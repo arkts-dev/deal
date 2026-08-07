@@ -112,7 +112,7 @@ public final class Parser {
             case THROW     -> parseThrowStatement();
             case SEMICOLON -> { advance(); yield null; }
             case EOF       -> null;
-            case RBRACE    -> null;
+            case RBRACE    -> { advance(); error("E1041", "Unexpected '}'", previous()); yield null; }
             default        -> parseExpressionStatement();
         };
     }
@@ -263,8 +263,7 @@ public final class Parser {
         Token retToken = advance();
 
         Optional<ExpressionNode> expr = Optional.empty();
-        if (!isAtEnd() && canStartExpression(peek().type())
-                && !isStatementBoundary(peek().type())) {
+        if (!isAtEnd() && canStartExpression(peek().type())) {
             ExpressionNode parsed = parseExpression();
             if (parsed != null) expr = Optional.of(parsed);
         }
@@ -627,13 +626,6 @@ public final class Parser {
         // "| null" suffix
         if (match(TokenType.PIPE)) {
             if (match(TokenType.NULL)) {
-                return new NullableType(
-                        spanBetween(tokenSpanStart(inner), previousOrCurrent()),
-                        inner);
-            }
-            // 'null' as identifier (fallback)
-            if (peek().type() == TokenType.IDENTIFIER && peek().lexeme().equals("null")) {
-                advance();
                 return new NullableType(
                         spanBetween(tokenSpanStart(inner), previousOrCurrent()),
                         inner);

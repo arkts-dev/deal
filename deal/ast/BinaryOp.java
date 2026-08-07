@@ -15,5 +15,5 @@ public enum BinaryOp {
     GT,    // >
     GTE,   // >=
     AND,   // &&
-    OR     // |
+    OR     // ||
 }

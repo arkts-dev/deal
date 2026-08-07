@@ -147,6 +147,8 @@ public class ParserTest {
         testErrorRecoveryBinaryLhsNull();
         testErrorRecoveryHasExprNull();
         testErrorRecoveryUnaryOperandNull();
+        testErrorRecoveryStrayRBrace();
+        testReturnFunctionExpr();
 
         // Span tests
         testSpanPositions();
@@ -1030,6 +1032,45 @@ public class ParserTest {
         check(hasE1xxx, "unary-null: produced E1xxx diagnostic");
         check(r.program().statements().size() >= 1,
             "unary-null: at least 1 statement recovered, got " + r.program().statements().size());
+    }
+
+    // =========================================================================
+    // Regression tests for review F1/F2 fixes
+    // =========================================================================
+
+    static void testErrorRecoveryStrayRBrace() {
+        System.out.println("-- Error Recovery: stray '}' at top level (F1 fix) --");
+
+        // Stray '}' at top level must not cause infinite loop; must emit E1041
+        // and continue parsing remaining statements.
+        ParseResult r = parse("let x: int = 1; }\nlet y: int = 2;");
+        boolean hasE1041 = r.diagnostics().stream()
+                .anyMatch(d -> d.code().equals("E1041"));
+        check(hasE1041, "f1-fix: produced E1041 diagnostic");
+        // Must have parsed both let statements (x and y) despite the stray }
+        check(r.program().statements().size() >= 2,
+            "f1-fix: at least 2 statements recovered, got " + r.program().statements().size());
+    }
+
+    static void testReturnFunctionExpr() {
+        System.out.println("-- ReturnStatement with function expression (F2 fix) --");
+
+        // return function(): int { return 0; }
+        // Must parse as a single ReturnStatement wrapping a FunctionExpr,
+        // not as a bare return followed by an expression statement.
+        ParseResult r = parse("function f(): int { return function(): int { return 0; }; }");
+        assertNoParseErrors(r, "return func expr");
+        FunctionDeclaration fd = (FunctionDeclaration) r.program().statements().get(0);
+        check(fd.body().statements().size() == 1,
+            "return-func-expr: 1 body statement, got " + fd.body().statements().size());
+        ReturnStatement ret = assertInstance(fd.body().statements().get(0),
+                ReturnStatement.class, "return-func-expr");
+        if (ret != null) {
+            check(ret.expr().isPresent(), "return-func-expr: has expression");
+            check(ret.expr().get() instanceof FunctionExpr,
+                "return-func-expr: expression is FunctionExpr, got "
+                + ret.expr().get().getClass().getSimpleName());
+        }
     }
 
     // =========================================================================
