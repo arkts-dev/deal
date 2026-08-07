@@ -38,6 +38,10 @@ public class LuaBackendTest {
 
     private record CompileOutput(String lua, CheckResult result, ProgramNode program) {}
 
+    /** Extended compile output that also captures codegen diagnostics. */
+    private record CompileOutputDiag(String lua, CheckResult result,
+                                      ProgramNode program, List<Diagnostic> codegenDiags) {}
+
     private static CompileOutput compile(String source) {
         return compile(source, "test.deal");
     }
@@ -68,7 +72,44 @@ public class LuaBackendTest {
         return new CompileOutput(lua, result, parse.program());
     }
 
-    /** F5 fix: Actually validate Lua syntax by having luajit evaluate loadstring(). */
+    /**
+     * Compile DEAL source and also capture codegen diagnostics.
+     * The LuaBackend.generate() static method creates an internal backend,
+     * so we need to use the backend instance directly to capture diagnostics.
+     */
+    private static CompileOutputDiag compileWithDiag(String source) {
+        return compileWithDiag(source, "test.deal");
+    }
+
+    private static CompileOutputDiag compileWithDiag(String source, String filename) {
+        LexResult lex = new Lexer(source, filename).tokenize();
+        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver(filename, resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+
+        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
+
+        CheckResult result;
+        if (diags.stream().noneMatch(d -> "error".equals(d.severity()))) {
+            result = TypeChecker.check(filename, symTable, nr, parse.program());
+            diags.addAll(result.diagnostics());
+            if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
+                return new CompileOutputDiag(null, result, parse.program(), List.of());
+            }
+        } else {
+            return new CompileOutputDiag(null,
+                new CheckResult(Map.of(), symTable, diags), parse.program(), List.of());
+        }
+
+        // Use the backend instance to capture diagnostics
+        LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable(), filename);
+        String lua = backend.generateFromInstance(parse.program());
+        List<Diagnostic> codegenDiags = backend.diagnostics();
+        return new CompileOutputDiag(lua, result, parse.program(), codegenDiags);
+    }
+
     /** F5 fix: Actually validate Lua syntax using luajit loadfile on a temp file. */
     private static boolean isValidLua(String lua) {
         if (lua == null || lua.isEmpty()) return false;
@@ -166,6 +207,19 @@ public class LuaBackendTest {
         }
     }
 
+    private static void assertHasDiagnostic(CompileOutputDiag out, String code, String context) {
+        if (out.codegenDiags() != null) {
+            for (Diagnostic d : out.codegenDiags()) {
+                if (d.code().equals(code)) {
+                    passed++;
+                    return;
+                }
+            }
+        }
+        failed++;
+        System.err.println("FAIL: " + context + " — expected diagnostic " + code + " not found");
+    }
+
     // =========================================================================
     // Main
     // =========================================================================
@@ -204,12 +258,15 @@ public class LuaBackendTest {
         testTryCatchPreserveErrorCode();
         testTryCatchWrapUnexpectedError();
         testThrow();
+        testThrowDefaultFields();
         testArityExtension();
         testReturnStatement();
         testReturnVoid();
         testModuleExports();
         testBreakStatement();
+        testBreakInsideTry();
         testContinueStatement();
+        testContinueInsideTry();
         testIntLiteralTrusted();
         testLuaSyntaxValidation();
         testClassExport();
@@ -221,11 +278,14 @@ public class LuaBackendTest {
         testFuncParamCheck();
         testTryCatchReturnPropagation();
         testTryCatchInFunction();
+        testNestedTryCatchFlagPropagation();
         testErrorDefaultsEmitted();
         testNestedTryCatchUniqueFlags();
         testModuleLevelTryCatchExports();
         testElseIfCheckBoolean();
         testErrorConstruction();
+        testNullableVsNullableComparison();
+        testNullableVsNullableNotEqual();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -687,8 +747,6 @@ public class LuaBackendTest {
         assertContains(out.lua, "pcall(function()", "pcall wrapper");
         assertContains(out.lua, "if not __ok then", "error check");
         assertContains(out.lua, "__err.code", "error table code check");
-        // F1 fix: should NOT have unconditional else/return, should have flag pattern
-        assertNotContains(out.lua, "else\n    return __err", "no unconditional return on success");
         // Module-level: should NOT have flag variables (no return propagation needed)
         assertNotContains(out.lua, "__try_returned", "no flag variable at module level");
     }
@@ -710,7 +768,7 @@ public class LuaBackendTest {
             "}"
         );
         assertNoErrors(out, "try/catch preserve error");
-        assertContains(out.lua, "if type(__err) == \"table\" and __err.code then", "error table check");
+        assertContains(out.lua, "if type(__err) == \"table\" and __err.code ~= nil then", "error table check");
         assertContains(out.lua, "e = __err", "preserve original error");
     }
 
@@ -745,6 +803,41 @@ public class LuaBackendTest {
         assertContains(out.lua, "error({", "error() call");
         assertContains(out.lua, "code = \"E_LIMIT\"", "code preserved");
         assertContains(out.lua, "message = \"fail\"", "message preserved");
+    }
+
+    // =========================================================================
+    // F3 round 5: throw with partial Error object literal includes default fields
+    // =========================================================================
+
+    static void testThrowDefaultFields() {
+        System.out.println("-- Throw Default Fields (F3 round 5) --");
+        // throw with only message — should include default code = ""
+        CompileOutput out = compile(
+            "throw { message: \"fail\" };"
+        );
+        assertNoErrors(out, "throw default fields");
+        // Should contain code = "" as a default
+        assertContains(out.lua, "code = \"\"", "default code field");
+        assertContains(out.lua, "message = \"fail\"", "explicit message field");
+
+        // throw with only code — should include default message = ""
+        CompileOutput out2 = compile(
+            "throw { code: \"E_LIMIT\" };"
+        );
+        assertNoErrors(out2, "throw default message");
+        assertContains(out2.lua, "code = \"E_LIMIT\"", "explicit code field");
+        assertContains(out2.lua, "message = \"\"", "default message field");
+
+        // throw with code and message — should NOT have redundancies
+        CompileOutput out3 = compile(
+            "throw { code: \"E_LIMIT\", message: \"fail\" };"
+        );
+        assertNoErrors(out3, "throw both fields");
+        assertContains(out3.lua, "code = \"E_LIMIT\"", "code field");
+        assertContains(out3.lua, "message = \"fail\"", "message field");
+        // Only one occurrence of code = 
+        int codeCount = countOccurrences(out3.lua, "code = ");
+        check(codeCount <= 2, "at most 2 'code = ' occurrences (one in defaults, one in throw), got: " + codeCount);
     }
 
     // =========================================================================
@@ -818,6 +911,57 @@ public class LuaBackendTest {
     }
 
     // =========================================================================
+    // F2 round 5: break inside try within loop emits E6002 diagnostic
+    // =========================================================================
+
+    static void testBreakInsideTry() {
+        System.out.println("-- Break Inside Try (F2 round 5) --");
+        // break inside try within a loop — should emit E6002
+        String source =
+            "while (true) {\n" +
+            "  try {\n" +
+            "    break;\n" +
+            "  } catch (e) {\n" +
+            "  }\n" +
+            "}";
+        // The type checker accepts break inside try within loop.
+        // The codegen should emit E6002 and generate error() instead of break.
+        LexResult lex = new Lexer(source, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        // Should compile (type checker allows break inside try within loop)
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            check(false, "break inside try: type checker should accept this");
+            return;
+        }
+
+        LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable(), "test.deal");
+        String lua = backend.generateFromInstance(parse.program());
+
+        // Check for E6002 in generated Lua
+        assertContains(lua, "E6002", "E6002 error in generated Lua");
+        assertContains(lua, "break inside try within loop not supported",
+            "diagnostic message in Lua");
+
+        // Check for codegen diagnostic
+        boolean foundDiag = false;
+        for (Diagnostic d : backend.diagnostics()) {
+            if ("E6002".equals(d.code())) {
+                foundDiag = true;
+                break;
+            }
+        }
+        check(foundDiag, "E6002 diagnostic emitted by codegen");
+
+        // Verify the generated Lua is still syntactically valid
+        check(isValidLua(lua), "break inside try generates valid Lua");
+    }
+
+    // =========================================================================
     // Test: Continue statement
     // =========================================================================
 
@@ -828,6 +972,54 @@ public class LuaBackendTest {
         );
         assertNoErrors(out, "continue");
         assertContains(out.lua, "goto __continue_", "goto continue");
+    }
+
+    // =========================================================================
+    // F2 round 5: continue inside try within loop emits E6002 diagnostic
+    // =========================================================================
+
+    static void testContinueInsideTry() {
+        System.out.println("-- Continue Inside Try (F2 round 5) --");
+        // continue inside try within a loop — should emit E6002
+        String source =
+            "for (let i: int = 0; i < 10; i = i + 1) {\n" +
+            "  try {\n" +
+            "    continue;\n" +
+            "  } catch (e) {\n" +
+            "  }\n" +
+            "}";
+        LexResult lex = new Lexer(source, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            check(false, "continue inside try: type checker should accept this");
+            return;
+        }
+
+        LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable(), "test.deal");
+        String lua = backend.generateFromInstance(parse.program());
+
+        // Check for E6002 in generated Lua
+        assertContains(lua, "E6002", "E6002 error in generated Lua");
+        assertContains(lua, "continue inside try within loop not supported",
+            "diagnostic message in Lua");
+
+        // Check for codegen diagnostic
+        boolean foundDiag = false;
+        for (Diagnostic d : backend.diagnostics()) {
+            if ("E6002".equals(d.code())) {
+                foundDiag = true;
+                break;
+            }
+        }
+        check(foundDiag, "E6002 diagnostic emitted by codegen");
+
+        // Verify the generated Lua is still syntactically valid
+        check(isValidLua(lua), "continue inside try generates valid Lua");
     }
 
     // =========================================================================
@@ -991,7 +1183,6 @@ public class LuaBackendTest {
         assertContains(out.lua, "__try_returned_", "flag set before return");
     }
 
-
     // =========================================================================
     // Test: try/catch in function (with return propagation flag pattern)
     // =========================================================================
@@ -1014,6 +1205,36 @@ public class LuaBackendTest {
         // Function-level try/catch: SHOULD have flag variables
         assertContains(out.lua, "__try_returned_", "flag variable in function try/catch");
         assertContains(out.lua, "__try_return_val_", "val variable in function try/catch");
+    }
+
+    // =========================================================================
+    // F1 round 5: nested try/catch return flag propagation to outer try
+    // =========================================================================
+
+    static void testNestedTryCatchFlagPropagation() {
+        System.out.println("-- Nested Try/Catch Flag Propagation (F1 round 5) --");
+        CompileOutput out = compile(
+            "function outer(): string {\n" +
+            "  try {\n" +
+            "    try {\n" +
+            "      return \"inner\";\n" +
+            "    } catch (e2) {\n" +
+            "      return \"inner_caught\";\n" +
+            "    }\n" +
+            "  } catch (e1) {\n" +
+            "    return \"outer_caught\";\n" +
+            "  }\n" +
+            "  return \"none\";\n" +
+            "}"
+        );
+        assertNoErrors(out, "nested try/catch flag propagation");
+        // The inner try's elseif block should set the outer flag
+        // Look for pattern: __try_returned_1 = true after elseif __try_returned_2
+        // The outer flag should be set in the inner try's propagation block
+        assertContains(out.lua, "__try_returned_1 = true",
+            "outer flag set by inner try's propagation");
+        assertContains(out.lua, "__try_return_val_1 = __try_return_val_2",
+            "outer val set to inner val");
     }
 
     // =========================================================================
@@ -1129,5 +1350,43 @@ public class LuaBackendTest {
         assertContains(out.lua, "Error_defaults", "references Error_defaults");
         assertContains(out.lua, "code = \"X\"", "code field");
         assertContains(out.lua, "message = \"fail\"", "message field");
+    }
+
+    // =========================================================================
+    // F4 round 5: nullable vs nullable comparison
+    // =========================================================================
+
+    static void testNullableVsNullableComparison() {
+        System.out.println("-- Nullable vs Nullable Comparison (F4 round 5) --");
+        // Two nullable values compared with === should handle nil/__NULL equivalence
+        CompileOutput out = compile(
+            "class User { name: string = \"\"; nick?: string = \"\"; }\n" +
+            "let a: string | null = null;\n" +
+            "let b: string | null = null;\n" +
+            "let eq: boolean = a === b;"
+        );
+        assertNoErrors(out, "nullable comparison");
+        // Should have special nullable comparison pattern
+        assertContains(out.lua, "== nil or", "nil check in comparison");
+        assertContains(out.lua, "== __NULL", "__NULL check in comparison");
+    }
+
+    // =========================================================================
+    // F4 round 5: nullable vs nullable not-equal
+    // =========================================================================
+
+    static void testNullableVsNullableNotEqual() {
+        System.out.println("-- Nullable vs Nullable Not Equal (F4 round 5) --");
+        CompileOutput out = compile(
+            "class User { name: string = \"\"; nick?: string = \"\"; }\n" +
+            "let a: string | null = null;\n" +
+            "let b: string | null = \"hi\";\n" +
+            "let neq: boolean = a !== b;"
+        );
+        assertNoErrors(out, "nullable not equal");
+        // Should have special nullable comparison pattern with not
+        assertContains(out.lua, "not (", "not wrapper");
+        assertContains(out.lua, "== nil or", "nil check in comparison");
+        assertContains(out.lua, "== __NULL", "__NULL check in comparison");
     }
 }

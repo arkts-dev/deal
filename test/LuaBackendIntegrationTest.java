@@ -11,7 +11,7 @@ import java.nio.file.*;
 import java.util.*;
 
 /**
- * Integration tests for the Lua backend (ISSUE-0007 F4).
+ * Integration tests for the Lua backend (ISSUE-0007).
  * Compiles complete DEAL programs to Lua, executes them with LuaJIT,
  * and verifies correct runtime behavior.
  */
@@ -30,23 +30,16 @@ public class LuaBackendIntegrationTest {
     // =========================================================================
 
     /**
-     * Compile DEAL source, run the generated Lua with LuaJIT, and return stdout.
+     * Compile DEAL source, generate Lua, run with LuaJIT, and return stdout.
      * Returns null if LuaJIT is not available.
      */
-    private static String compileAndRun(String dealSource) throws Exception {
-        return compileAndRun(dealSource, "test_integration.deal");
-    }
-
     private static String compileAndRun(String dealSource, String filename) throws Exception {
-        // Check if luajit is available
         try {
             new ProcessBuilder("luajit", "-v").start().waitFor();
         } catch (IOException e) {
-            System.err.println("SKIP: luajit not available");
             return null;
         }
 
-        // Compile DEAL source
         LexResult lex = new Lexer(dealSource, filename).tokenize();
         ParseResult parse = new Parser(lex.tokens(), filename).parse();
 
@@ -57,9 +50,8 @@ public class LuaBackendIntegrationTest {
         List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
         if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
             for (Diagnostic d : diags) {
-                if ("error".equals(d.severity())) {
+                if ("error".equals(d.severity()))
                     System.err.println("  Compile error: " + d);
-                }
             }
             throw new RuntimeException("Compilation failed");
         }
@@ -68,27 +60,21 @@ public class LuaBackendIntegrationTest {
         diags.addAll(result.diagnostics());
         if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
             for (Diagnostic d : diags) {
-                if ("error".equals(d.severity())) {
+                if ("error".equals(d.severity()))
                     System.err.println("  Type error: " + d);
-                }
             }
             throw new RuntimeException("Type checking failed");
         }
 
         String lua = LuaBackend.generate(parse.program(), result, filename);
 
-        // Write Lua to temp directory and run with LuaJIT
         Path tmpDir = Files.createTempDirectory("deal_integration_");
         Path luaFile = tmpDir.resolve("test_main.lua");
         Files.writeString(luaFile, lua);
-
-        // Copy runtime library
         Path runtimeDir = tmpDir.resolve("deal");
         Files.createDirectories(runtimeDir);
-        Path runtimeSrc = Path.of("deal/runtime.lua");
-        Files.copy(runtimeSrc, runtimeDir.resolve("runtime.lua"));
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
 
-        // Run with LuaJIT
         ProcessBuilder pb = new ProcessBuilder("luajit", luaFile.toString());
         pb.directory(tmpDir.toFile());
         pb.redirectErrorStream(true);
@@ -96,10 +82,8 @@ public class LuaBackendIntegrationTest {
         String output = new String(p.getInputStream().readAllBytes());
         int exit = p.waitFor();
 
-        // Cleanup
         try {
-            Files.walk(tmpDir)
-                .sorted(java.util.Comparator.reverseOrder())
+            Files.walk(tmpDir).sorted(Comparator.reverseOrder())
                 .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
         } catch (IOException ignored) {}
 
@@ -116,7 +100,6 @@ public class LuaBackendIntegrationTest {
     public static void main(String[] args) throws Exception {
         System.out.println("=== Running Lua Backend Integration Tests ===");
 
-        // Check if luajit is available
         boolean luajitAvailable;
         try {
             new ProcessBuilder("luajit", "-v").start().waitFor();
@@ -140,6 +123,9 @@ public class LuaBackendIntegrationTest {
         testForLoopClosureLimitation();
         testClassExport();
         testCodeAfterTryCatch();
+        testNestedTryCatchReturn();
+        testThrowDefaultFields();
+        testNullableComparison();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -154,23 +140,6 @@ public class LuaBackendIntegrationTest {
 
     static void testBasicFunctionCall() throws Exception {
         System.out.println("-- Basic Function Call --");
-        String source =
-            "function add(a: int, b: int): int { return a + b; }\n" +
-            "let result: int = add(2, 3);\n" +
-            "function print_int(x: int): void {}\n";  // placeholder; we'll check via return value
-
-        // Instead, use a function that returns a known value
-        String source2 =
-            "function get_answer(): int { return 42; }\n" +
-            "let answer: int = get_answer();\n";
-
-        // For integration tests, we need the Lua program to produce output.
-        // The generated Lua returns an exports table. We can't easily capture
-        // internal variable values. So let's use exported functions that we
-        // can call from a Lua wrapper.
-
-        // Let's use a different approach: compile a DEAL module that exports
-        // a function, then write a small Lua script that calls it.
         String dealSrc =
             "export function add(a: int, b: int): int { return a + b; }\n";
 
@@ -182,7 +151,6 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
         String lua = LuaBackend.generate(parse.program(), result, "test.deal");
 
-        // Create a runner script
         String runner =
             "package.path = './?.lua;' .. package.path\n" +
             "local mod = loadstring([[" + lua + "]])()\n" +
@@ -192,7 +160,6 @@ public class LuaBackendIntegrationTest {
         Path tmpDir = Files.createTempDirectory("deal_int_");
         Path runnerFile = tmpDir.resolve("runner.lua");
         Files.writeString(runnerFile, runner);
-
         Path runtimeDir = tmpDir.resolve("deal");
         Files.createDirectories(runtimeDir);
         Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
@@ -204,7 +171,6 @@ public class LuaBackendIntegrationTest {
         String output = new String(p.getInputStream().readAllBytes()).trim();
         int exit = p.waitFor();
 
-        // Cleanup
         try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
             .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
         } catch (IOException ignored) {}
@@ -270,17 +236,10 @@ public class LuaBackendIntegrationTest {
 
     static void testTryCatchRuntimeTypeError() throws Exception {
         System.out.println("-- Try/Catch Runtime Type Error --");
-
-        // This test catches a runtime type error and returns the error code.
-        // We need to trigger a type error at runtime, which is hard to do
-        // from valid DEAL code since the type checker prevents it.
-        // Instead, we'll use a function that throws and catches.
-
-        // We can test the catch wrapping: catch an unexpected Lua error
         String dealSrc =
             "export function test_catch_unexpected(): string {\n" +
             "  try {\n" +
-            "    let x: int = 1;\n" +  // This won't throw
+            "    let x: int = 1;\n" +
             "    return \"no_error\";\n" +
             "  } catch (e) {\n" +
             "    return e.code;\n" +
@@ -320,7 +279,6 @@ public class LuaBackendIntegrationTest {
         } catch (IOException ignored) {}
 
         check(exit == 0, "try/catch unexpected: luajit exit 0");
-        // No error, so should return "no_error"
         check(output.equals("no_error"), "try/catch unexpected: returned 'no_error', got: " + output);
     }
 
@@ -504,7 +462,6 @@ public class LuaBackendIntegrationTest {
         } catch (IOException ignored) {}
 
         check(exit == 0, "for-loop: luajit exit 0 (got: " + output + ")");
-        // sum = 0+1+2+3+4+5+6+7+8+9 = 45
         check(output.equals("45"), "for-loop: sum is 45, got: " + output);
     }
 
@@ -514,9 +471,6 @@ public class LuaBackendIntegrationTest {
 
     static void testForLoopClosureLimitation() throws Exception {
         System.out.println("-- For Loop Closure Limitation --");
-        // This test verifies the v0.6 limitation: closures all see the final value.
-        // We compile a for-loop that captures i in closures and verify that
-        // all closures return the same value (the final value).
         String dealSrc =
             "export function test_closure_loop(): int {\n" +
             "  let a: int = 0;\n" +
@@ -572,7 +526,6 @@ public class LuaBackendIntegrationTest {
         } catch (IOException ignored) {}
 
         check(exit == 0, "for-loop closure: luajit exit 0 (got: " + output + ")");
-        // a=1, b=2, c=3
         check(output.equals("3"), "for-loop closure: c is 3, got: " + output);
     }
 
@@ -582,7 +535,6 @@ public class LuaBackendIntegrationTest {
 
     static void testClassExport() throws Exception {
         System.out.println("-- Class Export --");
-        // Test that an exported class can be accessed from the module
         String dealSrc =
             "export class User { name: string = \"\"; nick?: string; }\n" +
             "export function make_user(): string {\n" +
@@ -612,7 +564,6 @@ public class LuaBackendIntegrationTest {
             "local mod = loadstring([[" + lua + "]])()\n" +
             "local r = mod.make_user.f()\n" +
             "print(r)\n" +
-            "-- Also verify that User is in the exports table\n" +
             "if mod.User ~= nil then print('class_exported') end\n";
 
         Path tmpDir = Files.createTempDirectory("deal_int_");
@@ -643,10 +594,7 @@ public class LuaBackendIntegrationTest {
     // =========================================================================
 
     static void testCodeAfterTryCatch() throws Exception {
-        System.out.println("-- Code After Try/Catch (F1 round 2) --");
-        // F1 fix: code after try/catch should execute. Previously the unconditional
-        // "else return __err" made all code after try/catch dead at module level,
-        // causing require() to receive nil instead of the exports table.
+        System.out.println("-- Code After Try/Catch --");
         String dealSrc =
             "export function test_after_try(): string {\n" +
             "  let result: string = \"initial\";\n" +
@@ -701,5 +649,207 @@ public class LuaBackendIntegrationTest {
 
         check(exit == 0, "code after try/catch: luajit exit 0 (got: " + output + ")");
         check(output.equals("tried"), "code after try/catch: result is 'tried', got: " + output);
+    }
+
+    // =========================================================================
+    // F1 round 5: Nested try/catch return propagation
+    // =========================================================================
+
+    static void testNestedTryCatchReturn() throws Exception {
+        System.out.println("-- Nested Try/Catch Return (F1 round 5) --");
+        String dealSrc =
+            "export function outer(): string {\n" +
+            "  try {\n" +
+            "    try {\n" +
+            "      return \"inner\";\n" +
+            "    } catch (e2) {\n" +
+            "      return \"inner_caught\";\n" +
+            "    }\n" +
+            "  } catch (e1) {\n" +
+            "    return \"outer_caught\";\n" +
+            "  }\n" +
+            "  return \"none\";\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "nested try/catch: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r = mod.outer.f()\n" +
+            "print(r)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "nested try/catch: luajit exit 0 (got: " + output + ")");
+        check(output.equals("inner"), "nested try/catch: inner return propagates, got: " + output);
+    }
+
+    // =========================================================================
+    // F3 round 5: throw with partial Error includes default fields
+    // =========================================================================
+
+    static void testThrowDefaultFields() throws Exception {
+        System.out.println("-- Throw Default Fields (F3 round 5) --");
+        // throw with only message — code should default to ""
+        String dealSrc =
+            "export function test_throw_msg_only(): string {\n" +
+            "  try {\n" +
+            "    throw { message: \"fail\" };\n" +
+            "  } catch (e) {\n" +
+            "    return e.code;\n" +
+            "  }\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "throw default fields: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r = mod.test_throw_msg_only.f()\n" +
+            "print(r)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "throw default fields: luajit exit 0 (got: " + output + ")");
+        check(output.equals(""), "throw default fields: e.code is empty string, got: " + output);
+    }
+
+    // =========================================================================
+    // F4 round 5: Nullable-vs-nullable comparison at runtime
+    // =========================================================================
+
+    static void testNullableComparison() throws Exception {
+        System.out.println("-- Nullable Comparison (F4 round 5) --");
+        String dealSrc =
+            "class User { name: string = \"\"; nick?: string; }\n" +
+            "export function test_nullable_eq(): boolean {\n" +
+            "  let u: User = { name: \"Ada\" };\n" +
+            "  let a: string | null = u.nick;\n" +
+            "  let b: string | null = null;\n" +
+            "  return a === b;\n" +
+            "}\n" +
+            "export function test_nullable_neq(): boolean {\n" +
+            "  let u: User = { name: \"Ada\", nick: \"ads\" };\n" +
+            "  let a: string | null = u.nick;\n" +
+            "  let b: string | null = null;\n" +
+            "  return a !== b;\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "nullable comparison: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "-- nil (missing field) === null (__NULL) should be true\n" +
+            "local r1 = mod.test_nullable_eq.f()\n" +
+            "print(r1)\n" +
+            "-- 'ads' !== null should be true\n" +
+            "local r2 = mod.test_nullable_neq.f()\n" +
+            "print(r2)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "nullable comparison: luajit exit 0 (got: " + output + ")");
+        // Output should be "true\ntrue"
+        String[] lines = output.split("\n");
+        check(lines.length >= 2, "nullable comparison: two output lines, got: " + output);
+        if (lines.length >= 2) {
+            check(lines[0].equals("true"), "nullable eq: nil === __NULL should be true, got: " + lines[0]);
+            check(lines[1].equals("true"), "nullable neq: 'ads' !== null should be true, got: " + lines[1]);
+        }
     }
 }

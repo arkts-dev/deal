@@ -33,27 +33,23 @@ public final class LuaBackend implements Visitor<Void> {
     private final List<Diagnostic> diagnostics = new ArrayList<>();
     private int indent = 0;
 
-    // F3 fix: map export name → actual Lua variable name.
-    // For functions: "greet" → "greet". For classes: "User" → "User_meta".
     private final Map<String, String> exportedValues = new LinkedHashMap<>();
 
     private Type currentReturnType = null;
     private String sourceFilePath = "unknown.deal";
 
-    // For continue: label to jump to at end of loop body
     private String currentContinueLabel = null;
     private int labelCounter = 0;
 
-    // For try/catch return propagation: non-null when inside a try block.
-    // ReturnStatement sets this flag before returning so the try/catch
-    // wrapper can propagate the return value after pcall succeeds.
     private String tryReturnFlag = null;
     private String tryReturnVal = null;
 
-    // F3 round 3: track function nesting depth. When 0, we're at module scope
-    // and should not emit bare "return" from try/catch return propagation
-    // (which would cause the module to return early, skipping exports).
     private int functionDepth = 0;
+
+    // Round 5: track try-block nesting depth for detecting break/continue
+    // inside try within a loop. Incremented when entering a try block body,
+    // decremented after.
+    private int insideTryDepth = 0;
 
     /**
      * Entry point: generate Lua source for a complete program.
@@ -65,12 +61,6 @@ public final class LuaBackend implements Visitor<Void> {
         backend.emitHeader();
         backend.emitLine("local __NULL = __rt.__NULL");
         backend.emitLine("local __MISSING = __rt.__MISSING");
-        // F1 round 3: emit Error_defaults for the built-in Error class.
-        // Error is registered as a ClassSymbol by NameResolver but has no
-        // ClassDeclaration AST node, so the normal visit(ClassDeclaration)
-        // never fires for it. Without this, class construction of Error
-        // values (e.g., let e: Error = { code: "X", message: "fail" })
-        // references an undefined Error_defaults variable at runtime.
         backend.emitLine("local Error_defaults = { code = \"\", message = \"\" }");
         backend.emitLine("");
 
@@ -117,6 +107,29 @@ public final class LuaBackend implements Visitor<Void> {
     private LuaBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols) {
         this.typeMap = new HashMap<>(typeMap);
         this.symbols = symbols;
+    }
+
+    /**
+     * Public constructor for tests that need to capture codegen diagnostics.
+     */
+    public LuaBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols, String sourcePath) {
+        this.typeMap = new HashMap<>(typeMap);
+        this.symbols = symbols;
+        this.sourceFilePath = sourcePath;
+    }
+
+    /**
+     * Generate Lua source using this instance (for tests that need diagnostics).
+     */
+    public String generateFromInstance(ProgramNode program) {
+        emitHeader();
+        emitLine("local __NULL = __rt.__NULL");
+        emitLine("local __MISSING = __rt.__MISSING");
+        emitLine("local Error_defaults = { code = \"\", message = \"\" }");
+        emitLine("");
+        walkStatements(program.statements());
+        emitExports();
+        return this.out.toString();
     }
 
     // =========================================================================
@@ -227,7 +240,6 @@ public final class LuaBackend implements Visitor<Void> {
         };
     }
 
-    // F2 fix: emit check for Class and Func types using runtime's check_type
     private String emitCheckExpr(String valueExpr, Type type) {
         if (type == null) return valueExpr;
         return switch (type) {
@@ -290,7 +302,9 @@ public final class LuaBackend implements Visitor<Void> {
             case TryStatement ts -> visit(ts);
             case ThrowStatement ts2 -> visit(ts2);
             case Block b -> visit(b);
-            default -> {}
+            default -> addDiagnostic("E6000",
+                "unsupported statement type: " + stmt.getClass().getSimpleName(),
+                stmt.span());
         }
     }
 
@@ -435,7 +449,6 @@ public final class LuaBackend implements Visitor<Void> {
                 || exprType instanceof Type.Null)) {
             emitLine("local " + name + " = " + initLua);
         } else {
-            // F6 fix: use exprType (inferred type) as check type when no annotation
             Type checkType = targetType != null ? targetType : exprType;
             if (checkType != null && !(checkType instanceof Type.Error)
                 && !(checkType instanceof Type.Void)
@@ -454,7 +467,6 @@ public final class LuaBackend implements Visitor<Void> {
         if (node.expr().isPresent()) {
             String exprLua = emitExpression(node.expr().get());
             String checkedExpr;
-            // F2 fix: wrap return value with type check when return type is known
             if (currentReturnType != null
                 && !(currentReturnType instanceof Type.Error)
                 && !(currentReturnType instanceof Type.Void)
@@ -464,15 +476,12 @@ public final class LuaBackend implements Visitor<Void> {
                 checkedExpr = exprLua;
             }
 
-            // F1 fix: when inside a try block, set the return flag before
-            // returning so the try/catch wrapper can propagate the value.
             if (tryReturnFlag != null) {
                 emitLine(tryReturnFlag + " = true");
                 emitLine(tryReturnVal + " = " + checkedExpr);
             }
             emitLine("return " + checkedExpr);
         } else {
-            // void return inside try block: no value to store
             if (tryReturnFlag != null) {
                 emitLine(tryReturnFlag + " = true");
             }
@@ -483,7 +492,6 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(IfStatement node) {
-        // F3 fix: wrap condition with check_boolean for consistency
         String condLua = "__rt.check_boolean(" + emitExpression(node.condition()) + ")";
         emitLine("if " + condLua + " then");
         indent++;
@@ -494,7 +502,6 @@ public final class LuaBackend implements Visitor<Void> {
             switch (node.elseBranch().get()) {
                 case Either.Left<IfStatement, Block> left -> {
                     IfStatement elseIf = left.value();
-                    // F4 round 3: wrap else-if condition with check_boolean
                     emitLine("elseif __rt.check_boolean("
                         + emitExpression(elseIf.condition()) + ") then");
                     indent++;
@@ -521,7 +528,6 @@ public final class LuaBackend implements Visitor<Void> {
             switch (node.elseBranch().get()) {
                 case Either.Left<IfStatement, Block> left -> {
                     IfStatement elseIf = left.value();
-                    // F4 round 3: wrap else-if condition with check_boolean
                     emitLine("elseif __rt.check_boolean("
                         + emitExpression(elseIf.condition()) + ") then");
                     indent++;
@@ -544,10 +550,8 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(WhileStatement node) {
-        // F3 fix: wrap condition with check_boolean for consistency with for-loop
         String condLua = "__rt.check_boolean(" + emitExpression(node.condition()) + ")";
 
-        // Set up continue label
         String savedLabel = currentContinueLabel;
         String loopLabel = freshLabel("__continue");
         currentContinueLabel = loopLabel;
@@ -555,7 +559,6 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("while " + condLua + " do");
         indent++;
         visit(node.body());
-        // Emit continue landing pad
         emitLine("::" + loopLabel + "::");
         indent--;
         emitLine("end");
@@ -595,7 +598,6 @@ public final class LuaBackend implements Visitor<Void> {
             ? "__rt.check_boolean(" + emitExpression(node.condition().get()) + ")"
             : "true";
 
-        // Set up continue label
         String savedLabel = currentContinueLabel;
         String loopLabel = freshLabel("__continue");
         currentContinueLabel = loopLabel;
@@ -603,8 +605,6 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("while " + condStr + " do");
         indent++;
         visit(node.body());
-        // Continue landing pad: placed before the update so that continue
-        // in a C-style for-loop jumps to the update step, then re-checks condition.
         emitLine("::" + loopLabel + "::");
         if (node.update().isPresent()) {
             emitLine(emitExpression(node.update().get()));
@@ -620,13 +620,27 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(BreakStatement node) {
-        emitLine("break");
+        if (insideTryDepth > 0) {
+            addDiagnostic("E6002",
+                "break inside try within loop not supported in v0.6",
+                node.span());
+            emitLine("error(__rt._err(\"E6002\","
+                + " \"break inside try within loop not supported in v0.6\"))");
+        } else {
+            emitLine("break");
+        }
         return null;
     }
 
     @Override
     public Void visit(ContinueStatement node) {
-        if (currentContinueLabel != null) {
+        if (insideTryDepth > 0) {
+            addDiagnostic("E6002",
+                "continue inside try within loop not supported in v0.6",
+                node.span());
+            emitLine("error(__rt._err(\"E6002\","
+                + " \"continue inside try within loop not supported in v0.6\"))");
+        } else if (currentContinueLabel != null) {
             emitLine("goto " + currentContinueLabel);
         } else {
             addDiagnostic("E6001", "continue outside loop", node.span());
@@ -649,7 +663,6 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(ExportDeclaration node) {
-        // F3 fix: store the actual Lua variable name for export
         switch (node.declaration()) {
             case FunctionDeclaration fd -> {
                 exportedValues.putIfAbsent(fd.name(), fd.name());
@@ -672,16 +685,6 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(TryStatement node) {
-        // F2 round 3: use unique flag variable names per try block to prevent
-        // shadowing in nested try/catch. Without unique names, an inner try's
-        // "local __try_returned = false" shadows the outer flag, causing the
-        // outer try to not detect returns from the inner try.
-        // F3 round 3: only use the flag pattern when inside a function.
-        // At module scope, a bare "return __try_return_val" would exit the
-        // module early (skipping exports). Module-level code cannot contain
-        // return statements (checked by the type checker), so the flag pattern
-        // is unnecessary and harmful at module scope.
-
         String savedFlag = tryReturnFlag;
         String savedVal = tryReturnVal;
         String myFlag = null;
@@ -700,7 +703,9 @@ public final class LuaBackend implements Visitor<Void> {
 
         emitLine("local __ok, __err = pcall(function()");
         indent++;
+        insideTryDepth++;
         visit(node.tryBlock());
+        insideTryDepth--;
         indent--;
         emitLine("end)");
 
@@ -710,7 +715,7 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("if not __ok then");
         indent++;
         emitLine("local " + node.catchVar());
-        emitLine("if type(__err) == \"table\" and __err.code then");
+        emitLine("if type(__err) == \"table\" and __err.code ~= nil then");
         indent++;
         emitLine(node.catchVar() + " = __err");
         indent--;
@@ -726,6 +731,11 @@ public final class LuaBackend implements Visitor<Void> {
         if (functionDepth > 0) {
             emitLine("elseif " + myFlag + " then");
             indent++;
+            // Round 5: propagate to outer try's flag for nested try/catch
+            if (savedFlag != null) {
+                emitLine(savedFlag + " = true");
+                emitLine(savedVal + " = " + myVal);
+            }
             emitLine("return " + myVal);
             indent--;
         }
@@ -736,6 +746,12 @@ public final class LuaBackend implements Visitor<Void> {
     @Override
     public Void visit(ThrowStatement node) {
         if (node.expr() instanceof ObjectLiteralExpr objLit) {
+            // Round 5: include default Error fields when not provided
+            Set<String> providedFields = new HashSet<>();
+            for (Property prop : objLit.properties()) {
+                providedFields.add(prop.name());
+            }
+
             StringBuilder sb = new StringBuilder("error({");
             boolean first = true;
             for (Property prop : objLit.properties()) {
@@ -743,6 +759,18 @@ public final class LuaBackend implements Visitor<Void> {
                 first = false;
                 sb.append(prop.name()).append(" = ")
                     .append(emitExpression(prop.value()));
+            }
+            {
+                if (!providedFields.contains("code")) {
+                    if (!first) sb.append(", ");
+                    first = false;
+                    sb.append("code = \"\"");
+                }
+                if (!providedFields.contains("message")) {
+                    if (!first) sb.append(", ");
+                    first = false;
+                    sb.append("message = \"\"");
+                }
             }
             sb.append("})");
             emitLine(sb.toString());
@@ -844,9 +872,20 @@ public final class LuaBackend implements Visitor<Void> {
             };
         }
 
-        // Handle null comparisons for nullable types:
-        // nullable_value === null should check for both nil and __NULL,
-        // because missing optional fields are nil at runtime.
+        // Round 5: nullable-vs-nullable comparison
+        if (leftType instanceof Type.Nullable && rightType instanceof Type.Nullable) {
+            if (op == BinaryOp.EQ) {
+                return "(" + left + " == " + right + " or ("
+                    + "(" + left + " == nil or " + left + " == __NULL) and ("
+                    + right + " == nil or " + right + " == __NULL)))";
+            }
+            if (op == BinaryOp.NEQ) {
+                return "(not (" + left + " == " + right + " or ("
+                    + "(" + left + " == nil or " + left + " == __NULL) and ("
+                    + right + " == nil or " + right + " == __NULL))))";
+            }
+        }
+
         if (op == BinaryOp.EQ && isNullLiteral(bin.right()) && leftType instanceof Type.Nullable) {
             return "(" + left + " == nil or " + left + " == __NULL)";
         }
@@ -976,8 +1015,6 @@ public final class LuaBackend implements Visitor<Void> {
         }
         provided.append("}");
 
-        // F7 fix: reference the module-level defaults table instead of
-        // rebuilding it inline at every construction site.
         String defaultsRef;
         if (sym instanceof Symbol.ClassSymbol cs) {
             defaultsRef = className + "_defaults";
@@ -1153,9 +1190,6 @@ public final class LuaBackend implements Visitor<Void> {
     // Helpers
     // =========================================================================
 
-    /**
-     * Check if an expression is the null literal.
-     */
     private boolean isNullLiteral(ExpressionNode expr) {
         return expr instanceof LiteralExpr lit
             && lit.value() instanceof LiteralValue.NullLiteral;
@@ -1188,9 +1222,6 @@ public final class LuaBackend implements Visitor<Void> {
         };
     }
 
-    /**
-     * Resolve a TypeNode (AST type annotation) to an internal Type.
-     */
     private Type resolveTypeNode(TypeNode typeNode) {
         return switch (typeNode) {
             case NamedType nt -> switch (nt.name()) {
