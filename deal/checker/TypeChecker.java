@@ -44,6 +44,13 @@ public final class TypeChecker {
     // -- Current scope for name resolution --
     private SymbolTable currentScope;
 
+    // -- Loop depth for break/continue validation (F8) --
+    private int loopDepth = 0;
+
+    // -- Write-context flag: when true, table member/index access is
+    //    treated as a write target (no contextual typing required) --
+    private boolean assignmentTargetMode = false;
+
     private TypeChecker(String modulePath, SymbolTable rootTable,
                         NameResolver nameResolver,
                         Map<StatementNode, SymbolTable> scopeMap) {
@@ -122,8 +129,8 @@ public final class TypeChecker {
             case IfStatement is          -> checkIfStatement(is);
             case WhileStatement ws       -> checkWhileStatement(ws);
             case ForStatement fs         -> checkForStatement(fs);
-            case BreakStatement bs       -> { /* no type checking needed */ }
-            case ContinueStatement cs    -> { /* no type checking needed */ }
+            case BreakStatement bs       -> checkBreak(bs);
+            case ContinueStatement cs    -> checkContinue(cs);
             case ExpressionStatement es  -> checkExpression(es.expr());
             case ImportDeclaration id    -> { /* already resolved */ }
             case ExportDeclaration ed    -> walkStatement(ed.declaration());
@@ -179,10 +186,21 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkFunctionDeclaration(FunctionDeclaration fd) {
+        // F2: Resolve from currentScope (not rootTable) so nested functions work.
+        // The function name is in the enclosing scope (parent of currentScope
+        // which is the function's own parameter scope). currentScope.resolve()
+        // walks the scope chain upward, so it will find the function name.
         Type.Func funcType = null;
-        Symbol sym = rootTable.resolve(fd.name());
+        Symbol sym = currentScope.resolve(fd.name());
         if (sym instanceof Symbol.FunctionSymbol fs) {
             funcType = fs.funcType();
+        }
+        // Fallback to rootTable for top-level functions
+        if (funcType == null) {
+            sym = rootTable.resolve(fd.name());
+            if (sym instanceof Symbol.FunctionSymbol fs) {
+                funcType = fs.funcType();
+            }
         }
 
         Type savedReturnType = currentReturnType;
@@ -190,9 +208,9 @@ public final class TypeChecker {
             currentReturnType = funcType.returnType();
         }
 
-        // The function scope is already entered via walkStatement
-        // Just check the body
-        walkStatements(fd.body().statements());
+        // F1: Use walkStatement(fd.body()) instead of walkStatements(fd.body().statements())
+        // so that the Block's scope (containing let-declared variables) is entered.
+        walkStatement(fd.body());
 
         if (funcType != null) {
             Type retType = funcType.returnType();
@@ -245,7 +263,12 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkIfStatement(IfStatement is) {
+        // F6: Set expectedType = boolean for if conditions
+        Type savedExpected = expectedType;
+        expectedType = Type.Boolean.INSTANCE;
         Type condType = checkExpression(is.condition());
+        expectedType = savedExpected;
+
         if (condType != Type.Error.INSTANCE && !(condType instanceof Type.Boolean)) {
             error("E3007", "If condition must be boolean, got " + typeName(condType),
                 is.condition().span());
@@ -287,7 +310,12 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkWhileStatement(WhileStatement ws) {
+        // F6: Set expectedType = boolean for while conditions
+        Type savedExpected = expectedType;
+        expectedType = Type.Boolean.INSTANCE;
         Type condType = checkExpression(ws.condition());
+        expectedType = savedExpected;
+
         if (condType != Type.Error.INSTANCE && !(condType instanceof Type.Boolean)) {
             error("E3007", "While condition must be boolean, got " + typeName(condType),
                 ws.condition().span());
@@ -295,7 +323,9 @@ public final class TypeChecker {
 
         NullNarrowing savedNarrowing = narrowing;
         narrowing = new NullNarrowing();
+        loopDepth++;
         walkStatement(ws.body());
+        loopDepth--;
         narrowing = savedNarrowing;
     }
 
@@ -311,8 +341,13 @@ public final class TypeChecker {
             }
         });
 
+        // F6: Set expectedType = boolean for for conditions
         fs.condition().ifPresent(cond -> {
+            Type savedExpected = expectedType;
+            expectedType = Type.Boolean.INSTANCE;
             Type condType = checkExpression(cond);
+            expectedType = savedExpected;
+
             if (condType != Type.Error.INSTANCE && !(condType instanceof Type.Boolean)) {
                 error("E3007", "For condition must be boolean, got " + typeName(condType),
                     cond.span());
@@ -323,8 +358,26 @@ public final class TypeChecker {
 
         NullNarrowing savedNarrowing = narrowing;
         narrowing = new NullNarrowing();
+        loopDepth++;
         walkStatement(fs.body());
+        loopDepth--;
         narrowing = savedNarrowing;
+    }
+
+    // =======================================================================
+    // Break / Continue (F8)
+    // =======================================================================
+
+    private void checkBreak(BreakStatement bs) {
+        if (loopDepth == 0) {
+            error("E2000", "'break' must be inside a loop", bs.span());
+        }
+    }
+
+    private void checkContinue(ContinueStatement cs) {
+        if (loopDepth == 0) {
+            error("E2000", "'continue' must be inside a loop", cs.span());
+        }
     }
 
     // =======================================================================
@@ -354,11 +407,17 @@ public final class TypeChecker {
     }
 
     // =======================================================================
-    // Delete statement
+    // Delete statement (F10: handle table delete without false errors)
     // =======================================================================
 
     private void checkDeleteStatement(DeleteStatement ds) {
+        // F10: Use write-context mode so table member/index access
+        // doesn't require contextual typing
+        boolean savedMode = assignmentTargetMode;
+        assignmentTargetMode = true;
         Type targetType = checkExpression(ds.target());
+        assignmentTargetMode = savedMode;
+
         if (targetType instanceof Type.Error) return;
 
         if (ds.target() instanceof MemberAccessExpr mae) {
@@ -374,7 +433,9 @@ public final class TypeChecker {
                     }
                 }
             }
+            // Table delete: any field is allowed (no further check needed)
         }
+        // Index delete on table: any key is allowed
     }
 
     // =======================================================================
@@ -610,7 +671,6 @@ public final class TypeChecker {
             if (sym instanceof Symbol.FunctionSymbol fs) {
                 List<Type> pts = new ArrayList<>(fs.funcType().paramTypes());
                 if (fs.funcType().restType().isPresent()) {
-                    // Add the rest element type as a sentinel for the rest args
                     pts.add(fs.funcType().restType().get().element());
                 }
                 return pts;
@@ -621,7 +681,6 @@ public final class TypeChecker {
                 }
             }
         }
-        // If callee is a variable of function type
         Type calleeType = typeMap.get(call.callee());
         if (calleeType instanceof Type.Func ft) {
             List<Type> pts = new ArrayList<>(ft.paramTypes());
@@ -630,7 +689,6 @@ public final class TypeChecker {
             }
             return pts;
         }
-        // Try computing it now if not yet typed
         calleeType = checkExpression(call.callee());
         if (calleeType instanceof Type.Func ft) {
             List<Type> pts = new ArrayList<>(ft.paramTypes());
@@ -730,9 +788,6 @@ public final class TypeChecker {
         Type objType = checkExpression(mae.object());
         if (objType == Type.Error.INSTANCE) return Type.Error.INSTANCE;
 
-        // F2: If the object type is the error sentinel, propagate it
-        if (objType == Type.Error.INSTANCE) return Type.Error.INSTANCE;
-
         String field = mae.field();
 
         // Array length intrinsic
@@ -774,8 +829,12 @@ public final class TypeChecker {
             }
         }
 
-        // Table access — requires contextual type
+        // F4: Table access — in write context (assignment target), allow without
+        // contextual type. Otherwise require contextual target type.
         if (objType instanceof Type.Table) {
+            if (assignmentTargetMode) {
+                return Type.Table.INSTANCE;
+            }
             if (expectedType != null && !(expectedType instanceof Type.Null)) {
                 return expectedType;
             }
@@ -798,6 +857,14 @@ public final class TypeChecker {
         Type indexType = checkExpression(idx.index());
         if (arrayType == Type.Error.INSTANCE || indexType == Type.Error.INSTANCE)
             return Type.Error.INSTANCE;
+
+        // F5: Table index — in write context (assignment target or delete),
+        // allow any index type and skip further checks
+        if (arrayType instanceof Type.Table && assignmentTargetMode) {
+            return Type.Table.INSTANCE;
+        }
+
+        // For arrays and reads, the index must be int
         if (!(indexType instanceof Type.Int)) {
             error("E3007", "Array index must be int, got " + typeName(indexType),
                 idx.index().span());
@@ -806,6 +873,7 @@ public final class TypeChecker {
         if (arrayType instanceof Type.Array arr) {
             return arr.element();
         }
+
         error("E3007", "Cannot index type " + typeName(arrayType), idx.array().span());
         return Type.Error.INSTANCE;
     }
@@ -845,8 +913,6 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkObjectLiteral(ObjectLiteralExpr obj) {
-        // F2: expectedType is now Type.Class("Error", "") for Error construction,
-        // so this instanceof check works correctly
         if (expectedType instanceof Type.Class cls) {
             return checkClassConstruction(obj, cls);
         }
@@ -940,7 +1006,6 @@ public final class TypeChecker {
             }
             paramNames.add(p.name());
             Type pt = nameResolver.resolveTypeNode(p.type());
-            // Check if already defined in this scope (shouldn't happen with set check above)
             if (currentScope.containsLocally(p.name())) {
                 error("E2002", "Duplicate parameter '" + p.name() + "'", p.span());
             } else {
@@ -964,7 +1029,9 @@ public final class TypeChecker {
         Type savedReturnType = currentReturnType;
         currentReturnType = returnType;
 
-        walkStatements(fe.body().statements());
+        // F1: Use walkStatement(fe.body()) instead of walkStatements(fe.body().statements())
+        // so that the Block's scope is entered.
+        walkStatement(fe.body());
 
         if (!(returnType instanceof Type.Null)
                 && !ReturnAnalysis.definitelyReturns(fe.body())) {
@@ -1021,14 +1088,30 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkAssignmentExpr(AssignmentExpr assign) {
-        Type valueType = checkExpression(assign.value());
+        // F3 & F4: Determine target type first (with write-context mode for
+        // table accesses), then use it as expectedType for the value.
+        boolean savedMode = assignmentTargetMode;
+        assignmentTargetMode = true;
         Type targetType = checkExpression(assign.target());
+        assignmentTargetMode = savedMode;
+
+        // F3: Use the target type as contextual expected type for the value
+        Type savedExpected = expectedType;
+        if (targetType != null && targetType != Type.Error.INSTANCE
+                && !(targetType instanceof Type.Table)) {
+            expectedType = targetType;
+        }
+        Type valueType = checkExpression(assign.value());
+        expectedType = savedExpected;
 
         if (valueType == Type.Error.INSTANCE || targetType == Type.Error.INSTANCE) {
             return Type.Error.INSTANCE;
         }
 
-        if (!isAssignable(targetType, valueType)) {
+        // For table write targets, no type checking needed (writes are unchecked)
+        if (targetType instanceof Type.Table) {
+            // Table write — always allowed
+        } else if (!isAssignable(targetType, valueType)) {
             // F10: Detect reverse arity for E5004
             if (targetType instanceof Type.Func tf && valueType instanceof Type.Func af
                     && isReverseArity(af, tf)) {

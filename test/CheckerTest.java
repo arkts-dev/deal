@@ -156,6 +156,9 @@ public class CheckerTest {
         testNameResolution_e2007_function();
         testNameResolution_e2007_let();
         testNameResolution_e2004();
+        // F7: E2006 when declaration precedes import
+        testNameResolution_e2006_classBeforeImport();
+        testNameResolution_e2006_functionBeforeImport();
 
         // -- Type Checking: Literals and Identifiers --
         testLiteralTypes();
@@ -198,6 +201,12 @@ public class CheckerTest {
         testFunctionCallContextualTyping();
         testFunctionExprDuplicateParams();
 
+        // F1: Scope chain — variables visible in nested blocks
+        testScopeChain_functionBody();
+        testScopeChain_nestedBlock();
+        // F2: Nested function return type
+        testNestedFunctionReturnType();
+
         // -- Type Checking: Classes --
         testClassConstruction();
         testClassExtraFields();
@@ -207,12 +216,33 @@ public class CheckerTest {
         testClassOptionalField();
         testNestedClass();
         testErrorClassConstruction();
+        // F9: Class field default values type-checked
+        testClassDefaultValueTypeError();
 
         // -- Type Checking: has / delete --
         testHasRequiredField();
         testHasOptionalField();
         testDeleteRequiredField();
         testDeleteOptionalField();
+        // F10: Delete on table fields
+        testDeleteTableField();
+        testDeleteTableIndex();
+
+        // F3: Assignment RHS contextual typing
+        testAssignmentContextualTyping();
+        // F4: Table member writes (no E3003)
+        testTableWrite();
+        // F5: Table index writes (no E3007)
+        testTableIndexWrite();
+
+        // F6: if/while/for conditions with contextual typing
+        testIfConditionContextualTyping();
+        testWhileConditionContextualTyping();
+        testForConditionContextualTyping();
+
+        // F8: Break/continue outside loops
+        testBreakOutsideLoop();
+        testContinueOutsideLoop();
 
         // -- Null Narrowing --
         testNullNarrowing_neNull();
@@ -347,6 +377,31 @@ public class CheckerTest {
             resolver
         );
         assertError(out, "E2007", "let shadows import");
+    }
+
+    // F7: E2006 — import shadows module-level declaration (declaration comes first)
+    static void testNameResolution_e2006_classBeforeImport() {
+        System.out.println("-- Name Resolution: E2006 import after class --");
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
+        CheckerOutput out = checkProgramWithModule(
+            "class Foo { x: int; }\n" +
+            "import * as Foo from \"./lib\";",
+            resolver
+        );
+        assertError(out, "E2006", "import after class declaration → E2006");
+    }
+
+    static void testNameResolution_e2006_functionBeforeImport() {
+        System.out.println("-- Name Resolution: E2006 import after function --");
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
+        CheckerOutput out = checkProgramWithModule(
+            "function Foo(): int { return 42; }\n" +
+            "import * as Foo from \"./lib\";",
+            resolver
+        );
+        assertError(out, "E2006", "import after function declaration → E2006");
     }
 
     // F8: Test E2004 — export not found in module
@@ -524,6 +579,37 @@ public class CheckerTest {
         assertError(out, "E3001", "number to int invariance error");
     }
 
+    // F3: Assignment RHS contextual typing for table reads
+    static void testAssignmentContextualTyping() {
+        System.out.println("-- Assignment: contextual typing on RHS --");
+        CheckerOutput out = checkProgram(
+            "let x: string = \"hello\";\n" +
+            "let t: table = { value: \"world\" };\n" +
+            "x = t.value;"
+        );
+        assertNoErrors(out, "assignment RHS contextual typing for table read");
+    }
+
+    // F4: Table member writes should NOT trigger E3003
+    static void testTableWrite() {
+        System.out.println("-- Table Write (should not trigger E3003) --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { name: \"A\" };\n" +
+            "t.name = \"B\";"
+        );
+        assertNoErrors(out, "table member write allowed without E3003");
+    }
+
+    // F5: Table index writes should NOT trigger E3007
+    static void testTableIndexWrite() {
+        System.out.println("-- Table Index Write (should not trigger E3007) --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { data: 1 };\n" +
+            "t[\"key\"] = 42;"
+        );
+        assertNoErrors(out, "table index write allowed without E3007");
+    }
+
     // =========================================================================
     // Array Tests
     // =========================================================================
@@ -685,6 +771,122 @@ public class CheckerTest {
             "let r: int = f(42);"
         );
         assertNoErrors(out, "function expression");
+    }
+
+    // =========================================================================
+    // F1: Scope Chain Tests
+    // =========================================================================
+
+    static void testScopeChain_functionBody() {
+        System.out.println("-- F1: Scope chain - function body variables --");
+        CheckerOutput out = checkProgram(
+            "function f(): int { let y: int = 42; return y; }"
+        );
+        assertNoErrors(out, "function body variable visible in same function");
+    }
+
+    static void testScopeChain_nestedBlock() {
+        System.out.println("-- F1: Scope chain - nested block variables --");
+        CheckerOutput out = checkProgram(
+            "function f(): int { let y: int = 42; { let z: int = y; } return y; }"
+        );
+        assertNoErrors(out, "variables visible in nested blocks");
+    }
+
+    // =========================================================================
+    // F2: Nested Function Return Type
+    // =========================================================================
+
+    static void testNestedFunctionReturnType() {
+        System.out.println("-- F2: Nested function return type --");
+        CheckerOutput out = checkProgram(
+            "function outer(): void {\n" +
+            "  function inner(): int { return 42; }\n" +
+            "  return;\n" +
+            "}"
+        );
+        assertNoErrors(out, "nested function return type resolved correctly");
+    }
+
+    // =========================================================================
+    // F6: If/While/For Condition Contextual Typing
+    // =========================================================================
+
+    static void testIfConditionContextualTyping() {
+        System.out.println("-- F6: If condition contextual typing --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { flag: true };\n" +
+            "if (t.flag) { let x: int = 1; }"
+        );
+        assertNoErrors(out, "if condition table read has boolean context");
+    }
+
+    static void testWhileConditionContextualTyping() {
+        System.out.println("-- F6: While condition contextual typing --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { flag: true };\n" +
+            "while (t.flag) { break; }"
+        );
+        assertNoErrors(out, "while condition table read has boolean context");
+    }
+
+    static void testForConditionContextualTyping() {
+        System.out.println("-- F6: For condition contextual typing --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { flag: true };\n" +
+            "for (let i: int = 0; i < 10 && t.flag; i = i + 1) { break; }"
+        );
+        assertNoErrors(out, "for condition table read has boolean context");
+    }
+
+    // =========================================================================
+    // F8: Break/Continue Outside Loop Tests
+    // =========================================================================
+
+    static void testBreakOutsideLoop() {
+        System.out.println("-- F8: Break outside loop --");
+        CheckerOutput out = checkProgram("break;");
+        assertError(out, "E2000", "break outside loop");
+    }
+
+    static void testContinueOutsideLoop() {
+        System.out.println("-- F8: Continue outside loop --");
+        CheckerOutput out = checkProgram("continue;");
+        assertError(out, "E2000", "continue outside loop");
+    }
+
+    // =========================================================================
+    // F9: Class Field Default Value Type Error
+    // =========================================================================
+
+    static void testClassDefaultValueTypeError() {
+        System.out.println("-- F9: Class default value type error --");
+        CheckerOutput out = checkProgram(
+            "class User { name: string = 42; }"
+        );
+        assertError(out, "E3001", "class default value type mismatch");
+    }
+
+    // =========================================================================
+    // F10: Delete on Table
+    // =========================================================================
+
+    static void testDeleteTableField() {
+        System.out.println("-- F10: Delete table field --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { x: 1 };\n" +
+            "delete t.x;"
+        );
+        assertNoErrors(out, "delete table field should not trigger E3003");
+    }
+
+    static void testDeleteTableIndex() {
+        System.out.println("-- F10: Delete table index --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { x: 1 };\n" +
+            "delete t[\"x\"];"
+        );
+        assertNoErrors(out, "delete table index should not trigger E3007");
     }
 
     // =========================================================================
@@ -987,7 +1189,6 @@ public class CheckerTest {
     // F10: Reverse arity E5004
     static void testReverseArityE5004() {
         System.out.println("-- Reverse Arity E5004 --");
-        // This should produce E5004 because the actual function has MORE params
         CheckerOutput out = checkProgram(
             "function twoArgs(a: int, b: int): int { return a + b; }\n" +
             "let f: (x: int) => int = twoArgs;"

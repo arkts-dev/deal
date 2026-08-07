@@ -25,6 +25,8 @@ public interface ModuleResolver {
 
     /** Exception thrown when a module cannot be found. */
     final class ModuleNotFoundException extends Exception {
+        private static final long serialVersionUID = 1L;
+
         public ModuleNotFoundException(String message) {
             super(message);
         }

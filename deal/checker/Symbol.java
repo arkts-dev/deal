@@ -1,6 +1,7 @@
 package deal.checker;
 
 import deal.ast.ClassField;
+import deal.ast.Span;
 import deal.types.Type;
 
 import java.util.List;
@@ -28,8 +29,12 @@ public sealed interface Symbol
     /** A class declaration, carrying its fields and the module path it belongs to. */
     record ClassSymbol(String name, List<ClassField> fields, String modulePath) implements Symbol {}
 
-    /** A module imported via {@code import * as Name from "path"}. */
-    record ModuleSymbol(String name, Map<String, Type> exports) implements Symbol {}
+    /**
+     * A module imported via {@code import * as Name from "path"}.
+     * Includes the import's source span for source-order collision detection
+     * (E2006 vs E2007).
+     */
+    record ModuleSymbol(String name, Map<String, Type> exports, Span importSpan) implements Symbol {}
 
     /**
      * A built-in / intrinsic function or value (e.g. {@code int}, {@code number}, {@code has}).

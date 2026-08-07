@@ -39,11 +39,23 @@ public final class NameResolver {
     /** Maps scoped AST nodes to their symbol table scope. */
     private final Map<StatementNode, SymbolTable> scopeMap = new HashMap<>();
 
+    /** Loop nesting depth — used to validate break/continue (F8). */
+    private int loopDepth = 0;
+
+    /** Set of modules currently being resolved (for circular import detection, F12). */
+    private final Set<String> modulesInProgress;
+
     public NameResolver(String modulePath, ModuleResolver moduleResolver) {
+        this(modulePath, moduleResolver, new HashSet<>());
+    }
+
+    private NameResolver(String modulePath, ModuleResolver moduleResolver,
+                         Set<String> modulesInProgress) {
         this.modulePath = modulePath;
         this.moduleResolver = moduleResolver;
         this.root = new SymbolTable();
         this.currentScope = root;
+        this.modulesInProgress = modulesInProgress;
     }
 
     // =======================================================================
@@ -122,18 +134,21 @@ public final class NameResolver {
         String alias = imp.alias();
         String path = imp.modulePath();
 
-        Symbol existing = root.resolveLocal(alias);
-        if (existing != null) {
-            error("E2006", "Import '" + alias + "' shadows module-level declaration",
+        // F12: Circular import detection
+        if (modulesInProgress.contains(path)) {
+            error("E2005", "Circular import with runtime dependency: '" + path + "'",
                 imp.span());
             return;
         }
 
         try {
+            modulesInProgress.add(modulePath);
             Map<String, Type> exports = moduleResolver.resolveModule(path, modulePath);
-            root.define(alias, new Symbol.ModuleSymbol(alias, exports));
+            root.define(alias, new Symbol.ModuleSymbol(alias, exports, imp.span()));
         } catch (ModuleResolver.ModuleNotFoundException e) {
             error("E2003", "Module not found: '" + path + "'", imp.span());
+        } finally {
+            modulesInProgress.remove(modulePath);
         }
     }
 
@@ -160,6 +175,48 @@ public final class NameResolver {
             return;
         }
         root.define(name, new Symbol.ClassSymbol(name, cd.fields(), modulePath));
+
+        // F9: Check class field default values against declared types
+        for (ClassField cf : cd.fields()) {
+            cf.defaultExpr().ifPresent(defaultExpr -> {
+                Type fieldType = resolveTypeNode(cf.type());
+                if (fieldType == Type.Error.INSTANCE) return;
+                Type defaultType = inferDefaultType(defaultExpr);
+                if (defaultType != null && defaultType != Type.Error.INSTANCE) {
+                    if (!Types.equals(fieldType, defaultType)
+                            && !(fieldType instanceof Type.Nullable ne
+                                 && Types.equals(ne.inner(), defaultType))) {
+                        error("E3001",
+                            "Default value type mismatch for field '" + cf.name()
+                            + "': expected " + TypeChecker.typeName(fieldType)
+                            + ", got " + TypeChecker.typeName(defaultType),
+                            defaultExpr.span());
+                    }
+                }
+            });
+        }
+    }
+
+    /**
+     * Infer the type of a default value expression (must be a literal).
+     */
+    private Type inferDefaultType(ExpressionNode expr) {
+        return switch (expr) {
+            case LiteralExpr lit -> switch (lit.value()) {
+                case LiteralValue.NullLiteral n -> Type.Null.INSTANCE;
+                case LiteralValue.BooleanLiteral b -> Type.Boolean.INSTANCE;
+                case LiteralValue.IntLiteral i -> Type.Int.INSTANCE;
+                case LiteralValue.NumberLiteral n -> Type.Number.INSTANCE;
+                case LiteralValue.StringLiteral s -> Type.String.INSTANCE;
+            };
+            case UnaryExpr un -> {
+                if (un.op() == UnaryOp.NEG && un.expr() instanceof LiteralExpr lit) {
+                    yield inferDefaultType(lit);
+                }
+                yield null;
+            }
+            default -> null;
+        };
     }
 
     private void hoistFunctionDeclarations(ProgramNode program) {
@@ -195,17 +252,49 @@ public final class NameResolver {
 
     /**
      * Checks whether the existing symbol at root with the given name is a
-     * ModuleSymbol (import). If so, emits E2007 and returns true.
+     * ModuleSymbol (import).
+     *
+     * <p>F7 fix: Compares source positions to distinguish E2006 from E2007.
+     * <ul>
+     *   <li>If the declaration came BEFORE the import in source order,
+     *       the import should have been rejected with E2006. The import
+     *       was processed first (before hoisting), so we correct this by
+     *       emitting E2006 at the import's span and removing the import.</li>
+     *   <li>If the declaration came AFTER the import, emit E2007.</li>
+     * </ul>
+     *
+     * @return true if a diagnostic was emitted and the declaration should be skipped
      */
-    private boolean shadowsImport(String name, Span span) {
+    private boolean shadowsImport(String name, Span declSpan) {
         Symbol existing = root.resolveLocal(name);
-        if (existing instanceof Symbol.ModuleSymbol) {
+        if (existing instanceof Symbol.ModuleSymbol ms) {
+            if (ms.importSpan() != null
+                    && spanIsBefore(declSpan, ms.importSpan())) {
+                // F7: Declaration came first in source order.
+                // The import was processed before hoisting, so it didn't see
+                // the declaration.  The real error is the import, not the
+                // declaration.  Emit E2006 and remove the import so the
+                // declaration can be used.
+                error("E2006",
+                    "Import '" + name + "' shadows module-level declaration",
+                    ms.importSpan());
+                root.remove(name);
+                return false; // allow the declaration to be added below
+            }
+            // Declaration came after import → E2007
             error("E2007",
                 "Module-level declaration '" + name + "' shadows import",
-                span);
+                declSpan);
             return true;
         }
         return false;
+    }
+
+    /** Returns true if span a comes strictly before span b in source order. */
+    private static boolean spanIsBefore(Span a, Span b) {
+        if (a.startLine() < b.startLine()) return true;
+        if (a.startLine() > b.startLine()) return false;
+        return a.startColumn() < b.startColumn();
     }
 
     // =======================================================================
@@ -230,6 +319,8 @@ public final class NameResolver {
             case TryStatement ts         -> walkTry(ts);
             case ImportDeclaration id    -> { /* already processed */ }
             case ExportDeclaration ed    -> walkStatement(ed.declaration());
+            case BreakStatement bs       -> walkBreak(bs);
+            case ContinueStatement cs    -> walkContinue(cs);
             default                      -> { /* no declarations */ }
         }
     }
@@ -300,6 +391,21 @@ public final class NameResolver {
     }
 
     private void walkFuncDecl(FunctionDeclaration fd) {
+        // F2: Define nested function name in the enclosing scope.
+        // For module-level functions, the name is already hoisted.
+        if (!currentScope.containsLocally(fd.name())) {
+            Type funcType = resolveTypeNode(fd.returnType());
+            List<Type> paramTypes = new ArrayList<>();
+            for (Parameter p : fd.params()) {
+                paramTypes.add(resolveTypeNode(p.type()));
+            }
+            Optional<Type.Array> restType = fd.restParam()
+                .map(rp -> (Type.Array) resolveTypeNode(rp.type()));
+
+            Type.Func ft = new Type.Func(paramTypes, restType, funcType);
+            currentScope.define(fd.name(), new Symbol.FunctionSymbol(fd.name(), ft));
+        }
+
         SymbolTable saved = currentScope;
         currentScope = currentScope.enterScope();
         scopeMap.put(fd, currentScope);
@@ -350,7 +456,9 @@ public final class NameResolver {
     }
 
     private void walkWhile(WhileStatement ws) {
+        loopDepth++;
         walkBlock(ws.body());
+        loopDepth--;
     }
 
     private void walkFor(ForStatement fs) {
@@ -367,7 +475,9 @@ public final class NameResolver {
             }
         });
 
+        loopDepth++;
         walkBlock(fs.body());
+        loopDepth--;
         currentScope = saved;
     }
 
@@ -377,12 +487,24 @@ public final class NameResolver {
         SymbolTable saved = currentScope;
         currentScope = currentScope.enterScope();
         scopeMap.put(ts, currentScope);
-        // F2: Use Class type for Error, not the sentinel
         currentScope.define(ts.catchVar(),
             new Symbol.VariableSymbol(ts.catchVar(),
                 Types.classType("Error", ""), true));
         walkBlock(ts.catchBlock());
         currentScope = saved;
+    }
+
+    // F8: Validate break/continue inside loops
+    private void walkBreak(BreakStatement bs) {
+        if (loopDepth == 0) {
+            error("E2000", "'break' must be inside a loop", bs.span());
+        }
+    }
+
+    private void walkContinue(ContinueStatement cs) {
+        if (loopDepth == 0) {
+            error("E2000", "'continue' must be inside a loop", cs.span());
+        }
     }
 
     // =======================================================================

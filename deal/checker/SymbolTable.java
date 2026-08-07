@@ -53,6 +53,14 @@ public final class SymbolTable {
     }
 
     /**
+     * Removes a symbol from this exact scope. Used for E2006 correction
+     * when an import is removed in favor of a declaration.
+     */
+    public void remove(String name) {
+        symbols.remove(name);
+    }
+
+    /**
      * Resolves a name by walking the scope chain.
      *
      * @return the symbol, or {@code null} if not found
