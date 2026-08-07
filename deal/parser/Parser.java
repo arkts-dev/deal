@@ -1216,7 +1216,7 @@ public final class Parser {
         return switch (type) {
             case NULL, TRUE, FALSE, INT_LITERAL, NUMBER_LITERAL, STRING_LITERAL,
                  IDENTIFIER, BANG, MINUS, LPAREN, LBRACKET, LBRACE,
-                 FUNCTION, HAS, DELETE, THROW -> true;
+                 FUNCTION, HAS -> true;
             default -> false;
         };
     }
