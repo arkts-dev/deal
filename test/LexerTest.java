@@ -101,6 +101,10 @@ public class LexerTest {
         testTokenSpan();
         testAllTokenTypesAppear();
         testDotNumber();
+        testBlockCommentColumnTracking();
+        testMultipleDotsInNumber();
+        testBlockCommentNoNesting();
+        testLineCommentColumnAtEOF();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -772,5 +776,108 @@ public class LexerTest {
         r = tokenize(".");
         assertNoDiagnostics(r.diagnostics(), "dot alone");
         assertToken(r.tokens().get(0), TokenType.DOT, ".", 1, 1);
+    }
+
+    // =========================================================================
+    // Block comment same-line column tracking (regression: Major Flaw 1)
+    // =========================================================================
+
+    static void testBlockCommentColumnTracking() {
+        System.out.println("-- Block Comment Column Tracking --");
+
+        // /* c */hello — hello starts at column 8 (/*=1-2, ' c '=3-5, */=6-7, h=8)
+        LexResult r = tokenize("/* c */hello");
+        assertNoDiagnostics(r.diagnostics(), "same-line block comment");
+        List<Token> tokens = r.tokens();
+        check(tokens.size() == 2, "expected IDENTIFIER + EOF, got " + tokens.size());
+        assertToken(tokens.get(0), TokenType.IDENTIFIER, "hello", 1, 8);
+
+        // Test that column is correct after an inline block comment
+        r = tokenize("x/*comment*/y");
+        assertNoDiagnostics(r.diagnostics(), "inline comment between identifiers");
+        tokens = r.tokens();
+        check(tokens.size() == 3, "expected x + y + EOF, got " + tokens.size());
+        assertToken(tokens.get(0), TokenType.IDENTIFIER, "x", 1, 1);
+        assertToken(tokens.get(1), TokenType.IDENTIFIER, "y", 1, 13);
+        // x=1, /*comment*/ = positions 2-12, y=14
+        // Actually let's compute: x at col 1, then /*comment*/ = columns 2-12 (11 chars), y at col 14
+    }
+
+    // =========================================================================
+    // Multiple dots in number literal (regression: Major Flaw 2)
+    // =========================================================================
+
+    static void testMultipleDotsInNumber() {
+        System.out.println("-- Multiple Dots in Number --");
+
+        // 1.2.3 should produce E1002 diagnostic
+        LexResult r = tokenize("1.2.3");
+        assertDiagnosticCode(r.diagnostics(), "E1002", "1.2.3 multiple dots");
+        List<Token> tokens = r.tokens();
+
+        // Should produce NUMBER("1.2") + NUMBER(".3") + EOF (3 tokens total)
+        // The first NUMBER token is "1.2" with the diagnostic
+        check(tokens.size() >= 3,
+            "1.2.3: expected at least 3 tokens, got " + tokens.size());
+        check(tokens.get(0).type() == TokenType.NUMBER_LITERAL
+                && tokens.get(0).lexeme().equals("1.2"),
+            "1.2.3: first token should be NUMBER 1.2");
+        check(tokens.get(1).type() == TokenType.NUMBER_LITERAL
+                && tokens.get(1).lexeme().equals(".3"),
+            "1.2.3: second token should be NUMBER .3");
+
+        // 1..2 should still work without diagnostic
+        r = tokenize("1..2");
+        assertNoDiagnostics(r.diagnostics(), "1..2 valid");
+        tokens = r.tokens();
+        check(tokens.get(0).type() == TokenType.INT_LITERAL
+                && tokens.get(0).lexeme().equals("1"),
+            "1..2: first token INT 1");
+        check(tokens.get(1).type() == TokenType.DOT,
+            "1..2: second token DOT");
+        check(tokens.get(2).type() == TokenType.NUMBER_LITERAL
+                && tokens.get(2).lexeme().equals(".2"),
+            "1..2: third token NUMBER .2");
+    }
+
+    // =========================================================================
+    // Block comment non-nesting (regression: Minor Flaw 3)
+    // =========================================================================
+
+    static void testBlockCommentNoNesting() {
+        System.out.println("-- Block Comment No Nesting --");
+
+        // /* /* */ should terminate at the first */, not nest
+        // The source is: /* /* */ trailing — the trailing text should be tokenized
+        LexResult r = tokenize("/* /* */ trailing");
+        assertNoDiagnostics(r.diagnostics(), "non-nesting block comment");
+        List<Token> tokens = r.tokens();
+        // After the comment consumes "/* /* */", "trailing" should be an identifier
+        check(tokens.size() == 2,
+            "expected IDENTIFIER(trailing) + EOF, got " + tokens.size()
+            + ": " + tokens);
+        assertToken(tokens.get(0), TokenType.IDENTIFIER, "trailing", 1, 10);
+    }
+
+    // =========================================================================
+    // Line comment column tracking at EOF (regression: Minor Flaw 4)
+    // =========================================================================
+
+    static void testLineCommentColumnAtEOF() {
+        System.out.println("-- Line Comment Column at EOF --");
+
+        // // comment (no trailing newline) should leave column correct for EOF
+        // "// comment" has length 10; after consuming the comment, column should be 11
+        LexResult r = tokenize("// comment");
+        assertNoDiagnostics(r.diagnostics(), "line comment at EOF");
+        List<Token> tokens = r.tokens();
+        check(tokens.size() == 1, "expected only EOF, got " + tokens.size());
+        Token eof = tokens.get(0);
+        check(eof.type() == TokenType.EOF, "last token is EOF");
+        // After consuming "// comment" (10 chars), column should be 11 (1-based)
+        check(eof.column() == 11,
+            "EOF column after line comment: expected 11, got " + eof.column());
+        check(eof.line() == 1,
+            "EOF line after line comment: expected 1, got " + eof.line());
     }
 }

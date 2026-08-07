@@ -186,9 +186,12 @@ public final class Lexer {
 
     /**
      * Skips a single-line comment: // ... until end of line.
+     * Uses bump() for all non-newline characters so column tracking
+     * remains accurate when a line comment ends at EOF.
      */
     private void skipLineComment() {
-        pos += 2; // skip // (no column update — comment chars don't affect token positions)
+        bump(); // skip first /
+        bump(); // skip second /
         while (pos < source.length()) {
             char c = source.charAt(pos);
             if (c == '\n') {
@@ -202,45 +205,52 @@ public final class Lexer {
                 }
                 return;
             }
-            pos++;
+            bump();
         }
     }
 
     /**
      * Skips a block comment: /* ... *​/.
-     * The spec says they do NOT nest — the first *​/ ends the comment.
-     * Unterminated block comments produce E1004.
+     *
+     * <p>Per spec.md line 56, block comments do NOT nest.
+     * {@code /* /* *​/} ends at the first {@code *​/}.</p>
+     *
+     * <p>All non-newline characters are consumed via {@link #bump()} so
+     * that subsequent tokens on the same line report correct column
+     * positions.  Unterminated block comments produce E1004.</p>
      */
     private void skipBlockComment() {
         int startLine = line;
         int startCol = column;
-        pos += 2; // skip /*
-        int depth = 1; // support nesting? spec says no, but be robust
+        bump(); // skip first /
+        bump(); // skip *
 
         while (pos < source.length()) {
             char c = source.charAt(pos);
-            if (c == '*' && pos + 1 < source.length() && source.charAt(pos + 1) == '/') {
-                pos += 2;
-                depth--;
-                if (depth == 0) return;
+
+            // Check for closing */
+            if (c == '*') {
+                bump(); // skip *
+                if (pos < source.length() && source.charAt(pos) == '/') {
+                    bump(); // skip /
+                    return;
+                }
+                // Just a lone * inside the comment; continue scanning.
                 continue;
             }
-            if (c == '/' && pos + 1 < source.length() && source.charAt(pos + 1) == '*') {
-                pos += 2;
-                depth++;
-                continue;
-            }
+
             if (c == '\n') {
                 newline();
             } else if (c == '\r') {
                 newline();
-                if (pos + 1 < source.length() && source.charAt(pos + 1) == '\n') {
-                    pos++;
+                if (pos < source.length() && source.charAt(pos) == '\n') {
+                    pos++; // consume LF (part of CRLF, column already reset)
                 }
             } else {
-                pos++;
+                bump();
             }
         }
+
         // Unterminated block comment
         error("E1004", "Unterminated multi-line comment", startLine, startCol);
     }
@@ -255,6 +265,8 @@ public final class Lexer {
      * <p>Integer: {@code [0-9]+}
      * <br>Number:  {@code ([0-9]* '.' [0-9]+ ([eE] [+-]? [0-9]+)?)
      *                    | ([0-9]+ [eE] [+-]? [0-9]+)}</p>
+     *
+     * <p>Multiple decimal points produce E1002.</p>
      */
     private Token readNumber() {
         int startPos = pos;
@@ -269,12 +281,31 @@ public final class Lexer {
         // Fractional part: '.' followed by digits
         if (pos < source.length() && source.charAt(pos) == '.') {
             if (pos + 1 < source.length() && isDigit(source.charAt(pos + 1))) {
+                // Guard: if we already saw a dot, this is a malformed number.
+                // (This fires for patterns like .5.3 where leading dot was consumed
+                //  as integer part, but also catches internal double-dot in theory.)
+                if (hasDot) {
+                    error("E1002",
+                        "Malformed number literal: multiple decimal points",
+                        tokenStartLine, tokenStartCol);
+                    String lexeme = source.substring(startPos, pos);
+                    return makeToken(TokenType.NUMBER_LITERAL, lexeme);
+                }
                 hasDot = true;
                 bump(); // '.'
                 while (pos < source.length() && isDigit(source.charAt(pos))) {
                     bump();
                 }
             }
+        }
+
+        // After consuming the fractional part, check whether the next
+        // character is another dot followed by digits (e.g. "1.2.3").
+        if (hasDot && pos < source.length() && source.charAt(pos) == '.'
+                && pos + 1 < source.length() && isDigit(source.charAt(pos + 1))) {
+            error("E1002",
+                "Malformed number literal: multiple decimal points",
+                tokenStartLine, tokenStartCol);
         }
 
         // Exponent part
