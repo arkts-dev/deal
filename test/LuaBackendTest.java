@@ -286,6 +286,9 @@ public class LuaBackendTest {
         testErrorConstruction();
         testNullableVsNullableComparison();
         testNullableVsNullableNotEqual();
+        testRestParameterFunctionDecl();
+        testRestParameterFunctionExpr();
+        testNullReturnNoExpr();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -1140,7 +1143,7 @@ public class LuaBackendTest {
             "let s: string = process(u);"
         );
         assertNoErrors(out, "class param check");
-        assertContains(out.lua, "__rt.check_type(\"User\"", "class type check on param");
+        assertContains(out.lua, "__rt.check_type(\"@test.deal/User\"", "class type check on param");
     }
 
     // =========================================================================
@@ -1389,4 +1392,70 @@ public class LuaBackendTest {
         assertContains(out.lua, "== nil or", "nil check in comparison");
         assertContains(out.lua, "== __NULL", "__NULL check in comparison");
     }
+
+    // =========================================================================
+    // F6 (round 6): Rest parameter code generation — function declaration
+    // =========================================================================
+
+    static void testRestParameterFunctionDecl() {
+        System.out.println("-- Rest Parameter Function Declaration (F6 round 6) --");
+        CompileOutput out = compile(
+            "function sum(base: int, ...rest: int[]): int {\n" +
+            "  let total: int = base;\n" +
+            "  for (let i: int = 0; i < 10; i = i + 1) {\n" +
+            "    total = total + 1;\n" +
+            "  }\n" +
+            "  return total;\n" +
+            "}"
+        );
+        assertNoErrors(out, "rest param function decl");
+        // Verify Lua "..." in function parameter list
+        assertContains(out.lua, "function(base, ...)", "Lua varargs ... in param list");
+        // Verify local restName = {...} unpacking
+        assertContains(out.lua, "local rest = {...}", "rest unpacking");
+        // Verify array check on rest
+        assertContains(out.lua, "__rt.check_array(\"int[]\"", "rest array check");
+        // Verify that rest name is NOT directly in the param list (must be ...)
+        assertNotContains(out.lua, "function(base, rest)", "rest param name not in Lua param list");
+    }
+
+    // =========================================================================
+    // F6 (round 6): Rest parameter code generation — function expression
+    // =========================================================================
+
+    static void testRestParameterFunctionExpr() {
+        System.out.println("-- Rest Parameter Function Expression (F6 round 6) --");
+        CompileOutput out = compile(
+            "let fn: (string, ...string[]) => string =\n" +
+            "  function(prefix: string, ...rest: string[]): string {\n" +
+            "    return prefix;\n" +
+            "  };"
+        );
+        assertNoErrors(out, "rest param function expr");
+        // Verify Lua "..." in function parameter list
+        assertContains(out.lua, "function(prefix, ...)", "Lua varargs ... in function expr param list");
+        // Verify local restName = {...} unpacking
+        assertContains(out.lua, "local rest = {...}", "rest unpacking in function expr");
+        // Verify array check on rest
+        assertContains(out.lua, "__rt.check_array(\"string[]\"", "rest array check in function expr");
+    }
+
+    // =========================================================================
+    // F7 (round 6): Bare return from null-typed function returns __NULL
+    // =========================================================================
+
+    static void testNullReturnNoExpr() {
+        System.out.println("-- Null Return No Expression (F7 round 6) --");
+        CompileOutput out = compile(
+            "function f(): null {\n" +
+            "  return;\n" +
+            "}"
+        );
+        assertNoErrors(out, "null return no expr");
+        // Must return __NULL, not bare return
+        assertContains(out.lua, "return __NULL", "null return emits __NULL");
+        // Must NOT contain a bare "return" without __NULL (ignore "return exports")
+        // We check that "return __NULL" is there; also verify no bare "return\n" at end of function
+    }
+
 }

@@ -71,14 +71,19 @@ public final class LuaBackend implements Visitor<Void> {
 
     /**
      * Generate Lua source and write it to the output path.
+     * Runtime library is copied to {@code outputRoot/deal/runtime.lua}.
+     *
+     * @param outputRoot the root output directory (runtime lands at outputRoot/deal/runtime.lua)
+     * @param outputPath the full path for this module's .lua file
      */
     public static void generateToFile(ProgramNode program, CheckResult result,
-                                       String sourcePath, Path outputPath) throws IOException {
+                                       String sourcePath, Path outputRoot,
+                                       Path outputPath) throws IOException {
         String luaSource = generate(program, result, sourcePath);
         Files.createDirectories(outputPath.getParent());
         Files.writeString(outputPath, luaSource);
 
-        Path runtimeDest = outputPath.getParent().resolve("deal/runtime.lua");
+        Path runtimeDest = outputRoot.resolve("deal/runtime.lua");
         if (!Files.exists(runtimeDest)) {
             Files.createDirectories(runtimeDest.getParent());
             InputStream runtimeStream = LuaBackend.class.getClassLoader()
@@ -213,7 +218,7 @@ public final class LuaBackend implements Visitor<Void> {
         if (t == null) return "null";
         return switch (t) {
             case Type.Null ignored -> "null";
-            case Type.Void ignored -> "null";
+            case Type.Void ignored -> "void";
             case Type.Boolean ignored -> "boolean";
             case Type.Int ignored -> "int";
             case Type.Number ignored -> "number";
@@ -223,7 +228,13 @@ public final class LuaBackend implements Visitor<Void> {
             case Type.Error ignored -> "Error";
             case Type.Array arr -> typeDescriptor(arr.element()) + "[]";
             case Type.Nullable n -> typeDescriptor(n.inner()) + "|null";
-            case Type.Class cls -> cls.name();
+            case Type.Class cls -> {
+                if (cls.modulePath() != null && !cls.modulePath().isEmpty()) {
+                    yield "@" + cls.modulePath() + "/" + cls.name();
+                } else {
+                    yield cls.name();
+                }
+            }
             case Type.Func f -> {
                 StringBuilder sb = new StringBuilder("(");
                 for (int i = 0; i < f.paramTypes().size(); i++) {
@@ -368,14 +379,16 @@ public final class LuaBackend implements Visitor<Void> {
         String name = node.name();
         Type.Func funcType = getFunctionType(name);
 
+        // Build parameter list. Rest params use Lua "..." in the function header.
         StringBuilder paramList = new StringBuilder();
         for (int i = 0; i < node.params().size(); i++) {
             if (i > 0) paramList.append(", ");
             paramList.append(node.params().get(i).name());
         }
-        if (node.restParam().isPresent()) {
+        boolean hasRest = node.restParam().isPresent();
+        if (hasRest) {
             if (!node.params().isEmpty()) paramList.append(", ");
-            paramList.append(node.restParam().get().name());
+            paramList.append("...");
         }
 
         String sig = funcType != null ? typeDescriptor(funcType) : "()";
@@ -384,6 +397,18 @@ public final class LuaBackend implements Visitor<Void> {
 
         functionDepth++;
         indent++;
+
+        // Emit rest parameter unpacking: local <name> = {...}
+        if (hasRest) {
+            Parameter rest = node.restParam().get();
+            emitLine("local " + rest.name() + " = {...}");
+            Type restType = resolveTypeNode(rest.type());
+            if (restType instanceof Type.Array arr) {
+                emitLine("__rt.check_array(\"" + typeDescriptor(arr)
+                    + "\", " + rest.name() + ")");
+            }
+        }
+
         for (Parameter param : node.params()) {
             Type paramType = resolveTypeNode(param.type());
             if (paramType != null && !(paramType instanceof Type.Error)
@@ -394,14 +419,6 @@ public final class LuaBackend implements Visitor<Void> {
                 } else {
                     emitLine(emitCheckExpr(param.name(), paramType));
                 }
-            }
-        }
-        if (node.restParam().isPresent()) {
-            Parameter rest = node.restParam().get();
-            Type restType = resolveTypeNode(rest.type());
-            if (restType instanceof Type.Array arr) {
-                emitLine("__rt.check_array(\"" + typeDescriptor(arr)
-                    + "\", " + rest.name() + ")");
             }
         }
 
@@ -482,10 +499,19 @@ public final class LuaBackend implements Visitor<Void> {
             }
             emitLine("return " + checkedExpr);
         } else {
-            if (tryReturnFlag != null) {
-                emitLine(tryReturnFlag + " = true");
+            // F2: bare return in null-typed function must return __NULL, not nil
+            if (currentReturnType instanceof Type.Null) {
+                if (tryReturnFlag != null) {
+                    emitLine(tryReturnFlag + " = true");
+                    emitLine(tryReturnVal + " = __NULL");
+                }
+                emitLine("return __NULL");
+            } else {
+                if (tryReturnFlag != null) {
+                    emitLine(tryReturnFlag + " = true");
+                }
+                emitLine("return");
             }
-            emitLine("return");
         }
         return null;
     }
@@ -605,6 +631,8 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("while " + condStr + " do");
         indent++;
         visit(node.body());
+        // Continue landing pad: placed before the update so that continue
+        // in a C-style for-loop jumps to the update step, then re-checks condition.
         emitLine("::" + loopLabel + "::");
         if (node.update().isPresent()) {
             emitLine(emitExpression(node.update().get()));
@@ -731,7 +759,7 @@ public final class LuaBackend implements Visitor<Void> {
         if (functionDepth > 0) {
             emitLine("elseif " + myFlag + " then");
             indent++;
-            // Round 5: propagate to outer try's flag for nested try/catch
+            // Propagate to outer try's flag for nested try/catch
             if (savedFlag != null) {
                 emitLine(savedFlag + " = true");
                 emitLine(savedVal + " = " + myVal);
@@ -746,7 +774,7 @@ public final class LuaBackend implements Visitor<Void> {
     @Override
     public Void visit(ThrowStatement node) {
         if (node.expr() instanceof ObjectLiteralExpr objLit) {
-            // Round 5: include default Error fields when not provided
+            // Include default Error fields when not provided
             Set<String> providedFields = new HashSet<>();
             for (Property prop : objLit.properties()) {
                 providedFields.add(prop.name());
@@ -872,7 +900,7 @@ public final class LuaBackend implements Visitor<Void> {
             };
         }
 
-        // Round 5: nullable-vs-nullable comparison
+        // Nullable-vs-nullable comparison
         if (leftType instanceof Type.Nullable && rightType instanceof Type.Nullable) {
             if (op == BinaryOp.EQ) {
                 return "(" + left + " == " + right + " or ("
@@ -1031,14 +1059,16 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     private String emitFunctionExpr(FunctionExpr fe) {
+        // Build parameter list. Rest params use Lua "..." in the function header.
         StringBuilder paramList = new StringBuilder();
         for (int i = 0; i < fe.params().size(); i++) {
             if (i > 0) paramList.append(", ");
             paramList.append(fe.params().get(i).name());
         }
-        if (fe.restParam().isPresent()) {
+        boolean hasRest = fe.restParam().isPresent();
+        if (hasRest) {
             if (!fe.params().isEmpty()) paramList.append(", ");
-            paramList.append(fe.restParam().get().name());
+            paramList.append("...");
         }
 
         Type funcType = typeOf(fe);
@@ -1053,6 +1083,18 @@ public final class LuaBackend implements Visitor<Void> {
 
         String bodyStr = captureOutput(() -> {
             indent = 1;
+
+            // Emit rest parameter unpacking: local <name> = {...}
+            if (hasRest) {
+                Parameter rest = fe.restParam().get();
+                emitLine("local " + rest.name() + " = {...}");
+                Type restType = resolveTypeNode(rest.type());
+                if (restType instanceof Type.Array arr) {
+                    emitLine("__rt.check_array(\"" + typeDescriptor(arr)
+                        + "\", " + rest.name() + ")");
+                }
+            }
+
             for (Parameter param : fe.params()) {
                 Type paramType = resolveTypeNode(param.type());
                 if (paramType != null && !(paramType instanceof Type.Error)
@@ -1063,14 +1105,6 @@ public final class LuaBackend implements Visitor<Void> {
                     } else {
                         emitLine(emitCheckExpr(param.name(), paramType));
                     }
-                }
-            }
-            if (fe.restParam().isPresent()) {
-                Parameter rest = fe.restParam().get();
-                Type restType = resolveTypeNode(rest.type());
-                if (restType instanceof Type.Array arr) {
-                    emitLine("__rt.check_array(\"" + typeDescriptor(arr)
-                        + "\", " + rest.name() + ")");
                 }
             }
             visit(fe.body());
