@@ -1,0 +1,9 @@
+-- DEAL Standard Library: std/math (declaration)
+export function abs(x: int): int;
+export function min(a: int, b: int): int;
+export function max(a: int, b: int): int;
+export function floor(x: number): int;
+export function ceil(x: number): int;
+export function absf(x: number): number;
+export function sqrt(x: number): number;
+export function pow(x: number, y: number): number;

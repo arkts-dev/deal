@@ -51,13 +51,27 @@ public final class LuaBackend implements Visitor<Void> {
     // decremented after.
     private int insideTryDepth = 0;
 
+    // Import resolution map: raw import path → Lua require path
+    private Map<String, String> importResolutions = Map.of();
+
     /**
      * Entry point: generate Lua source for a complete program.
      */
     public static String generate(ProgramNode program, CheckResult result,
                                    String sourcePath) {
+        return generateWithImports(program, result, sourcePath, Map.of());
+    }
+
+    /**
+     * Entry point with import resolution mapping.
+     * Maps raw import paths (e.g. "./lib") to Lua require paths (e.g. "lib").
+     */
+    public static String generateWithImports(ProgramNode program, CheckResult result,
+                                              String sourcePath,
+                                              Map<String, String> importResolutions) {
         LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable());
         backend.sourceFilePath = sourcePath;
+        backend.importResolutions = Map.copyOf(importResolutions);
         backend.emitHeader();
         backend.emitLine("local __NULL = __rt.__NULL");
         backend.emitLine("local __MISSING = __rt.__MISSING");
@@ -684,8 +698,10 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(ImportDeclaration node) {
+        String requirePath = importResolutions.getOrDefault(
+            node.modulePath(), node.modulePath());
         emitLine("local " + node.alias() + " = require(\""
-            + node.modulePath() + "\")");
+            + requirePath + "\")");
         return null;
     }
 
