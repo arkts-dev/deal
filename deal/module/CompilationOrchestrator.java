@@ -925,5 +925,26 @@ public final class CompilationOrchestrator {
 
             return false;
         }
+
+        @Override
+        public Symbol.ClassSymbol resolveClassSymbol(String className,
+                                                      String modulePath,
+                                                      String importingModule)
+                throws ModuleNotFoundException {
+            for (ModuleInfo info : modules.values()) {
+                if (info.modulePath.equals(modulePath)) {
+                    if (info.symbolTable != null) {
+                        Symbol sym = info.symbolTable.resolve(className);
+                        if (sym instanceof Symbol.ClassSymbol cs) return cs;
+                    }
+                    // If the module hasn't been type-checked yet (should not happen
+                    // since dependencies are processed in topological order),
+                    // return null — the caller will emit an appropriate error.
+                    return null;
+                }
+            }
+            // Module not found
+            return null;
+        }
     }
 }

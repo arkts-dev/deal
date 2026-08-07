@@ -810,6 +810,12 @@ public final class TypeChecker {
         // Class field access (including built-in Error class)
         if (objType instanceof Type.Class cls) {
             Symbol sym = currentScope.resolve(cls.name());
+            // If not found locally, try cross-module resolution
+            if (!(sym instanceof Symbol.ClassSymbol)) {
+                Symbol.ClassSymbol importedCs =
+                    nameResolver.resolveClassSymbol(cls.name(), cls.modulePath());
+                if (importedCs != null) sym = importedCs;
+            }
             if (sym instanceof Symbol.ClassSymbol cs) {
                 ClassField cf = IntrinsicResolvers.findField(cs.fields(), field);
                 if (cf != null) {
@@ -928,6 +934,12 @@ public final class TypeChecker {
 
     private Type checkClassConstruction(ObjectLiteralExpr obj, Type.Class cls) {
         Symbol sym = currentScope.resolve(cls.name());
+        // If not found locally, try cross-module resolution
+        if (!(sym instanceof Symbol.ClassSymbol)) {
+            Symbol.ClassSymbol importedCs =
+                nameResolver.resolveClassSymbol(cls.name(), cls.modulePath());
+            if (importedCs != null) sym = importedCs;
+        }
         if (!(sym instanceof Symbol.ClassSymbol cs)) {
             error("E3004", "Unknown class '" + cls.name() + "'", obj.span());
             return Type.Error.INSTANCE;
@@ -1060,6 +1072,12 @@ public final class TypeChecker {
         }
 
         Symbol sym = currentScope.resolve(cls.name());
+        // If not found locally, try cross-module resolution
+        if (!(sym instanceof Symbol.ClassSymbol)) {
+            Symbol.ClassSymbol importedCs =
+                nameResolver.resolveClassSymbol(cls.name(), cls.modulePath());
+            if (importedCs != null) sym = importedCs;
+        }
         if (!(sym instanceof Symbol.ClassSymbol cs)) {
             error("E4005", "Class '" + cls.name() + "' not found", has.span());
             return Type.Error.INSTANCE;

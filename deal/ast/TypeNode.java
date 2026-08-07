@@ -9,7 +9,8 @@ public sealed interface TypeNode
     permits NamedType,
             ArrayType,
             NullableType,
-            FunctionType {
+            FunctionType,
+            QualifiedType {
 
     Span span();
 }

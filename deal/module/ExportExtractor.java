@@ -126,6 +126,13 @@ public final class ExportExtractor {
                                         Map<String, List<ClassField>> classMap) {
         return switch (tn) {
             case NamedType nt -> resolveNamedSimple(nt.name(), classMap);
+            case QualifiedType qt -> {
+                // Qualified type like B.Result — we don't have the module
+                // resolver at this stage, so use the module alias as a
+                // best-effort module path. Full resolution happens during
+                // type checking.
+                yield Types.classType(qt.typeName(), qt.moduleName());
+            }
             case deal.ast.ArrayType at -> {
                 Type elem = resolveTypeNodeSimple(at.elementType(), classMap);
                 if (elem == Type.Error.INSTANCE) yield Type.Error.INSTANCE;

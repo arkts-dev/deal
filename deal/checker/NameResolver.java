@@ -604,6 +604,7 @@ public final class NameResolver {
     public Type resolveTypeNode(TypeNode tn) {
         return switch (tn) {
             case NamedType nt -> resolveNamedType(nt);
+            case QualifiedType qt -> resolveQualifiedType(qt);
             case deal.ast.ArrayType at -> {
                 Type elem = resolveTypeNode(at.elementType());
                 if (elem == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
@@ -644,6 +645,26 @@ public final class NameResolver {
         };
     }
 
+    /**
+     * Resolves a qualified type reference like {@code ModuleAlias.ClassName}.
+     * Looks up the module alias in scope, then the class in that module's exports.
+     */
+    private Type resolveQualifiedType(QualifiedType qt) {
+        Symbol sym = currentScope.resolve(qt.moduleName());
+        if (!(sym instanceof Symbol.ModuleSymbol ms)) {
+            error("E3004", "Unknown module '" + qt.moduleName() + "'", qt.span());
+            return Type.Error.INSTANCE;
+        }
+        Type exportType = ms.exports().get(qt.typeName());
+        if (exportType == null) {
+            error("E2004", "Export '" + qt.typeName() + "' not found in module '"
+                + qt.moduleName() + "'. Available: "
+                + String.join(", ", ms.exports().keySet()), qt.span());
+            return Type.Error.INSTANCE;
+        }
+        return exportType;
+    }
+
     private Type resolveNamedType(NamedType nt) {
         String name = nt.name();
         return switch (name) {
@@ -665,6 +686,33 @@ public final class NameResolver {
                 yield Type.Error.INSTANCE;
             }
         };
+    }
+
+    /**
+     * Resolves a class symbol from another module.
+     *
+     * <p>Used by the type checker when it encounters a {@link Type.Class}
+     * whose module path differs from the current module. The local scope
+     * only contains class symbols for locally-declared classes; imported
+     * classes must be looked up via the module resolver.</p>
+     *
+     * @param className the simple class name
+     * @param modulePath the module path where the class is declared
+     * @return the ClassSymbol, or {@code null} if not found
+     */
+    public Symbol.ClassSymbol resolveClassSymbol(String className, String modulePath) {
+        if (modulePath == null || modulePath.isEmpty()
+                || modulePath.equals(this.modulePath)) {
+            // Local class — look it up in the current scope
+            Symbol sym = currentScope.resolve(className);
+            if (sym instanceof Symbol.ClassSymbol cs) return cs;
+            return null;
+        }
+        try {
+            return moduleResolver.resolveClassSymbol(className, modulePath, this.modulePath);
+        } catch (ModuleResolver.ModuleNotFoundException e) {
+            return null;
+        }
     }
 
     // =======================================================================

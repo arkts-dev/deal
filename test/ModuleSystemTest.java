@@ -488,6 +488,207 @@ public class ModuleSystemTest {
     // Compilation Orchestration: Declaration File
     // =========================================================================
 
+    // =========================================================================
+    // Cross-Module Class Tests (F1-F5 fix for MR-0007 review)
+    // =========================================================================
+
+    private static void testCrossModuleClassFieldAccess() throws Exception {
+        System.out.println("-- Cross-Module Class: Field Access --");
+
+        writeFile("src/cm_class.deal", """
+            export class Point { x: int = 0; y: int = 0; }
+            export function create(x: int, y: int): Point {
+                return { x: x, y: y };
+            }
+            """);
+
+        writeFile("src/cm_main.deal", """
+            import * as P from "./cm_class"
+            export function getX(p: P.Point): int { return p.x; }
+            export function getY(p: P.Point): int { return p.y; }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/cm_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/cm_field");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, roots, null);
+
+        boolean success = orchestrator.compile();
+        check(success, "Cross-module class field access: compilation should succeed");
+        if (!success) {
+            for (Diagnostic d : orchestrator.diagnostics()) {
+                System.out.println("  Diag: " + d.code() + ": " + d.message());
+            }
+        }
+
+        // Verify output files exist
+        check(Files.exists(outputDir.resolve("cm_main.lua")),
+            "Cross-module class field access: cm_main.lua exists");
+        check(Files.exists(outputDir.resolve("cm_class.lua")),
+            "Cross-module class field access: cm_class.lua exists");
+
+        // Verify the generated code references the imported class defaults
+        String genCode = Files.readString(outputDir.resolve("cm_main.lua"));
+        check(genCode.contains("require(\"cm_class\")"),
+            "Cross-module class field access: generated code requires cm_class");
+    }
+
+    private static void testCrossModuleClassConstruction() throws Exception {
+        System.out.println("-- Cross-Module Class: Construction --");
+
+        writeFile("src/cc_class.deal", """
+            export class Vec { x: int = 0; y: int = 0; }
+            """);
+
+        writeFile("src/cc_main.deal", """
+            import * as V from "./cc_class"
+            export function makeVec(): V.Vec {
+                return { x: 1, y: 2 };
+            }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/cc_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/cm_constr");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, roots, null);
+
+        boolean success = orchestrator.compile();
+        check(success, "Cross-module class construction: compilation should succeed");
+        if (!success) {
+            for (Diagnostic d : orchestrator.diagnostics()) {
+                System.out.println("  Diag: " + d.code() + ": " + d.message());
+            }
+        }
+
+        // Verify the generated code references the imported defaults table
+        String genCode = Files.readString(outputDir.resolve("cc_main.lua"));
+        check(genCode.contains("V.Vec_defaults"),
+            "Cross-module class construction: generated code uses V.Vec_defaults");
+    }
+
+    private static void testCrossModuleClassHas() throws Exception {
+        System.out.println("-- Cross-Module Class: has() --");
+
+        writeFile("src/ch_class.deal", """
+            export class Opt { name?: string; }
+            """);
+
+        writeFile("src/ch_main.deal", """
+            import * as O from "./ch_class"
+            export function checkName(obj: O.Opt): boolean {
+                return has(obj.name);
+            }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/ch_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/cm_has");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, roots, null);
+
+        boolean success = orchestrator.compile();
+        check(success, "Cross-module class has(): compilation should succeed");
+        if (!success) {
+            for (Diagnostic d : orchestrator.diagnostics()) {
+                System.out.println("  Diag: " + d.code() + ": " + d.message());
+            }
+        }
+    }
+
+    private static void testQualifiedTypeAnnotation() throws Exception {
+        System.out.println("-- Qualified Type Annotation --");
+
+        writeFile("src/qt_class.deal", """
+            export class Data { value: int = 0; }
+            """);
+
+        writeFile("src/qt_main.deal", """
+            import * as D from "./qt_class"
+            export function getValue(d: D.Data): int { return d.value; }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/qt_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/cm_qt");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, roots, null);
+
+        boolean success = orchestrator.compile();
+        check(success, "Qualified type annotation: compilation should succeed");
+        if (!success) {
+            for (Diagnostic d : orchestrator.diagnostics()) {
+                System.out.println("  Diag: " + d.code() + ": " + d.message());
+            }
+        }
+    }
+
+    private static void testCrossModuleClassE2E() throws Exception {
+        System.out.println("-- Cross-Module Class: End-to-End Runtime --");
+        if (!luajitAvailable()) {
+            System.out.println("  SKIP: LuaJIT not available");
+            return;
+        }
+
+        writeFile("src/ce_class.deal", """
+            export class Result { value: int = 0; ok: boolean = true; }
+            export function make(value: int): Result {
+                return { value: value, ok: true };
+            }
+            """);
+
+        writeFile("src/ce_main.deal", """
+            import * as R from "./ce_class"
+            export function getValue(r: R.Result): int { return r.value; }
+            export function makeAndGet(): int {
+                let r = R.make(42);
+                return r.value;
+            }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/ce_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/cm_e2e");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, roots, null);
+
+        boolean success = orchestrator.compile();
+        check(success, "Cross-module class E2E: compilation should succeed");
+        if (!success) {
+            for (Diagnostic d : orchestrator.diagnostics()) {
+                System.out.println("  Diag: " + d.code() + ": " + d.message());
+            }
+            return;
+        }
+
+        // Runtime verification
+        try {
+            Path runtimeLib = outputDir.resolve("deal/runtime.lua");
+            String luaCode = "package.path = '" + outputDir.toRealPath()
+                + "/?.lua;' "
+                + "local m = require('ce_main') "
+                + "local r = m.makeAndGet.f() "
+                + "assert(r == 42, 'expected 42, got ' .. tostring(r)) "
+                + "print('OK: cross-module class e2e')";
+            ProcessBuilder pb = new ProcessBuilder("luajit", "-e", luaCode);
+            pb.redirectErrorStream(true);
+            Process proc = pb.start();
+            String output = new String(proc.getInputStream().readAllBytes());
+            int exitCode = proc.waitFor();
+            check(exitCode == 0,
+                "Cross-module class E2E: runtime verification (exit " + exitCode
+                + "): " + output.trim());
+        } catch (Exception e) {
+            check(false, "Cross-module class E2E: runtime verification failed: " + e.getMessage());
+        }
+    }
+
     private static void testDeclarationFile() throws Exception {
         System.out.println("-- Declaration File --");
 
@@ -866,6 +1067,11 @@ public class ModuleSystemTest {
             testCompilationWithError();
             testCircularImportRuntime();
             testCircularImportDeclarationOnly();
+            testCrossModuleClassFieldAccess();
+            testCrossModuleClassConstruction();
+            testCrossModuleClassHas();
+            testQualifiedTypeAnnotation();
+            testCrossModuleClassE2E();
             testDeclarationFile();
             testCli();
             testEndToEndSingleModule();

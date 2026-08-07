@@ -661,9 +661,43 @@ public final class Parser {
         }
 
         // Builtin type names (identifiers): boolean, int, number, string, table, coroutine, Error
+        // Also the start of qualified types like ModuleAlias.ClassName
         if (tt == TokenType.IDENTIFIER) {
-            Token t = advance();
-            return new NamedType(spanOf(t), t.lexeme());
+            Token first = advance();
+
+            // Check for qualified type: A.B or A.B.C etc.
+            if (peek().type() == TokenType.DOT) {
+                java.util.List<Token> nameTokens = new java.util.ArrayList<>();
+                nameTokens.add(first);
+
+                while (peek().type() == TokenType.DOT) {
+                    advance(); // DOT
+                    if (peek().type() != TokenType.IDENTIFIER) {
+                        error("E1032", "Expected type name after '.'", peek());
+                        break;
+                    }
+                    Token nameToken = advance();
+                    nameTokens.add(nameToken);
+                }
+
+                // Build module-qualified type: last token is the type name,
+                // all preceding tokens joined by dots form the module path.
+                // For A.B: moduleName = "A", typeName = "B"
+                // For A.B.C: moduleName = "A.B", typeName = "C"
+                if (nameTokens.size() >= 2) {
+                    StringBuilder modulePart = new StringBuilder(nameTokens.get(0).lexeme());
+                    for (int i = 1; i < nameTokens.size() - 1; i++) {
+                        modulePart.append('.').append(nameTokens.get(i).lexeme());
+                    }
+                    String typePart = nameTokens.get(nameTokens.size() - 1).lexeme();
+                    Span qspan = spanBetween(nameTokens.get(0),
+                            nameTokens.get(nameTokens.size() - 1));
+                    return new QualifiedType(qspan, modulePart.toString(), typePart);
+                }
+                // Fallback: single identifier with trailing dots (should not happen)
+            }
+
+            return new NamedType(spanOf(first), first.lexeme());
         }
 
         // Parenthesized type

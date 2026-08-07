@@ -714,6 +714,10 @@ public final class LuaBackend implements Visitor<Void> {
             }
             case ClassDeclaration cd -> {
                 exportedValues.putIfAbsent(cd.name(), cd.name() + "_meta");
+                // Also export the defaults table so importing modules
+                // can construct instances of this class.
+                exportedValues.putIfAbsent(cd.name() + "_defaults",
+                    cd.name() + "_defaults");
                 visit(cd);
             }
             default -> {}
@@ -1061,13 +1065,39 @@ public final class LuaBackend implements Visitor<Void> {
 
         String defaultsRef;
         if (sym instanceof Symbol.ClassSymbol cs) {
+            // Local class: reference defaults table directly
             defaultsRef = className + "_defaults";
+        } else if (cls.modulePath() != null && !cls.modulePath().isEmpty()) {
+            // Imported class: find the import alias and use alias._defaults
+            String alias = findImportAliasForClass(className, cls.modulePath());
+            if (alias != null) {
+                defaultsRef = alias + "." + className + "_defaults";
+            } else {
+                defaultsRef = "{}";
+            }
         } else {
             defaultsRef = "{}";
         }
 
         return "__rt.class_(\"" + className + "\", " + defaultsRef
             + ", " + provided.toString() + ")";
+    }
+
+    /**
+     * Searches the root symbol table for a ModuleSymbol whose exports
+     * include the given class. Returns the import alias (module local name)
+     * or {@code null} if not found.
+     */
+    private String findImportAliasForClass(String className, String modulePath) {
+        for (var entry : symbols.symbols().entrySet()) {
+            Symbol sym = entry.getValue();
+            if (sym instanceof Symbol.ModuleSymbol ms) {
+                if (ms.exports().containsKey(className)) {
+                    return entry.getKey();
+                }
+            }
+        }
+        return null;
     }
 
     @Override public Void visit(FunctionExpr node) {
@@ -1292,6 +1322,16 @@ public final class LuaBackend implements Visitor<Void> {
                     yield Type.Error.INSTANCE;
                 }
             };
+            case QualifiedType qt -> {
+                // Qualified type like B.Result — look up the module symbol
+                // and extract the class type.
+                Symbol sym = symbols.resolve(qt.moduleName());
+                if (sym instanceof Symbol.ModuleSymbol ms) {
+                    Type exportType = ms.exports().get(qt.typeName());
+                    if (exportType != null) yield exportType;
+                }
+                yield Types.classType(qt.typeName(), qt.moduleName());
+            }
             case deal.ast.ArrayType at -> {
                 Type elem = resolveTypeNode(at.elementType());
                 if (elem == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
