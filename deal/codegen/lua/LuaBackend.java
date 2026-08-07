@@ -33,7 +33,9 @@ public final class LuaBackend implements Visitor<Void> {
     private final List<Diagnostic> diagnostics = new ArrayList<>();
     private int indent = 0;
 
-    private final List<String> exportedNames = new ArrayList<>();
+    // F3 fix: map export name → actual Lua variable name.
+    // For functions: "greet" → "greet". For classes: "User" → "User_meta".
+    private final Map<String, String> exportedValues = new LinkedHashMap<>();
 
     private Type currentReturnType = null;
     private String sourceFilePath = "unknown.deal";
@@ -113,8 +115,8 @@ public final class LuaBackend implements Visitor<Void> {
 
     private void emitExports() {
         emitLine("local exports = {}");
-        for (String name : exportedNames) {
-            emitLine("exports." + name + " = " + name);
+        for (var entry : exportedValues.entrySet()) {
+            emitLine("exports." + entry.getKey() + " = " + entry.getValue());
         }
         emitLine("return exports");
     }
@@ -410,8 +412,12 @@ public final class LuaBackend implements Visitor<Void> {
                 || exprType instanceof Type.Null)) {
             emitLine("local " + name + " = " + initLua);
         } else {
-            if (targetType != null && !(targetType instanceof Type.Error)) {
-                String checked = emitCheckExpr(initLua, targetType);
+            // F6 fix: use exprType (inferred type) as check type when no annotation
+            Type checkType = targetType != null ? targetType : exprType;
+            if (checkType != null && !(checkType instanceof Type.Error)
+                && !(checkType instanceof Type.Void)
+                && !(checkType instanceof Type.Null)) {
+                String checked = emitCheckExpr(initLua, checkType);
                 emitLine("local " + name + " = " + checked);
             } else {
                 emitLine("local " + name + " = " + initLua);
@@ -423,7 +429,16 @@ public final class LuaBackend implements Visitor<Void> {
     @Override
     public Void visit(ReturnStatement node) {
         if (node.expr().isPresent()) {
-            emitLine("return " + emitExpression(node.expr().get()));
+            String exprLua = emitExpression(node.expr().get());
+            // F2 fix: wrap return value with type check when return type is known
+            if (currentReturnType != null
+                && !(currentReturnType instanceof Type.Error)
+                && !(currentReturnType instanceof Type.Void)
+                && !(currentReturnType instanceof Type.Null)) {
+                emitLine("return " + emitCheckExpr(exprLua, currentReturnType));
+            } else {
+                emitLine("return " + exprLua);
+            }
         } else {
             emitLine("return");
         }
@@ -546,13 +561,13 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("while " + condStr + " do");
         indent++;
         visit(node.body());
+        // F1 fix: emit continue landing pad before the update expression.
+        // Continue in a C-style for-loop jumps to the update step,
+        // then re-checks the loop condition.
+        emitLine("::" + loopLabel + "::");
         if (node.update().isPresent()) {
             emitLine(emitExpression(node.update().get()));
         }
-        // Emit continue landing pad before the update! 
-        // Actually, continue in a C-style for should jump to the update,
-        // then re-check condition. Let me restructure...
-        // We'll put the label before the update.
         indent--;
         emitLine("end");  // while
         indent--;
@@ -593,15 +608,14 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(ExportDeclaration node) {
+        // F3 fix: store the actual Lua variable name for export
         switch (node.declaration()) {
             case FunctionDeclaration fd -> {
-                if (!exportedNames.contains(fd.name()))
-                    exportedNames.add(fd.name());
+                exportedValues.putIfAbsent(fd.name(), fd.name());
                 visit(fd);
             }
             case ClassDeclaration cd -> {
-                if (!exportedNames.contains(cd.name()))
-                    exportedNames.add(cd.name());
+                exportedValues.putIfAbsent(cd.name(), cd.name() + "_meta");
                 visit(cd);
             }
             default -> {}
@@ -636,6 +650,13 @@ public final class LuaBackend implements Visitor<Void> {
         indent--;
         emitLine("end");
         visit(node.catchBlock());
+        indent--;
+        emitLine("else");
+        indent++;
+        // Propagate the return value from the successful try body.
+        // pcall returns true + the function's return values on success,
+        // so __err holds the first return value of the try block.
+        emitLine("return __err");
         indent--;
         emitLine("end");
         return null;
@@ -752,6 +773,21 @@ public final class LuaBackend implements Visitor<Void> {
             };
         }
 
+        // Handle null comparisons for nullable types:
+        // nullable_value === null should check for both nil and __NULL,
+        // because missing optional fields are nil at runtime.
+        if (op == BinaryOp.EQ && isNullLiteral(bin.right()) && leftType instanceof Type.Nullable) {
+            return "(" + left + " == nil or " + left + " == __NULL)";
+        }
+        if (op == BinaryOp.EQ && isNullLiteral(bin.left()) && rightType instanceof Type.Nullable) {
+            return "(" + right + " == nil or " + right + " == __NULL)";
+        }
+        if (op == BinaryOp.NEQ && isNullLiteral(bin.right()) && leftType instanceof Type.Nullable) {
+            return "(" + left + " ~= nil and " + left + " ~= __NULL)";
+        }
+        if (op == BinaryOp.NEQ && isNullLiteral(bin.left()) && rightType instanceof Type.Nullable) {
+            return "(" + right + " ~= nil and " + right + " ~= __NULL)";
+        }
         if (op == BinaryOp.EQ) return "(" + left + " == " + right + ")";
         if (op == BinaryOp.NEQ) return "(" + left + " ~= " + right + ")";
         if (op == BinaryOp.LT) return "(" + left + " < " + right + ")";
@@ -859,40 +895,8 @@ public final class LuaBackend implements Visitor<Void> {
         String className = cls.name();
         Symbol sym = symbols.resolve(className);
 
-        if (!(sym instanceof Symbol.ClassSymbol cs)) {
-            StringBuilder sb = new StringBuilder("__rt.class_(\"")
-                .append(className).append("\", {}, {");
-            boolean first = true;
-            for (Property prop : obj.properties()) {
-                if (!first) sb.append(", ");
-                first = false;
-                sb.append(prop.name()).append(" = ")
-                    .append(emitExpression(prop.value()));
-            }
-            sb.append("})");
-            return sb.toString();
-        }
-
-        StringBuilder defaults = new StringBuilder("{");
-        boolean first = true;
-        for (ClassField field : cs.fields()) {
-            if (!first) defaults.append(", ");
-            first = false;
-            defaults.append(field.name()).append(" = ");
-            if (field.optional() && field.defaultExpr().isEmpty()) {
-                defaults.append("__MISSING");
-            } else if (field.defaultExpr().isPresent()) {
-                defaults.append(emitExpression(field.defaultExpr().get()));
-            } else if (field.nullable()) {
-                defaults.append("__NULL");
-            } else {
-                defaults.append(defaultValueForTypeNode(field.type()));
-            }
-        }
-        defaults.append("}");
-
         StringBuilder provided = new StringBuilder("{");
-        first = true;
+        boolean first = true;
         for (Property prop : obj.properties()) {
             if (!first) provided.append(", ");
             first = false;
@@ -901,7 +905,16 @@ public final class LuaBackend implements Visitor<Void> {
         }
         provided.append("}");
 
-        return "__rt.class_(\"" + className + "\", " + defaults.toString()
+        // F7 fix: reference the module-level defaults table instead of
+        // rebuilding it inline at every construction site.
+        String defaultsRef;
+        if (sym instanceof Symbol.ClassSymbol cs) {
+            defaultsRef = className + "_defaults";
+        } else {
+            defaultsRef = "{}";
+        }
+
+        return "__rt.class_(\"" + className + "\", " + defaultsRef
             + ", " + provided.toString() + ")";
     }
 
@@ -1066,6 +1079,14 @@ public final class LuaBackend implements Visitor<Void> {
     // =========================================================================
     // Helpers
     // =========================================================================
+
+    /**
+     * Check if an expression is the null literal.
+     */
+    private boolean isNullLiteral(ExpressionNode expr) {
+        return expr instanceof LiteralExpr lit
+            && lit.value() instanceof LiteralValue.NullLiteral;
+    }
 
     private String escapeLuaString(String s) {
         StringBuilder sb = new StringBuilder("\"");

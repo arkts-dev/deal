@@ -32,6 +32,11 @@ javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java 
 java -ea -cp build deal.test.LuaBackendTest
 
 echo ""
+echo "=== Compiling and Running Lua Backend Integration Tests ==="
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java test/StubModuleResolver.java test/LuaBackendIntegrationTest.java
+java -ea -cp build deal.test.LuaBackendIntegrationTest
+
+echo ""
 echo "=== Running Runtime Library Tests ==="
 if command -v luajit &> /dev/null; then
   luajit test_runtime.lua
