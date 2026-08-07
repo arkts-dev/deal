@@ -562,9 +562,26 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
+        // F5: Determine parameter types for contextual typing BEFORE checking args
+        List<Type> paramTypesForContext = getParamTypesForContext(call);
+
         List<Type> argTypes = new ArrayList<>();
-        for (ExpressionNode arg : call.args()) {
+        for (int i = 0; i < call.args().size(); i++) {
+            ExpressionNode arg = call.args().get(i);
+            // Set expectedType from the corresponding parameter type, if available
+            Type savedExpected = expectedType;
+            if (paramTypesForContext != null && i < paramTypesForContext.size()) {
+                expectedType = paramTypesForContext.get(i);
+            } else if (paramTypesForContext != null && i >= paramTypesForContext.size()
+                    && hasRestParam(call)) {
+                // Rest parameter: use the element type
+                Type restElem = getRestElementType(call);
+                if (restElem != null) {
+                    expectedType = restElem;
+                }
+            }
             argTypes.add(checkExpression(arg));
+            expectedType = savedExpected;
         }
 
         // Intrinsic call?
@@ -581,6 +598,77 @@ public final class TypeChecker {
 
         error("E3008", typeName(calleeType) + " is not callable", call.callee().span());
         return Type.Error.INSTANCE;
+    }
+
+    /**
+     * Extracts parameter types from a callee for contextual typing.
+     * Returns null if not available.
+     */
+    private List<Type> getParamTypesForContext(CallExpr call) {
+        if (call.callee() instanceof IdentifierExpr id) {
+            Symbol sym = currentScope.resolve(id.name());
+            if (sym instanceof Symbol.FunctionSymbol fs) {
+                List<Type> pts = new ArrayList<>(fs.funcType().paramTypes());
+                if (fs.funcType().restType().isPresent()) {
+                    // Add the rest element type as a sentinel for the rest args
+                    pts.add(fs.funcType().restType().get().element());
+                }
+                return pts;
+            }
+            if (sym instanceof Symbol.IntrinsicSymbol is) {
+                if (is.type() instanceof Type.Func ft) {
+                    return new ArrayList<>(ft.paramTypes());
+                }
+            }
+        }
+        // If callee is a variable of function type
+        Type calleeType = typeMap.get(call.callee());
+        if (calleeType instanceof Type.Func ft) {
+            List<Type> pts = new ArrayList<>(ft.paramTypes());
+            if (ft.restType().isPresent()) {
+                pts.add(ft.restType().get().element());
+            }
+            return pts;
+        }
+        // Try computing it now if not yet typed
+        calleeType = checkExpression(call.callee());
+        if (calleeType instanceof Type.Func ft) {
+            List<Type> pts = new ArrayList<>(ft.paramTypes());
+            if (ft.restType().isPresent()) {
+                pts.add(ft.restType().get().element());
+            }
+            return pts;
+        }
+        return null;
+    }
+
+    private boolean hasRestParam(CallExpr call) {
+        if (call.callee() instanceof IdentifierExpr id) {
+            Symbol sym = currentScope.resolve(id.name());
+            if (sym instanceof Symbol.FunctionSymbol fs) {
+                return fs.funcType().restType().isPresent();
+            }
+        }
+        Type calleeType = typeMap.get(call.callee());
+        if (calleeType instanceof Type.Func ft) {
+            return ft.restType().isPresent();
+        }
+        return false;
+    }
+
+    private Type getRestElementType(CallExpr call) {
+        if (call.callee() instanceof IdentifierExpr id) {
+            Symbol sym = currentScope.resolve(id.name());
+            if (sym instanceof Symbol.FunctionSymbol fs
+                    && fs.funcType().restType().isPresent()) {
+                return fs.funcType().restType().get().element();
+            }
+        }
+        Type calleeType = typeMap.get(call.callee());
+        if (calleeType instanceof Type.Func ft && ft.restType().isPresent()) {
+            return ft.restType().get().element();
+        }
+        return null;
     }
 
     private Type checkFunctionCall(CallExpr call, Type.Func funcType, List<Type> argTypes) {
@@ -642,6 +730,9 @@ public final class TypeChecker {
         Type objType = checkExpression(mae.object());
         if (objType == Type.Error.INSTANCE) return Type.Error.INSTANCE;
 
+        // F2: If the object type is the error sentinel, propagate it
+        if (objType == Type.Error.INSTANCE) return Type.Error.INSTANCE;
+
         String field = mae.field();
 
         // Array length intrinsic
@@ -649,7 +740,7 @@ public final class TypeChecker {
             return Type.Int.INSTANCE;
         }
 
-        // Class field access
+        // Class field access (including built-in Error class)
         if (objType instanceof Type.Class cls) {
             Symbol sym = currentScope.resolve(cls.name());
             if (sym instanceof Symbol.ClassSymbol cs) {
@@ -671,13 +762,16 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
-        // Error type: .code and .message
-        if (objType instanceof Type.Error) {
-            if (field.equals("code") || field.equals("message")) {
-                return Type.String.INSTANCE;
+        // Module symbol via identifier (must be checked before Table)
+        if (mae.object() instanceof IdentifierExpr id) {
+            Symbol sym = currentScope.resolve(id.name());
+            if (sym instanceof Symbol.ModuleSymbol ms) {
+                Type exportType = ms.exports().get(field);
+                if (exportType != null) return exportType;
+                error("E2004", "Export '" + field + "' not found in module '"
+                    + id.name() + "'", mae.span());
+                return Type.Error.INSTANCE;
             }
-            error("E4002", "Unknown field '" + field + "' on Error", mae.span());
-            return Type.Error.INSTANCE;
         }
 
         // Table access — requires contextual type
@@ -688,18 +782,6 @@ public final class TypeChecker {
             error("E3003",
                 "Table field read requires contextual target type", mae.span());
             return Type.Error.INSTANCE;
-        }
-
-        // Module symbol via identifier
-        if (mae.object() instanceof IdentifierExpr id) {
-            Symbol sym = currentScope.resolve(id.name());
-            if (sym instanceof Symbol.ModuleSymbol ms) {
-                Type exportType = ms.exports().get(field);
-                if (exportType != null) return exportType;
-                error("E2004", "Export '" + field + "' not found in module '"
-                    + id.name() + "'", mae.span());
-                return Type.Error.INSTANCE;
-            }
         }
 
         error("E3003",
@@ -763,6 +845,8 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkObjectLiteral(ObjectLiteralExpr obj) {
+        // F2: expectedType is now Type.Class("Error", "") for Error construction,
+        // so this instanceof check works correctly
         if (expectedType instanceof Type.Class cls) {
             return checkClassConstruction(obj, cls);
         }
@@ -843,19 +927,38 @@ public final class TypeChecker {
         Type returnType = nameResolver.resolveTypeNode(fe.returnType());
         Type.Func funcType = new Type.Func(paramTypes, restType, returnType);
 
-        // Enter scope for parameters - but NameResolver didn't create a scope
-        // for function expressions! We need to handle this locally.
+        // Enter scope for parameters
         SymbolTable savedScope = currentScope;
         currentScope = currentScope.enterScope();
 
-        // Define parameters in this scope
+        // F6: Check for duplicate parameters before defining
+        Set<String> paramNames = new HashSet<>();
         for (Parameter p : fe.params()) {
+            if (paramNames.contains(p.name())) {
+                error("E2002", "Duplicate parameter '" + p.name() + "'", p.span());
+                continue;
+            }
+            paramNames.add(p.name());
             Type pt = nameResolver.resolveTypeNode(p.type());
-            currentScope.define(p.name(), new Symbol.VariableSymbol(p.name(), pt, true));
+            // Check if already defined in this scope (shouldn't happen with set check above)
+            if (currentScope.containsLocally(p.name())) {
+                error("E2002", "Duplicate parameter '" + p.name() + "'", p.span());
+            } else {
+                currentScope.define(p.name(), new Symbol.VariableSymbol(p.name(), pt, true));
+            }
         }
         fe.restParam().ifPresent(rp -> {
+            if (paramNames.contains(rp.name())) {
+                error("E2002", "Duplicate parameter '" + rp.name() + "'", rp.span());
+                return;
+            }
+            paramNames.add(rp.name());
             Type rt = nameResolver.resolveTypeNode(rp.type());
-            currentScope.define(rp.name(), new Symbol.VariableSymbol(rp.name(), rt, true));
+            if (currentScope.containsLocally(rp.name())) {
+                error("E2002", "Duplicate parameter '" + rp.name() + "'", rp.span());
+            } else {
+                currentScope.define(rp.name(), new Symbol.VariableSymbol(rp.name(), rt, true));
+            }
         });
 
         Type savedReturnType = currentReturnType;
@@ -926,9 +1029,19 @@ public final class TypeChecker {
         }
 
         if (!isAssignable(targetType, valueType)) {
-            error("E3001",
-                "Cannot assign " + typeName(valueType) + " to " + typeName(targetType),
-                assign.span());
+            // F10: Detect reverse arity for E5004
+            if (targetType instanceof Type.Func tf && valueType instanceof Type.Func af
+                    && isReverseArity(af, tf)) {
+                error("E5004",
+                    "Arity extension failed: actual function has more parameters ("
+                    + af.paramTypes().size() + ") than target ("
+                    + tf.paramTypes().size() + ")",
+                    assign.span());
+            } else {
+                error("E3001",
+                    "Cannot assign " + typeName(valueType) + " to " + typeName(targetType),
+                    assign.span());
+            }
         }
 
         if (assign.target() instanceof IdentifierExpr id) {
@@ -947,9 +1060,19 @@ public final class TypeChecker {
         if (targetType == null || exprType == null) return;
         if (targetType == Type.Error.INSTANCE || exprType == Type.Error.INSTANCE) return;
         if (!isAssignable(targetType, exprType)) {
-            error("E3001",
-                "Cannot assign " + typeName(exprType) + " to " + typeName(targetType),
-                span);
+            // F10: Detect reverse arity for E5004
+            if (targetType instanceof Type.Func tf && exprType instanceof Type.Func af
+                    && isReverseArity(af, tf)) {
+                error("E5004",
+                    "Arity extension failed: actual function has more parameters ("
+                    + af.paramTypes().size() + ") than target ("
+                    + tf.paramTypes().size() + ")",
+                    span);
+            } else {
+                error("E3001",
+                    "Cannot assign " + typeName(exprType) + " to " + typeName(targetType),
+                    span);
+            }
         }
     }
 
@@ -963,6 +1086,24 @@ public final class TypeChecker {
             return Types.isAssignable(af, ef);
         }
         return false;
+    }
+
+    /**
+     * F10: Detects the reverse arity case where the actual function has more
+     * parameters than the target, but the overlapping params and return type
+     * match. This should emit E5004 instead of E3001.
+     */
+    private static boolean isReverseArity(Type.Func actual, Type.Func target) {
+        if (actual.restType().isPresent() || target.restType().isPresent()) return false;
+        if (!Types.equals(actual.returnType(), target.returnType())) return false;
+        int actualCount = actual.paramTypes().size();
+        int targetCount = target.paramTypes().size();
+        if (actualCount <= targetCount) return false;
+        for (int i = 0; i < targetCount; i++) {
+            if (!Types.equals(actual.paramTypes().get(i), target.paramTypes().get(i)))
+                return false;
+        }
+        return true;
     }
 
     // =======================================================================
@@ -990,6 +1131,7 @@ public final class TypeChecker {
             case CallExpr call -> exprType;
             case FunctionExpr fe -> exprType;
             case IdentifierExpr id -> exprType;
+            case IndexExpr idx -> exprType;
             case UnaryExpr un -> exprType;
             case BinaryExpr bin -> exprType;
             case MemberAccessExpr mae -> {

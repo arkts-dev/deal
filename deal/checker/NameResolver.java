@@ -80,10 +80,19 @@ public final class NameResolver {
     // =======================================================================
 
     private void seedIntrinsics() {
+        // int intrinsic: (number) => int  (with intrinsic resolver for overloads)
+        Type.Func intFuncType = new Type.Func(
+            List.of(Type.Number.INSTANCE), Optional.empty(), Type.Int.INSTANCE);
         root.define("int", new Symbol.IntrinsicSymbol("int",
-            Type.Int.INSTANCE, IntrinsicResolvers.INT));
+            intFuncType, IntrinsicResolvers.INT));
+
+        // number intrinsic: (int) => number  (with intrinsic resolver for overloads)
+        Type.Func numFuncType = new Type.Func(
+            List.of(Type.Int.INSTANCE), Optional.empty(), Type.Number.INSTANCE);
         root.define("number", new Symbol.IntrinsicSymbol("number",
-            Type.Number.INSTANCE, IntrinsicResolvers.NUMBER));
+            numFuncType, IntrinsicResolvers.NUMBER));
+
+        // has intrinsic: type is a special intrinsic — can't fully represent as Func
         root.define("has", new Symbol.IntrinsicSymbol("has",
             Type.Boolean.INSTANCE, IntrinsicResolvers.HAS));
 
@@ -146,6 +155,7 @@ public final class NameResolver {
     private void hoistClass(ClassDeclaration cd) {
         String name = cd.name();
         if (root.containsLocally(name)) {
+            if (shadowsImport(name, cd.span())) return;
             error("E2002", "Redeclaration of '" + name + "'", cd.span());
             return;
         }
@@ -166,6 +176,7 @@ public final class NameResolver {
     private void hoistFunction(FunctionDeclaration fd) {
         String name = fd.name();
         if (root.containsLocally(name)) {
+            if (shadowsImport(name, fd.span())) return;
             error("E2002", "Redeclaration of '" + name + "'", fd.span());
             return;
         }
@@ -182,6 +193,21 @@ public final class NameResolver {
         root.define(name, new Symbol.FunctionSymbol(name, ft));
     }
 
+    /**
+     * Checks whether the existing symbol at root with the given name is a
+     * ModuleSymbol (import). If so, emits E2007 and returns true.
+     */
+    private boolean shadowsImport(String name, Span span) {
+        Symbol existing = root.resolveLocal(name);
+        if (existing instanceof Symbol.ModuleSymbol) {
+            error("E2007",
+                "Module-level declaration '" + name + "' shadows import",
+                span);
+            return true;
+        }
+        return false;
+    }
+
     // =======================================================================
     // Statement walking
     // =======================================================================
@@ -196,14 +222,14 @@ public final class NameResolver {
         switch (stmt) {
             case VariableDeclaration vd -> walkVarDecl(vd);
             case FunctionDeclaration fd  -> walkFuncDecl(fd);
-            case ClassDeclaration cd     -> { /* already hoisted */ }
+            case ClassDeclaration cd     -> walkClassDecl(cd);
             case Block b                 -> walkBlock(b);
             case IfStatement is          -> walkIf(is);
             case WhileStatement ws       -> walkWhile(ws);
             case ForStatement fs         -> walkFor(fs);
             case TryStatement ts         -> walkTry(ts);
             case ImportDeclaration id    -> { /* already processed */ }
-            case ExportDeclaration ed    -> { /* delegate to inner decl */ }
+            case ExportDeclaration ed    -> walkStatement(ed.declaration());
             default                      -> { /* no declarations */ }
         }
     }
@@ -212,10 +238,65 @@ public final class NameResolver {
         String name = vd.name();
         Type type = vd.typeAnnotation().map(this::resolveTypeNode).orElse(null);
         if (currentScope.containsLocally(name)) {
+            if (currentScope == root && shadowsImport(name, vd.span())) return;
             error("E2002", "Redeclaration of '" + name + "'", vd.span());
             return;
         }
         currentScope.define(name, new Symbol.VariableSymbol(name, type, false));
+
+        // F12: If the initializer is a FunctionExpr, enter its scope for Pass 1
+        if (vd.initializer() instanceof FunctionExpr fe) {
+            walkFunctionExpr(fe);
+        }
+    }
+
+    /**
+     * Walk a class declaration in statement context.
+     * At module scope, classes are already hoisted.
+     * Inside a function or block, we must add them to the current scope.
+     */
+    private void walkClassDecl(ClassDeclaration cd) {
+        String name = cd.name();
+        if (!currentScope.containsLocally(name)) {
+            // Not already hoisted (nested class inside a function/block)
+            currentScope.define(name,
+                new Symbol.ClassSymbol(name, cd.fields(), modulePath));
+        }
+    }
+
+    /**
+     * Walk a function expression body for Pass 1 name resolution.
+     * Defines parameters in a new scope and recurses into the body.
+     */
+    private void walkFunctionExpr(FunctionExpr fe) {
+        SymbolTable saved = currentScope;
+        currentScope = currentScope.enterScope();
+
+        Set<String> paramNames = new HashSet<>();
+        for (Parameter p : fe.params()) {
+            String name = p.name();
+            if (paramNames.contains(name)) {
+                error("E2002", "Duplicate parameter '" + name + "'", p.span());
+                continue;
+            }
+            paramNames.add(name);
+            Type paramType = resolveTypeNode(p.type());
+            currentScope.define(name, new Symbol.VariableSymbol(name, paramType, true));
+        }
+
+        fe.restParam().ifPresent(rp -> {
+            String name = rp.name();
+            if (paramNames.contains(name)) {
+                error("E2002", "Duplicate parameter '" + name + "'", rp.span());
+                return;
+            }
+            paramNames.add(name);
+            Type restType = resolveTypeNode(rp.type());
+            currentScope.define(name, new Symbol.VariableSymbol(name, restType, true));
+        });
+
+        walkStatements(fe.body().statements());
+        currentScope = saved;
     }
 
     private void walkFuncDecl(FunctionDeclaration fd) {
@@ -296,8 +377,10 @@ public final class NameResolver {
         SymbolTable saved = currentScope;
         currentScope = currentScope.enterScope();
         scopeMap.put(ts, currentScope);
+        // F2: Use Class type for Error, not the sentinel
         currentScope.define(ts.catchVar(),
-            new Symbol.VariableSymbol(ts.catchVar(), Type.Error.INSTANCE, true));
+            new Symbol.VariableSymbol(ts.catchVar(),
+                Types.classType("Error", ""), true));
         walkBlock(ts.catchBlock());
         currentScope = saved;
     }
@@ -362,7 +445,8 @@ public final class NameResolver {
             case "string"    -> Type.String.INSTANCE;
             case "table"     -> Type.Table.INSTANCE;
             case "coroutine" -> Type.Coroutine.INSTANCE;
-            case "Error"     -> Type.Error.INSTANCE;
+            case "void"      -> Type.Null.INSTANCE;
+            case "Error"     -> Types.classType("Error", "");
             default -> {
                 Symbol sym = currentScope.resolve(name);
                 if (sym instanceof Symbol.ClassSymbol cs) {

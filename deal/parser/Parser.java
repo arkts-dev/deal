@@ -608,11 +608,11 @@ public final class Parser {
     }
 
     private TypeNode parseNullableType() {
-        // "null |" prefix
+        // "null |" prefix — can be chained: null | null | T
         if (match(TokenType.NULL)) {
             Token nullToken = previous();
             if (match(TokenType.PIPE)) {
-                TypeNode inner = parseArrayType();
+                TypeNode inner = parseNullableType();
                 if (inner == null) return null;
                 return new NullableType(spanBetween(nullToken, previousOrCurrent()), inner);
             }
@@ -623,14 +623,16 @@ public final class Parser {
         TypeNode inner = parseArrayType();
         if (inner == null) return null;
 
-        // "| null" suffix
-        if (match(TokenType.PIPE)) {
+        // "| null" suffix — can be chained: T | null | null
+        while (match(TokenType.PIPE)) {
             if (match(TokenType.NULL)) {
-                return new NullableType(
+                inner = new NullableType(
                         spanBetween(tokenSpanStart(inner), previousOrCurrent()),
                         inner);
+            } else {
+                error("E1030", "Expected 'null' after '|' in nullable type", peek());
+                break;
             }
-            error("E1030", "Expected 'null' after '|' in nullable type", peek());
         }
 
         return inner;

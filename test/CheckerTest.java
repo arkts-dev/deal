@@ -74,6 +74,45 @@ public class CheckerTest {
         );
     }
 
+    private static CheckerOutput checkProgramWithModule(String source,
+            StubModuleResolver resolver) {
+        return checkProgramWithModule(source, "test.deal", resolver);
+    }
+
+    private static CheckerOutput checkProgramWithModule(String source,
+            String filename, StubModuleResolver resolver) {
+        LexResult lex = new Lexer(source, filename).tokenize();
+        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+
+        if (parse.hasErrors()) {
+            NameResolver nr = new NameResolver(filename, resolver);
+            nr.resolve(parse.program());
+            List<Diagnostic> diags = new ArrayList<>(parse.diagnostics());
+            diags.addAll(nr.diagnostics());
+            return new CheckerOutput(
+                new CheckResult(Map.of(), new SymbolTable(), diags),
+                parse.program()
+            );
+        }
+
+        NameResolver nr = new NameResolver(filename, resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+
+        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
+        if (!hasErrors(diags)) {
+            CheckResult result = TypeChecker.check(filename, symTable, nr, parse.program());
+            diags.addAll(result.diagnostics());
+            return new CheckerOutput(
+                new CheckResult(result.typeMap(), symTable, diags),
+                parse.program()
+            );
+        }
+        return new CheckerOutput(
+            new CheckResult(Map.of(), symTable, diags),
+            parse.program()
+        );
+    }
+
     private static boolean hasErrors(List<Diagnostic> diags) {
         return diags.stream().anyMatch(d -> "error".equals(d.severity()));
     }
@@ -113,6 +152,10 @@ public class CheckerTest {
         testNameResolution_parameterShadow();
         testNameResolution_import();
         testNameResolution_hoisting();
+        testNameResolution_e2007_class();
+        testNameResolution_e2007_function();
+        testNameResolution_e2007_let();
+        testNameResolution_e2004();
 
         // -- Type Checking: Literals and Identifiers --
         testLiteralTypes();
@@ -152,6 +195,8 @@ public class CheckerTest {
         testArityExtension();
         testReverseArityError();
         testFunctionExpr();
+        testFunctionCallContextualTyping();
+        testFunctionExprDuplicateParams();
 
         // -- Type Checking: Classes --
         testClassConstruction();
@@ -160,6 +205,8 @@ public class CheckerTest {
         testClassNominalTyping();
         testClassFieldAccess();
         testClassOptionalField();
+        testNestedClass();
+        testErrorClassConstruction();
 
         // -- Type Checking: has / delete --
         testHasRequiredField();
@@ -183,9 +230,14 @@ public class CheckerTest {
         testInference_literals();
         testInference_emptyArrayError();
         testInference_tableReadError();
+        testInference_indexExpr();
 
         // -- Unknown Types --
         testUnknownType();
+        testInvalidNullable();
+
+        // -- Reverse arity E5004 --
+        testReverseArityE5004();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -258,6 +310,56 @@ public class CheckerTest {
             "class Point { x: int; y: int; }"
         );
         assertNoErrors(out, "forward class reference via hoisting");
+    }
+
+    // F11: Test E2007 — module-level declaration shadows import
+    static void testNameResolution_e2007_class() {
+        System.out.println("-- Name Resolution: E2007 class shadows import --");
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
+        CheckerOutput out = checkProgramWithModule(
+            "import * as Foo from \"./lib\";\n" +
+            "class Foo { x: int; }",
+            resolver
+        );
+        assertError(out, "E2007", "class shadows import");
+    }
+
+    static void testNameResolution_e2007_function() {
+        System.out.println("-- Name Resolution: E2007 function shadows import --");
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
+        CheckerOutput out = checkProgramWithModule(
+            "import * as Foo from \"./lib\";\n" +
+            "function Foo(): int { return 42; }",
+            resolver
+        );
+        assertError(out, "E2007", "function shadows import");
+    }
+
+    static void testNameResolution_e2007_let() {
+        System.out.println("-- Name Resolution: E2007 let shadows import --");
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
+        CheckerOutput out = checkProgramWithModule(
+            "import * as Foo from \"./lib\";\n" +
+            "let Foo: int = 1;",
+            resolver
+        );
+        assertError(out, "E2007", "let shadows import");
+    }
+
+    // F8: Test E2004 — export not found in module
+    static void testNameResolution_e2004() {
+        System.out.println("-- Name Resolution: E2004 export not found --");
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("./lib", Map.of("existingExport", Type.Int.INSTANCE));
+        CheckerOutput out = checkProgramWithModule(
+            "import * as Lib from \"./lib\";\n" +
+            "let x: int = Lib.nonExistent;",
+            resolver
+        );
+        assertError(out, "E2004", "export not found in module");
     }
 
     // =========================================================================
@@ -556,6 +658,26 @@ public class CheckerTest {
             "reverse arity error: expected E5004 or E3001, got " + diags);
     }
 
+    // F5: Contextual typing for function call arguments
+    static void testFunctionCallContextualTyping() {
+        System.out.println("-- Function Call Contextual Typing --");
+        CheckerOutput out = checkProgram(
+            "function f(s: string): void {}\n" +
+            "let t: table = { value: \"hello\" };\n" +
+            "f(t.value);\n"
+        );
+        assertNoErrors(out, "function call contextual typing for table read");
+    }
+
+    // F6: Duplicate parameters in function expressions
+    static void testFunctionExprDuplicateParams() {
+        System.out.println("-- Function Expression Duplicate Params --");
+        CheckerOutput out = checkProgram(
+            "let f = function(x: int, x: int): int { return x; };"
+        );
+        assertError(out, "E2002", "function expr duplicate parameters");
+    }
+
     static void testFunctionExpr() {
         System.out.println("-- Function Expression --");
         CheckerOutput out = checkProgram(
@@ -627,6 +749,32 @@ public class CheckerTest {
         assertNoErrors(out, "class optional field");
     }
 
+    // F3: Nested class declarations
+    static void testNestedClass() {
+        System.out.println("-- Nested Class --");
+        CheckerOutput out = checkProgram(
+            "function make(): void { class Inner { x: int; } let i: Inner = { x: 1 }; }"
+        );
+        assertNoErrors(out, "nested class inside function");
+    }
+
+    // F2: Error class construction
+    static void testErrorClassConstruction() {
+        System.out.println("-- Error Class Construction --");
+        CheckerOutput out = checkProgram(
+            "let e: Error = { code: \"X\", message: \"Y\" };"
+        );
+        assertNoErrors(out, "Error class construction");
+
+        // Also test Error field access
+        out = checkProgram(
+            "let e: Error = { code: \"X\", message: \"Y\" };\n" +
+            "let c: string = e.code;\n" +
+            "let m: string = e.message;"
+        );
+        assertNoErrors(out, "Error field access");
+    }
+
     // =========================================================================
     // has / delete Tests
     // =========================================================================
@@ -688,13 +836,12 @@ public class CheckerTest {
 
     static void testNullNarrowing_eqNull() {
         System.out.println("-- Null Narrowing: x === null --");
-        // When we have if/else, both branches narrow
         CheckerOutput out = checkProgram(
             "let n: int | null = 5;\n" +
             "if (n === null) {\n" +
             "  return;\n" +
             "} else {\n" +
-            "  let x: int = n;\n" +  // n narrowed to int in else branch
+            "  let x: int = n;\n" +
             "}"
         );
         assertNoErrors(out, "null narrowing === null else branch");
@@ -810,6 +957,16 @@ public class CheckerTest {
         assertError(out, "E3003", "table read inference error");
     }
 
+    // F4: IndexExpr inference
+    static void testInference_indexExpr() {
+        System.out.println("-- Type Inference: index expression --");
+        CheckerOutput out = checkProgram(
+            "let arr: int[] = [1, 2, 3];\n" +
+            "let x = arr[0];"
+        );
+        assertNoErrors(out, "infer type from index expression");
+    }
+
     // =========================================================================
     // Unknown Type
     // =========================================================================
@@ -818,5 +975,23 @@ public class CheckerTest {
         System.out.println("-- Unknown Type --");
         CheckerOutput out = checkProgram("let x: Foo = 1;");
         assertError(out, "E3004", "unknown type");
+    }
+
+    // F7: Invalid nullable type
+    static void testInvalidNullable() {
+        System.out.println("-- Invalid Nullable --");
+        CheckerOutput out = checkProgram("let x: int | null | null = 1;");
+        assertError(out, "E3005", "invalid nullable (doubly nullable)");
+    }
+
+    // F10: Reverse arity E5004
+    static void testReverseArityE5004() {
+        System.out.println("-- Reverse Arity E5004 --");
+        // This should produce E5004 because the actual function has MORE params
+        CheckerOutput out = checkProgram(
+            "function twoArgs(a: int, b: int): int { return a + b; }\n" +
+            "let f: (x: int) => int = twoArgs;"
+        );
+        assertError(out, "E5004", "reverse arity E5004");
     }
 }
