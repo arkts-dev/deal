@@ -45,29 +45,6 @@ public class ModuleSystemTest {
         return file;
     }
 
-    private static String compileAndRunLua(String luaSource) throws Exception {
-        Path luaFile = tmpDir.resolve("__test_main.lua");
-        Files.writeString(luaFile, luaSource);
-
-        // Copy runtime to deal/runtime.lua
-        Path runtimeDest = tmpDir.resolve("deal/runtime.lua");
-        if (!Files.exists(runtimeDest)) {
-            Files.createDirectories(runtimeDest.getParent());
-            Path runtimeSrc = Path.of("deal/runtime.lua");
-            if (Files.exists(runtimeSrc)) {
-                Files.copy(runtimeSrc, runtimeDest);
-            }
-        }
-
-        ProcessBuilder pb = new ProcessBuilder("luajit", luaFile.toString());
-        pb.directory(tmpDir.toFile());
-        pb.redirectErrorStream(true);
-        Process p = pb.start();
-        String output = new String(p.getInputStream().readAllBytes());
-        int exit = p.waitFor();
-        return "exit=" + exit + " out=" + output.trim();
-    }
-
     // =========================================================================
     // DealConfig Tests
     // =========================================================================
@@ -75,7 +52,6 @@ public class ModuleSystemTest {
     private static void testDealConfig() {
         System.out.println("-- DealConfig --");
 
-        // Valid config
         String json = """
             {
               "languageVersion": "1.0",
@@ -133,7 +109,6 @@ public class ModuleSystemTest {
     private static void testExportExtractor() throws Exception {
         System.out.println("-- ExportExtractor --");
 
-        // Parse a simple module and extract exports
         String source = """
             export function add(a: int, b: int): int { return a + b; }
             export class Point {
@@ -166,13 +141,53 @@ public class ModuleSystemTest {
     }
 
     // =========================================================================
+    // ExportExtractor: .d.deal function body validation
+    // =========================================================================
+
+    private static void testDeclarationFileBodyValidation() throws Exception {
+        System.out.println("-- ExportExtractor: .d.deal body validation --");
+
+        // Valid .d.deal: no function bodies
+        String validDecl = """
+            export function add(a: int, b: int): int;
+            export class Result { value: int; }
+            """;
+
+        LexResult lex = new Lexer(validDecl, "test.d.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.d.deal").parse();
+        check(!parse.hasErrors(), "Parser: no errors for valid .d.deal");
+
+        ExportExtractor extractor = new ExportExtractor("test", true);
+        Map<String, Type> exports = extractor.extract(parse.program());
+        check(exports.containsKey("add"), "valid .d.deal: exports contains add");
+        check(exports.containsKey("Result"), "valid .d.deal: exports contains Result");
+        check(extractor.diagnostics().isEmpty(), "valid .d.deal: no diagnostics");
+
+        // Invalid .d.deal: function with body
+        String invalidDecl = """
+            export function add(a: int, b: int): int { return a + b; }
+            """;
+
+        LexResult lex2 = new Lexer(invalidDecl, "test2.d.deal").tokenize();
+        ParseResult parse2 = new Parser(lex2.tokens(), "test2.d.deal").parse();
+        check(!parse2.hasErrors(), "Parser: no errors for invalid .d.deal");
+
+        ExportExtractor extractor2 = new ExportExtractor("test2", true);
+        Map<String, Type> exports2 = extractor2.extract(parse2.program());
+        check(exports2.containsKey("add"), "invalid .d.deal: exports still contains add");
+
+        boolean hasE7001 = extractor2.diagnostics().stream()
+            .anyMatch(d -> "E7001".equals(d.code()) && "error".equals(d.severity()));
+        check(hasE7001, "invalid .d.deal: E7001 for function with body");
+    }
+
+    // =========================================================================
     // Module Resolution Tests
     // =========================================================================
 
     private static void testModuleResolution() throws Exception {
         System.out.println("-- Module Resolution --");
 
-        // Create a project structure
         writeFile("src/main.deal", """
             import * as lib from "./lib"
             let x: int = lib.add(1, 2);
@@ -188,13 +203,11 @@ public class ModuleSystemTest {
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, null, moduleRoots, null);
 
-        // Test import resolution
         Path mainFile = tmpDir.resolve("src/main.deal");
         String resolved = orchestrator.resolveImportPath("./lib", mainFile);
         check(resolved != null, "resolveImportPath returns non-null");
         check(resolved.endsWith("lib.deal"), "resolved path ends with lib.deal");
 
-        // Test module not found
         resolved = orchestrator.resolveImportPath("./nonexistent", mainFile);
         check(resolved == null, "resolveImportPath returns null for nonexistent");
     }
@@ -220,20 +233,15 @@ public class ModuleSystemTest {
         boolean success = orchestrator.compile();
         check(success, "Single module compilation succeeded");
 
-        // Check output file exists
         Path outputFile = outputDir.resolve("hello.lua");
         check(Files.exists(outputFile), "Output file exists: " + outputFile);
 
-        // Check runtime was copied (if the source exists)
-        // This depends on deal/runtime.lua being in the project root
         Path runtimeDest = outputDir.resolve("deal/runtime.lua");
         boolean runtimeExists = Files.exists(runtimeDest);
-        // If deal/runtime.lua exists in the project root, it should be copied
         if (Files.exists(Path.of("deal/runtime.lua"))) {
             check(runtimeExists, "Runtime library copied");
         }
 
-        // Read the output and verify it contains the function
         String luaOutput = Files.readString(outputFile);
         check(luaOutput.contains("greet"), "Output contains greet");
         check(luaOutput.contains("exports.greet = greet"), "Exports greet");
@@ -267,7 +275,6 @@ public class ModuleSystemTest {
         check(Files.exists(outputDir.resolve("main.lua")), "main.lua exists");
         check(Files.exists(outputDir.resolve("lib.lua")), "lib.lua exists");
 
-        // Verify main.lua contains proper require
         String mainLua = Files.readString(outputDir.resolve("main.lua"));
         check(mainLua.contains("require(\"lib\")"), "main.lua requires lib");
     }
@@ -300,37 +307,75 @@ public class ModuleSystemTest {
     }
 
     // =========================================================================
-    // Compilation Orchestration: Circular Import
+    // Circular Import: Runtime dependency (E2005)
     // =========================================================================
 
-    private static void testCircularImport() throws Exception {
-        System.out.println("-- Circular Import --");
+    private static void testCircularImportRuntime() throws Exception {
+        System.out.println("-- Circular Import: Runtime Dependency --");
 
-        writeFile("src/a.deal", """
-            import * as B from "./b"
+        // a.deal uses B at top level in a variable initializer -> runtime dependency
+        // b.deal imports a but only uses it in function bodies -> type-only from b's side
+        // But a.deal's top-level expression creates a runtime dependency cycle
+        writeFile("src/rta.deal", """
+            import * as B from "./rtb"
+            let x: int = B.getValue();
             export function foo(): int { return 42; }
             """);
-        writeFile("src/b.deal", """
-            import * as A from "./a"
-            export function bar(): int { return A.foo(); }
+        writeFile("src/rtb.deal", """
+            import * as A from "./rta"
+            export function getValue(): int { return 10; }
             """);
 
-        Path entryFile = tmpDir.resolve("src/a.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/lua4");
+        Path entryFile = tmpDir.resolve("src/rta.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/lua_cycle_rt");
         List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, null, moduleRoots, null);
 
         boolean success = orchestrator.compile();
-        // This should fail with E2005 or E2003
-        check(!success, "Circular import should fail");
+        check(!success, "Circular runtime import should fail");
 
         List<Diagnostic> diags = orchestrator.diagnostics();
         boolean hasCycleError = diags.stream().anyMatch(
             d -> "error".equals(d.severity())
-                && (d.code().equals("E2005") || d.code().equals("E2003")));
-        check(hasCycleError, "Has circular import error diagnostic (E2005 or E2003)");
+                && "E2005".equals(d.code()));
+        check(hasCycleError, "Has E2005 circular import error diagnostic");
+    }
+
+    // =========================================================================
+    // Circular Import: Declaration-only (allowed)
+    // =========================================================================
+
+    private static void testCircularImportDeclarationOnly() throws Exception {
+        System.out.println("-- Circular Import: Declaration-Only (allowed) --");
+
+        // Both modules only use each other in function bodies.
+        // No top-level runtime expressions reference the cyclic import.
+        writeFile("src/da.deal", """
+            import * as B from "./db"
+            export function foo(x: int): int { return B.get(x); }
+            """);
+        writeFile("src/db.deal", """
+            import * as A from "./da"
+            export function get(x: int): int { return x + 1; }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/da.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/lua_cycle_decl");
+        List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, moduleRoots, null);
+
+        boolean success = orchestrator.compile();
+        check(success, "Declaration-only cycle should succeed");
+
+        // Verify no E2005 errors
+        List<Diagnostic> diags = orchestrator.diagnostics();
+        boolean hasE2005 = diags.stream().anyMatch(
+            d -> "E2005".equals(d.code()));
+        check(!hasE2005, "Declaration-only cycle: no E2005 diagnostic");
     }
 
     // =========================================================================
@@ -359,11 +404,8 @@ public class ModuleSystemTest {
             entryFile, outputDir, false, null, moduleRoots, null);
 
         boolean success = orchestrator.compile();
-        // Should succeed if declaration file is properly handled
-        // (may fail at runtime since calc.lua doesn't exist, but compile should succeed)
-        check(success || true, "Declaration file compiles"); // Always passes
+        check(success, "Declaration file compilation should succeed");
 
-        // Check that calc.lua was NOT generated
         check(!Files.exists(outputDir.resolve("calc.lua")),
             "calc.lua should not be generated for .d.deal");
     }
@@ -375,23 +417,18 @@ public class ModuleSystemTest {
     private static void testCli() throws Exception {
         System.out.println("-- CLI --");
 
-        // Missing command
         int exitCode = Main.run(new String[]{});
-        check(exitCode == 1, "No args → exit 1");
+        check(exitCode == 1, "No args -> exit 1");
 
-        // Unknown command
         exitCode = Main.run(new String[]{"unknown"});
-        check(exitCode == 1, "Unknown command → exit 1");
+        check(exitCode == 1, "Unknown command -> exit 1");
 
-        // Missing entry file
         exitCode = Main.run(new String[]{"compile"});
-        check(exitCode == 1, "Missing entry → exit 1");
+        check(exitCode == 1, "Missing entry -> exit 1");
 
-        // Entry file not found
         exitCode = Main.run(new String[]{"compile", "/nonexistent/file.deal"});
-        check(exitCode == 1, "Nonexistent entry → exit 1");
+        check(exitCode == 1, "Nonexistent entry -> exit 1");
 
-        // Valid compile (single module)
         writeFile("src/cli_test.deal", """
             export function hello(): string { return "world"; }
             """);
@@ -400,7 +437,7 @@ public class ModuleSystemTest {
 
         exitCode = Main.run(new String[]{"compile",
             entryFile.toString(), "--output", outputDir.toString()});
-        check(exitCode == 0, "Valid compile → exit 0");
+        check(exitCode == 0, "Valid compile -> exit 0");
         check(Files.exists(outputDir.resolve("cli_test.lua")),
             "Output file exists");
     }
@@ -431,10 +468,6 @@ public class ModuleSystemTest {
 
         check(orchestrator.compile(), "E2E single: compile succeeded");
 
-        // Run the generated Lua
-        Path mainFile = outputDir.resolve("e2e_single.lua");
-        String luaSource = Files.readString(mainFile);
-
         // Copy runtime
         Path runtimeDest = outputDir.resolve("deal/runtime.lua");
         if (!Files.exists(runtimeDest)) {
@@ -442,18 +475,7 @@ public class ModuleSystemTest {
             Files.copy(Path.of("deal/runtime.lua"), runtimeDest);
         }
 
-        // Create a runner that requires the module and calls greet
-        String runnerSource = luaSource + """
-            local m = ...
-            local result = m.greet.f("DEAL")
-            print(result)
-            """;
-
-        Path runnerFile = outputDir.resolve("__runner.lua");
-        Files.writeString(runnerFile, runnerSource);
-
-        // Can't easily run the exports-based module this way...
-        // Instead, let's create a simple test that requires the module.
+        // Create test runner
         Path testFile = outputDir.resolve("__test.lua");
         String testLua = """
             local m = require("e2e_single")
@@ -533,13 +555,7 @@ public class ModuleSystemTest {
             return;
         }
 
-        // This test verifies that stdlib modules can be imported
-        writeFile("src/e2e_std.deal", """
-            import * as strings from "std/string"
-            export function test_len(): int { return strings.length("hello"); }
-            """);
-
-        // We need the std/ directory to be accessible as a module root
+        // Create a stdlib with .d.deal and .lua implementation
         Path stdlibDir = tmpDir.resolve("stdlib");
         Files.createDirectories(stdlibDir.resolve("std"));
         Files.writeString(stdlibDir.resolve("std/string.d.deal"),
@@ -549,6 +565,12 @@ public class ModuleSystemTest {
             + "local m = {}\n"
             + "function m.length(s) __rt.check_string(s); return #s end\n"
             + "return m\n");
+
+        // Create a source file that imports std/string
+        writeFile("src/e2e_std.deal", """
+            import * as strings from "std/string"
+            export function test_len(): int { return strings.length("hello"); }
+            """);
 
         Path entryFile = tmpDir.resolve("src/e2e_std.deal").toAbsolutePath();
         Path outputDir = tmpDir.resolve("build/e2e_std");
@@ -561,9 +583,43 @@ public class ModuleSystemTest {
             entryFile, outputDir, true, null, roots, stdlibDir.toAbsolutePath());
 
         boolean success = orchestrator.compile();
-        // This may fail because the stdlib module needs its .lua implementation
-        // to be compiled/copied. For now, just check that it doesn't crash.
-        check(true, "E2E stdlib: test ran"); // Informational
+        List<Diagnostic> diags = orchestrator.diagnostics();
+
+        // Core assertion: import resolution of a stdlib module must succeed
+        // (no E2003 "module not found" errors)
+        boolean hasModuleNotFound = diags.stream()
+            .anyMatch(d -> "E2003".equals(d.code()));
+        check(!hasModuleNotFound, "E2E stdlib: no E2003 module-not-found error");
+
+        // If compilation succeeded, verify the output structure
+        if (success) {
+            check(Files.exists(outputDir.resolve("e2e_std.lua")),
+                "E2E stdlib: output file exists after successful compile");
+
+            // Verify the generated code contains require for std.string
+            String genCode = Files.readString(outputDir.resolve("e2e_std.lua"));
+            check(genCode.contains("require(\"std.string\")"),
+                "E2E stdlib: generated code requires std.string");
+            check(genCode.contains("strings.length"),
+                "E2E stdlib: generated code references strings.length");
+
+            // Verify that the orchestrator copied the stdlib .lua to output
+            Path stdDest = outputDir.resolve("std/string.lua");
+            check(Files.exists(stdDest),
+                "E2E stdlib: std/string.lua copied to output");
+
+            // Runtime verification: stdlib Lua modules currently export raw
+            // functions while DEAL-compiled code expects wrapped functions
+            // (with .f accessor). This is a known integration gap tracked
+            // separately. For v0.6, we verify the structural assertions above.
+            System.out.println("  Note: Full runtime verification requires "
+                + "stdlib .f wrapping (tracked separately)");
+        } else {
+            // Compilation failed for non-E2003 reasons
+            System.out.println("  Note: stdlib compilation had errors: "
+                + diags.stream().filter(d -> "error".equals(d.severity()))
+                    .map(d -> d.code() + ": " + d.message()).toList());
+        }
     }
 
     private static void testEndToEndWithError() throws Exception {
@@ -583,7 +639,6 @@ public class ModuleSystemTest {
         boolean success = orchestrator.compile();
         check(!success, "E2E error: compilation should fail");
 
-        // Verify error diagnostics have proper format
         List<Diagnostic> diags = orchestrator.diagnostics();
         boolean hasProperDiag = false;
         for (Diagnostic d : diags) {
@@ -624,11 +679,9 @@ public class ModuleSystemTest {
             entryFile.toString(), "--output", outputDir.toString(), "--verbose"});
         check(exitCode == 0, "E2E CLI: exit 0");
 
-        // Verify output exists
         check(Files.exists(outputDir.resolve("e2e_cli.lua")),
             "E2E CLI: output file exists");
 
-        // Copy runtime and test
         Path runtimeDest = outputDir.resolve("deal/runtime.lua");
         Files.createDirectories(runtimeDest.getParent());
         if (!Files.exists(runtimeDest)) {
@@ -679,11 +732,13 @@ public class ModuleSystemTest {
         try {
             testDealConfig();
             testExportExtractor();
+            testDeclarationFileBodyValidation();
             testModuleResolution();
             testSingleModuleCompilation();
             testMultiModuleCompilation();
             testCompilationWithError();
-            testCircularImport();
+            testCircularImportRuntime();
+            testCircularImportDeclarationOnly();
             testDeclarationFile();
             testCli();
             testEndToEndSingleModule();
@@ -692,7 +747,6 @@ public class ModuleSystemTest {
             testEndToEndWithError();
             testEndToEndCliPipeline();
         } finally {
-            // Cleanup
             try {
                 Files.walk(tmpDir)
                     .sorted(Comparator.reverseOrder())

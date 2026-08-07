@@ -39,23 +39,18 @@ public final class CompilationOrchestrator {
     private final List<Path> moduleRoots;
     private final Path stdlibDir;
 
-    // Phase 0-1: discovery and parsing
     private final Map<String, ModuleInfo> modules = new LinkedHashMap<>();
     private final List<Diagnostic> diagnostics = new ArrayList<>();
     private boolean hasErrors = false;
 
-    // Built-in stdlib paths (bundled with compiler)
     private static final List<String> STDLIB_MODULES = List.of(
         "std/console", "std/string", "std/table", "std/json", "std/math"
     );
 
-    /**
-     * Internal record for tracking each module throughout compilation.
-     */
     private static final class ModuleInfo {
-        final String sourcePath;    // resolved file path (e.g. "/abs/path/src/main.deal")
-        final String modulePath;    // module path for require (e.g. "main")
-        final boolean isDeclarationFile; // .d.deal file
+        final String sourcePath;
+        final String modulePath;
+        final boolean isDeclarationFile;
         ProgramNode rawAst;
         Map<String, Type> exports;
         SymbolTable symbolTable;
@@ -85,35 +80,25 @@ public final class CompilationOrchestrator {
     // Public API
     // =========================================================================
 
-    /**
-     * Run the full compilation pipeline.
-     *
-     * @return true if compilation succeeded (no errors), false otherwise
-     */
     public boolean compile() throws IOException {
         long startTime = System.currentTimeMillis();
 
-        // Phase 0: Discover and parse all modules
         log("Phase 0: Module discovery and parsing");
         discoverAndParse();
         if (hasErrors) { printDiagnostics(); return false; }
 
-        // Phase 1: Extract export signatures
         log("Phase 1: Export signature extraction");
         extractSignatures();
         if (hasErrors) { printDiagnostics(); return false; }
 
-        // Phase 2: Build dependency graph and order
         log("Phase 2: Dependency graph and ordering");
         List<String> checkOrder = buildCheckOrder();
         if (checkOrder == null) { printDiagnostics(); return false; }
 
-        // Phase 3: Type check in topological order
         log("Phase 3: Type checking (" + checkOrder.size() + " modules)");
         typeCheckAll(checkOrder);
         if (hasErrors) { printDiagnostics(); return false; }
 
-        // Phase 4: Code generation
         log("Phase 4: Code generation");
         codegenAll();
         if (hasErrors) { printDiagnostics(); return false; }
@@ -135,13 +120,8 @@ public final class CompilationOrchestrator {
     // =========================================================================
 
     private void discoverAndParse() throws IOException {
-        // Resolve entry module
         String entrySourcePath = entryFile.toString();
-        String entryModulePath = computeModulePath(entryFile);
-
-        // Queue the entry module
         Queue<String> pending = new ArrayDeque<>();
-        Set<String> inProgress = new HashSet<>();
         pending.add(entrySourcePath);
 
         while (!pending.isEmpty()) {
@@ -156,10 +136,8 @@ public final class CompilationOrchestrator {
             }
 
             boolean isDecl = sourcePath.endsWith(".d.deal");
-
             log("  Parsing: " + sourcePath);
 
-            // Read and parse
             String source;
             try {
                 source = Files.readString(file);
@@ -181,7 +159,6 @@ public final class CompilationOrchestrator {
             diagnostics.addAll(parseResult.diagnostics());
             if (parseResult.hasErrors()) {
                 hasErrors = true;
-                // Continue parsing other modules even if this one has errors
             }
 
             String modulePath = computeModulePath(file);
@@ -190,7 +167,6 @@ public final class CompilationOrchestrator {
             info.parseResult = parseResult;
             modules.put(sourcePath, info);
 
-            // Discovery: find all imports in this module
             for (StatementNode stmt : parseResult.program().statements()) {
                 if (stmt instanceof ImportDeclaration imp) {
                     String importPath = imp.modulePath();
@@ -200,9 +176,6 @@ public final class CompilationOrchestrator {
                     }
                 }
             }
-
-            // Also scan ExportDeclarations' bodies for nested imports (rare but possible)
-            // No — imports are only at module level in DEAL.
         }
     }
 
@@ -217,9 +190,7 @@ public final class CompilationOrchestrator {
     private void extractSignatures() {
         for (ModuleInfo info : modules.values()) {
             if (info.isDeclarationFile) {
-                // .d.deal files: extract export signatures, validate no executable stmts
-                ExportExtractor extractor = new ExportExtractor(
-                    info.modulePath, true);
+                ExportExtractor extractor = new ExportExtractor(info.modulePath, true);
                 info.exports = extractor.extract(info.rawAst);
                 diagnostics.addAll(extractor.diagnostics());
                 if (extractor.diagnostics().stream().anyMatch(
@@ -227,8 +198,7 @@ public final class CompilationOrchestrator {
                     hasErrors = true;
                 }
             } else {
-                ExportExtractor extractor = new ExportExtractor(
-                    info.modulePath, false);
+                ExportExtractor extractor = new ExportExtractor(info.modulePath, false);
                 info.exports = extractor.extract(info.rawAst);
                 diagnostics.addAll(extractor.diagnostics());
             }
@@ -240,7 +210,6 @@ public final class CompilationOrchestrator {
     // =========================================================================
 
     private List<String> buildCheckOrder() {
-        // Build adjacency: for each module, find which modules it imports
         Map<String, Set<String>> deps = new LinkedHashMap<>();
         for (Map.Entry<String, ModuleInfo> entry : modules.entrySet()) {
             String sourcePath = entry.getKey();
@@ -259,45 +228,6 @@ public final class CompilationOrchestrator {
             deps.put(sourcePath, imports);
         }
 
-        // Topological sort (Kahn's algorithm)
-        Map<String, Integer> inDegree = new LinkedHashMap<>();
-        for (String src : modules.keySet()) {
-            inDegree.put(src, 0);
-        }
-        for (Set<String> imports : deps.values()) {
-            for (String imp : imports) {
-                inDegree.merge(imp, 1, Integer::sum);
-            }
-        }
-
-        // Wait — topological order should put dependencies FIRST.
-        // If A imports B, B must be checked before A.
-        // So edges go from importer to imported: A → B (A depends on B).
-        // B has no outgoing edge to A; A has an outgoing edge to B.
-        // In Kahn's: compute in-degree. B's in-degree = number of modules that depend on B.
-        // We want B (dependency) to come first. So we want nodes with 0 dependencies (no imports) first.
-
-        // Let me re-think. The dependency direction:
-        // A imports B → A depends on B. B should be checked before A.
-        // So edges: A → B means "A depends on B".
-        // In topo sort, if we follow edges, dependencies come first.
-        // Edges from A to B means B must come before A.
-
-        // Compute in-degree: how many modules depend on this one?
-        Map<String, Integer> depCount = new LinkedHashMap<>();
-        for (String src : modules.keySet()) {
-            depCount.put(src, 0);
-        }
-        for (Map.Entry<String, Set<String>> e : deps.entrySet()) {
-            for (String imp : e.getValue()) {
-                depCount.merge(e.getKey(), 1, Integer::sum);
-            }
-        }
-
-        // Hmm, let me simplify. Topological order with edges depender → dependee:
-        // Nodes with no dependencies (empty imports set) go first.
-        // Then nodes whose dependencies are already processed.
-
         List<String> order = new ArrayList<>();
         Set<String> remaining = new LinkedHashSet<>(modules.keySet());
 
@@ -306,7 +236,6 @@ public final class CompilationOrchestrator {
             for (Iterator<String> it = remaining.iterator(); it.hasNext(); ) {
                 String src = it.next();
                 Set<String> imports = deps.get(src);
-                // Check if all imports are already in order
                 if (order.containsAll(imports)) {
                     order.add(src);
                     it.remove();
@@ -314,17 +243,14 @@ public final class CompilationOrchestrator {
                 }
             }
             if (!found) {
-                // Cycle detected — all remaining modules have unsatisfied dependencies
                 return handleCycle(deps, remaining);
             }
         }
-
         return order;
     }
 
     private List<String> handleCycle(Map<String, Set<String>> deps,
                                       Set<String> remaining) {
-        // Find the cycle
         List<String> cycle = new ArrayList<>();
         String start = remaining.iterator().next();
         Set<String> visited = new HashSet<>();
@@ -334,10 +260,23 @@ public final class CompilationOrchestrator {
             cycle.addAll(remaining);
         }
 
-        // Determine if this is a declaration-only cycle (allowed)
-        // or a runtime dependency cycle (E2005).
-        // For now, we treat any cycle as E2005 since we can't determine
-        // at this stage whether it's declaration-only.
+        if (isDeclarationOnlyCycle(cycle, deps)) {
+            List<String> order = new ArrayList<>();
+            Set<String> cycleSet = new LinkedHashSet<>(cycle);
+            Set<String> allRemaining = new LinkedHashSet<>(remaining);
+            Set<String> nonCycle = new LinkedHashSet<>(allRemaining);
+            nonCycle.removeAll(cycleSet);
+
+            for (String src : nonCycle) {
+                Set<String> imports = deps.get(src);
+                if (order.containsAll(imports)) {
+                    order.add(src);
+                }
+            }
+            order.addAll(cycle);
+            return order;
+        }
+
         StringBuilder cyclePath = new StringBuilder();
         for (int i = 0; i < cycle.size(); i++) {
             if (i > 0) cyclePath.append(" -> ");
@@ -349,11 +288,172 @@ public final class CompilationOrchestrator {
         return null;
     }
 
+    private boolean isDeclarationOnlyCycle(List<String> cycle,
+                                            Map<String, Set<String>> deps) {
+        Set<String> cycleSet = new LinkedHashSet<>(cycle);
+
+        for (String modulePath : cycle) {
+            ModuleInfo info = modules.get(modulePath);
+            if (info == null || info.rawAst == null) continue;
+
+            for (StatementNode stmt : info.rawAst.statements()) {
+                if (stmt instanceof ImportDeclaration imp) {
+                    String resolved = resolveImportPath(imp.modulePath(),
+                        Path.of(modulePath));
+                    if (resolved != null && cycleSet.contains(resolved)) {
+                        if (usesImportAtRuntime(info.rawAst, imp.alias())) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    private boolean usesImportAtRuntime(ProgramNode program, String alias) {
+        for (StatementNode stmt : program.statements()) {
+            if (hasRuntimeImportUsage(stmt, alias)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasRuntimeImportUsage(StatementNode stmt, String alias) {
+        return switch (stmt) {
+            case VariableDeclaration vd -> {
+                if (vd.initializer() != null
+                        && exprReferencesImport(vd.initializer(), alias)) {
+                    yield true;
+                }
+                yield false;
+            }
+            case ExpressionStatement es -> {
+                yield exprReferencesImport(es.expr(), alias);
+            }
+            case ReturnStatement rs -> {
+                if (rs.expr().isPresent()
+                        && exprReferencesImport(rs.expr().get(), alias)) {
+                    yield true;
+                }
+                yield false;
+            }
+            case IfStatement is -> {
+                if (exprReferencesImport(is.condition(), alias)) yield true;
+                if (hasRuntimeImportUsage(is.thenBlock(), alias)) yield true;
+                if (is.elseBranch().isPresent()) {
+                    Either<IfStatement, Block> eb = is.elseBranch().get();
+                    if (eb instanceof Either.Left<IfStatement, Block> left) {
+                        if (hasRuntimeImportUsage(left.value(), alias)) yield true;
+                    } else if (eb instanceof Either.Right<IfStatement, Block> right) {
+                        if (hasRuntimeImportUsage(right.value(), alias)) yield true;
+                    }
+                }
+                yield false;
+            }
+            case WhileStatement ws -> {
+                if (exprReferencesImport(ws.condition(), alias)) yield true;
+                if (hasRuntimeImportUsage(ws.body(), alias)) yield true;
+                yield false;
+            }
+            case ForStatement fs -> {
+                if (fs.init().isPresent()
+                        && fs.init().get() instanceof ForInit.AssignExpr ie) {
+                    AssignmentExpr ae = ie.expr();
+                    if (exprReferencesImport(ae.target(), alias)) yield true;
+                    if (exprReferencesImport(ae.value(), alias)) yield true;
+                }
+                if (fs.condition().isPresent()
+                        && exprReferencesImport(fs.condition().get(), alias)) yield true;
+                if (fs.update().isPresent()
+                        && exprReferencesImport(fs.update().get(), alias)) yield true;
+                if (hasRuntimeImportUsage(fs.body(), alias)) yield true;
+                yield false;
+            }
+            case Block b -> {
+                for (StatementNode s : b.statements()) {
+                    if (hasRuntimeImportUsage(s, alias)) yield true;
+                }
+                yield false;
+            }
+            case TryStatement ts -> {
+                if (hasRuntimeImportUsage(ts.tryBlock(), alias)) yield true;
+                if (ts.catchBlock() != null
+                        && hasRuntimeImportUsage(ts.catchBlock(), alias)) yield true;
+                yield false;
+            }
+            case ThrowStatement th -> {
+                yield exprReferencesImport(th.expr(), alias);
+            }
+            case ExportDeclaration ed -> {
+                yield hasRuntimeImportUsage(ed.declaration(), alias);
+            }
+            case FunctionDeclaration fd -> false;
+            case ClassDeclaration cd -> false;
+            case ImportDeclaration id -> false;
+            case DeleteStatement ds -> false;
+            case BreakStatement bs -> false;
+            case ContinueStatement cs -> false;
+        };
+    }
+
+    private boolean exprReferencesImport(ExpressionNode expr, String alias) {
+        return switch (expr) {
+            case IdentifierExpr id -> id.name().equals(alias);
+            case MemberAccessExpr ma -> {
+                if (exprReferencesImport(ma.object(), alias)) yield true;
+                yield false;
+            }
+            case CallExpr ce -> {
+                if (exprReferencesImport(ce.callee(), alias)) yield true;
+                for (ExpressionNode arg : ce.args()) {
+                    if (exprReferencesImport(arg, alias)) yield true;
+                }
+                yield false;
+            }
+            case BinaryExpr be -> {
+                if (exprReferencesImport(be.left(), alias)) yield true;
+                if (exprReferencesImport(be.right(), alias)) yield true;
+                yield false;
+            }
+            case UnaryExpr ue -> {
+                yield exprReferencesImport(ue.expr(), alias);
+            }
+            case IndexExpr ie -> {
+                if (exprReferencesImport(ie.array(), alias)) yield true;
+                if (exprReferencesImport(ie.index(), alias)) yield true;
+                yield false;
+            }
+            case ArrayLiteralExpr al -> {
+                for (ExpressionNode e : al.elements()) {
+                    if (exprReferencesImport(e, alias)) yield true;
+                }
+                yield false;
+            }
+            case ObjectLiteralExpr ol -> {
+                for (Property p : ol.properties()) {
+                    if (exprReferencesImport(p.value(), alias)) yield true;
+                }
+                yield false;
+            }
+            case AssignmentExpr ae -> {
+                if (exprReferencesImport(ae.target(), alias)) yield true;
+                if (exprReferencesImport(ae.value(), alias)) yield true;
+                yield false;
+            }
+            case HasExpr he -> {
+                yield exprReferencesImport(he.object(), alias);
+            }
+            case FunctionExpr fe -> false;
+            case LiteralExpr le -> false;
+        };
+    }
+
     private boolean findCycle(Map<String, Set<String>> deps, String current,
                                Set<String> visited, Deque<String> stack,
                                List<String> cycle) {
         if (stack.contains(current)) {
-            // Found cycle — extract it
             boolean found = false;
             for (String s : stack) {
                 if (s.equals(current)) found = true;
@@ -383,19 +483,14 @@ public final class CompilationOrchestrator {
     // =========================================================================
 
     private void typeCheckAll(List<String> order) {
-        // Build a module resolver that uses the pre-extracted exports
         ModuleResolverImpl resolver = new ModuleResolverImpl(modules, diagnostics);
 
         for (String sourcePath : order) {
             ModuleInfo info = modules.get(sourcePath);
-            if (info.isDeclarationFile) {
-                // Declaration files are not type-checked (no bodies)
-                continue;
-            }
+            if (info.isDeclarationFile) continue;
 
             log("  Checking: " + sourcePath);
 
-            // Pass 1: Name resolution
             NameResolver nr = new NameResolver(info.modulePath, resolver);
             info.nameResolver = nr;
             SymbolTable symTable = nr.resolve(info.rawAst);
@@ -407,7 +502,6 @@ public final class CompilationOrchestrator {
                 continue;
             }
 
-            // Pass 2: Type checking
             CheckResult result = TypeChecker.check(info.modulePath, symTable,
                 nr, info.rawAst);
             info.checkResult = result;
@@ -429,12 +523,9 @@ public final class CompilationOrchestrator {
     private void codegenAll() throws IOException {
         Files.createDirectories(outputRoot);
 
-        // Build import resolution map: for each ImportDeclaration, map
-        // the raw import path to the resolved require path.
         for (ModuleInfo info : modules.values()) {
-            if (info.isDeclarationFile) continue; // no codegen for .d.deal
+            if (info.isDeclarationFile) continue;
 
-            // Build require-path mapping for this module's imports
             Map<String, String> importResolutions = new HashMap<>();
             for (StatementNode stmt : info.rawAst.statements()) {
                 if (stmt instanceof ImportDeclaration imp) {
@@ -450,11 +541,9 @@ public final class CompilationOrchestrator {
                 }
             }
 
-            // Generate Lua source
             String luaSource = LuaBackend.generateWithImports(
                 info.rawAst, info.checkResult, info.sourcePath, importResolutions);
 
-            // Write to output
             Path outputPath = outputRoot.resolve(info.modulePath + ".lua");
             Files.createDirectories(outputPath.getParent());
             Files.writeString(outputPath, luaSource);
@@ -462,10 +551,7 @@ public final class CompilationOrchestrator {
             log("  Generated: " + outputPath);
         }
 
-        // Copy runtime library
         copyRuntimeLibrary();
-
-        // Copy stdlib Lua implementations if needed
         copyStdlibModules();
     }
 
@@ -475,7 +561,6 @@ public final class CompilationOrchestrator {
 
         Files.createDirectories(runtimeDest.getParent());
 
-        // Try classpath resource first
         InputStream runtimeStream = getClass().getClassLoader()
             .getResourceAsStream("deal/runtime.lua");
         if (runtimeStream != null) {
@@ -485,7 +570,6 @@ public final class CompilationOrchestrator {
             return;
         }
 
-        // Fallback: look relative to current directory
         Path runtimeSrc = Path.of("deal/runtime.lua");
         if (Files.exists(runtimeSrc)) {
             Files.copy(runtimeSrc, runtimeDest);
@@ -493,8 +577,7 @@ public final class CompilationOrchestrator {
             return;
         }
 
-        error("E6000", "Runtime library not found: deal/runtime.lua",
-            "", 1, 1);
+        error("E6000", "Runtime library not found: deal/runtime.lua", "", 1, 1);
     }
 
     private void copyStdlibModules() throws IOException {
@@ -502,7 +585,6 @@ public final class CompilationOrchestrator {
             Path destFile = outputRoot.resolve(stdlibModule + ".lua");
             if (Files.exists(destFile)) continue;
 
-            // Try stdlib directory first
             if (stdlibDir != null) {
                 Path srcFile = stdlibDir.resolve(stdlibModule + ".lua");
                 if (Files.exists(srcFile)) {
@@ -511,15 +593,10 @@ public final class CompilationOrchestrator {
                     log("  Copied stdlib: " + stdlibModule);
                     continue;
                 }
-                // Try .d.deal
                 srcFile = stdlibDir.resolve(stdlibModule + ".d.deal");
-                if (Files.exists(srcFile)) {
-                    // .d.deal — only declaration, no runtime
-                    continue;
-                }
+                if (Files.exists(srcFile)) continue;
             }
 
-            // Try classpath resource
             String resourcePath = "std/" + stdlibModule.substring(4) + ".lua";
             InputStream stream = getClass().getClassLoader()
                 .getResourceAsStream(resourcePath);
@@ -536,32 +613,21 @@ public final class CompilationOrchestrator {
     // Import resolution
     // =========================================================================
 
-    /**
-     * Resolve an import path to a source file path.
-     *
-     * @param importPath the import path from source (e.g. "./lib" or "std/console")
-     * @param fromFile   the file containing the import
-     * @return resolved absolute file path, or null if not found
-     */
     public String resolveImportPath(String importPath, Path fromFile) {
         List<String> candidates = new ArrayList<>();
 
         if (importPath.startsWith("./") || importPath.startsWith("../")) {
-            // Relative import
             Path resolved = fromFile.getParent().resolve(importPath).normalize();
             addCandidates(candidates, resolved.toString());
         } else {
-            // Bare import — search module roots
             for (Path root : moduleRoots) {
                 Path resolved = root.resolve(importPath).normalize();
                 addCandidates(candidates, resolved.toString());
             }
-            // Also search stdlib dir
             if (stdlibDir != null) {
                 Path resolved = stdlibDir.resolve(importPath).normalize();
                 addCandidates(candidates, resolved.toString());
             }
-            // Also search current directory
             Path resolved = Path.of("").toAbsolutePath().resolve(importPath).normalize();
             addCandidates(candidates, resolved.toString());
         }
@@ -572,7 +638,6 @@ public final class CompilationOrchestrator {
             }
         }
 
-        // Not found — record diagnostic with attempted paths
         StringBuilder msg = new StringBuilder("Module not found: '" + importPath
             + "'. Attempted: ");
         for (int i = 0; i < candidates.size(); i++) {
@@ -594,12 +659,7 @@ public final class CompilationOrchestrator {
     // Path computation
     // =========================================================================
 
-    /**
-     * Compute the module path for require() calls.
-     * Converts a file path like /abs/path/src/main.deal to "main".
-     */
     private String computeModulePath(Path sourceFile) {
-        // Find the best-matching module root for this file
         Path absFile = sourceFile.toAbsolutePath().normalize();
         Path bestRoot = null;
         int bestLength = -1;
@@ -618,17 +678,14 @@ public final class CompilationOrchestrator {
         if (bestRoot != null) {
             Path relative = bestRoot.relativize(absFile);
             String path = relative.toString();
-            // Remove .deal or .d.deal extension
             if (path.endsWith(".d.deal")) {
                 path = path.substring(0, path.length() - ".d.deal".length());
             } else if (path.endsWith(".deal")) {
                 path = path.substring(0, path.length() - ".deal".length());
             }
-            // Normalize separators to dots for Lua require()
             return path.replace('/', '.').replace('\\', '.');
         }
 
-        // Fallback: use filename without extension
         String name = sourceFile.getFileName().toString();
         if (name.endsWith(".d.deal")) {
             return name.substring(0, name.length() - ".d.deal".length());
@@ -648,15 +705,13 @@ public final class CompilationOrchestrator {
 
     private void error(String code, String message, String file, int line, int col) {
         diagnostics.add(Diagnostic.error(code, message, file, line, col));
-        if ("error".equals("error")) hasErrors = true;
+        hasErrors = true;
     }
 
     private void printDiagnostics() {
         for (Diagnostic d : diagnostics) {
-            if ("error".equals(d.severity())) {
-                System.err.println(d.file() + ":" + d.line() + ":" + d.column()
-                    + ": error " + d.code() + ": " + d.message());
-            }
+            System.err.println(d.file() + ":" + d.line() + ":" + d.column()
+                + ": " + d.severity() + " " + d.code() + ": " + d.message());
         }
         long errorCount = diagnostics.stream()
             .filter(d -> "error".equals(d.severity())).count();
@@ -666,13 +721,9 @@ public final class CompilationOrchestrator {
     }
 
     // =========================================================================
-    // ModuleResolverImpl for NameResolver
+    // ModuleResolverImpl
     // =========================================================================
 
-    /**
-     * Implementation of ModuleResolver that provides pre-computed export
-     * types to the NameResolver during type checking.
-     */
     final class ModuleResolverImpl implements ModuleResolver {
 
         private final Map<String, ModuleInfo> modules;
@@ -689,32 +740,19 @@ public final class CompilationOrchestrator {
                                                 String importingModule,
                                                 Set<String> modulesInProgress)
                 throws ModuleNotFoundException {
-            // Look up by resolving the import path
             Path importingFile = null;
             for (ModuleInfo info : modules.values()) {
-                if (info.modulePath.equals(importingModule) || info.sourcePath.equals(importingModule)) {
+                if (info.modulePath.equals(importingModule)
+                        || info.sourcePath.equals(importingModule)) {
                     importingFile = Path.of(info.sourcePath);
                     break;
                 }
             }
             if (importingFile == null) {
-                // Try matching by source path
                 importingFile = Path.of(importingModule);
             }
 
-            // Resolve the import path relative to the importing file
-            // We need the orchestrator's resolveImportPath, but we don't
-            // have it directly. Instead, iterate over all modules and
-            // find the one that matches.
-            // The module path stored in ImportDeclaration is the raw import path.
-            // We need to find which resolved module corresponds to it.
-
-            // Strategy: for each known module, check if its sourcePath
-            // is the resolution of this importPath from the importing file.
             for (ModuleInfo info : modules.values()) {
-                // Check if info.sourcePath could be the resolution
-                // This is a heuristic: check if the module path matches
-                // the import path structure
                 if (isMatch(modulePath, importingFile, info)) {
                     return info.exports != null ? info.exports : Map.of();
                 }
@@ -724,8 +762,6 @@ public final class CompilationOrchestrator {
         }
 
         private boolean isMatch(String importPath, Path fromFile, ModuleInfo info) {
-            // Check if the source path matches what we'd get from resolving
-            // the import path relative to fromFile
             if (fromFile == null) return false;
 
             Path fromDir = fromFile.getParent();
@@ -739,15 +775,6 @@ public final class CompilationOrchestrator {
                 if (sourcePath.equals(resolvedBase + ".d.deal")) return true;
                 if (sourcePath.equals(resolvedBase + "/index.d.deal")) return true;
             } else {
-                // Bare import — check various roots
-                Path absSource = Path.of(info.sourcePath).toAbsolutePath().normalize();
-                for (Path root : moduleRoots) {
-                    Path resolved = root.resolve(importPath).normalize();
-                    if (absSource.equals(resolved.resolveSibling(
-                            resolved.getFileName() + ".deal"))) return true;
-                    // Simpler: check if the module path (not source path) matches
-                }
-                // Check module path
                 if (info.modulePath.equals(importPath.replace('/', '.'))) return true;
             }
 

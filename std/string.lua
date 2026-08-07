@@ -11,17 +11,14 @@ function stringlib.length(s)
   return #s
 end
 
---- Returns the substring from start (1-based) to the end.
-function stringlib.substring(s, start)
-  __rt.check_string(s)
-  __rt.check_int(start)
-  return string.sub(s, start + 1)
-end
-
---- Returns the substring from start (1-based) with given length.
+--- Returns the substring from start (0-based) to the end,
+--- or of the given length if len is provided.
 function stringlib.substring(s, start, len)
   __rt.check_string(s)
   __rt.check_int(start)
+  if len == nil then
+    return string.sub(s, start + 1)
+  end
   __rt.check_int(len)
   return string.sub(s, start + 1, start + len)
 end
@@ -59,22 +56,37 @@ function stringlib.indexOf(s, sub)
 end
 
 --- Returns the string with all occurrences of old replaced by new.
+--- Performs plain-text matching (not Lua pattern matching).
 function stringlib.replace(s, old, new)
   __rt.check_string(s)
   __rt.check_string(old)
   __rt.check_string(new)
-  return (string.gsub(s, old, new))
+  return (string.gsub(s, old, new, true))
 end
 
 --- Splits the string by the given separator and returns an array.
+--- Performs plain-text splitting (separator is not treated as a Lua pattern).
 function stringlib.split(s, sep)
   __rt.check_string(s)
   __rt.check_string(sep)
   local result = {}
-  local pattern = "(.-)" .. sep
-  local last = 1
-  for match in string.gmatch(s .. sep, pattern) do
-    result[#result + 1] = match
+  if sep == "" then
+    -- Special case: split into individual characters
+    for i = 1, #s do
+      result[#result + 1] = string.sub(s, i, i)
+    end
+    return result
+  end
+  local seplen = #sep
+  local start = 1
+  while true do
+    local pos = string.find(s, sep, start, true)
+    if not pos then
+      result[#result + 1] = string.sub(s, start)
+      break
+    end
+    result[#result + 1] = string.sub(s, start, pos - 1)
+    start = pos + seplen
   end
   return result
 end

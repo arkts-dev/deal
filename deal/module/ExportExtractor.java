@@ -84,6 +84,16 @@ public final class ExportExtractor {
         StatementNode decl = exp.declaration();
         switch (decl) {
             case FunctionDeclaration fd -> {
+                // In .d.deal files, exported functions must not have bodies
+                if (isDeclarationFile && fd.body() != null
+                        && fd.body().statements() != null
+                        && !fd.body().statements().isEmpty()) {
+                    diagnostics.add(Diagnostic.error("E7001",
+                        "Exported function '" + fd.name()
+                            + "' in declaration file must not have a body",
+                        fd.span().file(), fd.span().startLine(),
+                        fd.span().startColumn()));
+                }
                 Type funcType = resolveFuncType(fd, classMap);
                 exports.put(fd.name(), funcType);
             }
