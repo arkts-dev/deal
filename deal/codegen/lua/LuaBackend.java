@@ -44,6 +44,11 @@ public final class LuaBackend implements Visitor<Void> {
     private String currentContinueLabel = null;
     private int labelCounter = 0;
 
+    // For try/catch return propagation: non-null when inside a try block.
+    // ReturnStatement sets this flag before returning so the try/catch
+    // wrapper can propagate the return value after pcall succeeds.
+    private String tryReturnFlag = null;
+
     /**
      * Entry point: generate Lua source for a complete program.
      */
@@ -209,6 +214,7 @@ public final class LuaBackend implements Visitor<Void> {
         };
     }
 
+    // F2 fix: emit check for Class and Func types using runtime's check_type
     private String emitCheckExpr(String valueExpr, Type type) {
         if (type == null) return valueExpr;
         return switch (type) {
@@ -223,8 +229,10 @@ public final class LuaBackend implements Visitor<Void> {
                 "__rt.check_array(\"" + typeDescriptor(type) + "\", " + valueExpr + ")";
             case Type.Nullable n ->
                 "__rt.check_nullable(\"" + typeDescriptor(n.inner()) + "\", " + valueExpr + ")";
-            case Type.Class cls -> valueExpr;
-            case Type.Func f -> valueExpr;
+            case Type.Class cls ->
+                "__rt.check_type(\"" + typeDescriptor(cls) + "\", " + valueExpr + ")";
+            case Type.Func f ->
+                "__rt.check_type(\"" + typeDescriptor(f) + "\", " + valueExpr + ")";
             default -> valueExpr;
         };
     }
@@ -430,16 +438,29 @@ public final class LuaBackend implements Visitor<Void> {
     public Void visit(ReturnStatement node) {
         if (node.expr().isPresent()) {
             String exprLua = emitExpression(node.expr().get());
+            String checkedExpr;
             // F2 fix: wrap return value with type check when return type is known
             if (currentReturnType != null
                 && !(currentReturnType instanceof Type.Error)
                 && !(currentReturnType instanceof Type.Void)
                 && !(currentReturnType instanceof Type.Null)) {
-                emitLine("return " + emitCheckExpr(exprLua, currentReturnType));
+                checkedExpr = emitCheckExpr(exprLua, currentReturnType);
             } else {
-                emitLine("return " + exprLua);
+                checkedExpr = exprLua;
             }
+
+            // F1 fix: when inside a try block, set the return flag before
+            // returning so the try/catch wrapper can propagate the value.
+            if (tryReturnFlag != null) {
+                emitLine(tryReturnFlag + " = true");
+                emitLine("__try_return_val = " + checkedExpr);
+            }
+            emitLine("return " + checkedExpr);
         } else {
+            // F1 fix: void return inside try block still sets the flag
+            if (tryReturnFlag != null) {
+                emitLine(tryReturnFlag + " = true");
+            }
             emitLine("return");
         }
         return null;
@@ -447,7 +468,8 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(IfStatement node) {
-        String condLua = emitExpression(node.condition());
+        // F3 fix: wrap condition with check_boolean for consistency
+        String condLua = "__rt.check_boolean(" + emitExpression(node.condition()) + ")";
         emitLine("if " + condLua + " then");
         indent++;
         visit(node.thenBlock());
@@ -503,7 +525,8 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(WhileStatement node) {
-        String condLua = emitExpression(node.condition());
+        // F3 fix: wrap condition with check_boolean for consistency with for-loop
+        String condLua = "__rt.check_boolean(" + emitExpression(node.condition()) + ")";
 
         // Set up continue label
         String savedLabel = currentContinueLabel;
@@ -561,9 +584,8 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("while " + condStr + " do");
         indent++;
         visit(node.body());
-        // F1 fix: emit continue landing pad before the update expression.
-        // Continue in a C-style for-loop jumps to the update step,
-        // then re-checks the loop condition.
+        // Continue landing pad: placed before the update so that continue
+        // in a C-style for-loop jumps to the update step, then re-checks condition.
         emitLine("::" + loopLabel + "::");
         if (node.update().isPresent()) {
             emitLine(emitExpression(node.update().get()));
@@ -631,11 +653,25 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(TryStatement node) {
+        // F1 fix: use flag variable pattern for proper return propagation.
+        // The try body is wrapped in pcall. Returns inside the try body
+        // set __try_returned flag and store the return value. After pcall,
+        // if no error and the flag is set, propagate the return value.
+        // If no error and flag is not set, execution continues normally.
+
+        String savedFlag = tryReturnFlag;
+        tryReturnFlag = "__try_returned";
+
+        emitLine("local __try_returned = false");
+        emitLine("local __try_return_val = nil");
         emitLine("local __ok, __err = pcall(function()");
         indent++;
         visit(node.tryBlock());
         indent--;
         emitLine("end)");
+
+        tryReturnFlag = savedFlag;
+
         emitLine("if not __ok then");
         indent++;
         emitLine("local " + node.catchVar());
@@ -651,12 +687,9 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("end");
         visit(node.catchBlock());
         indent--;
-        emitLine("else");
+        emitLine("elseif __try_returned then");
         indent++;
-        // Propagate the return value from the successful try body.
-        // pcall returns true + the function's return values on success,
-        // so __err holds the first return value of the try block.
-        emitLine("return __err");
+        emitLine("return __try_return_val");
         indent--;
         emitLine("end");
         return null;

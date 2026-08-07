@@ -139,6 +139,7 @@ public class LuaBackendIntegrationTest {
         testForLoopSimple();
         testForLoopClosureLimitation();
         testClassExport();
+        testCodeAfterTryCatch();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -635,5 +636,70 @@ public class LuaBackendIntegrationTest {
         check(exit == 0, "class export: luajit exit 0 (got: " + output + ")");
         check(output.contains("Bob"), "class export: returns Bob, got: " + output);
         check(output.contains("class_exported"), "class export: User is in exports table, got: " + output);
+    }
+
+    // =========================================================================
+    // Test: Code after try/catch executes (F1 round 2)
+    // =========================================================================
+
+    static void testCodeAfterTryCatch() throws Exception {
+        System.out.println("-- Code After Try/Catch (F1 round 2) --");
+        // F1 fix: code after try/catch should execute. Previously the unconditional
+        // "else return __err" made all code after try/catch dead at module level,
+        // causing require() to receive nil instead of the exports table.
+        String dealSrc =
+            "export function test_after_try(): string {\n" +
+            "  let result: string = \"initial\";\n" +
+            "  try {\n" +
+            "    result = \"tried\";\n" +
+            "  } catch (e) {\n" +
+            "    result = \"caught\";\n" +
+            "  }\n" +
+            "  return result;\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "code after try/catch: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r = mod.test_after_try.f()\n" +
+            "print(r)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "code after try/catch: luajit exit 0 (got: " + output + ")");
+        check(output.equals("tried"), "code after try/catch: result is 'tried', got: " + output);
     }
 }
