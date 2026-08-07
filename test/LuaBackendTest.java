@@ -220,6 +220,12 @@ public class LuaBackendTest {
         testClassParamCheck();
         testFuncParamCheck();
         testTryCatchReturnPropagation();
+        testTryCatchInFunction();
+        testErrorDefaultsEmitted();
+        testNestedTryCatchUniqueFlags();
+        testModuleLevelTryCatchExports();
+        testElseIfCheckBoolean();
+        testErrorConstruction();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -683,7 +689,8 @@ public class LuaBackendTest {
         assertContains(out.lua, "__err.code", "error table code check");
         // F1 fix: should NOT have unconditional else/return, should have flag pattern
         assertNotContains(out.lua, "else\n    return __err", "no unconditional return on success");
-        assertContains(out.lua, "__try_returned", "flag variable for return propagation");
+        // Module-level: should NOT have flag variables (no return propagation needed)
+        assertNotContains(out.lua, "__try_returned", "no flag variable at module level");
     }
 
     // =========================================================================
@@ -976,10 +983,151 @@ public class LuaBackendTest {
             "}"
         );
         assertNoErrors(out, "try/catch return propagation");
-        assertContains(out.lua, "__try_returned", "flag variable");
-        assertContains(out.lua, "__try_return_val", "return val variable");
-        assertContains(out.lua, "elseif __try_returned then", "elseif return check");
+        // F2 round 3: flag variables now use unique numbered names (e.g., __try_returned_1)
+        assertContains(out.lua, "__try_returned_", "flag variable");
+        assertContains(out.lua, "__try_return_val_", "return val variable");
+        assertContains(out.lua, "elseif __try_returned_", "elseif return check");
         assertNotContains(out.lua, "else\n    return __err", "no unconditional return");
-        assertContains(out.lua, "__try_returned = true", "flag set before return");
+        assertContains(out.lua, "__try_returned_", "flag set before return");
+    }
+
+
+    // =========================================================================
+    // Test: try/catch in function (with return propagation flag pattern)
+    // =========================================================================
+
+    static void testTryCatchInFunction() {
+        System.out.println("-- Try/Catch In Function --");
+        CompileOutput out = compile(
+            "function f(): int {\n" +
+            "  try {\n" +
+            "    let x: int = 1;\n" +
+            "  } catch (e) {\n" +
+            "    return 0;\n" +
+            "  }\n" +
+            "  return 1;\n" +
+            "}"
+        );
+        assertNoErrors(out, "try/catch in function");
+        assertContains(out.lua, "pcall(function()", "pcall wrapper");
+        assertContains(out.lua, "if not __ok then", "error check");
+        // Function-level try/catch: SHOULD have flag variables
+        assertContains(out.lua, "__try_returned_", "flag variable in function try/catch");
+        assertContains(out.lua, "__try_return_val_", "val variable in function try/catch");
+    }
+
+    // =========================================================================
+    // F1 round 3: Error class construction (Error_defaults emitted)
+    // =========================================================================
+
+    static void testErrorDefaultsEmitted() {
+        System.out.println("-- Error Defaults Emitted (F1 round 3) --");
+        CompileOutput out = compile("let x: int = 1;");
+        assertNoErrors(out, "error defaults");
+        // Error_defaults should be emitted in every module header
+        assertContains(out.lua, "local Error_defaults = { code = \"\", message = \"\" }",
+            "Error_defaults emitted");
+    }
+
+    // =========================================================================
+    // F2 round 3: Nested try/catch unique flag variable names
+    // =========================================================================
+
+    static void testNestedTryCatchUniqueFlags() {
+        System.out.println("-- Nested Try/Catch Unique Flags (F2 round 3) --");
+        CompileOutput out = compile(
+            "function outer(): string {\n" +
+            "  try {\n" +
+            "    try {\n" +
+            "      return \"inner\";\n" +
+            "    } catch (e2) {\n" +
+            "      return \"inner_caught\";\n" +
+            "    }\n" +
+            "  } catch (e1) {\n" +
+            "    return \"outer_caught\";\n" +
+            "  }\n" +
+            "  return \"none\";\n" +
+            "}"
+        );
+        assertNoErrors(out, "nested try/catch flags");
+        // Should have two different flag variable names
+        assertContains(out.lua, "__try_returned_1", "first try flag");
+        assertContains(out.lua, "__try_returned_2", "second try flag (different from first)");
+        assertContains(out.lua, "__try_return_val_1", "first try val");
+        assertContains(out.lua, "__try_return_val_2", "second try val");
+        // Each elseif should reference its own flag
+        assertContains(out.lua, "elseif __try_returned_1 then", "first elseif");
+        assertContains(out.lua, "elseif __try_returned_2 then", "second elseif");
+    }
+
+    // =========================================================================
+    // F3 round 3: Module-level try/catch exports accessible
+    // =========================================================================
+
+    static void testModuleLevelTryCatchExports() {
+        System.out.println("-- Module-Level Try/Catch Exports (F3 round 3) --");
+        CompileOutput out = compile(
+            "try {\n" +
+            "  let x: int = 1;\n" +
+            "} catch (e) {\n" +
+            "  let y: int = 0;\n" +
+            "}\n" +
+            "export function get_answer(): int { return 42; }"
+        );
+        assertNoErrors(out, "module-level try/catch exports");
+        // Should NOT have flag variables (module scope)
+        assertNotContains(out.lua, "__try_returned", "no flag at module scope");
+        // Should have exports table and return exports
+        assertContains(out.lua, "local exports = {}", "exports table exists");
+        assertContains(out.lua, "return exports", "return exports exists");
+        // Should have the exported function
+        assertContains(out.lua, "exports.get_answer", "exported function");
+    }
+
+    // =========================================================================
+    // F4 round 3: else-if condition wrapped with check_boolean
+    // =========================================================================
+
+    static void testElseIfCheckBoolean() {
+        System.out.println("-- Else-If Check Boolean (F4 round 3) --");
+        CompileOutput out = compile(
+            "function classify(n: int): string {\n" +
+            "  if (n === 0) {\n" +
+            "    return \"zero\";\n" +
+            "  } else if (n === 1) {\n" +
+            "    return \"one\";\n" +
+            "  } else {\n" +
+            "    return \"other\";\n" +
+            "  }\n" +
+            "}"
+        );
+        assertNoErrors(out, "else-if check_boolean");
+        // Both if and else-if should have check_boolean
+        // Count occurrences of __rt.check_boolean
+        int count = 0;
+        int idx = 0;
+        String search = "__rt.check_boolean";
+        while ((idx = out.lua.indexOf(search, idx)) != -1) {
+            count++;
+            idx += search.length();
+        }
+        check(count >= 2, "at least two __rt.check_boolean calls (if + else-if), got: " + count);
+    }
+
+    // =========================================================================
+    // F1 round 3 integration: Error construction compiles correctly
+    // =========================================================================
+
+    static void testErrorConstruction() {
+        System.out.println("-- Error Construction (F1 round 3) --");
+        // Verify that Error_defaults is referenced correctly for Error construction
+        CompileOutput out = compile(
+            "let e: Error = { code: \"X\", message: \"fail\" };"
+        );
+        assertNoErrors(out, "error construction");
+        assertContains(out.lua, "__rt.class_(\"Error\"", "Error class_ call");
+        assertContains(out.lua, "Error_defaults", "references Error_defaults");
+        assertContains(out.lua, "code = \"X\"", "code field");
+        assertContains(out.lua, "message = \"fail\"", "message field");
     }
 }

@@ -48,6 +48,12 @@ public final class LuaBackend implements Visitor<Void> {
     // ReturnStatement sets this flag before returning so the try/catch
     // wrapper can propagate the return value after pcall succeeds.
     private String tryReturnFlag = null;
+    private String tryReturnVal = null;
+
+    // F3 round 3: track function nesting depth. When 0, we're at module scope
+    // and should not emit bare "return" from try/catch return propagation
+    // (which would cause the module to return early, skipping exports).
+    private int functionDepth = 0;
 
     /**
      * Entry point: generate Lua source for a complete program.
@@ -59,6 +65,13 @@ public final class LuaBackend implements Visitor<Void> {
         backend.emitHeader();
         backend.emitLine("local __NULL = __rt.__NULL");
         backend.emitLine("local __MISSING = __rt.__MISSING");
+        // F1 round 3: emit Error_defaults for the built-in Error class.
+        // Error is registered as a ClassSymbol by NameResolver but has no
+        // ClassDeclaration AST node, so the normal visit(ClassDeclaration)
+        // never fires for it. Without this, class construction of Error
+        // values (e.g., let e: Error = { code: "X", message: "fail" })
+        // references an undefined Error_defaults variable at runtime.
+        backend.emitLine("local Error_defaults = { code = \"\", message = \"\" }");
         backend.emitLine("");
 
         backend.walkStatements(program.statements());
@@ -355,6 +368,7 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("local " + name + " = __rt.function_(\"" + sig
             + "\", function(" + paramList.toString() + ")");
 
+        functionDepth++;
         indent++;
         for (Parameter param : node.params()) {
             Type paramType = resolveTypeNode(param.type());
@@ -382,6 +396,7 @@ public final class LuaBackend implements Visitor<Void> {
         visit(node.body());
         currentReturnType = savedReturn;
         indent--;
+        functionDepth--;
 
         emitLine("end)");
         emitLine();
@@ -453,11 +468,11 @@ public final class LuaBackend implements Visitor<Void> {
             // returning so the try/catch wrapper can propagate the value.
             if (tryReturnFlag != null) {
                 emitLine(tryReturnFlag + " = true");
-                emitLine("__try_return_val = " + checkedExpr);
+                emitLine(tryReturnVal + " = " + checkedExpr);
             }
             emitLine("return " + checkedExpr);
         } else {
-            // F1 fix: void return inside try block still sets the flag
+            // void return inside try block: no value to store
             if (tryReturnFlag != null) {
                 emitLine(tryReturnFlag + " = true");
             }
@@ -479,7 +494,9 @@ public final class LuaBackend implements Visitor<Void> {
             switch (node.elseBranch().get()) {
                 case Either.Left<IfStatement, Block> left -> {
                     IfStatement elseIf = left.value();
-                    emitLine("elseif " + emitExpression(elseIf.condition()) + " then");
+                    // F4 round 3: wrap else-if condition with check_boolean
+                    emitLine("elseif __rt.check_boolean("
+                        + emitExpression(elseIf.condition()) + ") then");
                     indent++;
                     visit(elseIf.thenBlock());
                     indent--;
@@ -504,7 +521,9 @@ public final class LuaBackend implements Visitor<Void> {
             switch (node.elseBranch().get()) {
                 case Either.Left<IfStatement, Block> left -> {
                     IfStatement elseIf = left.value();
-                    emitLine("elseif " + emitExpression(elseIf.condition()) + " then");
+                    // F4 round 3: wrap else-if condition with check_boolean
+                    emitLine("elseif __rt.check_boolean("
+                        + emitExpression(elseIf.condition()) + ") then");
                     indent++;
                     visit(elseIf.thenBlock());
                     indent--;
@@ -653,17 +672,32 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(TryStatement node) {
-        // F1 fix: use flag variable pattern for proper return propagation.
-        // The try body is wrapped in pcall. Returns inside the try body
-        // set __try_returned flag and store the return value. After pcall,
-        // if no error and the flag is set, propagate the return value.
-        // If no error and flag is not set, execution continues normally.
+        // F2 round 3: use unique flag variable names per try block to prevent
+        // shadowing in nested try/catch. Without unique names, an inner try's
+        // "local __try_returned = false" shadows the outer flag, causing the
+        // outer try to not detect returns from the inner try.
+        // F3 round 3: only use the flag pattern when inside a function.
+        // At module scope, a bare "return __try_return_val" would exit the
+        // module early (skipping exports). Module-level code cannot contain
+        // return statements (checked by the type checker), so the flag pattern
+        // is unnecessary and harmful at module scope.
 
         String savedFlag = tryReturnFlag;
-        tryReturnFlag = "__try_returned";
+        String savedVal = tryReturnVal;
+        String myFlag = null;
+        String myVal = null;
 
-        emitLine("local __try_returned = false");
-        emitLine("local __try_return_val = nil");
+        if (functionDepth > 0) {
+            int tryId = ++labelCounter;
+            myFlag = "__try_returned_" + tryId;
+            myVal = "__try_return_val_" + tryId;
+            tryReturnFlag = myFlag;
+            tryReturnVal = myVal;
+
+            emitLine("local " + myFlag + " = false");
+            emitLine("local " + myVal + " = nil");
+        }
+
         emitLine("local __ok, __err = pcall(function()");
         indent++;
         visit(node.tryBlock());
@@ -671,6 +705,7 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("end)");
 
         tryReturnFlag = savedFlag;
+        tryReturnVal = savedVal;
 
         emitLine("if not __ok then");
         indent++;
@@ -687,10 +722,13 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("end");
         visit(node.catchBlock());
         indent--;
-        emitLine("elseif __try_returned then");
-        indent++;
-        emitLine("return __try_return_val");
-        indent--;
+
+        if (functionDepth > 0) {
+            emitLine("elseif " + myFlag + " then");
+            indent++;
+            emitLine("return " + myVal);
+            indent--;
+        }
         emitLine("end");
         return null;
     }
@@ -974,6 +1012,7 @@ public final class LuaBackend implements Visitor<Void> {
 
         int savedIndent = indent;
         indent = 0;
+        functionDepth++;
 
         String bodyStr = captureOutput(() -> {
             indent = 1;
@@ -1000,6 +1039,7 @@ public final class LuaBackend implements Visitor<Void> {
             visit(fe.body());
         });
 
+        functionDepth--;
         currentReturnType = savedReturn;
         indent = savedIndent;
 
