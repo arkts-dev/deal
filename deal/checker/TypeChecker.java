@@ -214,7 +214,7 @@ public final class TypeChecker {
 
         if (funcType != null) {
             Type retType = funcType.returnType();
-            if (!(retType instanceof Type.Null)
+            if (!Types.isNullOrVoid(retType)
                     && !ReturnAnalysis.definitelyReturns(fd.body())) {
                 error("E5002",
                     "Function '" + fd.name() + "' must return a value on all paths",
@@ -249,7 +249,7 @@ public final class TypeChecker {
                     rs.expr().get().span());
             }
         } else {
-            if (currentReturnType != null && !(currentReturnType instanceof Type.Null)) {
+            if (currentReturnType != null && !Types.isNullOrVoid(currentReturnType)) {
                 error("E5003",
                     "Return type mismatch: expected " + typeName(currentReturnType)
                     + ", got null",
@@ -795,6 +795,18 @@ public final class TypeChecker {
             return Type.Int.INSTANCE;
         }
 
+        // Module symbol via identifier (must be checked before Table)
+        if (mae.object() instanceof IdentifierExpr id) {
+            Symbol sym = currentScope.resolve(id.name());
+            if (sym instanceof Symbol.ModuleSymbol ms) {
+                Type exportType = ms.exports().get(field);
+                if (exportType != null) return exportType;
+                error("E2004", "Export '" + field + "' not found in module '"
+                    + id.name() + "'", mae.span());
+                return Type.Error.INSTANCE;
+            }
+        }
+
         // Class field access (including built-in Error class)
         if (objType instanceof Type.Class cls) {
             Symbol sym = currentScope.resolve(cls.name());
@@ -817,25 +829,13 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
-        // Module symbol via identifier (must be checked before Table)
-        if (mae.object() instanceof IdentifierExpr id) {
-            Symbol sym = currentScope.resolve(id.name());
-            if (sym instanceof Symbol.ModuleSymbol ms) {
-                Type exportType = ms.exports().get(field);
-                if (exportType != null) return exportType;
-                error("E2004", "Export '" + field + "' not found in module '"
-                    + id.name() + "'", mae.span());
-                return Type.Error.INSTANCE;
-            }
-        }
-
         // F4: Table access — in write context (assignment target), allow without
         // contextual type. Otherwise require contextual target type.
         if (objType instanceof Type.Table) {
             if (assignmentTargetMode) {
                 return Type.Table.INSTANCE;
             }
-            if (expectedType != null && !(expectedType instanceof Type.Null)) {
+            if (expectedType != null && !Types.isNullOrVoid(expectedType)) {
                 return expectedType;
             }
             error("E3003",
@@ -993,38 +993,37 @@ public final class TypeChecker {
         Type returnType = nameResolver.resolveTypeNode(fe.returnType());
         Type.Func funcType = new Type.Func(paramTypes, restType, returnType);
 
-        // Enter scope for parameters
+        // F1: Check if Pass 1 recorded a scope for this function expression.
+        // If so, use it instead of creating a fresh scope — this ensures
+        // let-declarations from Pass 1 are visible.
         SymbolTable savedScope = currentScope;
-        currentScope = currentScope.enterScope();
+        SymbolTable feScope = scopeMap.get(fe.body());
+        if (feScope != null) {
+            currentScope = feScope;
+        } else {
+            currentScope = currentScope.enterScope();
 
-        // F6: Check for duplicate parameters before defining
-        Set<String> paramNames = new HashSet<>();
-        for (Parameter p : fe.params()) {
-            if (paramNames.contains(p.name())) {
-                error("E2002", "Duplicate parameter '" + p.name() + "'", p.span());
-                continue;
-            }
-            paramNames.add(p.name());
-            Type pt = nameResolver.resolveTypeNode(p.type());
-            if (currentScope.containsLocally(p.name())) {
-                error("E2002", "Duplicate parameter '" + p.name() + "'", p.span());
-            } else {
+            // F6: Check for duplicate parameters before defining
+            Set<String> paramNames = new HashSet<>();
+            for (Parameter p : fe.params()) {
+                if (paramNames.contains(p.name())) {
+                    error("E2002", "Duplicate parameter '" + p.name() + "'", p.span());
+                    continue;
+                }
+                paramNames.add(p.name());
+                Type pt = nameResolver.resolveTypeNode(p.type());
                 currentScope.define(p.name(), new Symbol.VariableSymbol(p.name(), pt, true));
             }
-        }
-        fe.restParam().ifPresent(rp -> {
-            if (paramNames.contains(rp.name())) {
-                error("E2002", "Duplicate parameter '" + rp.name() + "'", rp.span());
-                return;
-            }
-            paramNames.add(rp.name());
-            Type rt = nameResolver.resolveTypeNode(rp.type());
-            if (currentScope.containsLocally(rp.name())) {
-                error("E2002", "Duplicate parameter '" + rp.name() + "'", rp.span());
-            } else {
+            fe.restParam().ifPresent(rp -> {
+                if (paramNames.contains(rp.name())) {
+                    error("E2002", "Duplicate parameter '" + rp.name() + "'", rp.span());
+                    return;
+                }
+                paramNames.add(rp.name());
+                Type rt = nameResolver.resolveTypeNode(rp.type());
                 currentScope.define(rp.name(), new Symbol.VariableSymbol(rp.name(), rt, true));
-            }
-        });
+            });
+        }
 
         Type savedReturnType = currentReturnType;
         currentReturnType = returnType;
@@ -1033,7 +1032,7 @@ public final class TypeChecker {
         // so that the Block's scope is entered.
         walkStatement(fe.body());
 
-        if (!(returnType instanceof Type.Null)
+        if (!Types.isNullOrVoid(returnType)
                 && !ReturnAnalysis.definitelyReturns(fe.body())) {
             error("E5002",
                 "Function expression must return a value on all paths", fe.span());
@@ -1165,6 +1164,11 @@ public final class TypeChecker {
             if (Types.equals(ne.inner(), actual)) return true;
             if (actual instanceof Type.Null) return true;
         }
+        // Void and Null are interchangeable for assignment purposes
+        // (e.g., assigning null to void return is OK, void return type
+        //  matches when expression is null)
+        if (expected instanceof Type.Void && actual instanceof Type.Null) return true;
+        if (expected instanceof Type.Null && actual instanceof Type.Void) return true;
         if (expected instanceof Type.Func ef && actual instanceof Type.Func af) {
             return Types.isAssignable(af, ef);
         }
@@ -1287,17 +1291,23 @@ public final class TypeChecker {
         };
     }
 
+    /**
+     * Returns a human-readable name for a type for use in diagnostic messages.
+     * Distinguishes {@code void} from {@code null}, and returns {@code "<error>"}
+     * for the internal error sentinel.
+     */
     static String typeName(Type t) {
         if (t == null) return "null";
         return switch (t) {
             case Type.Null ignored -> "null";
+            case Type.Void ignored -> "void";
             case Type.Boolean ignored -> "boolean";
             case Type.Int ignored -> "int";
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
             case Type.Coroutine ignored -> "coroutine";
-            case Type.Error ignored -> "Error";
+            case Type.Error ignored -> "<error>";
             case Type.Array a -> typeName(a.element()) + "[]";
             case Type.Nullable n -> typeName(n.inner()) + " | null";
             case Type.Class c -> c.name();

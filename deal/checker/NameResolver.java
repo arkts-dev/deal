@@ -21,9 +21,9 @@ import java.util.*;
  * </ol>
  *
  * <p>Also produces a {@code scopeMap} mapping each scoped statement
- * (Block, FunctionDeclaration, ForStatement, TryStatement) to its
- * {@link SymbolTable} scope, used by the TypeChecker for scope-aware
- * name resolution.</p>
+ * (Block, FunctionDeclaration, ForStatement, TryStatement, and
+ * FunctionExpr) to its {@link SymbolTable} scope, used by the TypeChecker
+ * for scope-aware name resolution.</p>
  *
  * <p>Errors produced: E2001–E2007.</p>
  */
@@ -42,15 +42,15 @@ public final class NameResolver {
     /** Loop nesting depth — used to validate break/continue (F8). */
     private int loopDepth = 0;
 
-    /** Set of modules currently being resolved (for circular import detection, F12). */
+    /** Set of modules currently being resolved (for circular import detection, F12/F2). */
     private final Set<String> modulesInProgress;
 
     public NameResolver(String modulePath, ModuleResolver moduleResolver) {
         this(modulePath, moduleResolver, new HashSet<>());
     }
 
-    private NameResolver(String modulePath, ModuleResolver moduleResolver,
-                         Set<String> modulesInProgress) {
+    public NameResolver(String modulePath, ModuleResolver moduleResolver,
+                 Set<String> modulesInProgress) {
         this.modulePath = modulePath;
         this.moduleResolver = moduleResolver;
         this.root = new SymbolTable();
@@ -104,7 +104,10 @@ public final class NameResolver {
         root.define("number", new Symbol.IntrinsicSymbol("number",
             numFuncType, IntrinsicResolvers.NUMBER));
 
-        // has intrinsic: type is a special intrinsic — can't fully represent as Func
+        // F7: The `has` intrinsic is handled by HasExpr in the type checker,
+        // not via call-intrinsic path.  Store it with a boolean type for
+        // symbol-table correctness; the intrinsic resolver is dead code
+        // but kept for robustness.
         root.define("has", new Symbol.IntrinsicSymbol("has",
             Type.Boolean.INSTANCE, IntrinsicResolvers.HAS));
 
@@ -134,7 +137,8 @@ public final class NameResolver {
         String alias = imp.alias();
         String path = imp.modulePath();
 
-        // F12: Circular import detection
+        // F2: Circular import detection — check if the IMPORTED module
+        // is already being resolved (not the importing module).
         if (modulesInProgress.contains(path)) {
             error("E2005", "Circular import with runtime dependency: '" + path + "'",
                 imp.span());
@@ -142,13 +146,15 @@ public final class NameResolver {
         }
 
         try {
-            modulesInProgress.add(modulePath);
-            Map<String, Type> exports = moduleResolver.resolveModule(path, modulePath);
+            // F2: Track the IMPORTED module, not the importing module.
+            modulesInProgress.add(path);
+            Map<String, Type> exports = moduleResolver.resolveModule(
+                path, modulePath, modulesInProgress);
             root.define(alias, new Symbol.ModuleSymbol(alias, exports, imp.span()));
         } catch (ModuleResolver.ModuleNotFoundException e) {
             error("E2003", "Module not found: '" + path + "'", imp.span());
         } finally {
-            modulesInProgress.remove(modulePath);
+            modulesInProgress.remove(path);
         }
     }
 
@@ -183,9 +189,12 @@ public final class NameResolver {
                 if (fieldType == Type.Error.INSTANCE) return;
                 Type defaultType = inferDefaultType(defaultExpr);
                 if (defaultType != null && defaultType != Type.Error.INSTANCE) {
+                    // F3: Allow null default for nullable fields
                     if (!Types.equals(fieldType, defaultType)
                             && !(fieldType instanceof Type.Nullable ne
-                                 && Types.equals(ne.inner(), defaultType))) {
+                                 && Types.equals(ne.inner(), defaultType))
+                            && !(fieldType instanceof Type.Nullable
+                                 && defaultType instanceof Type.Null)) {
                         error("E3001",
                             "Default value type mismatch for field '" + cf.name()
                             + "': expected " + TypeChecker.typeName(fieldType)
@@ -198,7 +207,9 @@ public final class NameResolver {
     }
 
     /**
-     * Infer the type of a default value expression (must be a literal).
+     * Infer the type of a default value expression.
+     * F8: Now handles non-literal defaults by delegating to a simple
+     * expression-to-type resolution where possible.
      */
     private Type inferDefaultType(ExpressionNode expr) {
         return switch (expr) {
@@ -212,6 +223,14 @@ public final class NameResolver {
             case UnaryExpr un -> {
                 if (un.op() == UnaryOp.NEG && un.expr() instanceof LiteralExpr lit) {
                     yield inferDefaultType(lit);
+                }
+                yield null;
+            }
+            case IdentifierExpr id -> {
+                // Resolve a simple identifier to its declared type
+                Symbol sym = currentScope.resolve(id.name());
+                if (sym instanceof Symbol.VariableSymbol vs && vs.type() != null) {
+                    yield vs.type();
                 }
                 yield null;
             }
@@ -321,7 +340,60 @@ public final class NameResolver {
             case ExportDeclaration ed    -> walkStatement(ed.declaration());
             case BreakStatement bs       -> walkBreak(bs);
             case ContinueStatement cs    -> walkContinue(cs);
+            // F1: Walk expressions in these contexts to find FunctionExpr nodes
+            case ReturnStatement rs      -> rs.expr().ifPresent(this::walkExpression);
+            case ExpressionStatement es  -> walkExpression(es.expr());
+            case DeleteStatement ds      -> walkExpression(ds.target());
+            case ThrowStatement ts2      -> walkExpression(ts2.expr());
             default                      -> { /* no declarations */ }
+        }
+    }
+
+    // =======================================================================
+    // F1: Expression walking — finds FunctionExpr nodes for Pass 1
+    // =======================================================================
+
+    /**
+     * Recursively walk an expression tree to find and process any
+     * {@link FunctionExpr} nodes.  This ensures that let-declarations
+     * inside function expression bodies are resolved during Pass 1
+     * and visible during Pass 2.
+     */
+    private void walkExpression(ExpressionNode expr) {
+        switch (expr) {
+            case FunctionExpr fe -> walkFunctionExpr(fe);
+            case BinaryExpr bin -> {
+                walkExpression(bin.left());
+                walkExpression(bin.right());
+            }
+            case UnaryExpr un -> walkExpression(un.expr());
+            case CallExpr call -> {
+                walkExpression(call.callee());
+                for (ExpressionNode arg : call.args()) {
+                    walkExpression(arg);
+                }
+            }
+            case MemberAccessExpr mae -> walkExpression(mae.object());
+            case IndexExpr idx -> {
+                walkExpression(idx.array());
+                walkExpression(idx.index());
+            }
+            case ArrayLiteralExpr arr -> {
+                for (ExpressionNode elem : arr.elements()) {
+                    walkExpression(elem);
+                }
+            }
+            case ObjectLiteralExpr obj -> {
+                for (Property prop : obj.properties()) {
+                    walkExpression(prop.value());
+                }
+            }
+            case HasExpr has -> walkExpression(has.object());
+            case AssignmentExpr assign -> {
+                walkExpression(assign.target());
+                walkExpression(assign.value());
+            }
+            default -> { /* leaf expression — no nested FunctionExpr possible */ }
         }
     }
 
@@ -335,10 +407,8 @@ public final class NameResolver {
         }
         currentScope.define(name, new Symbol.VariableSymbol(name, type, false));
 
-        // F12: If the initializer is a FunctionExpr, enter its scope for Pass 1
-        if (vd.initializer() instanceof FunctionExpr fe) {
-            walkFunctionExpr(fe);
-        }
+        // F1: Walk the initializer expression to find any FunctionExpr nodes
+        walkExpression(vd.initializer());
     }
 
     /**
@@ -357,11 +427,15 @@ public final class NameResolver {
 
     /**
      * Walk a function expression body for Pass 1 name resolution.
-     * Defines parameters in a new scope and recurses into the body.
+     * Defines parameters in a new scope, records the scope in scopeMap,
+     * and recurses into the body.
      */
     private void walkFunctionExpr(FunctionExpr fe) {
         SymbolTable saved = currentScope;
         currentScope = currentScope.enterScope();
+
+        // F1: Record the scope so Pass 2 can reuse it
+        scopeMap.put(fe.body(), currentScope);
 
         Set<String> paramNames = new HashSet<>();
         for (Parameter p : fe.params()) {
@@ -386,7 +460,8 @@ public final class NameResolver {
             currentScope.define(name, new Symbol.VariableSymbol(name, restType, true));
         });
 
-        walkStatements(fe.body().statements());
+        // F1: Use walkStatement(fe.body()) so the Block's scope is also recorded
+        walkStatement(fe.body());
         currentScope = saved;
     }
 
@@ -446,6 +521,8 @@ public final class NameResolver {
     }
 
     private void walkIf(IfStatement is) {
+        // F1: Walk condition expression to find FunctionExpr nodes
+        walkExpression(is.condition());
         walkBlock(is.thenBlock());
         is.elseBranch().ifPresent(eb -> {
             switch (eb) {
@@ -456,6 +533,8 @@ public final class NameResolver {
     }
 
     private void walkWhile(WhileStatement ws) {
+        // F1: Walk condition expression
+        walkExpression(ws.condition());
         loopDepth++;
         walkBlock(ws.body());
         loopDepth--;
@@ -472,8 +551,16 @@ public final class NameResolver {
                 String name = decl.name();
                 Type type = decl.typeAnnotation().map(this::resolveTypeNode).orElse(null);
                 currentScope.define(name, new Symbol.VariableSymbol(name, type, false));
+                // F1: Walk init expression
+                walkExpression(decl.initializer());
+            } else if (init instanceof ForInit.AssignExpr ae) {
+                walkExpression(ae.expr());
             }
         });
+
+        // F1: Walk condition and update expressions
+        fs.condition().ifPresent(this::walkExpression);
+        fs.update().ifPresent(this::walkExpression);
 
         loopDepth++;
         walkBlock(fs.body());
@@ -567,7 +654,7 @@ public final class NameResolver {
             case "string"    -> Type.String.INSTANCE;
             case "table"     -> Type.Table.INSTANCE;
             case "coroutine" -> Type.Coroutine.INSTANCE;
-            case "void"      -> Type.Null.INSTANCE;
+            case "void"      -> Type.Void.INSTANCE;
             case "Error"     -> Types.classType("Error", "");
             default -> {
                 Symbol sym = currentScope.resolve(name);

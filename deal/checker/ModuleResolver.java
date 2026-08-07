@@ -1,6 +1,7 @@
 package deal.checker;
 
 import java.util.Map;
+import java.util.Set;
 import deal.types.Type;
 
 /**
@@ -17,10 +18,14 @@ public interface ModuleResolver {
      *
      * @param modulePath the import path (e.g. {@code "./lib"} or {@code "std/console"})
      * @param importingModule the module path of the file doing the import
+     * @param modulesInProgress set of module paths currently being resolved
+     *        (for circular import detection); the resolver should pass this
+     *        set when creating nested NameResolver instances
      * @return a map from export name to resolved type
      * @throws ModuleNotFoundException if the module cannot be found
      */
-    Map<String, Type> resolveModule(String modulePath, String importingModule)
+    Map<String, Type> resolveModule(String modulePath, String importingModule,
+                                     Set<String> modulesInProgress)
         throws ModuleNotFoundException;
 
     /** Exception thrown when a module cannot be found. */

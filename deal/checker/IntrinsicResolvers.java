@@ -9,6 +9,11 @@ import java.util.List;
 
 /**
  * Built-in intrinsic resolvers for {@code int()}, {@code number()}, and {@code has()}.
+ *
+ * <p>Note: {@code has(obj.field)} is parsed as a {@link HasExpr} by the parser
+ * and checked directly by {@link TypeChecker#checkHas(HasExpr)}.  The
+ * {@link #HAS} resolver here is kept for robustness but is not normally
+ * invoked through the call-intrinsic path.
  */
 final class IntrinsicResolvers {
 
@@ -67,9 +72,8 @@ final class IntrinsicResolvers {
     /**
      * {@code has(obj.field)} — field presence test.
      *
-     * <p>{@code obj} must be a class-typed expression; {@code field}
-     * must be a declared optional field of that class.
-     * Result type is {@code boolean}.
+     * <p>This resolver is a fallback path; normally {@code has()} is
+     * parsed as a {@link HasExpr} and handled by the type checker directly.
      */
     static final IntrinsicResolver HAS = (call, argTypes, ctx) -> {
         if (call.args().size() != 1) {
@@ -147,13 +151,14 @@ final class IntrinsicResolvers {
         if (t == null) return "null";
         return switch (t) {
             case Type.Null ignored -> "null";
+            case Type.Void ignored -> "void";
             case Type.Boolean ignored -> "boolean";
             case Type.Int ignored -> "int";
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
             case Type.Coroutine ignored -> "coroutine";
-            case Type.Error ignored -> "Error";
+            case Type.Error ignored -> "<error>";
             case Type.Array a -> typeName(a.element()) + "[]";
             case Type.Nullable n -> typeName(n.inner()) + " | null";
             case Type.Class c -> c.name();

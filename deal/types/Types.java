@@ -34,6 +34,9 @@ public final class Types {
             if (n.inner() instanceof Type.Null) {
                 throw new IllegalArgumentException("Nullable inner must not be null");
             }
+            if (n.inner() instanceof Type.Void) {
+                throw new IllegalArgumentException("Nullable inner must not be void");
+            }
             return new Type.Nullable(canonicalize(n.inner()));
         }
         if (type instanceof Type.Array a) {
@@ -74,6 +77,7 @@ public final class Types {
 
         return switch (a) {
             case Type.Null ignored -> true;
+            case Type.Void ignored -> true;
             case Type.Boolean ignored -> true;
             case Type.Int ignored -> true;
             case Type.Number ignored -> true;
@@ -206,5 +210,17 @@ public final class Types {
     public static Type.Func func(List<Type> paramTypes, Type.Array restType, Type returnType) {
         return (Type.Func) canonicalize(
             new Type.Func(List.copyOf(paramTypes), Optional.of(restType), returnType));
+    }
+
+    // =========================================================================
+    // Null-or-Void helpers
+    // =========================================================================
+
+    /**
+     * Returns true when {@code t} is a null-like type ({@code Null}
+     * or {@code Void}).
+     */
+    public static boolean isNullOrVoid(Type t) {
+        return t instanceof Type.Null || t instanceof Type.Void;
     }
 }

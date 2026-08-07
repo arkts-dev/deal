@@ -5,6 +5,7 @@ import deal.types.Type;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Stub module resolver for unit-testing the checker without a real module system.
@@ -21,7 +22,8 @@ final class StubModuleResolver implements ModuleResolver {
     }
 
     @Override
-    public Map<String, Type> resolveModule(String modulePath, String importingModule)
+    public Map<String, Type> resolveModule(String modulePath, String importingModule,
+                                            Set<String> modulesInProgress)
             throws ModuleNotFoundException {
         Map<String, Type> exports = modules.get(modulePath);
         if (exports == null) {
