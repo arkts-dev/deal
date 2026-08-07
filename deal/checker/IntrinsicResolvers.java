@@ -1,0 +1,170 @@
+package deal.checker;
+
+import deal.ast.*;
+import deal.lexer.Diagnostic;
+import deal.types.Type;
+import deal.types.Types;
+
+import java.util.List;
+
+/**
+ * Built-in intrinsic resolvers for {@code int()}, {@code number()}, and {@code has()}.
+ */
+final class IntrinsicResolvers {
+
+    private IntrinsicResolvers() {}
+
+    /**
+     * {@code int(v)} — conversion to int.
+     *
+     * <p>Overloads:
+     * <ul>
+     *   <li>{@code (number) => int}</li>
+     *   <li>{@code (int | null) => int}</li>
+     * </ul>
+     */
+    static final IntrinsicResolver INT = (call, argTypes, ctx) -> {
+        if (argTypes.size() != 1) {
+            ctx.error("E5001", "int() expects exactly 1 argument, got " + argTypes.size(),
+                call.span());
+            return Type.Error.INSTANCE;
+        }
+        Type arg = argTypes.get(0);
+        if (isNumber(arg) || isNullableInt(arg)) {
+            return Type.Int.INSTANCE;
+        }
+        ctx.error("E5001",
+            "int() argument must be number or int|null, got " + typeName(arg),
+            call.span());
+        return Type.Error.INSTANCE;
+    };
+
+    /**
+     * {@code number(v)} — conversion to number.
+     *
+     * <p>Overloads:
+     * <ul>
+     *   <li>{@code (int) => number}</li>
+     *   <li>{@code (number | null) => number}</li>
+     * </ul>
+     */
+    static final IntrinsicResolver NUMBER = (call, argTypes, ctx) -> {
+        if (argTypes.size() != 1) {
+            ctx.error("E5001", "number() expects exactly 1 argument, got " + argTypes.size(),
+                call.span());
+            return Type.Error.INSTANCE;
+        }
+        Type arg = argTypes.get(0);
+        if (isInt(arg) || isNullableNumber(arg)) {
+            return Type.Number.INSTANCE;
+        }
+        ctx.error("E5001",
+            "number() argument must be int or number|null, got " + typeName(arg),
+            call.span());
+        return Type.Error.INSTANCE;
+    };
+
+    /**
+     * {@code has(obj.field)} — field presence test.
+     *
+     * <p>{@code obj} must be a class-typed expression; {@code field}
+     * must be a declared optional field of that class.
+     * Result type is {@code boolean}.
+     */
+    static final IntrinsicResolver HAS = (call, argTypes, ctx) -> {
+        if (call.args().size() != 1) {
+            ctx.error("E5001", "has() expects exactly 1 argument, got " + call.args().size(),
+                call.span());
+            return Type.Error.INSTANCE;
+        }
+        ExpressionNode arg = call.args().get(0);
+
+        // The argument must be a member access expression
+        if (!(arg instanceof MemberAccessExpr mae)) {
+            ctx.error("E4005",
+                "'has' argument must be a class field access (obj.field)",
+                arg.span());
+            return Type.Error.INSTANCE;
+        }
+
+        // Check that the object is a class type
+        Type objType = argTypes.get(0);
+        if (objType instanceof Type.Error) return Type.Error.INSTANCE;
+
+        // Actually we need the object's type BEFORE the member access
+        // argTypes contains the type of the member access itself, not the object
+        // So we need to get the type of the object from the type map
+        Type objActualType = ctx.typeOf(mae.object());
+        if (objActualType instanceof Type.Error) return Type.Error.INSTANCE;
+
+        if (!(objActualType instanceof Type.Class cls)) {
+            ctx.error("E4005",
+                "'has' argument must be a class field access, got " + typeName(objActualType),
+                arg.span());
+            return Type.Error.INSTANCE;
+        }
+
+        // Look up the field in the class
+        Symbol sym = ctx.resolveSymbol(cls.name());
+        if (!(sym instanceof Symbol.ClassSymbol cs)) {
+            ctx.error("E4005", "Class '" + cls.name() + "' not found", arg.span());
+            return Type.Error.INSTANCE;
+        }
+
+        String fieldName = mae.field();
+        ClassField field = findField(cs.fields(), fieldName);
+        if (field == null) {
+            ctx.error("E4005",
+                "Field '" + fieldName + "' not declared in class '" + cls.name() + "'",
+                arg.span());
+            return Type.Error.INSTANCE;
+        }
+        if (!field.optional()) {
+            ctx.error("E4005",
+                "'has' argument must be an optional class field; '" + fieldName
+                + "' is required",
+                arg.span());
+            return Type.Error.INSTANCE;
+        }
+
+        return Type.Boolean.INSTANCE;
+    };
+
+    // -- helpers --
+
+    private static boolean isInt(Type t) { return t == Type.Int.INSTANCE; }
+    private static boolean isNumber(Type t) { return t == Type.Number.INSTANCE; }
+
+    private static boolean isNullableInt(Type t) {
+        return t instanceof Type.Nullable n && n.inner() == Type.Int.INSTANCE;
+    }
+
+    private static boolean isNullableNumber(Type t) {
+        return t instanceof Type.Nullable n && n.inner() == Type.Number.INSTANCE;
+    }
+
+    private static String typeName(Type t) {
+        if (t == null) return "null";
+        return switch (t) {
+            case Type.Null ignored -> "null";
+            case Type.Boolean ignored -> "boolean";
+            case Type.Int ignored -> "int";
+            case Type.Number ignored -> "number";
+            case Type.String ignored -> "string";
+            case Type.Table ignored -> "table";
+            case Type.Coroutine ignored -> "coroutine";
+            case Type.Error ignored -> "Error";
+            case Type.Array a -> typeName(a.element()) + "[]";
+            case Type.Nullable n -> typeName(n.inner()) + " | null";
+            case Type.Class c -> c.name();
+            case Type.Func f -> "function";
+        };
+    }
+
+    static ClassField findField(List<ClassField> fields, String name) {
+        for (ClassField f : fields) {
+            if (f.name().equals(name)) return f;
+        }
+        return null;
+    }
+}

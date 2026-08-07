@@ -1,0 +1,822 @@
+package deal.test;
+
+import deal.ast.*;
+import deal.checker.*;
+import deal.lexer.*;
+import deal.parser.*;
+import deal.types.Type;
+import deal.types.Types;
+
+import java.util.*;
+
+/**
+ * Comprehensive unit tests for the DEAL type checker (ISSUE-0006).
+ * Covers name resolution, type checking, null narrowing, definite return analysis,
+ * class construction, and error diagnostics.
+ */
+public class CheckerTest {
+
+    private static int passed = 0;
+    private static int failed = 0;
+
+    private static void check(boolean condition, String message) {
+        if (condition) { passed++; }
+        else { failed++; System.err.println("FAIL: " + message); }
+    }
+
+    private static void fail(String message) {
+        failed++;
+        System.err.println("FAIL: " + message);
+    }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    private record CheckerOutput(CheckResult result, ProgramNode program) {}
+
+    private static CheckerOutput checkProgram(String source) {
+        return checkProgram(source, "test.deal");
+    }
+
+    private static CheckerOutput checkProgram(String source, String filename) {
+        LexResult lex = new Lexer(source, filename).tokenize();
+        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+
+        if (parse.hasErrors()) {
+            StubModuleResolver resolver = new StubModuleResolver();
+            NameResolver nr = new NameResolver(filename, resolver);
+            nr.resolve(parse.program());
+            List<Diagnostic> diags = new ArrayList<>(parse.diagnostics());
+            diags.addAll(nr.diagnostics());
+            return new CheckerOutput(
+                new CheckResult(Map.of(), new SymbolTable(), diags),
+                parse.program()
+            );
+        }
+
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver(filename, resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+
+        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
+        if (!hasErrors(diags)) {
+            CheckResult result = TypeChecker.check(filename, symTable, nr, parse.program());
+            diags.addAll(result.diagnostics());
+            return new CheckerOutput(
+                new CheckResult(result.typeMap(), symTable, diags),
+                parse.program()
+            );
+        }
+        return new CheckerOutput(
+            new CheckResult(Map.of(), symTable, diags),
+            parse.program()
+        );
+    }
+
+    private static boolean hasErrors(List<Diagnostic> diags) {
+        return diags.stream().anyMatch(d -> "error".equals(d.severity()));
+    }
+
+    private static void assertNoErrors(CheckerOutput out, String context) {
+        List<Diagnostic> diags = out.result.diagnostics();
+        if (!diags.isEmpty()) {
+            for (Diagnostic d : diags) {
+                System.err.println("  Diagnostic: " + d);
+            }
+        }
+        check(!hasErrors(diags),
+            context + ": expected no errors, got " + diags.size());
+    }
+
+    private static void assertError(CheckerOutput out, String code, String context) {
+        List<Diagnostic> diags = out.result.diagnostics();
+        boolean found = diags.stream().anyMatch(d -> d.code().equals(code));
+        if (!found) {
+            System.err.println("  Expected " + code + " but got: " + diags);
+        }
+        check(found, context + ": expected diagnostic " + code);
+    }
+
+    // =========================================================================
+    // Main
+    // =========================================================================
+
+    public static void main(String[] args) {
+        System.out.println("=== Running Type Checker Tests ===");
+
+        // -- Name Resolution --
+        testNameResolution_simple();
+        testNameResolution_undeclared();
+        testNameResolution_redeclare();
+        testNameResolution_shadow();
+        testNameResolution_parameterShadow();
+        testNameResolution_import();
+        testNameResolution_hoisting();
+
+        // -- Type Checking: Literals and Identifiers --
+        testLiteralTypes();
+        testIdentifierType();
+
+        // -- Type Checking: Operators --
+        testArithmeticOperators();
+        testComparisonOperators();
+        testEqualityOperators();
+        testLogicalOperators();
+        testUnaryOperators();
+        testOperatorTypeErrors();
+
+        // -- Type Checking: Assignments --
+        testAssignment_exact();
+        testAssignment_nullableWrapping();
+        testAssignment_nullableError();
+        testAssignment_invariance();
+
+        // -- Type Checking: Arrays --
+        testArrayLiteral();
+        testMixedArray();
+        testEmptyArray();
+        testArrayRead();
+        testArrayLength();
+
+        // -- Type Checking: Object/Table --
+        testTableLiteral();
+        testTableReadWithContext();
+        testTableReadWithoutContext();
+
+        // -- Type Checking: Functions --
+        testFunctionCall();
+        testFunctionArgCountMismatch();
+        testFunctionArgTypeMismatch();
+        testFunctionReturnType();
+        testArityExtension();
+        testReverseArityError();
+        testFunctionExpr();
+
+        // -- Type Checking: Classes --
+        testClassConstruction();
+        testClassExtraFields();
+        testClassMissingRequiredField();
+        testClassNominalTyping();
+        testClassFieldAccess();
+        testClassOptionalField();
+
+        // -- Type Checking: has / delete --
+        testHasRequiredField();
+        testHasOptionalField();
+        testDeleteRequiredField();
+        testDeleteOptionalField();
+
+        // -- Null Narrowing --
+        testNullNarrowing_neNull();
+        testNullNarrowing_eqNull();
+        testNullNarrowing_assignmentClears();
+        testNullNarrowing_negated();
+        testNullNarrowing_nestedIf();
+
+        // -- Definite Return --
+        testDefiniteReturn_bothBranches();
+        testDefiniteReturn_missingReturn();
+        testDefiniteReturn_throwCounts();
+
+        // -- Type Inference --
+        testInference_literals();
+        testInference_emptyArrayError();
+        testInference_tableReadError();
+
+        // -- Unknown Types --
+        testUnknownType();
+
+        System.out.println();
+        System.out.println("Passed: " + passed + ", Failed: " + failed);
+        if (failed > 0) {
+            System.exit(1);
+        }
+    }
+
+    // =========================================================================
+    // Name Resolution Tests
+    // =========================================================================
+
+    static void testNameResolution_simple() {
+        System.out.println("-- Name Resolution: simple --");
+        CheckerOutput out = checkProgram("let x: int = 42; let y: int = x;");
+        assertNoErrors(out, "simple resolution");
+    }
+
+    static void testNameResolution_undeclared() {
+        System.out.println("-- Name Resolution: undeclared --");
+        CheckerOutput out = checkProgram("let y: int = z;");
+        assertError(out, "E2001", "undeclared identifier");
+    }
+
+    static void testNameResolution_redeclare() {
+        System.out.println("-- Name Resolution: redeclare --");
+        CheckerOutput out = checkProgram("let x: int = 1; let x: int = 2;");
+        assertError(out, "E2002", "redeclare in same scope");
+    }
+
+    static void testNameResolution_shadow() {
+        System.out.println("-- Name Resolution: shadow --");
+        CheckerOutput out = checkProgram(
+            "let x: int = 1;\n" +
+            "{\n" +
+            "  let x: boolean = true;\n" +
+            "  let y: boolean = x;\n" +
+            "}"
+        );
+        assertNoErrors(out, "shadow outer with inner");
+    }
+
+    static void testNameResolution_parameterShadow() {
+        System.out.println("-- Name Resolution: parameter shadow --");
+        CheckerOutput out = checkProgram(
+            "function f(x: int, x: int): int { return x; }"
+        );
+        assertError(out, "E2002", "parameter shadow parameter");
+    }
+
+    static void testNameResolution_import() {
+        System.out.println("-- Name Resolution: import --");
+        CheckerOutput out = checkProgram(
+            "import * as Lib from \"./nonexistent\";\n" +
+            "let x: int = 1;"
+        );
+        assertError(out, "E2003", "module not found");
+    }
+
+    static void testNameResolution_hoisting() {
+        System.out.println("-- Name Resolution: hoisting --");
+        CheckerOutput out = checkProgram(
+            "function foo(): int { return bar(); }\n" +
+            "function bar(): int { return 42; }"
+        );
+        assertNoErrors(out, "forward reference via hoisting");
+
+        out = checkProgram(
+            "function make(): Point { return { x: 1, y: 2 }; }\n" +
+            "class Point { x: int; y: int; }"
+        );
+        assertNoErrors(out, "forward class reference via hoisting");
+    }
+
+    // =========================================================================
+    // Literal and Identifier Type Tests
+    // =========================================================================
+
+    static void testLiteralTypes() {
+        System.out.println("-- Literal Types --");
+        CheckerOutput out = checkProgram("let a: null = null;");
+        assertNoErrors(out, "null literal");
+        out = checkProgram("let a: boolean = true;");
+        assertNoErrors(out, "true literal");
+        out = checkProgram("let a: boolean = false;");
+        assertNoErrors(out, "false literal");
+        out = checkProgram("let a: int = 42;");
+        assertNoErrors(out, "int literal");
+        out = checkProgram("let a: number = 3.14;");
+        assertNoErrors(out, "number literal");
+        out = checkProgram("let a: string = \"hello\";");
+        assertNoErrors(out, "string literal");
+    }
+
+    static void testIdentifierType() {
+        System.out.println("-- Identifier Type --");
+        CheckerOutput out = checkProgram(
+            "let x: int = 1;\n" +
+            "let y: int = x;"
+        );
+        assertNoErrors(out, "identifier type");
+    }
+
+    // =========================================================================
+    // Operator Tests
+    // =========================================================================
+
+    static void testArithmeticOperators() {
+        System.out.println("-- Arithmetic Operators --");
+        CheckerOutput out = checkProgram(
+            "let a: int = 1 + 2;\n" +
+            "let b: int = 1 - 2;\n" +
+            "let c: int = 1 * 2;\n" +
+            "let d: int = 1 / 2;\n" +
+            "let e: int = 1 % 2;\n" +
+            "let f: int = 2 ** 3;"
+        );
+        assertNoErrors(out, "int arithmetic");
+
+        out = checkProgram(
+            "let a: number = 1.0 + 2.0;\n" +
+            "let b: number = 1.0 - 2.0;\n" +
+            "let c: number = 1.0 * 2.0;"
+        );
+        assertNoErrors(out, "number arithmetic");
+
+        out = checkProgram("let a: string = \"a\" + \"b\";");
+        assertNoErrors(out, "string concat");
+    }
+
+    static void testComparisonOperators() {
+        System.out.println("-- Comparison Operators --");
+        CheckerOutput out = checkProgram(
+            "let a: boolean = 1 < 2;\n" +
+            "let b: boolean = 1 <= 2;\n" +
+            "let c: boolean = 1 > 2;\n" +
+            "let d: boolean = 1 >= 2;"
+        );
+        assertNoErrors(out, "int comparison");
+
+        out = checkProgram("let a: boolean = 1.0 < 2.0;");
+        assertNoErrors(out, "number comparison");
+
+        out = checkProgram("let a: boolean = \"a\" < \"b\";");
+        assertNoErrors(out, "string comparison");
+    }
+
+    static void testEqualityOperators() {
+        System.out.println("-- Equality Operators --");
+        CheckerOutput out = checkProgram(
+            "let a: boolean = 1 === 1;\n" +
+            "let b: boolean = 1 !== 2;"
+        );
+        assertNoErrors(out, "int equality");
+
+        out = checkProgram(
+            "let x: int | null = null;\n" +
+            "let a: boolean = x === null;\n" +
+            "let b: boolean = x !== null;"
+        );
+        assertNoErrors(out, "nullable vs null equality");
+    }
+
+    static void testLogicalOperators() {
+        System.out.println("-- Logical Operators --");
+        CheckerOutput out = checkProgram(
+            "let a: boolean = true && false;\n" +
+            "let b: boolean = true || false;"
+        );
+        assertNoErrors(out, "logical operators");
+    }
+
+    static void testUnaryOperators() {
+        System.out.println("-- Unary Operators --");
+        CheckerOutput out = checkProgram(
+            "let a: boolean = !true;\n" +
+            "let b: int = -5;"
+        );
+        assertNoErrors(out, "unary operators");
+    }
+
+    static void testOperatorTypeErrors() {
+        System.out.println("-- Operator Type Errors --");
+        CheckerOutput out = checkProgram("let a: string = \"a\" + 1;");
+        assertError(out, "E3010", "string + int error");
+
+        out = checkProgram("let a: boolean = 1 === true;");
+        assertError(out, "E3006", "int === bool error");
+    }
+
+    // =========================================================================
+    // Assignment Tests
+    // =========================================================================
+
+    static void testAssignment_exact() {
+        System.out.println("-- Assignment: exact match --");
+        CheckerOutput out = checkProgram(
+            "let x: int = 42;\n" +
+            "x = 100;"
+        );
+        assertNoErrors(out, "exact assignment");
+    }
+
+    static void testAssignment_nullableWrapping() {
+        System.out.println("-- Assignment: nullable wrapping --");
+        CheckerOutput out = checkProgram("let x: int | null = 1;");
+        assertNoErrors(out, "nullable wrapping OK");
+
+        out = checkProgram("let x: int | null = null;");
+        assertNoErrors(out, "null to nullable OK");
+    }
+
+    static void testAssignment_nullableError() {
+        System.out.println("-- Assignment: nullable error --");
+        CheckerOutput out = checkProgram(
+            "let n: int | null = null;\n" +
+            "let x: int = n;"
+        );
+        assertError(out, "E3001", "nullable to non-nullable error");
+    }
+
+    static void testAssignment_invariance() {
+        System.out.println("-- Assignment: invariance --");
+        CheckerOutput out = checkProgram(
+            "let x: int = 1;\n" +
+            "let y: number = x;"
+        );
+        assertError(out, "E3001", "int to number invariance error");
+
+        out = checkProgram(
+            "let x: number = 1.0;\n" +
+            "let y: int = x;"
+        );
+        assertError(out, "E3001", "number to int invariance error");
+    }
+
+    // =========================================================================
+    // Array Tests
+    // =========================================================================
+
+    static void testArrayLiteral() {
+        System.out.println("-- Array Literal --");
+        CheckerOutput out = checkProgram("let a: int[] = [1, 2, 3];");
+        assertNoErrors(out, "int array literal");
+    }
+
+    static void testMixedArray() {
+        System.out.println("-- Mixed Array --");
+        CheckerOutput out = checkProgram(
+            "let a: int[] = [1, 2];\n" +
+            "let b = [1, 1.0];"
+        );
+        assertError(out, "E3011", "mixed array types");
+    }
+
+    static void testEmptyArray() {
+        System.out.println("-- Empty Array --");
+        CheckerOutput out = checkProgram("let a = [];");
+        assertError(out, "E3002", "empty array inference error");
+    }
+
+    static void testArrayRead() {
+        System.out.println("-- Array Read --");
+        CheckerOutput out = checkProgram(
+            "let a: int[] = [1, 2, 3];\n" +
+            "let x: int = a[0];"
+        );
+        assertNoErrors(out, "array read");
+    }
+
+    static void testArrayLength() {
+        System.out.println("-- Array Length --");
+        CheckerOutput out = checkProgram(
+            "let a: int[] = [1, 2, 3];\n" +
+            "let len: int = a.length;"
+        );
+        assertNoErrors(out, "array length");
+    }
+
+    // =========================================================================
+    // Table Tests
+    // =========================================================================
+
+    static void testTableLiteral() {
+        System.out.println("-- Table Literal --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { name: \"A\", age: 30 };"
+        );
+        assertNoErrors(out, "table literal");
+    }
+
+    static void testTableReadWithContext() {
+        System.out.println("-- Table Read with Context --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { name: \"A\" };\n" +
+            "let x: string = t.name;"
+        );
+        assertNoErrors(out, "table read with context");
+    }
+
+    static void testTableReadWithoutContext() {
+        System.out.println("-- Table Read without Context --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { name: \"A\" };\n" +
+            "let x = t.name;"
+        );
+        assertError(out, "E3003", "table read without context");
+    }
+
+    // =========================================================================
+    // Function Tests
+    // =========================================================================
+
+    static void testFunctionCall() {
+        System.out.println("-- Function Call --");
+        CheckerOutput out = checkProgram(
+            "function add(a: int, b: int): int { return a + b; }\n" +
+            "let x: int = add(1, 2);"
+        );
+        assertNoErrors(out, "function call");
+    }
+
+    static void testFunctionArgCountMismatch() {
+        System.out.println("-- Function Arg Count Mismatch --");
+        CheckerOutput out = checkProgram(
+            "function add(a: int, b: int): int { return a + b; }\n" +
+            "let x: int = add(1);"
+        );
+        assertError(out, "E3009", "arg count mismatch");
+    }
+
+    static void testFunctionArgTypeMismatch() {
+        System.out.println("-- Function Arg Type Mismatch --");
+        CheckerOutput out = checkProgram(
+            "function add(a: int, b: int): int { return a + b; }\n" +
+            "let x: int = add(\"a\", \"b\");"
+        );
+        assertError(out, "E5001", "arg type mismatch");
+    }
+
+    static void testFunctionReturnType() {
+        System.out.println("-- Function Return Type --");
+        CheckerOutput out = checkProgram(
+            "function f(): int { return \"hello\"; }"
+        );
+        assertError(out, "E5003", "return type mismatch");
+    }
+
+    static void testArityExtension() {
+        System.out.println("-- Arity Extension --");
+        CheckerOutput out = checkProgram(
+            "function oneArg(a: int): int { return a; }\n" +
+            "let f: (x: int, y: int) => int = oneArg;"
+        );
+        assertNoErrors(out, "arity extension: fewer params OK");
+    }
+
+    static void testReverseArityError() {
+        System.out.println("-- Reverse Arity Error --");
+        CheckerOutput out = checkProgram(
+            "function twoArgs(a: int, b: int): int { return a + b; }\n" +
+            "let f: (x: int) => int = twoArgs;"
+        );
+        List<Diagnostic> diags = out.result.diagnostics();
+        boolean hasE5004 = diags.stream().anyMatch(d -> d.code().equals("E5004"));
+        boolean hasE3001 = diags.stream().anyMatch(d -> d.code().equals("E3001"));
+        check(hasE5004 || hasE3001,
+            "reverse arity error: expected E5004 or E3001, got " + diags);
+    }
+
+    static void testFunctionExpr() {
+        System.out.println("-- Function Expression --");
+        CheckerOutput out = checkProgram(
+            "let f = function(x: int): int { return x; };\n" +
+            "let r: int = f(42);"
+        );
+        assertNoErrors(out, "function expression");
+    }
+
+    // =========================================================================
+    // Class Tests
+    // =========================================================================
+
+    static void testClassConstruction() {
+        System.out.println("-- Class Construction --");
+        CheckerOutput out = checkProgram(
+            "class Point { x: int; y: int; }\n" +
+            "let p: Point = { x: 1, y: 2 };"
+        );
+        assertNoErrors(out, "class construction");
+    }
+
+    static void testClassExtraFields() {
+        System.out.println("-- Class Extra Fields --");
+        CheckerOutput out = checkProgram(
+            "class Point { x: int; y: int; }\n" +
+            "let p: Point = { x: 1, y: 2, z: 3 };"
+        );
+        assertError(out, "E4002", "extra field in class literal");
+    }
+
+    static void testClassMissingRequiredField() {
+        System.out.println("-- Class Missing Required Field --");
+        CheckerOutput out = checkProgram(
+            "class Point { x: int; y: int; }\n" +
+            "let p: Point = { x: 1 };"
+        );
+        assertError(out, "E4001", "missing required field");
+    }
+
+    static void testClassNominalTyping() {
+        System.out.println("-- Class Nominal Typing --");
+        CheckerOutput out = checkProgram(
+            "class A { x: int; }\n" +
+            "class B { x: int; }\n" +
+            "let a: A = { x: 1 };\n" +
+            "let b: B = a;"
+        );
+        assertError(out, "E3001", "nominal typing: A != B");
+    }
+
+    static void testClassFieldAccess() {
+        System.out.println("-- Class Field Access --");
+        CheckerOutput out = checkProgram(
+            "class Point { x: int; y: int; }\n" +
+            "let p: Point = { x: 1, y: 2 };\n" +
+            "let x: int = p.x;"
+        );
+        assertNoErrors(out, "class field access");
+    }
+
+    static void testClassOptionalField() {
+        System.out.println("-- Class Optional Field --");
+        CheckerOutput out = checkProgram(
+            "class User { name: string; age?: int = 0; }\n" +
+            "let u: User = { name: \"A\" };\n" +
+            "let a: int | null = u.age;"
+        );
+        assertNoErrors(out, "class optional field");
+    }
+
+    // =========================================================================
+    // has / delete Tests
+    // =========================================================================
+
+    static void testHasRequiredField() {
+        System.out.println("-- has() on Required Field --");
+        CheckerOutput out = checkProgram(
+            "class Point { x: int; y: int; }\n" +
+            "let p: Point = { x: 1, y: 2 };\n" +
+            "let b: boolean = has(p.x);"
+        );
+        assertError(out, "E4005", "has on required field");
+    }
+
+    static void testHasOptionalField() {
+        System.out.println("-- has() on Optional Field --");
+        CheckerOutput out = checkProgram(
+            "class User { name: string; age?: int = 0; }\n" +
+            "let u: User = { name: \"A\" };\n" +
+            "let b: boolean = has(u.age);"
+        );
+        assertNoErrors(out, "has on optional field");
+    }
+
+    static void testDeleteRequiredField() {
+        System.out.println("-- Delete Required Field --");
+        CheckerOutput out = checkProgram(
+            "class Point { x: int; y?: int = 0; }\n" +
+            "let p: Point = { x: 1 };\n" +
+            "delete p.x;"
+        );
+        assertError(out, "E4004", "delete required field");
+    }
+
+    static void testDeleteOptionalField() {
+        System.out.println("-- Delete Optional Field --");
+        CheckerOutput out = checkProgram(
+            "class Point { x: int; y?: int = 0; }\n" +
+            "let p: Point = { x: 1 };\n" +
+            "delete p.y;"
+        );
+        assertNoErrors(out, "delete optional field");
+    }
+
+    // =========================================================================
+    // Null Narrowing Tests
+    // =========================================================================
+
+    static void testNullNarrowing_neNull() {
+        System.out.println("-- Null Narrowing: x !== null --");
+        CheckerOutput out = checkProgram(
+            "let n: int | null = null;\n" +
+            "if (n !== null) {\n" +
+            "  let x: int = n;\n" +
+            "}"
+        );
+        assertNoErrors(out, "null narrowing !== null");
+    }
+
+    static void testNullNarrowing_eqNull() {
+        System.out.println("-- Null Narrowing: x === null --");
+        // When we have if/else, both branches narrow
+        CheckerOutput out = checkProgram(
+            "let n: int | null = 5;\n" +
+            "if (n === null) {\n" +
+            "  return;\n" +
+            "} else {\n" +
+            "  let x: int = n;\n" +  // n narrowed to int in else branch
+            "}"
+        );
+        assertNoErrors(out, "null narrowing === null else branch");
+    }
+
+    static void testNullNarrowing_assignmentClears() {
+        System.out.println("-- Null Narrowing: assignment clears --");
+        CheckerOutput out = checkProgram(
+            "let n: int | null = 5;\n" +
+            "if (n !== null) {\n" +
+            "  n = null;\n" +
+            "  let x: int = n;\n" +
+            "}"
+        );
+        assertError(out, "E3001", "assignment clears narrowing");
+    }
+
+    static void testNullNarrowing_negated() {
+        System.out.println("-- Null Narrowing: negated condition --");
+        CheckerOutput out = checkProgram(
+            "let n: int | null = null;\n" +
+            "if (!(n === null)) {\n" +
+            "  let x: int = n;\n" +
+            "}"
+        );
+        assertNoErrors(out, "null narrowing with !(x === null)");
+    }
+
+    static void testNullNarrowing_nestedIf() {
+        System.out.println("-- Null Narrowing: nested if --");
+        CheckerOutput out = checkProgram(
+            "let a: int | null = 5;\n" +
+            "let b: int | null = 10;\n" +
+            "if (a !== null) {\n" +
+            "  if (b !== null) {\n" +
+            "    let x: int = a;\n" +
+            "    let y: int = b;\n" +
+            "  }\n" +
+            "}"
+        );
+        assertNoErrors(out, "nested null narrowing");
+    }
+
+    // =========================================================================
+    // Definite Return Tests
+    // =========================================================================
+
+    static void testDefiniteReturn_bothBranches() {
+        System.out.println("-- Definite Return: both branches --");
+        CheckerOutput out = checkProgram(
+            "function f(x: boolean): int {\n" +
+            "  if (x) { return 1; }\n" +
+            "  else { return 2; }\n" +
+            "}"
+        );
+        assertNoErrors(out, "definite return both branches");
+    }
+
+    static void testDefiniteReturn_missingReturn() {
+        System.out.println("-- Definite Return: missing return --");
+        CheckerOutput out = checkProgram(
+            "function f(x: boolean): int {\n" +
+            "  if (x) { return 1; }\n" +
+            "}"
+        );
+        assertError(out, "E5002", "missing return on path");
+    }
+
+    static void testDefiniteReturn_throwCounts() {
+        System.out.println("-- Definite Return: throw counts --");
+        CheckerOutput out = checkProgram(
+            "function f(): int {\n" +
+            "  throw \"error\";\n" +
+            "}"
+        );
+        assertNoErrors(out, "throw counts as return");
+    }
+
+    // =========================================================================
+    // Type Inference Tests
+    // =========================================================================
+
+    static void testInference_literals() {
+        System.out.println("-- Type Inference: literals --");
+        CheckerOutput out = checkProgram("let x = 42;");
+        assertNoErrors(out, "infer int from literal");
+
+        out = checkProgram("let x = true;");
+        assertNoErrors(out, "infer boolean from literal");
+
+        out = checkProgram("let x = \"hi\";");
+        assertNoErrors(out, "infer string from literal");
+
+        out = checkProgram("let x = 3.14;");
+        assertNoErrors(out, "infer number from literal");
+
+        out = checkProgram("let x = null;");
+        assertNoErrors(out, "infer null from literal");
+    }
+
+    static void testInference_emptyArrayError() {
+        System.out.println("-- Type Inference: empty array error --");
+        CheckerOutput out = checkProgram("let x = [];");
+        assertError(out, "E3002", "empty array inference error");
+    }
+
+    static void testInference_tableReadError() {
+        System.out.println("-- Type Inference: table read error --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { x: 1 };\n" +
+            "let x = t.x;"
+        );
+        assertError(out, "E3003", "table read inference error");
+    }
+
+    // =========================================================================
+    // Unknown Type
+    // =========================================================================
+
+    static void testUnknownType() {
+        System.out.println("-- Unknown Type --");
+        CheckerOutput out = checkProgram("let x: Foo = 1;");
+        assertError(out, "E3004", "unknown type");
+    }
+}
