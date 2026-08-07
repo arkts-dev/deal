@@ -802,7 +802,7 @@ public final class TypeChecker {
                 Type exportType = ms.exports().get(field);
                 if (exportType != null) return exportType;
                 error("E2004", "Export '" + field + "' not found in module '"
-                    + id.name() + "'", mae.span());
+                    + id.name() + "'. Available: " + String.join(", ", ms.exports().keySet()), mae.span());
                 return Type.Error.INSTANCE;
             }
         }

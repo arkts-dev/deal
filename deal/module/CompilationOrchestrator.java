@@ -35,7 +35,6 @@ public final class CompilationOrchestrator {
     private final Path entryFile;
     private final Path outputRoot;
     private final boolean verbose;
-    private final DealConfig config;
     private final List<Path> moduleRoots;
     private final Path stdlibDir;
 
@@ -71,7 +70,6 @@ public final class CompilationOrchestrator {
         this.entryFile = entryFile.toAbsolutePath().normalize();
         this.outputRoot = outputRoot.toAbsolutePath().normalize();
         this.verbose = verbose;
-        this.config = config;
         this.moduleRoots = moduleRoots;
         this.stdlibDir = stdlibDir;
     }
@@ -288,13 +286,47 @@ public final class CompilationOrchestrator {
             Set<String> nonCycle = new LinkedHashSet<>(allRemaining);
             nonCycle.removeAll(cycleSet);
 
-            for (String src : nonCycle) {
-                Set<String> imports = deps.get(src);
-                if (order.containsAll(imports)) {
+            // Add non-cycle modules whose dependencies are already satisfied
+            boolean progress;
+            do {
+                progress = false;
+                for (Iterator<String> it = nonCycle.iterator(); it.hasNext(); ) {
+                    String src = it.next();
+                    Set<String> imports = deps.get(src);
+                    if (order.containsAll(imports)) {
+                        order.add(src);
+                        it.remove();
+                        progress = true;
+                    }
+                }
+            } while (progress);
+
+            // Add all cycle modules after non-cycle dependencies are satisfied
+            order.addAll(cycle);
+
+            // After cycle modules are in order, try again to add any
+            // remaining non-cycle modules that depend on cycle modules
+            do {
+                progress = false;
+                for (Iterator<String> it = nonCycle.iterator(); it.hasNext(); ) {
+                    String src = it.next();
+                    Set<String> imports = deps.get(src);
+                    if (order.containsAll(imports)) {
+                        order.add(src);
+                        it.remove();
+                        progress = true;
+                    }
+                }
+            } while (progress);
+
+            // Any modules still in nonCycle at this point have unsatisfied
+            // dependencies — add them at the end to avoid losing them
+            if (!nonCycle.isEmpty()) {
+                for (String src : nonCycle) {
                     order.add(src);
                 }
             }
-            order.addAll(cycle);
+
             return order;
         }
 
@@ -379,11 +411,15 @@ public final class CompilationOrchestrator {
                 yield false;
             }
             case ForStatement fs -> {
-                if (fs.init().isPresent()
-                        && fs.init().get() instanceof ForInit.AssignExpr ie) {
-                    AssignmentExpr ae = ie.expr();
-                    if (exprReferencesImport(ae.target(), alias)) yield true;
-                    if (exprReferencesImport(ae.value(), alias)) yield true;
+                if (fs.init().isPresent()) {
+                    ForInit init = fs.init().get();
+                    if (init instanceof ForInit.VarDecl vd) {
+                        if (exprReferencesImport(vd.decl().initializer(), alias)) yield true;
+                    } else if (init instanceof ForInit.AssignExpr ie) {
+                        AssignmentExpr ae = ie.expr();
+                        if (exprReferencesImport(ae.target(), alias)) yield true;
+                        if (exprReferencesImport(ae.value(), alias)) yield true;
+                    }
                 }
                 if (fs.condition().isPresent()
                         && exprReferencesImport(fs.condition().get(), alias)) yield true;

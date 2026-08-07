@@ -185,6 +185,112 @@ public class ModuleSystemTest {
     // Module Resolution Tests
     // =========================================================================
 
+
+    // =========================================================================
+    // ExportExtractor: .d.deal with executable let statement
+    // =========================================================================
+
+    private static void testDeclarationFileLetStmt() throws Exception {
+        System.out.println("-- ExportExtractor: .d.deal let statement --");
+
+        // .d.deal with top-level let statement should produce E7001
+        String invalidDecl = """
+            export function add(a: int, b: int): int;
+            let x: int = 42;
+            """;
+
+        LexResult lex = new Lexer(invalidDecl, "test_let.d.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test_let.d.deal").parse();
+        check(!parse.hasErrors(), "Parser: no errors for .d.deal with let");
+
+        ExportExtractor extractor = new ExportExtractor("test_let", true);
+        Map<String, Type> exports = extractor.extract(parse.program());
+        check(exports.containsKey("add"), ".d.deal with let: exports still contains add");
+
+        boolean hasE7001 = extractor.diagnostics().stream()
+            .anyMatch(d -> "E7001".equals(d.code()) && "error".equals(d.severity()));
+        check(hasE7001, ".d.deal with let: E7001 for executable statement");
+    }
+
+    // =========================================================================
+    // Topological Sort: Diamond Dependency
+    // =========================================================================
+
+    private static void testTopologicalSortDiamond() throws Exception {
+        System.out.println("-- Topological Sort: Diamond --");
+
+        // A depends on B and C; B and C both depend on D
+        writeFile("src/diamondA.deal", """
+            import * as B from "./diamondB"
+            import * as C from "./diamondC"
+            export function run(): int { return B.val() + C.val(); }
+            """);
+        writeFile("src/diamondB.deal", """
+            import * as D from "./diamondD"
+            export function val(): int { return D.get(); }
+            """);
+        writeFile("src/diamondC.deal", """
+            import * as D from "./diamondD"
+            export function val(): int { return D.get() + 10; }
+            """);
+        writeFile("src/diamondD.deal", """
+            export function get(): int { return 5; }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/diamondA.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/diamond");
+        List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, moduleRoots, null);
+
+        boolean success = orchestrator.compile();
+        check(success, "Diamond dependency: compilation succeeded");
+        check(Files.exists(outputDir.resolve("diamondA.lua")), "diamondA.lua exists");
+        check(Files.exists(outputDir.resolve("diamondD.lua")), "diamondD.lua exists");
+    }
+
+    // =========================================================================
+    // Topological Sort: Module outside cycle depending on cycle module
+    // =========================================================================
+
+    private static void testModuleOutsideCycle() throws Exception {
+        System.out.println("-- Module Outside Declaration-Only Cycle --");
+
+        // A and B form a declaration-only cycle
+        // C depends on A (module outside cycle that depends on cycle module)
+        writeFile("src/ocA.deal", """
+            import * as B from "./ocB"
+            export function foo(x: int): int { return B.transform(x); }
+            """);
+        writeFile("src/ocB.deal", """
+            import * as A from "./ocA"
+            export function transform(x: int): int { return x + 1; }
+            """);
+        writeFile("src/ocC.deal", """
+            import * as A from "./ocA"
+            export function run(): int { return A.foo(10); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/ocC.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/oc");
+        List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, moduleRoots, null);
+
+        boolean success = orchestrator.compile();
+        check(success, "Module outside cycle: compilation succeeded");
+        check(Files.exists(outputDir.resolve("ocC.lua")), "ocC.lua exists");
+        check(Files.exists(outputDir.resolve("ocA.lua")), "ocA.lua exists");
+        check(Files.exists(outputDir.resolve("ocB.lua")), "ocB.lua exists");
+
+        // Verify no E2005 errors (should be declaration-only cycle)
+        List<Diagnostic> diags = orchestrator.diagnostics();
+        boolean hasE2005 = diags.stream().anyMatch(d -> "E2005".equals(d.code()));
+        check(!hasE2005, "Module outside cycle: no E2005");
+    }
+
     private static void testModuleResolution() throws Exception {
         System.out.println("-- Module Resolution --");
 
@@ -751,7 +857,10 @@ public class ModuleSystemTest {
             testDealConfig();
             testExportExtractor();
             testDeclarationFileBodyValidation();
+            testDeclarationFileLetStmt();
             testModuleResolution();
+            testTopologicalSortDiamond();
+            testModuleOutsideCycle();
             testSingleModuleCompilation();
             testMultiModuleCompilation();
             testCompilationWithError();
