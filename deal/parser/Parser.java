@@ -773,6 +773,7 @@ public final class Parser {
 
         if (match(TokenType.EQ_SIGN)) {
             ExpressionNode right = parseAssignment();
+            if (right == null) return left;
 
             if (!isValidAssignmentTarget(left)) {
                 error("E1033", "Invalid assignment target", left);
@@ -787,6 +788,7 @@ public final class Parser {
 
     private ExpressionNode parseBinary(int minPrec) {
         ExpressionNode left = parseUnary();
+        if (left == null) return null;
 
         while (true) {
             Token op = peek();
@@ -796,6 +798,7 @@ public final class Parser {
             advance();
             int nextMinPrec = isRightAssocBinary(prec) ? prec : prec + 1;
             ExpressionNode right = parseBinary(nextMinPrec);
+            if (right == null) return left;
 
             BinaryOp binaryOp = tokenToBinaryOp(op.type());
             Span sp = spanBetween(left.span(), right.span());
@@ -809,6 +812,7 @@ public final class Parser {
         if (match(TokenType.BANG)) {
             Token bang = previous();
             ExpressionNode operand = parseUnary();
+            if (operand == null) return null;
             Span sp = spanBetween(spanOf(bang), operand.span());
             return new UnaryExpr(sp, UnaryOp.NOT, operand);
         }
@@ -816,6 +820,7 @@ public final class Parser {
         if (match(TokenType.MINUS)) {
             Token minus = previous();
             ExpressionNode operand = parseUnary();
+            if (operand == null) return null;
             Span sp = spanBetween(spanOf(minus), operand.span());
             return new UnaryExpr(sp, UnaryOp.NEG, operand);
         }
@@ -825,6 +830,7 @@ public final class Parser {
 
     private ExpressionNode parsePostfix() {
         ExpressionNode expr = parsePrimary();
+        if (expr == null) return null;
 
         while (true) {
             if (match(TokenType.DOT)) {
@@ -1071,7 +1077,11 @@ public final class Parser {
             return new HasExpr(sp, ma.object(), ma.field());
         }
 
-        error("E1040", "Expected member access (obj.field) in has() expression", full);
+        if (full != null) {
+            error("E1040", "Expected member access (obj.field) in has() expression", full);
+        } else {
+            error("E1040", "Expected member access (obj.field) in has() expression", hasToken);
+        }
         Span sp = spanBetween(hasToken, previousOrCurrent());
         return new HasExpr(sp, full, "?");
     }

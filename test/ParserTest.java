@@ -142,6 +142,11 @@ public class ParserTest {
         testErrorRecoveryMissingBrace();
         testErrorRecoveryMidFile();
         testErrorRecoveryMultipleErrors();
+        testErrorRecoveryAssignmentRhsNull();
+        testErrorRecoveryBinaryRhsNull();
+        testErrorRecoveryBinaryLhsNull();
+        testErrorRecoveryHasExprNull();
+        testErrorRecoveryUnaryOperandNull();
 
         // Span tests
         testSpanPositions();
@@ -957,6 +962,74 @@ public class ParserTest {
         check(r.program().statements().size() >= 3,
             "error recovery: at least 3 valid statements, got "
             + r.program().statements().size());
+    }
+
+    // =========================================================================
+    // Null-safety error recovery tests (regression for Flaws 1-4)
+    // =========================================================================
+
+    static void testErrorRecoveryAssignmentRhsNull() {
+        System.out.println("-- Error Recovery: assignment RHS null (Flaw 1 fix) --");
+
+        // x = ;  —  assignment with missing RHS
+        ParseResult r = parse("x = ;\nlet y: int = 1;");
+        // Must not crash; errors must be reported
+        boolean hasE1xxx = r.diagnostics().stream()
+                .anyMatch(d -> d.code().startsWith("E1"));
+        check(hasE1xxx, "flaw1: produced E1xxx diagnostic");
+        // Should still parse 'let y'
+        check(r.program().statements().size() >= 1,
+            "flaw1: at least 1 statement recovered, got " + r.program().statements().size());
+    }
+
+    static void testErrorRecoveryBinaryRhsNull() {
+        System.out.println("-- Error Recovery: binary RHS null (Flaw 2 fix) --");
+
+        // 1 + ;  —  binary operator with missing RHS
+        ParseResult r = parse("let a: int = 1 + ;\nlet b: int = 2;");
+        boolean hasE1xxx = r.diagnostics().stream()
+                .anyMatch(d -> d.code().startsWith("E1"));
+        check(hasE1xxx, "flaw2: produced E1xxx diagnostic");
+        check(r.program().statements().size() >= 1,
+            "flaw2: at least 1 statement recovered, got " + r.program().statements().size());
+    }
+
+    static void testErrorRecoveryBinaryLhsNull() {
+        System.out.println("-- Error Recovery: binary LHS null (Flaw 3 fix) --");
+
+        // + * 5  — the '+' is not a unary op in DEAL, so parsePrimary rejects it,
+        // returning null. Without the fix, parseBinary would enter the loop
+        // on '*' and dereference null left.
+        ParseResult r = parse("let a: int = + * 5;\nlet b: int = 2;");
+        boolean hasE1xxx = r.diagnostics().stream()
+                .anyMatch(d -> d.code().startsWith("E1"));
+        check(hasE1xxx, "flaw3: produced E1xxx diagnostic");
+        check(r.program().statements().size() >= 1,
+            "flaw3: at least 1 statement recovered, got " + r.program().statements().size());
+    }
+
+    static void testErrorRecoveryHasExprNull() {
+        System.out.println("-- Error Recovery: has() expression null (Flaw 4 fix) --");
+
+        // has(;)  —  has() with a non-expression inside
+        ParseResult r = parse("let b: boolean = has(;);\nlet y: int = 1;");
+        boolean hasE1xxx = r.diagnostics().stream()
+                .anyMatch(d -> d.code().startsWith("E1"));
+        check(hasE1xxx, "flaw4: produced E1xxx diagnostic");
+        check(r.program().statements().size() >= 1,
+            "flaw4: at least 1 statement recovered, got " + r.program().statements().size());
+    }
+
+    static void testErrorRecoveryUnaryOperandNull() {
+        System.out.println("-- Error Recovery: unary operand null --");
+
+        // !;  —  unary NOT with missing operand
+        ParseResult r = parse("let a: boolean = !;\nlet b: int = 2;");
+        boolean hasE1xxx = r.diagnostics().stream()
+                .anyMatch(d -> d.code().startsWith("E1"));
+        check(hasE1xxx, "unary-null: produced E1xxx diagnostic");
+        check(r.program().statements().size() >= 1,
+            "unary-null: at least 1 statement recovered, got " + r.program().statements().size());
     }
 
     // =========================================================================
