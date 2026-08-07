@@ -7,15 +7,15 @@ local __rt = require("deal.runtime")
 local console = {}
 
 --- Print a string to stdout.
-function console.log(s)
+console.log = __rt.function_("(string)->void", function(s)
   __rt.check_string(s)
   print(s)
-end
+end)
 
 --- Print a string to stdout without trailing newline.
-function console.write(s)
+console.write = __rt.function_("(string)->void", function(s)
   __rt.check_string(s)
   io.write(s)
-end
+end)
 
 return console

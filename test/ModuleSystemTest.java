@@ -563,7 +563,8 @@ public class ModuleSystemTest {
         Files.writeString(stdlibDir.resolve("std/string.lua"),
             "local __rt = require(\"deal.runtime\")\n"
             + "local m = {}\n"
-            + "function m.length(s) __rt.check_string(s); return #s end\n"
+            + "m.length = __rt.function_(\"(string)->int\", function(s) "
+            + "__rt.check_string(s); return #s end)\n"
             + "return m\n");
 
         // Create a source file that imports std/string
@@ -608,12 +609,29 @@ public class ModuleSystemTest {
             check(Files.exists(stdDest),
                 "E2E stdlib: std/string.lua copied to output");
 
-            // Runtime verification: stdlib Lua modules currently export raw
-            // functions while DEAL-compiled code expects wrapped functions
-            // (with .f accessor). This is a known integration gap tracked
-            // separately. For v0.6, we verify the structural assertions above.
-            System.out.println("  Note: Full runtime verification requires "
-                + "stdlib .f wrapping (tracked separately)");
+            // Runtime verification: execute the compiled module with LuaJIT
+            // to verify that the wrapped stdlib function works correctly at runtime.
+            // Note: Use a single -e argument because LuaJIT treats each -e as a
+            // separate chunk with its own local scope.
+            try {
+                String luaCode = "package.path = '" + outputDir.toRealPath()
+                    + "/?.lua;" + outputDir.toRealPath() + "/?/init.lua;"
+                    + stdlibDir.toRealPath() + "/?.lua;' "
+                    + "local m = require('e2e_std') "
+                    + "local result = m.test_len.f() "
+                    + "assert(result == 5, 'expected 5, got ' .. tostring(result)) "
+                    + "print('OK: e2e stdlib runtime')";
+                ProcessBuilder pb = new ProcessBuilder("luajit", "-e", luaCode);
+                pb.redirectErrorStream(true);
+                Process proc = pb.start();
+                String output = new String(proc.getInputStream().readAllBytes());
+                int exitCode = proc.waitFor();
+                check(exitCode == 0,
+                    "E2E stdlib: runtime verification failed (exit " + exitCode
+                    + "): " + output.trim());
+            } catch (Exception e) {
+                check(false, "E2E stdlib: runtime verification failed: " + e.getMessage());
+            }
         } else {
             // Compilation failed for non-E2003 reasons
             System.out.println("  Note: stdlib compilation had errors: "

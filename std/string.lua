@@ -6,14 +6,14 @@ local __rt = require("deal.runtime")
 local stringlib = {}
 
 --- Returns the length of the string.
-function stringlib.length(s)
+stringlib.length = __rt.function_("(string)->int", function(s)
   __rt.check_string(s)
   return #s
-end
+end)
 
 --- Returns the substring from start (0-based) to the end,
 --- or of the given length if len is provided.
-function stringlib.substring(s, start, len)
+stringlib.substring = __rt.function_("(string,int,int)->string", function(s, start, len)
   __rt.check_string(s)
   __rt.check_int(start)
   if len == nil then
@@ -21,31 +21,31 @@ function stringlib.substring(s, start, len)
   end
   __rt.check_int(len)
   return string.sub(s, start + 1, start + len)
-end
+end)
 
 --- Returns true if the string contains the given substring.
-function stringlib.contains(s, sub)
+stringlib.contains = __rt.function_("(string,string)->boolean", function(s, sub)
   __rt.check_string(s)
   __rt.check_string(sub)
   return string.find(s, sub, 1, true) ~= nil
-end
+end)
 
 --- Returns true if the string starts with the given prefix.
-function stringlib.startsWith(s, prefix)
+stringlib.startsWith = __rt.function_("(string,string)->boolean", function(s, prefix)
   __rt.check_string(s)
   __rt.check_string(prefix)
   return string.sub(s, 1, #prefix) == prefix
-end
+end)
 
 --- Returns true if the string ends with the given suffix.
-function stringlib.endsWith(s, suffix)
+stringlib.endsWith = __rt.function_("(string,string)->boolean", function(s, suffix)
   __rt.check_string(s)
   __rt.check_string(suffix)
   return #s >= #suffix and string.sub(s, -#suffix) == suffix
-end
+end)
 
 --- Returns the 0-based index of the first occurrence of sub, or -1.
-function stringlib.indexOf(s, sub)
+stringlib.indexOf = __rt.function_("(string,string)->int", function(s, sub)
   __rt.check_string(s)
   __rt.check_string(sub)
   local found = string.find(s, sub, 1, true)
@@ -53,20 +53,25 @@ function stringlib.indexOf(s, sub)
     return found - 1
   end
   return -1
+end)
+
+-- Escape Lua pattern metacharacters for plain-text matching with string.gsub.
+local function escape_pattern(s)
+  return (string.gsub(s, "[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1"))
 end
 
 --- Returns the string with all occurrences of old replaced by new.
 --- Performs plain-text matching (not Lua pattern matching).
-function stringlib.replace(s, old, new)
+stringlib.replace = __rt.function_("(string,string,string)->string", function(s, old, new)
   __rt.check_string(s)
   __rt.check_string(old)
   __rt.check_string(new)
-  return (string.gsub(s, old, new, true))
-end
+  return (string.gsub(s, escape_pattern(old), new))
+end)
 
 --- Splits the string by the given separator and returns an array.
 --- Performs plain-text splitting (separator is not treated as a Lua pattern).
-function stringlib.split(s, sep)
+stringlib.split = __rt.function_("(string,string)->string[]", function(s, sep)
   __rt.check_string(s)
   __rt.check_string(sep)
   local result = {}
@@ -89,24 +94,24 @@ function stringlib.split(s, sep)
     start = pos + seplen
   end
   return result
-end
+end)
 
 --- Returns the uppercase version of the string.
-function stringlib.toUpperCase(s)
+stringlib.toUpperCase = __rt.function_("(string)->string", function(s)
   __rt.check_string(s)
   return string.upper(s)
-end
+end)
 
 --- Returns the lowercase version of the string.
-function stringlib.toLowerCase(s)
+stringlib.toLowerCase = __rt.function_("(string)->string", function(s)
   __rt.check_string(s)
   return string.lower(s)
-end
+end)
 
 --- Trims whitespace from both ends of the string.
-function stringlib.trim(s)
+stringlib.trim = __rt.function_("(string)->string", function(s)
   __rt.check_string(s)
   return (string.gsub(s, "^%s*(.-)%s*$", "%1"))
-end
+end)
 
 return stringlib

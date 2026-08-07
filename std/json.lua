@@ -61,19 +61,22 @@ local function encode_value(v)
 end
 
 --- Encode a value to a JSON string.
-function json.encode(v)
+json.encode = __rt.function_("(table)->string", function(v)
   return encode_value(v)
-end
+end)
 
 --- Decode a JSON string to a Lua table.
-function json.decode(s)
+json.decode = __rt.function_("(string)->table", function(s)
   __rt.check_string(s)
   -- Use LuaJIT's built-in JSON if available (LuaJIT 2.1+ has no native JSON)
   -- Simple recursive descent parser
   local pos = 1
   local len = #s
 
-  local function skip_ws()
+  -- Forward-declare mutually recursive parser functions
+  local skip_ws, parse_value, parse_string, parse_number, parse_object, parse_array
+
+  function skip_ws()
     while pos <= len do
       local c = s:sub(pos, pos)
       if c == ' ' or c == '\n' or c == '\r' or c == '\t' then
@@ -84,7 +87,7 @@ function json.decode(s)
     end
   end
 
-  local function parse_value()
+  function parse_value()
     skip_ws()
     if pos > len then return nil end
     local c = s:sub(pos, pos)
@@ -109,7 +112,7 @@ function json.decode(s)
     end
   end
 
-  local function parse_string()
+  function parse_string()
     pos = pos + 1 -- skip opening quote
     local parts = {}
     while pos <= len do
@@ -145,7 +148,7 @@ function json.decode(s)
     return table.concat(parts)
   end
 
-  local function parse_number()
+  function parse_number()
     local start = pos
     if s:sub(pos, pos) == '-' then pos = pos + 1 end
     while pos <= len and s:sub(pos, pos):match('[0-9]') do pos = pos + 1 end
@@ -163,7 +166,7 @@ function json.decode(s)
     return tonumber(s:sub(start, pos - 1))
   end
 
-  local function parse_object()
+  function parse_object()
     pos = pos + 1 -- skip {
     local obj = {}
     skip_ws()
@@ -186,7 +189,7 @@ function json.decode(s)
     end
   end
 
-  local function parse_array()
+  function parse_array()
     pos = pos + 1 -- skip [
     local arr = {}
     skip_ws()
@@ -208,6 +211,6 @@ function json.decode(s)
   end
 
   return parse_value()
-end
+end)
 
 return json
