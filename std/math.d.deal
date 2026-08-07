@@ -1,4 +1,4 @@
--- DEAL Standard Library: std/math (declaration)
+// DEAL Standard Library: std/math (declaration)
 export function abs(x: int): int;
 export function min(a: int, b: int): int;
 export function max(a: int, b: int): int;

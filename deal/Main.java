@@ -130,17 +130,16 @@ public final class Main {
             moduleRoots.add(projectDir);
         }
 
-        // Determine stdlib directory
+        // Determine stdlib directory (the parent of std/ — Orchestrator prepends "std/" itself)
         Path stdlibDir = null;
         // Try project-local std/ first
         Path localStd = projectDir.resolve("std");
         if (Files.isDirectory(localStd)) {
-            stdlibDir = localStd;
+            stdlibDir = projectDir;
         }
         // Also try relative to current working dir
-        Path cwdStd = Path.of("std");
-        if (stdlibDir == null && Files.isDirectory(cwdStd)) {
-            stdlibDir = cwdStd.toAbsolutePath();
+        if (stdlibDir == null && Files.isDirectory(Path.of("std"))) {
+            stdlibDir = Path.of("").toAbsolutePath();
         }
 
         if (verbose) {

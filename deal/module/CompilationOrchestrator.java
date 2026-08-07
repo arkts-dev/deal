@@ -120,6 +120,7 @@ public final class CompilationOrchestrator {
     // =========================================================================
 
     private void discoverAndParse() throws IOException {
+        long phaseStart = System.currentTimeMillis();
         String entrySourcePath = entryFile.toString();
         Queue<String> pending = new ArrayDeque<>();
         pending.add(entrySourcePath);
@@ -135,8 +136,8 @@ public final class CompilationOrchestrator {
                 continue;
             }
 
+            long modStart = System.currentTimeMillis();
             boolean isDecl = sourcePath.endsWith(".d.deal");
-            log("  Parsing: " + sourcePath);
 
             String source;
             try {
@@ -167,6 +168,9 @@ public final class CompilationOrchestrator {
             info.parseResult = parseResult;
             modules.put(sourcePath, info);
 
+            long modElapsed = System.currentTimeMillis() - modStart;
+            log("  Parsed: " + sourcePath + " (" + modElapsed + "ms)");
+
             for (StatementNode stmt : parseResult.program().statements()) {
                 if (stmt instanceof ImportDeclaration imp) {
                     String importPath = imp.modulePath();
@@ -176,6 +180,11 @@ public final class CompilationOrchestrator {
                     }
                 }
             }
+        }
+
+        long phaseElapsed = System.currentTimeMillis() - phaseStart;
+        if (verbose) {
+            System.out.println("  Phase 0 total: " + phaseElapsed + "ms");
         }
     }
 
@@ -188,7 +197,11 @@ public final class CompilationOrchestrator {
     // =========================================================================
 
     private void extractSignatures() {
+        long phaseStart = System.currentTimeMillis();
+
         for (ModuleInfo info : modules.values()) {
+            long modStart = System.currentTimeMillis();
+
             if (info.isDeclarationFile) {
                 ExportExtractor extractor = new ExportExtractor(info.modulePath, true);
                 info.exports = extractor.extract(info.rawAst);
@@ -202,6 +215,14 @@ public final class CompilationOrchestrator {
                 info.exports = extractor.extract(info.rawAst);
                 diagnostics.addAll(extractor.diagnostics());
             }
+
+            long modElapsed = System.currentTimeMillis() - modStart;
+            log("  Signatures extracted: " + info.sourcePath + " (" + modElapsed + "ms)");
+        }
+
+        long phaseElapsed = System.currentTimeMillis() - phaseStart;
+        if (verbose) {
+            System.out.println("  Phase 1 total: " + phaseElapsed + "ms");
         }
     }
 
@@ -483,13 +504,14 @@ public final class CompilationOrchestrator {
     // =========================================================================
 
     private void typeCheckAll(List<String> order) {
+        long phaseStart = System.currentTimeMillis();
         ModuleResolverImpl resolver = new ModuleResolverImpl(modules, diagnostics);
 
         for (String sourcePath : order) {
             ModuleInfo info = modules.get(sourcePath);
             if (info.isDeclarationFile) continue;
 
-            log("  Checking: " + sourcePath);
+            long modStart = System.currentTimeMillis();
 
             NameResolver nr = new NameResolver(info.modulePath, resolver);
             info.nameResolver = nr;
@@ -499,6 +521,8 @@ public final class CompilationOrchestrator {
             diagnostics.addAll(nr.diagnostics());
             if (hasNameErrors(nr.diagnostics())) {
                 hasErrors = true;
+                long modElapsed = System.currentTimeMillis() - modStart;
+                log("  Checked: " + sourcePath + " (name resolution error, " + modElapsed + "ms)");
                 continue;
             }
 
@@ -509,6 +533,14 @@ public final class CompilationOrchestrator {
             if (result.hasErrors()) {
                 hasErrors = true;
             }
+
+            long modElapsed = System.currentTimeMillis() - modStart;
+            log("  Checked: " + sourcePath + " (" + modElapsed + "ms)");
+        }
+
+        long phaseElapsed = System.currentTimeMillis() - phaseStart;
+        if (verbose) {
+            System.out.println("  Phase 3 total: " + phaseElapsed + "ms");
         }
     }
 
@@ -521,10 +553,13 @@ public final class CompilationOrchestrator {
     // =========================================================================
 
     private void codegenAll() throws IOException {
+        long phaseStart = System.currentTimeMillis();
         Files.createDirectories(outputRoot);
 
         for (ModuleInfo info : modules.values()) {
             if (info.isDeclarationFile) continue;
+
+            long modStart = System.currentTimeMillis();
 
             Map<String, String> importResolutions = new HashMap<>();
             for (StatementNode stmt : info.rawAst.statements()) {
@@ -544,15 +579,24 @@ public final class CompilationOrchestrator {
             String luaSource = LuaBackend.generateWithImports(
                 info.rawAst, info.checkResult, info.sourcePath, importResolutions);
 
-            Path outputPath = outputRoot.resolve(info.modulePath + ".lua");
+            // Convert dot-separated module path back to directory separators
+            // for the output file path (D2: ./a/b.deal → output a/b.lua)
+            String filePath = info.modulePath.replace('.', '/') + ".lua";
+            Path outputPath = outputRoot.resolve(filePath);
             Files.createDirectories(outputPath.getParent());
             Files.writeString(outputPath, luaSource);
 
-            log("  Generated: " + outputPath);
+            long modElapsed = System.currentTimeMillis() - modStart;
+            log("  Generated: " + outputPath + " (" + modElapsed + "ms)");
         }
 
         copyRuntimeLibrary();
         copyStdlibModules();
+
+        long phaseElapsed = System.currentTimeMillis() - phaseStart;
+        if (verbose) {
+            System.out.println("  Phase 4 total: " + phaseElapsed + "ms");
+        }
     }
 
     private void copyRuntimeLibrary() throws IOException {
@@ -632,9 +676,26 @@ public final class CompilationOrchestrator {
             addCandidates(candidates, resolved.toString());
         }
 
+        // First, try filesystem candidates
         for (String candidate : candidates) {
             if (Files.exists(Path.of(candidate))) {
                 return candidate;
+            }
+        }
+
+        // Fallback: try JAR/classpath resources for bare imports
+        if (!importPath.startsWith("./") && !importPath.startsWith("../")) {
+            String resourcePath = importPath + ".d.deal";
+            InputStream stream = getClass().getClassLoader()
+                .getResourceAsStream(resourcePath);
+            if (stream != null) {
+                try {
+                    stream.close();
+                } catch (IOException ignored) {}
+                // Resource exists — but we can't return a filesystem path.
+                // Instead we record it as a virtual module in the modules map
+                // so that later phases know about it.
+                return registerResourceModule(resourcePath, importPath);
             }
         }
 
@@ -646,6 +707,50 @@ public final class CompilationOrchestrator {
         }
         error("E2003", msg.toString(), fromFile.toString(), 1, 1);
         return null;
+    }
+
+    /**
+     * Register a module found only as a JAR/classpath resource.
+     * The resource must be a .d.deal declaration file.
+     * Returns a synthetic source path that the rest of the pipeline can use.
+     */
+    private String registerResourceModule(String resourcePath, String importPath) {
+        String syntheticPath = "classpath:" + resourcePath;
+        if (modules.containsKey(syntheticPath)) return syntheticPath;
+
+        try {
+            InputStream stream = getClass().getClassLoader()
+                .getResourceAsStream(resourcePath);
+            if (stream == null) return null;
+
+            String source = new String(stream.readAllBytes());
+            stream.close();
+
+            String modulePath = importPath.replace('/', '.');
+
+            LexResult lex = new Lexer(source, syntheticPath).tokenize();
+            if (hasLexErrors(lex)) {
+                diagnostics.addAll(lex.diagnostics());
+                hasErrors = true;
+                return null;
+            }
+
+            Parser parser = new Parser(lex.tokens(), syntheticPath);
+            ParseResult parseResult = parser.parse();
+            diagnostics.addAll(parseResult.diagnostics());
+            if (parseResult.hasErrors()) {
+                hasErrors = true;
+            }
+
+            ModuleInfo info = new ModuleInfo(syntheticPath, modulePath, true);
+            info.rawAst = parseResult.program();
+            info.parseResult = parseResult;
+            modules.put(syntheticPath, info);
+
+            return syntheticPath;
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     private void addCandidates(List<String> candidates, String basePath) {
@@ -776,6 +881,10 @@ public final class CompilationOrchestrator {
                 if (sourcePath.equals(resolvedBase + "/index.d.deal")) return true;
             } else {
                 if (info.modulePath.equals(importPath.replace('/', '.'))) return true;
+                // Also match synthetic classpath sources
+                if (info.sourcePath.startsWith("classpath:")) {
+                    if (info.modulePath.equals(importPath.replace('/', '.'))) return true;
+                }
             }
 
             return false;

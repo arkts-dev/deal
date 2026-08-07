@@ -1,4 +1,4 @@
--- DEAL Standard Library: std/string (declaration)
+// DEAL Standard Library: std/string (declaration)
 export function length(s: string): int;
 export function substring(s: string, start: int): string;
 export function substring(s: string, start: int, len: int): string;
