@@ -3,8 +3,8 @@ set -e
 
 mkdir -p build
 
-echo "=== Compiling DEAL AST, Types, Lexer, Parser, and Checker ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java
+echo "=== Compiling DEAL AST, Types, Lexer, Parser, Checker, and Codegen ==="
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java
 
 echo ""
 echo "=== Compiling and Running AST/Types Tests ==="
@@ -25,3 +25,16 @@ echo ""
 echo "=== Compiling and Running Checker Tests ==="
 javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java test/StubModuleResolver.java test/CheckerTest.java
 java -ea -cp build deal.test.CheckerTest
+
+echo ""
+echo "=== Compiling and Running Lua Backend Tests ==="
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java test/StubModuleResolver.java test/LuaBackendTest.java
+java -ea -cp build deal.test.LuaBackendTest
+
+echo ""
+echo "=== Running Runtime Library Tests ==="
+if command -v luajit &> /dev/null; then
+  luajit test_runtime.lua
+else
+  echo "WARNING: luajit not found, skipping runtime library tests"
+fi
