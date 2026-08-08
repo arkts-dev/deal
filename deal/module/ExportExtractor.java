@@ -24,9 +24,25 @@ public final class ExportExtractor {
     private final Map<String, Type> exports = new LinkedHashMap<>();
     private boolean isDeclarationFile;
 
+    /**
+     * Maps import aliases (local names like "V") to the resolved module path
+     * (like "cc_class"). Populated before extraction for correct qualified-type
+     * resolution in exported function signatures.
+     */
+    private Map<String, String> importModulePaths = Map.of();
+
     public ExportExtractor(String modulePath, boolean isDeclarationFile) {
         this.modulePath = modulePath;
         this.isDeclarationFile = isDeclarationFile;
+    }
+
+    /**
+     * Sets the mapping from import alias to resolved module path.
+     * Must be called before {@link #extract(ProgramNode)} for correct
+     * resolution of qualified types like {@code V.Vec}.
+     */
+    public void setImportModulePaths(Map<String, String> importModulePaths) {
+        this.importModulePaths = Map.copyOf(importModulePaths);
     }
 
     /**
@@ -60,15 +76,11 @@ public final class ExportExtractor {
             }
         }
 
-        // For .d.deal files, also add non-exported classes to the export map
-        // since they're part of the module's public API
-        if (isDeclarationFile) {
-            for (StatementNode stmt : program.statements()) {
-                if (stmt instanceof ClassDeclaration cd && !exports.containsKey(cd.name())) {
-                    exports.put(cd.name(), Types.classType(cd.name(), modulePath));
-                }
-            }
-        }
+        // NOTE: Non-exported classes in .d.deal files are NOT automatically
+        // added to the export map.  Only explicitly exported declarations
+        // form the module's public API.  Internal helper classes that are
+        // needed by exported function signatures must be explicitly exported
+        // or their types must appear via structural interface types.
 
         return Collections.unmodifiableMap(exports);
     }
@@ -119,7 +131,8 @@ public final class ExportExtractor {
 
     /**
      * Simple type node resolution that handles primitives, arrays, nullables,
-     * function types, and locally-declared classes. Does not resolve imported
+     * function types, locally-declared classes, and qualified types (with
+     * import alias mapping when available). Does not resolve imported
      * types (those need the module resolver).
      */
     private Type resolveTypeNodeSimple(TypeNode tn,
@@ -127,11 +140,13 @@ public final class ExportExtractor {
         return switch (tn) {
             case NamedType nt -> resolveNamedSimple(nt.name(), classMap);
             case QualifiedType qt -> {
-                // Qualified type like B.Result — we don't have the module
-                // resolver at this stage, so use the module alias as a
-                // best-effort module path. Full resolution happens during
-                // type checking.
-                yield Types.classType(qt.typeName(), qt.moduleName());
+                // Resolve the import alias to the actual module path if possible.
+                // If not available (e.g., before import resolution), fall back
+                // to the alias itself.  The export map will be updated after
+                // name resolution in Phase 3 with the correct types.
+                String resolvedModulePath = importModulePaths.getOrDefault(
+                    qt.moduleName(), qt.moduleName());
+                yield Types.classType(qt.typeName(), resolvedModulePath);
             }
             case deal.ast.ArrayType at -> {
                 Type elem = resolveTypeNodeSimple(at.elementType(), classMap);

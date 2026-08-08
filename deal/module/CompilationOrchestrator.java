@@ -6,6 +6,7 @@ import deal.codegen.lua.LuaBackend;
 import deal.lexer.*;
 import deal.parser.*;
 import deal.types.Type;
+import deal.types.Types;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -169,11 +170,22 @@ public final class CompilationOrchestrator {
             long modElapsed = System.currentTimeMillis() - modStart;
             log("  Parsed: " + sourcePath + " (" + modElapsed + "ms)");
 
+            // Process imports for discovery.  Use tryResolveImportPath to
+            // avoid emitting E2003 here — we will emit it in Phase 3 where
+            // we have precise source locations (or here with the import span).
             for (StatementNode stmt : parseResult.program().statements()) {
                 if (stmt instanceof ImportDeclaration imp) {
                     String importPath = imp.modulePath();
-                    String resolved = resolveImportPath(importPath, file);
-                    if (resolved != null && !modules.containsKey(resolved)) {
+                    String resolved = tryResolveImportPath(importPath, file);
+                    if (resolved == null) {
+                        // Record E2003 with the import statement's span for
+                        // accurate error location.
+                        error("E2003",
+                            "Module not found: '" + importPath
+                                + "'. Searched in: " + describeSearchPaths(importPath, file),
+                            imp.span().file(), imp.span().startLine(),
+                            imp.span().startColumn());
+                    } else if (!modules.containsKey(resolved)) {
                         pending.add(resolved);
                     }
                 }
@@ -200,18 +212,32 @@ public final class CompilationOrchestrator {
         for (ModuleInfo info : modules.values()) {
             long modStart = System.currentTimeMillis();
 
-            if (info.isDeclarationFile) {
-                ExportExtractor extractor = new ExportExtractor(info.modulePath, true);
-                info.exports = extractor.extract(info.rawAst);
-                diagnostics.addAll(extractor.diagnostics());
-                if (extractor.diagnostics().stream().anyMatch(
-                        d -> "error".equals(d.severity()))) {
-                    hasErrors = true;
+            // Build import alias → module path mapping for qualified type
+            // resolution in export signatures (e.g., V.Vec → "cc_class".Vec).
+            Map<String, String> importAliasMap = new HashMap<>();
+            if (info.rawAst != null) {
+                for (StatementNode stmt : info.rawAst.statements()) {
+                    if (stmt instanceof ImportDeclaration imp) {
+                        String resolvedSource = resolveImportPath(
+                            imp.modulePath(), Path.of(info.sourcePath));
+                        if (resolvedSource != null) {
+                            ModuleInfo imported = modules.get(resolvedSource);
+                            if (imported != null) {
+                                importAliasMap.put(imp.alias(), imported.modulePath);
+                            }
+                        }
+                    }
                 }
-            } else {
-                ExportExtractor extractor = new ExportExtractor(info.modulePath, false);
-                info.exports = extractor.extract(info.rawAst);
-                diagnostics.addAll(extractor.diagnostics());
+            }
+
+            ExportExtractor extractor = new ExportExtractor(info.modulePath,
+                info.isDeclarationFile);
+            extractor.setImportModulePaths(importAliasMap);
+            info.exports = extractor.extract(info.rawAst);
+            diagnostics.addAll(extractor.diagnostics());
+            if (extractor.diagnostics().stream().anyMatch(
+                    d -> "error".equals(d.severity()))) {
+                hasErrors = true;
             }
 
             long modElapsed = System.currentTimeMillis() - modStart;
@@ -312,21 +338,14 @@ public final class CompilationOrchestrator {
                     additionalCycle.get(0), 1, 1);
                 return null;
             }
-            // Merge into the set of all cycle nodes
             allCycleNodes.addAll(additionalCycle);
             nonCycle.removeAll(additionalCycle);
         }
 
         // All cycles are declaration-only. Build the order.
-        // Steps:
-        // 1. Add non-cycle modules whose deps are already satisfied (none initially)
-        // 2. Add all cycle modules
-        // 3. Add remaining non-cycle modules that depend on cycle modules
-        // 4. Append any still-unsatisfied modules at the end
-
         List<String> order = new ArrayList<>();
 
-        // Step 1: non-cycle modules with all deps already in order (empty at start)
+        // Step 1: non-cycle modules with all deps already in order
         boolean progress;
         do {
             progress = false;
@@ -382,7 +401,6 @@ public final class CompilationOrchestrator {
             Set<String> visited = new HashSet<>();
             Deque<String> stack = new ArrayDeque<>();
             if (findCycleRestricted(deps, start, candidates, visited, stack, cycle)) {
-                // Deduplicate while preserving order
                 List<String> unique = new ArrayList<>();
                 Set<String> seen = new HashSet<>();
                 for (String s : cycle) {
@@ -396,10 +414,6 @@ public final class CompilationOrchestrator {
         return new ArrayList<>();
     }
 
-    /**
-     * Finds a cycle by DFS, restricted to nodes in the allowed set.
-     * Only follows edges to nodes that are in allowed.
-     */
     private boolean findCycleRestricted(Map<String, Set<String>> deps,
                                          String current, Set<String> allowed,
                                          Set<String> visited, Deque<String> stack,
@@ -421,7 +435,6 @@ public final class CompilationOrchestrator {
         Set<String> imports = deps.get(current);
         if (imports != null) {
             for (String imp : imports) {
-                // Only follow edges to nodes in the allowed set
                 if (!allowed.contains(imp)) continue;
                 if (findCycleRestricted(deps, imp, allowed, visited, stack, cycle))
                     return true;
@@ -456,6 +469,21 @@ public final class CompilationOrchestrator {
         return true;
     }
 
+    /**
+     * Checks whether a module uses a given import alias at runtime
+     * (i.e., in top-level executable statements, not just in type positions).
+     *
+     * <p><b>Known limitation (v0.6):</b> Indirect runtime dependencies are not
+     * detected.  If a module defines a function that uses the cyclic import and
+     * then calls that function at the top level, the cycle will be incorrectly
+     * classified as declaration-only:
+     * <pre>{@code
+     *   import * as B from "./b"
+     *   function helper(): int { return B.getValue(); }
+     *   let x: int = helper();  // indirect runtime use of B — not detected
+     * }</pre>
+     * A full fix requires data-flow analysis, planned for a future release.
+     */
     private boolean usesImportAtRuntime(ProgramNode program, String alias) {
         for (StatementNode stmt : program.statements()) {
             if (hasRuntimeImportUsage(stmt, alias)) {
@@ -646,6 +674,36 @@ public final class CompilationOrchestrator {
             SymbolTable symTable = nr.resolve(info.rawAst);
             info.symbolTable = symTable;
 
+            // F1 fix: Rebuild exports with correctly resolved types from name
+            // resolution.  The ExportExtractor in Phase 1 uses import aliases
+            // for qualified types (e.g., "V" instead of "cc_class"), which are
+            // local to the exporting module and meaningless to downstream
+            // importers.  After name resolution, we know the correct module
+            // paths and can produce accurate export types.
+            Map<String, Type> correctedExports = new LinkedHashMap<>();
+            for (StatementNode stmt : info.rawAst.statements()) {
+                if (stmt instanceof ExportDeclaration exp) {
+                    String exportName = null;
+                    if (exp.declaration() instanceof FunctionDeclaration fd) {
+                        exportName = fd.name();
+                    } else if (exp.declaration() instanceof ClassDeclaration cd) {
+                        exportName = cd.name();
+                    }
+                    if (exportName != null) {
+                        Symbol sym = symTable.resolve(exportName);
+                        if (sym != null) {
+                            if (sym instanceof Symbol.FunctionSymbol fs) {
+                                correctedExports.put(exportName, fs.funcType());
+                            } else if (sym instanceof Symbol.ClassSymbol cs) {
+                                correctedExports.put(exportName,
+                                    Types.classType(cs.name(), cs.modulePath()));
+                            }
+                        }
+                    }
+                }
+            }
+            info.exports = correctedExports;
+
             diagnostics.addAll(nr.diagnostics());
             if (hasNameErrors(nr.diagnostics())) {
                 hasErrors = true;
@@ -707,8 +765,6 @@ public final class CompilationOrchestrator {
             String luaSource = LuaBackend.generateWithImports(
                 info.rawAst, info.checkResult, info.sourcePath, importResolutions);
 
-            // Convert dot-separated module path back to directory separators
-            // for the output file path (D2: ./a/b.deal → output a/b.lua)
             String filePath = info.modulePath.replace('.', '/') + ".lua";
             Path outputPath = outputRoot.resolve(filePath);
             Files.createDirectories(outputPath.getParent());
@@ -767,6 +823,7 @@ public final class CompilationOrchestrator {
                 }
             }
 
+            // Fallback: try classpath resource for bundled stdlib .lua files
             String resourcePath = "std/" + stdlibModule.substring(4) + ".lua";
             InputStream stream = getClass().getClassLoader()
                 .getResourceAsStream(resourcePath);
@@ -783,7 +840,65 @@ public final class CompilationOrchestrator {
     // Import resolution
     // =========================================================================
 
+    /**
+     * Resolves an import path to a source file.  Emits E2003 with the
+     * given file location (defaulting to 1:1) if resolution fails.
+     *
+     * @return the resolved source path, or {@code null} if not found
+     */
     public String resolveImportPath(String importPath, Path fromFile) {
+        return resolveImportPath(importPath, fromFile, fromFile.toString(), 1, 1);
+    }
+
+    /**
+     * Resolves an import path to a source file, using the given location
+     * for any E2003 diagnostic.
+     */
+    private String resolveImportPath(String importPath, Path fromFile,
+                                      String errorFile, int errorLine, int errorCol) {
+        String resolved = tryResolveImportPath(importPath, fromFile);
+        if (resolved == null) {
+            StringBuilder msg = new StringBuilder("Module not found: '" + importPath
+                + "'. Attempted: ");
+            List<String> candidates = buildCandidates(importPath, fromFile);
+            for (int i = 0; i < candidates.size(); i++) {
+                if (i > 0) msg.append(", ");
+                msg.append(candidates.get(i));
+            }
+            error("E2003", msg.toString(), errorFile, errorLine, errorCol);
+        }
+        return resolved;
+    }
+
+    /**
+     * Tries to resolve an import path without emitting diagnostics.
+     * Returns the resolved source file path, or {@code null} if not found.
+     */
+    private String tryResolveImportPath(String importPath, Path fromFile) {
+        List<String> candidates = buildCandidates(importPath, fromFile);
+
+        // Try filesystem candidates
+        for (String candidate : candidates) {
+            if (Files.exists(Path.of(candidate))) {
+                return candidate;
+            }
+        }
+
+        // Fallback: try JAR/classpath resources for bare imports
+        if (!importPath.startsWith("./") && !importPath.startsWith("../")) {
+            String resourcePath = importPath + ".d.deal";
+            InputStream stream = getClass().getClassLoader()
+                .getResourceAsStream(resourcePath);
+            if (stream != null) {
+                try { stream.close(); } catch (IOException ignored) {}
+                return registerResourceModule(resourcePath, importPath);
+            }
+        }
+
+        return null;
+    }
+
+    private List<String> buildCandidates(String importPath, Path fromFile) {
         List<String> candidates = new ArrayList<>();
 
         if (importPath.startsWith("./") || importPath.startsWith("../")) {
@@ -801,45 +916,23 @@ public final class CompilationOrchestrator {
             Path resolved = Path.of("").toAbsolutePath().resolve(importPath).normalize();
             addCandidates(candidates, resolved.toString());
         }
-
-        // First, try filesystem candidates
-        for (String candidate : candidates) {
-            if (Files.exists(Path.of(candidate))) {
-                return candidate;
-            }
-        }
-
-        // Fallback: try JAR/classpath resources for bare imports
-        if (!importPath.startsWith("./") && !importPath.startsWith("../")) {
-            String resourcePath = importPath + ".d.deal";
-            InputStream stream = getClass().getClassLoader()
-                .getResourceAsStream(resourcePath);
-            if (stream != null) {
-                try {
-                    stream.close();
-                } catch (IOException ignored) {}
-                // Resource exists — but we can't return a filesystem path.
-                // Instead we record it as a virtual module in the modules map
-                // so that later phases know about it.
-                return registerResourceModule(resourcePath, importPath);
-            }
-        }
-
-        StringBuilder msg = new StringBuilder("Module not found: '" + importPath
-            + "'. Attempted: ");
-        for (int i = 0; i < candidates.size(); i++) {
-            if (i > 0) msg.append(", ");
-            msg.append(candidates.get(i));
-        }
-        error("E2003", msg.toString(), fromFile.toString(), 1, 1);
-        return null;
+        return candidates;
     }
 
     /**
-     * Register a module found only as a JAR/classpath resource.
-     * The resource must be a .d.deal declaration file.
-     * Returns a synthetic source path that the rest of the pipeline can use.
+     * Describes the search paths used for a bare import, for use in
+     * E2003 diagnostic messages.
      */
+    private String describeSearchPaths(String importPath, Path fromFile) {
+        List<String> candidates = buildCandidates(importPath, fromFile);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < candidates.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(candidates.get(i));
+        }
+        return sb.toString();
+    }
+
     private String registerResourceModule(String resourcePath, String importPath) {
         String syntheticPath = "classpath:" + resourcePath;
         if (modules.containsKey(syntheticPath)) return syntheticPath;
@@ -917,6 +1010,23 @@ public final class CompilationOrchestrator {
             return path.replace('/', '.').replace('\\', '.');
         }
 
+        // Fallback: use relative path from current working directory.
+        // If the source is under the CWD, use the relative path to avoid
+        // collisions from filename-only resolution.
+        Path cwd = Path.of("").toAbsolutePath().normalize();
+        if (absFile.startsWith(cwd)) {
+            Path relative = cwd.relativize(absFile);
+            String path = relative.toString();
+            if (path.endsWith(".d.deal")) {
+                path = path.substring(0, path.length() - ".d.deal".length());
+            } else if (path.endsWith(".deal")) {
+                path = path.substring(0, path.length() - ".deal".length());
+            }
+            return path.replace('/', '.').replace('\\', '.');
+        }
+
+        // Absolute fallback: just the filename (used only when the file is
+        // outside both module roots and CWD — typically a test scenario).
         String name = sourceFile.getFileName().toString();
         if (name.endsWith(".d.deal")) {
             return name.substring(0, name.length() - ".d.deal".length());
@@ -1007,7 +1117,6 @@ public final class CompilationOrchestrator {
                 if (sourcePath.equals(resolvedBase + "/index.d.deal")) return true;
             } else {
                 if (info.modulePath.equals(importPath.replace('/', '.'))) return true;
-                // Also match synthetic classpath sources
                 if (info.sourcePath.startsWith("classpath:")) {
                     if (info.modulePath.equals(importPath.replace('/', '.'))) return true;
                 }
@@ -1027,13 +1136,9 @@ public final class CompilationOrchestrator {
                         Symbol sym = info.symbolTable.resolve(className);
                         if (sym instanceof Symbol.ClassSymbol cs) return cs;
                     }
-                    // If the module hasn't been type-checked yet (should not happen
-                    // since dependencies are processed in topological order),
-                    // return null — the caller will emit an appropriate error.
                     return null;
                 }
             }
-            // Module not found
             return null;
         }
     }

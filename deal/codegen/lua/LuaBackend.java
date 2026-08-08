@@ -1085,14 +1085,22 @@ public final class LuaBackend implements Visitor<Void> {
 
     /**
      * Searches the root symbol table for a ModuleSymbol whose exports
-     * include the given class. Returns the import alias (module local name)
-     * or {@code null} if not found.
+     * include the given class with the exact module path. Returns the
+     * import alias (module local name) or {@code null} if not found.
+     *
+     * <p>The {@code modulePath} parameter is essential: when two imported
+     * modules export classes with the same name (e.g., both {@code mod1}
+     * and {@code mod2} export {@code class Result}), checking only the
+     * class name would return the wrong alias and produce incorrect
+     * defaults-table references.</p>
      */
     private String findImportAliasForClass(String className, String modulePath) {
         for (var entry : symbols.symbols().entrySet()) {
             Symbol sym = entry.getValue();
             if (sym instanceof Symbol.ModuleSymbol ms) {
-                if (ms.exports().containsKey(className)) {
+                Type exportType = ms.exports().get(className);
+                if (exportType instanceof Type.Class tc
+                        && tc.modulePath().equals(modulePath)) {
                     return entry.getKey();
                 }
             }
