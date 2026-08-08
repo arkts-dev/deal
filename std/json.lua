@@ -60,7 +60,8 @@ local function encode_value(v)
       return '{' .. table.concat(parts, ',') .. '}'
     end
   end
-  return 'null'
+  -- Unsupported types: reject with runtime error
+  error(__rt._err("E8001", "unsupported type for JSON encoding: " .. t, nil, nil, nil, "string, number, boolean, or table", t))
 end
 
 --- Encode a value to a JSON string.

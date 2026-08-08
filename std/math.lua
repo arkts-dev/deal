@@ -6,8 +6,10 @@ local __rt = require("deal.runtime")
 local mathlib = {}
 
 --- Returns the absolute value of an integer or number.
--- Handles both (int)->int and (number)->number overloads declared in .d.deal.
--- Uses number check so both int and float inputs are accepted.
+-- Both the (int)->int and (number)->number overloads declared in .d.deal share
+-- this single runtime implementation.  The runtime uses check_number (which
+-- accepts NaN) for input validation, and the type checker selects the
+-- appropriate overload at compile time.
 mathlib.abs = __rt.function_("(number)->number", function(x)
   __rt.check_number(x)
   return math.abs(x)

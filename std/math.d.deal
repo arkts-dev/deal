@@ -1,4 +1,11 @@
 // DEAL Standard Library: std/math (declaration)
+//
+// NOTE: The two abs overloads share a single runtime implementation that
+// accepts the wider 'number' type.  The type checker selects the appropriate
+// overload at compile time; the runtime uses check_number for input validation
+// and does not enforce int-specific checks on the output.  This means the
+// (int)->int overload's tighter runtime contract (reject NaN, validate output
+// is int) is not enforced independently — the type checker ensures correctness.
 export function abs(x: int): int;
 export function abs(x: number): number;
 export function ceil(x: number): int;

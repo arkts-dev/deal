@@ -129,10 +129,15 @@ test("string.find with non-string raises error", function()
   assert(type(err) == "table", "error should be a table")
 end)
 
-test("string.find does literal search, not pattern matching", function()
-  -- A dot in Lua patterns matches any character; literal search should not match
-  local r = strings.find.f("hello", "h.llo")
-  assert(r == require("deal.runtime").__NULL, "literal search should not match pattern '.'")
+test("string.find uses Lua pattern matching", function()
+  -- %d+ matches one or more digits
+  local r = strings.find.f("hello 123 world", "%d+")
+  assert(r == 6, "pattern '%d+' should match digits at 0-based index 6, got " .. tostring(r))
+end)
+
+test("string.find returns null when pattern not matched", function()
+  local r = strings.find.f("hello", "xyz")
+  assert(r == require("deal.runtime").__NULL)
 end)
 
 test("string.concat concatenates strings", function()
@@ -316,6 +321,15 @@ end)
 test("json.stringify with non-table raises error", function()
   local err = assert_error(function() json.stringify.f("not a table") end)
   assert(type(err) == "table", "error should be a table")
+end)
+
+test("json.stringify rejects unsupported nested types", function()
+  -- A table containing a function should cause an error during encoding
+  local t = { a = 1, fn = function() end }
+  local err = assert_error(function() json.stringify.f(t) end)
+  assert(type(err) == "table", "error should be a table")
+  assert(err.code ~= nil, "error should have a code")
+  assert(string.find(err.message, "unsupported") ~= nil, "error message should mention unsupported type")
 end)
 
 test("json.parse with non-string raises error", function()

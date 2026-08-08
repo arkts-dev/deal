@@ -1,5 +1,5 @@
 // DEAL Standard Library: std/string (declaration)
 export function len(s: string): int;
 export function sub(s: string, start: int, end: int): string;
-export function find(s: string, substring: string): int | null;
+export function find(s: string, pattern: string): int | null;
 export function concat(a: string, b: string): string;
