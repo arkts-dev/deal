@@ -8,7 +8,7 @@ local stringlib = {}
 --- Returns the length of the string.
 stringlib.len = __rt.function_("(string)->int", function(s)
   __rt.check_string(s)
-  return #s
+  return __rt.check_int(#s)
 end)
 
 --- Returns the substring from start to end (both 0-based, inclusive on the
@@ -23,7 +23,7 @@ stringlib.sub = __rt.function_("(string,int,int)->string", function(s, start, en
   -- position of the last character + 1 (i.e. exclusive), matching the
   -- typical substring convention where end is exclusive.
   -- Convert: Lua sub(s, start+1, end)
-  return string.sub(s, start + 1, end_)
+  return __rt.check_string(string.sub(s, start + 1, end_))
 end)
 
 --- Finds the first occurrence of 'pattern' in 's' using Lua pattern matching.
@@ -42,7 +42,7 @@ end)
 stringlib.concat = __rt.function_("(string,string)->string", function(a, b)
   __rt.check_string(a)
   __rt.check_string(b)
-  return a .. b
+  return __rt.check_string(a .. b)
 end)
 
 return stringlib

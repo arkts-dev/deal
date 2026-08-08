@@ -5,12 +5,24 @@ local __rt = require("deal.runtime")
 
 local mathlib = {}
 
---- Returns the absolute value of an integer or number.
--- Both the (int)->int and (number)->number overloads declared in .d.deal share
--- this single runtime implementation.  The runtime uses check_number (which
--- accepts NaN) for input validation, and the type checker selects the
--- appropriate overload at compile time.
+--- Returns the absolute value of a number (or integer, which is a subtype).
+--
+-- The single runtime implementation serves both the (int)->int and
+-- (number)->number uses declared in the type system:
+--   * When the input is a valid int, both input and output are validated with
+--     check_int (rejecting NaN, Infinity, non-integer values, and safe-range
+--     violations).
+--   * When the input is a number but not an int, only check_number is used
+--     (accepts NaN and Infinity) and the output is returned unchecked.
 mathlib.abs = __rt.function_("(number)->number", function(x)
+  -- Try int validation first: if the input passes check_int it is a safe
+  -- integer and we should apply int-output validation as well.
+  local intOk, intVal = pcall(__rt.check_int, x)
+  if intOk then
+    -- Input is a valid int; apply int-output validation.
+    return __rt.check_int(math.abs(intVal))
+  end
+  -- Not an int: validate as number (accepts NaN, Infinity) and return.
   __rt.check_number(x)
   return math.abs(x)
 end)

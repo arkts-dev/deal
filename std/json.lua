@@ -5,16 +5,24 @@ local __rt = require("deal.runtime")
 
 local json = {}
 
+-- Escape a string for JSON output.  Handles all ASCII control characters
+-- (U+0000–U+001F) as well as the required escapes for \", \\, and the
+-- common whitespace escapes.
 local function escape(s)
-  return (string.gsub(s, '[%c\\"\b\f\n\r\t]', {
-    ['\b'] = '\\b',
-    ['\f'] = '\\f',
-    ['\n'] = '\\n',
-    ['\r'] = '\\r',
-    ['\t'] = '\\t',
-    ['"']  = '\\"',
-    ['\\'] = '\\\\',
-  }))
+  return (string.gsub(s, '[%c\\"]', function(c)
+    local byte = string.byte(c)
+    if c == '"'  then return '\\"'
+    elseif c == '\\' then return '\\\\'
+    elseif c == '\b' then return '\\b'
+    elseif c == '\f' then return '\\f'
+    elseif c == '\n' then return '\\n'
+    elseif c == '\r' then return '\\r'
+    elseif c == '\t' then return '\\t'
+    else
+      -- Other control character: encode as \u00XX
+      return string.format('\\u%04x', byte)
+    end
+  end))
 end
 
 local function encode_value(v)
@@ -53,9 +61,17 @@ local function encode_value(v)
     else
       local parts = {}
       for k, val in pairs(v) do
+        -- Include both string and numeric keys; numeric keys are
+        -- converted to strings via tostring / JSON-compatible formatting.
+        local key_str
         if type(k) == 'string' then
-          parts[#parts + 1] = '"' .. escape(k) .. '":' .. encode_value(val)
+          key_str = '"' .. escape(k) .. '"'
+        elseif type(k) == 'number' then
+          key_str = '"' .. string.format('%.17g', k) .. '"'
+        else
+          key_str = '"' .. escape(tostring(k)) .. '"'
         end
+        parts[#parts + 1] = key_str .. ':' .. encode_value(val)
       end
       return '{' .. table.concat(parts, ',') .. '}'
     end

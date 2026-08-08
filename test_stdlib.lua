@@ -90,6 +90,13 @@ test("string.len returns correct length", function()
   assert(strings.len.f("abc def") == 7)
 end)
 
+test("string.len validates output as int", function()
+  local r = strings.len.f("test")
+  assert(type(r) == "number")
+  assert(r % 1 == 0, "output should be an integer")
+  assert(r >= 0, "output should be non-negative")
+end)
+
 test("string.len with non-string raises error", function()
   local err = assert_error(function() strings.len.f(42) end)
   assert(type(err) == "table", "error should be a table")
@@ -102,6 +109,11 @@ test("string.sub returns correct substring", function()
   assert(strings.sub.f("hello", 1, 4) == "ell")
   -- 0-based: sub("hello", 0, 1) → "h"
   assert(strings.sub.f("hello", 0, 1) == "h")
+end)
+
+test("string.sub validates output as string", function()
+  local r = strings.sub.f("hello", 0, 5)
+  assert(type(r) == "string", "output should be a string")
 end)
 
 test("string.sub with non-string raises error", function()
@@ -144,6 +156,11 @@ test("string.concat concatenates strings", function()
   assert(strings.concat.f("hello", " world") == "hello world")
   assert(strings.concat.f("", "") == "")
   assert(strings.concat.f("a", "b") == "ab")
+end)
+
+test("string.concat validates output as string", function()
+  local r = strings.concat.f("a", "b")
+  assert(type(r) == "string", "output should be a string")
 end)
 
 test("string.concat with non-string raises error", function()
@@ -230,6 +247,20 @@ test("json.stringify boolean values", function()
   local result = json.stringify.f({ a = true, b = false })
   assert(string.find(result, "true") ~= nil)
   assert(string.find(result, "false") ~= nil)
+end)
+
+test("json.stringify includes numeric keys in object mode", function()
+  local result = json.stringify.f({ [1] = "a", name = "test" })
+  assert(string.find(result, '"1"') ~= nil, "numeric key 1 should be included as string")
+  assert(string.find(result, '"name"') ~= nil)
+end)
+
+test("json.stringify escapes all control characters", function()
+  -- ASCII control character 0x01 (SOH)
+  local result = json.stringify.f({ a = "hello\x01world" })
+  assert(string.find(result, "\\u0001") ~= nil, "control character 0x01 should be \\u0001, got: " .. result)
+  -- Also verify that no literal control character remains
+  assert(string.find(result, "\x01") == nil, "no literal control character should remain")
 end)
 
 test("json.parse of object", function()
@@ -343,16 +374,36 @@ end)
 
 local mathlib = require("std.math")
 
-test("math.abs(int) returns absolute value", function()
-  assert(mathlib.abs.f(5) == 5)
-  assert(mathlib.abs.f(-5) == 5)
-  assert(mathlib.abs.f(0) == 0)
+test("math.abs(int) returns absolute value with int validation", function()
+  local r = mathlib.abs.f(5)
+  assert(r == 5)
+  assert(type(r) == "number")
+  assert(r % 1 == 0, "int abs should return an integer")
+
+  local r2 = mathlib.abs.f(-5)
+  assert(r2 == 5)
+  assert(r2 % 1 == 0)
+
+  local r3 = mathlib.abs.f(0)
+  assert(r3 == 0)
+  assert(r3 % 1 == 0)
 end)
 
-test("math.abs(float) returns absolute value (number overload)", function()
+test("math.abs(float) returns absolute value", function()
   assert(mathlib.abs.f(3.14) == 3.14)
   assert(mathlib.abs.f(-3.14) == 3.14)
   assert(mathlib.abs.f(-0.0) == 0, "-0.0 abs should be 0")
+end)
+
+test("math.abs(NaN) is accepted (number overload)", function()
+  -- NaN input is accepted by the number check
+  local r = mathlib.abs.f(0/0) -- produces NaN
+  assert(r ~= r, "abs(NaN) should still be NaN (NaN ~= NaN)")
+end)
+
+test("math.abs(Infinity) is accepted (number overload)", function()
+  local r = mathlib.abs.f(math.huge)
+  assert(r == math.huge, "abs(Infinity) should be Infinity")
 end)
 
 test("math.abs with non-number raises error", function()
