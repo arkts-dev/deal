@@ -5,11 +5,12 @@ local __rt = require("deal.runtime")
 
 local mathlib = {}
 
---- Returns the absolute value of an integer.
--- Input and output are checked as int.
-mathlib.abs = __rt.function_("(int)->int", function(x)
-  __rt.check_int(x)
-  return __rt.check_int(math.abs(x))
+--- Returns the absolute value of an integer or number.
+-- Handles both (int)->int and (number)->number overloads declared in .d.deal.
+-- Uses number check so both int and float inputs are accepted.
+mathlib.abs = __rt.function_("(number)->number", function(x)
+  __rt.check_number(x)
+  return math.abs(x)
 end)
 
 --- Returns the ceiling of a number as an integer.
@@ -28,14 +29,14 @@ end)
 mathlib.max = __rt.function_("(int,int)->int", function(a, b)
   __rt.check_int(a)
   __rt.check_int(b)
-  if a > b then return a else return b end
+  return __rt.check_int(math.max(a, b))
 end)
 
 --- Returns the minimum of two integers.
 mathlib.min = __rt.function_("(int,int)->int", function(a, b)
   __rt.check_int(a)
   __rt.check_int(b)
-  if a < b then return a else return b end
+  return __rt.check_int(math.min(a, b))
 end)
 
 --- Returns the square root of a number.

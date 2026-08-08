@@ -18,6 +18,9 @@ local function escape(s)
 end
 
 local function encode_value(v)
+  if v == __rt.__NULL then
+    return 'null'
+  end
   if v == nil then
     return 'null'
   end
@@ -73,6 +76,44 @@ json.parse = __rt.function_("(string)->table", function(s)
   local pos = 1
   local len = #s
 
+  -- Report a parse error with context.
+  local function parse_error(msg)
+    local ctx_start = math.max(1, pos - 10)
+    local ctx_end = math.min(len, pos + 10)
+    local ctx = s:sub(ctx_start, ctx_end)
+    error(__rt._err("E8001", "JSON parse error at position " .. pos .. ": " .. msg
+      .. " (near '" .. ctx .. "')", nil, nil, nil, nil, nil))
+  end
+
+  local function peek()
+    if pos > len then return nil end
+    return s:sub(pos, pos)
+  end
+
+  local function read_char()
+    if pos > len then return nil end
+    local c = s:sub(pos, pos)
+    pos = pos + 1
+    return c
+  end
+
+  local function expect_char(expected)
+    local c = read_char()
+    if c ~= expected then
+      parse_error("expected '" .. expected .. "', got '" .. (c or "EOF") .. "'")
+    end
+    return c
+  end
+
+  local function expect_literal(word)
+    for i = 1, #word do
+      local c = read_char()
+      if c ~= word:sub(i, i) then
+        parse_error("expected '" .. word .. "', got unexpected character '" .. (c or "EOF") .. "'")
+      end
+    end
+  end
+
   local skip_ws, parse_value, parse_string, parse_number, parse_object, parse_array
 
   function skip_ws()
@@ -88,7 +129,9 @@ json.parse = __rt.function_("(string)->table", function(s)
 
   function parse_value()
     skip_ws()
-    if pos > len then return nil end
+    if pos > len then
+      parse_error("unexpected end of input")
+    end
     local c = s:sub(pos, pos)
 
     if c == '{' then
@@ -98,16 +141,18 @@ json.parse = __rt.function_("(string)->table", function(s)
     elseif c == '"' then
       return parse_string()
     elseif c == 't' then
-      pos = pos + 4
+      expect_literal("true")
       return true
     elseif c == 'f' then
-      pos = pos + 5
+      expect_literal("false")
       return false
     elseif c == 'n' then
-      pos = pos + 4
-      return nil
-    else
+      expect_literal("null")
+      return __rt.__NULL
+    elseif c == '-' or (c >= '0' and c <= '9') then
       return parse_number()
+    else
+      parse_error("unexpected character '" .. c .. "'")
     end
   end
 
@@ -121,7 +166,9 @@ json.parse = __rt.function_("(string)->table", function(s)
         return table.concat(parts)
       elseif c == '\\' then
         pos = pos + 1
-        if pos > len then break end
+        if pos > len then
+          parse_error("unterminated escape sequence in string")
+        end
         local esc = s:sub(pos, pos)
         if esc == 'n' then parts[#parts+1] = '\n'
         elseif esc == 'r' then parts[#parts+1] = '\r'
@@ -133,6 +180,9 @@ json.parse = __rt.function_("(string)->table", function(s)
         elseif esc == '/' then parts[#parts+1] = '/'
         elseif esc == 'u' then
           local hex = s:sub(pos+1, pos+4)
+          if #hex < 4 then
+            parse_error("invalid unicode escape: expected 4 hex digits")
+          end
           pos = pos + 4
           parts[#parts+1] = string.char(tonumber(hex, 16))
         else
@@ -143,15 +193,35 @@ json.parse = __rt.function_("(string)->table", function(s)
       end
       pos = pos + 1
     end
-    return table.concat(parts)
+    parse_error("unterminated string")
   end
 
   function parse_number()
     local start = pos
     if s:sub(pos, pos) == '-' then pos = pos + 1 end
-    while pos <= len and s:sub(pos, pos):match('[0-9]') do pos = pos + 1 end
+
+    -- Must have at least one digit before decimal point
+    if pos > len or not s:sub(pos, pos):match('[0-9]') then
+      parse_error("invalid number: expected digit")
+    end
+    -- Leading zero check: if first digit is '0', next char must be '.' or 'e'/'E' or end of number
+    if s:sub(pos, pos) == '0' then
+      pos = pos + 1
+      if pos <= len then
+        local nc = s:sub(pos, pos)
+        if nc:match('[0-9]') then
+          parse_error("invalid number: leading zero not allowed")
+        end
+      end
+    else
+      while pos <= len and s:sub(pos, pos):match('[0-9]') do pos = pos + 1 end
+    end
+
     if pos <= len and s:sub(pos, pos) == '.' then
       pos = pos + 1
+      if pos > len or not s:sub(pos, pos):match('[0-9]') then
+        parse_error("invalid number: expected digit after decimal point")
+      end
       while pos <= len and s:sub(pos, pos):match('[0-9]') do pos = pos + 1 end
     end
     if pos <= len and (s:sub(pos, pos) == 'e' or s:sub(pos, pos) == 'E') then
@@ -159,31 +229,45 @@ json.parse = __rt.function_("(string)->table", function(s)
       if pos <= len and (s:sub(pos, pos) == '+' or s:sub(pos, pos) == '-') then
         pos = pos + 1
       end
+      if pos > len or not s:sub(pos, pos):match('[0-9]') then
+        parse_error("invalid number: expected digit in exponent")
+      end
       while pos <= len and s:sub(pos, pos):match('[0-9]') do pos = pos + 1 end
     end
-    return tonumber(s:sub(start, pos - 1))
+    local num_str = s:sub(start, pos - 1)
+    if #num_str == 0 then
+      parse_error("invalid number: empty")
+    end
+    return tonumber(num_str)
   end
 
   function parse_object()
     pos = pos + 1 -- skip {
     local obj = {}
     skip_ws()
-    if s:sub(pos, pos) == '}' then
+    if peek() == '}' then
       pos = pos + 1
       return obj
     end
     while true do
       skip_ws()
+      if peek() ~= '"' then
+        parse_error("expected string key in object")
+      end
       local key = parse_string()
       skip_ws()
-      if s:sub(pos, pos) == ':' then pos = pos + 1 end
+      expect_char(':')
       obj[key] = parse_value()
       skip_ws()
-      if s:sub(pos, pos) == '}' then
+      local c = peek()
+      if c == '}' then
         pos = pos + 1
         return obj
+      elseif c == ',' then
+        pos = pos + 1
+      else
+        parse_error("expected ',' or '}' in object, got '" .. (c or "EOF") .. "'")
       end
-      if s:sub(pos, pos) == ',' then pos = pos + 1 end
     end
   end
 
@@ -191,7 +275,7 @@ json.parse = __rt.function_("(string)->table", function(s)
     pos = pos + 1 -- skip [
     local arr = {}
     skip_ws()
-    if s:sub(pos, pos) == ']' then
+    if peek() == ']' then
       pos = pos + 1
       return arr
     end
@@ -200,15 +284,24 @@ json.parse = __rt.function_("(string)->table", function(s)
       arr[idx] = parse_value()
       idx = idx + 1
       skip_ws()
-      if s:sub(pos, pos) == ']' then
+      local c = peek()
+      if c == ']' then
         pos = pos + 1
         return arr
+      elseif c == ',' then
+        pos = pos + 1
+      else
+        parse_error("expected ',' or ']' in array, got '" .. (c or "EOF") .. "'")
       end
-      if s:sub(pos, pos) == ',' then pos = pos + 1 end
     end
   end
 
-  return parse_value()
+  local result = parse_value()
+  skip_ws()
+  if pos <= len then
+    parse_error("unexpected trailing characters after JSON value")
+  end
+  return result
 end)
 
 return json

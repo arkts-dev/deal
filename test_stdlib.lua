@@ -129,6 +129,12 @@ test("string.find with non-string raises error", function()
   assert(type(err) == "table", "error should be a table")
 end)
 
+test("string.find does literal search, not pattern matching", function()
+  -- A dot in Lua patterns matches any character; literal search should not match
+  local r = strings.find.f("hello", "h.llo")
+  assert(r == require("deal.runtime").__NULL, "literal search should not match pattern '.'")
+end)
+
 test("string.concat concatenates strings", function()
   assert(strings.concat.f("hello", " world") == "hello world")
   assert(strings.concat.f("", "") == "")
@@ -146,13 +152,13 @@ end)
 
 local tablelib = require("std.table")
 
-test("table.keys returns keys of a table", function()
+test("table.keys returns keys of a table as strings", function()
   local t = { a = 1, b = 2, c = 3 }
   local keys = tablelib.keys.f(t)
   assert(#keys == 3)
   -- All keys should be strings
   for _, k in ipairs(keys) do
-    assert(type(k) == "string")
+    assert(type(k) == "string", "key should be string, got " .. type(k))
   end
   -- Check that all expected keys are present
   local found = { a = false, b = false, c = false }
@@ -160,6 +166,15 @@ test("table.keys returns keys of a table", function()
     found[k] = true
   end
   assert(found.a and found.b and found.c)
+end)
+
+test("table.keys converts numeric keys to strings", function()
+  local t = { [1] = "a", [2] = "b" }
+  local keys = tablelib.keys.f(t)
+  assert(#keys == 2)
+  for _, k in ipairs(keys) do
+    assert(type(k) == "string", "numeric key should be converted to string, got " .. type(k))
+  end
 end)
 
 test("table.keys on empty table returns empty array", function()
@@ -198,6 +213,20 @@ test("json.stringify of nested object", function()
   assert(string.find(result, '"data"') ~= nil)
 end)
 
+test("json.stringify encodes __NULL as null", function()
+  local __rt = require("deal.runtime")
+  local result = json.stringify.f({ a = __rt.__NULL, b = 1 })
+  -- Should contain "null", not "{}"
+  assert(string.find(result, "null") ~= nil, "should contain 'null' for __NULL value")
+  assert(string.find(result, "{}") == nil, "should NOT contain '{}' for __NULL value")
+end)
+
+test("json.stringify boolean values", function()
+  local result = json.stringify.f({ a = true, b = false })
+  assert(string.find(result, "true") ~= nil)
+  assert(string.find(result, "false") ~= nil)
+end)
+
 test("json.parse of object", function()
   local result = json.parse.f('{"a":1,"b":"hi"}')
   assert(type(result) == "table")
@@ -213,6 +242,18 @@ test("json.parse of array", function()
   assert(result[3] == 3)
 end)
 
+test("json.parse of null returns __NULL", function()
+  local __rt = require("deal.runtime")
+  local result = json.parse.f('{"a":null}')
+  assert(result.a == __rt.__NULL, "JSON null should parse to __NULL")
+end)
+
+test("json.parse of nested null returns __NULL", function()
+  local __rt = require("deal.runtime")
+  local result = json.parse.f('[null]')
+  assert(result[1] == __rt.__NULL, "JSON null in array should parse to __NULL")
+end)
+
 test("json.parse of empty object", function()
   local result = json.parse.f('{}')
   assert(type(result) == "table")
@@ -223,6 +264,36 @@ test("json.parse of empty array", function()
   assert(type(result) == "table")
 end)
 
+test("json.parse rejects invalid JSON: bare word", function()
+  local err = assert_error(function() json.parse.f("tru") end)
+  assert(type(err) == "table", "should get error table for 'tru'")
+  assert(err.code ~= nil, "error should have code")
+end)
+
+test("json.parse rejects invalid JSON: malformed object", function()
+  local err = assert_error(function() json.parse.f("{invalid}") end)
+  assert(type(err) == "table", "should get error table for '{invalid}'")
+  assert(err.code ~= nil, "error should have code")
+end)
+
+test("json.parse rejects invalid JSON: trailing comma", function()
+  local err = assert_error(function() json.parse.f('[1,]') end)
+  assert(type(err) == "table", "should get error table for trailing comma")
+  assert(err.code ~= nil, "error should have code")
+end)
+
+test("json.parse rejects invalid JSON: trailing garbage", function()
+  local err = assert_error(function() json.parse.f('1 2') end)
+  assert(type(err) == "table", "should get error table for trailing garbage")
+  assert(err.code ~= nil, "error should have code")
+end)
+
+test("json.parse rejects empty string", function()
+  local err = assert_error(function() json.parse.f('') end)
+  assert(type(err) == "table", "should get error table for empty string")
+  assert(err.code ~= nil, "error should have code")
+end)
+
 test("json round-trip", function()
   local original = { a = 1, b = "hello", c = true, d = { nested = 2 } }
   local encoded = json.stringify.f(original)
@@ -231,6 +302,15 @@ test("json round-trip", function()
   assert(decoded.b == "hello")
   assert(decoded.c == true)
   assert(decoded.d.nested == 2)
+end)
+
+test("json null round-trip", function()
+  local __rt = require("deal.runtime")
+  local original = { a = __rt.__NULL, b = 42 }
+  local encoded = json.stringify.f(original)
+  local decoded = json.parse.f(encoded)
+  assert(decoded.a == __rt.__NULL, "null should round-trip to __NULL, got " .. tostring(decoded.a))
+  assert(decoded.b == 42)
 end)
 
 test("json.stringify with non-table raises error", function()
@@ -255,13 +335,14 @@ test("math.abs(int) returns absolute value", function()
   assert(mathlib.abs.f(0) == 0)
 end)
 
-test("math.abs with non-int raises error", function()
-  local err = assert_error(function() mathlib.abs.f("hi") end)
-  assert(type(err) == "table", "error should be a table")
+test("math.abs(float) returns absolute value (number overload)", function()
+  assert(mathlib.abs.f(3.14) == 3.14)
+  assert(mathlib.abs.f(-3.14) == 3.14)
+  assert(mathlib.abs.f(-0.0) == 0, "-0.0 abs should be 0")
 end)
 
-test("math.abs with float raises error (int overload)", function()
-  local err = assert_error(function() mathlib.abs.f(3.14) end)
+test("math.abs with non-number raises error", function()
+  local err = assert_error(function() mathlib.abs.f("hi") end)
   assert(type(err) == "table", "error should be a table")
 end)
 
@@ -299,6 +380,14 @@ test("math.max with non-int raises error", function()
   assert(type(err) == "table", "error should be a table")
 end)
 
+test("math.max validates return value as int", function()
+  -- Integers within safe range should return correctly
+  local r = mathlib.max.f(100, 200)
+  assert(r == 200)
+  assert(type(r) == "number")
+  assert(r % 1 == 0)
+end)
+
 test("math.min returns minimum of two ints", function()
   assert(mathlib.min.f(1, 2) == 1)
   assert(mathlib.min.f(5, 3) == 3)
@@ -309,6 +398,13 @@ end)
 test("math.min with non-int raises error", function()
   local err = assert_error(function() mathlib.min.f("hi", 2) end)
   assert(type(err) == "table", "error should be a table")
+end)
+
+test("math.min validates return value as int", function()
+  local r = mathlib.min.f(100, 200)
+  assert(r == 100)
+  assert(type(r) == "number")
+  assert(r % 1 == 0)
 end)
 
 test("math.sqrt returns square root", function()

@@ -42,6 +42,11 @@ javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java 
 java -ea -cp build deal.test.ModuleSystemTest
 
 echo ""
+echo "=== Compiling and Running Stdlib .d.deal Parse Tests ==="
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java deal/parser/*.java test/StdlibDeclParseTest.java
+java -ea -cp build deal.test.StdlibDeclParseTest
+
+echo ""
 echo "=== Running Runtime Library Tests ==="
 if command -v luajit &> /dev/null; then
   luajit test_runtime.lua

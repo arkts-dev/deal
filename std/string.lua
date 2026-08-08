@@ -26,12 +26,12 @@ stringlib.sub = __rt.function_("(string,int,int)->string", function(s, start, en
   return string.sub(s, start + 1, end_)
 end)
 
---- Finds the first occurrence of 'pattern' in 's'.
+--- Finds the first occurrence of 'substring' in 's' using literal search.
 -- Returns the 0-based start index, or null if not found.
-stringlib.find = __rt.function_("(string,string)->int|null", function(s, pattern)
+stringlib.find = __rt.function_("(string,string)->int|null", function(s, substring)
   __rt.check_string(s)
-  __rt.check_string(pattern)
-  local found = string.find(s, pattern, 1, true)
+  __rt.check_string(substring)
+  local found = string.find(s, substring, 1, true)
   if found then
     return found - 1  -- convert to 0-based
   end

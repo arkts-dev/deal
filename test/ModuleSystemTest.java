@@ -35,6 +35,279 @@ public class ModuleSystemTest {
     }
 
     // =========================================================================
+    // Stdlib Compiler Integration Tests (ISSUE-0009)
+    // =========================================================================
+
+    private static void testStdlibConsoleCompilerIntegration() throws Exception {
+        System.out.println("-- Stdlib Compiler Integration: std/console --");
+
+        writeFile("src/sci_console.deal", """
+            import * as console from "std/console"
+            export function test(): void { console.log("hello"); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/sci_console.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/sci_console");
+        List<Path> roots = new ArrayList<>();
+        roots.add(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, roots, null);
+
+        boolean success = orchestrator.compile();
+        List<Diagnostic> diags = orchestrator.diagnostics();
+        boolean hasModuleNotFound = diags.stream()
+            .anyMatch(d -> "E2003".equals(d.code()));
+        check(!hasModuleNotFound, "Stdlib console: no E2003 module-not-found");
+        if (!success) {
+            System.out.println("  Note: compilation had errors: " + diags.stream()
+                .filter(d -> "error".equals(d.severity()))
+                .map(d -> d.code() + ": " + d.message()).toList());
+        }
+    }
+
+    private static void testStdlibTableCompilerIntegration() throws Exception {
+        System.out.println("-- Stdlib Compiler Integration: std/table --");
+
+        writeFile("src/sci_table.deal", """
+            import * as tbl from "std/table"
+            export function getKeys(t: table): string[] { return tbl.keys(t); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/sci_table.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/sci_table");
+        List<Path> roots = new ArrayList<>();
+        roots.add(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, roots, null);
+
+        boolean success = orchestrator.compile();
+        List<Diagnostic> diags = orchestrator.diagnostics();
+        boolean hasModuleNotFound = diags.stream()
+            .anyMatch(d -> "E2003".equals(d.code()));
+        check(!hasModuleNotFound, "Stdlib table: no E2003 module-not-found");
+        if (!success) {
+            System.out.println("  Note: compilation had errors: " + diags.stream()
+                .filter(d -> "error".equals(d.severity()))
+                .map(d -> d.code() + ": " + d.message()).toList());
+        }
+    }
+
+    private static void testStdlibJsonCompilerIntegration() throws Exception {
+        System.out.println("-- Stdlib Compiler Integration: std/json --");
+
+        writeFile("src/sci_json.deal", """
+            import * as json from "std/json"
+            export function encode(t: table): string { return json.stringify(t); }
+            export function decode(s: string): table { return json.parse(s); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/sci_json.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/sci_json");
+        List<Path> roots = new ArrayList<>();
+        roots.add(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, roots, null);
+
+        boolean success = orchestrator.compile();
+        List<Diagnostic> diags = orchestrator.diagnostics();
+        boolean hasModuleNotFound = diags.stream()
+            .anyMatch(d -> "E2003".equals(d.code()));
+        check(!hasModuleNotFound, "Stdlib json: no E2003 module-not-found");
+        if (!success) {
+            System.out.println("  Note: compilation had errors: " + diags.stream()
+                .filter(d -> "error".equals(d.severity()))
+                .map(d -> d.code() + ": " + d.message()).toList());
+        }
+    }
+
+    private static void testStdlibMathCompilerIntegration() throws Exception {
+        System.out.println("-- Stdlib Compiler Integration: std/math --");
+
+        writeFile("src/sci_math.deal", """
+            import * as math from "std/math"
+            export function absVal(x: number): number { return math.abs(x); }
+            export function roundUp(x: number): int { return math.ceil(x); }
+            export function roundDown(x: number): int { return math.floor(x); }
+            export function bigger(a: int, b: int): int { return math.max(a, b); }
+            export function smaller(a: int, b: int): int { return math.min(a, b); }
+            export function sqRoot(x: number): number { return math.sqrt(x); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/sci_math.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/sci_math");
+        List<Path> roots = new ArrayList<>();
+        roots.add(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, roots, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success = orchestrator.compile();
+        List<Diagnostic> diags = orchestrator.diagnostics();
+        boolean hasModuleNotFound = diags.stream()
+            .anyMatch(d -> "E2003".equals(d.code()));
+        check(!hasModuleNotFound, "Stdlib math: no E2003 module-not-found");
+        if (!success) {
+            System.out.println("  Note: compilation had errors: " + diags.stream()
+                .filter(d -> "error".equals(d.severity()))
+                .map(d -> d.code() + ": " + d.message()).toList());
+        }
+    }
+
+    private static void testStdlibTimeCompilerIntegration() throws Exception {
+        System.out.println("-- Stdlib Compiler Integration: std/time --");
+
+        writeFile("src/sci_time.deal", """
+            import * as time from "std/time"
+            export function currentTime(): int { return time.now(); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/sci_time.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/sci_time");
+        List<Path> roots = new ArrayList<>();
+        roots.add(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, roots, null);
+
+        boolean success = orchestrator.compile();
+        List<Diagnostic> diags = orchestrator.diagnostics();
+        boolean hasModuleNotFound = diags.stream()
+            .anyMatch(d -> "E2003".equals(d.code()));
+        check(!hasModuleNotFound, "Stdlib time: no E2003 module-not-found");
+        if (!success) {
+            System.out.println("  Note: compilation had errors: " + diags.stream()
+                .filter(d -> "error".equals(d.severity()))
+                .map(d -> d.code() + ": " + d.message()).toList());
+        }
+    }
+
+    private static void testStdlibCrossModuleUsage() throws Exception {
+        System.out.println("-- Stdlib: Cross-Module Usage (string + math) --");
+
+        writeFile("src/sci_cross.deal", """
+            import * as strings from "std/string"
+            import * as math from "std/math"
+            export function analyze(s: string): int {
+                let len: int = strings.len(s);
+                return math.max(len, 0);
+            }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/sci_cross.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/sci_cross");
+        List<Path> roots = new ArrayList<>();
+        roots.add(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, roots, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success = orchestrator.compile();
+        List<Diagnostic> diags = orchestrator.diagnostics();
+        boolean hasModuleNotFound = diags.stream()
+            .anyMatch(d -> "E2003".equals(d.code()));
+        check(!hasModuleNotFound, "Stdlib cross-module: no E2003 module-not-found");
+        if (!success) {
+            System.out.println("  Note: compilation had errors: " + diags.stream()
+                .filter(d -> "error".equals(d.severity()))
+                .map(d -> d.code() + ": " + d.message()).toList());
+        }
+
+        // Runtime verification if luajit is available
+        if (luajitAvailable() && success) {
+            try {
+                Path runtimeDest = outputDir.resolve("deal/runtime.lua");
+                if (!Files.exists(runtimeDest)) {
+                    Files.createDirectories(runtimeDest.getParent());
+                    Files.copy(Path.of("deal/runtime.lua"), runtimeDest);
+                }
+
+                String luaCode = "package.path = '" + outputDir.toRealPath()
+                    + "/?.lua;' "
+                    + "local m = require('sci_cross') "
+                    + "local result = m.analyze.f('hello') "
+                    + "assert(result == 5, 'expected 5, got ' .. tostring(result)) "
+                    + "print('OK: stdlib cross-module runtime')";
+                ProcessBuilder pb = new ProcessBuilder("luajit", "-e", luaCode);
+                pb.redirectErrorStream(true);
+                Process proc = pb.start();
+                String output = new String(proc.getInputStream().readAllBytes());
+                int exitCode = proc.waitFor();
+                check(exitCode == 0,
+                    "Stdlib cross-module: runtime verification (exit " + exitCode
+                    + "): " + output.trim());
+            } catch (Exception e) {
+                check(false, "Stdlib cross-module: runtime verification failed: " + e.getMessage());
+            }
+        }
+    }
+
+    private static void testStdlibJsonRoundTrip() throws Exception {
+        System.out.println("-- Stdlib: JSON Round-Trip End-to-End --");
+
+        writeFile("src/sci_jsonrt.deal", """
+            import * as json from "std/json"
+            export function roundTrip(data: table): table {
+                let encoded: string = json.stringify(data);
+                return json.parse(encoded);
+            }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/sci_jsonrt.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/sci_jsonrt");
+        List<Path> roots = new ArrayList<>();
+        roots.add(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, roots, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success = orchestrator.compile();
+        List<Diagnostic> diags = orchestrator.diagnostics();
+        boolean hasModuleNotFound = diags.stream()
+            .anyMatch(d -> "E2003".equals(d.code()));
+        check(!hasModuleNotFound, "Stdlib json round-trip: no E2003 module-not-found");
+        if (!success) {
+            System.out.println("  Note: compilation had errors: " + diags.stream()
+                .filter(d -> "error".equals(d.severity()))
+                .map(d -> d.code() + ": " + d.message()).toList());
+        }
+
+        // Runtime verification of JSON round-trip
+        if (luajitAvailable() && success) {
+            try {
+                Path runtimeDest = outputDir.resolve("deal/runtime.lua");
+                if (!Files.exists(runtimeDest)) {
+                    Files.createDirectories(runtimeDest.getParent());
+                    Files.copy(Path.of("deal/runtime.lua"), runtimeDest);
+                }
+
+                String luaCode = "package.path = '" + outputDir.toRealPath()
+                    + "/?.lua;' "
+                    + "local m = require('sci_jsonrt') "
+                    + "local input = {a=1, b='hi', c=true} "
+                    + "local result = m.roundTrip.f(input) "
+                    + "assert(result.a == 1, 'a mismatch: ' .. tostring(result.a)) "
+                    + "assert(result.b == 'hi', 'b mismatch: ' .. tostring(result.b)) "
+                    + "assert(result.c == true, 'c mismatch: ' .. tostring(result.c)) "
+                    + "print('OK: stdlib json round-trip')";
+                ProcessBuilder pb = new ProcessBuilder("luajit", "-e", luaCode);
+                pb.redirectErrorStream(true);
+                Process proc = pb.start();
+                String output = new String(proc.getInputStream().readAllBytes());
+                int exitCode = proc.waitFor();
+                check(exitCode == 0,
+                    "Stdlib json round-trip: runtime verification (exit " + exitCode
+                    + "): " + output.trim());
+            } catch (Exception e) {
+                check(false, "Stdlib json round-trip: runtime verification failed: " + e.getMessage());
+            }
+        }
+    }
+
+
+    // =========================================================================
     // Helpers
     // =========================================================================
 
@@ -1229,6 +1502,14 @@ public class ModuleSystemTest {
             testEndToEndStdlib();
             testEndToEndWithError();
             testEndToEndCliPipeline();
+            // Stdlib compiler integration tests (ISSUE-0009)
+            testStdlibConsoleCompilerIntegration();
+            testStdlibTableCompilerIntegration();
+            testStdlibJsonCompilerIntegration();
+            testStdlibMathCompilerIntegration();
+            testStdlibTimeCompilerIntegration();
+            testStdlibCrossModuleUsage();
+            testStdlibJsonRoundTrip();
         } finally {
             try {
                 Files.walk(tmpDir)
