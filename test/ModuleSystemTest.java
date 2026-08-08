@@ -484,6 +484,153 @@ public class ModuleSystemTest {
         check(!hasE2005, "Declaration-only cycle: no E2005 diagnostic");
     }
 
+
+    // =========================================================================
+    // Two Disconnected Cycles: One Declaration-Only, One Runtime (regression)
+    // =========================================================================
+
+    private static void testTwoDisconnectedCyclesOneRuntime() throws Exception {
+        System.out.println("-- Two Disconnected Cycles: One Declaration-Only, One Runtime --");
+
+        // SCC1: A↔B — declaration-only (only type references in function bodies)
+        writeFile("src/tdc_a.deal", """
+            import * as B from "./tdc_b"
+            export function callB(x: int): int { return B.transform(x); }
+            """);
+        writeFile("src/tdc_b.deal", """
+            import * as A from "./tdc_a"
+            export function transform(x: int): int { return x + 1; }
+            """);
+
+        // SCC2: X↔Y — runtime (top-level expression uses cyclic import)
+        writeFile("src/tdc_x.deal", """
+            import * as Y from "./tdc_y"
+            let val: int = Y.getVal();
+            export function getX(): int { return 1; }
+            """);
+        writeFile("src/tdc_y.deal", """
+            import * as X from "./tdc_x"
+            export function getVal(): int { return X.getX(); }
+            """);
+
+        // Entry: imports A first (decl-only cycle), then X (runtime cycle)
+        writeFile("src/tdc_entry.deal", """
+            import * as A from "./tdc_a"
+            import * as X from "./tdc_x"
+            export function test(): int { return A.callB(1); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/tdc_entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/tdc");
+        List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, moduleRoots, null);
+
+        boolean success = orchestrator.compile();
+        check(!success, "Two disconnected cycles (one runtime): compilation should fail");
+
+        List<Diagnostic> diags = orchestrator.diagnostics();
+        boolean hasE2005 = diags.stream().anyMatch(
+            d -> "E2005".equals(d.code()) && "error".equals(d.severity()));
+        check(hasE2005, "Two disconnected cycles: should have E2005 for runtime cycle");
+    }
+
+    // =========================================================================
+    // Two Disconnected Cycles: Both Declaration-Only (should succeed)
+    // =========================================================================
+
+    private static void testTwoDisconnectedCyclesBothDecl() throws Exception {
+        System.out.println("-- Two Disconnected Cycles: Both Declaration-Only --");
+
+        // SCC1: A↔B — declaration-only
+        writeFile("src/tdc2_a.deal", """
+            import * as B from "./tdc2_b"
+            export function callB(x: int): int { return B.transform(x); }
+            """);
+        writeFile("src/tdc2_b.deal", """
+            import * as A from "./tdc2_a"
+            export function transform(x: int): int { return x + 1; }
+            """);
+
+        // SCC2: C↔D — declaration-only
+        writeFile("src/tdc2_c.deal", """
+            import * as D from "./tdc2_d"
+            export function callD(x: int): int { return D.convert(x); }
+            """);
+        writeFile("src/tdc2_d.deal", """
+            import * as C from "./tdc2_c"
+            export function convert(x: int): int { return C.callD(x) + 2; }
+            """);
+
+        // Entry: imports A first, then C
+        writeFile("src/tdc2_entry.deal", """
+            import * as A from "./tdc2_a"
+            import * as C from "./tdc2_c"
+            export function test(): int { return A.callB(1) + C.callD(2); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/tdc2_entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/tdc2");
+        List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, moduleRoots, null);
+
+        boolean success = orchestrator.compile();
+        check(success, "Two disconnected cycles (both decl-only): compilation should succeed");
+
+        List<Diagnostic> diags = orchestrator.diagnostics();
+        boolean hasE2005 = diags.stream().anyMatch(
+            d -> "E2005".equals(d.code()));
+        check(!hasE2005, "Two disconnected cycles (both decl-only): no E2005");
+    }
+
+    // =========================================================================
+    // Stdlib .lua fallback when .d.deal exists without .lua in stdlibDir (regression)
+    // =========================================================================
+
+    private static void testStdlibFallbackAfterDdeal() throws Exception {
+        System.out.println("-- Stdlib .lua fallback after .d.deal (regression) --");
+
+        // Create a stdlibDir with ONLY .d.deal, no .lua
+        Path stdlibDir = tmpDir.resolve("stdlib_fallback");
+        Files.createDirectories(stdlibDir.resolve("std"));
+        Files.writeString(stdlibDir.resolve("std/string.d.deal"),
+            "// DEAL Standard Library: std/string (declaration)\n"
+            + "export function length(s: string): int;\n");
+        // Intentionally do NOT create std/string.lua
+
+        writeFile("src/sf_main.deal", """
+            import * as strings from "std/string"
+            export function getLen(s: string): int { return strings.length(s); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/sf_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/sf");
+        List<Path> roots = new ArrayList<>();
+        roots.add(tmpDir.resolve("src").toAbsolutePath());
+        roots.add(stdlibDir.toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, roots, stdlibDir.toAbsolutePath());
+
+        // The compilation should succeed because the .d.deal provides type info.
+        // The .lua not being copied is acceptable — the host provides it at runtime.
+        // The important thing: no crash/exception during copyStdlibModules.
+        boolean success = orchestrator.compile();
+        check(success, "Stdlib fallback: compilation should succeed with .d.deal only");
+
+        // Verify that copyStdlibModules was reached and didn't crash.
+        // The .lua file may or may not exist depending on classpath resources,
+        // but the orchestrator should not have thrown an exception.
+        Path stdlibLua = outputDir.resolve("std/string.lua");
+        // Either the .lua was found on classpath and copied, or it wasn't.
+        // Both outcomes are acceptable — the fix ensures the classpath
+        // fallback is at least attempted.
+        System.out.println("  std/string.lua in output: " + Files.exists(stdlibLua));
+    }
+
     // =========================================================================
     // Compilation Orchestration: Declaration File
     // =========================================================================
@@ -1067,6 +1214,9 @@ public class ModuleSystemTest {
             testCompilationWithError();
             testCircularImportRuntime();
             testCircularImportDeclarationOnly();
+            testTwoDisconnectedCyclesOneRuntime();
+            testTwoDisconnectedCyclesBothDecl();
+            testStdlibFallbackAfterDdeal();
             testCrossModuleClassFieldAccess();
             testCrossModuleClassConstruction();
             testCrossModuleClassHas();

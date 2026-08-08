@@ -270,6 +270,7 @@ public final class CompilationOrchestrator {
 
     private List<String> handleCycle(Map<String, Set<String>> deps,
                                       Set<String> remaining) {
+        // Find the first cycle
         List<String> cycle = new ArrayList<>();
         String start = remaining.iterator().next();
         Set<String> visited = new HashSet<>();
@@ -279,67 +280,158 @@ public final class CompilationOrchestrator {
             cycle.addAll(remaining);
         }
 
-        if (isDeclarationOnlyCycle(cycle, deps)) {
-            List<String> order = new ArrayList<>();
-            Set<String> cycleSet = new LinkedHashSet<>(cycle);
-            Set<String> allRemaining = new LinkedHashSet<>(remaining);
-            Set<String> nonCycle = new LinkedHashSet<>(allRemaining);
-            nonCycle.removeAll(cycleSet);
+        // Check if the first cycle has runtime dependencies
+        if (!isDeclarationOnlyCycle(cycle, deps)) {
+            StringBuilder cyclePath = new StringBuilder();
+            for (int i = 0; i < cycle.size(); i++) {
+                if (i > 0) cyclePath.append(" -> ");
+                cyclePath.append(cycle.get(i));
+            }
+            error("E2005", "Circular import with runtime dependency: " + cyclePath,
+                cycle.get(0), 1, 1);
+            return null;
+        }
 
-            // Add non-cycle modules whose dependencies are already satisfied
-            boolean progress;
-            do {
-                progress = false;
-                for (Iterator<String> it = nonCycle.iterator(); it.hasNext(); ) {
-                    String src = it.next();
-                    Set<String> imports = deps.get(src);
-                    if (order.containsAll(imports)) {
-                        order.add(src);
-                        it.remove();
-                        progress = true;
-                    }
+        // First cycle is declaration-only. Now check non-cycle modules
+        // for additional cycles (multiple disconnected SCCs).
+        Set<String> allCycleNodes = new LinkedHashSet<>(cycle);
+        Set<String> nonCycle = new LinkedHashSet<>(remaining);
+        nonCycle.removeAll(allCycleNodes);
+
+        // Iteratively find and check additional cycles in the non-cycle set
+        List<String> additionalCycle;
+        while ((additionalCycle = findCycleInSet(deps, nonCycle)) != null
+                && !additionalCycle.isEmpty()) {
+            if (!isDeclarationOnlyCycle(additionalCycle, deps)) {
+                StringBuilder cyclePath = new StringBuilder();
+                for (int i = 0; i < additionalCycle.size(); i++) {
+                    if (i > 0) cyclePath.append(" -> ");
+                    cyclePath.append(additionalCycle.get(i));
                 }
-            } while (progress);
+                error("E2005", "Circular import with runtime dependency: " + cyclePath,
+                    additionalCycle.get(0), 1, 1);
+                return null;
+            }
+            // Merge into the set of all cycle nodes
+            allCycleNodes.addAll(additionalCycle);
+            nonCycle.removeAll(additionalCycle);
+        }
 
-            // Add all cycle modules after non-cycle dependencies are satisfied
-            order.addAll(cycle);
+        // All cycles are declaration-only. Build the order.
+        // Steps:
+        // 1. Add non-cycle modules whose deps are already satisfied (none initially)
+        // 2. Add all cycle modules
+        // 3. Add remaining non-cycle modules that depend on cycle modules
+        // 4. Append any still-unsatisfied modules at the end
 
-            // After cycle modules are in order, try again to add any
-            // remaining non-cycle modules that depend on cycle modules
-            do {
-                progress = false;
-                for (Iterator<String> it = nonCycle.iterator(); it.hasNext(); ) {
-                    String src = it.next();
-                    Set<String> imports = deps.get(src);
-                    if (order.containsAll(imports)) {
-                        order.add(src);
-                        it.remove();
-                        progress = true;
-                    }
-                }
-            } while (progress);
+        List<String> order = new ArrayList<>();
 
-            // Any modules still in nonCycle at this point have unsatisfied
-            // dependencies — add them at the end to avoid losing them
-            if (!nonCycle.isEmpty()) {
-                for (String src : nonCycle) {
+        // Step 1: non-cycle modules with all deps already in order (empty at start)
+        boolean progress;
+        do {
+            progress = false;
+            for (Iterator<String> it = nonCycle.iterator(); it.hasNext(); ) {
+                String src = it.next();
+                Set<String> imports = deps.get(src);
+                if (order.containsAll(imports)) {
                     order.add(src);
+                    it.remove();
+                    progress = true;
                 }
             }
+        } while (progress);
 
-            return order;
+        // Step 2: all cycle modules
+        order.addAll(allCycleNodes);
+
+        // Step 3: non-cycle modules whose deps are now satisfied
+        do {
+            progress = false;
+            for (Iterator<String> it = nonCycle.iterator(); it.hasNext(); ) {
+                String src = it.next();
+                Set<String> imports = deps.get(src);
+                if (order.containsAll(imports)) {
+                    order.add(src);
+                    it.remove();
+                    progress = true;
+                }
+            }
+        } while (progress);
+
+        // Step 4: any remaining modules (deps not fully satisfied)
+        if (!nonCycle.isEmpty()) {
+            for (String src : nonCycle) {
+                order.add(src);
+            }
         }
 
-        StringBuilder cyclePath = new StringBuilder();
-        for (int i = 0; i < cycle.size(); i++) {
-            if (i > 0) cyclePath.append(" -> ");
-            cyclePath.append(cycle.get(i));
-        }
-
-        error("E2005", "Circular import with runtime dependency: " + cyclePath,
-            cycle.get(0), 1, 1);
-        return null;
+        return order;
     }
+
+    /**
+     * Finds a cycle in the given set of modules. Returns the cycle nodes
+     * (with duplicates removed via LinkedHashSet), or an empty list if
+     * no cycle is found.
+     */
+    private List<String> findCycleInSet(Map<String, Set<String>> deps,
+                                         Set<String> candidates) {
+        if (candidates.isEmpty()) return null;
+
+        for (String start : candidates) {
+            List<String> cycle = new ArrayList<>();
+            Set<String> visited = new HashSet<>();
+            Deque<String> stack = new ArrayDeque<>();
+            if (findCycleRestricted(deps, start, candidates, visited, stack, cycle)) {
+                // Deduplicate while preserving order
+                List<String> unique = new ArrayList<>();
+                Set<String> seen = new HashSet<>();
+                for (String s : cycle) {
+                    if (seen.add(s)) {
+                        unique.add(s);
+                    }
+                }
+                return unique;
+            }
+        }
+        return new ArrayList<>();
+    }
+
+    /**
+     * Finds a cycle by DFS, restricted to nodes in the allowed set.
+     * Only follows edges to nodes that are in allowed.
+     */
+    private boolean findCycleRestricted(Map<String, Set<String>> deps,
+                                         String current, Set<String> allowed,
+                                         Set<String> visited, Deque<String> stack,
+                                         List<String> cycle) {
+        if (stack.contains(current)) {
+            boolean found = false;
+            for (String s : stack) {
+                if (s.equals(current)) found = true;
+                if (found) cycle.add(s);
+            }
+            cycle.add(current);
+            return true;
+        }
+        if (visited.contains(current)) return false;
+
+        visited.add(current);
+        stack.addLast(current);
+
+        Set<String> imports = deps.get(current);
+        if (imports != null) {
+            for (String imp : imports) {
+                // Only follow edges to nodes in the allowed set
+                if (!allowed.contains(imp)) continue;
+                if (findCycleRestricted(deps, imp, allowed, visited, stack, cycle))
+                    return true;
+            }
+        }
+
+        stack.removeLast();
+        return false;
+    }
+
 
     private boolean isDeclarationOnlyCycle(List<String> cycle,
                                             Map<String, Set<String>> deps) {
@@ -673,8 +765,6 @@ public final class CompilationOrchestrator {
                     log("  Copied stdlib: " + stdlibModule);
                     continue;
                 }
-                srcFile = stdlibDir.resolve(stdlibModule + ".d.deal");
-                if (Files.exists(srcFile)) continue;
             }
 
             String resourcePath = "std/" + stdlibModule.substring(4) + ".lua";
