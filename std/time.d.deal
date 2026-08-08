@@ -1,0 +1,2 @@
+// DEAL Standard Library: std/time (declaration)
+export function now(): int;

@@ -1,3 +1,3 @@
 // DEAL Standard Library: std/json (declaration)
-export function encode(v: table): string;
-export function decode(s: string): table;
+export function stringify(value: table): string;
+export function parse(text: string): table;

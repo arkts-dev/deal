@@ -50,4 +50,12 @@ else
 fi
 
 echo ""
+echo "=== Running Standard Library Tests ==="
+if command -v luajit &> /dev/null; then
+  luajit test_stdlib.lua
+else
+  echo "WARNING: luajit not found, skipping standard library tests"
+fi
+
+echo ""
 echo "=== All Tests Passed ==="

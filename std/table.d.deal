@@ -1,3 +1,2 @@
 // DEAL Standard Library: std/table (declaration)
 export function keys(t: table): string[];
-export function length(t: table): int;

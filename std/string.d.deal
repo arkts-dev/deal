@@ -1,13 +1,5 @@
 // DEAL Standard Library: std/string (declaration)
-export function length(s: string): int;
-export function substring(s: string, start: int): string;
-export function substring(s: string, start: int, len: int): string;
-export function contains(s: string, sub: string): boolean;
-export function startsWith(s: string, prefix: string): boolean;
-export function endsWith(s: string, suffix: string): boolean;
-export function indexOf(s: string, sub: string): int;
-export function replace(s: string, old: string, new: string): string;
-export function split(s: string, sep: string): string[];
-export function toUpperCase(s: string): string;
-export function toLowerCase(s: string): string;
-export function trim(s: string): string;
+export function len(s: string): int;
+export function sub(s: string, start: int, end: int): string;
+export function find(s: string, pattern: string): int | null;
+export function concat(a: string, b: string): string;

@@ -61,19 +61,18 @@ local function encode_value(v)
 end
 
 --- Encode a value to a JSON string.
-json.encode = __rt.function_("(table)->string", function(v)
+json.stringify = __rt.function_("(table)->string", function(v)
+  __rt.check_table(v)
   return encode_value(v)
 end)
 
 --- Decode a JSON string to a Lua table.
-json.decode = __rt.function_("(string)->table", function(s)
+json.parse = __rt.function_("(string)->table", function(s)
   __rt.check_string(s)
-  -- Use LuaJIT's built-in JSON if available (LuaJIT 2.1+ has no native JSON)
   -- Simple recursive descent parser
   local pos = 1
   local len = #s
 
-  -- Forward-declare mutually recursive parser functions
   local skip_ws, parse_value, parse_string, parse_number, parse_object, parse_array
 
   function skip_ws()
@@ -133,7 +132,6 @@ json.decode = __rt.function_("(string)->table", function(s)
         elseif esc == '"' then parts[#parts+1] = '"'
         elseif esc == '/' then parts[#parts+1] = '/'
         elseif esc == 'u' then
-          -- \uXXXX
           local hex = s:sub(pos+1, pos+4)
           pos = pos + 4
           parts[#parts+1] = string.char(tonumber(hex, 16))
