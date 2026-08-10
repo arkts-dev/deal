@@ -374,58 +374,132 @@ end)
 
 local mathlib = require("std.math")
 
-test("math.abs(int) returns absolute value with int validation", function()
-  local r = mathlib.abs.f(5)
+-- absInt tests
+
+test("math.absInt(int) returns absolute value", function()
+  local r = mathlib.absInt.f(5)
   assert(r == 5)
   assert(type(r) == "number")
-  assert(r % 1 == 0, "int abs should return an integer")
+  assert(r % 1 == 0, "absInt should return an integer")
 
-  local r2 = mathlib.abs.f(-5)
+  local r2 = mathlib.absInt.f(-5)
   assert(r2 == 5)
   assert(r2 % 1 == 0)
 
-  local r3 = mathlib.abs.f(0)
+  local r3 = mathlib.absInt.f(0)
   assert(r3 == 0)
   assert(r3 % 1 == 0)
 end)
 
-test("math.abs(float) returns absolute value", function()
-  assert(mathlib.abs.f(3.14) == 3.14)
-  assert(mathlib.abs.f(-3.14) == 3.14)
-  assert(mathlib.abs.f(-0.0) == 0, "-0.0 abs should be 0")
-end)
-
-test("math.abs(NaN) is accepted (number overload)", function()
-  -- NaN input is accepted by the number check
-  local r = mathlib.abs.f(0/0) -- produces NaN
-  assert(r ~= r, "abs(NaN) should still be NaN (NaN ~= NaN)")
-end)
-
-test("math.abs(Infinity) is accepted (number overload)", function()
-  local r = mathlib.abs.f(math.huge)
-  assert(r == math.huge, "abs(Infinity) should be Infinity")
-end)
-
-test("math.abs with non-number raises error", function()
-  local err = assert_error(function() mathlib.abs.f("hi") end)
+test("math.absInt with non-int (string) raises error", function()
+  local err = assert_error(function() mathlib.absInt.f("hi") end)
   assert(type(err) == "table", "error should be a table")
 end)
 
-test("math.ceil returns ceiling as int", function()
-  assert(mathlib.ceil.f(3.14) == 4)
-  assert(mathlib.ceil.f(3.0) == 3)
-  assert(mathlib.ceil.f(-2.5) == -2)
-end)
-
-test("math.ceil with non-number raises error", function()
-  local err = assert_error(function() mathlib.ceil.f("hi") end)
+test("math.absInt with float raises error (not int)", function()
+  local err = assert_error(function() mathlib.absInt.f(3.14) end)
   assert(type(err) == "table", "error should be a table")
 end)
 
-test("math.floor returns floor as int", function()
-  assert(mathlib.floor.f(3.14) == 3)
-  assert(mathlib.floor.f(3.0) == 3)
-  assert(mathlib.floor.f(-2.5) == -3)
+test("math.absInt with NaN raises error", function()
+  local err = assert_error(function() mathlib.absInt.f(0/0) end)
+  assert(type(err) == "table", "error should be a table")
+end)
+
+-- absNumber tests
+
+test("math.absNumber returns absolute value", function()
+  assert(mathlib.absNumber.f(3.14) == 3.14)
+  assert(mathlib.absNumber.f(-3.14) == 3.14)
+  assert(mathlib.absNumber.f(0.0) == 0.0)
+  assert(mathlib.absNumber.f(-0.0) == 0, "-0.0 abs should be 0")
+end)
+
+test("math.absNumber(NaN) is accepted", function()
+  local r = mathlib.absNumber.f(0/0)
+  assert(r ~= r, "absNumber(NaN) should still be NaN")
+end)
+
+test("math.absNumber(Infinity) is accepted", function()
+  local r = mathlib.absNumber.f(math.huge)
+  assert(r == math.huge, "absNumber(Infinity) should be Infinity")
+end)
+
+test("math.absNumber with non-number raises error", function()
+  local err = assert_error(function() mathlib.absNumber.f("hi") end)
+  assert(type(err) == "table", "error should be a table")
+end)
+
+-- minInt tests
+
+test("math.minInt returns minimum of two ints", function()
+  assert(mathlib.minInt.f(1, 2) == 1)
+  assert(mathlib.minInt.f(5, 3) == 3)
+  assert(mathlib.minInt.f(-1, -2) == -2)
+  assert(mathlib.minInt.f(0, 0) == 0)
+end)
+
+test("math.minInt validates return value as int", function()
+  local r = mathlib.minInt.f(100, 200)
+  assert(r == 100)
+  assert(type(r) == "number")
+  assert(r % 1 == 0)
+end)
+
+test("math.minInt with non-int raises error", function()
+  local err = assert_error(function() mathlib.minInt.f("hi", 2) end)
+  assert(type(err) == "table", "error should be a table")
+end)
+
+test("math.minInt with float raises error", function()
+  local err = assert_error(function() mathlib.minInt.f(1.5, 2) end)
+  assert(type(err) == "table", "error should be a table")
+end)
+
+-- maxInt tests
+
+test("math.maxInt returns maximum of two ints", function()
+  assert(mathlib.maxInt.f(1, 2) == 2)
+  assert(mathlib.maxInt.f(5, 3) == 5)
+  assert(mathlib.maxInt.f(-1, -2) == -1)
+  assert(mathlib.maxInt.f(0, 0) == 0)
+end)
+
+test("math.maxInt validates return value as int", function()
+  local r = mathlib.maxInt.f(100, 200)
+  assert(r == 200)
+  assert(type(r) == "number")
+  assert(r % 1 == 0)
+end)
+
+test("math.maxInt with non-int raises error", function()
+  local err = assert_error(function() mathlib.maxInt.f("hi", 2) end)
+  assert(type(err) == "table", "error should be a table")
+end)
+
+test("math.maxInt with float raises error", function()
+  local err = assert_error(function() mathlib.maxInt.f(1, 2.5) end)
+  assert(type(err) == "table", "error should be a table")
+end)
+
+-- floor tests (returns number, not int)
+
+test("math.floor returns floor as number", function()
+  local r = mathlib.floor.f(3.14)
+  assert(r == 3.0)
+  assert(type(r) == "number")
+
+  local r2 = mathlib.floor.f(3.7)
+  assert(r2 == 3.0)
+end)
+
+test("math.floor of integer returns same value as number", function()
+  local r = mathlib.floor.f(3.0)
+  assert(r == 3.0)
+end)
+
+test("math.floor of negative number", function()
+  assert(mathlib.floor.f(-2.5) == -3.0)
 end)
 
 test("math.floor with non-number raises error", function()
@@ -433,58 +507,50 @@ test("math.floor with non-number raises error", function()
   assert(type(err) == "table", "error should be a table")
 end)
 
-test("math.max returns maximum of two ints", function()
-  assert(mathlib.max.f(1, 2) == 2)
-  assert(mathlib.max.f(5, 3) == 5)
-  assert(mathlib.max.f(-1, -2) == -1)
-  assert(mathlib.max.f(0, 0) == 0)
+test("math.floor(NaN) returns NaN", function()
+  local r = mathlib.floor.f(0/0)
+  assert(r ~= r, "floor(NaN) should be NaN")
 end)
 
-test("math.max with non-int raises error", function()
-  local err = assert_error(function() mathlib.max.f("hi", 2) end)
+-- ceil tests (returns number, not int)
+
+test("math.ceil returns ceiling as number", function()
+  local r = mathlib.ceil.f(3.14)
+  assert(r == 4.0)
+  assert(type(r) == "number")
+
+  local r2 = mathlib.ceil.f(3.0)
+  assert(r2 == 3.0)
+
+  local r3 = mathlib.ceil.f(-2.5)
+  assert(r3 == -2.0)
+end)
+
+test("math.ceil with non-number raises error", function()
+  local err = assert_error(function() mathlib.ceil.f("hi") end)
   assert(type(err) == "table", "error should be a table")
 end)
 
-test("math.max validates return value as int", function()
-  -- Integers within safe range should return correctly
-  local r = mathlib.max.f(100, 200)
-  assert(r == 200)
-  assert(type(r) == "number")
-  assert(r % 1 == 0)
+test("math.ceil(NaN) returns NaN", function()
+  local r = mathlib.ceil.f(0/0)
+  assert(r ~= r, "ceil(NaN) should be NaN")
 end)
 
-test("math.min returns minimum of two ints", function()
-  assert(mathlib.min.f(1, 2) == 1)
-  assert(mathlib.min.f(5, 3) == 3)
-  assert(mathlib.min.f(-1, -2) == -2)
-  assert(mathlib.min.f(0, 0) == 0)
-end)
-
-test("math.min with non-int raises error", function()
-  local err = assert_error(function() mathlib.min.f("hi", 2) end)
-  assert(type(err) == "table", "error should be a table")
-end)
-
-test("math.min validates return value as int", function()
-  local r = mathlib.min.f(100, 200)
-  assert(r == 100)
-  assert(type(r) == "number")
-  assert(r % 1 == 0)
-end)
+-- sqrt tests
 
 test("math.sqrt returns square root", function()
-  local r = mathlib.sqrt.f(4)
-  assert(r == 2)
-  local r2 = mathlib.sqrt.f(2)
+  local r = mathlib.sqrt.f(4.0)
+  assert(r == 2.0)
+  local r2 = mathlib.sqrt.f(2.0)
   assert(r2 > 1.41 and r2 < 1.42)
 end)
 
 test("math.sqrt of zero returns zero", function()
-  assert(mathlib.sqrt.f(0) == 0)
+  assert(mathlib.sqrt.f(0.0) == 0.0)
 end)
 
 test("math.sqrt of negative number errors with E8001", function()
-  local err = assert_error_code(function() mathlib.sqrt.f(-1) end, "E8001")
+  local err = assert_error_code(function() mathlib.sqrt.f(-1.0) end, "E8001")
 end)
 
 test("math.sqrt with non-number raises error", function()
