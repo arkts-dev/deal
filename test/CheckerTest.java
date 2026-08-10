@@ -288,6 +288,8 @@ public class CheckerTest {
         // Runtime intrinsics: int() and number()
         testIntrinsicIntRejectsIntLiteral();
         testIntrinsicNumberRejectsBoolean();
+        // ISSUE-0008: E6003 coroutine import rejection
+        testE6003_coroutineImport();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -1333,4 +1335,33 @@ public class CheckerTest {
         check(hasE5001,
             "number(true) should reject boolean with E5001, got: " + diags);
     }
+    // ISSUE-0008: E6003 — coroutine import rejection
+    // =========================================================================
+
+    static void testE6003_coroutineImport() {
+        System.out.println("-- ISSUE-0008: E6003 coroutine import rejection --");
+
+        // Test 1: import * as c from "std/coroutine" should produce E6003
+        CheckerOutput out = checkProgram(
+            "import * as c from \"std/coroutine\";"
+        );
+        assertError(out, "E6003", "coroutine import produces E6003");
+
+        // Test 2: import alongside other code — E6003 still fires.
+        out = checkProgram(
+            "import * as c from \"std/coroutine\";\n" +
+            "let x: int = 42;"
+        );
+        assertError(out, "E6003", "coroutine import with other code still produces E6003");
+
+        // Test 3: use of c.resumeInt after failed import — E6003 fires first.
+        // If the import somehow succeeded (e.g., E6003 check removed),
+        // the TypeChecker would emit E2001 for the undeclared identifier 'c'.
+        out = checkProgram(
+            "import * as c from \"std/coroutine\";\n" +
+            "let x: int = c.resumeInt(null);"
+        );
+        assertError(out, "E6003", "coroutine import with c.resumeInt usage produces E6003");
+    }
+
 }

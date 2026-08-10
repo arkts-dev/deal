@@ -25,7 +25,7 @@ import java.util.*;
  * FunctionExpr) to its {@link SymbolTable} scope, used by the TypeChecker
  * for scope-aware name resolution.</p>
  *
- * <p>Errors produced: E2001–E2007.</p>
+ * <p>Errors produced: E2001–E2007, E6003.</p>
  */
 public final class NameResolver {
 
@@ -136,6 +136,14 @@ public final class NameResolver {
     private void processImport(ImportDeclaration imp) {
         String alias = imp.alias();
         String path = imp.modulePath();
+
+        // D6/ISSUE-0008: Coroutines are not supported on this backend.
+        // Emit E6003 and do not bind the import alias.
+        if (path.equals("std/coroutine")) {
+            error("E6003", "Coroutines are not supported on this backend",
+                imp.span());
+            return;
+        }
 
         // F2: Circular import detection — check if the IMPORTED module
         // is already being resolved (not the importing module).
