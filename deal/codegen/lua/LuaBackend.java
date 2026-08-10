@@ -54,6 +54,11 @@ public final class LuaBackend implements Visitor<Void> {
     // Import resolution map: raw import path → Lua require path
     private Map<String, String> importResolutions = Map.of();
 
+    // ISSUE-0009: for-loop shadow-local lowering.
+    // When non-null, all IdentifierExpr nodes with this name in condition
+    // and update expressions are remapped to "_name" (the outer counter).
+    private String forLoopShadowVar = null;
+
     /**
      * Entry point: generate Lua source for a complete program.
      */
@@ -620,10 +625,22 @@ public final class LuaBackend implements Visitor<Void> {
     @Override
     public Void visit(ForStatement node) {
         emitLine("-- DEAL for-loop (v0.6 lowering)");
-        emitLine("-- KNOWN LIMIT: closures inside the loop body that capture the loop variable");
-        emitLine("-- will all see the final value (no per-iteration fresh binding).");
         emitLine("do");
         indent++;
+
+        // Determine if this is a let-declared loop variable (shadow-local pattern).
+        // When the for-init is a let declaration, we create a shadow variable _name
+        // for the outer counter and remap condition/update references to it.
+        String loopVarName = null;
+        boolean hasLetInit = false;
+
+        if (node.init().isPresent()) {
+            ForInit init = node.init().get();
+            if (init instanceof ForInit.VarDecl) {
+                hasLetInit = true;
+                loopVarName = ((ForInit.VarDecl) init).decl().name();
+            }
+        }
 
         if (node.init().isPresent()) {
             ForInit init = node.init().get();
@@ -633,20 +650,26 @@ public final class LuaBackend implements Visitor<Void> {
                     Type varType = decl.typeAnnotation().isPresent()
                         ? resolveTypeNode(decl.typeAnnotation().get()) : null;
                     String initExpr = emitExpression(decl.initializer());
+                    // Emit the outer counter as "_name" instead of "name"
+                    String shadowName = "_" + decl.name();
                     if (varType != null && !(varType instanceof Type.Error)) {
-                        emitLine("local " + decl.name() + " = "
+                        emitLine("local " + shadowName + " = "
                             + emitCheckExpr(initExpr, varType));
                     } else {
-                        emitLine("local " + decl.name() + " = " + initExpr);
+                        emitLine("local " + shadowName + " = " + initExpr);
                     }
                 }
                 case ForInit.AssignExpr ae -> visit(ae.expr());
             }
         }
 
+        // Condition: remap loop variable references to the shadow name
+        String savedShadowVar = this.forLoopShadowVar;
+        this.forLoopShadowVar = hasLetInit ? loopVarName : null;
         String condStr = node.condition().isPresent()
             ? "__rt.check_boolean(" + emitExpression(node.condition().get()) + ")"
             : "true";
+        this.forLoopShadowVar = savedShadowVar;
 
         String savedLabel = currentContinueLabel;
         String loopLabel = freshLabel("__continue");
@@ -654,12 +677,21 @@ public final class LuaBackend implements Visitor<Void> {
 
         emitLine("while " + condStr + " do");
         indent++;
+
+        // Per-iteration fresh binding: copy the outer counter into a new local
+        if (hasLetInit) {
+            emitLine("local " + loopVarName + " = _" + loopVarName);
+        }
+
         visit(node.body());
         // Continue landing pad: placed before the update so that continue
         // in a C-style for-loop jumps to the update step, then re-checks condition.
         emitLine("::" + loopLabel + "::");
         if (node.update().isPresent()) {
+            // Update: remap loop variable references to the shadow name
+            this.forLoopShadowVar = hasLetInit ? loopVarName : null;
             emitLine(emitExpression(node.update().get()));
+            this.forLoopShadowVar = savedShadowVar;
         }
         indent--;
         emitLine("end");  // while
@@ -888,7 +920,18 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine(node.name()); return null;
     }
 
-    private String emitIdentifier(IdentifierExpr id) { return id.name(); }
+    /**
+     * Emit an identifier. When forLoopShadowVar is set and the identifier
+     * name matches, emits the shadow name (prefixed with "_") so that the
+     * condition and update expressions in a for-let loop reference the
+     * outer counter.
+     */
+    private String emitIdentifier(IdentifierExpr id) {
+        if (forLoopShadowVar != null && id.name().equals(forLoopShadowVar)) {
+            return "_" + id.name();
+        }
+        return id.name();
+    }
 
     @Override public Void visit(BinaryExpr node) {
         emitLine(emitBinary(node)); return null;
