@@ -83,13 +83,6 @@ public final class LuaBackend implements Visitor<Void> {
         backend.sourceFilePath = sourcePath;
         backend.importResolutions = Map.copyOf(importResolutions);
         backend.emitHeader();
-        backend.emitLine("local __NULL = __rt.__NULL");
-        backend.emitLine("local __MISSING = __rt.__MISSING");
-        // Intrinsic aliases: int() and number() are direct-call-only in v1.0.
-        // Indirect use (assigned to variables / passed as callbacks) fails at
-        // runtime because codegen emits .f() for captured function values.
-        backend.emitLine("local int = __rt.int_convert");
-        backend.emitLine("local number = __rt.number_convert");
         backend.emitLine("local Error_defaults = { code = \"\", message = \"\" }");
         backend.emitLine("");
 
@@ -157,13 +150,6 @@ public final class LuaBackend implements Visitor<Void> {
      */
     public String generateFromInstance(ProgramNode program) {
         emitHeader();
-        emitLine("local __NULL = __rt.__NULL");
-        emitLine("local __MISSING = __rt.__MISSING");
-        // Intrinsic aliases: int() and number() are direct-call-only in v1.0.
-        // Indirect use (assigned to variables / passed as callbacks) fails at
-        // runtime because codegen emits .f() for captured function values.
-        emitLine("local int = __rt.int_convert");
-        emitLine("local number = __rt.number_convert");
         emitLine("local Error_defaults = { code = \"\", message = \"\" }");
         emitLine("");
         walkStatements(program.statements());
@@ -180,6 +166,14 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("-- Source: " + sourceFilePath);
         emitLine("");
         emitLine("local __rt = require(\"deal.runtime\")");
+        emitLine("");
+        emitLine("local __NULL = __rt.__NULL");
+        emitLine("local __MISSING = __rt.__MISSING");
+        // Intrinsic aliases: int() and number() are direct-call-only in v1.0.
+        // Indirect use (assigned to variables / passed as callbacks) fails at
+        // runtime because codegen emits .f() for captured function values.
+        emitLine("local int = __rt.int_convert");
+        emitLine("local number = __rt.number_convert");
         emitLine("");
     }
 
