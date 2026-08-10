@@ -27,7 +27,7 @@ Features not described in this specification do not exist in the language.
 - Operators:
  - `+ - * / % **`
  - `=== !== < <= > >=`
- - `&& | !`
+ - `&& || !`
  - `=` (assignment)
  - `.` (member access)
  - `[]` (index access)
@@ -196,7 +196,7 @@ WhileStatement ::= 'while' '(' Expression ')' Block
 
 ForStatement    ::= 'for' '(' ForInit? ';' Expression? ';' Expression? ')' Block
 
-ForOfStatement  ::= 'for' '(' Identifier 'of' Expression ')' Block
+ForOfStatement  ::= 'for' '(' 'let' Identifier ':' Type 'of' Expression ')' Block
 
 ForInit ::= VariableDeclaration | AssignmentExpression
 
@@ -1495,7 +1495,7 @@ Supported inside loops.
 
 ### Error type
 
-`Error` is a builtin class:
+`Error` is a builtin class. Its shape is equivalent to this descriptive pseudo-source; user code must not declare it:
 
 ```ts
 class Error {
@@ -1562,8 +1562,10 @@ try {
 An `async` function returns its declared type directly. The `async` marker is part of the function type. Callers use `await` to suspend until the function completes.
 
 ```ts
+import * as http from "host/http";
+
 async function fetchUser(id: int): User | null {
-  let json: string = await httpGet("/user/" + id);
+  let json: string = await http.get("/user/" + id);
   return User$fromJson(json);
 }
 ```
@@ -1746,7 +1748,7 @@ Host ABI:
 Declaration metadata versioning:
 
 ```ts
-// @deal-version 1.0
+// @deal-version 1.1
 ```
 
 If omitted, compiler assumes the current project `languageVersion`. A compiler must reject declaration files with a newer major version. Minor-version migrations may be performed only by explicit compiler migration rules.
@@ -1757,11 +1759,11 @@ A project may define `deal.json` at its root:
 
 ```json
 {
- "languageVersion": "1.0",
+ "languageVersion": "1.1",
  "moduleRoots": ["src"],
  "output": "build/lua",
  "backend": "luajit",
- "stdlib": "1.0",
+ "stdlib": "1.1",
  "dependencies": {},
  "externals": {
   "host/log": {
@@ -1907,7 +1909,7 @@ __rt.from_lua_function("(int)->int", raw_f)
 
 ### Host error and debugging
 
-Errors are raised by `throw`, runtime type checks, integer division-by-zero, invalid conversions, permission denial, host abort, and failed import resolution.
+Errors are raised by `throw`, runtime type checks, integer division-by-zero, invalid conversions, host abort, and failed import resolution.
 
 Errors propagate through function wrappers, module boundaries, and call chains. If not caught by `catch`, an error escapes to the host as a `DEALRuntimeError` object with source location, code, message, and stack frames.
 
@@ -2794,5 +2796,5 @@ A conforming implementation must include tests for:
 - ABI: import/export, host function wrapping, standard library module.
 - Diagnostics: stable code, location span, expected/actual type.
 - Host ABI: declared external imports, missing external rejection, runtime boundary checks.
-- Stdlib: string, table, JSON, math, time.
+- Stdlib: console, string, table, JSON, math, time.
 - AI-codegen benchmark: give agents the feature subset and validate generated solutions.
