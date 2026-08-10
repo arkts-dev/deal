@@ -5,52 +5,41 @@ local __rt = require("deal.runtime")
 
 local mathlib = {}
 
---- Returns the absolute value of a number (or integer, which is a subtype).
---
--- The single runtime implementation serves both the (int)->int and
--- (number)->number uses declared in the type system:
---   * When the input is a valid int, both input and output are validated with
---     check_int (rejecting NaN, Infinity, non-integer values, and safe-range
---     violations).
---   * When the input is a number but not an int, only check_number is used
---     (accepts NaN and Infinity) and the output is returned unchecked.
-mathlib.abs = __rt.function_("(number)->number", function(x)
-  -- Try int validation first: if the input passes check_int it is a safe
-  -- integer and we should apply int-output validation as well.
-  local intOk, intVal = pcall(__rt.check_int, x)
-  if intOk then
-    -- Input is a valid int; apply int-output validation.
-    return __rt.check_int(math.abs(intVal))
-  end
-  -- Not an int: validate as number (accepts NaN, Infinity) and return.
+--- Returns the absolute value of an int.
+mathlib.absInt = __rt.function_("(int)->int", function(x)
+  return __rt.check_int(math.abs(__rt.check_int(x)))
+end)
+
+--- Returns the absolute value of a number.
+mathlib.absNumber = __rt.function_("(number)->number", function(x)
   __rt.check_number(x)
   return math.abs(x)
 end)
 
---- Returns the ceiling of a number as an integer.
-mathlib.ceil = __rt.function_("(number)->int", function(x)
-  __rt.check_number(x)
-  return __rt.check_int(math.ceil(x))
+--- Returns the minimum of two ints.
+mathlib.minInt = __rt.function_("(int,int)->int", function(a, b)
+  __rt.check_int(a)
+  __rt.check_int(b)
+  return __rt.check_int(math.min(a, b))
 end)
 
---- Returns the floor of a number as an integer.
-mathlib.floor = __rt.function_("(number)->int", function(x)
-  __rt.check_number(x)
-  return __rt.check_int(math.floor(x))
-end)
-
---- Returns the maximum of two integers.
-mathlib.max = __rt.function_("(int,int)->int", function(a, b)
+--- Returns the maximum of two ints.
+mathlib.maxInt = __rt.function_("(int,int)->int", function(a, b)
   __rt.check_int(a)
   __rt.check_int(b)
   return __rt.check_int(math.max(a, b))
 end)
 
---- Returns the minimum of two integers.
-mathlib.min = __rt.function_("(int,int)->int", function(a, b)
-  __rt.check_int(a)
-  __rt.check_int(b)
-  return __rt.check_int(math.min(a, b))
+--- Returns the floor of a number as a number (not int).
+mathlib.floor = __rt.function_("(number)->number", function(x)
+  __rt.check_number(x)
+  return math.floor(x)
+end)
+
+--- Returns the ceiling of a number as a number (not int).
+mathlib.ceil = __rt.function_("(number)->number", function(x)
+  __rt.check_number(x)
+  return math.ceil(x)
 end)
 
 --- Returns the square root of a number.

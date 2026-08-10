@@ -1,13 +1,8 @@
 // DEAL Standard Library: std/math (declaration)
-//
-// NOTE: Only the (number)->number overload is declared.  The (int)->int
-// behaviour is covered by the same declaration because int is a subtype of
-// number in DEAL's type system.  The runtime implementation performs the
-// stricter int checks (reject NaN, validate output is int) when the input
-// happens to be a valid integer.
-export function abs(x: number): number;
-export function ceil(x: number): int;
-export function floor(x: number): int;
-export function max(a: int, b: int): int;
-export function min(a: int, b: int): int;
+export function floor(x: number): number;
+export function ceil(x: number): number;
 export function sqrt(x: number): number;
+export function absInt(x: int): int;
+export function absNumber(x: number): number;
+export function minInt(a: int, b: int): int;
+export function maxInt(a: int, b: int): int;
