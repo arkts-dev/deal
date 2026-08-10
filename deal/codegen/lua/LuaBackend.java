@@ -44,11 +44,16 @@ public final class LuaBackend implements Visitor<Void> {
     private String tryReturnFlag = null;
     private String tryReturnVal = null;
 
+    // Break/continue flag support (ISSUE-0011): flag-based pattern for
+    // break/continue inside try within loops. Allocated at every TryStatement
+    // level when inside a loop, with save/restore for nesting.
+    private String tryBreakFlag = null;
+    private String tryContinueFlag = null;
+
     private int functionDepth = 0;
 
-    // Round 5: track try-block nesting depth for detecting break/continue
-    // inside try within a loop. Incremented when entering a try block body,
-    // decremented after.
+    // Retained for potential assertions and future use; no longer used
+    // for break/continue detection (ISSUE-0011 replaced that with flag-based pattern).
     private int insideTryDepth = 0;
 
     // Import resolution map: raw import path → Lua require path
@@ -704,12 +709,10 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(BreakStatement node) {
-        if (insideTryDepth > 0) {
-            addDiagnostic("E6002",
-                "break inside try within loop not supported in v0.6",
-                node.span());
-            emitLine("error(__rt._err(\"E6002\","
-                + " \"break inside try within loop not supported in v0.6\"))");
+        if (tryBreakFlag != null) {
+            // Inside a try that is inside a loop: set flag and exit pcall
+            emitLine(tryBreakFlag + " = true");
+            emitLine("return");
         } else {
             emitLine("break");
         }
@@ -718,12 +721,10 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(ContinueStatement node) {
-        if (insideTryDepth > 0) {
-            addDiagnostic("E6002",
-                "continue inside try within loop not supported in v0.6",
-                node.span());
-            emitLine("error(__rt._err(\"E6002\","
-                + " \"continue inside try within loop not supported in v0.6\"))");
+        if (tryContinueFlag != null) {
+            // Inside a try that is inside a loop: set flag and exit pcall
+            emitLine(tryContinueFlag + " = true");
+            emitLine("return");
         } else if (currentContinueLabel != null) {
             emitLine("goto " + currentContinueLabel);
         } else {
@@ -775,6 +776,7 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(TryStatement node) {
+        // ---- Save try-return flags ----
         String savedFlag = tryReturnFlag;
         String savedVal = tryReturnVal;
         String myFlag = null;
@@ -791,6 +793,25 @@ public final class LuaBackend implements Visitor<Void> {
             emitLine("local " + myVal + " = nil");
         }
 
+        // ---- Save and allocate try-break/continue flags ----
+        boolean inLoop = currentContinueLabel != null;
+        String savedBreakFlag = tryBreakFlag;
+        String savedContinueFlag = tryContinueFlag;
+        String myBreakFlag = null;
+        String myContinueFlag = null;
+
+        if (inLoop) {
+            int tryId = ++labelCounter;
+            myBreakFlag = "__try_break_" + tryId;
+            myContinueFlag = "__try_continue_" + tryId;
+            tryBreakFlag = myBreakFlag;
+            tryContinueFlag = myContinueFlag;
+
+            emitLine("local " + myBreakFlag + " = false");
+            emitLine("local " + myContinueFlag + " = false");
+        }
+
+        // ---- Emit pcall wrapper ----
         emitLine("local __ok, __err = pcall(function()");
         indent++;
         insideTryDepth++;
@@ -799,9 +820,13 @@ public final class LuaBackend implements Visitor<Void> {
         indent--;
         emitLine("end)");
 
+        // ---- Restore ALL flags before catch block (catch is outside pcall) ----
         tryReturnFlag = savedFlag;
         tryReturnVal = savedVal;
+        tryBreakFlag = savedBreakFlag;
+        tryContinueFlag = savedContinueFlag;
 
+        // ---- Catch block ----
         emitLine("if not __ok then");
         indent++;
         emitLine("local " + node.catchVar());
@@ -818,6 +843,7 @@ public final class LuaBackend implements Visitor<Void> {
         visit(node.catchBlock());
         indent--;
 
+        // ---- Try-return flag check (after catch, continues elseif chain) ----
         if (functionDepth > 0) {
             emitLine("elseif " + myFlag + " then");
             indent++;
@@ -829,6 +855,41 @@ public final class LuaBackend implements Visitor<Void> {
             emitLine("return " + myVal);
             indent--;
         }
+
+        // ---- Try-break/continue flag checks (ISSUE-0011) ----
+        if (inLoop) {
+            if (functionDepth > 0) {
+                // Continue the elseif chain
+                emitLine("elseif " + myBreakFlag + " then");
+            } else {
+                // Close the catch if-block first, start a new if
+                emitLine("end");
+                emitLine("if " + myBreakFlag + " then");
+            }
+            indent++;
+            if (savedBreakFlag != null) {
+                // Nested try: propagate to outer try's break flag
+                emitLine(savedBreakFlag + " = true");
+                emitLine("return");
+            } else {
+                // Outermost try: real break
+                emitLine("break");
+            }
+            indent--;
+
+            emitLine("elseif " + myContinueFlag + " then");
+            indent++;
+            if (savedContinueFlag != null) {
+                // Nested try: propagate to outer try's continue flag
+                emitLine(savedContinueFlag + " = true");
+                emitLine("return");
+            } else {
+                // Outermost try: real continue via goto
+                emitLine("goto " + currentContinueLabel);
+            }
+            indent--;
+        }
+
         emitLine("end");
         return null;
     }

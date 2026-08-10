@@ -129,6 +129,12 @@ public class LuaBackendIntegrationTest {
         testNullableComparison();
         testNullReturn();
         testThrowValidError();
+        // ISSUE-0011: break/continue inside try within loop
+        testBreakInsideTryInLoop();
+        testContinueInsideTryInLoop();
+        testBreakInsideNestedTryInLoop();
+        testContinueInsideNestedTryInLoop();
+        testContinueInsideTryInForLoop();
 
         testIntConvertValid();
         testIntConvertNonInteger();
@@ -1366,9 +1372,6 @@ public class LuaBackendIntegrationTest {
         check(hasError, "int(3) should be rejected at compile time with E5001");
     }
 
-    // =========================================================================
-    // ISSUE-0010: Throw valid Error and catch it
-    // =========================================================================
 
     static void testThrowValidError() throws Exception {
         System.out.println("-- Throw Valid Error (ISSUE-0010) --");
@@ -1426,4 +1429,332 @@ public class LuaBackendIntegrationTest {
         check(exit == 0, "throw valid error: luajit exit 0 (got: " + output + ")");
         check(output.equals("E_TEST"), "throw valid error: caught code is E_TEST, got: " + output);
     }
+
+
+    // =========================================================================
+    // ISSUE-0011: Break inside try within for-loop exits loop correctly
+    // =========================================================================
+
+    static void testBreakInsideTryInLoop() throws Exception {
+        System.out.println("-- Break Inside Try In Loop (ISSUE-0011) --");
+        String dealSrc =
+            "export function test_break_in_try(): int {\n" +
+            "  let found: int = 0;\n" +
+            "  for (let i: int = 0; i < 10; i = i + 1) {\n" +
+            "    try {\n" +
+            "      if (i === 5) { break; }\n" +
+            "    } catch (e) {}\n" +
+            "    found = i;\n" +
+            "  }\n" +
+            "  return found;\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "break in try: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r = mod.test_break_in_try.f()\n" +
+            "print(r)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        // When i=5, break exits before found=i, so found should be 4 (last iteration before break)
+        check(exit == 0, "break in try: luajit exit 0 (got: " + output + ")");
+        check(output.equals("4"), "break in try: found should be 4 (break at i=5 before assignment), got: " + output);
+    }
+
+    // =========================================================================
+    // ISSUE-0011: Continue inside try within for-loop skips iteration
+    // =========================================================================
+
+    static void testContinueInsideTryInLoop() throws Exception {
+        System.out.println("-- Continue Inside Try In Loop (ISSUE-0011) --");
+        String dealSrc =
+            "export function test_continue_in_try(): int {\n" +
+            "  let sum: int = 0;\n" +
+            "  for (let i: int = 0; i < 5; i = i + 1) {\n" +
+            "    try {\n" +
+            "      if (i === 2) { continue; }\n" +
+            "    } catch (e) {}\n" +
+            "    sum = sum + i;\n" +
+            "  }\n" +
+            "  return sum;\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "continue in try: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r = mod.test_continue_in_try.f()\n" +
+            "print(r)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        // sum = 0 + 1 + 3 + 4 = 8 (skips i=2)
+        check(exit == 0, "continue in try: luajit exit 0 (got: " + output + ")");
+        check(output.equals("8"), "continue in try: sum should be 8 (skip i=2), got: " + output);
+    }
+
+    // =========================================================================
+    // ISSUE-0011: Break inside nested try propagates and exits loop
+    // =========================================================================
+
+    static void testBreakInsideNestedTryInLoop() throws Exception {
+        System.out.println("-- Break Inside Nested Try In Loop (ISSUE-0011) --");
+        String dealSrc =
+            "export function test_nested_break(): int {\n" +
+            "  let found: int = 0;\n" +
+            "  for (let i: int = 0; i < 10; i = i + 1) {\n" +
+            "    try {\n" +
+            "      try {\n" +
+            "        if (i === 5) { break; }\n" +
+            "      } catch (e2) {}\n" +
+            "      found = i;\n" +
+            "    } catch (e1) {}\n" +
+            "  }\n" +
+            "  return found;\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "nested break: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r = mod.test_nested_break.f()\n" +
+            "print(r)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        // Break at i=5 before found=i, so found should be 4
+        check(exit == 0, "nested break: luajit exit 0 (got: " + output + ")");
+        check(output.equals("4"), "nested break: found should be 4, got: " + output);
+    }
+
+    // =========================================================================
+    // ISSUE-0011: Continue inside nested try propagates and skips iteration
+    // =========================================================================
+
+    static void testContinueInsideNestedTryInLoop() throws Exception {
+        System.out.println("-- Continue Inside Nested Try In Loop (ISSUE-0011) --");
+        String dealSrc =
+            "export function test_nested_continue(): int {\n" +
+            "  let sum: int = 0;\n" +
+            "  for (let i: int = 0; i < 5; i = i + 1) {\n" +
+            "    try {\n" +
+            "      try {\n" +
+            "        if (i === 2) { continue; }\n" +
+            "      } catch (e2) {}\n" +
+            "      sum = sum + i;\n" +
+            "    } catch (e1) {}\n" +
+            "  }\n" +
+            "  return sum;\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "nested continue: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r = mod.test_nested_continue.f()\n" +
+            "print(r)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        // sum = 0 + 1 + 3 + 4 = 8 (skips i=2)
+        check(exit == 0, "nested continue: luajit exit 0 (got: " + output + ")");
+        check(output.equals("8"), "nested continue: sum should be 8 (skip i=2), got: " + output);
+    }
+
+    // =========================================================================
+    // ISSUE-0011: Continue inside try in for-loop jumps to update step
+    // =========================================================================
+
+    static void testContinueInsideTryInForLoop() throws Exception {
+        System.out.println("-- Continue Inside Try In For-Loop Update (ISSUE-0011) --");
+        // Verify that continue in try jumps to the update step (i = i + 1 executes)
+        String dealSrc =
+            "export function test_continue_update(): int {\n" +
+            "  let count: int = 0;\n" +
+            "  for (let i: int = 0; i < 3; i = i + 1) {\n" +
+            "    try {\n" +
+            "      continue;\n" +
+            "    } catch (e) {}\n" +
+            "    count = count + 1;\n" +
+            "  }\n" +
+            "  return count;\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "continue update: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r = mod.test_continue_update.f()\n" +
+            "print(r)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        // Every iteration continues before count++, so count should be 0
+        // The loop should still terminate (update i = i + 1 runs each time)
+        check(exit == 0, "continue update: luajit exit 0 (got: " + output + ")");
+        check(output.equals("0"), "continue update: count should be 0 (all iterations skipped by continue), got: " + output);
+    }
+
 }
