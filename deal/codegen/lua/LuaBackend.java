@@ -638,9 +638,7 @@ public final class LuaBackend implements Visitor<Void> {
             ForInit init = node.init().get();
             if (init instanceof ForInit.VarDecl) {
                 hasLetInit = true;
-                loopVarName = init.span() != null
-                    ? ((ForInit.VarDecl) init).decl().name()
-                    : ((ForInit.VarDecl) init).decl().name();
+                loopVarName = ((ForInit.VarDecl) init).decl().name();
             }
         }
 
