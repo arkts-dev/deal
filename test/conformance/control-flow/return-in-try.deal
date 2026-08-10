@@ -1,0 +1,15 @@
+// @spec: Error handling — try / catch
+// @description: return inside try within for-loop exits function correctly
+// @expected: runtime-ok
+// @features: error-handling, try, return, for-loop
+
+export function test_return_in_try_loop(): int {
+  let found: int = 0;
+  for (let i: int = 0; i < 10; i = i + 1) {
+    try {
+      if (i === 5) { return i; }
+    } catch (e) {}
+    found = i;
+  }
+  return found;
+}

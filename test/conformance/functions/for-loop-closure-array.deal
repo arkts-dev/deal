@@ -1,0 +1,12 @@
+// @spec: Functions — Closures and captured variables
+// @description: For-loop closures stored in array capture per-iteration values
+// @expected: runtime-ok
+// @features: functions, closures, for-loop, arrays
+
+export function test_for_closure_array(): int {
+  let fs: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];
+  for (let i: int = 0; i < 3; i = i + 1) {
+    fs[i] = function(): int { return i; };
+  }
+  return fs[0]() * 100 + fs[1]() * 10 + fs[2]();
+}
