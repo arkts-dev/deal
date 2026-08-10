@@ -79,92 +79,301 @@ test("console.error with non-string raises error", function()
 end)
 
 -- ===========================================================================
--- std/string tests
+-- std/string tests — v1.0: length, substring, contains, startsWith, endsWith,
+-- replace, split, trim
 -- ===========================================================================
 
 local strings = require("std.string")
 
-test("string.len returns correct length", function()
-  assert(strings.len.f("hello") == 5)
-  assert(strings.len.f("") == 0)
-  assert(strings.len.f("abc def") == 7)
+-- ----- length -----
+
+test("string.length returns correct length", function()
+  assert(strings.length.f("hello") == 5)
+  assert(strings.length.f("") == 0)
+  assert(strings.length.f("abc def") == 7)
 end)
 
-test("string.len validates output as int", function()
-  local r = strings.len.f("test")
+test("string.length validates output as int", function()
+  local r = strings.length.f("test")
   assert(type(r) == "number")
   assert(r % 1 == 0, "output should be an integer")
   assert(r >= 0, "output should be non-negative")
 end)
 
-test("string.len with non-string raises error", function()
-  local err = assert_error(function() strings.len.f(42) end)
+test("string.length with non-string raises error", function()
+  local err = assert_error(function() strings.length.f(42) end)
   assert(type(err) == "table", "error should be a table")
 end)
 
-test("string.sub returns correct substring", function()
-  -- 0-based: sub("hello", 0, 5) → "hello"
-  assert(strings.sub.f("hello", 0, 5) == "hello")
-  -- 0-based: sub("hello", 1, 4) → "ell"
-  assert(strings.sub.f("hello", 1, 4) == "ell")
-  -- 0-based: sub("hello", 0, 1) → "h"
-  assert(strings.sub.f("hello", 0, 1) == "h")
+-- ----- substring -----
+
+test("string.substring returns correct substring", function()
+  -- 0-based: substring("hello", 0, 5) → "hello"
+  assert(strings.substring.f("hello", 0, 5) == "hello")
+  -- 0-based: substring("hello", 1, 4) → "ell"
+  assert(strings.substring.f("hello", 1, 4) == "ell")
+  -- 0-based: substring("hello", 0, 1) → "h"
+  assert(strings.substring.f("hello", 0, 1) == "h")
 end)
 
-test("string.sub validates output as string", function()
-  local r = strings.sub.f("hello", 0, 5)
+test("string.substring with start == end returns empty", function()
+  assert(strings.substring.f("hello", 2, 2) == "")
+end)
+
+test("string.substring with start > end returns empty", function()
+  assert(strings.substring.f("hello", 3, 1) == "")
+end)
+
+test("string.substring at boundaries", function()
+  -- end beyond string length: Lua truncates
+  assert(strings.substring.f("abc", 1, 10) == "bc")
+  -- start beyond string length: empty
+  assert(strings.substring.f("abc", 5, 10) == "")
+end)
+
+test("string.substring validates output as string", function()
+  local r = strings.substring.f("hello", 0, 5)
   assert(type(r) == "string", "output should be a string")
 end)
 
-test("string.sub with non-string raises error", function()
-  local err = assert_error(function() strings.sub.f(42, 0, 1) end)
+test("string.substring with non-string raises error", function()
+  local err = assert_error(function() strings.substring.f(42, 0, 1) end)
   assert(type(err) == "table", "error should be a table")
 end)
 
-test("string.sub with non-int raises error", function()
-  local err = assert_error(function() strings.sub.f("hi", "x", 1) end)
+test("string.substring with non-int raises error", function()
+  local err = assert_error(function() strings.substring.f("hi", "x", 1) end)
   assert(type(err) == "table", "error should be a table")
 end)
 
-test("string.find returns index when found", function()
-  local r = strings.find.f("hello world", "world")
-  assert(r == 6) -- 0-based index
+-- ----- contains -----
+
+test("string.contains returns true when part found", function()
+  assert(strings.contains.f("hello world", "world") == true)
+  assert(strings.contains.f("hello", "ell") == true)
+  assert(strings.contains.f("abc", "a") == true)
+  assert(strings.contains.f("abc", "c") == true)
 end)
 
-test("string.find returns null when not found", function()
-  local r = strings.find.f("hello", "xyz")
-  assert(r == require("deal.runtime").__NULL)
+test("string.contains returns false when part not found", function()
+  assert(strings.contains.f("hello", "xyz") == false)
+  assert(strings.contains.f("abc", "abcd") == false)
 end)
 
-test("string.find with non-string raises error", function()
-  local err = assert_error(function() strings.find.f(42, "hi") end)
+test("string.contains with empty part returns true", function()
+  -- An empty string is considered to be contained in any string
+  assert(strings.contains.f("hello", "") == true)
+end)
+
+test("string.contains with empty string returns false (non-empty part)", function()
+  assert(strings.contains.f("", "a") == false)
+end)
+
+test("string.contains is plain-text (no pattern matching)", function()
+  -- Lua magic characters should be treated literally
+  assert(strings.contains.f("100%", "%") == true)
+  assert(strings.contains.f("a(b)c", "(") == true)
+  assert(strings.contains.f("x.y.z", ".") == true)
+  assert(strings.contains.f("a*b", "*") == true)
+  assert(strings.contains.f("a+b", "+") == true)
+  assert(strings.contains.f("a?b", "?") == true)
+  assert(strings.contains.f("a-b", "-") == true)
+  assert(strings.contains.f("a^b", "^") == true)
+  assert(strings.contains.f("a$b", "$") == true)
+  assert(strings.contains.f("[x]", "[") == true)
+end)
+
+test("string.contains validates output as boolean", function()
+  local r = strings.contains.f("hello", "h")
+  assert(type(r) == "boolean", "output should be boolean")
+end)
+
+test("string.contains with non-string raises error", function()
+  local err = assert_error(function() strings.contains.f(42, "hi") end)
   assert(type(err) == "table", "error should be a table")
 end)
 
-test("string.find uses Lua pattern matching", function()
-  -- %d+ matches one or more digits
-  local r = strings.find.f("hello 123 world", "%d+")
-  assert(r == 6, "pattern '%d+' should match digits at 0-based index 6, got " .. tostring(r))
+-- ----- startsWith -----
+
+test("string.startsWith returns true when prefix matches", function()
+  assert(strings.startsWith.f("hello", "hel") == true)
+  assert(strings.startsWith.f("hello", "h") == true)
+  assert(strings.startsWith.f("hello", "hello") == true)
+  assert(strings.startsWith.f("abc", "") == true)
 end)
 
-test("string.find returns null when pattern not matched", function()
-  local r = strings.find.f("hello", "xyz")
-  assert(r == require("deal.runtime").__NULL)
+test("string.startsWith returns false when prefix does not match", function()
+  assert(strings.startsWith.f("hello", "ello") == false)
+  assert(strings.startsWith.f("hello", "xyz") == false)
+  assert(strings.startsWith.f("", "a") == false)
 end)
 
-test("string.concat concatenates strings", function()
-  assert(strings.concat.f("hello", " world") == "hello world")
-  assert(strings.concat.f("", "") == "")
-  assert(strings.concat.f("a", "b") == "ab")
+test("string.startsWith validates output as boolean", function()
+  local r = strings.startsWith.f("hello", "h")
+  assert(type(r) == "boolean", "output should be boolean")
 end)
 
-test("string.concat validates output as string", function()
-  local r = strings.concat.f("a", "b")
+test("string.startsWith with non-string raises error", function()
+  local err = assert_error(function() strings.startsWith.f(42, "hi") end)
+  assert(type(err) == "table", "error should be a table")
+end)
+
+-- ----- endsWith -----
+
+test("string.endsWith returns true when suffix matches", function()
+  assert(strings.endsWith.f("hello", "lo") == true)
+  assert(strings.endsWith.f("hello", "o") == true)
+  assert(strings.endsWith.f("hello", "hello") == true)
+  assert(strings.endsWith.f("abc", "") == true)
+end)
+
+test("string.endsWith returns false when suffix does not match", function()
+  assert(strings.endsWith.f("hello", "hel") == false)
+  assert(strings.endsWith.f("hello", "xyz") == false)
+  assert(strings.endsWith.f("", "a") == false)
+end)
+
+test("string.endsWith validates output as boolean", function()
+  local r = strings.endsWith.f("hello", "o")
+  assert(type(r) == "boolean", "output should be boolean")
+end)
+
+test("string.endsWith with non-string raises error", function()
+  local err = assert_error(function() strings.endsWith.f(42, "hi") end)
+  assert(type(err) == "table", "error should be a table")
+end)
+
+-- ----- replace -----
+
+test("string.replace replaces all occurrences", function()
+  assert(strings.replace.f("hello world", "world", "earth") == "hello earth")
+  assert(strings.replace.f("aaa", "a", "b") == "bbb")
+  assert(strings.replace.f("ababab", "ab", "x") == "xxx")
+end)
+
+test("string.replace with no match returns original", function()
+  assert(strings.replace.f("hello", "xyz", "abc") == "hello")
+end)
+
+test("string.replace with empty from returns original", function()
+  assert(strings.replace.f("hello", "", "x") == "hello")
+end)
+
+test("string.replace is plain-text (no pattern matching)", function()
+  -- Lua magic characters in 'from' should be treated literally
+  assert(strings.replace.f("a.b.c", ".", "-") == "a-b-c")
+  assert(strings.replace.f("100%", "%", "pct") == "100pct")
+  assert(strings.replace.f("a*b*c", "*", "+") == "a+b+c")
+end)
+
+test("string.replace handles % in replacement string", function()
+  -- % in replacement should be treated literally, not as gsub capture reference
+  assert(strings.replace.f("hello", "e", "100%") == "h100%llo")
+  assert(strings.replace.f("hello", "e", "%1") == "h%1llo")
+  assert(strings.replace.f("hello", "e", "%%") == "h%%llo")
+end)
+
+test("string.replace validates output as string", function()
+  local r = strings.replace.f("a", "a", "b")
   assert(type(r) == "string", "output should be a string")
 end)
 
-test("string.concat with non-string raises error", function()
-  local err = assert_error(function() strings.concat.f(1, "b") end)
+test("string.replace with non-string raises error", function()
+  local err = assert_error(function() strings.replace.f(42, "a", "b") end)
+  assert(type(err) == "table", "error should be a table")
+end)
+
+-- ----- split -----
+
+test("string.split splits by separator", function()
+  local r = strings.split.f("a,b,c", ",")
+  assert(#r == 3)
+  assert(r[1] == "a")
+  assert(r[2] == "b")
+  assert(r[3] == "c")
+end)
+
+test("string.split with single element returns array of one", function()
+  local r = strings.split.f("hello", ",")
+  assert(#r == 1)
+  assert(r[1] == "hello")
+end)
+
+test("string.split with empty string returns empty array", function()
+  local r = strings.split.f("", ",")
+  assert(#r == 0)
+end)
+
+test("string.split with empty separator splits into characters", function()
+  local r = strings.split.f("abc", "")
+  assert(#r == 3)
+  assert(r[1] == "a")
+  assert(r[2] == "b")
+  assert(r[3] == "c")
+end)
+
+test("string.split returns array", function()
+  local r = strings.split.f("a,b", ",")
+  assert(type(r) == "table", "output should be a table (array)")
+end)
+
+test("string.split with non-string raises error", function()
+  local err = assert_error(function() strings.split.f(42, ",") end)
+  assert(type(err) == "table", "error should be a table")
+end)
+
+test("string.split with consecutive separators produces empty strings", function()
+  local r = strings.split.f("a,,b", ",")
+  assert(#r == 3)
+  assert(r[1] == "a")
+  assert(r[2] == "")
+  assert(r[3] == "b")
+end)
+
+test("string.split with leading separator produces empty first element", function()
+  local r = strings.split.f(",a,b", ",")
+  assert(#r == 3)
+  assert(r[1] == "")
+  assert(r[2] == "a")
+  assert(r[3] == "b")
+end)
+
+test("string.split with trailing separator produces empty last element", function()
+  local r = strings.split.f("a,b,", ",")
+  assert(#r == 3)
+  assert(r[1] == "a")
+  assert(r[2] == "b")
+  assert(r[3] == "")
+end)
+
+-- ----- trim -----
+
+test("string.trim removes leading and trailing whitespace", function()
+  assert(strings.trim.f("  hello  ") == "hello")
+  assert(strings.trim.f("\t\nhello\r\n") == "hello")
+  assert(strings.trim.f("hello") == "hello")
+end)
+
+test("string.trim on all-whitespace returns empty string", function()
+  assert(strings.trim.f("   ") == "")
+  assert(strings.trim.f("\t\n\r") == "")
+end)
+
+test("string.trim on empty string returns empty string", function()
+  assert(strings.trim.f("") == "")
+end)
+
+test("string.trim preserves internal whitespace", function()
+  assert(strings.trim.f("  hello  world  ") == "hello  world")
+end)
+
+test("string.trim validates output as string", function()
+  local r = strings.trim.f("  hello  ")
+  assert(type(r) == "string", "output should be a string")
+end)
+
+test("string.trim with non-string raises error", function()
+  local err = assert_error(function() strings.trim.f(42) end)
   assert(type(err) == "table", "error should be a table")
 end)
 
