@@ -9,8 +9,14 @@ Features not described in this specification do not exist in the language.
 ## Lexical elements
 
 - Identifiers: `[a-zA-Z_$][a-zA-Z0-9_$]*`
-  - Identifiers containing `$` are reserved for compiler-generated names. User code must not declare identifiers containing `$`.
+  - User-declared identifiers must not contain `$`.
+  - Compiler-generated identifiers may contain `$`.
+  - Generated identifiers are source-visible only when this specification defines them, such as `C$fromJson` and `C$toJson`.
+  - A user declaration, import alias, parameter, field, or local variable containing `$` is a compile-time error.
 - Keywords: `let`, `class`, `function`, `async`, `await`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `null`, `true`, `false`, `import`, `export`, `from`, `delete`, `has`, `try`, `catch`, `throw`, `of`
+  - `async` and `await` are keywords. They cannot be used as identifiers, type names, field names, import aliases, or parameter names.
+  - `async` is a function/type marker and does not participate in name resolution.
+  - `await` is expression syntax and does not participate in name resolution.
 - Literals:
  - `null`
  - boolean: `true`, `false`
@@ -38,7 +44,9 @@ Line terminators are LF (`\n`), CRLF (`\r\n`), and CR (`\r`).
 
 - `//` comments extend to end-of-line (line-ending character consumed, not emitted).
 - `/* */` comments do **not** nest. `/* /* */` ends at the first `*/`.
-- Comments are equivalent to whitespace.
+- Comments are equivalent to whitespace except recognized compiler directive comments.
+- A compiler directive comment has the form `// @name` and applies only where this specification defines that directive.
+- `// @jsonable` applies only when it immediately precedes an `export class` declaration with no non-comment token between the directive and the declaration.
 
 ### String escapes and UTF-8
 
@@ -89,7 +97,10 @@ let s: string = `Items: ${xs[0]}, ${xs[1]}`;
  - `NaN`, `Infinity`, `-Infinity` are representable values. `NaN` is not equal to itself (`x === x` is false).
  - Division returns `number` only when both operands are `number`.
  - Division by zero of a `number` produces `Infinity` or `NaN`, not a runtime error.
- - `NaN` poisons comparison operators (`>`, `<`, `>=`, `<=` are false; `===` and `!==` follow IEEE equality ordering).
+ - `number` comparisons follow IEEE 754:
+   - `NaN === NaN` is `false`.
+   - `NaN !== NaN` is `true`.
+   - Relational operators `<`, `>`, `<=`, `>=` return `false` when either operand is `NaN`.
 
 ### Lexical grammar (normative)
 
@@ -122,7 +133,7 @@ StringCharacter ::= /* any SourceCharacter except line terminators and unescaped
 
 Operator ::= '+' | '-' | '*' | '/' | '%' | '**'
  | '===' | '!==' | '<' | '<=' | '>' | '>='
- | '&&' | '|' | '!' | '=' | '.' | '=>' | '|' | '...'
+ | '&&' | '||' | '!' | '=' | '.' | '=>' | '|' | '...'
 
 Punctuator ::= '{' | '}' | '(' | ')' | '[' | ']' | ':' | ';' | ',' | '?'
 ```
@@ -227,7 +238,7 @@ Expression ::= AssignmentExpression
 AssignmentExpression ::= LogicalOrExpression
  | LeftHandSideExpression '=' AssignmentExpression
 
-LogicalOrExpression ::= LogicalAndExpression ('|' LogicalAndExpression)*
+LogicalOrExpression ::= LogicalAndExpression ('||' LogicalAndExpression)*
 
 LogicalAndExpression ::= EqualityExpression ('&&' EqualityExpression)*
 
@@ -241,8 +252,11 @@ MultiplicativeExpression ::= ExponentiationExpression (('*' | '/' | '%') Exponen
 
 ExponentiationExpression ::= UnaryExpression ('**' ExponentiationExpression)?
 
-UnaryExpression ::= ('!' | '-' | 'await') UnaryExpression
+UnaryExpression ::= ('!' | '-') UnaryExpression
+                  | AwaitExpression
                   | PostfixExpression
+
+AwaitExpression ::= 'await' PostfixExpression
 
 PostfixExpression ::= PrimaryExpression PostfixPart*
 
@@ -390,7 +404,8 @@ Type :=
   ClassName // nominal record type
  Array<Type> // surface: T[]
  Nullable<Type> // surface: T | null
- Function(params, rest?, return)
+ Function(sync, params, rest?, return)
+ Function(async, params, rest?, return)
 ```
 
 No other union types exist. `Nullable` is the sole union constructor.
@@ -409,9 +424,9 @@ PrimaryType ::= BuiltinType
  | Identifier
  | '(' FunctionType ')'
 
-BuiltinType ::= 'null' | 'boolean' | 'int' | 'number' | 'string' | 'table'
+BuiltinType ::= 'null' | 'boolean' | 'int' | 'number' | 'string' | 'table' | 'Error'
 
-FunctionType ::= '(' FunctionTypeParams? ')' '=>' Type
+FunctionType ::= 'async'? '(' FunctionTypeParams? ')' '=>' Type
 
 FunctionTypeParams ::= FunctionTypeParam (',' FunctionTypeParam)* (',' FunctionTypeRest)?
  | FunctionTypeRest
@@ -428,6 +443,7 @@ Constraints:
 - `null | null`, `(T | null) | null`, and `T | null | null` are invalid.
 - Rest parameter type must be an array type `T[]`.
 - Identifier in a type context must not be a keyword.
+- `Error` is a builtin nominal class type. User code must not declare a class named `Error`.
 
 ### Surface syntax
 
@@ -449,6 +465,8 @@ null | T // equivalent
 (p1: T1, ..., pN: TN) => R
 (...rest: T[]) => R
 (p1: T1, ...rest: T[]) => R
+async (p1: T1, ..., pN: TN) => R
+async (...rest: T[]) => R
 
 ClassName // nominal record
 ```
@@ -499,6 +517,7 @@ Narrowing invalidation:
 - Passing a narrowed variable to a function does not invalidate it because primitives/classes are references but the variable binding itself is unchanged.
 - Property-path narrowing is not supported, so aliasing of object fields does not affect narrowing.
 - Narrowing does not cross function boundaries or loop back-edges.
+- Narrowing is invalidated after an `await` expression. After `await`, all narrowed variables in the enclosing async function revert to their declared types.
 
 ```ts
 let x: string | null = "a";
@@ -517,7 +536,8 @@ All type constructors are invariant. No subtyping:
 - `Array<int>` is not assignable to `Array<number>` and vice versa.
 - `Nullable<int>` is not assignable to `Nullable<number>` and vice versa.
 - `ClassName` is only assignable from itself.
-- Function types must match **exactly** (with limited arity extension, see [Function type compatibility](#function-type-compatibility)).
+- Function types must match **exactly**, including the async marker (with limited arity extension, see [Function type compatibility](#function-type-compatibility)).
+- `async (...) => R` is not assignable to `(...) => R`, and `(...) => R` is not assignable to `async (...) => R`.
 
 ### Explicit conversions
 
@@ -537,7 +557,7 @@ They fail at runtime when the value is out of representable range or null.
 
 Type equality:
 
-Two types are equal iff their canonical forms are identical. Class types are equal by declared class symbol only. Function types are equal by exact parameter list, rest shape, and return type.
+Two types are equal iff their canonical forms are identical. Class types are equal by declared class symbol only. Function types are equal by exact async marker, parameter list, rest shape, and return type.
 
 Value equality: `===` and `!==` are valid only when operand types are equal. Exception: `T | null` may be compared with `null`.
 
@@ -603,6 +623,7 @@ String concatenation uses `+`. Both operands must be `string`. No implicit strin
 | member `a.p` where `a: table` | **error** unless the surrounding context provides a target type |
 | member `a.p` where `a: ClassName` | required field: declared field type; optional field `p?: T`: `T \| null`; optional nullable field `p?: T \| null`: `T \| null` |
 | call `f(e1, ..., eN)` where `f: (p1: T1, ..., pN: TN) => R` | `R` |
+| `await f(e1, ..., eN)` where `f: async (p1: T1, ..., pN: TN) => R` | `R` |
 | `e.code` where `e: Error` | `string` |
 | `e.message` where `e: Error` | `string` |
 
@@ -660,7 +681,21 @@ export class User {
 }
 ```
 
-**Transitive annotation.** All classes reachable by field traversal from a `@jsonable` class must also be annotated `@jsonable`. Compile-time error otherwise.
+**Jsonable field types.** A `// @jsonable` class may contain fields of:
+
+- `null`
+- `boolean`
+- `int`
+- `number`
+- `string`
+- `table`
+- `T[]` where `T` is jsonable
+- `T | null` where `T` is jsonable
+- class type `C` only if `C` has generated or declared JSON functions visible to the compiler
+
+A type is jsonable if it is one of the primitive JSON-compatible types above, or a class type with visible `C$fromJson` and `C$toJson` functions.
+
+If any field type is not jsonable, the compiler emits a compile-time error at the field declaration.
 
 **Generated functions.** For a `@jsonable` class `C`, the compiler emits two module-level export functions:
 
@@ -981,8 +1016,9 @@ function findName(): string | null { // ok: returns null or string
 
 ### Function type compatibility
 
-A function value `f_actual` with type `(p1: T1, ..., pM: TM) => R` is assignable to a target of type `(p1: T1, ..., pN: TN) => R` **if and only if**:
+A function value `f_actual` with type `A (p1: T1, ..., pM: TM) => R` is assignable to a target of type `B (p1: T1, ..., pN: TN) => R` **if and only if**:
 
+- Async markers are identical: `A` equals `B`, where each marker is either absent or `async`
 - Return types are identical (including nullable wrapper)
 - `M <= N` (target has at least as many parameters)
 - For each `i` in `1..M`, `T_i` of actual equals `T_i` of target exactly
@@ -1041,7 +1077,7 @@ A function declaration produces a first-class typed function value. The source c
 let r: int = add(1, 2);
 ```
 
-Function values carry runtime type information. This is observable only at the host interop boundary, not in the source language.
+Function values carry runtime type information, including whether the function is async. This is observable only through type checking and at the host interop boundary, not as a source-level value.
 
 Compile-time call checking:
 
@@ -1049,6 +1085,8 @@ Compile-time call checking:
 - Argument expression types must equal parameter types exactly, except assignment into `T | null` parameters accepts `T` or `null`.
 - Return value has the declared return type.
 - Direct calls with wrong argument types are compile-time errors.
+- A direct call to an async function without `await` is a compile-time error.
+- `await` may be applied only to a direct async function call.
 
 Runtime call checking:
 
@@ -1521,7 +1559,7 @@ try {
 
 ### async function
 
-An `async` function returns its declared type directly. The `async` modifier is visible only in the declaration; callers use `await` to suspend until the function completes.
+An `async` function returns its declared type directly. The `async` marker is part of the function type. Callers use `await` to suspend until the function completes.
 
 ```ts
 async function fetchUser(id: int): User | null {
@@ -1533,7 +1571,7 @@ async function fetchUser(id: int): User | null {
 `async` function expressions are supported:
 
 ```ts
-let f: (id: int) => User | null = async function(id: int): User | null {
+let f: async (id: int) => User | null = async function(id: int): User | null {
   return await fetchUser(id);
 };
 ```
@@ -1547,18 +1585,32 @@ let u: User | null = await fetchUser(42);
 ```
 
 Compile-time rules:
+- `await E` is valid only inside an `async` function body.
+- `E` must be a direct call expression.
+- The callee of `E` must have async function type `async (...) => R`.
+- The type of `await E` is `R`.
 - `await` applied to a non-`async` call is a compile-time error.
-- `await` outside an `async` function is a compile-time error.
-- An `async` function call without `await` is a compile-time error.
+- An async function call without `await` is a compile-time error.
 
 ### Backend lowering
 
-Async/await is lowered backend-specifically:
-- **LuaJIT**: desugars to stackful coroutine-resuming state machines.
-- **JavaScript**: native `async`/`await`.
-- **JVM**: Project Loom virtual threads with `LockSupport.park`/`unpark`.
+Async/await is lowered backend-specifically.
 
-No backend requires a user-visible coroutine or promise type.
+A backend must preserve these source-level rules:
+
+- async functions have async function type `async (...) => R`
+- async calls must appear as the operand of `await`
+- `await` may appear only inside an async function body
+- `await` evaluates to the declared return type `R`
+- no source-level coroutine, promise, future, or task type exists
+
+Backend strategies are not source-language observable.
+
+A LuaJIT backend may implement async lowering with internal coroutines, continuation-passing style, or explicit state-machine tables.
+
+A JVM backend may implement async lowering with virtual threads, blocking calls, futures, or explicit state machines.
+
+All async function completion values cross the typed boundary defined in the backend conformance contract.
 
 ---
 
@@ -1710,23 +1762,11 @@ A project may define `deal.json` at its root:
  "output": "build/lua",
  "backend": "luajit",
  "stdlib": "1.0",
- "permissions": {
- "io": false,
- "time": true,
- "debug": false,
- "ffi": false
- },
- "limits": {
- "instructionBudget": 1000000,
- "memoryBytes": 67108864,
- "wallTimeMs": 1000
- },
  "dependencies": {},
  "externals": {
- "host/log": {
- "declaration": "bindings/host-log.d.deal",
- "permissions": ["io"]
- }
+  "host/log": {
+   "declaration": "bindings/host-log.d.deal"
+  }
  }
 }
 ```
@@ -1735,11 +1775,9 @@ Rules:
 
 - `languageVersion` selects grammar/type rules.
 - `moduleRoots` participate in import resolution.
-- `permissions` gate standard-library modules and host APIs.
-- `limits` are mandatory for sandboxed execution; host may lower but not raise them without explicit configuration.
-- has no package registry. `dependencies` is reserved for local/package-manager integration later.
+- DEAL has no package registry. `dependencies` is reserved for local/package-manager integration later.
 - Standard library modules may be described by bundled `.d.deal` files, but are resolved as part of the language distribution rather than as project external host modules.
-- External host modules must be explicitly allowlisted in `externals` with a declaration file and required permissions.
+- `externals` declares host modules available to the compiler.
 - Importing an external module not listed in `externals` is a compile-time error.
 
 ### Standard library declarations
@@ -1797,13 +1835,6 @@ export function maxInt(a: int, b: int): int;
 export function nowMillis(): int;
 ```
 
-#### `std/io.d.deal`
-
-```ts
-export function readText(path: string): string;
-export function writeText(path: string, text: string): null;
-```
-
 Usage:
 
 ```ts
@@ -1814,43 +1845,15 @@ let parts: string[] = strings.split("a,b", ",");
 let t: table = json.parse("{\"name\":\"Ada\"}");
 ```
 
-### Sandbox, host APIs, and FFI safety
+### Host APIs
 
-DEAL is designed for **safe AI scripting**. The default execution environment is sandboxed.
+DEAL source has no implicit global namespace.
 
-Threat model:
+A host API is available only through an imported module with a `.d.deal` declaration.
 
-- User source code may be untrusted and AI-generated.
-- Code must not access host filesystem, network, process, clock, randomness, debug hooks, FFI, or global state unless explicitly permitted.
-- Code may attempt infinite loops, excessive allocation, deep recursion, or large output.
-- The host is trusted to configure and enforce manifest permissions and runtime limits.
+The compiler type-checks host API use from the declaration file. Runtime values crossing the host boundary are checked according to the backend conformance contract.
 
-Rules:
-
-- Source cannot access global state directly.
-- `require` is not source-visible.
-- Host APIs are available only through imported declaration modules allowed by `deal.json` permissions.
-- Raw FFI is disabled by default and unavailable from source.
-- Host-provided functions must have `.d.deal` declarations.
-- All host boundary values are runtime-checked.
-- Host may deny any import at load time.
-
-Resource controls:
-
-- Instruction budget, wall-clock timeout, and memory budget are host-defined execution policies.
-- Determinism: deterministic mode disables time, random, IO, debug, and unordered table iteration APIs.
-
-Cancellation is host-defined and outside source language semantics. A conforming implementation may provide cooperative cancellation, but 
-
-Backends may enforce host policies through implementation-defined runtime checks, debug hooks, allocation wrappers, or host-controlled module environments.
-
-Host responsibilities:
-
-- Provide a restricted module environment, not `_G`.
-- Deny non-allowlisted imports.
-- Enforce or explicitly report inability to enforce each configured resource limit.
-- Treat runtime and generated code as part of the trusted computing base.
-- Never expose raw `ffi`, `debug`, filesystem, process, or networking APIs unless policy explicitly permits them.
+Raw backend APIs, including Lua `require`, Lua `ffi`, JVM reflection, filesystem, process, networking, and debug APIs, are not source-language features unless exposed by an imported declaration module.
 
 ### Host ABI and interoperability
 
@@ -1964,6 +1967,66 @@ local __MISSING = {} -- missing optional field
 | `null` | JSON null / language null |
 | missing optional field | field absence state |
 
+### Backend conformance contract
+
+A conforming backend preserves the observable behavior defined by this specification.
+
+Observable behavior includes:
+
+- compile-time diagnostics
+- successful runtime values
+- runtime error codes and source locations
+- module import/export behavior
+- host boundary behavior
+- `null` and missing-field semantics
+- class nominal identity
+- function type identity, including the async marker
+- evaluation order
+- integer overflow and division semantics
+- `@jsonable` serialization behavior
+
+A backend may choose any internal representation, including erased, partially erased, statically typed, boxed, unboxed, interpreted, source-generated, or bytecode-generated representation, if observable behavior is unchanged.
+
+A backend may omit a runtime check when static backend representation proves that the value already satisfies the DEAL type and no untyped boundary can have produced it.
+
+A backend is non-conforming if it erases DEAL types in a way that allows a runtime value to cross a typed boundary without equivalent validation.
+
+#### Typed boundaries
+
+A typed boundary is a point where a runtime value is accepted as, stored as, returned as, exported as, or reconstructed as a declared DEAL type.
+
+Backends must validate values at every typed boundary unless the validation is statically proven redundant.
+
+Typed boundaries are exactly:
+
+- variable declaration with annotation: `let x: T = e`
+- assignment to a variable with declared or inferred type `T`
+- assignment to a declared class field of type `T`
+- assignment to an array element of `T[]`
+- function parameter entry
+- rest parameter array construction
+- function return
+- async function completion value
+- class object literal construction
+- class default field application
+- class value received from an untyped boundary
+- optional field read that converts missing to `null`
+- table read in contextual target type `T`
+- value read from imported module member
+- value exposed through module export table
+- value crossing from host into DEAL through `.d.deal`
+- value crossing from DEAL into host through `.d.deal`
+- standard-library function parameter and return
+- external declaration function parameter and return
+- `@jsonable` `fromJson` field validation
+- `@jsonable` `toJson` field serialization input validation
+
+#### Backend representation
+
+The following sections define required value mappings for supported backends. These mappings are representation contracts, not additional source-language semantics.
+
+When a backend mapping conflicts with the source-language semantics or the backend conformance contract, the source-language semantics and backend conformance contract are authoritative.
+
 ### LuaJIT value mapping
 
 | Type | LuaJIT representation |
@@ -1998,6 +2061,35 @@ local __MISSING = {} -- missing optional field
 | `(params) => R` | generated function wrapper with descriptor |
 | module type | generated module object/export map |
 
+### JVM backend contract
+
+A conforming JVM backend emits Java source, JVM bytecode, or an interpreter over checked DEAL IR.
+
+The JVM backend must preserve the backend conformance contract.
+
+The JVM backend may use JVM primitive types, final classes, verifier-checked bytecode, method signatures, and JIT optimization to prove typed-boundary checks redundant.
+
+Recommended JVM representation:
+
+| DEAL type | JVM representation |
+|---|---|
+| `boolean` | `boolean` where statically known; boxed `Boolean` at dynamic boundaries |
+| `int` | `long` where statically known; boxed `Long` at dynamic boundaries |
+| `number` | `double` where statically known; boxed `Double` at dynamic boundaries |
+| `string` | non-null `java.lang.String` |
+| `null` | `DealNull.INSTANCE` at dynamic boundaries; Java `null` only where representation is statically nullable |
+| required class field `T` | Java field of representation of `T` |
+| required nullable field `T | null` | nullable representation or tagged wrapper |
+| optional field `p?: T` | presence bit plus field storage |
+| optional nullable field `p?: T | null` | presence bit plus nullable storage |
+| `table` | `DealTable` |
+| `T[]` | `DealArray<T>` or specialized primitive array wrapper |
+| `(…) => R` | `DealFunction` wrapper with runtime descriptor |
+| `async (…) => R` | `DealAsyncFunction` wrapper with runtime descriptor |
+| module type | generated module class or export object |
+
+The JVM backend must not expose Java `null` as DEAL `null` across untyped boundaries without validation.
+
 ### Runtime type descriptor format
 
 ```txt
@@ -2024,7 +2116,10 @@ NullableDescriptor :=
  "?" RuntimeTypeDescriptor
 
 FunctionDescriptor :=
- "(" ParamDescriptorList? ")" "->" RuntimeTypeDescriptor
+ AsyncMarker? "(" ParamDescriptorList? ")" "->" RuntimeTypeDescriptor
+
+AsyncMarker :=
+ "async"
 
 ParamDescriptorList :=
  ParamDescriptor ("," ParamDescriptor)*
@@ -2047,6 +2142,7 @@ int // int
 ()->null // () => null
 (...[int])->null // (...xs:int[])=>null
 (string,...[int])->null // (s:string,...xs:int[])=>null
+async(int)->string // async (x:int)=>string
 ```
 
 Constraint: `NullableDescriptor` inner type must not be `null` and must not be another `NullableDescriptor`.
@@ -2056,7 +2152,7 @@ Equality semantics for `===`:
 - `null === null` is true by sentinel identity.
 - Booleans compare by value.
 - `int` compares by integer value.
-- `number` compares by IEEE 754 equality; `NaN === NaN` is false.
+- `number` compares by IEEE 754 equality: `NaN === NaN` is `false`; `NaN !== NaN` is `true`.
 - Strings compare by byte sequence.
 - Arrays, tables, classes, and functions compare by reference identity.
 - Values of different static types cannot be compared, except `T | null` vs `null`.
@@ -2682,7 +2778,7 @@ Evaluation is strict and left-to-right:
 1. Evaluate receiver expression before member/index/call arguments.
 2. Evaluate call arguments left-to-right.
 3. Evaluate assignment RHS before LHS write check.
-4. Short-circuit `&&` and `|`.
+4. Short-circuit `&&` and `||`.
 5. Function calls create a new local scope.
 6. Class object literal construction evaluates provided fields left-to-right, applies defaults for omitted required-present fields, validates all fields, then tags the object.
 7. Table object literal construction evaluates properties left-to-right and stores values as dynamic fields.
@@ -2697,6 +2793,6 @@ A conforming implementation must include tests for:
 - Runtime: null sentinel, missing optional fields, class defaults, array indexing, function wrappers.
 - ABI: import/export, host function wrapping, standard library module.
 - Diagnostics: stable code, location span, expected/actual type.
-- Sandbox: permission denial, host-defined resource policies, deterministic mode.
-- Stdlib: string, array, JSON, math, time, IO permission gates.
+- Host ABI: declared external imports, missing external rejection, runtime boundary checks.
+- Stdlib: string, table, JSON, math, time.
 - AI-codegen benchmark: give agents the feature subset and validate generated solutions.
