@@ -219,6 +219,13 @@ public class CheckerTest {
         // F9: Class field default values type-checked
         testClassDefaultValueTypeError();
 
+        // -- Type Checking: Throw statement (ISSUE-0010) --
+        testThrowIntError();
+        testThrowStringError();
+        testThrowMessageOnly();
+        testThrowFullError();
+        testThrowErrorVariable();
+
         // -- Type Checking: has / delete --
         testHasRequiredField();
         testHasOptionalField();
@@ -1000,6 +1007,53 @@ public class CheckerTest {
     }
 
     // =========================================================================
+    // Throw Statement Tests (ISSUE-0010)
+    // =========================================================================
+
+    static void testThrowIntError() {
+        System.out.println("-- Throw: int → E3001 --");
+        CheckerOutput out = checkProgram(
+            "function f(): void { throw 42; }"
+        );
+        assertError(out, "E3001", "throw int must produce E3001");
+    }
+
+    static void testThrowStringError() {
+        System.out.println("-- Throw: string → E3001 --");
+        CheckerOutput out = checkProgram(
+            "function f(): void { throw \"oops\"; }"
+        );
+        assertError(out, "E3001", "throw string must produce E3001");
+    }
+
+    static void testThrowMessageOnly() {
+        System.out.println("-- Throw: { message: \"x\" } → OK --");
+        CheckerOutput out = checkProgram(
+            "function f(): void { throw { message: \"x\" }; }"
+        );
+        assertNoErrors(out, "throw { message: \"x\" } must compile");
+    }
+
+    static void testThrowFullError() {
+        System.out.println("-- Throw: { code: \"E001\", message: \"x\" } → OK --");
+        CheckerOutput out = checkProgram(
+            "function f(): void { throw { code: \"E001\", message: \"x\" }; }"
+        );
+        assertNoErrors(out, "throw { code, message } must compile");
+    }
+
+    static void testThrowErrorVariable() {
+        System.out.println("-- Throw: Error variable → OK --");
+        CheckerOutput out = checkProgram(
+            "function f(): void {\n" +
+            "  let e: Error = { message: \"x\" };\n" +
+            "  throw e;\n" +
+            "}"
+        );
+        assertNoErrors(out, "throw Error variable must compile");
+    }
+
+    // =========================================================================
     // has / delete Tests
     // =========================================================================
 
@@ -1138,7 +1192,7 @@ public class CheckerTest {
         System.out.println("-- Definite Return: throw counts --");
         CheckerOutput out = checkProgram(
             "function f(): int {\n" +
-            "  throw \"error\";\n" +
+            "  throw { message: \"error\" };\n" +
             "}"
         );
         assertNoErrors(out, "throw counts as return");

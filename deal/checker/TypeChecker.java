@@ -403,7 +403,17 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkThrowStatement(ThrowStatement ts) {
-        checkExpression(ts.expr());
+        Type savedExpected = expectedType;
+        Type errorType = Types.classType("Error", "");
+        expectedType = errorType;
+        Type exprType = checkExpression(ts.expr());
+        expectedType = savedExpected;
+
+        if (exprType != Type.Error.INSTANCE && !isAssignable(errorType, exprType)) {
+            error("E3001",
+                "throw expression must have type Error, got " + typeName(exprType),
+                ts.expr().span());
+        }
     }
 
     // =======================================================================

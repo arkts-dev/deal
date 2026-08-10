@@ -112,11 +112,14 @@ public final class NameResolver {
             Type.Boolean.INSTANCE, IntrinsicResolvers.HAS));
 
         Span synth = Span.synthetic(modulePath);
+        LiteralExpr emptyString = new LiteralExpr(synth,
+            new LiteralValue.StringLiteral(""));
+
         List<ClassField> errorFields = List.of(
             new ClassField(synth, "code", false, false,
-                new NamedType(synth, "string"), Optional.empty()),
+                new NamedType(synth, "string"), Optional.of(emptyString)),
             new ClassField(synth, "message", false, false,
-                new NamedType(synth, "string"), Optional.empty())
+                new NamedType(synth, "string"), Optional.of(emptyString))
         );
         root.define("Error", new Symbol.ClassSymbol("Error", errorFields, ""));
     }

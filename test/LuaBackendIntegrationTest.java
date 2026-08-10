@@ -128,6 +128,7 @@ public class LuaBackendIntegrationTest {
         testThrowDefaultFields();
         testNullableComparison();
         testNullReturn();
+        testThrowValidError();
 
         testIntConvertValid();
         testIntConvertNonInteger();
@@ -1365,4 +1366,64 @@ public class LuaBackendIntegrationTest {
         check(hasError, "int(3) should be rejected at compile time with E5001");
     }
 
+    // =========================================================================
+    // ISSUE-0010: Throw valid Error and catch it
+    // =========================================================================
+
+    static void testThrowValidError() throws Exception {
+        System.out.println("-- Throw Valid Error (ISSUE-0010) --");
+        String dealSrc =
+            "export function test_throw_valid(): string {\n" +
+            "  try {\n" +
+            "    throw { code: \"E_TEST\", message: \"test error\" };\n" +
+            "  } catch (e) {\n" +
+            "    return e.code;\n" +
+            "  }\n" +
+            "  return \"not_caught\";\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "throw valid error: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r = mod.test_throw_valid.f()\n" +
+            "print(r)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "throw valid error: luajit exit 0 (got: " + output + ")");
+        check(output.equals("E_TEST"), "throw valid error: caught code is E_TEST, got: " + output);
+    }
 }
