@@ -564,14 +564,23 @@ end)
 
 local timelib = require("std.time")
 
-test("time.now returns a reasonable timestamp", function()
-  local ts = timelib.now.f()
+test("time.nowMillis returns a reasonable timestamp in milliseconds", function()
+  local ts = timelib.nowMillis.f()
   assert(type(ts) == "number")
   assert(ts % 1 == 0, "timestamp should be an integer")
-  -- Should be sometime after 2010-01-01 (1262304000)
-  assert(ts > 1262304000, "timestamp should be after 2010")
-  -- Should be before 2100-01-01 (4102444800)
-  assert(ts < 4102444800, "timestamp should be before 2100")
+  -- Should be sometime after 2010-01-01 in milliseconds (1262304000000)
+  assert(ts > 1262304000000, "timestamp should be after 2010, got " .. tostring(ts))
+  -- Should be before 2100-01-01 in milliseconds (4102444800000)
+  assert(ts < 4102444800000, "timestamp should be before 2100, got " .. tostring(ts))
+end)
+
+test("time.nowMillis returns value ~1000x os.time()", function()
+  local ts = timelib.nowMillis.f()
+  local raw = os.time()
+  -- The millisecond value should be roughly 1000x the seconds value
+  local ratio = ts / math.max(raw, 1)
+  assert(ratio >= 990 and ratio <= 1010,
+    "nowMillis should be ~1000x os.time(), got ratio " .. tostring(ratio))
 end)
 
 -- ===========================================================================
