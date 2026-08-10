@@ -1,0 +1,3 @@
+// DEAL Standard Library: std/io (declaration)
+export function readText(path: string): string;
+export function writeText(path: string, text: string): null;

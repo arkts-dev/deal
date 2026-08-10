@@ -509,6 +509,109 @@ test("time.now returns a reasonable timestamp", function()
 end)
 
 -- ===========================================================================
+-- std/io tests
+-- ===========================================================================
+
+local io_lib = require("std.io")
+
+test("io.readText reads file contents", function()
+  -- Create a temporary test file
+  local path = "/tmp/deal_test_io_read.txt"
+  local test_content = "Hello, DEAL IO!\nLine 2\n"
+  local f = io.open(path, "w")
+  f:write(test_content)
+  f:close()
+
+  local result = io_lib.readText.f(path)
+  assert(type(result) == "string", "readText should return a string")
+  assert(result == test_content, "readText should return correct content")
+
+  -- Cleanup
+  os.remove(path)
+end)
+
+test("io.readText on empty file", function()
+  local path = "/tmp/deal_test_io_empty.txt"
+  local f = io.open(path, "w")
+  f:close()
+
+  local result = io_lib.readText.f(path)
+  assert(type(result) == "string", "readText should return a string")
+  assert(result == "", "readText on empty file should return empty string")
+
+  os.remove(path)
+end)
+
+test("io.readText with non-string raises error", function()
+  local err = assert_error(function() io_lib.readText.f(42) end)
+  assert(type(err) == "table", "error should be a table")
+  assert(err.code ~= nil, "error should have a code")
+end)
+
+test("io.readText on non-existent file raises error", function()
+  local err = assert_error(function() io_lib.readText.f("/tmp/deal_test_nonexistent_file.txt") end)
+  assert(type(err) == "table", "error should be a table")
+  assert(err.code ~= nil, "error should have a code")
+end)
+
+test("io.writeText writes file contents", function()
+  local path = "/tmp/deal_test_io_write.txt"
+  local test_content = "Write test content!"
+
+  -- writeText returns null
+  local result = io_lib.writeText.f(path, test_content)
+  local __rt = require("deal.runtime")
+  assert(result == __rt.__NULL, "writeText should return null")
+
+  -- Verify by reading back
+  local f = io.open(path, "r")
+  local content = f:read("*a")
+  f:close()
+  assert(content == test_content, "written content should match")
+
+  os.remove(path)
+end)
+
+test("io.writeText overwrites existing file", function()
+  local path = "/tmp/deal_test_io_overwrite.txt"
+  local first_content = "First content"
+  local second_content = "Second content"
+
+  io_lib.writeText.f(path, first_content)
+  io_lib.writeText.f(path, second_content)
+
+  local f = io.open(path, "r")
+  local content = f:read("*a")
+  f:close()
+  assert(content == second_content, "writeText should overwrite existing file")
+
+  os.remove(path)
+end)
+
+test("io.writeText with non-string path raises error", function()
+  local err = assert_error(function() io_lib.writeText.f(42, "hello") end)
+  assert(type(err) == "table", "error should be a table")
+  assert(err.code ~= nil, "error should have a code")
+end)
+
+test("io.writeText with non-string text raises error", function()
+  local err = assert_error(function() io_lib.writeText.f("/tmp/test.txt", 42) end)
+  assert(type(err) == "table", "error should be a table")
+  assert(err.code ~= nil, "error should have a code")
+end)
+
+test("io read-write round-trip", function()
+  local path = "/tmp/deal_test_io_roundtrip.txt"
+  local original = "Round-trip test: " .. tostring(os.time())
+
+  io_lib.writeText.f(path, original)
+  local result = io_lib.readText.f(path)
+  assert(result == original, "round-trip should preserve content")
+
+  os.remove(path)
+end)
+
+-- ===========================================================================
 -- Summary
 -- ===========================================================================
 
