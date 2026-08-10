@@ -285,6 +285,10 @@ public class CheckerTest {
         // F6: Void return type message uses "void" not "null"
         testVoidReturnTypeMessage();
 
+        // Runtime intrinsics: int() and number()
+        testIntrinsicIntRejectsIntLiteral();
+        testIntrinsicNumberRejectsBoolean();
+
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -1300,5 +1304,33 @@ public class CheckerTest {
             .anyMatch(d -> d.code().equals("E5003") && d.message().contains("void"));
         check(hasVoidMessage,
             "void return type mismatch message should contain 'void', got: " + diags);
+    }
+
+    // =========================================================================
+    // Runtime Intrinsic Tests
+    // =========================================================================
+
+    static void testIntrinsicIntRejectsIntLiteral() {
+        System.out.println("-- int(3) rejects int literal at compile time --");
+        CheckerOutput out = checkProgram(
+            "export function test(): int { return int(3); }"
+        );
+        List<Diagnostic> diags = out.result.diagnostics();
+        boolean hasE5001 = diags.stream()
+            .anyMatch(d -> d.code().equals("E5001"));
+        check(hasE5001,
+            "int(3) should reject int literal with E5001, got: " + diags);
+    }
+
+    static void testIntrinsicNumberRejectsBoolean() {
+        System.out.println("-- number(true) rejects boolean at compile time --");
+        CheckerOutput out = checkProgram(
+            "export function test(): number { return number(true); }"
+        );
+        List<Diagnostic> diags = out.result.diagnostics();
+        boolean hasE5001 = diags.stream()
+            .anyMatch(d -> d.code().equals("E5001"));
+        check(hasE5001,
+            "number(true) should reject boolean with E5001, got: " + diags);
     }
 }

@@ -902,6 +902,117 @@ test("class_ with default table deep-copied independently", function()
   assert(b.data.x == 1)
 end)
 
+-- ==================== int_convert tests ====================
+
+test("int_convert(3.0) returns 3", function()
+  local r = __rt.int_convert(3.0)
+  assert(r == 3)
+end)
+
+test("int_convert(0.0) returns 0", function()
+  local r = __rt.int_convert(0.0)
+  assert(r == 0)
+end)
+
+test("int_convert(-5.0) returns -5", function()
+  local r = __rt.int_convert(-5.0)
+  assert(r == -5)
+end)
+
+test("int_convert(3.7) errors (non-integer)", function()
+  assert_error(function() __rt.int_convert(3.7) end, "E8001")
+end)
+
+test("int_convert(nil) errors with E8001 (null not convertible)", function()
+  local err = assert_error(function() __rt.int_convert(nil) end, "E8001")
+  assert(string.find(err.message, "cannot convert null to int") ~= nil)
+end)
+
+test("int_convert(__NULL) errors with E8001 (null not convertible)", function()
+  local err = assert_error(function() __rt.int_convert(__rt.__NULL) end, "E8001")
+  assert(string.find(err.message, "cannot convert null to int") ~= nil)
+end)
+
+test("int_convert(NaN) errors with E8001", function()
+  assert_error(function() __rt.int_convert(0/0) end, "E8001")
+end)
+
+test("int_convert(Infinity) errors with E8001", function()
+  assert_error(function() __rt.int_convert(1/0) end, "E8001")
+end)
+
+test("int_convert(-Infinity) errors with E8001", function()
+  assert_error(function() __rt.int_convert(-1/0) end, "E8001")
+end)
+
+test("int_convert(1e308) errors with E8004 (out of safe range)", function()
+  assert_error(function() __rt.int_convert(1e308) end, "E8004")
+end)
+
+test("int_convert('hello') errors with E8001 (expected int)", function()
+  assert_error(function() __rt.int_convert("hello") end, "E8001")
+end)
+
+test("int_convert(true) errors with E8001 (not a number)", function()
+  assert_error(function() __rt.int_convert(true) end, "E8001")
+end)
+
+test("int_convert(int value) works (unwrapping nullable int)", function()
+  -- When called with an int that is not null, returns the int
+  local r = __rt.int_convert(42)
+  assert(r == 42)
+end)
+
+-- ==================== number_convert tests ====================
+
+test("number_convert(3) returns 3.0", function()
+  local r = __rt.number_convert(3)
+  assert(r == 3.0)
+end)
+
+test("number_convert(0) returns 0.0", function()
+  local r = __rt.number_convert(0)
+  assert(r == 0.0)
+end)
+
+test("number_convert(-5) returns -5.0", function()
+  local r = __rt.number_convert(-5)
+  assert(r == -5.0)
+end)
+
+test("number_convert(3.14) returns 3.14 (already number)", function()
+  local r = __rt.number_convert(3.14)
+  assert(r == 3.14)
+end)
+
+test("number_convert(nil) errors with E8001 (null not convertible)", function()
+  local err = assert_error(function() __rt.number_convert(nil) end, "E8001")
+  assert(string.find(err.message, "cannot convert null to number") ~= nil)
+end)
+
+test("number_convert(__NULL) errors with E8001 (null not convertible)", function()
+  local err = assert_error(function() __rt.number_convert(__rt.__NULL) end, "E8001")
+  assert(string.find(err.message, "cannot convert null to number") ~= nil)
+end)
+
+test("number_convert(true) errors with E8001 (not a number)", function()
+  assert_error(function() __rt.number_convert(true) end, "E8001")
+end)
+
+test("number_convert('hello') errors with E8001 (not a number)", function()
+  assert_error(function() __rt.number_convert("hello") end, "E8001")
+end)
+
+test("number_convert(NaN) passes (NaN is a valid number)", function()
+  local r = __rt.number_convert(0/0)
+  assert(r ~= r)  -- NaN check
+end)
+
+test("number_convert(Infinity) passes", function()
+  local r = __rt.number_convert(1/0)
+  assert(r == math.huge)
+end)
+
 
 -- ==================== Summary ====================
 

@@ -75,6 +75,11 @@ public final class LuaBackend implements Visitor<Void> {
         backend.emitHeader();
         backend.emitLine("local __NULL = __rt.__NULL");
         backend.emitLine("local __MISSING = __rt.__MISSING");
+        // Intrinsic aliases: int() and number() are direct-call-only in v1.0.
+        // Indirect use (assigned to variables / passed as callbacks) fails at
+        // runtime because codegen emits .f() for captured function values.
+        backend.emitLine("local int = __rt.int_convert");
+        backend.emitLine("local number = __rt.number_convert");
         backend.emitLine("local Error_defaults = { code = \"\", message = \"\" }");
         backend.emitLine("");
 
@@ -144,6 +149,11 @@ public final class LuaBackend implements Visitor<Void> {
         emitHeader();
         emitLine("local __NULL = __rt.__NULL");
         emitLine("local __MISSING = __rt.__MISSING");
+        // Intrinsic aliases: int() and number() are direct-call-only in v1.0.
+        // Indirect use (assigned to variables / passed as callbacks) fails at
+        // runtime because codegen emits .f() for captured function values.
+        emitLine("local int = __rt.int_convert");
+        emitLine("local number = __rt.number_convert");
         emitLine("local Error_defaults = { code = \"\", message = \"\" }");
         emitLine("");
         walkStatements(program.statements());
@@ -980,6 +990,18 @@ public final class LuaBackend implements Visitor<Void> {
         for (int i = 0; i < call.args().size(); i++) {
             if (i > 0) args.append(", ");
             args.append(emitExpression(call.args().get(i)));
+        }
+        // Intrinsic calls (int, number) — emit direct call, not .f()
+        // KNOWN LIMIT (v1.0): only direct calls (callee is an IdentifierExpr
+        // resolving to an IntrinsicSymbol) are intercepted. Indirect use
+        // (assigned to variables / passed as callbacks) will still emit .f()
+        // and fail at runtime because the aliases are plain Lua functions,
+        // not function wrappers.
+        if (call.callee() instanceof IdentifierExpr id) {
+            Symbol sym = symbols.resolve(id.name());
+            if (sym instanceof Symbol.IntrinsicSymbol) {
+                return emitExpression(call.callee()) + "(" + args.toString() + ")";
+            }
         }
         if (calleeType instanceof Type.Func) {
             return emitExpression(call.callee()) + ".f(" + args.toString() + ")";

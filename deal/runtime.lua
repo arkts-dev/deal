@@ -518,6 +518,36 @@ function __rt.has(obj, field)
   return obj[field] ~= nil
 end
 
+-- ===== Conversion intrinsics =====
+
+--- Convert a value to int. Handles both overloads:
+---   (number) => int      — converts number to int, validating range/integer-ness
+---   (int | null) => int  — unwraps nullable int, rejecting null
+--- Delegates to check_int for range, NaN, Infinity, and non-integer validation.
+--- KNOWN LIMIT (v1.0): When used indirectly (assigned to a variable or passed
+--- as a callback), the codegen emits `.f()` which fails at runtime. This is
+--- because int/number are emitted as plain Lua local aliases, not function
+--- wrappers. Direct calls like int(3.0) work correctly.
+function __rt.int_convert(v)
+  if v == nil or v == __rt.__NULL then
+    error(__rt._err("E8001", "cannot convert null to int", nil, nil, nil, "int", "null"))
+  end
+  -- Reuse check_int which validates range, NaN, Infinity, and integer-ness
+  return __rt.check_int(v)
+end
+
+--- Convert a value to number. Handles both overloads:
+---   (int) => number           — converts int to number
+---   (number | null) => number — unwraps nullable number, rejecting null
+--- Delegates to check_number for type validation.
+--- KNOWN LIMIT (v1.0): Same indirect-use limitation as int_convert.
+function __rt.number_convert(v)
+  if v == nil or v == __rt.__NULL then
+    error(__rt._err("E8001", "cannot convert null to number", nil, nil, nil, "number", "null"))
+  end
+  return __rt.check_number(v)
+end
+
 -- ===== Internal helpers =====
 
 --- Deep-copy a table recursively.
