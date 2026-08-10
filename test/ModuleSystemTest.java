@@ -161,7 +161,7 @@ public class ModuleSystemTest {
 
         writeFile("src/sci_time.deal", """
             import * as time from "std/time"
-            export function currentTime(): int { return time.now(); }
+            export function currentTime(): int { return time.nowMillis(); }
             """);
 
         Path entryFile = tmpDir.resolve("src/sci_time.deal").toAbsolutePath();
