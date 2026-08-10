@@ -32,7 +32,8 @@ public class StdlibDeclParseTest {
         "std/table.d.deal",
         "std/json.d.deal",
         "std/math.d.deal",
-        "std/time.d.deal"
+        "std/time.d.deal",
+        "std/io.d.deal"
     };
 
     public static void main(String[] args) throws Exception {

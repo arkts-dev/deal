@@ -44,7 +44,7 @@ public final class CompilationOrchestrator {
     private boolean hasErrors = false;
 
     private static final List<String> STDLIB_MODULES = List.of(
-        "std/console", "std/string", "std/table", "std/json", "std/math", "std/time"
+        "std/console", "std/string", "std/table", "std/json", "std/math", "std/time", "std/io"
     );
 
     private static final class ModuleInfo {
