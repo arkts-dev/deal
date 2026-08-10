@@ -191,8 +191,8 @@ public class ModuleSystemTest {
             import * as strings from "std/string"
             import * as math from "std/math"
             export function analyze(s: string): int {
-                let len: int = strings.len(s);
-                return math.max(len, 0);
+                let len: int = strings.length(s);
+                return math.maxInt(len, 0);
             }
             """);
 

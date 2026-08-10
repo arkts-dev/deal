@@ -1,5 +1,15 @@
-// DEAL Standard Library: std/string (declaration)
-export function len(s: string): int;
-export function sub(s: string, start: int, end: int): string;
-export function find(s: string, pattern: string): int | null;
-export function concat(a: string, b: string): string;
+// DEAL Standard Library: std/string (declaration) — v1.0
+//
+// NOTE: The replace function parameter is named "old" (not "from") because
+// "from" is a reserved keyword in DEAL (used in "import … from …") and cannot
+// be used as an identifier.  The v1.0 spec declares `replace(s: string,
+// from: string, to: string): string` but uses a keyword as a parameter name;
+// this is a necessary workaround for a known spec bug.
+export function length(s: string): int;
+export function substring(s: string, start: int, end: int): string;
+export function contains(s: string, part: string): boolean;
+export function startsWith(s: string, part: string): boolean;
+export function endsWith(s: string, part: string): boolean;
+export function replace(s: string, old: string, to: string): string;
+export function split(s: string, sep: string): string[];
+export function trim(s: string): string;
