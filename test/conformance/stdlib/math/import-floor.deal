@@ -1,0 +1,10 @@
+// @spec: Standard library declarations — std/math
+// @description: std/math can be imported
+// @expected: compile-ok
+// @features: stdlib, math
+
+import * as math from "std/math"
+
+export function test_math_floor(x: number): number {
+  return math.floor(x);
+}

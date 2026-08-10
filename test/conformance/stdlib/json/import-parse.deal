@@ -1,0 +1,10 @@
+// @spec: Standard library declarations — std/json
+// @description: std/json can be imported
+// @expected: compile-ok
+// @features: stdlib, json
+
+import * as json from "std/json"
+
+export function test_json_parse(s: string): table {
+  return json.parse(s);
+}

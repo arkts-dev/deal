@@ -1,0 +1,8 @@
+// @spec: Runtime execution model — Runtime library
+// @description: int() on non-integer number raises E8001 at runtime
+// @expected: runtime-error E8001
+// @features: runtime, int, conversion, error
+
+export function test_int_noninteger(): int {
+  return int(3.7);
+}

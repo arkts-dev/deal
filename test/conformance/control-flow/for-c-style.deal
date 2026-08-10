@@ -1,0 +1,12 @@
+// @spec: Control flow — For (C-style)
+// @description: C-style for loop works
+// @expected: runtime-ok
+// @features: control-flow, for
+
+export function test_for(): int {
+  let x: int = 0;
+  for (let i: int = 0; i < 5; i = i + 1) {
+    x = x + i;
+  }
+  return x; // 0+1+2+3+4 = 10
+}

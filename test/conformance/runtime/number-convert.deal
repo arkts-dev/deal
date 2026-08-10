@@ -1,0 +1,8 @@
+// @spec: Runtime execution model — Runtime library
+// @description: number(3) returns 3.0 at runtime
+// @expected: runtime-ok
+// @features: runtime, number, conversion
+
+export function test_number(): number {
+  return number(3);
+}

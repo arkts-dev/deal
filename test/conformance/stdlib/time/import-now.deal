@@ -1,0 +1,10 @@
+// @spec: Standard library declarations — std/time
+// @description: std/time can be imported
+// @expected: compile-ok
+// @features: stdlib, time
+
+import * as time from "std/time"
+
+export function test_time_now(): int {
+  return time.nowMillis();
+}

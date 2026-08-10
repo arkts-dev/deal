@@ -1,0 +1,10 @@
+// @spec: Lexical elements — Comment semantics
+// @description: Block comments do not nest
+// @expected: compile-ok
+// @features: lexer, comments
+
+/* This is a block comment */
+let x: int = 1;
+/* Multi-line
+   block comment */
+let y: int = 2;

@@ -1,0 +1,15 @@
+// @spec: Syntactic grammar — ForStatement
+// @description: Empty for-loop (infinite loop with no init/test/update) is valid
+// @expected: compile-ok
+// @features: parser, for-loop
+
+export function test_empty_for(): null {
+  let count: int = 0;
+  for (;;) {
+    count = count + 1;
+    if (count >= 3) {
+      break;
+    }
+  }
+  return null;
+}

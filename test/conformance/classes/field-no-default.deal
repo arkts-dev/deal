@@ -1,0 +1,14 @@
+// @spec: Classes — Class assignment semantics
+// @description: Cannot delete required field
+// @expected: compile-error E4004
+// @features: classes, delete
+
+class User {
+  name: string = "";
+}
+
+export function test_delete_required(): null {
+  let u: User = { name: "Ada" };
+  delete u.name;
+  return null;
+}

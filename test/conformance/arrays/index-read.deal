@@ -1,0 +1,9 @@
+// @spec: Arrays — Indexing
+// @description: Array index read works
+// @expected: runtime-ok
+// @features: arrays, indexing
+
+export function test_array_index(): int {
+  let xs: int[] = [10, 20, 30];
+  return xs[1]; // should be 20
+}

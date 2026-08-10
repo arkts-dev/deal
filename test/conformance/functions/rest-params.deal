@@ -1,0 +1,16 @@
+// @spec: Functions — Rest parameters
+// @description: Rest parameters work correctly
+// @expected: runtime-ok
+// @features: functions, rest
+
+function sum(...values: int[]): int {
+  let total: int = 0;
+  for (let i: int = 0; i < values.length; i = i + 1) {
+    total = total + values[i];
+  }
+  return total;
+}
+
+export function test_rest(): int {
+  return sum(1, 2, 3, 4, 5);
+}

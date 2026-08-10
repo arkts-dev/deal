@@ -1,0 +1,7 @@
+// @spec: Diagnostics — Compile-time diagnostic format
+// @description: Assignment to wrong type produces diagnostic
+// @expected: compile-error E3001
+// @features: diagnostics, assignment
+
+let y: int = 1;
+y = 2.0;

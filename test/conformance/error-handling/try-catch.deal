@@ -1,0 +1,14 @@
+// @spec: Error handling — try / catch
+// @description: try/catch works without error
+// @expected: runtime-ok
+// @features: error-handling, try-catch
+
+export function test_trycatch(): string {
+  let result: string = "initial";
+  try {
+    result = "tried";
+  } catch (e) {
+    result = "caught";
+  }
+  return result;
+}

@@ -1,0 +1,17 @@
+// @spec: Error handling — try / catch
+// @description: continue inside nested try within loop propagates
+// @expected: runtime-ok
+// @features: error-handling, try, continue, nested
+
+export function test_nested_continue(): int {
+  let sum: int = 0;
+  for (let i: int = 0; i < 5; i = i + 1) {
+    try {
+      try {
+        if (i === 2) { continue; }
+      } catch (e2) {}
+      sum = sum + i;
+    } catch (e1) {}
+  }
+  return sum;
+}

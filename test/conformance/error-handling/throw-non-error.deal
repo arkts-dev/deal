@@ -1,0 +1,8 @@
+// @spec: Error handling — throw
+// @description: throw with non-Error type is compile error
+// @expected: compile-error E3001
+// @features: error-handling, throw
+
+export function test_throw_bad(): null {
+  throw 42;
+}

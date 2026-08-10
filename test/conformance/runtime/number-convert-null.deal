@@ -1,0 +1,9 @@
+// @spec: Runtime execution model — Runtime library
+// @description: number(null) raises E8001 at runtime
+// @expected: runtime-error E8001
+// @features: runtime, number, conversion, error
+
+export function test_number_null(): number {
+  let x: number | null = null;
+  return number(x);
+}

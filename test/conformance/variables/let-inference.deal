@@ -1,0 +1,11 @@
+// @spec: Variables — Inference rules
+// @description: Type inference from initializer
+// @expected: compile-ok
+// @features: variables, inference
+
+let a = null;
+let b = true;
+let c = 1;
+let d = 2.0;
+let e = "hello";
+let f = [1, 2, 3];

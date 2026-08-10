@@ -1,0 +1,12 @@
+// @spec: Control flow — While
+// @description: While loop works
+// @expected: runtime-ok
+// @features: control-flow, while
+
+export function test_while(): int {
+  let x: int = 0;
+  while (x < 10) {
+    x = x + 1;
+  }
+  return x;
+}

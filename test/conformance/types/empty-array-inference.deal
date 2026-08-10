@@ -1,0 +1,6 @@
+// @spec: Type system — Invariance
+// @description: Empty array literal cannot infer element type
+// @expected: compile-error E3002
+// @features: type-system, arrays
+
+let a = [];

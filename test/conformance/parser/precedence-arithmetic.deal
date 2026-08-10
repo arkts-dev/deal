@@ -1,0 +1,13 @@
+// @spec: Syntactic grammar — Operator precedence table
+// @description: Arithmetic operators follow correct precedence
+// @expected: runtime-ok
+// @features: parser, precedence
+
+export function test_precedence(): int {
+  // 2 + 3 * 4 = 2 + 12 = 14
+  let a: int = 2 + 3 * 4;
+  // (2 + 3) * 4 = 5 * 4 = 20
+  let b: int = (2 + 3) * 4;
+  // a should be 14, b should be 20; return their sum (34)
+  return a + b;
+}

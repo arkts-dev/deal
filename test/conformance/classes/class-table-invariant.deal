@@ -1,0 +1,9 @@
+// @spec: Classes — Class vs table
+// @description: Class and table are invariant and distinct
+// @expected: compile-error E3001
+// @features: classes, tables
+
+class Point { x: int = 0; }
+
+let p: Point = { x: 1 };
+let t: table = p;

@@ -1,0 +1,13 @@
+// @spec: Syntactic grammar — Statement/expression separation
+// @description: Blocks are valid statement containers
+// @expected: compile-ok
+// @features: parser, blocks
+
+export function test_blocks(): int {
+  let x: int = 1;
+  {
+    let y: int = 2;
+    x = x + y;
+  }
+  return x;
+}

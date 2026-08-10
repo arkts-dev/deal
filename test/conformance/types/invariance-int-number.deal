@@ -1,0 +1,6 @@
+// @spec: Type system — Invariance
+// @description: int is not assignable to number
+// @expected: compile-error E3001
+// @features: type-system, invariance
+
+let a: int = 1.0;

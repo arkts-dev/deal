@@ -1,0 +1,10 @@
+// @spec: Tables — Reading table fields
+// @description: Table field read with target type is allowed
+// @expected: runtime-ok
+// @features: tables, dynamic-read
+
+export function test_table_read(): int {
+  let t: table = { x: 42 };
+  let v: int = t.x; // OK: contextual target type
+  return v;
+}

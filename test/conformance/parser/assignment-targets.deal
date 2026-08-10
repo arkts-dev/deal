@@ -1,0 +1,25 @@
+// @spec: Syntactic grammar — Assignment targets
+// @description: Variable, member, and index are valid LHS targets
+// @expected: compile-ok
+// @features: parser, assignment
+
+class Point {
+  x: int = 0;
+  y: int = 0;
+}
+
+export function test_assign(): null {
+  // simple variable
+  let a: int = 1;
+  a = 2;
+
+  // member access
+  let p: Point = { x: 1, y: 2 };
+  p.x = 3;
+
+  // index access
+  let xs: int[] = [1, 2, 3];
+  xs[0] = 10;
+
+  return null;
+}

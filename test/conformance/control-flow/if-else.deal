@@ -1,0 +1,14 @@
+// @spec: Control flow — Conditional
+// @description: If/else works
+// @expected: runtime-ok
+// @features: control-flow, if
+
+export function test_ifelse(): int {
+  let x: int = 0;
+  if (x === 0) {
+    x = 1;
+  } else {
+    x = 2;
+  }
+  return x; // should be 1
+}

@@ -1,0 +1,10 @@
+// @spec: Classes — Construction
+// @description: Extra fields are rejected in object literals
+// @expected: compile-error E4002
+// @features: classes, extra-fields
+
+class User {
+  name: string = "";
+}
+
+let u: User = { name: "Ada", unknown: 1 };

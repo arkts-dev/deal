@@ -1,0 +1,15 @@
+// @spec: Error handling — try / catch
+// @description: break inside try within for-loop exits loop
+// @expected: runtime-ok
+// @features: error-handling, try, break
+
+export function test_break_in_try(): int {
+  let found: int = 0;
+  for (let i: int = 0; i < 10; i = i + 1) {
+    try {
+      if (i === 5) { break; }
+    } catch (e) {}
+    found = i;
+  }
+  return found;
+}

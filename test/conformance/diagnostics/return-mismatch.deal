@@ -1,0 +1,8 @@
+// @spec: Diagnostics — Compile-time diagnostic format
+// @description: Return type mismatch produces diagnostic
+// @expected: compile-error E5003
+// @features: diagnostics, return
+
+function wrongReturn(): int {
+  return 1.0;
+}

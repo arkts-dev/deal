@@ -1,0 +1,7 @@
+// @spec: Type system — Nullable semantics
+// @description: T can be assigned to T | null (wrapping)
+// @expected: compile-ok
+// @features: type-system, nullable
+
+let a: int = 42;
+let b: int | null = a;

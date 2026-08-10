@@ -1,0 +1,13 @@
+// @spec: Control flow — Break / Continue
+// @description: Break exits the loop
+// @expected: runtime-ok
+// @features: control-flow, break
+
+export function test_break(): int {
+  let found: int = 0;
+  for (let i: int = 0; i < 10; i = i + 1) {
+    if (i === 5) { break; }
+    found = i;
+  }
+  return found; // i runs 0..4, so last is 4
+}

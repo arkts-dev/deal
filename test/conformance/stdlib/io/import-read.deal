@@ -1,0 +1,10 @@
+// @spec: Standard library declarations — std/io
+// @description: std/io can be imported
+// @expected: compile-ok
+// @features: stdlib, io
+
+import * as io from "std/io"
+
+export function test_io_read(path: string): string {
+  return io.readText(path);
+}

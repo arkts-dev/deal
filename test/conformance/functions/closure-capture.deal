@@ -1,0 +1,13 @@
+// @spec: Functions — Closures and captured variables
+// @description: Closure captures variable by binding, sees current value
+// @expected: runtime-ok
+// @features: functions, closures
+
+export function test_closure(): int {
+  let x: int = 1;
+  let f: () => int = function(): int {
+    return x;
+  };
+  x = 2;
+  return f(); // should return 2
+}

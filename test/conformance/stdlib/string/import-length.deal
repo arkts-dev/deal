@@ -1,0 +1,10 @@
+// @spec: Standard library declarations — std/string
+// @description: std/string can be imported
+// @expected: compile-ok
+// @features: stdlib, string
+
+import * as str from "std/string"
+
+export function test_string_len(): int {
+  return str.length("hello");
+}

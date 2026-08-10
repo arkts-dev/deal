@@ -1,0 +1,22 @@
+// @spec: Classes — Construction
+// @description: Class construction with object literal works
+// @expected: runtime-ok
+// @features: classes, construction
+
+class Address {
+  city: string = "";
+  zip: int = 0;
+}
+
+class User {
+  name: string = "";
+  home: Address = {};
+}
+
+export function test_construct(): string {
+  let u: User = {
+    name: "Ada",
+    home: { city: "London", zip: 12345 },
+  };
+  return u.name;
+}

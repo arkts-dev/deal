@@ -1,0 +1,15 @@
+// @spec: Error handling — try / catch
+// @description: continue inside try within for-loop jumps to update step
+// @expected: runtime-ok
+// @features: error-handling, try, continue
+
+export function test_continue_in_try(): int {
+  let sum: int = 0;
+  for (let i: int = 0; i < 5; i = i + 1) {
+    try {
+      if (i === 2) { continue; }
+    } catch (e) {}
+    sum = sum + i;
+  }
+  return sum;
+}

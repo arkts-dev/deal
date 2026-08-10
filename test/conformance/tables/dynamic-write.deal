@@ -1,0 +1,12 @@
+// @spec: Tables — Writing table fields
+// @description: Table field write is allowed
+// @expected: runtime-ok
+// @features: tables, dynamic-write
+
+export function test_table_write(): string {
+  let t: table = {};
+  t.key = "val";
+  t.num = 42;
+  let v: string = t.key;
+  return v;
+}

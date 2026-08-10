@@ -1,0 +1,7 @@
+// @spec: Type system — Type-of-expression rules
+// @description: Table field read requires contextual target type
+// @expected: compile-error E3003
+// @features: type-system, tables
+
+let t: table = {};
+let v = t.x;

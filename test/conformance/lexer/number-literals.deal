@@ -1,0 +1,9 @@
+// @spec: Lexical elements — Numeric overflow, NaN, and Infinity
+// @description: Number literals with decimal and exponent forms are valid
+// @expected: compile-ok
+// @features: lexer, number
+
+let a: number = 3.14;
+let b: number = 0.0;
+let c: number = 1e308;
+let d: number = 1.0e-3;

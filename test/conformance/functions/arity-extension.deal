@@ -1,0 +1,11 @@
+// @spec: Functions — Function type compatibility
+// @description: Arity extension: shorter function assigned to longer target
+// @expected: runtime-ok
+// @features: functions, arity
+
+function one(x: int): int { return x; }
+
+export function test_arity(): int {
+  let takesTwo: (x: int, y: int) => int = one;
+  return takesTwo(10, 20);
+}

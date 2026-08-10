@@ -1,0 +1,9 @@
+// @spec: Lexical elements — String escapes and UTF-8
+// @description: String escape sequences are recognized
+// @expected: compile-ok
+// @features: lexer, strings
+
+export function test_escapes(): string {
+  let s: string = "hello\nworld\t!\\\"\'";
+  return s;
+}

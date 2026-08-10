@@ -1,0 +1,13 @@
+// @spec: Error handling — throw
+// @description: throw with Error type works
+// @expected: runtime-ok
+// @features: error-handling, throw
+
+export function test_throw(): string {
+  try {
+    throw { code: "E_TEST", message: "test error" };
+    return "no_error";
+  } catch (e) {
+    return e.code;
+  }
+}

@@ -1,0 +1,8 @@
+// @spec: Lexical elements — Numeric overflow, NaN, and Infinity
+// @description: Integer literals are valid
+// @expected: compile-ok
+// @features: lexer, int
+
+let a: int = 0;
+let b: int = 42;
+let c: int = 1234567890;

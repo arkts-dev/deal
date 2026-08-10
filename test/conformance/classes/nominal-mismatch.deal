@@ -1,0 +1,10 @@
+// @spec: Classes — Nominal typing
+// @description: Two identically-shaped classes are distinct types
+// @expected: compile-error E3001
+// @features: classes, nominal
+
+class A { x: int = 0; }
+class B { x: int = 0; }
+
+let a: A = { x: 1 };
+let b: B = a;

@@ -1,0 +1,10 @@
+// @spec: Standard library declarations — std/table
+// @description: std/table can be imported
+// @expected: compile-ok
+// @features: stdlib, table
+
+import * as tbl from "std/table"
+
+export function test_table_keys(t: table): string[] {
+  return tbl.keys(t);
+}

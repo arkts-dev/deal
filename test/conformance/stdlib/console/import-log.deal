@@ -1,0 +1,11 @@
+// @spec: Standard library declarations — std/console
+// @description: std/console can be imported and used
+// @expected: runtime-ok
+// @features: stdlib, console
+
+import * as console from "std/console"
+
+export function test_console_log(): null {
+  console.log("hello");
+  return null;
+}

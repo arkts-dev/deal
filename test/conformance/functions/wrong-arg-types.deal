@@ -1,0 +1,10 @@
+// @spec: Functions — Function values, calls, and wrappers
+// @description: Function call with wrong arg types is compile error
+// @expected: compile-error E5001
+// @features: functions, type-check
+
+function add(a: int, b: int): int { return a + b; }
+
+let x: number = 1.0;
+let y: number = 2.0;
+let r: int = add(x, y); // error: int vs number

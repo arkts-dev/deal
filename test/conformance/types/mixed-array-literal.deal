@@ -1,0 +1,6 @@
+// @spec: Type system — Invariance
+// @description: Mixed array literal is a compile error
+// @expected: compile-error E3011
+// @features: type-system, arrays, invariance
+
+let a = [1, 1.0];

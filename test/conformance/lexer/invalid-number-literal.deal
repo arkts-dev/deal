@@ -1,0 +1,6 @@
+// @spec: Lexical elements — Numeric overflow, NaN, and Infinity
+// @description: Trailing decimal point without digits is a parse error
+// @expected: compile-error E1034
+// @features: lexer, number
+
+let x: number = 0.;

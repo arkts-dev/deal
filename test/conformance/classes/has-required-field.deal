@@ -1,0 +1,17 @@
+// @spec: Classes — Field access
+// @description: has() checks optional field presence
+// @expected: runtime-ok
+// @features: classes, has
+
+class User {
+  name: string = "";
+  nick?: string;
+}
+
+export function test_has(): boolean {
+  let u: User = { name: "Ada" };
+  let missing: boolean = has(u.nick); // false
+  u.nick = "ads";
+  let present: boolean = has(u.nick); // true
+  return !missing && present;
+}

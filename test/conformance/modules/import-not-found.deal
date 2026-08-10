@@ -1,0 +1,6 @@
+// @spec: Modules, declarations, standard library, and host ABI — Module resolution
+// @description: Importing a non-existent module is a compile error
+// @expected: compile-error E2003
+// @features: modules, diagnostics
+
+import * as m from "./nonexistent_module";

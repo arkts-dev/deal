@@ -1,0 +1,8 @@
+// @spec: Functions — Return type requirements
+// @description: Function must return on all paths
+// @expected: compile-error E5002
+// @features: functions, return
+
+function missingReturn(): int {
+  let x: int = 1;
+}

@@ -1,0 +1,8 @@
+// @spec: Lexical elements — Comment semantics
+// @description: Line comments extend to end of line
+// @expected: compile-ok
+// @features: lexer, comments
+
+// This is a line comment
+let x: int = 1; // comment after statement
+let y: int = 2;

@@ -1,0 +1,7 @@
+// @spec: Type system — Nullable semantics
+// @description: T | null cannot be assigned to T without narrowing
+// @expected: compile-error E3001
+// @features: type-system, nullable
+
+let a: int | null = 42;
+let b: int = a;

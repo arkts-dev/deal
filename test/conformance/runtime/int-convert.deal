@@ -1,0 +1,8 @@
+// @spec: Runtime execution model — Runtime library
+// @description: int(3.0) returns 3 at runtime
+// @expected: runtime-ok
+// @features: runtime, int, conversion
+
+export function test_int(): int {
+  return int(3.0);
+}

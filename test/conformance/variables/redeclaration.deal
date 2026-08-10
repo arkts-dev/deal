@@ -1,0 +1,7 @@
+// @spec: Variables — Redeclaration
+// @description: Redeclaration in same scope is error
+// @expected: compile-error E2002
+// @features: variables, redeclaration
+
+let x: int = 1;
+let x: int = 2;

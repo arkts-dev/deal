@@ -1,0 +1,16 @@
+// @spec: Functions — Closures and captured variables
+// @description: For-loop creates per-iteration closure binding
+// @expected: runtime-ok
+// @features: functions, closures, for-loop
+
+export function test_for_closure(): int {
+  let f0: (() => int) = function(): int { return -1; };
+  let f1: (() => int) = function(): int { return -1; };
+  let f2: (() => int) = function(): int { return -1; };
+  for (let i: int = 0; i < 3; i = i + 1) {
+    if (i === 0) { f0 = function(): int { return i; }; }
+    if (i === 1) { f1 = function(): int { return i; }; }
+    if (i === 2) { f2 = function(): int { return i; }; }
+  }
+  return f0() * 100 + f1() * 10 + f2();
+}
