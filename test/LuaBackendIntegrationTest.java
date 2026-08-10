@@ -120,7 +120,8 @@ public class LuaBackendIntegrationTest {
         testClassOptionalField();
         testClassOptionalFieldAfterDelete();
         testForLoopSimple();
-        testForLoopClosureLimitation();
+        testForLoopClosureBinding();
+        testForLoopClosureNested();
         testClassExport();
         testCodeAfterTryCatch();
         testNestedTryCatchReturn();
@@ -475,22 +476,25 @@ public class LuaBackendIntegrationTest {
     }
 
     // =========================================================================
-    // Test: For-loop closure limitation
+    // Test: For-loop closure per-iteration binding (ISSUE-0009)
     // =========================================================================
 
-    static void testForLoopClosureLimitation() throws Exception {
-        System.out.println("-- For Loop Closure Limitation --");
+    static void testForLoopClosureBinding() throws Exception {
+        System.out.println("-- For Loop Closure Binding (ISSUE-0009) --");
+        // Each closure should capture the per-iteration value of i.
+        // We use separate variables to avoid array indexing of table type.
+        // f0() should return 0, f1() returns 1, f2() returns 2.
         String dealSrc =
-            "export function test_closure_loop(): int {\n" +
-            "  let a: int = 0;\n" +
-            "  let b: int = 0;\n" +
-            "  let c: int = 0;\n" +
+            "export function test_closure_binding(): int {\n" +
+            "  let f0: (() => int) = function(): int { return -1; };\n" +
+            "  let f1: (() => int) = function(): int { return -1; };\n" +
+            "  let f2: (() => int) = function(): int { return -1; };\n" +
             "  for (let i: int = 0; i < 3; i = i + 1) {\n" +
-            "    if (i === 1) { a = i; }\n" +
-            "    if (i === 2) { b = i; }\n" +
+            "    if (i === 0) { f0 = function(): int { return i; }; }\n" +
+            "    if (i === 1) { f1 = function(): int { return i; }; }\n" +
+            "    if (i === 2) { f2 = function(): int { return i; }; }\n" +
             "  }\n" +
-            "  c = a + b;\n" +
-            "  return c;\n" +
+            "  return f0() * 100 + f1() * 10 + f2();\n" +
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
@@ -504,7 +508,7 @@ public class LuaBackendIntegrationTest {
             for (Diagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
-            check(false, "for-loop closure: compilation failed");
+            check(false, "closure binding: compilation failed");
             return;
         }
 
@@ -513,7 +517,7 @@ public class LuaBackendIntegrationTest {
         String runner =
             "package.path = './?.lua;' .. package.path\n" +
             "local mod = loadstring([[" + lua + "]])()\n" +
-            "local r = mod.test_closure_loop.f()\n" +
+            "local r = mod.test_closure_binding.f()\n" +
             "print(r)\n";
 
         Path tmpDir = Files.createTempDirectory("deal_int_");
@@ -534,8 +538,86 @@ public class LuaBackendIntegrationTest {
             .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
         } catch (IOException ignored) {}
 
-        check(exit == 0, "for-loop closure: luajit exit 0 (got: " + output + ")");
-        check(output.equals("3"), "for-loop closure: c is 3, got: " + output);
+        check(exit == 0, "closure binding: luajit exit 0 (got: " + output + ")");
+        // f0()=0, f1()=1, f2()=2 → 0*100 + 1*10 + 2 = 12
+        check(output.equals("12"), "closure binding: expected 12 (f0=0,f1=1,f2=2), got: " + output);
+    }
+
+    // =========================================================================
+    // Test: Nested for-loops with closure binding (ISSUE-0009)
+    // =========================================================================
+
+    static void testForLoopClosureNested() throws Exception {
+        System.out.println("-- Nested For Loop Closure Binding (ISSUE-0009) --");
+        // Outer closures capture outer i, inner closures capture inner j.
+        // Each has its own shadow variable.
+        String dealSrc =
+            "export function test_nested_binding(): int {\n" +
+            "  let outer_f0: (() => int) = function(): int { return -1; };\n" +
+            "  let outer_f1: (() => int) = function(): int { return -1; };\n" +
+            "  let inner_f0: (() => int) = function(): int { return -1; };\n" +
+            "  for (let i: int = 0; i < 2; i = i + 1) {\n" +
+            "    if (i === 0) { outer_f0 = function(): int { return i; }; }\n" +
+            "    if (i === 1) { outer_f1 = function(): int { return i; }; }\n" +
+            "    for (let j: int = 0; j < 2; j = j + 1) {\n" +
+            "      if (j === 1) { inner_f0 = function(): int { return j; }; }\n" +
+            "    }\n" +
+            "  }\n" +
+            "  return outer_f0() * 100 + outer_f1() * 10 + inner_f0();\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "nested closure: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        // Verify the generated Lua has distinct shadow variables
+        if (lua != null) {
+            check(lua.contains("local _i = "), "outer shadow variable _i");
+            check(lua.contains("local _j = "), "inner shadow variable _j");
+            check(lua.contains("local i = _i"), "outer per-iteration binding");
+            check(lua.contains("local j = _j"), "inner per-iteration binding");
+        }
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r = mod.test_nested_binding.f()\n" +
+            "print(r)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "nested closure: luajit exit 0 (got: " + output + ")");
+        // outer_f0()=0, outer_f1()=1, inner_f0()=1 → 0*100 + 1*10 + 1 = 11
+        check(output.equals("11"), "nested closure: expected 11 (outer0=0,outer1=1,inner=1), got: " + output);
     }
 
     // =========================================================================
@@ -731,7 +813,6 @@ public class LuaBackendIntegrationTest {
 
     static void testThrowDefaultFields() throws Exception {
         System.out.println("-- Throw Default Fields (F3 round 5) --");
-        // throw with only message — code should default to ""
         String dealSrc =
             "export function test_throw_msg_only(): string {\n" +
             "  try {\n" +
@@ -853,7 +934,6 @@ public class LuaBackendIntegrationTest {
         } catch (IOException ignored) {}
 
         check(exit == 0, "nullable comparison: luajit exit 0 (got: " + output + ")");
-        // Output should be "true\ntrue"
         String[] lines = output.split("\n");
         check(lines.length >= 2, "nullable comparison: two output lines, got: " + output);
         if (lines.length >= 2) {
@@ -1286,4 +1366,3 @@ public class LuaBackendIntegrationTest {
     }
 
 }
-

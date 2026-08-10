@@ -253,7 +253,7 @@ public class LuaBackendTest {
         testStringConcatenation();
         testIntegerArithmetic();
         testForLoop();
-        testForLoopClosureLimitation();
+        testForLoopClosureBinding();
         testTryCatch();
         testTryCatchPreserveErrorCode();
         testTryCatchWrapUnexpectedError();
@@ -698,7 +698,7 @@ public class LuaBackendTest {
     }
 
     // =========================================================================
-    // Test: For loop (C-style)
+    // Test: For loop (C-style) — ISSUE-0009 shadow-local lowering
     // =========================================================================
 
     static void testForLoop() {
@@ -710,27 +710,52 @@ public class LuaBackendTest {
             "}"
         );
         assertNoErrors(out, "for loop");
-        assertContains(out.lua, "KNOWN LIMIT", "limitation comment");
+        // ISSUE-0009: No KNOWN LIMIT comment
+        assertNotContains(out.lua, "KNOWN LIMIT", "no limitation comment");
+        // Shadow-local pattern: outer counter uses _i
+        assertContains(out.lua, "local _i = ", "shadow variable init");
+        // While loop desugaring
         assertContains(out.lua, "while ", "while desugaring");
         assertContains(out.lua, "__rt.check_boolean", "condition check");
+        // Condition remapped to _i
+        assertContains(out.lua, "_i < 10", "condition uses shadow var");
+        // Per-iteration fresh binding
+        assertContains(out.lua, "local i = _i", "per-iteration binding");
+        // Update remapped to _i
+        assertContains(out.lua, "_i = __rt.int_add(_i, 1)", "update uses shadow var");
+        // Body uses i (not _i)
+        assertContains(out.lua, "sum = __rt.int_add(sum, i)", "body uses per-iteration i");
+        // Continue label present
+        assertContains(out.lua, "::__continue_", "continue label");
     }
 
     // =========================================================================
-    // Test: For loop closure limitation
+    // Test: For loop closure per-iteration binding — ISSUE-0009
     // =========================================================================
 
-    static void testForLoopClosureLimitation() {
-        System.out.println("-- For Loop Closure Limitation --");
+    static void testForLoopClosureBinding() {
+        System.out.println("-- For Loop Closure Binding (ISSUE-0009) --");
         CompileOutput out = compile(
             "let fs: table = {};\n" +
             "for (let i: int = 0; i < 3; i = i + 1) {\n" +
             "  fs[i] = function(): int { return i; };\n" +
             "}"
         );
-        assertNoErrors(out, "for loop closure");
-        assertContains(out.lua, "KNOWN LIMIT", "limitation documented");
-        // Verify NO IIFE wrapper (v0.6 limitation)
+        assertNoErrors(out, "for loop closure binding");
+        // No KNOWN LIMIT comment (ISSUE-0009 fix)
+        assertNotContains(out.lua, "KNOWN LIMIT", "no limitation comment");
+        // No IIFE wrapper
         assertNotContains(out.lua, "(function(i)", "no IIFE wrapper");
+        // Shadow-local pattern: outer counter uses _i
+        assertContains(out.lua, "local _i = ", "shadow variable init");
+        // Per-iteration fresh binding
+        assertContains(out.lua, "local i = _i", "per-iteration binding");
+        // Condition remapped to _i
+        assertContains(out.lua, "_i < 3", "condition uses shadow var");
+        // Update remapped to _i
+        assertContains(out.lua, "_i = __rt.int_add(_i, 1)", "update uses shadow var");
+        // The closure inside body captures per-iteration i
+        assertContains(out.lua, "return __rt.check_int(i)", "closure uses per-iteration i");
     }
 
     // =========================================================================
