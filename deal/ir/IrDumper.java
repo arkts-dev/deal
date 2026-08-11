@@ -901,6 +901,19 @@ public final class IrDumper implements Visitor<String> {
         return sb.toString();
     }
 
+    @Override
+    public String visit(AwaitExpression node) {
+        String typeStr = hasType(node) ? specTypeDescriptor(typeOf(node))
+            : (isDeclFile ? "[no-expr-in-decl]" : "?");
+        StringBuilder sb = new StringBuilder();
+        sb.append(indent()).append("await : ").append(typeStr)
+            .append(" ").append(spanStr(node.span())).append("\n");
+        pushIndent();
+        sb.append(dispatchExpr(node.callee()));
+        popIndent();
+        return sb.toString();
+    }
+
     // =========================================================================
     // Visit methods — Type nodes
     // =========================================================================

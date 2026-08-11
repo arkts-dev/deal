@@ -1,0 +1,10 @@
+// @spec: Async/Await — import under await retention
+// @description: Imported async function used with await keeps the import
+// @expected: compile-ok
+// @features: async, await, import, modules
+
+import * as M from "./async-lib";
+
+async function f(): int {
+  return await M.fetch(1);
+}

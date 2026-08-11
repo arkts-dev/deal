@@ -1,20 +1,19 @@
 // IR golden fixture: await-expressions
-// Tests complex call expressions with nesting and member access.
-// These patterns form the basis for await expression lowering.
+// Tests await expressions with various async function call patterns.
+// Verifies that the IrDumper produces "await : <type>" nodes with
+// proper type annotations and walks the callee call expression.
 
-class Calc { }
-
-function add(a: int, b: int): int {
+async function add(a: int, b: int): int {
     return a + b;
 }
 
-function compute(x: int, y: int): int {
-    let r: int = add(x, y);
+async function compute(x: int, y: int): int {
+    let r: int = await add(x, y);
     return r;
 }
 
-function chain(a: int): int {
-    let b: int = add(a, 1);
-    let c: int = add(b, 2);
-    return add(c, 3);
+async function chain(a: int): int {
+    let b: int = await add(a, 1);
+    let c: int = await add(b, 2);
+    return await add(c, 3);
 }
