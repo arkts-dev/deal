@@ -35,6 +35,7 @@ public enum TokenType {
     INT_LITERAL,
     NUMBER_LITERAL,
     STRING_LITERAL,
+    TEMPLATE_LITERAL,
 
     // -- Identifier --
     IDENTIFIER,

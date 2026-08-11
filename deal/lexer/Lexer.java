@@ -416,6 +416,119 @@ public final class Lexer {
     }
 
     // =========================================================================
+    // Template literals
+    // =========================================================================
+
+    /**
+     * Reads a backtick-delimited template literal.
+     *
+     * <p>The lexeme is the raw content between the backticks (backticks not
+     * included).  Line terminators inside the literal produce E1003 per the
+     * normative grammar (template literals are single-line).</p>
+     *
+     * <p>Newline handling order (D18, D19):
+     * <ol>
+     *   <li>Check for bare newline BEFORE checking for {@code \\}.</li>
+     *   <li>Within the {@code \\} handler, peek at the next character:
+     *       if it is a line terminator, treat it as the terminating newline
+     *       rather than as an escaped character.</li>
+     *   <li>After calling {@code newline()} for {@code \r}, conditionally
+     *       consume a following {@code \n} with bare {@code pos++}
+     *       (no second {@code newline()}), matching the existing
+     *       {@code readString()} and {@code skipWhitespaceAndComments()} pattern.</li>
+     * </ol>
+     */
+    private Token readTemplateLiteral() {
+        int startPos = pos;
+        bump(); // opening backtick
+
+        // Record start of raw content (after the opening backtick)
+        int contentStart = pos;
+
+        while (pos < source.length()) {
+            char c = source.charAt(pos);
+
+            // Step 1: Newline check first (bare newline — E1003)
+            if (c == '\n') {
+                error(DiagnosticCode.E1003,
+                    "Unterminated template literal: missing closing backtick",
+                    tokenStartLine, tokenStartCol);
+                String lexeme = source.substring(contentStart, pos);
+                newline();
+                return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
+            }
+            if (c == '\r') {
+                error(DiagnosticCode.E1003,
+                    "Unterminated template literal: missing closing backtick",
+                    tokenStartLine, tokenStartCol);
+                String lexeme = source.substring(contentStart, pos);
+                newline();
+                // D19: conditionally consume LF after CR
+                if (pos < source.length() && source.charAt(pos) == '\n') {
+                    pos++;
+                }
+                return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
+            }
+
+            // Step 2: Backslash escape
+            if (c == '\\') {
+                bump(); // consume backslash
+                if (pos >= source.length()) {
+                    // EOF after backslash
+                    error(DiagnosticCode.E1003,
+                        "Unterminated template literal: escape at end of file",
+                        tokenStartLine, tokenStartCol);
+                    String lexeme = source.substring(contentStart, pos);
+                    return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
+                }
+                char next = source.charAt(pos);
+                // D18: backslash + newline → not an escape; terminate with E1003
+                if (next == '\n') {
+                    error(DiagnosticCode.E1003,
+                        "Unterminated template literal: missing closing backtick",
+                        tokenStartLine, tokenStartCol);
+                    String lexeme = source.substring(contentStart, pos - 1);
+                    newline();
+                    return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
+                }
+                if (next == '\r') {
+                    error(DiagnosticCode.E1003,
+                        "Unterminated template literal: missing closing backtick",
+                        tokenStartLine, tokenStartCol);
+                    String lexeme = source.substring(contentStart, pos - 1);
+                    newline();
+                    // D19: conditionally consume LF after CR
+                    if (pos < source.length() && source.charAt(pos) == '\n') {
+                        pos++;
+                    }
+                    return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
+                }
+                // Valid escape: consume the escaped character (backtick after
+                // backslash does not close the template)
+                bump();
+                continue;
+            }
+
+            // Step 3: Closing backtick
+            if (c == '`') {
+                bump(); // consume closing backtick
+                String lexeme = source.substring(contentStart, pos - 1);
+                return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
+            }
+
+            // Step 4: Other characters
+            bump();
+        }
+
+        // Reached EOF without closing backtick
+        error(DiagnosticCode.E1003,
+            "Unterminated template literal: missing closing backtick",
+            tokenStartLine, tokenStartCol);
+        String lexeme = source.substring(contentStart, pos);
+        return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
+    }
+
+    // =========================================================================
     // Identifiers and keywords
     // =========================================================================
 
@@ -542,6 +655,7 @@ public final class Lexer {
             case ')' -> { bump(); yield makeToken(TokenType.RPAREN, ")"); }
             case '[' -> { bump(); yield makeToken(TokenType.LBRACKET, "["); }
             case ']' -> { bump(); yield makeToken(TokenType.RBRACKET, "]"); }
+            case '`' -> { yield readTemplateLiteral(); }
 
             default -> {
                 String ch = String.valueOf(c);
