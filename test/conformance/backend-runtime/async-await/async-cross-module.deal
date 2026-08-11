@@ -1,7 +1,7 @@
 // @spec: Async/Await — cross-module async import
-// @description: import an async function from a companion module, await it, verify compilation succeeds (runtime execution of cross-module imports not yet supported by conformance runner)
-// @expected: compile-ok
-// @features: async-await, modules
+// @description: import an async function from a companion module, await it, verify runtime execution returns correct values
+// @expected: runtime-ok
+// @features: async-await, modules, runtime
 
 import * as lib from "./async_lib.deal";
 

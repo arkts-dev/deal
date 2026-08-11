@@ -51,6 +51,12 @@ public class ConformanceTest {
         String message
     ) {}
 
+    /**
+     * A companion module that has been compiled to Lua and is ready to be
+     * written to the temp directory for runtime resolution.
+     */
+    private record CompanionModule(String luaSource, String moduleName) {}
+
     // =========================================================================
     // Main
     // =========================================================================
@@ -257,8 +263,9 @@ public class ConformanceTest {
             return;
         }
 
-        String lua = generateLua(test.path());
-        if (lua == null) {
+        // Generate Lua for the main test file and any companion modules it imports
+        var generated = generateLuaWithCompanions(test.path());
+        if (generated == null) {
             System.out.println("FAIL (codegen failed)");
             failed++;
             addResult(test, false, "codegen failed");
@@ -267,17 +274,14 @@ public class ConformanceTest {
 
         // Check if generated Lua uses $ identifiers (from @jsonable codegen)
         // and skip runtime test if LuaJIT doesn't support $ in identifiers.
-        if (luaContainsDollarIdentifiers(lua) && !luajitSupportsDollar) {
+        if (luaContainsDollarIdentifiers(generated.mainLua()) && !luajitSupportsDollar) {
             System.out.println("SKIP (LuaJIT does not support $ in identifiers; @jsonable runtime test skipped)");
             skipped++;
             addResult(test, false, "skipped: LuaJIT $ support required for @jsonable");
             return;
         }
 
-        // Compile companion modules referenced in the generated Lua
-        Map<String, String> companionLuas = compileCompanionModules(test.path());
-
-        String output = executeLua(lua, false, companionLuas);
+        String output = executeLua(generated.mainLua(), generated.companionModules(), false);
         if (output == null) {
             System.out.println("FAIL (Lua execution failed)");
             failed++;
@@ -339,8 +343,9 @@ public class ConformanceTest {
             return;
         }
 
-        String lua = generateLua(test.path());
-        if (lua == null) {
+        // Generate Lua for the main test file and any companion modules it imports
+        var generated = generateLuaWithCompanions(test.path());
+        if (generated == null) {
             System.out.println("FAIL (codegen failed)");
             failed++;
             addResult(test, false, "codegen failed");
@@ -348,17 +353,14 @@ public class ConformanceTest {
         }
 
         // Check if generated Lua uses $ identifiers
-        if (luaContainsDollarIdentifiers(lua) && !luajitSupportsDollar) {
+        if (luaContainsDollarIdentifiers(generated.mainLua()) && !luajitSupportsDollar) {
             System.out.println("SKIP (LuaJIT does not support $ in identifiers; @jsonable runtime test skipped)");
             skipped++;
             addResult(test, false, "skipped: LuaJIT $ support required for @jsonable");
             return;
         }
 
-        // Compile companion modules referenced in the generated Lua
-        Map<String, String> companionLuas = compileCompanionModules(test.path());
-
-        String output = executeLua(lua, true, companionLuas);
+        String output = executeLua(generated.mainLua(), generated.companionModules(), true);
         if (output == null) {
             System.out.println("FAIL (Lua execution returned null)");
             failed++;
@@ -417,6 +419,169 @@ public class ConformanceTest {
         return allDiags;
     }
 
+    // =========================================================================
+    // GeneratedLua and companion module support
+    // =========================================================================
+
+    /**
+     * Result of generating Lua for a test file and its companion modules.
+     */
+    private record GeneratedLua(String mainLua, Map<String, CompanionModule> companionModules) {}
+
+    /**
+     * Generate Lua for a test file and any companion modules it imports.
+     * <p>
+     * Companion modules are .deal files in the same directory that are imported
+     * by the test file via relative paths. They are compiled to Lua and made
+     * available for the Lua {@code require} system at runtime.
+     * <p>
+     * Companion modules that themselves import other companion modules are
+     * recursively compiled (one level deep). Cyclic imports between companions
+     * are not yet supported.
+     */
+    private static GeneratedLua generateLuaWithCompanions(Path file) throws Exception {
+        String source = Files.readString(file);
+        String filename = file.toString();
+
+        LexResult lex = new Lexer(source, filename).tokenize();
+        if (lex.hasErrors()) return null;
+
+        Parser parser = new Parser(lex.tokens(), filename);
+        ParseResult parseResult = parser.parse();
+        if (parseResult.hasErrors()) return null;
+
+        // Discover companion imports before name resolution, so we can
+        // compile them and make them available to the resolver.
+        Path testDir = file.toAbsolutePath().getParent();
+        Map<String, String> importResolutions = new LinkedHashMap<>();
+        Map<String, CompanionModule> companionModules = new LinkedHashMap<>();
+
+        for (StatementNode stmt : parseResult.program().statements()) {
+            if (stmt instanceof ImportDeclaration imp) {
+                String importPath = imp.modulePath();
+                Path resolvedPath = resolveCompanionPath(importPath, testDir);
+                if (resolvedPath != null && resolvedPath.getParent().equals(testDir)) {
+                    String moduleName = moduleNameFor(resolvedPath);
+                    importResolutions.put(importPath, moduleName);
+
+                    if (!companionModules.containsKey(moduleName)) {
+                        String companionLua = generateModuleLua(resolvedPath);
+                        if (companionLua != null) {
+                            companionModules.put(moduleName,
+                                new CompanionModule(companionLua, moduleName));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Name resolution and type checking for the main test file.
+        // The ConformanceModuleResolver will resolve companion imports
+        // by extracting their exports via ExportExtractor.
+        ConformanceModuleResolver resolver = new ConformanceModuleResolver(file);
+        NameResolver nr = new NameResolver(filename, resolver);
+        SymbolTable symTable = nr.resolve(parseResult.program());
+        if (nr.diagnostics().stream().anyMatch(d -> "error".equals(d.severity())))
+            return null;
+
+        CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
+        if (result.hasErrors()) return null;
+
+        // Generate main Lua with import resolutions so that `require` paths
+        // use the companion module names rather than the raw .deal paths.
+        String mainLua = LuaBackend.generateWithImports(
+            parseResult.program(), result, filename, importResolutions);
+
+        return new GeneratedLua(mainLua, companionModules);
+    }
+
+    /**
+     * Generate Lua for a companion module file (a .deal file that is imported
+     * by a test file but is not itself a test).
+     * <p>
+     * Companion modules may themselves import other companion modules.
+     * This method recursively discovers and compiles those imports.
+     */
+    private static String generateModuleLua(Path file) throws Exception {
+        String source = Files.readString(file);
+        String filename = file.toString();
+
+        LexResult lex = new Lexer(source, filename).tokenize();
+        if (lex.hasErrors()) return null;
+
+        Parser parser = new Parser(lex.tokens(), filename);
+        ParseResult parseResult = parser.parse();
+        if (parseResult.hasErrors()) return null;
+
+        // Build import resolutions for any imports the companion itself has
+        Path testDir = file.toAbsolutePath().getParent();
+        Map<String, String> importResolutions = new LinkedHashMap<>();
+
+        for (StatementNode stmt : parseResult.program().statements()) {
+            if (stmt instanceof ImportDeclaration imp) {
+                String importPath = imp.modulePath();
+                Path resolvedPath = resolveCompanionPath(importPath, testDir);
+                if (resolvedPath != null) {
+                    String moduleName = moduleNameFor(resolvedPath);
+                    importResolutions.put(importPath, moduleName);
+                }
+            }
+        }
+
+        ConformanceModuleResolver resolver = new ConformanceModuleResolver(file);
+        NameResolver nr = new NameResolver(filename, resolver);
+        SymbolTable symTable = nr.resolve(parseResult.program());
+        if (nr.diagnostics().stream().anyMatch(d -> "error".equals(d.severity())))
+            return null;
+
+        CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
+        if (result.hasErrors()) return null;
+
+        if (importResolutions.isEmpty()) {
+            return LuaBackend.generate(parseResult.program(), result, filename);
+        }
+        return LuaBackend.generateWithImports(
+            parseResult.program(), result, filename, importResolutions);
+    }
+
+    /**
+     * Resolve a relative import path to a .deal file on disk.
+     *
+     * @param importPath the raw import path from the ImportDeclaration
+     * @param baseDir    the directory containing the importing file
+     * @return the resolved path, or {@code null} if not found
+     */
+    private static Path resolveCompanionPath(String importPath, Path baseDir) {
+        if (!importPath.startsWith("./") && !importPath.startsWith("../")) {
+            return null;
+        }
+        Path resolved = baseDir.resolve(importPath).normalize();
+        if (Files.exists(resolved)) return resolved;
+        Path withExt = baseDir.resolve(importPath + ".deal").normalize();
+        if (Files.exists(withExt)) return withExt;
+        Path withDeclExt = baseDir.resolve(importPath + ".d.deal").normalize();
+        if (Files.exists(withDeclExt)) return withDeclExt;
+        return null;
+    }
+
+    /**
+     * Derive a Lua module name from a .deal file path.
+     * Uses the filename stem (without extension) as the module name.
+     */
+    private static String moduleNameFor(Path path) {
+        String name = path.getFileName().toString();
+        if (name.endsWith(".d.deal")) {
+            return name.substring(0, name.length() - ".d.deal".length());
+        } else if (name.endsWith(".deal")) {
+            return name.substring(0, name.length() - ".deal".length());
+        }
+        return name;
+    }
+
+    /**
+     * Simple Lua generation for a single file (no companion module handling).
+     * Used as a fallback and for standalone test files.
+     */
     private static String generateLua(Path file) throws Exception {
         String source = Files.readString(file);
         String filename = file.toString();
@@ -483,62 +648,22 @@ public class ConformanceTest {
         return Pattern.compile("[a-zA-Z0-9_]\\$[a-zA-Z]").matcher(lua).find();
     }
 
-    /**
-     * Find and compile companion modules referenced by relative
-     * {@code require} calls in the generated Lua.
-     */
-    private static Map<String, String> compileCompanionModules(Path testFile)
-            throws Exception {
-        Map<String, String> result = new LinkedHashMap<>();
-        Path testDir = testFile.toAbsolutePath().getParent();
-
-        // Find require("./...") patterns in the generated Lua
-        String mainLua = generateLua(testFile);
-        if (mainLua == null) return result;
-
-        // Match require("./xxx") or require("../xxx")
-        Pattern requirePattern = Pattern.compile(
-            "require\\(\"(\\.\\.?/[^\"]+)\"\\)");
-        Matcher m = requirePattern.matcher(mainLua);
-
-        while (m.find()) {
-            String requirePath = m.group(1);
-            // Try to find the corresponding .deal file
-            Path resolved = testDir.resolve(requirePath + ".deal").normalize();
-            if (!Files.exists(resolved)) {
-                resolved = testDir.resolve(requirePath + ".d.deal").normalize();
-            }
-            if (Files.exists(resolved) && !resolved.equals(testFile.toAbsolutePath().normalize())) {
-                // Skip if already compiled
-                if (!result.containsKey(requirePath)) {
-                    try {
-                        String companionLua = generateLuaForFile(resolved);
-                        if (companionLua != null &&
-                            luaContainsDollarIdentifiers(companionLua) &&
-                            !luajitSupportsDollar) {
-                            // Companion requires $ support — skip but don't fail
-                            continue;
-                        }
-                        if (companionLua != null) {
-                            result.put(requirePath, companionLua);
-                        }
-                    } catch (Exception e) {
-                        System.err.println("    Warning: failed to compile companion " +
-                            resolved + ": " + e.getMessage());
-                    }
-                }
-            }
-        }
-        return result;
-    }
-
     // =========================================================================
     // Lua execution
     // =========================================================================
 
-    private static String executeLua(String luaSource, boolean isXpcallWrapped,
-            Map<String, String> companionLuas) {
-        // Build a runner that loads the module and invokes exported functions
+    /**
+     * Execute Lua source with optional companion modules.
+     *
+     * @param luaSource        the generated Lua for the main test module
+     * @param companionModules companion module name → Lua source pairs to write
+     *                         as .lua files in the temp directory
+     * @param isXpcallWrapped  true for runtime-error tests, false for runtime-ok
+     * @return stdout output, or {@code null} on failure
+     */
+    private static String executeLua(String luaSource,
+            Map<String, CompanionModule> companionModules,
+            boolean isXpcallWrapped) {
         String runner;
         if (isXpcallWrapped) {
             runner = buildXpcallRunner(luaSource);
@@ -555,6 +680,12 @@ public class ConformanceTest {
             Files.createDirectories(runtimeDir);
             Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
 
+            // Write companion .lua files so that `require` can find them
+            for (var entry : companionModules.entrySet()) {
+                Path companionFile = tmpDir.resolve(entry.getKey() + ".lua");
+                Files.writeString(companionFile, entry.getValue().luaSource());
+            }
+
             // Copy stdlib .lua files
             Path stdDir = Path.of("std");
             if (Files.isDirectory(stdDir)) {
@@ -568,16 +699,6 @@ public class ConformanceTest {
                               } catch (IOException ignored) {}
                           });
                 }
-            }
-
-            // Write companion module Lua files
-            for (var entry : companionLuas.entrySet()) {
-                String modulePath = entry.getKey();  // e.g., "./jsonable_lib"
-                String lua = entry.getValue();
-                // require("./jsonable_lib") looks for ./jsonable_lib.lua
-                Path companionFile = tmpDir.resolve(modulePath + ".lua");
-                Files.createDirectories(companionFile.getParent());
-                Files.writeString(companionFile, lua);
             }
 
             ProcessBuilder pb = new ProcessBuilder("luajit", luaFile.toString());
