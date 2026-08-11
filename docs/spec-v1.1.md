@@ -47,6 +47,7 @@ Line terminators are LF (`\n`), CRLF (`\r\n`), and CR (`\r`).
 - Comments are equivalent to whitespace except recognized compiler directive comments.
 - A compiler directive comment has the form `// @name` and applies only where this specification defines that directive.
 - `// @jsonable` applies only when it immediately precedes an `export class` declaration with no non-comment token between the directive and the declaration.
+- If `// @jsonable` appears before any construct other than `export class`, the compiler emits a warning and ignores the directive.
 
 ### String escapes and UTF-8
 
