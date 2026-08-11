@@ -107,6 +107,8 @@ public enum DiagnosticCode {
     E1040(Phase.FRONTEND, "Expected member access (obj.field) in has() expression"),
     /** Unexpected '}'. */
     E1041(Phase.FRONTEND, "Unexpected '}'"),
+    /** Invalid template literal escape or malformed interpolation. */
+    E1042(Phase.FRONTEND, "Invalid template literal"),
 
     // =========================================================================
     // E2xxx — name resolution and module resolution (FRONTEND)
@@ -157,6 +159,10 @@ public enum DiagnosticCode {
     E3010(Phase.FRONTEND, "Invalid operand types for '+'"),
     /** Array element type mismatch. */
     E3011(Phase.FRONTEND, "Array element type mismatch"),
+    /** For-of iterable must be an array or string. */
+    E3015(Phase.FRONTEND, "Invalid for-of iterable type"),
+    /** Template literal interpolation must be string. */
+    E3016(Phase.FRONTEND, "Template literal interpolation type mismatch"),
 
     // =========================================================================
     // E4xxx — class shape validation (FRONTEND)

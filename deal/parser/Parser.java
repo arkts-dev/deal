@@ -337,6 +337,18 @@ public final class Parser {
                 typeAnnotation = Optional.ofNullable(parseType());
             }
 
+            // D6: For-of detection — after optional type annotation
+            if (typeAnnotation.isPresent() && match(TokenType.OF)) {
+                ExpressionNode iterable = parseExpression();
+                // D20: Null guard — matches established parser pattern
+                if (iterable == null) { synchronize(); return null; }
+                expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after for-of iterable");
+                Block body = parseBlock();
+                Span sp = spanBetween(forToken, previousOrCurrent());
+                return new ForOfStatement(sp, nameToken.lexeme(),
+                    typeAnnotation.get(), iterable, body);
+            }
+
             if (!match(TokenType.EQ_SIGN)) {
                 error(DiagnosticCode.E1013, "Expected '=' initializer in for-loop variable", peek());
                 synchronize(); return null;
@@ -955,6 +967,10 @@ public final class Parser {
                 return new LiteralExpr(spanOf(previous()),
                         new LiteralValue.StringLiteral(value));
             }
+            case TEMPLATE_LITERAL -> {
+                advance();
+                return parseTemplateLiteral();
+            }
             case IDENTIFIER -> {
                 advance();
                 return new IdentifierExpr(spanOf(previous()), previous().lexeme());
@@ -982,6 +998,264 @@ public final class Parser {
             }
         }
     }
+
+    // =======================================================================
+    // Template literal parsing
+    // =======================================================================
+
+    /**
+     * Parses a template literal from a TEMPLATE_LITERAL token.
+     * The token's lexeme is the raw content between backticks.
+     */
+    private ExpressionNode parseTemplateLiteral() {
+        Token token = previous(); // the TEMPLATE_LITERAL token
+        String raw = token.lexeme();
+        List<ExpressionNode> parts = splitTemplateLiteral(raw, token.line(), token.column());
+        return new TemplateLiteralExpr(spanOf(token), parts);
+    }
+
+    /**
+     * Splits raw template literal content into alternating string-literal
+     * and expression parts.  Even-indexed parts are LiteralExpr(StringLiteral);
+     * odd-indexed parts are interpolated expressions.
+     *
+     * <p>Implements escape processing (D11), brace-depth scan (D14),
+     * and sub-lexer re-entry.</p>
+     */
+    private List<ExpressionNode> splitTemplateLiteral(String raw, int baseLine, int baseCol) {
+        List<ExpressionNode> parts = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        int pos = 0;
+
+        while (pos < raw.length()) {
+            char c = raw.charAt(pos);
+
+            // 1. Backslash escape
+            if (c == '\\') {
+                pos++; // skip backslash
+                if (pos >= raw.length()) break;
+                char esc = raw.charAt(pos);
+                switch (esc) {
+                    case 'n'  -> current.append('\n');
+                    case 't'  -> current.append('\t');
+                    case '\\' -> current.append('\\');
+                    case '"'  -> current.append('"');
+                    case '\'' -> current.append('\'');
+                    case '`'  -> current.append('`');
+                    case '$'  -> current.append('$');
+                    case '\r', '\n' -> { /* handled by lexer — should not occur here */ }
+                    default -> {
+                        error(DiagnosticCode.E1042,
+                            "Invalid escape sequence in template literal: '\\" + esc + "'",
+                            new Token(TokenType.IDENTIFIER, "", baseLine, baseCol + pos, 1));
+                    }
+                }
+                pos++;
+                continue;
+            }
+
+            // 2. Interpolation start: ${
+            if (c == '$' && pos + 1 < raw.length() && raw.charAt(pos + 1) == '{') {
+                // Flush accumulated string part
+                flushStringPart(parts, current.toString(), baseLine, baseCol);
+                current.setLength(0);
+
+                pos += 2; // skip '$' and '{'
+                int exprStart = pos;
+
+                // D14: Find matching '}' using string/template/escape-aware scan
+                int exprEnd = findMatchingBrace(raw, pos, baseLine, baseCol);
+                if (exprEnd < 0) {
+                    // Unterminated — error already emitted by findMatchingBrace
+                    // Use rest of raw as expression for recovery
+                    exprEnd = raw.length();
+                }
+
+                String exprSource = raw.substring(exprStart, exprEnd);
+
+                // Calculate position of expression in original source
+                int exprLine = baseLine;
+                int exprCol = baseCol + exprStart;
+
+                ExpressionNode expr = parseEmbeddedExpression(exprSource, exprLine, exprCol);
+                parts.add(expr);
+
+                pos = exprEnd;
+                if (pos < raw.length() && raw.charAt(pos) == '}') {
+                    pos++; // skip '}'
+                }
+                continue;
+            }
+
+            // 3. Unescaped '}' without matching '${'
+            if (c == '}') {
+                error(DiagnosticCode.E1042,
+                    "Unexpected '}' in template literal",
+                    new Token(TokenType.IDENTIFIER, "", baseLine, baseCol + pos, 1));
+                pos++;
+                continue;
+            }
+
+            // 4. Bare character
+            current.append(c);
+            pos++;
+        }
+
+        // Flush remaining accumulator
+        flushStringPart(parts, current.toString(), baseLine, baseCol);
+
+        return parts;
+    }
+
+    /**
+     * D14: Escape-aware, string-literal-aware, nested-template-literal-aware
+     * brace-depth scan. Returns the index of the matching '}' or -1 if unterminated.
+     */
+    private int findMatchingBrace(String raw, int startPos, int baseLine, int baseCol) {
+        int depth = 1;
+        int scanPos = startPos;
+
+        while (scanPos < raw.length() && depth > 0) {
+            char c = raw.charAt(scanPos);
+
+            // Top-level backslash: skip escape sequence entirely
+            if (c == '\\') {
+                scanPos += 2;
+                continue;
+            }
+
+            // String literal: skip to matching closing quote
+            if (c == '"' || c == '\'') {
+                char quote = c;
+                scanPos++;
+                while (scanPos < raw.length()) {
+                    char sc = raw.charAt(scanPos);
+                    if (sc == '\\') {
+                        scanPos += 2; // skip escape sequence
+                    } else if (sc == quote) {
+                        scanPos++;
+                        break; // closing quote found
+                    } else {
+                        scanPos++;
+                    }
+                }
+                continue;
+            }
+
+            // Nested template literal: skip to matching backtick
+            if (c == '`') {
+                scanPos++;
+                while (scanPos < raw.length()) {
+                    char tc = raw.charAt(scanPos);
+                    if (tc == '\\') {
+                        scanPos += 2; // skip escape sequence
+                    } else if (tc == '`') {
+                        scanPos++;
+                        break; // closing backtick found
+                    } else {
+                        scanPos++;
+                    }
+                }
+                continue;
+            }
+
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return scanPos; // matching '}' found
+                }
+            }
+            scanPos++;
+        }
+
+        // Unterminated
+        error(DiagnosticCode.E1042,
+            "Unterminated '${' in template literal",
+            new Token(TokenType.IDENTIFIER, "", baseLine, baseCol + startPos, 2));
+        return -1;
+    }
+
+    /**
+     * Creates a LiteralExpr from an accumulated string part and adds it to the list.
+     */
+    private void flushStringPart(List<ExpressionNode> parts, String value,
+                                  int line, int col) {
+        Span sp = new Span(file, line, col, line, col + Math.max(0, value.length() - 1));
+        parts.add(new LiteralExpr(sp, new LiteralValue.StringLiteral(value)));
+    }
+
+    /**
+     * D11: Sub-lexer re-entry for an embedded expression inside ${...}.
+     * Creates a fresh Lexer and Parser for the expression substring,
+     * adjusting token positions back to the original source coordinates.
+     *
+     * <p>D16: If the expression is syntactically invalid, substitutes a
+     * placeholder LiteralExpr so the rest of the template compiles.</p>
+     */
+    private ExpressionNode parseEmbeddedExpression(String source,
+            int baseLine, int baseCol) {
+        // 1. Sub-lex the expression substring
+        deal.lexer.Lexer subLexer = new deal.lexer.Lexer(source, file);
+        deal.lexer.LexResult subResult = subLexer.tokenize();
+
+        // 2. Merge lexer diagnostics with position adjustment
+        for (deal.lexer.Diagnostic d : subResult.diagnostics()) {
+            diagnostics.add(Diagnostic.error(
+                d.diagnosticCode() != null ? d.diagnosticCode() : DiagnosticCode.valueOf(d.code()),
+                d.message(), d.file(),
+                baseLine + d.line() - 1,
+                baseCol + d.column() - 1));
+        }
+
+        // 3. Remove trailing EOF token
+        java.util.List<Token> rawTokens = subResult.tokens();
+        java.util.List<Token> subTokens = new java.util.ArrayList<>();
+        for (Token t : rawTokens) {
+            if (t.type() == TokenType.EOF) break;
+            subTokens.add(t);
+        }
+
+        if (subTokens.isEmpty()) {
+            // Empty expression: emit error and return a placeholder
+            error(DiagnosticCode.E1042,
+                "Empty expression in template literal",
+                new Token(TokenType.IDENTIFIER, "", baseLine, baseCol, 0));
+            return new LiteralExpr(
+                new Span(file, baseLine, baseCol, baseLine, baseCol),
+                new LiteralValue.StringLiteral(""));
+        }
+
+        // 4. Adjust token positions to original source coordinates
+        java.util.List<Token> adjusted = new java.util.ArrayList<>();
+        for (Token t : subTokens) {
+            adjusted.add(new Token(t.type(), t.lexeme(),
+                baseLine + t.line() - 1,
+                baseCol + t.column() - 1,
+                t.length()));
+        }
+
+        // 5. Parse expression with a sub-parser
+        //    parseExpression() is private but accessible — Java JLS section 6.6.1
+        Parser subParser = new Parser(adjusted, file);
+        ExpressionNode expr = subParser.parseExpression();
+
+        // 6. Merge sub-parser diagnostics (positions already correct)
+        diagnostics.addAll(subParser.diagnostics);
+
+        // D16: Null-safety guard — if the expression is syntactically invalid
+        // (e.g., ${@}), parseExpression() returns null. Substitute a placeholder
+        // so the rest of the template and compilation can continue.
+        if (expr == null) {
+            expr = new LiteralExpr(
+                new Span(file, baseLine, baseCol, baseLine, baseCol),
+                new LiteralValue.StringLiteral(""));
+        }
+
+        return expr;
+    }
+
 
     private ExpressionNode parseFunctionExpression() {
         Token funcToken = advance();
@@ -1251,7 +1525,7 @@ public final class Parser {
 
     private boolean canStartExpression(TokenType type) {
         return switch (type) {
-            case NULL, TRUE, FALSE, INT_LITERAL, NUMBER_LITERAL, STRING_LITERAL,
+            case NULL, TRUE, FALSE, INT_LITERAL, NUMBER_LITERAL, STRING_LITERAL, TEMPLATE_LITERAL,
                  IDENTIFIER, BANG, MINUS, LPAREN, LBRACKET, LBRACE,
                  FUNCTION, HAS -> true;
             default -> false;

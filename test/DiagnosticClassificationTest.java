@@ -223,7 +223,7 @@ public class DiagnosticClassificationTest {
         Map<String, String> coverage = new LinkedHashMap<>();
 
         for (int i = 1001; i <= 1004; i++) coverage.put("E" + i, "LexerTest");
-        for (int i = 1005; i <= 1041; i++) coverage.put("E" + i, "ParserTest");
+        for (int i = 1005; i <= 1042; i++) coverage.put("E" + i, "ParserTest");
 
         coverage.put("E2000", "CheckerTest (break/continue)");
         coverage.put("E2001", "CheckerTest (undeclared identifier)");
@@ -246,6 +246,8 @@ public class DiagnosticClassificationTest {
         coverage.put("E3009", "CheckerTest (arg count mismatch)");
         coverage.put("E3010", "CheckerTest (string+int)");
         coverage.put("E3011", "CheckerTest (array element mismatch)");
+        coverage.put("E3015", "CheckerTest (for-of iterable type)");
+        coverage.put("E3016", "CheckerTest (template literal interpolation)");
 
         coverage.put("E4001", "CheckerTest (missing required field)");
         coverage.put("E4002", "CheckerTest (extra field)");

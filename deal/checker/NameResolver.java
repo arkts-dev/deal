@@ -347,6 +347,7 @@ public final class NameResolver {
             case IfStatement is          -> walkIf(is);
             case WhileStatement ws       -> walkWhile(ws);
             case ForStatement fs         -> walkFor(fs);
+            case ForOfStatement fos      -> walkForOf(fos);
             case TryStatement ts         -> walkTry(ts);
             case ImportDeclaration id    -> { /* already processed */ }
             case ExportDeclaration ed    -> walkStatement(ed.declaration());
@@ -404,6 +405,11 @@ public final class NameResolver {
             case AssignmentExpr assign -> {
                 walkExpression(assign.target());
                 walkExpression(assign.value());
+            }
+            case TemplateLiteralExpr tl -> {
+                for (ExpressionNode part : tl.parts()) {
+                    walkExpression(part);
+                }
             }
             default -> { /* leaf expression — no nested FunctionExpr possible */ }
         }
@@ -576,6 +582,35 @@ public final class NameResolver {
 
         loopDepth++;
         walkBlock(fs.body());
+        loopDepth--;
+        currentScope = saved;
+    }
+
+    /**
+     * D13: Walk a for-of statement.
+     * The iterable expression and var type are resolved in the PARENT scope.
+     * The loop variable is defined in a new child scope.
+     * The body Block creates its own scope via walkBlock().
+     * ForOfStatement is NOT added to scopeMap — only the body Block.
+     */
+    private void walkForOf(ForOfStatement fos) {
+        // Walk iterable expression in PARENT scope (before scope entry)
+        walkExpression(fos.iterable());
+        // Resolve var type in PARENT scope
+        Type varType = resolveTypeNode(fos.varType());
+
+        // Enter new scope for loop variable and body
+        SymbolTable saved = currentScope;
+        currentScope = currentScope.enterScope();
+        // NOTE: ForOfStatement is NOT added to scopeMap.
+        // Only the body Block gets a scopeMap entry via walkBlock().
+
+        // Define the loop variable in the new scope
+        currentScope.define(fos.varName(),
+            new Symbol.VariableSymbol(fos.varName(), varType, false));
+
+        loopDepth++;
+        walkBlock(fos.body()); // Creates block scope, records in scopeMap
         loopDepth--;
         currentScope = saved;
     }

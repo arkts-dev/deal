@@ -519,6 +519,7 @@ public final class LuaBackend implements Visitor<Void> {
             case IfStatement is -> visit(is);
             case WhileStatement ws -> visit(ws);
             case ForStatement fs -> visit(fs);
+            case ForOfStatement fos -> visit(fos);
             case BreakStatement bs -> visit(bs);
             case ContinueStatement cs -> visit(cs);
             case ExpressionStatement es -> visit(es);
@@ -899,6 +900,44 @@ public final class LuaBackend implements Visitor<Void> {
         }
         indent--;
         emitLine("end");  // while
+        indent--;
+        emitLine("end");  // do
+
+        currentContinueLabel = savedLabel;
+        return null;
+    }
+
+    @Override
+    public Void visit(ForOfStatement node) {
+        Type iterableType = typeOf(node.iterable());
+
+        emitLine("do");
+        indent++;
+
+        String iterableExpr = emitExpression(node.iterable());
+        String varName = node.varName();
+
+        String savedLabel = currentContinueLabel;
+        String loopLabel = freshLabel("__continue");
+        currentContinueLabel = loopLabel;
+
+        if (iterableType instanceof Type.Array) {
+            emitLine("for __i, " + varName + " in ipairs(" + iterableExpr + ") do");
+        } else {
+            // D17: Hoist iterable expression to local for single evaluation
+            emitLine("local __iterable = " + iterableExpr);
+            emitLine("for __i = 1, #__iterable do");
+            indent++;
+            emitLine("local " + varName + " = string.sub(__iterable, __i, __i)");
+            indent--;
+        }
+
+        indent++;
+        visit(node.body());
+        emitLine("::" + loopLabel + "::");
+        indent--;
+        emitLine("end");  // for
+
         indent--;
         emitLine("end");  // do
 
@@ -1533,10 +1572,30 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     private String emitTemplateLiteral(TemplateLiteralExpr tl) {
+        List<ExpressionNode> parts = tl.parts();
+        if (parts.size() == 1) {
+            // No interpolations: emit plain string literal
+            return emitExpression(parts.get(0));
+        }
         StringBuilder sb = new StringBuilder("(");
-        for (int i = 0; i < tl.parts().size(); i++) {
-            if (i > 0) sb.append(" .. ");
-            sb.append(emitExpression(tl.parts().get(i)));
+        boolean first = true;
+        for (int i = 0; i < parts.size(); i++) {
+            ExpressionNode part = parts.get(i);
+            if (i % 2 == 0) {
+                // String part: skip if empty
+                String emitted = emitExpression(part);
+                if (emitted.equals("\"\"") || emitted.equals("''")) {
+                    continue;
+                }
+                if (!first) sb.append(" .. ");
+                sb.append(emitted);
+                first = false;
+            } else {
+                // Expression part
+                if (!first) sb.append(" .. ");
+                sb.append(emitExpression(part));
+                first = false;
+            }
         }
         sb.append(")");
         return sb.toString();

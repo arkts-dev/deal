@@ -130,6 +130,7 @@ public final class TypeChecker {
             case IfStatement is          -> checkIfStatement(is);
             case WhileStatement ws       -> checkWhileStatement(ws);
             case ForStatement fs         -> checkForStatement(fs);
+            case ForOfStatement fos      -> checkForOfStatement(fos);
             case BreakStatement bs       -> checkBreak(bs);
             case ContinueStatement cs    -> checkContinue(cs);
             case ExpressionStatement es  -> checkExpression(es.expr());
@@ -366,6 +367,42 @@ public final class TypeChecker {
     }
 
     // =======================================================================
+    // For-of statement (D8)
+    // =======================================================================
+
+    private void checkForOfStatement(ForOfStatement fos) {
+        // In parent scope (no scopeMap entry for ForOfStatement)
+        Type iterableType = checkExpression(fos.iterable());
+        Type varType = nameResolver.resolveTypeNode(fos.varType());
+
+        if (iterableType instanceof Type.Array arr) {
+            if (!Types.equals(arr.element(), varType)) {
+                error(DiagnosticCode.E3015,
+                    "For-of loop variable type " + typeName(varType)
+                    + " does not match array element type " + typeName(arr.element()),
+                    fos.span());
+            }
+        } else if (iterableType instanceof Type.String) {
+            if (!(varType instanceof Type.String)) {
+                error(DiagnosticCode.E3015,
+                    "For-of over string requires loop variable type string, got "
+                    + typeName(varType), fos.span());
+            }
+        } else {
+            error(DiagnosticCode.E3015,
+                "For-of iterable must be an array or string, got "
+                + typeName(iterableType), fos.iterable().span());
+        }
+
+        NullNarrowing savedNarrowing = narrowing;
+        narrowing = new NullNarrowing();
+        loopDepth++;
+        walkStatement(fos.body()); // Enters Block scope via scopeMap
+        loopDepth--;
+        narrowing = savedNarrowing;
+    }
+
+    // =======================================================================
     // Break / Continue (F8)
     // =======================================================================
 
@@ -482,8 +519,14 @@ public final class TypeChecker {
             case HasExpr has           -> checkHas(has);
             case AssignmentExpr assign -> checkAssignmentExpr(assign);
             case TemplateLiteralExpr tl -> {
-                for (ExpressionNode part : tl.parts()) {
-                    checkExpression(part);
+                for (int i = 0; i < tl.parts().size(); i++) {
+                    ExpressionNode part = tl.parts().get(i);
+                    Type partType = checkExpression(part);
+                    if (i % 2 == 1 && !(partType instanceof Type.String)) {
+                        error(DiagnosticCode.E3016,
+                            "Template literal interpolation must have type string, got "
+                            + typeName(partType), part.span());
+                    }
                 }
                 yield Type.String.INSTANCE;
             }
