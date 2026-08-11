@@ -15,6 +15,10 @@ import deal.diagnostics.DiagnosticCode;
  * comments, and whitespace. Emits E1xxx diagnostics for lexical errors
  * and recovers to continue tokenizing.</p>
  *
+ * <p>Recognizes compiler directive comments such as {@code // @jsonable}
+ * and attaches them to the next non-comment token via
+ * {@link Token#directives()}.</p>
+ *
  * <p>Usage:</p>
  * <pre>{@code
  * Lexer lexer = new Lexer(source, "file.deal");
@@ -65,6 +69,9 @@ public final class Lexer {
     private int tokenStartLine;
     private int tokenStartCol;
 
+    /** Pending compiler directives accumulated from comment lines (D1). */
+    private final List<String> pendingDirectives = new ArrayList<>();
+
     /**
      * Creates a new lexer for the given source text.
      *
@@ -98,7 +105,9 @@ public final class Lexer {
             }
         }
 
-        // Emit EOF token at the current position
+        // Emit EOF token at the current position.
+        // Pending directives are discarded (EOF is synthetic and cannot carry them).
+        pendingDirectives.clear();
         tokens.add(new Token(TokenType.EOF, "", line, column, 0));
 
         return new LexResult(List.copyOf(tokens), List.copyOf(diagnostics));
@@ -110,6 +119,7 @@ public final class Lexer {
 
     /**
      * Reads the next token from the source, or null if at end of input.
+     * Attaches any pending compiler directives to the returned token.
      */
     private Token nextToken() {
         skipWhitespaceAndComments();
@@ -122,23 +132,26 @@ public final class Lexer {
 
         char c = source.charAt(pos);
 
+        Token token;
+
         // Number: starts with digit, or '.' followed by digit
         if (isDigit(c) || (c == '.' && pos + 1 < source.length() && isDigit(source.charAt(pos + 1)))) {
-            return readNumber();
+            token = readNumber();
+        } else if (c == '"' || c == '\'') {
+            token = readString();
+        } else if (isIdentifierStart(c)) {
+            token = readIdentifierOrKeyword();
+        } else {
+            token = readOperatorOrPunctuation();
         }
 
-        // String literal
-        if (c == '"' || c == '\'') {
-            return readString();
+        // Attach pending compiler directives to this token (D1)
+        if (token != null && !pendingDirectives.isEmpty()) {
+            token = token.withDirectives(List.copyOf(pendingDirectives));
+            pendingDirectives.clear();
         }
 
-        // Identifier or keyword
-        if (isIdentifierStart(c)) {
-            return readIdentifierOrKeyword();
-        }
-
-        // Operators and punctuation
-        return readOperatorOrPunctuation();
+        return token;
     }
 
     // =========================================================================
@@ -189,12 +202,23 @@ public final class Lexer {
 
     /**
      * Skips a single-line comment: // ... until end of line.
-     * Uses bump() for all non-newline characters so column tracking
-     * remains accurate when a line comment ends at EOF.
+     *
+     * <p>Inspects the comment body for recognized compiler directives
+     * (currently {@code @jsonable}) and buffers them in
+     * {@link #pendingDirectives} for attachment to the next non-comment
+     * token (D1).
+     *
+     * <p>Uses bump() for all non-newline characters so column tracking
+     * remains accurate when a line comment ends at EOF.</p>
      */
     private void skipLineComment() {
         bump(); // skip first /
         bump(); // skip second /
+
+        // Inspect comment body for compiler directives (D1)
+        inspectDirective();
+
+        // Consume the rest of the line (existing behavior)
         while (pos < source.length()) {
             char c = source.charAt(pos);
             if (c == '\n') {
@@ -209,6 +233,59 @@ public final class Lexer {
                 return;
             }
             bump();
+        }
+    }
+
+    /**
+     * Inspects the comment body starting at the current position for
+     * recognized compiler directives.  Recognized directives are added
+     * to {@link #pendingDirectives}.
+     *
+     * <p>The inspection peeks at the source without consuming characters
+     * (non-destructive lookahead).  Only {@code @jsonable} is recognized
+     * in v1.1.  The mechanism is extensible to additional directives
+     * by adding entries to a known set.</p>
+     */
+    private void inspectDirective() {
+        int peekPos = pos;
+
+        // Skip optional leading whitespace between // and the directive
+        while (peekPos < source.length()) {
+            char c = source.charAt(peekPos);
+            if (c == ' ' || c == '\t') {
+                peekPos++;
+                continue;
+            }
+            break;
+        }
+
+        // Must start with @ to be a directive
+        if (peekPos >= source.length() || source.charAt(peekPos) != '@') {
+            return;
+        }
+
+        // Check for @jsonable (exact match)
+        String directive = "@jsonable";
+        if (peekPos + directive.length() <= source.length()) {
+            boolean match = true;
+            for (int i = 0; i < directive.length(); i++) {
+                if (source.charAt(peekPos + i) != directive.charAt(i)) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                // Ensure word boundary after the directive:
+                // whitespace, newline, carriage return, or EOF
+                int afterPos = peekPos + directive.length();
+                if (afterPos >= source.length()
+                        || source.charAt(afterPos) == ' '
+                        || source.charAt(afterPos) == '\t'
+                        || source.charAt(afterPos) == '\n'
+                        || source.charAt(afterPos) == '\r') {
+                    pendingDirectives.add("@jsonable");
+                }
+            }
         }
     }
 
