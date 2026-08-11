@@ -84,13 +84,6 @@ function __rt.check_table(v, file, line, column)
   return v
 end
 
-function __rt.check_coroutine(v, file, line, column)
-  if type(v) ~= "thread" then
-    error(__rt._err("E8001", "expected coroutine", file, line, column, "coroutine", type(v)))
-  end
-  return v
-end
-
 -- ===== Composite type checks =====
 
 --- Check a nullable value.
@@ -243,7 +236,6 @@ local function parse_descriptor(descriptor)
     ["number"] = true,
     ["string"] = true,
     ["table"] = true,
-    ["coroutine"] = true,
   }
   if primitives[d] then
     return { kind = "primitive", name = d }
@@ -280,8 +272,6 @@ function __rt.check_type(descriptor, v, file, line, column)
       return __rt.check_string(v, file, line, column)
     elseif parsed.name == "table" then
       return __rt.check_table(v, file, line, column)
-    elseif parsed.name == "coroutine" then
-      return __rt.check_coroutine(v, file, line, column)
     else
       error(__rt._err("E8001", "unknown primitive type: " .. parsed.name, file, line, column, nil, nil))
     end
@@ -450,7 +440,7 @@ function __rt.from_lua_function(sig, raw_f)
     local nresults = #results
 
     -- Check return type
-    if ret_descriptor ~= "null" and ret_descriptor ~= "void" then
+    if ret_descriptor ~= "null" then
       for i = 1, nresults do
         local ok, err = pcall(__rt.check_type, ret_descriptor, results[i])
         if not ok then

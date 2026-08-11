@@ -139,18 +139,18 @@ public class DiagnosticClassificationTest {
         triggers.put("E1001", "@");
         triggers.put("E1003", "\"unterminated");
         triggers.put("E1004", "/* unterminated block comment");
-        triggers.put("E2000", "function f(): void { break; }");
+        triggers.put("E2000", "function f(): null { break; }");
         triggers.put("E2001", "let x = y;");
         triggers.put("E2002", "let x = 1; let x = 2;");
         triggers.put("E3001", "let x: int = 3.14;");
         triggers.put("E3002", "let x = [];");
         triggers.put("E3008", "let x = 1; x();");
-        triggers.put("E3009", "function f(x: int): void {} f(1, 2);");
+        triggers.put("E3009", "function f(x: int): null {} f(1, 2);");
         triggers.put("E4001",
             "class Foo { name: string; } let f: Foo = {};");
         triggers.put("E4002",
             "class Foo { name: string; } let f: Foo = { name: \"x\", extra: 1 };");
-        triggers.put("E5001", "function f(x: int): void {} f(true);");
+        triggers.put("E5001", "function f(x: int): null {} f(true);");
         triggers.put("E5003",
             "function f(): int { return \"hi\"; }");
 
@@ -233,7 +233,7 @@ public class DiagnosticClassificationTest {
         coverage.put("E2005", "ModuleSystemTest (circular import)");
         coverage.put("E2006", "CheckerTest (import after declaration)");
         coverage.put("E2007", "CheckerTest (declaration after import)");
-        coverage.put("E2008", "Not yet implemented (ISSUE-0017)");
+        coverage.put("E2008", "CheckerTest (dollar in identifier)");
 
         coverage.put("E3001", "CheckerTest (type mismatch)");
         coverage.put("E3002", "CheckerTest (empty literal inference)");
@@ -254,6 +254,7 @@ public class DiagnosticClassificationTest {
         coverage.put("E4003", "CheckerTest (field type mismatch)");
         coverage.put("E4004", "CheckerTest (delete required field)");
         coverage.put("E4005", "CheckerTest (has() on required field)");
+        coverage.put("E4006", "CheckerTest (class Error prohibition)");
 
         coverage.put("E5001", "CheckerTest (arg type mismatch)");
         coverage.put("E5002", "CheckerTest (missing return)");
@@ -263,7 +264,7 @@ public class DiagnosticClassificationTest {
         coverage.put("E6000", "LuaBackendTest (unsupported stmt)");
         coverage.put("E6001", "LuaBackendTest (continue outside loop)");
         coverage.put("E6002", "Historical (ISSUE-0011, no longer emitted)");
-        coverage.put("E6003", "CheckerTest (coroutine import)");
+        coverage.put("E6003", "Retired (ISSUE-0040 — coroutine import guard removed)");
 
         coverage.put("E7001", "ModuleSystemTest (decl file exec stmt)");
 

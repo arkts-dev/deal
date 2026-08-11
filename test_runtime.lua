@@ -215,16 +215,7 @@ test("check_table on string errors with E8001", function()
   assert_error(function() __rt.check_table("hi") end, "E8001")
 end)
 
--- ==================== check_coroutine tests ====================
 
-test("check_coroutine on thread passes", function()
-  local co = coroutine.create(function() end)
-  assert(__rt.check_coroutine(co) == co)
-end)
-
-test("check_coroutine on number errors with E8001", function()
-  assert_error(function() __rt.check_coroutine(42) end, "E8001")
-end)
 
 -- ==================== check_nullable tests ====================
 
@@ -358,11 +349,6 @@ end)
 test("check_type('table', {}) passes", function()
   local t = {}
   assert(__rt.check_type("table", t) == t)
-end)
-
-test("check_type('coroutine', thread) passes", function()
-  local co = coroutine.create(function() end)
-  assert(__rt.check_type("coroutine", co) == co)
 end)
 
 test("check_type('int[]', {1,2}) passes", function()

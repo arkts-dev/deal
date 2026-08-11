@@ -152,13 +152,11 @@ final class IntrinsicResolvers {
         if (t == null) return "null";
         return switch (t) {
             case Type.Null ignored -> "null";
-            case Type.Void ignored -> "void";
             case Type.Boolean ignored -> "boolean";
             case Type.Int ignored -> "int";
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
-            case Type.Coroutine ignored -> "coroutine";
             case Type.Error ignored -> "<error>";
             case Type.Array a -> typeName(a.element()) + "[]";
             case Type.Nullable n -> typeName(n.inner()) + " | null";

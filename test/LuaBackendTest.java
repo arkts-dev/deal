@@ -822,7 +822,7 @@ public class LuaBackendTest {
     static void testTryCatchPreserveErrorCode() {
         System.out.println("-- Try/Catch Preserve Error Code --");
         CompileOutput out = compile(
-            "function f(): void {\n" +
+            "function f(): null {\n" +
             "  throw { code: \"E_LIMIT\", message: \"fail\" };\n" +
             "}\n" +
             "try {\n" +
@@ -1533,7 +1533,7 @@ public class LuaBackendTest {
     static void testTryBreakContinueInFunction() {
         System.out.println("-- Try Break/Continue In Function (ISSUE-0011) --");
         String source =
-            "function f(): void {\n" +
+            "function f(): null {\n" +
             "  while (true) {\n" +
             "    try {\n" +
             "      break;\n" +

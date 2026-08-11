@@ -26,7 +26,7 @@ import deal.diagnostics.DiagnosticCode;
  * FunctionExpr) to its {@link SymbolTable} scope, used by the TypeChecker
  * for scope-aware name resolution.</p>
  *
- * <p>Errors produced: E2001–E2007, E6003.</p>
+ * <p>Errors produced: E2001–E2008, E4006.</p>
  */
 public final class NameResolver {
 
@@ -141,13 +141,8 @@ public final class NameResolver {
         String alias = imp.alias();
         String path = imp.modulePath();
 
-        // D6/ISSUE-0008: Coroutines are not supported on this backend.
-        // Emit E6003 and do not bind the import alias.
-        if (path.equals("std/coroutine")) {
-            error(DiagnosticCode.E6003, "Coroutines are not supported on this backend",
-                imp.span());
-            return;
-        }
+        // Check for $ in import alias (E2008)
+        checkNoDollar(alias, imp.span());
 
         // F2: Circular import detection — check if the IMPORTED module
         // is already being resolved (not the importing module).
@@ -187,6 +182,16 @@ public final class NameResolver {
 
     private void hoistClass(ClassDeclaration cd) {
         String name = cd.name();
+
+        // Check for $ in class name (E2008)
+        checkNoDollar(name, cd.span());
+
+        // Check for user-declared class Error (E4006)
+        if (name.equals("Error")) {
+            error(DiagnosticCode.E4006, "Cannot declare class 'Error': 'Error' is a built-in type", cd.span());
+            return;
+        }
+
         if (root.containsLocally(name)) {
             if (shadowsImport(name, cd.span())) return;
             error(DiagnosticCode.E2002, "Redeclaration of '" + name + "'", cd.span());
@@ -263,6 +268,10 @@ public final class NameResolver {
 
     private void hoistFunction(FunctionDeclaration fd) {
         String name = fd.name();
+
+        // Check for $ in function name (E2008)
+        checkNoDollar(name, fd.span());
+
         if (root.containsLocally(name)) {
             if (shadowsImport(name, fd.span())) return;
             error(DiagnosticCode.E2002, "Redeclaration of '" + name + "'", fd.span());
@@ -417,6 +426,10 @@ public final class NameResolver {
 
     private void walkVarDecl(VariableDeclaration vd) {
         String name = vd.name();
+
+        // Check for $ in let-variable name (E2008)
+        checkNoDollar(name, vd.span());
+
         Type type = vd.typeAnnotation().map(this::resolveTypeNode).orElse(null);
         if (currentScope.containsLocally(name)) {
             if (currentScope == root && shadowsImport(name, vd.span())) return;
@@ -436,6 +449,16 @@ public final class NameResolver {
      */
     private void walkClassDecl(ClassDeclaration cd) {
         String name = cd.name();
+
+        // Check for $ in nested class name (E2008)
+        checkNoDollar(name, cd.span());
+
+        // Check for user-declared class Error in nested context (E4006)
+        if (name.equals("Error")) {
+            error(DiagnosticCode.E4006, "Cannot declare class 'Error': 'Error' is a built-in type", cd.span());
+            return;
+        }
+
         if (!currentScope.containsLocally(name)) {
             // Not already hoisted (nested class inside a function/block)
             currentScope.define(name,
@@ -458,6 +481,10 @@ public final class NameResolver {
         Set<String> paramNames = new HashSet<>();
         for (Parameter p : fe.params()) {
             String name = p.name();
+
+            // Check for $ in parameter name (E2008)
+            checkNoDollar(name, p.span());
+
             if (paramNames.contains(name)) {
                 error(DiagnosticCode.E2002, "Duplicate parameter '" + name + "'", p.span());
                 continue;
@@ -469,6 +496,10 @@ public final class NameResolver {
 
         fe.restParam().ifPresent(rp -> {
             String name = rp.name();
+
+            // Check for $ in rest parameter name (E2008)
+            checkNoDollar(name, rp.span());
+
             if (paramNames.contains(name)) {
                 error(DiagnosticCode.E2002, "Duplicate parameter '" + name + "'", rp.span());
                 return;
@@ -506,6 +537,10 @@ public final class NameResolver {
         Set<String> paramNames = new HashSet<>();
         for (Parameter p : fd.params()) {
             String name = p.name();
+
+            // Check for $ in parameter name (E2008)
+            checkNoDollar(name, p.span());
+
             if (paramNames.contains(name)) {
                 error(DiagnosticCode.E2002, "Duplicate parameter '" + name + "'", p.span());
                 continue;
@@ -517,6 +552,10 @@ public final class NameResolver {
 
         fd.restParam().ifPresent(rp -> {
             String name = rp.name();
+
+            // Check for $ in rest parameter name (E2008)
+            checkNoDollar(name, rp.span());
+
             if (paramNames.contains(name)) {
                 error(DiagnosticCode.E2002, "Duplicate parameter '" + name + "'", rp.span());
                 return;
@@ -567,6 +606,10 @@ public final class NameResolver {
             if (init instanceof ForInit.VarDecl vd) {
                 VariableDeclaration decl = vd.decl();
                 String name = decl.name();
+
+                // Check for $ in for-loop variable name (E2008)
+                checkNoDollar(name, decl.span());
+
                 Type type = decl.typeAnnotation().map(this::resolveTypeNode).orElse(null);
                 currentScope.define(name, new Symbol.VariableSymbol(name, type, false));
                 // F1: Walk init expression
@@ -638,6 +681,20 @@ public final class NameResolver {
     private void walkContinue(ContinueStatement cs) {
         if (loopDepth == 0) {
             error(DiagnosticCode.E2000, "'continue' must be inside a loop", cs.span());
+        }
+    }
+
+    // =======================================================================
+    // $ prohibition helper
+    // =======================================================================
+
+    /**
+     * Validates that a user-declared identifier does not contain '$'.
+     * Emits E2008 if it does.
+     */
+    private void checkNoDollar(String name, Span span) {
+        if (name.indexOf('$') >= 0) {
+            error(DiagnosticCode.E2008, "Identifier '" + name + "' must not contain '$'", span);
         }
     }
 
@@ -721,8 +778,6 @@ public final class NameResolver {
             case "number"    -> Type.Number.INSTANCE;
             case "string"    -> Type.String.INSTANCE;
             case "table"     -> Type.Table.INSTANCE;
-            case "coroutine" -> Type.Coroutine.INSTANCE;
-            case "void"      -> Type.Void.INSTANCE;
             case "Error"     -> Types.classType("Error", "");
             default -> {
                 Symbol sym = currentScope.resolve(name);

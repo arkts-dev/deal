@@ -105,13 +105,11 @@ public final class IrDumper implements Visitor<String> {
         if (t == null) return "null";
         return switch (t) {
             case Type.Null ignored -> "null";
-            case Type.Void ignored -> "void";
             case Type.Boolean ignored -> "boolean";
             case Type.Int ignored -> "int";
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
-            case Type.Coroutine ignored -> "coroutine";
             case Type.Error ignored -> "Error";
             case Type.Array arr -> "[" + specTypeDescriptor(arr.element()) + "]";
             case Type.Nullable n -> "?" + specTypeDescriptor(n.inner());
@@ -125,7 +123,7 @@ public final class IrDumper implements Visitor<String> {
             case Type.Func f -> {
                 StringBuilder sb = new StringBuilder();
                 // Async prefix: use reflective check until Type.Func gains isAsync (ISSUE-0017)
-                if (funcIsAsync(f)) {
+                if (f.isAsync()) {
                     sb.append("async");
                 }
                 sb.append("(");
@@ -150,12 +148,7 @@ public final class IrDumper implements Visitor<String> {
      * will transparently start returning the actual value.
      */
     private static boolean funcIsAsync(Type.Func f) {
-        try {
-            return (boolean) Type.Func.class.getMethod("isAsync").invoke(f);
-        } catch (Exception e) {
-            // isAsync not yet available (ISSUE-0017)
-            return false;
-        }
+        return f.isAsync();
     }
 
     private String typeNodeToSpecDescriptor(TypeNode tn) {
@@ -370,7 +363,7 @@ public final class IrDumper implements Visitor<String> {
         boolean savedAsync = this.currentFunctionIsAsync;
 
         // Check if this function is async via reflection (ISSUE-0017 will add isAsync field)
-        boolean isAsync = funcDeclIsAsync(node);
+        boolean isAsync = node.isAsync();
         this.currentFunctionIsAsync = isAsync;
 
         Type funcReturnType = null;
@@ -416,12 +409,7 @@ public final class IrDumper implements Visitor<String> {
      * this method will transparently start returning the actual value.
      */
     private static boolean funcDeclIsAsync(FunctionDeclaration node) {
-        try {
-            return (boolean) FunctionDeclaration.class.getMethod("isAsync").invoke(node);
-        } catch (Exception e) {
-            // isAsync not yet available (ISSUE-0017)
-            return false;
-        }
+        return node.isAsync();
     }
 
     private String visitParam(Parameter param) {
@@ -479,7 +467,7 @@ public final class IrDumper implements Visitor<String> {
         StringBuilder sb = new StringBuilder();
         sb.append(indent()).append("return ").append(spanStr(node.span())).append("\n");
         if (currentReturnType != null && !(currentReturnType instanceof Type.Null)
-                && !(currentReturnType instanceof Type.Void)) {
+                 ) {
             String boundaryKind = currentFunctionIsAsync ? "async-completion" : "return";
             sb.append(indent()).append("  ").append(boundary(boundaryKind)).append("\n");
         }

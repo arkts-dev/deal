@@ -1,6 +1,0 @@
-// @spec: Standard library declarations — std/coroutine
-// @description: Import of std/coroutine is rejected with E6003
-// @expected: compile-error E6003
-// @features: stdlib, coroutine, diagnostics
-
-import * as c from "std/coroutine";

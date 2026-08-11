@@ -482,7 +482,6 @@ public class AstAndTypesTest {
         check(Types.canonicalize(Type.Number.INSTANCE) == Type.Number.INSTANCE, "canonicalize number → number");
         check(Types.canonicalize(Type.String.INSTANCE) == Type.String.INSTANCE, "canonicalize string → string");
         check(Types.canonicalize(Type.Table.INSTANCE) == Type.Table.INSTANCE, "canonicalize table → table");
-        check(Types.canonicalize(Type.Coroutine.INSTANCE) == Type.Coroutine.INSTANCE, "canonicalize coroutine → coroutine");
         check(Types.canonicalize(Type.Error.INSTANCE) == Type.Error.INSTANCE, "canonicalize Error → Error");
 
         // Rule 9: T[] → ArrayType(canonicalize(T))

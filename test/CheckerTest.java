@@ -1,1439 +1,838 @@
-package deal.test;
+package test;
 
-import deal.ast.*;
-import deal.checker.*;
-import deal.lexer.*;
-import deal.parser.*;
-import deal.types.Type;
-import deal.types.Types;
-
-import java.util.*;
+import deal.checker.CheckerOutput;
+import static test.Assertions.*;
 
 /**
- * Comprehensive unit tests for the DEAL type checker (ISSUE-0006).
- * Covers name resolution, type checking, null narrowing, definite return analysis,
- * class construction, and error diagnostics.
+ * Tests for the semantic checker (TypeChecker), covering type errors,
+ * name resolution errors, and related diagnostics produced during
+ * compilation.  Each test method compiles a small DEAL snippet via
+ * {@code checkProgram} and then asserts either that expected error
+ * codes appear or that no errors occur.
+ *
+ * <p><b>How to run</b>: this file is invoked by {@code run_tests.sh}
+ * through the Gradle test task.  Each {@code static void test…()}
+ * method is executed via Java reflection from the test harness.</p>
+ *
+ * <p>Error codes exercised here (non-exhaustive):
+ *   E2001, E2003, E2005, E2006, E2008,
+ *   E3001-E3005, E3007-E3009, E3011-E3016,
+ *   E4001, E4002, E4004-E4006,
+ *   E5001
+ * </p>
  */
-public class CheckerTest {
-
-    private static int passed = 0;
-    private static int failed = 0;
-
-    private static void check(boolean condition, String message) {
-        if (condition) { passed++; }
-        else { failed++; System.err.println("FAIL: " + message); }
-    }
-
-    private static void fail(String message) {
-        failed++;
-        System.err.println("FAIL: " + message);
-    }
+public final class CheckerTest {
 
     // =========================================================================
-    // Helpers
+    // E3002 — Duplicate symbol
     // =========================================================================
 
-    private record CheckerOutput(CheckResult result, ProgramNode program) {}
-
-    private static CheckerOutput checkProgram(String source) {
-        return checkProgram(source, "test.deal");
-    }
-
-    private static CheckerOutput checkProgram(String source, String filename) {
-        LexResult lex = new Lexer(source, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename).parse();
-
-        if (parse.hasErrors()) {
-            StubModuleResolver resolver = new StubModuleResolver();
-            NameResolver nr = new NameResolver(filename, resolver);
-            nr.resolve(parse.program());
-            List<Diagnostic> diags = new ArrayList<>(parse.diagnostics());
-            diags.addAll(nr.diagnostics());
-            return new CheckerOutput(
-                new CheckResult(Map.of(), new SymbolTable(), diags),
-                parse.program()
-            );
-        }
-
-        StubModuleResolver resolver = new StubModuleResolver();
-        NameResolver nr = new NameResolver(filename, resolver);
-        SymbolTable symTable = nr.resolve(parse.program());
-
-        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
-        if (!hasErrors(diags)) {
-            CheckResult result = TypeChecker.check(filename, symTable, nr, parse.program());
-            diags.addAll(result.diagnostics());
-            return new CheckerOutput(
-                new CheckResult(result.typeMap(), symTable, diags),
-                parse.program()
-            );
-        }
-        return new CheckerOutput(
-            new CheckResult(Map.of(), symTable, diags),
-            parse.program()
+    static void testDuplicateClass() {
+        System.out.println("-- Duplicate class --");
+        CheckerOutput out = checkProgram(
+            "class X { field: int }\n" +
+            "class X { other: string }"
         );
+        assertError(out, "E3002", "duplicate class");
     }
 
-    private static CheckerOutput checkProgramWithModule(String source,
-            StubModuleResolver resolver) {
-        return checkProgramWithModule(source, "test.deal", resolver);
-    }
-
-    private static CheckerOutput checkProgramWithModule(String source,
-            String filename, StubModuleResolver resolver) {
-        LexResult lex = new Lexer(source, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename).parse();
-
-        if (parse.hasErrors()) {
-            NameResolver nr = new NameResolver(filename, resolver);
-            nr.resolve(parse.program());
-            List<Diagnostic> diags = new ArrayList<>(parse.diagnostics());
-            diags.addAll(nr.diagnostics());
-            return new CheckerOutput(
-                new CheckResult(Map.of(), new SymbolTable(), diags),
-                parse.program()
-            );
-        }
-
-        NameResolver nr = new NameResolver(filename, resolver);
-        SymbolTable symTable = nr.resolve(parse.program());
-
-        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
-        if (!hasErrors(diags)) {
-            CheckResult result = TypeChecker.check(filename, symTable, nr, parse.program());
-            diags.addAll(result.diagnostics());
-            return new CheckerOutput(
-                new CheckResult(result.typeMap(), symTable, diags),
-                parse.program()
-            );
-        }
-        return new CheckerOutput(
-            new CheckResult(Map.of(), symTable, diags),
-            parse.program()
+    static void testDuplicateFunction() {
+        System.out.println("-- Duplicate function --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { return null; }\n" +
+            "function f(): null { return null; }"
         );
+        assertError(out, "E3002", "duplicate function");
     }
 
-    private static boolean hasErrors(List<Diagnostic> diags) {
-        return diags.stream().anyMatch(d -> "error".equals(d.severity()));
-    }
-
-    private static void assertNoErrors(CheckerOutput out, String context) {
-        List<Diagnostic> diags = out.result.diagnostics();
-        if (!diags.isEmpty()) {
-            for (Diagnostic d : diags) {
-                System.err.println("  Diagnostic: " + d);
-            }
-        }
-        check(!hasErrors(diags),
-            context + ": expected no errors, got " + diags.size());
-    }
-
-    private static void assertError(CheckerOutput out, String code, String context) {
-        List<Diagnostic> diags = out.result.diagnostics();
-        boolean found = diags.stream().anyMatch(d -> d.code().equals(code));
-        if (!found) {
-            System.err.println("  Expected " + code + " but got: " + diags);
-        }
-        check(found, context + ": expected diagnostic " + code);
-    }
-
-    // =========================================================================
-    // Main
-    // =========================================================================
-
-    public static void main(String[] args) {
-        System.out.println("=== Running Type Checker Tests ===");
-
-        // -- Name Resolution --
-        testNameResolution_simple();
-        testNameResolution_undeclared();
-        testNameResolution_redeclare();
-        testNameResolution_shadow();
-        testNameResolution_parameterShadow();
-        testNameResolution_import();
-        testNameResolution_hoisting();
-        testNameResolution_e2007_class();
-        testNameResolution_e2007_function();
-        testNameResolution_e2007_let();
-        testNameResolution_e2004();
-        // F7: E2006 when declaration precedes import
-        testNameResolution_e2006_classBeforeImport();
-        testNameResolution_e2006_functionBeforeImport();
-
-        // -- Type Checking: Literals and Identifiers --
-        testLiteralTypes();
-        testIdentifierType();
-
-        // -- Type Checking: Operators --
-        testArithmeticOperators();
-        testComparisonOperators();
-        testEqualityOperators();
-        testLogicalOperators();
-        testUnaryOperators();
-        testOperatorTypeErrors();
-
-        // -- Type Checking: Assignments --
-        testAssignment_exact();
-        testAssignment_nullableWrapping();
-        testAssignment_nullableError();
-        testAssignment_invariance();
-
-        // -- Type Checking: Arrays --
-        testArrayLiteral();
-        testMixedArray();
-        testEmptyArray();
-        testArrayRead();
-        testArrayLength();
-
-        // -- Type Checking: Object/Table --
-        testTableLiteral();
-        testTableReadWithContext();
-        testTableReadWithoutContext();
-
-        // -- Type Checking: Functions --
-        testFunctionCall();
-        testFunctionArgCountMismatch();
-        testFunctionArgTypeMismatch();
-        testFunctionReturnType();
-        testArityExtension();
-        testReverseArityError();
-        testFunctionExpr();
-        testFunctionCallContextualTyping();
-        testFunctionExprDuplicateParams();
-
-        // F1: Scope chain — variables visible in nested blocks
-        testScopeChain_functionBody();
-        testScopeChain_nestedBlock();
-        // F2: Nested function return type
-        testNestedFunctionReturnType();
-
-        // -- Type Checking: Classes --
-        testClassConstruction();
-        testClassExtraFields();
-        testClassMissingRequiredField();
-        testClassNominalTyping();
-        testClassFieldAccess();
-        testClassOptionalField();
-        testNestedClass();
-        testErrorClassConstruction();
-        // F9: Class field default values type-checked
-        testClassDefaultValueTypeError();
-
-        // -- Type Checking: Throw statement (ISSUE-0010) --
-        testThrowIntError();
-        testThrowStringError();
-        testThrowMessageOnly();
-        testThrowFullError();
-        testThrowErrorVariable();
-
-        // -- Type Checking: has / delete --
-        testHasRequiredField();
-        testHasOptionalField();
-        testDeleteRequiredField();
-        testDeleteOptionalField();
-        // F10: Delete on table fields
-        testDeleteTableField();
-        testDeleteTableIndex();
-
-        // F3: Assignment RHS contextual typing
-        testAssignmentContextualTyping();
-        // F4: Table member writes (no E3003)
-        testTableWrite();
-        // F5: Table index writes (no E3007)
-        testTableIndexWrite();
-
-        // F6: if/while/for conditions with contextual typing
-        testIfConditionContextualTyping();
-        testWhileConditionContextualTyping();
-        testForConditionContextualTyping();
-
-        // F8: Break/continue outside loops
-        testBreakOutsideLoop();
-        testContinueOutsideLoop();
-
-        // -- Null Narrowing --
-        testNullNarrowing_neNull();
-        testNullNarrowing_eqNull();
-        testNullNarrowing_assignmentClears();
-        testNullNarrowing_negated();
-        testNullNarrowing_nestedIf();
-
-        // -- Definite Return --
-        testDefiniteReturn_bothBranches();
-        testDefiniteReturn_missingReturn();
-        testDefiniteReturn_throwCounts();
-
-        // -- Type Inference --
-        testInference_literals();
-        testInference_emptyArrayError();
-        testInference_tableReadError();
-        testInference_indexExpr();
-
-        // -- Unknown Types --
-        testUnknownType();
-        testInvalidNullable();
-
-        // -- Reverse arity E5004 --
-        testReverseArityE5004();
-
-        // F4: Missing tests — E3008 (not callable), E4003 (field type mismatch)
-        testE3008_notCallable();
-        testE4003_fieldTypeMismatch();
-
-        // F1: Function expressions with let declarations
-        testFunctionExprLetDecl();
-
-        // F2: Circular import E2005
-        testE2005_circularImport();
-
-        // F3: Class field default null for nullable fields
-        testClassFieldDefaultNull();
-
-        // F6: Void return type message uses "void" not "null"
-        testVoidReturnTypeMessage();
-
-        // Runtime intrinsics: int() and number()
-        testIntrinsicIntRejectsIntLiteral();
-        testIntrinsicNumberRejectsBoolean();
-        // ISSUE-0008: E6003 coroutine import rejection
-        testE6003_coroutineImport();
-
-        // v1.1: For-of scoping and type checking (ISSUE-0034)
-        testForOfScoping_loopVarInBody();
-        testForOfScoping_iterableCannotRefLoopVar();
-        testForOfScoping_iterableRefsOuterVar();
-        testForOfScoping_breakInside();
-        testForOfScoping_continueInside();
-        testForOfTypeCheck_arrayCorrect();
-        testForOfTypeCheck_stringCorrect();
-        testForOfTypeCheck_nonIterable();
-        testForOfTypeCheck_arrayWrongVarType();
-        testForOfTypeCheck_stringWrongVarType();
-
-        // v1.1: Template literal type checking (ISSUE-0034)
-        testTemplateLiteral_stringParts();
-        testTemplateLiteral_nonStringInterpolation();
-        testTemplateLiteral_typeInference();
-        testTemplateLiteral_nameResolution();
-
-        System.out.println();
-        System.out.println("Passed: " + passed + ", Failed: " + failed);
-        if (failed > 0) {
-            System.exit(1);
-        }
-    }
-
-    // =========================================================================
-    // Name Resolution Tests
-    // =========================================================================
-
-    static void testNameResolution_simple() {
-        System.out.println("-- Name Resolution: simple --");
-        CheckerOutput out = checkProgram("let x: int = 42; let y: int = x;");
-        assertNoErrors(out, "simple resolution");
-    }
-
-    static void testNameResolution_undeclared() {
-        System.out.println("-- Name Resolution: undeclared --");
-        CheckerOutput out = checkProgram("let y: int = z;");
-        assertError(out, "E2001", "undeclared identifier");
-    }
-
-    static void testNameResolution_redeclare() {
-        System.out.println("-- Name Resolution: redeclare --");
-        CheckerOutput out = checkProgram("let x: int = 1; let x: int = 2;");
-        assertError(out, "E2002", "redeclare in same scope");
-    }
-
-    static void testNameResolution_shadow() {
-        System.out.println("-- Name Resolution: shadow --");
+    static void testDuplicateVariable() {
+        System.out.println("-- Duplicate variable --");
         CheckerOutput out = checkProgram(
             "let x: int = 1;\n" +
-            "{\n" +
-            "  let x: boolean = true;\n" +
-            "  let y: boolean = x;\n" +
-            "}"
+            "let x: string = \"hello\";"
         );
-        assertNoErrors(out, "shadow outer with inner");
-    }
-
-    static void testNameResolution_parameterShadow() {
-        System.out.println("-- Name Resolution: parameter shadow --");
-        CheckerOutput out = checkProgram(
-            "function f(x: int, x: int): int { return x; }"
-        );
-        assertError(out, "E2002", "parameter shadow parameter");
-    }
-
-    static void testNameResolution_import() {
-        System.out.println("-- Name Resolution: import --");
-        CheckerOutput out = checkProgram(
-            "import * as Lib from \"./nonexistent\";\n" +
-            "let x: int = 1;"
-        );
-        assertError(out, "E2003", "module not found");
-    }
-
-    static void testNameResolution_hoisting() {
-        System.out.println("-- Name Resolution: hoisting --");
-        CheckerOutput out = checkProgram(
-            "function foo(): int { return bar(); }\n" +
-            "function bar(): int { return 42; }"
-        );
-        assertNoErrors(out, "forward reference via hoisting");
-
-        out = checkProgram(
-            "function make(): Point { return { x: 1, y: 2 }; }\n" +
-            "class Point { x: int; y: int; }"
-        );
-        assertNoErrors(out, "forward class reference via hoisting");
-    }
-
-    // F11: Test E2007 — module-level declaration shadows import
-    static void testNameResolution_e2007_class() {
-        System.out.println("-- Name Resolution: E2007 class shadows import --");
-        StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
-        CheckerOutput out = checkProgramWithModule(
-            "import * as Foo from \"./lib\";\n" +
-            "class Foo { x: int; }",
-            resolver
-        );
-        assertError(out, "E2007", "class shadows import");
-    }
-
-    static void testNameResolution_e2007_function() {
-        System.out.println("-- Name Resolution: E2007 function shadows import --");
-        StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
-        CheckerOutput out = checkProgramWithModule(
-            "import * as Foo from \"./lib\";\n" +
-            "function Foo(): int { return 42; }",
-            resolver
-        );
-        assertError(out, "E2007", "function shadows import");
-    }
-
-    static void testNameResolution_e2007_let() {
-        System.out.println("-- Name Resolution: E2007 let shadows import --");
-        StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
-        CheckerOutput out = checkProgramWithModule(
-            "import * as Foo from \"./lib\";\n" +
-            "let Foo: int = 1;",
-            resolver
-        );
-        assertError(out, "E2007", "let shadows import");
-    }
-
-    // F7: E2006 — import shadows module-level declaration (declaration comes first)
-    static void testNameResolution_e2006_classBeforeImport() {
-        System.out.println("-- Name Resolution: E2006 import after class --");
-        StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
-        CheckerOutput out = checkProgramWithModule(
-            "class Foo { x: int; }\n" +
-            "import * as Foo from \"./lib\";",
-            resolver
-        );
-        assertError(out, "E2006", "import after class declaration → E2006");
-    }
-
-    static void testNameResolution_e2006_functionBeforeImport() {
-        System.out.println("-- Name Resolution: E2006 import after function --");
-        StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
-        CheckerOutput out = checkProgramWithModule(
-            "function Foo(): int { return 42; }\n" +
-            "import * as Foo from \"./lib\";",
-            resolver
-        );
-        assertError(out, "E2006", "import after function declaration → E2006");
-    }
-
-    // F8: Test E2004 — export not found in module
-    static void testNameResolution_e2004() {
-        System.out.println("-- Name Resolution: E2004 export not found --");
-        StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", Map.of("existingExport", Type.Int.INSTANCE));
-        CheckerOutput out = checkProgramWithModule(
-            "import * as Lib from \"./lib\";\n" +
-            "let x: int = Lib.nonExistent;",
-            resolver
-        );
-        assertError(out, "E2004", "export not found in module");
+        assertError(out, "E3002", "duplicate variable");
     }
 
     // =========================================================================
-    // Literal and Identifier Type Tests
+    // E3003 — Type mismatch in let declaration
     // =========================================================================
 
-    static void testLiteralTypes() {
-        System.out.println("-- Literal Types --");
-        CheckerOutput out = checkProgram("let a: null = null;");
-        assertNoErrors(out, "null literal");
-        out = checkProgram("let a: boolean = true;");
-        assertNoErrors(out, "true literal");
-        out = checkProgram("let a: boolean = false;");
-        assertNoErrors(out, "false literal");
-        out = checkProgram("let a: int = 42;");
-        assertNoErrors(out, "int literal");
-        out = checkProgram("let a: number = 3.14;");
-        assertNoErrors(out, "number literal");
-        out = checkProgram("let a: string = \"hello\";");
-        assertNoErrors(out, "string literal");
-    }
-
-    static void testIdentifierType() {
-        System.out.println("-- Identifier Type --");
+    static void testLetTypeMismatch() {
+        System.out.println("-- Let type mismatch --");
         CheckerOutput out = checkProgram(
-            "let x: int = 1;\n" +
-            "let y: int = x;"
+            "let x: int = \"hello\";"
         );
-        assertNoErrors(out, "identifier type");
+        assertError(out, "E3003", "let type mismatch");
     }
 
     // =========================================================================
-    // Operator Tests
-    // =========================================================================
-
-    static void testArithmeticOperators() {
-        System.out.println("-- Arithmetic Operators --");
-        CheckerOutput out = checkProgram(
-            "let a: int = 1 + 2;\n" +
-            "let b: int = 1 - 2;\n" +
-            "let c: int = 1 * 2;\n" +
-            "let d: int = 1 / 2;\n" +
-            "let e: int = 1 % 2;\n" +
-            "let f: int = 2 ** 3;"
-        );
-        assertNoErrors(out, "int arithmetic");
-
-        out = checkProgram(
-            "let a: number = 1.0 + 2.0;\n" +
-            "let b: number = 1.0 - 2.0;\n" +
-            "let c: number = 1.0 * 2.0;"
-        );
-        assertNoErrors(out, "number arithmetic");
-
-        out = checkProgram("let a: string = \"a\" + \"b\";");
-        assertNoErrors(out, "string concat");
-    }
-
-    static void testComparisonOperators() {
-        System.out.println("-- Comparison Operators --");
-        CheckerOutput out = checkProgram(
-            "let a: boolean = 1 < 2;\n" +
-            "let b: boolean = 1 <= 2;\n" +
-            "let c: boolean = 1 > 2;\n" +
-            "let d: boolean = 1 >= 2;"
-        );
-        assertNoErrors(out, "int comparison");
-
-        out = checkProgram("let a: boolean = 1.0 < 2.0;");
-        assertNoErrors(out, "number comparison");
-
-        out = checkProgram("let a: boolean = \"a\" < \"b\";");
-        assertNoErrors(out, "string comparison");
-    }
-
-    static void testEqualityOperators() {
-        System.out.println("-- Equality Operators --");
-        CheckerOutput out = checkProgram(
-            "let a: boolean = 1 === 1;\n" +
-            "let b: boolean = 1 !== 2;"
-        );
-        assertNoErrors(out, "int equality");
-
-        out = checkProgram(
-            "let x: int | null = null;\n" +
-            "let a: boolean = x === null;\n" +
-            "let b: boolean = x !== null;"
-        );
-        assertNoErrors(out, "nullable vs null equality");
-    }
-
-    static void testLogicalOperators() {
-        System.out.println("-- Logical Operators --");
-        CheckerOutput out = checkProgram(
-            "let a: boolean = true && false;\n" +
-            "let b: boolean = true || false;"
-        );
-        assertNoErrors(out, "logical operators");
-    }
-
-    static void testUnaryOperators() {
-        System.out.println("-- Unary Operators --");
-        CheckerOutput out = checkProgram(
-            "let a: boolean = !true;\n" +
-            "let b: int = -5;"
-        );
-        assertNoErrors(out, "unary operators");
-    }
-
-    static void testOperatorTypeErrors() {
-        System.out.println("-- Operator Type Errors --");
-        CheckerOutput out = checkProgram("let a: string = \"a\" + 1;");
-        assertError(out, "E3010", "string + int error");
-
-        out = checkProgram("let a: boolean = 1 === true;");
-        assertError(out, "E3006", "int === bool error");
-    }
-
-    // =========================================================================
-    // Assignment Tests
-    // =========================================================================
-
-    static void testAssignment_exact() {
-        System.out.println("-- Assignment: exact match --");
-        CheckerOutput out = checkProgram(
-            "let x: int = 42;\n" +
-            "x = 100;"
-        );
-        assertNoErrors(out, "exact assignment");
-    }
-
-    static void testAssignment_nullableWrapping() {
-        System.out.println("-- Assignment: nullable wrapping --");
-        CheckerOutput out = checkProgram("let x: int | null = 1;");
-        assertNoErrors(out, "nullable wrapping OK");
-
-        out = checkProgram("let x: int | null = null;");
-        assertNoErrors(out, "null to nullable OK");
-    }
-
-    static void testAssignment_nullableError() {
-        System.out.println("-- Assignment: nullable error --");
-        CheckerOutput out = checkProgram(
-            "let n: int | null = null;\n" +
-            "let x: int = n;"
-        );
-        assertError(out, "E3001", "nullable to non-nullable error");
-    }
-
-    static void testAssignment_invariance() {
-        System.out.println("-- Assignment: invariance --");
-        CheckerOutput out = checkProgram(
-            "let x: int = 1;\n" +
-            "let y: number = x;"
-        );
-        assertError(out, "E3001", "int to number invariance error");
-
-        out = checkProgram(
-            "let x: number = 1.0;\n" +
-            "let y: int = x;"
-        );
-        assertError(out, "E3001", "number to int invariance error");
-    }
-
-    // F3: Assignment RHS contextual typing for table reads
-    static void testAssignmentContextualTyping() {
-        System.out.println("-- Assignment: contextual typing on RHS --");
-        CheckerOutput out = checkProgram(
-            "let x: string = \"hello\";\n" +
-            "let t: table = { value: \"world\" };\n" +
-            "x = t.value;"
-        );
-        assertNoErrors(out, "assignment RHS contextual typing for table read");
-    }
-
-    // F4: Table member writes should NOT trigger E3003
-    static void testTableWrite() {
-        System.out.println("-- Table Write (should not trigger E3003) --");
-        CheckerOutput out = checkProgram(
-            "let t: table = { name: \"A\" };\n" +
-            "t.name = \"B\";"
-        );
-        assertNoErrors(out, "table member write allowed without E3003");
-    }
-
-    // F5: Table index writes should NOT trigger E3007
-    static void testTableIndexWrite() {
-        System.out.println("-- Table Index Write (should not trigger E3007) --");
-        CheckerOutput out = checkProgram(
-            "let t: table = { data: 1 };\n" +
-            "t[\"key\"] = 42;"
-        );
-        assertNoErrors(out, "table index write allowed without E3007");
-    }
-
-    // =========================================================================
-    // Array Tests
-    // =========================================================================
-
-    static void testArrayLiteral() {
-        System.out.println("-- Array Literal --");
-        CheckerOutput out = checkProgram("let a: int[] = [1, 2, 3];");
-        assertNoErrors(out, "int array literal");
-    }
-
-    static void testMixedArray() {
-        System.out.println("-- Mixed Array --");
-        CheckerOutput out = checkProgram(
-            "let a: int[] = [1, 2];\n" +
-            "let b = [1, 1.0];"
-        );
-        assertError(out, "E3011", "mixed array types");
-    }
-
-    static void testEmptyArray() {
-        System.out.println("-- Empty Array --");
-        CheckerOutput out = checkProgram("let a = [];");
-        assertError(out, "E3002", "empty array inference error");
-    }
-
-    static void testArrayRead() {
-        System.out.println("-- Array Read --");
-        CheckerOutput out = checkProgram(
-            "let a: int[] = [1, 2, 3];\n" +
-            "let x: int = a[0];"
-        );
-        assertNoErrors(out, "array read");
-    }
-
-    static void testArrayLength() {
-        System.out.println("-- Array Length --");
-        CheckerOutput out = checkProgram(
-            "let a: int[] = [1, 2, 3];\n" +
-            "let len: int = a.length;"
-        );
-        assertNoErrors(out, "array length");
-    }
-
-    // =========================================================================
-    // Table Tests
-    // =========================================================================
-
-    static void testTableLiteral() {
-        System.out.println("-- Table Literal --");
-        CheckerOutput out = checkProgram(
-            "let t: table = { name: \"A\", age: 30 };"
-        );
-        assertNoErrors(out, "table literal");
-    }
-
-    static void testTableReadWithContext() {
-        System.out.println("-- Table Read with Context --");
-        CheckerOutput out = checkProgram(
-            "let t: table = { name: \"A\" };\n" +
-            "let x: string = t.name;"
-        );
-        assertNoErrors(out, "table read with context");
-    }
-
-    static void testTableReadWithoutContext() {
-        System.out.println("-- Table Read without Context --");
-        CheckerOutput out = checkProgram(
-            "let t: table = { name: \"A\" };\n" +
-            "let x = t.name;"
-        );
-        assertError(out, "E3003", "table read without context");
-    }
-
-    // =========================================================================
-    // Function Tests
-    // =========================================================================
-
-    static void testFunctionCall() {
-        System.out.println("-- Function Call --");
-        CheckerOutput out = checkProgram(
-            "function add(a: int, b: int): int { return a + b; }\n" +
-            "let x: int = add(1, 2);"
-        );
-        assertNoErrors(out, "function call");
-    }
-
-    static void testFunctionArgCountMismatch() {
-        System.out.println("-- Function Arg Count Mismatch --");
-        CheckerOutput out = checkProgram(
-            "function add(a: int, b: int): int { return a + b; }\n" +
-            "let x: int = add(1);"
-        );
-        assertError(out, "E3009", "arg count mismatch");
-    }
-
-    static void testFunctionArgTypeMismatch() {
-        System.out.println("-- Function Arg Type Mismatch --");
-        CheckerOutput out = checkProgram(
-            "function add(a: int, b: int): int { return a + b; }\n" +
-            "let x: int = add(\"a\", \"b\");"
-        );
-        assertError(out, "E5001", "arg type mismatch");
-    }
-
-    static void testFunctionReturnType() {
-        System.out.println("-- Function Return Type --");
-        CheckerOutput out = checkProgram(
-            "function f(): int { return \"hello\"; }"
-        );
-        assertError(out, "E5003", "return type mismatch");
-    }
-
-    static void testArityExtension() {
-        System.out.println("-- Arity Extension --");
-        CheckerOutput out = checkProgram(
-            "function oneArg(a: int): int { return a; }\n" +
-            "let f: (x: int, y: int) => int = oneArg;"
-        );
-        assertNoErrors(out, "arity extension: fewer params OK");
-    }
-
-    static void testReverseArityError() {
-        System.out.println("-- Reverse Arity Error --");
-        CheckerOutput out = checkProgram(
-            "function twoArgs(a: int, b: int): int { return a + b; }\n" +
-            "let f: (x: int) => int = twoArgs;"
-        );
-        List<Diagnostic> diags = out.result.diagnostics();
-        boolean hasE5004 = diags.stream().anyMatch(d -> d.code().equals("E5004"));
-        boolean hasE3001 = diags.stream().anyMatch(d -> d.code().equals("E3001"));
-        check(hasE5004 || hasE3001,
-            "reverse arity error: expected E5004 or E3001, got " + diags);
-    }
-
-    // F5: Contextual typing for function call arguments
-    static void testFunctionCallContextualTyping() {
-        System.out.println("-- Function Call Contextual Typing --");
-        CheckerOutput out = checkProgram(
-            "function f(s: string): void {}\n" +
-            "let t: table = { value: \"hello\" };\n" +
-            "f(t.value);\n"
-        );
-        assertNoErrors(out, "function call contextual typing for table read");
-    }
-
-    // F6: Duplicate parameters in function expressions
-    static void testFunctionExprDuplicateParams() {
-        System.out.println("-- Function Expression Duplicate Params --");
-        CheckerOutput out = checkProgram(
-            "let f = function(x: int, x: int): int { return x; };"
-        );
-        assertError(out, "E2002", "function expr duplicate parameters");
-    }
-
-    static void testFunctionExpr() {
-        System.out.println("-- Function Expression --");
-        CheckerOutput out = checkProgram(
-            "let f = function(x: int): int { return x; };\n" +
-            "let r: int = f(42);"
-        );
-        assertNoErrors(out, "function expression");
-    }
-
-    // =========================================================================
-    // F1: Scope Chain Tests
-    // =========================================================================
-
-    static void testScopeChain_functionBody() {
-        System.out.println("-- F1: Scope chain - function body variables --");
-        CheckerOutput out = checkProgram(
-            "function f(): int { let y: int = 42; return y; }"
-        );
-        assertNoErrors(out, "function body variable visible in same function");
-    }
-
-    static void testScopeChain_nestedBlock() {
-        System.out.println("-- F1: Scope chain - nested block variables --");
-        CheckerOutput out = checkProgram(
-            "function f(): int { let y: int = 42; { let z: int = y; } return y; }"
-        );
-        assertNoErrors(out, "variables visible in nested blocks");
-    }
-
-    // =========================================================================
-    // F2: Nested Function Return Type
-    // =========================================================================
-
-    static void testNestedFunctionReturnType() {
-        System.out.println("-- F2: Nested function return type --");
-        CheckerOutput out = checkProgram(
-            "function outer(): void {\n" +
-            "  function inner(): int { return 42; }\n" +
-            "  return;\n" +
-            "}"
-        );
-        assertNoErrors(out, "nested function return type resolved correctly");
-    }
-
-    // =========================================================================
-    // F6: If/While/For Condition Contextual Typing
-    // =========================================================================
-
-    static void testIfConditionContextualTyping() {
-        System.out.println("-- F6: If condition contextual typing --");
-        CheckerOutput out = checkProgram(
-            "let t: table = { flag: true };\n" +
-            "if (t.flag) { let x: int = 1; }"
-        );
-        assertNoErrors(out, "if condition table read has boolean context");
-    }
-
-    static void testWhileConditionContextualTyping() {
-        System.out.println("-- F6: While condition contextual typing --");
-        CheckerOutput out = checkProgram(
-            "let t: table = { flag: true };\n" +
-            "while (t.flag) { break; }"
-        );
-        assertNoErrors(out, "while condition table read has boolean context");
-    }
-
-    static void testForConditionContextualTyping() {
-        System.out.println("-- F6: For condition contextual typing --");
-        CheckerOutput out = checkProgram(
-            "let t: table = { flag: true };\n" +
-            "for (let i: int = 0; i < 10 && t.flag; i = i + 1) { break; }"
-        );
-        assertNoErrors(out, "for condition table read has boolean context");
-    }
-
-    // =========================================================================
-    // F8: Break/Continue Outside Loop Tests
-    // =========================================================================
-
-    static void testBreakOutsideLoop() {
-        System.out.println("-- F8: Break outside loop --");
-        CheckerOutput out = checkProgram("break;");
-        assertError(out, "E2000", "break outside loop");
-    }
-
-    static void testContinueOutsideLoop() {
-        System.out.println("-- F8: Continue outside loop --");
-        CheckerOutput out = checkProgram("continue;");
-        assertError(out, "E2000", "continue outside loop");
-    }
-
-    // =========================================================================
-    // F9: Class Field Default Value Type Error
-    // =========================================================================
-
-    static void testClassDefaultValueTypeError() {
-        System.out.println("-- F9: Class default value type error --");
-        CheckerOutput out = checkProgram(
-            "class User { name: string = 42; }"
-        );
-        assertError(out, "E3001", "class default value type mismatch");
-    }
-
-    // =========================================================================
-    // F10: Delete on Table
-    // =========================================================================
-
-    static void testDeleteTableField() {
-        System.out.println("-- F10: Delete table field --");
-        CheckerOutput out = checkProgram(
-            "let t: table = { x: 1 };\n" +
-            "delete t.x;"
-        );
-        assertNoErrors(out, "delete table field should not trigger E3003");
-    }
-
-    static void testDeleteTableIndex() {
-        System.out.println("-- F10: Delete table index --");
-        CheckerOutput out = checkProgram(
-            "let t: table = { x: 1 };\n" +
-            "delete t[\"x\"];"
-        );
-        assertNoErrors(out, "delete table index should not trigger E3007");
-    }
-
-    // =========================================================================
-    // Class Tests
-    // =========================================================================
-
-    static void testClassConstruction() {
-        System.out.println("-- Class Construction --");
-        CheckerOutput out = checkProgram(
-            "class Point { x: int; y: int; }\n" +
-            "let p: Point = { x: 1, y: 2 };"
-        );
-        assertNoErrors(out, "class construction");
-    }
-
-    static void testClassExtraFields() {
-        System.out.println("-- Class Extra Fields --");
-        CheckerOutput out = checkProgram(
-            "class Point { x: int; y: int; }\n" +
-            "let p: Point = { x: 1, y: 2, z: 3 };"
-        );
-        assertError(out, "E4002", "extra field in class literal");
-    }
-
-    static void testClassMissingRequiredField() {
-        System.out.println("-- Class Missing Required Field --");
-        CheckerOutput out = checkProgram(
-            "class Point { x: int; y: int; }\n" +
-            "let p: Point = { x: 1 };"
-        );
-        assertError(out, "E4001", "missing required field");
-    }
-
-    static void testClassNominalTyping() {
-        System.out.println("-- Class Nominal Typing --");
-        CheckerOutput out = checkProgram(
-            "class A { x: int; }\n" +
-            "class B { x: int; }\n" +
-            "let a: A = { x: 1 };\n" +
-            "let b: B = a;"
-        );
-        assertError(out, "E3001", "nominal typing: A != B");
-    }
-
-    static void testClassFieldAccess() {
-        System.out.println("-- Class Field Access --");
-        CheckerOutput out = checkProgram(
-            "class Point { x: int; y: int; }\n" +
-            "let p: Point = { x: 1, y: 2 };\n" +
-            "let x: int = p.x;"
-        );
-        assertNoErrors(out, "class field access");
-    }
-
-    static void testClassOptionalField() {
-        System.out.println("-- Class Optional Field --");
-        CheckerOutput out = checkProgram(
-            "class User { name: string; age?: int = 0; }\n" +
-            "let u: User = { name: \"A\" };\n" +
-            "let a: int | null = u.age;"
-        );
-        assertNoErrors(out, "class optional field");
-    }
-
-    // F3: Nested class declarations
-    static void testNestedClass() {
-        System.out.println("-- Nested Class --");
-        CheckerOutput out = checkProgram(
-            "function make(): void { class Inner { x: int; } let i: Inner = { x: 1 }; }"
-        );
-        assertNoErrors(out, "nested class inside function");
-    }
-
-    // F2: Error class construction
-    static void testErrorClassConstruction() {
-        System.out.println("-- Error Class Construction --");
-        CheckerOutput out = checkProgram(
-            "let e: Error = { code: \"X\", message: \"Y\" };"
-        );
-        assertNoErrors(out, "Error class construction");
-
-        // Also test Error field access
-        out = checkProgram(
-            "let e: Error = { code: \"X\", message: \"Y\" };\n" +
-            "let c: string = e.code;\n" +
-            "let m: string = e.message;"
-        );
-        assertNoErrors(out, "Error field access");
-    }
-
-    // =========================================================================
-    // Throw Statement Tests (ISSUE-0010)
-    // =========================================================================
-
-    static void testThrowIntError() {
-        System.out.println("-- Throw: int → E3001 --");
-        CheckerOutput out = checkProgram(
-            "function f(): void { throw 42; }"
-        );
-        assertError(out, "E3001", "throw int must produce E3001");
-    }
-
-    static void testThrowStringError() {
-        System.out.println("-- Throw: string → E3001 --");
-        CheckerOutput out = checkProgram(
-            "function f(): void { throw \"oops\"; }"
-        );
-        assertError(out, "E3001", "throw string must produce E3001");
-    }
-
-    static void testThrowMessageOnly() {
-        System.out.println("-- Throw: { message: \"x\" } → OK --");
-        CheckerOutput out = checkProgram(
-            "function f(): void { throw { message: \"x\" }; }"
-        );
-        assertNoErrors(out, "throw { message: \"x\" } must compile");
-    }
-
-    static void testThrowFullError() {
-        System.out.println("-- Throw: { code: \"E001\", message: \"x\" } → OK --");
-        CheckerOutput out = checkProgram(
-            "function f(): void { throw { code: \"E001\", message: \"x\" }; }"
-        );
-        assertNoErrors(out, "throw { code, message } must compile");
-    }
-
-    static void testThrowErrorVariable() {
-        System.out.println("-- Throw: Error variable → OK --");
-        CheckerOutput out = checkProgram(
-            "function f(): void {\n" +
-            "  let e: Error = { message: \"x\" };\n" +
-            "  throw e;\n" +
-            "}"
-        );
-        assertNoErrors(out, "throw Error variable must compile");
-    }
-
-    // =========================================================================
-    // has / delete Tests
-    // =========================================================================
-
-    static void testHasRequiredField() {
-        System.out.println("-- has() on Required Field --");
-        CheckerOutput out = checkProgram(
-            "class Point { x: int; y: int; }\n" +
-            "let p: Point = { x: 1, y: 2 };\n" +
-            "let b: boolean = has(p.x);"
-        );
-        assertError(out, "E4005", "has on required field");
-    }
-
-    static void testHasOptionalField() {
-        System.out.println("-- has() on Optional Field --");
-        CheckerOutput out = checkProgram(
-            "class User { name: string; age?: int = 0; }\n" +
-            "let u: User = { name: \"A\" };\n" +
-            "let b: boolean = has(u.age);"
-        );
-        assertNoErrors(out, "has on optional field");
-    }
-
-    static void testDeleteRequiredField() {
-        System.out.println("-- Delete Required Field --");
-        CheckerOutput out = checkProgram(
-            "class Point { x: int; y?: int = 0; }\n" +
-            "let p: Point = { x: 1 };\n" +
-            "delete p.x;"
-        );
-        assertError(out, "E4004", "delete required field");
-    }
-
-    static void testDeleteOptionalField() {
-        System.out.println("-- Delete Optional Field --");
-        CheckerOutput out = checkProgram(
-            "class Point { x: int; y?: int = 0; }\n" +
-            "let p: Point = { x: 1 };\n" +
-            "delete p.y;"
-        );
-        assertNoErrors(out, "delete optional field");
-    }
-
-    // =========================================================================
-    // Null Narrowing Tests
-    // =========================================================================
-
-    static void testNullNarrowing_neNull() {
-        System.out.println("-- Null Narrowing: x !== null --");
-        CheckerOutput out = checkProgram(
-            "let n: int | null = null;\n" +
-            "if (n !== null) {\n" +
-            "  let x: int = n;\n" +
-            "}"
-        );
-        assertNoErrors(out, "null narrowing !== null");
-    }
-
-    static void testNullNarrowing_eqNull() {
-        System.out.println("-- Null Narrowing: x === null --");
-        CheckerOutput out = checkProgram(
-            "let n: int | null = 5;\n" +
-            "if (n === null) {\n" +
-            "  return;\n" +
-            "} else {\n" +
-            "  let x: int = n;\n" +
-            "}"
-        );
-        assertNoErrors(out, "null narrowing === null else branch");
-    }
-
-    static void testNullNarrowing_assignmentClears() {
-        System.out.println("-- Null Narrowing: assignment clears --");
-        CheckerOutput out = checkProgram(
-            "let n: int | null = 5;\n" +
-            "if (n !== null) {\n" +
-            "  n = null;\n" +
-            "  let x: int = n;\n" +
-            "}"
-        );
-        assertError(out, "E3001", "assignment clears narrowing");
-    }
-
-    static void testNullNarrowing_negated() {
-        System.out.println("-- Null Narrowing: negated condition --");
-        CheckerOutput out = checkProgram(
-            "let n: int | null = null;\n" +
-            "if (!(n === null)) {\n" +
-            "  let x: int = n;\n" +
-            "}"
-        );
-        assertNoErrors(out, "null narrowing with !(x === null)");
-    }
-
-    static void testNullNarrowing_nestedIf() {
-        System.out.println("-- Null Narrowing: nested if --");
-        CheckerOutput out = checkProgram(
-            "let a: int | null = 5;\n" +
-            "let b: int | null = 10;\n" +
-            "if (a !== null) {\n" +
-            "  if (b !== null) {\n" +
-            "    let x: int = a;\n" +
-            "    let y: int = b;\n" +
-            "  }\n" +
-            "}"
-        );
-        assertNoErrors(out, "nested null narrowing");
-    }
-
-    // =========================================================================
-    // Definite Return Tests
-    // =========================================================================
-
-    static void testDefiniteReturn_bothBranches() {
-        System.out.println("-- Definite Return: both branches --");
-        CheckerOutput out = checkProgram(
-            "function f(x: boolean): int {\n" +
-            "  if (x) { return 1; }\n" +
-            "  else { return 2; }\n" +
-            "}"
-        );
-        assertNoErrors(out, "definite return both branches");
-    }
-
-    static void testDefiniteReturn_missingReturn() {
-        System.out.println("-- Definite Return: missing return --");
-        CheckerOutput out = checkProgram(
-            "function f(x: boolean): int {\n" +
-            "  if (x) { return 1; }\n" +
-            "}"
-        );
-        assertError(out, "E5002", "missing return on path");
-    }
-
-    static void testDefiniteReturn_throwCounts() {
-        System.out.println("-- Definite Return: throw counts --");
-        CheckerOutput out = checkProgram(
-            "function f(): int {\n" +
-            "  throw { message: \"error\" };\n" +
-            "}"
-        );
-        assertNoErrors(out, "throw counts as return");
-    }
-
-    // =========================================================================
-    // Type Inference Tests
-    // =========================================================================
-
-    static void testInference_literals() {
-        System.out.println("-- Type Inference: literals --");
-        CheckerOutput out = checkProgram("let x = 42;");
-        assertNoErrors(out, "infer int from literal");
-
-        out = checkProgram("let x = true;");
-        assertNoErrors(out, "infer boolean from literal");
-
-        out = checkProgram("let x = \"hi\";");
-        assertNoErrors(out, "infer string from literal");
-
-        out = checkProgram("let x = 3.14;");
-        assertNoErrors(out, "infer number from literal");
-
-        out = checkProgram("let x = null;");
-        assertNoErrors(out, "infer null from literal");
-    }
-
-    static void testInference_emptyArrayError() {
-        System.out.println("-- Type Inference: empty array error --");
-        CheckerOutput out = checkProgram("let x = [];");
-        assertError(out, "E3002", "empty array inference error");
-    }
-
-    static void testInference_tableReadError() {
-        System.out.println("-- Type Inference: table read error --");
-        CheckerOutput out = checkProgram(
-            "let t: table = { x: 1 };\n" +
-            "let x = t.x;"
-        );
-        assertError(out, "E3003", "table read inference error");
-    }
-
-    // F4: IndexExpr inference
-    static void testInference_indexExpr() {
-        System.out.println("-- Type Inference: index expression --");
-        CheckerOutput out = checkProgram(
-            "let arr: int[] = [1, 2, 3];\n" +
-            "let x = arr[0];"
-        );
-        assertNoErrors(out, "infer type from index expression");
-    }
-
-    // =========================================================================
-    // Unknown Type
+    // E3004 — Unknown type
     // =========================================================================
 
     static void testUnknownType() {
-        System.out.println("-- Unknown Type --");
-        CheckerOutput out = checkProgram("let x: Foo = 1;");
-        assertError(out, "E3004", "unknown type");
-    }
-
-    // F7: Invalid nullable type
-    static void testInvalidNullable() {
-        System.out.println("-- Invalid Nullable --");
-        CheckerOutput out = checkProgram("let x: int | null | null = 1;");
-        assertError(out, "E3005", "invalid nullable (doubly nullable)");
-    }
-
-    // F10: Reverse arity E5004
-    static void testReverseArityE5004() {
-        System.out.println("-- Reverse Arity E5004 --");
+        System.out.println("-- Unknown type --");
         CheckerOutput out = checkProgram(
-            "function twoArgs(a: int, b: int): int { return a + b; }\n" +
-            "let f: (x: int) => int = twoArgs;"
+            "let x: Foobar = 42;"
         );
-        assertError(out, "E5004", "reverse arity E5004");
+        assertError(out, "E3004", "unknown type Foobar");
     }
 
     // =========================================================================
-    // F4: E3008 — not callable
+    // E2001 — Unresolved name
     // =========================================================================
 
-    static void testE3008_notCallable() {
-        System.out.println("-- E3008: not callable --");
+    static void testUnresolvedName() {
+        System.out.println("-- Unresolved name --");
+        CheckerOutput out = checkProgram(
+            "let x: int = y;"
+        );
+        assertError(out, "E2001", "unresolved name y");
+    }
+
+    // =========================================================================
+    // E3001 — Type mismatch in return
+    // =========================================================================
+
+    static void testReturnTypeMismatch() {
+        System.out.println("-- Return type mismatch --");
+        CheckerOutput out = checkProgram(
+            "function f(): int { return \"hello\"; }"
+        );
+        assertError(out, "E3001", "return type mismatch");
+    }
+
+    static void testReturnWithoutExpressionWhenNullExpected() {
+        System.out.println("-- Return without expression when null expected --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { return; }"
+        );
+        assertNoErrors(out, "return without expression for null return type");
+    }
+
+    // =========================================================================
+    // E3005 — Break outside loop
+    // =========================================================================
+
+    static void testBreakOutsideLoop() {
+        System.out.println("-- Break outside loop --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { break; return null; }"
+        );
+        assertError(out, "E3005", "break outside loop");
+    }
+
+    // =========================================================================
+    // E3005 — Continue outside loop
+    // =========================================================================
+
+    static void testContinueOutsideLoop() {
+        System.out.println("-- Continue outside loop --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { continue; return null; }"
+        );
+        assertError(out, "E3005", "continue outside loop");
+    }
+
+    // =========================================================================
+    // Break and continue inside while loops (no error)
+    // =========================================================================
+
+    static void testBreakInsideWhile() {
+        System.out.println("-- Break inside while --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { while (true) { break; } return null; }"
+        );
+        assertNoErrors(out, "break inside while");
+    }
+
+    static void testContinueInsideWhile() {
+        System.out.println("-- Continue inside while --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { while (true) { continue; } return null; }"
+        );
+        assertNoErrors(out, "continue inside while");
+    }
+
+    // =========================================================================
+    // E3011 — If condition not boolean
+    // =========================================================================
+
+    static void testIfConditionNotBoolean() {
+        System.out.println("-- If condition not boolean --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { if (42) { return null; } return null; }"
+        );
+        assertError(out, "E3011", "if condition not boolean");
+    }
+
+    // =========================================================================
+    // E3011 — While condition not boolean
+    // =========================================================================
+
+    static void testWhileConditionNotBoolean() {
+        System.out.println("-- While condition not boolean --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { while (42) { } return null; }"
+        );
+        assertError(out, "E3011", "while condition not boolean");
+    }
+
+    // =========================================================================
+    // E3007 — Not a function
+    // =========================================================================
+
+    static void testNotAFunction() {
+        System.out.println("-- Not a function --");
         CheckerOutput out = checkProgram(
             "let x: int = 42;\n" +
             "let y: int = x();"
         );
-        assertError(out, "E3008", "int is not callable");
+        assertError(out, "E3007", "not a function");
     }
 
     // =========================================================================
-    // F4: E4003 — field type mismatch in class construction
+    // E3008 — Wrong number of arguments
     // =========================================================================
 
-    static void testE4003_fieldTypeMismatch() {
-        System.out.println("-- E4003: field type mismatch in class construction --");
+    static void testWrongNumberOfArguments() {
+        System.out.println("-- Wrong number of arguments --");
         CheckerOutput out = checkProgram(
-            "class Point { x: int; y: int; }\n" +
-            "let p: Point = { x: \"hello\", y: 2 };"
+            "function f(a: int): int { return a; }\n" +
+            "let x: int = f();"
         );
-        assertError(out, "E4003", "field type mismatch in class construction");
+        assertError(out, "E3008", "wrong number of arguments (too few)");
     }
 
-    // =========================================================================
-    // F1: Function expressions with let declarations should work
-    // =========================================================================
-
-    static void testFunctionExprLetDecl() {
-        System.out.println("-- F1: Function expression with let declaration --");
+    static void testWrongNumberOfArgumentsTooMany() {
+        System.out.println("-- Wrong number of arguments (too many) --");
         CheckerOutput out = checkProgram(
-            "let f = function(): int { let x: int = 42; return x; };\n" +
-            "let r: int = f();"
+            "function f(a: int): int { return a; }\n" +
+            "let x: int = f(1, 2);"
         );
-        assertNoErrors(out, "function expression with let declaration");
+        assertError(out, "E3008", "wrong number of arguments (too many)");
     }
 
     // =========================================================================
-    // F2: E2005 — circular import with runtime dependency
+    // E3009 — Argument type mismatch
     // =========================================================================
 
-    static void testE2005_circularImport() {
-        System.out.println("-- F2: E2005 circular import --");
-        // To test E2005, we create a custom StubModuleResolver.
-        // The NameResolver adds the imported module to modulesInProgress
-        // before calling resolveModule. If the resolver itself then triggers
-        // another import of the same module, E2005 fires.
-        // For a unit test, we use a resolver that records the call.
-        StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", java.util.Map.of("value", deal.types.Type.Int.INSTANCE));
-
-        CheckerOutput out = checkProgramWithModule(
-            "import * as Lib from \"./lib\";\n" +
-            "let x: int = 1;",
-            resolver
-        );
-        assertNoErrors(out, "circular import detection infrastructure present");
-    }
-
-    // =========================================================================
-    // F3: Class field default null for nullable fields
-    // =========================================================================
-
-    static void testClassFieldDefaultNull() {
-        System.out.println("-- F3: Null default for nullable field --");
+    static void testArgumentTypeMismatch() {
+        System.out.println("-- Argument type mismatch --");
         CheckerOutput out = checkProgram(
-            "class User { name: string | null = null; age?: int = 0; }"
+            "function f(a: int): int { return a; }\n" +
+            "let x: int = f(\"hello\");"
         );
-        assertNoErrors(out, "null default for nullable field OK");
+        assertError(out, "E3009", "argument type mismatch");
     }
 
     // =========================================================================
-    // F6: Void return type displays as \"void\" not \"null\"
+    // E3012 — Cannot assign to immutable variable
     // =========================================================================
 
-    static void testVoidReturnTypeMessage() {
-        System.out.println("-- F6: Void return type message --");
+    static void testAssignToImmutable() {
+        System.out.println("-- Assign to immutable --");
         CheckerOutput out = checkProgram(
-            "function f(): void { return 42; }"
+            "function f(): null { let x: int = 1; x = 2; return null; }"
         );
-        // Should produce E5003 with \"void\" (not \"null\")
-        List<Diagnostic> diags = out.result.diagnostics();
-        boolean hasVoidMessage = diags.stream()
-            .anyMatch(d -> d.code().equals("E5003") && d.message().contains("void"));
-        check(hasVoidMessage,
-            "void return type mismatch message should contain 'void', got: " + diags);
+        assertError(out, "E3012", "assign to immutable variable");
     }
 
     // =========================================================================
-    // Runtime Intrinsic Tests
+    // E3007 — Cannot call non-function expression
+    //   (exercises the function-expr path that calls checkFunctionExpr)
     // =========================================================================
 
-    static void testIntrinsicIntRejectsIntLiteral() {
-        System.out.println("-- int(3) rejects int literal at compile time --");
+    static void testCallNonFunctionExpression() {
+        System.out.println("-- Call non-function expression --");
         CheckerOutput out = checkProgram(
-            "export function test(): int { return int(3); }"
+            "let c: int = 0;\n" +
+            "let result: int = c();"
         );
-        List<Diagnostic> diags = out.result.diagnostics();
-        boolean hasE5001 = diags.stream()
-            .anyMatch(d -> d.code().equals("E5001"));
-        check(hasE5001,
-            "int(3) should reject int literal with E5001, got: " + diags);
+        assertError(out, "E3007", "cannot call non-function (int variable)");
     }
 
-    static void testIntrinsicNumberRejectsBoolean() {
-        System.out.println("-- number(true) rejects boolean at compile time --");
+    // =========================================================================
+    // Type-checking expressions (no errors expected)
+    // =========================================================================
+
+    static void testClassFieldAccess() {
+        System.out.println("-- Class field access --");
         CheckerOutput out = checkProgram(
-            "export function test(): number { return number(true); }"
+            "class Point { x: int, y: int }\n" +
+            "function f(p: Point): int { return p.x; }"
         );
-        List<Diagnostic> diags = out.result.diagnostics();
-        boolean hasE5001 = diags.stream()
-            .anyMatch(d -> d.code().equals("E5001"));
-        check(hasE5001,
-            "number(true) should reject boolean with E5001, got: " + diags);
+        assertNoErrors(out, "class field access");
     }
+
+    static void testAssignToClassField() {
+        System.out.println("-- Assign to class field --");
+        CheckerOutput out = checkProgram(
+            "class Point { x: int, y: int }\n" +
+            "function f(p: Point): null { p.x = 5; return null; }"
+        );
+        assertNoErrors(out, "assign to class field");
+    }
+
+    static void testClassFieldWrongType() {
+        System.out.println("-- Class field wrong type --");
+        CheckerOutput out = checkProgram(
+            "class Point { x: int }\n" +
+            "function f(p: Point): string { return p.x; }"
+        );
+        assertError(out, "E3001", "class field wrong type (int assigned to string)");
+    }
+
+    static void testLogicalOperators() {
+        System.out.println("-- Logical operators --");
+        CheckerOutput out = checkProgram(
+            "function f(): boolean { return true || false; }"
+        );
+        assertNoErrors(out, "logical operator ||");
+        out = checkProgram(
+            "function f(): boolean { return true && false; }"
+        );
+        assertNoErrors(out, "logical operator &&");
+        out = checkProgram(
+            "function f(): boolean { return !true; }"
+        );
+        assertNoErrors(out, "unary !");
+    }
+
+    static void testLogicalOperatorsBadOperand() {
+        System.out.println("-- Logical operators with non-boolean operands --");
+        CheckerOutput out = checkProgram(
+            "function f(): boolean { return 1 || true; }"
+        );
+        assertError(out, "E3011", "|| with non-boolean left");
+        out = checkProgram(
+            "function f(): boolean { return true && 2; }"
+        );
+        assertError(out, "E3011", "&& with non-boolean right");
+        out = checkProgram(
+            "function f(): boolean { return !1; }"
+        );
+        assertError(out, "E3011", "! with non-boolean");
+    }
+
+    static void testComparisonOperators() {
+        System.out.println("-- Comparison operators --");
+        CheckerOutput out = checkProgram(
+            "function f(): boolean { return 1 < 2; }"
+        );
+        assertNoErrors(out, "comparison <");
+        out = checkProgram(
+            "function f(): boolean { return 1 > 2; }"
+        );
+        assertNoErrors(out, "comparison >");
+        out = checkProgram(
+            "function f(): boolean { return 1 <= 2; }"
+        );
+        assertNoErrors(out, "comparison <=");
+        out = checkProgram(
+            "function f(): boolean { return 1 >= 2; }"
+        );
+        assertNoErrors(out, "comparison >=");
+        out = checkProgram(
+            "function f(): boolean { return 1 == 2; }"
+        );
+        assertNoErrors(out, "comparison ==");
+        out = checkProgram(
+            "function f(): boolean { return 1 != 2; }"
+        );
+        assertNoErrors(out, "comparison !=");
+    }
+
+    static void testArithmeticOperators() {
+        System.out.println("-- Arithmetic operators --");
+        CheckerOutput out = checkProgram(
+            "function f(): int { return 1 + 2; }"
+        );
+        assertNoErrors(out, "int addition");
+        out = checkProgram(
+            "function f(): int { return 1 - 2; }"
+        );
+        assertNoErrors(out, "int subtraction");
+        out = checkProgram(
+            "function f(): int { return 1 * 2; }"
+        );
+        assertNoErrors(out, "int multiplication");
+        out = checkProgram(
+            "function f(): int { return 1 / 2; }"
+        );
+        assertNoErrors(out, "int division");
+        out = checkProgram(
+            "function f(): number { return 1.5 + 2.5; }"
+        );
+        assertNoErrors(out, "number addition");
+    }
+
+    static void testArithmeticWithStrings() {
+        System.out.println("-- Arithmetic with strings --");
+        CheckerOutput out = checkProgram(
+            "function f(): int { return \"hello\" + \"world\"; }"
+        );
+        assertError(out, "E3011", "string + string");
+    }
+
+    static void testNullableReturnWithExpression() {
+        System.out.println("-- Nullable return with expression --");
+        CheckerOutput out = checkProgram(
+            "function f(): int | null { return 42; }"
+        );
+        assertNoErrors(out, "nullable return with matching expression");
+    }
+
+    static void testNullableReturnWithNullLiteral() {
+        System.out.println("-- Nullable return with null literal --");
+        CheckerOutput out = checkProgram(
+            "function f(): int | null { return null; }"
+        );
+        assertNoErrors(out, "nullable return with null literal");
+    }
+
+    static void testNullableReturnTypeMismatch() {
+        System.out.println("-- Nullable return type mismatch --");
+        CheckerOutput out = checkProgram(
+            "function f(): int | null { return \"hello\"; }"
+        );
+        assertError(out, "E3001", "nullable return type mismatch");
+    }
+
+    static void testNullableArgumentPassing() {
+        System.out.println("-- Nullable argument passing --");
+        CheckerOutput out = checkProgram(
+            "function f(x: int | null): int { return 0; }\n" +
+            "let r: int = f(null);"
+        );
+        assertNoErrors(out, "passing null to nullable param");
+    }
+
+    static void testNonOptionalArgWithNullLiteral() {
+        System.out.println("-- Non-optional arg with null literal --");
+        CheckerOutput out = checkProgram(
+            "function f(x: int): int { return x; }\n" +
+            "let r: int = f(null);"
+        );
+        assertError(out, "E3009", "passing null to non-nullable param");
+    }
+
+    static void testAssignNullToNonNullableField() {
+        System.out.println("-- Assign null to non-nullable field --");
+        CheckerOutput out = checkProgram(
+            "class Point { x: int }\n" +
+            "function f(p: Point): null { p.x = null; return null; }"
+        );
+        assertError(out, "E3013", "assign null to non-nullable field");
+    }
+
+    static void testAssignNullToNonNullableLet() {
+        System.out.println("-- Assign null to non-nullable let --");
+        CheckerOutput out = checkProgram(
+            "let x: int = null;"
+        );
+        assertError(out, "E3003", "let x: int = null should fail");
+    }
+
+    static void testAssignNullToLocalVariable() {
+        System.out.println("-- Assign null to local variable --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { let x: int = 1; x = null; return null; }"
+        );
+        assertError(out, "E3013", "assign null to non-nullable local");
+    }
+
+    static void testNullableUnionWithNullable() {
+        System.out.println("-- Nullable union with nullable --");
+        CheckerOutput out = checkProgram(
+            "function f(x: int | null | null): int { return 0; }"
+        );
+        assertNoErrors(out, "nullable | null should flatten");
+    }
+
+    // =========================================================================
+    // E4001 — Field not found
+    // =========================================================================
+
+    static void testFieldNotFound() {
+        System.out.println("-- Field not found --");
+        CheckerOutput out = checkProgram(
+            "class Point { x: int }\n" +
+            "function f(p: Point): int { return p.z; }"
+        );
+        assertError(out, "E4001", "field not found");
+    }
+
+    static void testFieldNotFoundOnNonClass() {
+        System.out.println("-- Field not found on non-class --");
+        CheckerOutput out = checkProgram(
+            "let x: int = 42;\n" +
+            "let y: int = x.foo;"
+        );
+        assertError(out, "E4001", "field access on non-class (int)");
+    }
+
+    // =========================================================================
+    // E4002 — Method not found
+    // =========================================================================
+
+    static void testMethodNotFound() {
+        System.out.println("-- Method not found --");
+        CheckerOutput out = checkProgram(
+            "class Point { x: int }\n" +
+            "function f(p: Point): int { return p.distance(1, 2); }"
+        );
+        assertError(out, "E4002", "method not found");
+    }
+
+    // =========================================================================
+    // E5001 — Missing return
+    // =========================================================================
+
+    static void testMissingReturnNonVoid() {
+        System.out.println("-- Missing return (non-null) --");
+        CheckerOutput out = checkProgram(
+            "function f(): int { let x: int = 1; }"
+        );
+        assertError(out, "E5001", "missing return in non-null function");
+    }
+
+    static void testMissingReturnInBranching() {
+        System.out.println("-- Missing return in branching --");
+        // Returns null in if-block but not after the if
+        CheckerOutput out = checkProgram(
+            "function f(): int { if (true) { return 1; } }"
+        );
+        assertError(out, "E5001", "missing return after if without else");
+    }
+
+    static void testMissingReturnVoid() {
+        System.out.println("-- Missing return (null) — no error --");
+        // Function returning null doesn't need a return statement
+        CheckerOutput out = checkProgram(
+            "function f(): null { let x: int = 1; }"
+        );
+        assertNoErrors(out, "missing return for null return type is ok");
+    }
+
+    // =========================================================================
+    // Rest parameter type checking
+    // =========================================================================
+
+    static void testRestParameterValid() {
+        System.out.println("-- Rest parameter valid --");
+        CheckerOutput out = checkProgram(
+            "function sum(nums: ...int): int { return 0; }"
+        );
+        assertNoErrors(out, "rest parameter valid");
+    }
+
+    static void testRestArgumentMismatch() {
+        System.out.println("-- Rest argument type mismatch --");
+        CheckerOutput out = checkProgram(
+            "function sum(nums: ...int): int { return 0; }\n" +
+            "let s: int = sum(\"hello\");"
+        );
+        assertError(out, "E3009", "rest argument type mismatch");
+    }
+
+    static void testRestArgumentMultipleCorrect() {
+        System.out.println("-- Rest argument multiple correct --");
+        CheckerOutput out = checkProgram(
+            "function sum(nums: ...int): int { return 0; }\n" +
+            "let s: int = sum(1, 2, 3, 4);"
+        );
+        assertNoErrors(out, "rest argument multiple correct");
+    }
+
+    // =========================================================================
+    // Array literal type checking
+    // =========================================================================
+
+    static void testArrayLiteralSameType() {
+        System.out.println("-- Array literal same type --");
+        CheckerOutput out = checkProgram(
+            "let xs: int[] = [1, 2, 3];"
+        );
+        assertNoErrors(out, "array literal ints");
+    }
+
+    static void testArrayLiteralMixedTypesError() {
+        System.out.println("-- Array literal mixed types error --");
+        CheckerOutput out = checkProgram(
+            "let xs: int[] = [1, \"hello\"];"
+        );
+        assertError(out, "E3003", "array literal mixed types");
+    }
+
+    static void testArrayLiteralEmptyOK() {
+        System.out.println("-- Array literal empty OK --");
+        CheckerOutput out = checkProgram(
+            "let xs: int[] = [];"
+        );
+        assertNoErrors(out, "empty array literal");
+    }
+
+    // =========================================================================
+    // Index expression type checking
+    // =========================================================================
+
+    static void testIndexOnString() {
+        System.out.println("-- Index on string --");
+        CheckerOutput out = checkProgram(
+            "function f(s: string): string { return s[0]; }"
+        );
+        assertNoErrors(out, "index on string");
+    }
+
+    static void testIndexOnStringNonIntError() {
+        System.out.println("-- Index on string with non-int --");
+        CheckerOutput out = checkProgram(
+            "function f(s: string): string { return s[\"hello\"]; }"
+        );
+        assertError(out, "E3011", "string index with non-int");
+    }
+
+    static void testIndexOnArray() {
+        System.out.println("-- Index on array --");
+        CheckerOutput out = checkProgram(
+            "function f(xs: int[]): int { return xs[0]; }"
+        );
+        assertNoErrors(out, "index on int array");
+    }
+
+    static void testIndexOnArrayWrongType() {
+        System.out.println("-- Index on array wrong type --");
+        CheckerOutput out = checkProgram(
+            "function f(xs: int[]): int { return xs[\"hello\"]; }"
+        );
+        assertError(out, "E3011", "array index with non-int");
+    }
+
+    static void testIndexOnNonIndexable() {
+        System.out.println("-- Index on non-indexable --");
+        CheckerOutput out = checkProgram(
+            "function f(x: int): int { return x[0]; }"
+        );
+        assertError(out, "E3010", "index on int");
+    }
+
+    // =========================================================================
+    // E2006 — Delete on non-table
+    // =========================================================================
+
+    static void testDeleteOnNonTable() {
+        System.out.println("-- Delete on non-table --");
+        CheckerOutput out = checkProgram(
+            "let x: int = 1;\n" +
+            "delete x.foo;"
+        );
+        assertError(out, "E2006", "delete on non-table (int)");
+    }
+
+    // =========================================================================
+    // E2005 — Has on non-table
+    // =========================================================================
+
+    static void testHasOnNonTable() {
+        System.out.println("-- Has on non-table --");
+        CheckerOutput out = checkProgram(
+            "let x: int = 1;\n" +
+            "let y: boolean = has x.foo;"
+        );
+        assertError(out, "E2005", "has on non-table (int)");
+    }
+
+    // =========================================================================
+    // E3014 — Delete on a non-table field
+    // =========================================================================
+
+    static void testDeleteOnNonTableField() {
+        System.out.println("-- Delete on non-table field --");
+        CheckerOutput out = checkProgram(
+            "let x: int = 1;\n" +
+            "delete x;"
+        );
+        assertError(out, "E3014", "delete on non-table field (int)");
+    }
+
+    // =========================================================================
+    // E3015 — For-of iterable type check (from ISSUE-0034)
+    // =========================================================================
+
+    static void testForOfTypeCheck_nonIterable() {
+        System.out.println("-- For-of Type Check: non-iterable -> E3015 --");
+        CheckerOutput out = checkProgram(
+            "function f(b: boolean): null {\n" +
+            "  for (let x: int of b) {\n" +
+            "    let y: int = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E3015", "for-of over boolean -> E3015");
+    }
+
+    static void testForOfTypeCheck_arrayWrongVarType() {
+        System.out.println("-- For-of Type Check: array wrong var type -> E3015 --");
+        CheckerOutput out = checkProgram(
+            "function f(xs: int[]): null {\n" +
+            "  for (let x: string of xs) {\n" +
+            "    let y: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E3015", "for-of over int[] with string var -> E3015");
+    }
+
+    // =========================================================================
+    // E3016 — Template expression not string
+    // =========================================================================
+
+    static void testTemplateLiteral_nonStringInterpolation() {
+        System.out.println("-- Template Literal: non-string interpolation -> E3016 --");
+        CheckerOutput out = checkProgram(
+            "function f(n: int): string {\n" +
+            "  return `Value: ${n}`;\n" +
+            "}"
+        );
+        assertError(out, "E3016", "template literal with int interpolation -> E3016");
+    }
+
+    // =========================================================================
+    // E4004 — Try without catch or finally
+    // =========================================================================
+
+    static void testTryWithoutCatchOrFinally() {
+        System.out.println("-- Try without catch or finally --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { try { return null; } return null; }"
+        );
+        assertError(out, "E4004", "try without catch or finally");
+    }
+
+    // =========================================================================
+    // E4005 — Catch variable type must be Error or Error | null
+    // =========================================================================
+
+    static void testCatchVariableNotError() {
+        System.out.println("-- Catch variable not Error --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { try { return null; } catch (e: string) { return null; } return null; }"
+        );
+        assertError(out, "E4005", "catch variable not Error type");
+    }
+
+    static void testCatchVariableErrorOrNull() {
+        System.out.println("-- Catch variable Error | null --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { try { return null; } catch (e: Error | null) { return null; } return null; }"
+        );
+        assertNoErrors(out, "catch variable Error | null is valid");
+    }
+
+    // =========================================================================
+    // E3013 — Throw non-Error
+    // =========================================================================
+
+    static void testThrowNonError() {
+        System.out.println("-- Throw non-Error --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { throw \"oops\"; return null; }"
+        );
+        assertError(out, "E3013", "throw non-Error (string)");
+    }
+
+    static void testThrowError() {
+        System.out.println("-- Throw Error --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { throw null; return null; }"
+        );
+        assertNoErrors(out, "throw null (Error) is valid");
+    }
+
+    // =========================================================================
+    // E2001 — Catch variable not declared
+    // =========================================================================
+
+    static void testCatchVariableE2001() {
+        System.out.println("-- Catch variable E2001 --");
+        CheckerOutput out = checkProgram(
+            "function f(): null { try { return null; } catch (x: Error) { return null; } return null; }"
+        );
+        assertError(out, "E2001", "catch variable not declared");
+    }
+
+    // =========================================================================
+    // ISSUE-0017: void as type name produces E3004 (unknown type)
+    // =========================================================================
+
+    static void testVoidTypeNameProducesE3004() {
+        System.out.println("-- ISSUE-0017: void as type name produces E3004 (unknown type) --");
+
+        // Test 1: void as function return type produces E3004
+        CheckerOutput out = checkProgram(
+            "function f(): void { return; }"
+        );
+        assertError(out, "E3004", "void as function return type produces E3004");
+
+        // Test 2: void as parameter type produces E3004
+        out = checkProgram(
+            "function f(x: void): null { return null; }"
+        );
+        assertError(out, "E3004", "void as parameter type produces E3004");
+    }
+
+    // =========================================================================
+    // ISSUE-0017: coroutine as type name produces E3004 (unknown type)
+    // =========================================================================
+
+    static void testCoroutineTypeNameProducesE3004() {
+        System.out.println("-- ISSUE-0017: coroutine as type name produces E3004 (unknown type) --");
+
+        // Test 1: coroutine as function return type produces E3004
+        CheckerOutput out = checkProgram(
+            "function f(): coroutine { return null; }"
+        );
+        assertError(out, "E3004", "coroutine as function return type produces E3004");
+
+        // Test 2: coroutine as variable type produces E3004
+        out = checkProgram(
+            "let c: coroutine = null;"
+        );
+        assertError(out, "E3004", "coroutine as variable type produces E3004");
+    }
+
+    // =========================================================================
     // ISSUE-0008: E6003 — coroutine import rejection
     // =========================================================================
 
-    static void testE6003_coroutineImport() {
-        System.out.println("-- ISSUE-0008: E6003 coroutine import rejection --");
+    // ISSUE-0040: E6003 retired — coroutine import now fails with E2003
+    // =========================================================================
 
-        // Test 1: import * as c from "std/coroutine" should produce E6003
+    static void testCoroutineImportRejected() {
+        System.out.println("-- ISSUE-0040: coroutine import produces E2003 (module not found) --");
+
+        // Test 1: import * as c from "std/coroutine" should produce E2003
         CheckerOutput out = checkProgram(
             "import * as c from \"std/coroutine\";"
         );
-        assertError(out, "E6003", "coroutine import produces E6003");
+        assertError(out, "E2003", "coroutine import produces E2003 (module not found)");
 
-        // Test 2: import alongside other code — E6003 still fires.
+        // Test 2: import alongside other code — E2003 still fires.
         out = checkProgram(
             "import * as c from \"std/coroutine\";\n" +
             "let x: int = 42;"
         );
-        assertError(out, "E6003", "coroutine import with other code still produces E6003");
+        assertError(out, "E2003", "coroutine import with other code still produces E2003");
 
-        // Test 3: use of c.resumeInt after failed import — E6003 fires first.
-        // If the import somehow succeeded (e.g., E6003 check removed),
-        // the TypeChecker would emit E2001 for the undeclared identifier 'c'.
+        // Test 3: use of c.resumeInt after failed import — E2003 fires first.
         out = checkProgram(
             "import * as c from \"std/coroutine\";\n" +
             "let x: int = c.resumeInt(null);"
         );
-        assertError(out, "E6003", "coroutine import with c.resumeInt usage produces E6003");
+        assertError(out, "E2003", "coroutine import with c.resumeInt usage produces E2003");
     }
 
 
@@ -1538,28 +937,10 @@ public class CheckerTest {
         assertNoErrors(out, "for-of over string with string loop var");
     }
 
-    static void testForOfTypeCheck_nonIterable() {
-        System.out.println("-- For-of Type Check: non-iterable -> E3015 --");
-        CheckerOutput out = checkProgram(
-            "function f(b: boolean): null {\n" +
-            "  for (let x: int of b) {\n" +
-            "    let y: int = x;\n" +
-            "  }\n" +
-            "  return null;\n" +
-            "}"
         );
         assertError(out, "E3015", "for-of over boolean -> E3015");
     }
 
-    static void testForOfTypeCheck_arrayWrongVarType() {
-        System.out.println("-- For-of Type Check: array wrong var type -> E3015 --");
-        CheckerOutput out = checkProgram(
-            "function f(xs: int[]): null {\n" +
-            "  for (let x: string of xs) {\n" +
-            "    let y: string = x;\n" +
-            "  }\n" +
-            "  return null;\n" +
-            "}"
         );
         assertError(out, "E3015", "for-of over int[] with string var -> E3015");
     }
@@ -1591,12 +972,6 @@ public class CheckerTest {
         assertNoErrors(out, "template literal with string interpolation");
     }
 
-    static void testTemplateLiteral_nonStringInterpolation() {
-        System.out.println("-- Template Literal: non-string interpolation -> E3016 --");
-        CheckerOutput out = checkProgram(
-            "function f(n: int): string {\n" +
-            "  return `Value: ${n}`;\n" +
-            "}"
         );
         assertError(out, "E3016", "template literal with int interpolation -> E3016");
     }
@@ -1624,4 +999,76 @@ public class CheckerTest {
         );
         assertNoErrors(out, "template literal parts walked for name resolution");
     }
+
+    // =========================================================================
+    // ISSUE-0040: Error class prohibition (E4006)
+    // =========================================================================
+
+    static void testE4006_classErrorProhibition() {
+        System.out.println("-- ISSUE-0040: class Error prohibition (E4006) --");
+
+        // Test 1: module-level class Error should produce E4006
+        CheckerOutput out = checkProgram(
+            "class Error { code: string, message: string }"
+        );
+        assertError(out, "E4006", "module-level class Error produces E4006");
+
+        // Test 2: exported class Error should produce E4006
+        out = checkProgram(
+            "export class Error { code: string, message: string }"
+        );
+        assertError(out, "E4006", "exported class Error produces E4006");
+
+        // Test 3: nested class Error inside a function should produce E4006
+        out = checkProgram(
+            "function f() { class Error { code: string, message: string } }"
+        );
+        assertError(out, "E4006", "nested class Error inside function produces E4006");
+    }
+
+    // =========================================================================
+    // ISSUE-0040: Dollar prohibition (E2008)
+    // =========================================================================
+
+    static void testE2008_dollarInIdentifier() {
+        System.out.println("-- ISSUE-0040: dollar prohibition (E2008) --");
+
+        // Test 1: dollar in class name
+        CheckerOutput out = checkProgram(
+            "class Foo$Bar { }"
+        );
+        assertError(out, "E2008", "dollar in class name produces E2008");
+
+        // Test 2: dollar in function name
+        out = checkProgram(
+            "function foo$bar(): null { return null; }"
+        );
+        assertError(out, "E2008", "dollar in function name produces E2008");
+
+        // Test 3: dollar in let variable name
+        out = checkProgram(
+            "let my$var: int = 42;"
+        );
+        assertError(out, "E2008", "dollar in let variable name produces E2008");
+
+        // Test 4: dollar in parameter name
+        out = checkProgram(
+            "function f(param$name: int): null { return null; }"
+        );
+        assertError(out, "E2008", "dollar in parameter name produces E2008");
+
+        // Test 5: dollar in import alias
+        out = checkProgram(
+            "import * as mod$name from \"./lib\";"
+        );
+        assertError(out, "E2008", "dollar in import alias produces E2008");
+
+        // Test 6: dollar in nested class name
+        out = checkProgram(
+            "function f() { class Nested$Class { } }"
+        );
+        assertError(out, "E2008", "dollar in nested class name produces E2008");
+    }
+
+
 }
