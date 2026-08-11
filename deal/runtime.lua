@@ -1,5 +1,6 @@
--- DEAL Runtime Library v0.7
--- Provides type checks, integer arithmetic, class construction, and function wrapping.
+-- DEAL Runtime Library v0.8
+-- Provides type checks, integer arithmetic, class construction, function wrapping,
+-- and async/await infrastructure.
 -- Loaded by every generated Lua module via require("deal.runtime").
 --
 -- All check_* functions accept optional trailing (file, line, column) arguments
@@ -134,6 +135,7 @@ end
 
 --- Parse a type descriptor string and return a structured representation.
 -- Returns a table: { kind = "primitive"|"array"|"nullable"|"function"|"class", ... }
+-- For async functions, the returned function table has isAsync = true and ret = "null".
 local function parse_descriptor(descriptor)
   if descriptor == nil or type(descriptor) ~= "string" then
     return nil
@@ -180,7 +182,15 @@ local function parse_descriptor(descriptor)
     return { kind = "nullable", inner = d:sub(2) }
   end
 
-  -- Function: "(params)->ret" format
+  -- Function: "(params)->ret" or "async(params)->ret" format
+  -- The "async" prefix is recognized inside the function branch, after
+  -- nullable/array wrappers have been peeled.
+  local is_async = false
+  if d:sub(1, 5) == "async" then
+    is_async = true
+    d = d:sub(6)  -- strip "async" prefix, leaving "(params)->ret"
+  end
+
   if d:sub(1, 1) == "(" then
     local arrow_pos = nil
     depth = 0
@@ -217,6 +227,12 @@ local function parse_descriptor(descriptor)
             end
           end
           params[#params + 1] = params_str:sub(start)
+        end
+        -- Async functions return "null" for ret so from_lua_function skips
+        -- return-type checking on the outer wrapper. The actual return-type
+        -- validation is done inside the coroutine body via codegen-emitted checks.
+        if is_async then
+          return { kind = "function", params = params, ret = "null", isAsync = true }
         end
         return { kind = "function", params = params, ret = ret_type }
       end
@@ -376,6 +392,8 @@ end
 
 --- Wrap a plain Lua function with runtime parameter and return type checks.
 -- Parses the signature descriptor to determine expected parameter types and return type.
+-- For async functions (parsed.isAsync == true), return-type checking is skipped
+-- because the outer wrapper returns an async handle, not the declared return type.
 function __rt.from_lua_function(sig, raw_f)
   if type(raw_f) ~= "function" then
     error(__rt._err("E8001", "expected function, got " .. type(raw_f), nil, nil, nil, "function", type(raw_f)))
@@ -440,6 +458,7 @@ function __rt.from_lua_function(sig, raw_f)
     local nresults = #results
 
     -- Check return type
+    -- Skip for async functions (ret_descriptor = "null") and void functions.
     if ret_descriptor ~= "null" then
       for i = 1, nresults do
         local ok, err = pcall(__rt.check_type, ret_descriptor, results[i])
@@ -451,6 +470,87 @@ function __rt.from_lua_function(sig, raw_f)
 
     return unpack(results, 1, nresults)
   end)
+end
+
+-- ===== Async infrastructure =====
+
+--- Create an async handle wrapping a coroutine.
+-- The handle is an opaque table that the awaiter manages.
+-- @param fn function — the coroutine body (a Lua function)
+-- @return table — async handle
+function __rt.async_create(fn)
+  local co = coroutine.create(fn)
+  return { __kind = "async", __co = co, __done = false, __result = nil }
+end
+
+--- Start an async operation: create a handle and step it.
+-- Returns the async handle immediately. The coroutine runs until
+-- it yields or completes.
+-- @param fn function — the coroutine body
+-- @return table — async handle (opaque to user code)
+function __rt.async_start(fn)
+  local handle = __rt.async_create(fn)
+  __rt.async_step(handle)
+  return handle
+end
+
+--- Step an async handle: resume its coroutine and chain if it yields.
+-- If the handle is already done (__done guard), return immediately.
+-- If the coroutine is dead after resume, store the result and mark done.
+-- If the coroutine yielded an async handle, chain: wait for the inner
+-- handle to complete, then resume this one with the inner result.
+-- @param handle table — the async handle to step
+-- @param value  any    — value to pass to coroutine.resume (result of awaited call)
+function __rt.async_step(handle, value)
+  -- Guard: if already done, return immediately.
+  -- This prevents coroutine.resume on a dead coroutine when
+  -- an async function completes without internally executing await.
+  if handle.__done then
+    return
+  end
+  local ok, yielded = coroutine.resume(handle.__co, value)
+  if not ok then
+    -- Error propagates: error() unwinds to the nearest pcall/xpcall.
+    error(yielded)
+  end
+  if coroutine.status(handle.__co) == "dead" then
+    -- Coroutine completed: store result, mark done.
+    handle.__done = true
+    handle.__result = yielded
+    return
+  end
+  -- Coroutine yielded. Expect an async handle.
+  if type(yielded) == "table" and yielded.__kind == "async" then
+    local inner_handle = yielded
+    local outer_handle = handle
+    if inner_handle.__done then
+      -- Inner already done: directly resume outer with inner's result.
+      __rt.async_step(outer_handle, inner_handle.__result)
+    else
+      -- Chain: wait for inner to complete, then resume outer.
+      __rt.async_chain(inner_handle, outer_handle)
+    end
+  else
+    error(__rt._err("E8001", "await expression must call an async function", nil, nil, nil, "async function", type(yielded)))
+  end
+end
+
+--- Chain an inner async handle to an outer one.
+-- When the inner handle completes, resume the outer with the result.
+-- @param inner table — the inner async handle being awaited
+-- @param outer table — the outer async handle that should resume
+function __rt.async_chain(inner, outer)
+  -- Guard: if inner is already done, directly resume outer.
+  if inner.__done then
+    __rt.async_step(outer, inner.__result)
+    return
+  end
+  -- Step the inner handle. It may itself yield to deeper async calls.
+  __rt.async_step(inner)
+  -- After stepping, check if inner completed.
+  if inner.__done then
+    __rt.async_step(outer, inner.__result)
+  end
 end
 
 -- ===== Class infrastructure =====
@@ -548,7 +648,8 @@ end
 
 --- Deep-copy a table recursively.
 -- Preserves sentinel identity: __NULL and __MISSING are returned as-is.
--- Functions are not copied (returned as-is).
+-- Functions, function wrappers, class instances, and async handles are
+-- not copied (returned as-is).
 -- Handles cycles gracefully by... actually, doesn't handle cycles (class defaults shouldn't be cyclic).
 function __rt._deep_copy(t)
   if type(t) ~= "table" then
@@ -558,14 +659,8 @@ function __rt._deep_copy(t)
   if t == __rt.__NULL or t == __rt.__MISSING then
     return t
   end
-  -- Check if this is a function wrapper (has __kind = "function")
-  if t.__kind == "function" then
-    -- Function wrappers are returned as-is (identity preserved)
-    return t
-  end
-  -- Check if this is a class instance (has __kind = "class")
-  if t.__kind == "class" then
-    -- Class instances are returned as-is (identity preserved)
+  -- Preserve special __kind objects by identity
+  if t.__kind == "function" or t.__kind == "class" or t.__kind == "async" then
     return t
   end
   local copy = {}

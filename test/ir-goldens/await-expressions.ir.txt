@@ -1,4 +1,50 @@
-module @test/ir-goldens/fixtures/await-expressions.deal:5:1-8:1
-  function placeholder: null @test/ir-goldens/fixtures/await-expressions.deal:5:1-8:1
+module @test/ir-goldens/fixtures/await-expressions.deal:5:1-21:1
+  class Calc @test/ir-goldens/fixtures/await-expressions.deal:5:1-5:14
+  function add: int @test/ir-goldens/fixtures/await-expressions.deal:7:1-11:8
+    param a: int @test/ir-goldens/fixtures/await-expressions.deal:7:14-7:20
+      [boundary: param-entry]
+    param b: int @test/ir-goldens/fixtures/await-expressions.deal:7:22-7:28
+      [boundary: param-entry]
     body
-      return @test/ir-goldens/fixtures/await-expressions.deal:6:5-7:1
+      return @test/ir-goldens/fixtures/await-expressions.deal:8:5-9:1
+        [boundary: return]
+        binary + : int @test/ir-goldens/fixtures/await-expressions.deal:8:12-8:16
+          ident a : int @test/ir-goldens/fixtures/await-expressions.deal:8:12-8:12
+          ident b : int @test/ir-goldens/fixtures/await-expressions.deal:8:16-8:16
+  function compute: int @test/ir-goldens/fixtures/await-expressions.deal:11:1-16:8
+    param x: int @test/ir-goldens/fixtures/await-expressions.deal:11:18-11:24
+      [boundary: param-entry]
+    param y: int @test/ir-goldens/fixtures/await-expressions.deal:11:26-11:32
+      [boundary: param-entry]
+    body
+      let r: int @test/ir-goldens/fixtures/await-expressions.deal:12:5-13:10
+        [boundary: var-annotation]
+        call : int @test/ir-goldens/fixtures/await-expressions.deal:12:18-12:26
+          ident add : (int,int)->int @test/ir-goldens/fixtures/await-expressions.deal:12:18-12:20
+          ident x : int @test/ir-goldens/fixtures/await-expressions.deal:12:22-12:22
+          ident y : int @test/ir-goldens/fixtures/await-expressions.deal:12:25-12:25
+      return @test/ir-goldens/fixtures/await-expressions.deal:13:5-14:1
+        [boundary: return]
+        ident r : int @test/ir-goldens/fixtures/await-expressions.deal:13:12-13:12
+  function chain: int @test/ir-goldens/fixtures/await-expressions.deal:16:1-21:1
+    param a: int @test/ir-goldens/fixtures/await-expressions.deal:16:16-16:22
+      [boundary: param-entry]
+    body
+      let b: int @test/ir-goldens/fixtures/await-expressions.deal:17:5-18:7
+        [boundary: var-annotation]
+        call : int @test/ir-goldens/fixtures/await-expressions.deal:17:18-17:26
+          ident add : (int,int)->int @test/ir-goldens/fixtures/await-expressions.deal:17:18-17:20
+          ident a : int @test/ir-goldens/fixtures/await-expressions.deal:17:22-17:22
+          literal 1 : int @test/ir-goldens/fixtures/await-expressions.deal:17:25-17:25
+      let c: int @test/ir-goldens/fixtures/await-expressions.deal:18:5-19:10
+        [boundary: var-annotation]
+        call : int @test/ir-goldens/fixtures/await-expressions.deal:18:18-18:26
+          ident add : (int,int)->int @test/ir-goldens/fixtures/await-expressions.deal:18:18-18:20
+          ident b : int @test/ir-goldens/fixtures/await-expressions.deal:18:22-18:22
+          literal 2 : int @test/ir-goldens/fixtures/await-expressions.deal:18:25-18:25
+      return @test/ir-goldens/fixtures/await-expressions.deal:19:5-20:1
+        [boundary: return]
+        call : int @test/ir-goldens/fixtures/await-expressions.deal:19:12-19:20
+          ident add : (int,int)->int @test/ir-goldens/fixtures/await-expressions.deal:19:12-19:14
+          ident c : int @test/ir-goldens/fixtures/await-expressions.deal:19:16-19:16
+          literal 3 : int @test/ir-goldens/fixtures/await-expressions.deal:19:19-19:19

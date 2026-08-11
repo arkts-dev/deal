@@ -1,7 +1,25 @@
 // IR golden fixture: jsonable-classes
-// TODO(v1.1): Add @jsonable class when the feature lands.
-// Currently contains a minimal valid class as a placeholder.
+// Tests class declarations with various field patterns:
+// required fields with defaults, optional fields, and edge cases.
 
-class Placeholder {
+class Point {
+    x: int = 0;
+    y: int = 0;
+}
+
+class User {
     name: string = "";
+    age?: int;
+    active: boolean = true;
+}
+
+class Config {
+    title: string = "untitled";
+    count: int = 1;
+    ratio: number = 1.0;
+    enabled: boolean = false;
+}
+
+function makePoint(x: int, y: int): Point {
+    return { x: x, y: y };
 }
