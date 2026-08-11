@@ -162,6 +162,13 @@ public class LuaBackendIntegrationTest {
         testForOfTryCatchInside();
         testForOfStringMemberAccess();
 
+        // ISSUE-0055: Async/await integration tests
+        testAsyncSimpleAwait();
+        testAsyncSyncComplete();
+        testAsyncNested();
+        testAsyncThrowCatch();
+        testAsyncErrorPropagation();
+
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -2639,6 +2646,292 @@ public class LuaBackendIntegrationTest {
         check(exit == 0, "for-of string member access: luajit exit 0 (got: " + output + ")");
         check(output.equals("5"),
             "for-of string member access: expected 5, got: " + output);
+    }
+
+    // =========================================================================
+    // ISSUE-0055: Async/await integration tests
+    // =========================================================================
+
+    static void testAsyncSimpleAwait() throws Exception {
+        System.out.println("-- Async Simple Await --");
+        String dealSrc =
+            "export async function g(): int { return 42; }\n" +
+            "export async function f(): int { return await g(); }\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "async simple await: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local handle = mod.f.f()\n" +
+            "if handle.__kind ~= 'async' then print('NOT ASYNC: ' .. tostring(handle.__kind)); return end\n" +
+            "if not handle.__done then print('PENDING'); return end\n" +
+            "print(handle.__result)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "async simple await: luajit exit 0 (got: " + output + ")");
+        check(output.equals("42"), "async simple await: expected 42, got: " + output);
+    }
+
+    static void testAsyncSyncComplete() throws Exception {
+        System.out.println("-- Async Sync Complete --");
+        String dealSrc =
+            "export async function f(): int { return 5; }\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "async sync complete: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local handle = mod.f.f()\n" +
+            "if handle.__kind ~= 'async' then print('NOT ASYNC'); return end\n" +
+            "if not handle.__done then print('PENDING'); return end\n" +
+            "print(handle.__result)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "async sync complete: luajit exit 0 (got: " + output + ")");
+        check(output.equals("5"), "async sync complete: expected 5, got: " + output);
+    }
+
+    static void testAsyncNested() throws Exception {
+        System.out.println("-- Async Nested --");
+        String dealSrc =
+            "export async function c(): int { return 10; }\n" +
+            "export async function b(): int { return await c(); }\n" +
+            "export async function a(): int { return await b(); }\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "async nested: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local handle = mod.a.f()\n" +
+            "if handle.__kind ~= 'async' then print('NOT ASYNC'); return end\n" +
+            "if not handle.__done then print('PENDING'); return end\n" +
+            "print(handle.__result)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "async nested: luajit exit 0 (got: " + output + ")");
+        check(output.equals("10"), "async nested: expected 10, got: " + output);
+    }
+
+    static void testAsyncThrowCatch() throws Exception {
+        System.out.println("-- Async Throw Catch --");
+        String dealSrc =
+            "export async function f(): string {\n" +
+            "  try {\n" +
+            "    throw { code: \"E_TEST\", message: \"test error\" };\n" +
+            "  } catch (e) {\n" +
+            "    return e.code;\n" +
+            "  }\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "async throw catch: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local handle = mod.f.f()\n" +
+            "if handle.__kind ~= 'async' then print('NOT ASYNC'); return end\n" +
+            "if not handle.__done then print('PENDING'); return end\n" +
+            "print(handle.__result)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "async throw catch: luajit exit 0 (got: " + output + ")");
+        check(output.equals("E_TEST"), "async throw catch: expected E_TEST, got: " + output);
+    }
+
+    static void testAsyncErrorPropagation() throws Exception {
+        System.out.println("-- Async Error Propagation --");
+        // inner throws, outer catches via try/catch around await
+        // Use int() conversion instead of string() since there is no string() intrinsic.
+        String dealSrc =
+            "export async function inner(): int {\n" +
+            "  throw { code: \"E_INNER\", message: \"inner error\" };\n" +
+            "  return 0;\n" +
+            "}\n" +
+            "export async function outer(): string {\n" +
+            "  try {\n" +
+            "    let _: int = await inner();\n" +
+            "    return \"no error\";\n" +
+            "  } catch (e) {\n" +
+            "    return e.code;\n" +
+            "  }\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "async error propagation: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local handle = mod.outer.f()\n" +
+            "if handle.__kind ~= 'async' then print('NOT ASYNC'); return end\n" +
+            "if not handle.__done then print('PENDING'); return end\n" +
+            "print(handle.__result)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "async error propagation: luajit exit 0 (got: " + output + ")");
+        check(output.equals("E_INNER"), "async error propagation: expected E_INNER, got: " + output);
     }
 
 }

@@ -1381,6 +1381,65 @@ test("async outer wrapper: sync function still validates return type", function(
 end)
 
 
+-- ==================== Deep async nesting test ====================
+
+test("async deep nesting: 50-level chain completes correctly", function()
+  -- Build a chain of N async coroutines where each awaits the next.
+  -- The deepest returns a value; each level passes it up via coroutine.yield.
+  -- async_step/async_chain recursion handles the depth.
+  local N = 50
+
+  -- Build from deepest outward:
+  -- deepest returns 1
+  -- level N-1 awaits deepest, adds 1
+  -- ...
+  -- level 1 awaits level 2, adds 1
+  -- Result should be N (50)
+
+  -- Create coroutine functions: deepest first
+  local coro_fns = {}
+  coro_fns[N] = function()
+    return 1
+  end
+
+  for i = N - 1, 1, -1 do
+    local inner_handle = nil  -- will be set
+    coro_fns[i] = function()
+      local val = coroutine.yield(inner_handle)
+      return val + 1
+    end
+  end
+
+  -- Create handles from outermost to deepest
+  local handles = {}
+  for i = N, 1, -1 do
+    handles[i] = __rt.async_create(coro_fns[i])
+    if i < N then
+      -- Patch the inner_handle reference for this level
+      -- We need to capture handles[i+1] in the closure
+      -- Re-create with proper capture
+      local inner_h = handles[i + 1]
+      handles[i] = __rt.async_create(function()
+        local val = coroutine.yield(inner_h)
+        return val + 1
+      end)
+    end
+  end
+
+  -- Now step from outermost: async_step will chain through all 50 levels
+  __rt.async_step(handles[1])
+
+  -- All handles should be done, result should be N
+  for i = 1, N do
+    assert(handles[i].__done, "handle " .. i .. " should be done")
+  end
+  assert(handles[1].__result == N,
+    "deep nesting result should be " .. N .. ", got: " .. tostring(handles[1].__result))
+  assert(handles[N].__result == 1,
+    "deepest result should be 1, got: " .. tostring(handles[N].__result))
+end)
+
+
 -- ==================== Summary ====================
 
 print("")
