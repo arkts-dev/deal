@@ -1,3 +1,4 @@
+// @spec: Async/Await — cross-module companion module for frontend tests
 // Helper module for import-under-await test
 export async function fetch(id: int): int {
   return id * 2;
