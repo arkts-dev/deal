@@ -390,15 +390,20 @@
       ]
     },
     {
-      "name": "async-function-pending",
-      "description": "Async function descriptor \u2014 pending ISSUE-0017. SKIP (empty backends).",
-      "source": "function fetch(x: int): string { return \"\"; }",
+      "name": "async-function-descriptor",
+      "description": "Async function descriptor uses async prefix in IR",
+      "source": "async function fetch(x: int): string { return \"data\"; }\nlet f: async (x: int) => string = fetch;",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": [],
+      "irContains": [
+        "async(int)->string",
+        "async function fetch: string"
+      ],
       "irNotContains": [],
-      "backends": []
+      "backends": [
+        "luajit"
+      ]
     }
   ]
 }

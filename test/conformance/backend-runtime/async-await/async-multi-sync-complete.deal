@@ -1,0 +1,18 @@
+// @spec: Async/Await — multi-level synchronous completion chain
+// @description: Multiple levels of async functions where innermost completes synchronously;
+//              __done guard prevents dead-coroutine resume at every level
+// @expected: runtime-ok
+// @features: async, await, runtime
+
+// Level 3: sync completion — no internal await
+async function level3_sync(): int { return 3; }
+
+// Level 2: awaits level3_sync (which completes synchronously)
+async function level2(): int { return await level3_sync(); }
+
+// Level 1: awaits level2
+async function level1(): int { return await level2(); }
+
+export async function test(): int {
+  return await level1();
+}

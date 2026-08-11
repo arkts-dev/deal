@@ -1,50 +1,53 @@
-module @test/ir-goldens/fixtures/await-expressions.deal:5:1-21:1
-  class Calc @test/ir-goldens/fixtures/await-expressions.deal:5:1-5:14
-  function add: int @test/ir-goldens/fixtures/await-expressions.deal:7:1-11:8
-    param a: int @test/ir-goldens/fixtures/await-expressions.deal:7:14-7:20
+module @test/ir-goldens/fixtures/await-expressions.deal:6:1-20:1
+  async function add: int @test/ir-goldens/fixtures/await-expressions.deal:6:1-10:5
+    param a: int @test/ir-goldens/fixtures/await-expressions.deal:6:20-6:26
       [boundary: param-entry]
-    param b: int @test/ir-goldens/fixtures/await-expressions.deal:7:22-7:28
-      [boundary: param-entry]
-    body
-      return @test/ir-goldens/fixtures/await-expressions.deal:8:5-9:1
-        [boundary: return]
-        binary + : int @test/ir-goldens/fixtures/await-expressions.deal:8:12-8:16
-          ident a : int @test/ir-goldens/fixtures/await-expressions.deal:8:12-8:12
-          ident b : int @test/ir-goldens/fixtures/await-expressions.deal:8:16-8:16
-  function compute: int @test/ir-goldens/fixtures/await-expressions.deal:11:1-16:8
-    param x: int @test/ir-goldens/fixtures/await-expressions.deal:11:18-11:24
-      [boundary: param-entry]
-    param y: int @test/ir-goldens/fixtures/await-expressions.deal:11:26-11:32
+    param b: int @test/ir-goldens/fixtures/await-expressions.deal:6:28-6:34
       [boundary: param-entry]
     body
-      let r: int @test/ir-goldens/fixtures/await-expressions.deal:12:5-13:10
-        [boundary: var-annotation]
-        call : int @test/ir-goldens/fixtures/await-expressions.deal:12:18-12:26
-          ident add : (int,int)->int @test/ir-goldens/fixtures/await-expressions.deal:12:18-12:20
-          ident x : int @test/ir-goldens/fixtures/await-expressions.deal:12:22-12:22
-          ident y : int @test/ir-goldens/fixtures/await-expressions.deal:12:25-12:25
-      return @test/ir-goldens/fixtures/await-expressions.deal:13:5-14:1
-        [boundary: return]
-        ident r : int @test/ir-goldens/fixtures/await-expressions.deal:13:12-13:12
-  function chain: int @test/ir-goldens/fixtures/await-expressions.deal:16:1-21:1
-    param a: int @test/ir-goldens/fixtures/await-expressions.deal:16:16-16:22
+      return @test/ir-goldens/fixtures/await-expressions.deal:7:5-8:1
+        [boundary: async-completion]
+        binary + : int @test/ir-goldens/fixtures/await-expressions.deal:7:12-7:16
+          ident a : int @test/ir-goldens/fixtures/await-expressions.deal:7:12-7:12
+          ident b : int @test/ir-goldens/fixtures/await-expressions.deal:7:16-7:16
+  async function compute: int @test/ir-goldens/fixtures/await-expressions.deal:10:1-15:5
+    param x: int @test/ir-goldens/fixtures/await-expressions.deal:10:24-10:30
+      [boundary: param-entry]
+    param y: int @test/ir-goldens/fixtures/await-expressions.deal:10:32-10:38
       [boundary: param-entry]
     body
-      let b: int @test/ir-goldens/fixtures/await-expressions.deal:17:5-18:7
+      let r: int @test/ir-goldens/fixtures/await-expressions.deal:11:5-12:10
         [boundary: var-annotation]
-        call : int @test/ir-goldens/fixtures/await-expressions.deal:17:18-17:26
-          ident add : (int,int)->int @test/ir-goldens/fixtures/await-expressions.deal:17:18-17:20
-          ident a : int @test/ir-goldens/fixtures/await-expressions.deal:17:22-17:22
-          literal 1 : int @test/ir-goldens/fixtures/await-expressions.deal:17:25-17:25
-      let c: int @test/ir-goldens/fixtures/await-expressions.deal:18:5-19:10
+        await : int @test/ir-goldens/fixtures/await-expressions.deal:11:18-11:32
+          call : int @test/ir-goldens/fixtures/await-expressions.deal:11:24-11:32
+            ident add : async(int,int)->int @test/ir-goldens/fixtures/await-expressions.deal:11:24-11:26
+            ident x : int @test/ir-goldens/fixtures/await-expressions.deal:11:28-11:28
+            ident y : int @test/ir-goldens/fixtures/await-expressions.deal:11:31-11:31
+      return @test/ir-goldens/fixtures/await-expressions.deal:12:5-13:1
+        [boundary: async-completion]
+        ident r : int @test/ir-goldens/fixtures/await-expressions.deal:12:12-12:12
+  async function chain: int @test/ir-goldens/fixtures/await-expressions.deal:15:1-20:1
+    param a: int @test/ir-goldens/fixtures/await-expressions.deal:15:22-15:28
+      [boundary: param-entry]
+    body
+      let b: int @test/ir-goldens/fixtures/await-expressions.deal:16:5-17:7
         [boundary: var-annotation]
-        call : int @test/ir-goldens/fixtures/await-expressions.deal:18:18-18:26
-          ident add : (int,int)->int @test/ir-goldens/fixtures/await-expressions.deal:18:18-18:20
-          ident b : int @test/ir-goldens/fixtures/await-expressions.deal:18:22-18:22
-          literal 2 : int @test/ir-goldens/fixtures/await-expressions.deal:18:25-18:25
-      return @test/ir-goldens/fixtures/await-expressions.deal:19:5-20:1
-        [boundary: return]
-        call : int @test/ir-goldens/fixtures/await-expressions.deal:19:12-19:20
-          ident add : (int,int)->int @test/ir-goldens/fixtures/await-expressions.deal:19:12-19:14
-          ident c : int @test/ir-goldens/fixtures/await-expressions.deal:19:16-19:16
-          literal 3 : int @test/ir-goldens/fixtures/await-expressions.deal:19:19-19:19
+        await : int @test/ir-goldens/fixtures/await-expressions.deal:16:18-16:32
+          call : int @test/ir-goldens/fixtures/await-expressions.deal:16:24-16:32
+            ident add : async(int,int)->int @test/ir-goldens/fixtures/await-expressions.deal:16:24-16:26
+            ident a : int @test/ir-goldens/fixtures/await-expressions.deal:16:28-16:28
+            literal 1 : int @test/ir-goldens/fixtures/await-expressions.deal:16:31-16:31
+      let c: int @test/ir-goldens/fixtures/await-expressions.deal:17:5-18:10
+        [boundary: var-annotation]
+        await : int @test/ir-goldens/fixtures/await-expressions.deal:17:18-17:32
+          call : int @test/ir-goldens/fixtures/await-expressions.deal:17:24-17:32
+            ident add : async(int,int)->int @test/ir-goldens/fixtures/await-expressions.deal:17:24-17:26
+            ident b : int @test/ir-goldens/fixtures/await-expressions.deal:17:28-17:28
+            literal 2 : int @test/ir-goldens/fixtures/await-expressions.deal:17:31-17:31
+      return @test/ir-goldens/fixtures/await-expressions.deal:18:5-19:1
+        [boundary: async-completion]
+        await : int @test/ir-goldens/fixtures/await-expressions.deal:18:12-18:26
+          call : int @test/ir-goldens/fixtures/await-expressions.deal:18:18-18:26
+            ident add : async(int,int)->int @test/ir-goldens/fixtures/await-expressions.deal:18:18-18:20
+            ident c : int @test/ir-goldens/fixtures/await-expressions.deal:18:22-18:22
+            literal 3 : int @test/ir-goldens/fixtures/await-expressions.deal:18:25-18:25

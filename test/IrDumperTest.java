@@ -46,6 +46,7 @@ public class IrDumperTest {
         testTableReadBoundary();
         testStdlibBoundary();
         testExternalBoundary();
+        testAwaitExpressionIr();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -614,6 +615,88 @@ public class IrDumperTest {
     }
 
     // =========================================================================
+    // AwaitExpression IR dump test
+    // =========================================================================
+
+    /**
+     * Tests that the IrDumper properly handles AwaitExpression nodes
+     * instead of silently emitting null (the default Visitor return).
+     */
+    static void testAwaitExpressionIr() {
+        System.out.print("  testAwaitExpressionIr... ");
+
+        // Build a synthetic async function with an await expression:
+        // async function g(): int { return 42; }
+        // async function f(): int { return await g(); }
+        Span span = new Span("test.deal", 1, 1, 5, 1);
+
+        // async function g(): int { return 42; }
+        LiteralExpr lit42 = new LiteralExpr(
+            new Span("test.deal", 2, 18, 2, 20),
+            new LiteralValue.IntLiteral(42));
+        ReturnStatement gReturn = new ReturnStatement(
+            new Span("test.deal", 2, 9, 2, 21),
+            Optional.of(lit42));
+        FunctionDeclaration gDecl = new FunctionDeclaration(
+            new Span("test.deal", 2, 1, 3, 2), "g",
+            List.of(), Optional.empty(),
+            new NamedType(new Span("test.deal", 2, 17, 2, 17), "int"),
+            new Block(new Span("test.deal", 2, 22, 3, 2), List.of(gReturn)),
+            true);  // isAsync = true
+
+        // await g() — the await expression wrapping the call
+        IdentifierExpr gId = new IdentifierExpr(
+            new Span("test.deal", 4, 17, 4, 20), "g");
+        CallExpr gCall = new CallExpr(
+            new Span("test.deal", 4, 17, 4, 21), gId, List.of());
+        AwaitExpression awaitExpr = new AwaitExpression(
+            new Span("test.deal", 4, 11, 4, 21), gCall);
+        ReturnStatement fReturn = new ReturnStatement(
+            new Span("test.deal", 4, 5, 4, 21),
+            Optional.of(awaitExpr));
+        FunctionDeclaration fDecl = new FunctionDeclaration(
+            new Span("test.deal", 4, 1, 5, 1), "f",
+            List.of(), Optional.empty(),
+            new NamedType(new Span("test.deal", 4, 16, 4, 16), "int"),
+            new Block(new Span("test.deal", 4, 22, 5, 1), List.of(fReturn)),
+            true);  // isAsync = true
+
+        ProgramNode prog = new ProgramNode(span, List.of(gDecl, fDecl));
+
+        // Build type map
+        Map<ExpressionNode, Type> typeMap = new HashMap<>();
+        typeMap.put(lit42, Type.Int.INSTANCE);
+
+        // g has type async()->int
+        Type.Func gType = Types.func(List.of(), Type.Int.INSTANCE, true);
+        typeMap.put(gId, gType);
+        // gCall result type is int (return type of g)
+        typeMap.put(gCall, Type.Int.INSTANCE);
+        // awaitExpr result type is int (return type of async function)
+        typeMap.put(awaitExpr, Type.Int.INSTANCE);
+        // fReturn
+        typeMap.put(fReturn.expr().get(), Type.Int.INSTANCE);
+
+        // gReturn
+        typeMap.put(gReturn.expr().get(), Type.Int.INSTANCE);
+
+        SymbolTable st = new SymbolTable();
+        st.define("g", new Symbol.FunctionSymbol("g", gType));
+        st.define("f", new Symbol.FunctionSymbol("f",
+            Types.func(List.of(), Type.Int.INSTANCE, true)));
+        CheckResult result = new CheckResult(typeMap, st, List.of());
+
+        String ir = IrDumper.dump(prog, result, "test");
+
+        assertContains(ir, "async function g: int", "async function g header");
+        assertContains(ir, "async function f: int", "async function f header");
+        assertContains(ir, "await : int", "await expression with type");
+        assertContains(ir, "call : int", "call inside await");
+        assertContains(ir, "ident g : async()->int", "async function type on ident");
+
+        System.out.println("OK");
+    }
+
 
     /**
      * Tests that rest parameter types in the spec type descriptor use

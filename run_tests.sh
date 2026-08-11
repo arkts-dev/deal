@@ -128,7 +128,13 @@ else
 fi
 
 echo ""
-echo "=== Running Stdlib Contract Tests ==="
+echo ""
+echo "=== Running Async Nesting Stress Tests ==="
+if command -v luajit &> /dev/null; then
+  luajit test_async_nesting.lua
+else
+  echo "WARNING: luajit not found, skipping async nesting stress tests"
+fi
 java -ea -cp build deal.test.StdlibContractTest
 
 echo ""
