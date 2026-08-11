@@ -38,8 +38,13 @@ public class IrDumperTest {
         testDeclFileMode();
         testDeterministicOrdering();
         testNullSpanThrows();
+        testNullSpanInNodeThrows();
+        testMissingTypeMapEntryThrows();
         testSyntheticSpan();
         testCallExpr();
+        testTableReadBoundary();
+        testStdlibBoundary();
+        testExternalBoundary();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -230,31 +235,27 @@ public class IrDumperTest {
     static void testThrow() {
         System.out.print("  testThrow... ");
         Span span = new Span("test.deal", 1, 1, 1, 30);
+        IdentifierExpr errorIdent = new IdentifierExpr(
+            new Span("test.deal", 2, 9, 2, 13), "Error");
+        LiteralExpr oopsLit = new LiteralExpr(
+            new Span("test.deal", 2, 15, 2, 22),
+            new LiteralValue.StringLiteral("oops"));
+        CallExpr errorCall = new CallExpr(
+            new Span("test.deal", 2, 9, 2, 23), errorIdent, List.of(oopsLit));
+        ThrowStatement throwStmt = new ThrowStatement(
+            new Span("test.deal", 2, 3, 2, 23), errorCall);
         FunctionDeclaration fd = new FunctionDeclaration(
             new Span("test.deal", 1, 1, 3, 2), "f",
             List.of(), Optional.empty(),
             new NamedType(new Span("test.deal", 1, 19, 1, 22), "null"),
-            new Block(new Span("test.deal", 1, 24, 3, 2), List.of(
-                new ThrowStatement(
-                    new Span("test.deal", 2, 3, 2, 23),
-                    new CallExpr(
-                        new Span("test.deal", 2, 9, 2, 23),
-                        new IdentifierExpr(new Span("test.deal", 2, 9, 2, 13), "Error"),
-                        List.of(
-                            new LiteralExpr(new Span("test.deal", 2, 15, 2, 22),
-                                new LiteralValue.StringLiteral("oops"))
-                        )
-                    )
-                )
-            ))
-        );
+            new Block(new Span("test.deal", 1, 24, 3, 2), List.of(throwStmt)));
         ProgramNode prog = new ProgramNode(span, List.of(fd));
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
         Type errorType = Types.classType("Error", "test");
-        typeMap.put(
-            ((ThrowStatement)((Block)fd.body()).statements().get(0)).expr(),
-            errorType);
+        typeMap.put(errorCall, errorType);
+        typeMap.put(errorIdent, errorType);
+        typeMap.put(oopsLit, Type.String.INSTANCE);
         SymbolTable st = new SymbolTable();
         st.define("Error", new Symbol.ClassSymbol("Error", List.of(), "test"));
         st.define("f", new Symbol.FunctionSymbol("f",
@@ -404,6 +405,87 @@ public class IrDumperTest {
         System.out.println("OK");
     }
 
+    /**
+     * Tests that passing an AST node with a null span results in
+     * IllegalStateException with a message identifying the node class.
+     */
+    static void testNullSpanInNodeThrows() {
+        System.out.print("  testNullSpanInNodeThrows... ");
+        // Construct a ProgramNode containing a VariableDeclaration with a null span
+        LiteralExpr lit = new LiteralExpr(
+            new Span("test.deal", 1, 1, 1, 1),
+            new LiteralValue.IntLiteral(42));
+        VariableDeclaration var = new VariableDeclaration(
+            null,  // null span — should trigger IllegalStateException
+            "x",
+            Optional.empty(),
+            lit);
+
+        ProgramNode prog = new ProgramNode(
+            new Span("test.deal", 1, 1, 1, 1),
+            List.of(var));
+
+        Map<ExpressionNode, Type> typeMap = new HashMap<>();
+        typeMap.put(lit, Type.Int.INSTANCE);
+        SymbolTable st = new SymbolTable();
+        st.define("x", new Symbol.VariableSymbol("x", Type.Int.INSTANCE, false));
+        CheckResult result = new CheckResult(typeMap, st, List.of());
+
+        try {
+            IrDumper.dump(prog, result, "test");
+            failed++;
+            System.out.println("FAIL: should have thrown IllegalStateException for null span");
+        } catch (IllegalStateException e) {
+            String msg = e.getMessage();
+            if (msg.contains("null span") || msg.contains("VariableDeclaration")) {
+                passed++;
+                System.out.println("OK (caught: " + msg + ")");
+            } else {
+                failed++;
+                System.out.println("FAIL: message should identify null span or node class, got: " + msg);
+            }
+        }
+    }
+
+    /**
+     * Tests that a missing typeMap entry in full-module mode throws
+     * IllegalStateException with the node class name and span.
+     */
+    static void testMissingTypeMapEntryThrows() {
+        System.out.print("  testMissingTypeMapEntryThrows... ");
+        // Construct an IdentifierExpr that is NOT in the typeMap
+        IdentifierExpr idExpr = new IdentifierExpr(
+            new Span("test.deal", 1, 10, 1, 11), "x");
+        VariableDeclaration var = new VariableDeclaration(
+            new Span("test.deal", 1, 1, 1, 11), "y",
+            Optional.empty(), idExpr);
+
+        ProgramNode prog = new ProgramNode(
+            new Span("test.deal", 1, 1, 1, 11),
+            List.of(var));
+
+        // typeMap is empty — idExpr is missing
+        Map<ExpressionNode, Type> typeMap = new HashMap<>();
+        SymbolTable st = new SymbolTable();
+        st.define("y", new Symbol.VariableSymbol("y", Type.Int.INSTANCE, false));
+        CheckResult result = new CheckResult(typeMap, st, List.of());
+
+        try {
+            IrDumper.dump(prog, result, "test");
+            failed++;
+            System.out.println("FAIL: should have thrown IllegalStateException for missing typeMap entry");
+        } catch (IllegalStateException e) {
+            String msg = e.getMessage();
+            if (msg.contains("Missing typeMap entry") || msg.contains("IdentifierExpr")) {
+                passed++;
+                System.out.println("OK (caught: " + msg + ")");
+            } else {
+                failed++;
+                System.out.println("FAIL: message should identify missing typeMap entry, got: " + msg);
+            }
+        }
+    }
+
     static void testSyntheticSpan() {
         System.out.print("  testSyntheticSpan... ");
         String source = "function f(): null { return; }";
@@ -428,6 +510,105 @@ public class IrDumperTest {
 
         assertContains(ir, "call : int", "call expr");
         assertContains(ir, "ident compute : (int,int)->int", "callee ident");
+        System.out.println("OK");
+    }
+
+    // =========================================================================
+    // New boundary tests (reviewer feedback fixes)
+    // =========================================================================
+
+    static void testTableReadBoundary() {
+        System.out.print("  testTableReadBoundary... ");
+        // A table read with contextual type should produce [boundary: table-read]
+        String source = """
+            function readTable(t: table): string {
+                return t.name;
+            }
+            """;
+        CompileResult cr = compile(source);
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+
+        assertContains(ir, "[boundary: table-read]", "table-read boundary on member access");
+        System.out.println("OK");
+    }
+
+    static void testStdlibBoundary() {
+        System.out.print("  testStdlibBoundary... ");
+        // Simulate a call to a stdlib function via an import alias
+        Span span = new Span("test.deal", 1, 1, 1, 30);
+        ImportDeclaration imp = new ImportDeclaration(
+            new Span("test.deal", 1, 1, 1, 30), "S", "std/string");
+
+        IdentifierExpr calleeId = new IdentifierExpr(
+            new Span("test.deal", 2, 11, 2, 12), "S");
+        MemberAccessExpr callee = new MemberAccessExpr(
+            new Span("test.deal", 2, 11, 2, 19), calleeId, "length");
+        LiteralExpr arg = new LiteralExpr(
+            new Span("test.deal", 2, 20, 2, 27),
+            new LiteralValue.StringLiteral("hello"));
+        CallExpr call = new CallExpr(
+            new Span("test.deal", 2, 11, 2, 28), callee, List.of(arg));
+        VariableDeclaration var = new VariableDeclaration(
+            new Span("test.deal", 2, 1, 2, 28), "x",
+            java.util.Optional.of(new NamedType(new Span("test.deal", 2, 5, 2, 10), "int")),
+            call);
+
+        ProgramNode prog = new ProgramNode(span, List.of(imp, var));
+
+        // Set up typeMap — all expression nodes need entries
+        Map<ExpressionNode, Type> typeMap = new HashMap<>();
+        typeMap.put(calleeId, Type.Table.INSTANCE);
+        typeMap.put(callee, Type.Int.INSTANCE);
+        typeMap.put(arg, Type.String.INSTANCE);
+        typeMap.put(call, Type.Int.INSTANCE);
+        typeMap.put(var.initializer(), Type.Int.INSTANCE);
+
+        SymbolTable st = new SymbolTable();
+        st.define("S", new Symbol.ModuleSymbol("S", Map.of("length",
+            Types.func(List.of(Type.String.INSTANCE), Type.Int.INSTANCE)), imp.span()));
+        st.define("x", new Symbol.VariableSymbol("x", Type.Int.INSTANCE, false));
+        CheckResult result = new CheckResult(typeMap, st, List.of());
+
+        String ir = IrDumper.dump(prog, result, "test");
+        assertContains(ir, "[boundary: stdlib-boundary]", "stdlib-boundary on call");
+        System.out.println("OK");
+    }
+
+    static void testExternalBoundary() {
+        System.out.print("  testExternalBoundary... ");
+        // Simulate a call to an external (host) function via a bare import
+        Span span = new Span("test.deal", 1, 1, 1, 30);
+        ImportDeclaration imp = new ImportDeclaration(
+            new Span("test.deal", 1, 1, 1, 30), "Ext", "external-lib");
+
+        IdentifierExpr calleeId = new IdentifierExpr(
+            new Span("test.deal", 2, 11, 2, 14), "Ext");
+        MemberAccessExpr callee = new MemberAccessExpr(
+            new Span("test.deal", 2, 11, 2, 18), calleeId, "foo");
+        CallExpr call = new CallExpr(
+            new Span("test.deal", 2, 11, 2, 20), callee, List.of());
+        VariableDeclaration var = new VariableDeclaration(
+            new Span("test.deal", 2, 1, 2, 20), "y",
+            java.util.Optional.of(new NamedType(new Span("test.deal", 2, 5, 2, 10), "int")),
+            call);
+
+        ProgramNode prog = new ProgramNode(span, List.of(imp, var));
+
+        Map<ExpressionNode, Type> typeMap = new HashMap<>();
+        typeMap.put(calleeId, Type.Table.INSTANCE);
+        typeMap.put(callee, Type.Int.INSTANCE);
+        typeMap.put(call, Type.Int.INSTANCE);
+        typeMap.put(var.initializer(), Type.Int.INSTANCE);
+
+        SymbolTable st = new SymbolTable();
+        st.define("Ext", new Symbol.ModuleSymbol("Ext", Map.of("foo",
+            Types.func(List.of(), Type.Int.INSTANCE)), imp.span()));
+        st.define("y", new Symbol.VariableSymbol("y", Type.Int.INSTANCE, false));
+        CheckResult result = new CheckResult(typeMap, st, List.of());
+
+        String ir = IrDumper.dump(prog, result, "test");
+        assertContains(ir, "[boundary: external-boundary]", "external-boundary on call");
+        assertContains(ir, "[boundary: host-in]", "host-in on import");
         System.out.println("OK");
     }
 

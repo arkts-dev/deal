@@ -259,7 +259,7 @@ public final class CompilationOrchestrator {
                         writeIrDump(info.modulePath, irText);
                     }
                 } catch (Exception e) {
-                    error("E6001", "IR dump failed for " + info.sourcePath
+                    error(DiagnosticCode.E6001, "IR dump failed for " + info.sourcePath
                         + ": " + e.getMessage(), info.sourcePath, 1, 1);
                 }
             }
@@ -753,7 +753,7 @@ public final class CompilationOrchestrator {
                         writeIrDump(info.modulePath, irText);
                     }
                 } catch (Exception e) {
-                    error("E6001", "IR dump failed for " + info.sourcePath
+                    error(DiagnosticCode.E6001, "IR dump failed for " + info.sourcePath
                         + ": " + e.getMessage(), info.sourcePath, 1, 1);
                 }
             }

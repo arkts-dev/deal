@@ -36,6 +36,9 @@ public final class IrDumper implements Visitor<String> {
     private Type currentReturnType;
     private boolean currentFunctionIsAsync;
 
+    /** Maps import alias to module path for boundary annotations on calls. */
+    private final Map<String, String> importAliasToPath = new HashMap<>();
+
     private IrDumper(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
                      String modulePath, boolean isDeclFile) {
         this.typeMap = Collections.unmodifiableMap(new HashMap<>(typeMap));
@@ -153,10 +156,22 @@ public final class IrDumper implements Visitor<String> {
     // Expression type lookup
     // =========================================================================
 
+    /**
+     * Returns the resolved type for an expression.
+     *
+     * <p>In full-module mode (not declaration-file), if an expression is not in
+     * the typeMap and is not a self-describing literal, an
+     * {@link IllegalStateException} is thrown per the design contract.
+     */
     private Type typeOf(ExpressionNode expr) {
         Type t = typeMap.get(expr);
         if (t == null && expr instanceof LiteralExpr lit) {
             return literalType(lit);
+        }
+        if (t == null && !isDeclFile && !(expr instanceof LiteralExpr)) {
+            throw new IllegalStateException(
+                "Missing typeMap entry for " + expr.getClass().getSimpleName()
+                + " " + spanStr(expr.span()));
         }
         return t;
     }
@@ -251,6 +266,21 @@ public final class IrDumper implements Visitor<String> {
             }
         }
         return false;
+    }
+
+    /**
+     * Extracts the root identifier name from a callee chain for import-boundary
+     * detection. For a {@code MemberAccessExpr} chain like
+     * {@code M.foo.bar()}, this returns the base alias {@code "M"}.
+     */
+    private String rootCalleeAlias(ExpressionNode callee) {
+        if (callee instanceof IdentifierExpr id) {
+            return id.name();
+        }
+        if (callee instanceof MemberAccessExpr mae) {
+            return rootCalleeAlias(mae.object());
+        }
+        return null;
     }
 
     // =========================================================================
@@ -489,6 +519,9 @@ public final class IrDumper implements Visitor<String> {
 
     @Override
     public String visit(ImportDeclaration node) {
+        // Record alias→modulePath for call boundary detection
+        importAliasToPath.put(node.alias(), node.modulePath());
+
         StringBuilder sb = new StringBuilder();
         sb.append(indent()).append("import * as ").append(node.alias())
             .append(" from \"").append(node.modulePath()).append("\"")
@@ -641,6 +674,20 @@ public final class IrDumper implements Visitor<String> {
         StringBuilder sb = new StringBuilder();
         sb.append(indent()).append("call : ").append(typeStr)
             .append(" ").append(spanStr(node.span())).append("\n");
+
+        // Detect stdlib/external boundaries: check if callee is an imported function
+        String alias = rootCalleeAlias(node.callee());
+        if (alias != null) {
+            String resolvedPath = importAliasToPath.get(alias);
+            if (resolvedPath != null) {
+                if (resolvedPath.startsWith("std/")) {
+                    sb.append(indent()).append("  ").append(boundary("stdlib-boundary")).append("\n");
+                } else if (!resolvedPath.startsWith("./") && !resolvedPath.startsWith("../")) {
+                    sb.append(indent()).append("  ").append(boundary("external-boundary")).append("\n");
+                }
+            }
+        }
+
         pushIndent();
         sb.append(dispatchExpr(node.callee()));
         for (ExpressionNode arg : node.args()) {
@@ -658,9 +705,20 @@ public final class IrDumper implements Visitor<String> {
         sb.append(indent()).append("member .").append(node.field())
             .append(" : ").append(typeStr)
             .append(" ").append(spanStr(node.span())).append("\n");
+
+        // Optional field read boundary
         if (isOptionalFieldRead(node)) {
             sb.append(indent()).append("  ").append(boundary("optional-read")).append("\n");
         }
+
+        // Table-read boundary: object is a Table type, result has a non-null, non-error type
+        Type objType = typeOf(node.object());
+        Type resultType = typeOf(node);
+        if (objType instanceof Type.Table && resultType != null
+                && !(resultType instanceof Type.Error)) {
+            sb.append(indent()).append("  ").append(boundary("table-read")).append("\n");
+        }
+
         pushIndent();
         sb.append(dispatchExpr(node.object()));
         popIndent();
@@ -674,6 +732,15 @@ public final class IrDumper implements Visitor<String> {
         StringBuilder sb = new StringBuilder();
         sb.append(indent()).append("index [] : ").append(typeStr)
             .append(" ").append(spanStr(node.span())).append("\n");
+
+        // Table-read boundary: array is a Table type, result has a non-null, non-error type
+        Type arrType = typeOf(node.array());
+        Type resultType = typeOf(node);
+        if (arrType instanceof Type.Table && resultType != null
+                && !(resultType instanceof Type.Error)) {
+            sb.append(indent()).append("  ").append(boundary("table-read")).append("\n");
+        }
+
         pushIndent();
         sb.append(dispatchExpr(node.array()));
         sb.append(dispatchExpr(node.index()));
