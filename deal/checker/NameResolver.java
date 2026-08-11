@@ -649,6 +649,9 @@ public final class NameResolver {
         // Resolve var type in PARENT scope
         Type varType = resolveTypeNode(fos.varType());
 
+        // Check for $ in for-of loop variable name (E2008)
+        checkNoDollar(fos.varName(), fos.span());
+
         // Enter new scope for loop variable and body
         SymbolTable saved = currentScope;
         currentScope = currentScope.enterScope();

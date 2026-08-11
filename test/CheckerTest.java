@@ -303,6 +303,18 @@ public class CheckerTest {
         // ISSUE-0040: Dollar prohibition (E2008)
         testE2008_dollarInIdentifier();
 
+        // ISSUE-0041: Additional dollar prohibition tests
+        testE2008_dollarInRestParam();
+        testE2008_dollarInForLoopVar();
+        testE2008_dollarInForOfLoopVar();
+
+        // ISSUE-0041: Negative tests — Error variants not rejected
+        testE4006_errorVariantsNoError();
+
+        // ISSUE-0041: Integration tests (null return type + $ param, valid import)
+        testE2008_dollarIntegration_nullReturn();
+        testE2008_dollarIntegration_validImport();
+
         // v1.1: For-of scoping and type checking (ISSUE-0034)
         testForOfScoping_loopVarInBody();
         testForOfScoping_iterableCannotRefLoopVar();
@@ -1727,4 +1739,123 @@ public class CheckerTest {
         assertError(out, "E2008", "dollar in nested class field name produces E2008");
     }
 
+
+    // =========================================================================
+    // ISSUE-0041: Additional dollar prohibition tests
+    // =========================================================================
+
+    /** Test that dollar in rest parameter name produces E2008. */
+    static void testE2008_dollarInRestParam() {
+        System.out.println("-- ISSUE-0041: dollar in rest parameter (E2008) --");
+
+        CheckerOutput out = checkProgram(
+            "function f(a: int, ...rest$param: int[]): null { return null; }"
+        );
+        assertError(out, "E2008", "dollar in rest parameter name produces E2008");
+    }
+
+    /** Test that dollar in for-loop variable name produces E2008. */
+    static void testE2008_dollarInForLoopVar() {
+        System.out.println("-- ISSUE-0041: dollar in for-loop variable (E2008) --");
+
+        CheckerOutput out = checkProgram(
+            "function f(): null {\n" +
+            "  for (let i$: int = 0; i$ < 10; i$ = i$ + 1) { }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E2008", "dollar in for-loop variable name produces E2008");
+    }
+
+    /** Test that dollar in for-of loop variable name produces E2008. */
+    static void testE2008_dollarInForOfLoopVar() {
+        System.out.println("-- ISSUE-0041: dollar in for-of loop variable (E2008) --");
+
+        CheckerOutput out = checkProgram(
+            "function f(xs: int[]): null {\n" +
+            "  for (let x$: int of xs) { }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E2008", "dollar in for-of loop variable name produces E2008");
+    }
+
+    // =========================================================================
+    // ISSUE-0041: Negative tests — Error variants not rejected
+    // =========================================================================
+
+    /** Test that class names similar to Error (but not exactly "Error") do NOT produce E4006. */
+    static void testE4006_errorVariantsNoError() {
+        System.out.println("-- ISSUE-0041: Error-like class names not rejected (E4006 negative) --");
+
+        // Test 1: class Error2 should NOT produce E4006
+        CheckerOutput out = checkProgram(
+            "class Error2 { }"
+        );
+        List<Diagnostic> diags = out.result.diagnostics();
+        boolean hasE4006 = diags.stream().anyMatch(d -> d.code().equals("E4006"));
+        check(!hasE4006, "class Error2 should NOT produce E4006");
+
+        // Test 2: class MyError should NOT produce E4006
+        out = checkProgram(
+            "class MyError { }"
+        );
+        diags = out.result.diagnostics();
+        hasE4006 = diags.stream().anyMatch(d -> d.code().equals("E4006"));
+        check(!hasE4006, "class MyError should NOT produce E4006");
+
+        // Test 3: class error (lowercase) should NOT produce E4006
+        out = checkProgram(
+            "class error { }"
+        );
+        diags = out.result.diagnostics();
+        hasE4006 = diags.stream().anyMatch(d -> d.code().equals("E4006"));
+        check(!hasE4006, "class \"error\" (lowercase) should NOT produce E4006");
+    }
+
+    // =========================================================================
+    // ISSUE-0041: Integration tests (T3/T4 combined)
+    // =========================================================================
+
+    /**
+     * Integration test: null return type (T3 void removal) combined with
+     * a parameter containing $ (T4 $ prohibition).
+     * E2008 should fire, and the null return type should be recognized correctly.
+     */
+    static void testE2008_dollarIntegration_nullReturn() {
+        System.out.println("-- ISSUE-0041: integration — null return type + $ param (E2008) --");
+
+        CheckerOutput out = checkProgram(
+            "function f(param$name: int): null { return null; }"
+        );
+        assertError(out, "E2008", "dollar in param produces E2008 with null return type");
+
+        // Verify null return type is recognized (no E3004 for "null")
+        List<Diagnostic> diags = out.result.diagnostics();
+        boolean hasE3004ForNull = diags.stream()
+            .anyMatch(d -> d.code().equals("E3004") && d.message().contains("null"));
+        check(!hasE3004ForNull, "null return type should NOT produce E3004");
+    }
+
+    /**
+     * Integration test: valid module import combined with $ in import alias.
+     * E2008 should fire at the import alias.
+     */
+    static void testE2008_dollarIntegration_validImport() {
+        System.out.println("-- ISSUE-0041: integration — valid module import + $ import alias (E2008) --");
+
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("./lib", Map.of("foo", Type.Int.INSTANCE));
+
+        CheckerOutput out = checkProgramWithModule(
+            "import * as mod$name from \"./lib\";",
+            resolver
+        );
+        assertError(out, "E2008", "dollar in import alias produces E2008 with valid module");
+
+        // Also verify that the module was found (no E2003)
+        List<Diagnostic> diags = out.result.diagnostics();
+        boolean hasE2003 = diags.stream().anyMatch(d -> d.code().equals("E2003"));
+        check(!hasE2003, "valid module import should NOT produce E2003");
+    }
 }
