@@ -715,6 +715,8 @@ The `$` sigil is reserved for compiler-generated names (see Lexical elements).
 
 **toJson.** Serializes each declared field to its JSON representation. Omits missing optional fields. Preserves `null` for nullable fields.
 
+For a `table` field, `fromJson` accepts only a JSON object and maps it to a DEAL table as untyped JSON-shaped data. `toJson` accepts only finite acyclic JSON-shaped table values: string-keyed objects, arrays, and `null`/`boolean`/`int`/`number`/`string` leaves. Otherwise, it raises `Error`.
+
 **Optional-nullable roundtrip.** The three states of `field?: T | null` are preserved exactly:
 
 | State | fromJson input | toJson output |
