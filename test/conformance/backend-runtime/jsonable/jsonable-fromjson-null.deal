@@ -1,0 +1,17 @@
+// @spec: Classes — @jsonable fromJson returns null
+// @description: @jsonable fromJson returns null on malformed JSON input
+// @expected: runtime-ok
+// @features: jsonable, fromJson, error-handling
+
+// @jsonable
+export class Item {
+  name: string = "";
+}
+
+export function test_fromJson_null(): null {
+  let result: Item | null = Item$fromJson("not valid json");
+  if (result !== null) {
+    throw { code: "TEST_FAIL", message: "fromJson should return null for malformed JSON" };
+  }
+  return null;
+}

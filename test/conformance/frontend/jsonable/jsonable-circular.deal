@@ -1,0 +1,14 @@
+// @spec: Classes — @jsonable circular dependency
+// @description: Circular same-module @jsonable dependency is rejected with E4008
+// @expected: compile-error E4008
+// @features: jsonable, type-checking
+
+// @jsonable
+export class A {
+  b: B = {};
+}
+
+// @jsonable
+export class B {
+  a: A = {};
+}

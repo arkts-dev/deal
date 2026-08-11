@@ -1,0 +1,39 @@
+// @spec: Classes — @jsonable nested classes
+// @description: @jsonable classes with nested @jsonable class fields serialize and deserialize correctly
+// @expected: runtime-ok
+// @features: jsonable, nested
+
+// @jsonable
+export class Address {
+  city: string = "";
+  zip: int = 0;
+}
+
+// @jsonable
+export class Person {
+  name: string = "";
+  home: Address = {};
+}
+
+export function test_nested(): null {
+  let p: Person = {
+    name: "Dave",
+    home: { city: "Paris", zip: 75001 }
+  };
+  let json: string = Person$toJson(p);
+  let p2: Person | null = Person$fromJson(json);
+  if (p2 !== null) {
+    if (p2.name !== "Dave") {
+      throw { code: "TEST_FAIL", message: "nested name mismatch" };
+    }
+    if (p2.home.city !== "Paris") {
+      throw { code: "TEST_FAIL", message: "nested city mismatch" };
+    }
+    if (p2.home.zip !== 75001) {
+      throw { code: "TEST_FAIL", message: "nested zip mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "nested roundtrip fromJson null" };
+  }
+  return null;
+}
