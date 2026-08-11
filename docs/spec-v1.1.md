@@ -698,6 +698,8 @@ A type is jsonable if it is one of the primitive JSON-compatible types above, or
 
 If any field type is not jsonable, the compiler emits a compile-time error at the field declaration.
 
+Circular same-module dependencies between `@jsonable` classes are compile-time errors. This includes dependencies through `T[]` and `T | null`.
+
 In declaration files, `// @jsonable` has no effect. Declaration files may explicitly declare compatible `C$fromJson` and `C$toJson` functions.
 
 **Generated functions.** For a `@jsonable` class `C`, the compiler emits two module-level export functions:
