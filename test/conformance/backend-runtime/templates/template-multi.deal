@@ -1,0 +1,10 @@
+// @spec: Lexical elements — Template literals — Multiple interpolations
+// @description: Template literal with several interpolations concatenates in order
+// @expected: runtime-ok
+// @features: template-literal
+
+export function test_multi(): string {
+  let a: string = "Alice";
+  let b: string = "Bob";
+  return `Hello, ${a}! You have ${b} as a friend.`;
+}

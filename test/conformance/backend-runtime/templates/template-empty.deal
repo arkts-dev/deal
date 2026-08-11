@@ -1,0 +1,9 @@
+// @spec: Lexical elements — Template literals — Empty template
+// @description: An empty template literal (``) produces an empty string
+// @expected: runtime-ok
+// @features: template-literal
+
+export function test_empty(): string {
+  let s: string = ``;
+  return s;
+}

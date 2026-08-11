@@ -1,4 +1,4 @@
-// @spec: Template literals — String containing '}' inside interpolation
+// @spec: Lexical elements — Template literals — Brace scanning
 // @description: The '}' inside a string literal within ${} must not close the interpolation
 // @expected: runtime-ok
 // @features: template-literal, brace-scanning

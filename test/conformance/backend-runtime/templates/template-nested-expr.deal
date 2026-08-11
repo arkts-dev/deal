@@ -1,0 +1,21 @@
+// @spec: Lexical elements — Template literals — Nested expressions
+// @description: Template literal inside a for-of loop body, and inside a function call argument
+// @expected: runtime-ok
+// @features: template-literal, for-of
+
+function greet(name: string): string {
+  return `Hi, ${name}`;
+}
+
+export function test_forof_template(): string {
+  let names: string[] = ["Alice", "Bob"];
+  let result: string = "";
+  for (let n: string of names) {
+    result = result + `[${n}]`;
+  }
+  return result;
+}
+
+export function test_call_template(): string {
+  return greet(`World`);
+}

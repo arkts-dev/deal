@@ -1,0 +1,10 @@
+// @spec: Lexical elements — Template literal interpolation
+// @description: Non-string interpolation expression is rejected with E3016.
+//   The expression `${42}` has type int, not string — no implicit string conversion.
+// @expected: compile-error E3016
+// @features: template-literal, type-checking
+
+export function test_bad_interp(): string {
+  let s: string = `${42}`;
+  return s;
+}

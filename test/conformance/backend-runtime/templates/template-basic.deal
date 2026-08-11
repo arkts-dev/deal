@@ -1,4 +1,4 @@
-// @spec: Template literals — Basic interpolation
+// @spec: Lexical elements — Template literals — Basic interpolation
 // @description: Template literal with identifier interpolation produces correct string
 // @expected: runtime-ok
 // @features: template-literal

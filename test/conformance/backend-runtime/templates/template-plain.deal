@@ -1,0 +1,9 @@
+// @spec: Lexical elements — Template literals — Plain string
+// @description: A template literal with no interpolation is just a plain string
+// @expected: runtime-ok
+// @features: template-literal
+
+export function test_plain(): string {
+  let s: string = `hello world`;
+  return s;
+}
