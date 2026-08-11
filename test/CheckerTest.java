@@ -160,6 +160,12 @@ public class CheckerTest {
         testNameResolution_e2006_classBeforeImport();
         testNameResolution_e2006_functionBeforeImport();
 
+        // ISSUE-0052: NameResolver isAsync propagation
+        testNameResolution_asyncFuncDeclIsAsync();
+        testNameResolution_syncFuncDeclIsNotAsync();
+        testNameResolution_asyncFuncTypeAnnotationIsAsync();
+        testNameResolution_awaitWalkExpressionHoistsNestedFuncExpr();
+
         // -- Type Checking: Literals and Identifiers --
         testLiteralTypes();
         testIdentifierType();
@@ -2100,4 +2106,128 @@ public class CheckerTest {
         assertError(out, "E4007", "imported non-@jsonable class field → E4007");
     }
 
-}
+    // =========================================================================
+    // ISSUE-0052: NameResolver isAsync propagation tests
+    // =========================================================================
+
+    /**
+     * Verify that an async function declaration resolves with isAsync=true
+     * in the symbol table after name resolution.
+     */
+    static void testNameResolution_asyncFuncDeclIsAsync() {
+        System.out.println("-- Name Resolution: async function decl isAsync --");
+
+        CheckerOutput out = checkProgram(
+            "async function f(): int { return 5; }");
+
+        assertNoErrors(out, "async function decl resolution");
+
+        SymbolTable symTable = out.result.symbolTable();
+        Symbol sym = symTable.resolve("f");
+        check(sym instanceof Symbol.FunctionSymbol,
+            "f should be a FunctionSymbol");
+        Symbol.FunctionSymbol fs = (Symbol.FunctionSymbol) sym;
+        check(fs.funcType().isAsync(),
+            "async function should have isAsync=true in resolved type");
+        check(fs.funcType().returnType() == Type.Int.INSTANCE,
+            "async function return type should be int");
+    }
+
+    /**
+     * Verify that a sync function declaration resolves with isAsync=false
+     * (regression test to ensure the default is correct).
+     */
+    static void testNameResolution_syncFuncDeclIsNotAsync() {
+        System.out.println("-- Name Resolution: sync function decl isAsync=false --");
+
+        CheckerOutput out = checkProgram(
+            "function f(): int { return 5; }");
+
+        assertNoErrors(out, "sync function decl resolution");
+
+        SymbolTable symTable = out.result.symbolTable();
+        Symbol sym = symTable.resolve("f");
+        check(sym instanceof Symbol.FunctionSymbol,
+            "f should be a FunctionSymbol");
+        Symbol.FunctionSymbol fs = (Symbol.FunctionSymbol) sym;
+        check(!fs.funcType().isAsync(),
+            "sync function should have isAsync=false in resolved type");
+    }
+
+    /**
+     * Verify that a function type annotation with async (e.g.,
+     * {@code async (int) => string}) resolves with isAsync=true.
+     */
+    static void testNameResolution_asyncFuncTypeAnnotationIsAsync() {
+        System.out.println("-- Name Resolution: async function type annotation isAsync --");
+
+        // The NameResolver resolves types from annotations before the
+        // TypeChecker runs.  We test that an async function type annotation
+        // resolves with isAsync=true.  We use a helper that only runs
+        // name resolution (not full type checking) to avoid spurious
+        // type errors from the initializer expression.
+        String source = "let f: async (p: int) => string = null;";
+        LexResult lex = new Lexer(source, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        check(!parse.hasErrors(), "Parser: no errors");
+
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+
+        // The variable f should have the async function type
+        Symbol sym = symTable.resolve("f");
+        check(sym instanceof Symbol.VariableSymbol,
+            "f should be a VariableSymbol");
+        Symbol.VariableSymbol vs = (Symbol.VariableSymbol) sym;
+        check(vs.type() instanceof Type.Func,
+            "f's type should be Type.Func");
+        Type.Func ft = (Type.Func) vs.type();
+        check(ft.isAsync(),
+            "async function type annotation should have isAsync=true");
+        check(ft.returnType() instanceof Type.String,
+            "return type should be string");
+        check(ft.paramTypes().size() == 1,
+            "should have 1 param");
+        check(ft.paramTypes().get(0) == Type.Int.INSTANCE,
+            "param type should be int");
+    }
+
+    /**
+     * Verify that function expressions nested inside await callee arguments
+     * are correctly hoisted during Pass 1. Without the AwaitExpression case
+     * in walkExpression, a FunctionExpr inside the arguments of
+     * {@code await f(async function() { ... })} would not be visited during
+     * Pass 1, so let-declarations in its body would not be resolved.
+     */
+    static void testNameResolution_awaitWalkExpressionHoistsNestedFuncExpr() {
+        System.out.println("-- Name Resolution: await walkExpression hoists nested FunctionExpr --");
+
+        // This test verifies that a FunctionExpr inside an await callee's
+        // arguments is hoisted during Pass 1.  The key is that the nested
+        // async function expression body contains a let-declaration; if
+        // walkExpression doesn't visit it, the variable won't be in scope
+        // when the inner function body returns it.
+        //
+        // The outer function f must be declared async so that await is allowed.
+        // We then test that the inner variable 'n' is visible in the nested
+        // function expression body.
+        //
+        // Also declare g as a sync function so it can be referenced.
+        CheckerOutput out = checkProgram(
+            "function g(cb: function(): int): int { return cb(); }\n"
+            + "async function f(): int {\n"
+            + "    return await g(async function(): int {\n"
+            + "        let n: int = 42;\n"
+            + "        return n;\n"
+            + "    });\n"
+            + "}");
+
+        // We just need to verify that name resolution succeeds (no
+        // undeclared variable errors). The inner 'n' must be found
+        // during Pass 1 hoisting of the FunctionExpr.
+        boolean hasUndeclared = out.result.diagnostics().stream()
+            .anyMatch(d -> "E2001".equals(d.code()));
+        check(!hasUndeclared,
+            "nested function expr variable should be hoisted (no E2001)");
+    }

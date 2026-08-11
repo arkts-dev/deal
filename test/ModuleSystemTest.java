@@ -413,6 +413,78 @@ public class ModuleSystemTest {
         check(pointType instanceof Type.Class, "Point is a class type");
     }
 
+
+    // =========================================================================
+    // ExportExtractor: async function isAsync propagation (ISSUE-0052)
+    // =========================================================================
+
+    private static void testExportExtractorAsyncFunc() throws Exception {
+        System.out.println("-- ExportExtractor: async function isAsync --");
+
+        String source = """
+            export async function fetch(a: int): int { return a; }
+            export function sync(a: int): int { return a; }
+            """;
+
+        LexResult lex = new Lexer(source, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        check(!parse.hasErrors(), "Parser: no errors");
+
+        ExportExtractor extractor = new ExportExtractor("test", false);
+        Map<String, Type> exports = extractor.extract(parse.program());
+
+        check(exports.containsKey("fetch"), "exports contains fetch");
+        check(exports.containsKey("sync"), "exports contains sync");
+
+        // Async function should have isAsync=true
+        Type fetchType = exports.get("fetch");
+        check(fetchType instanceof Type.Func, "fetch is a function type");
+        Type.Func fetchFunc = (Type.Func) fetchType;
+        check(fetchFunc.isAsync(), "fetch should be async");
+        check(fetchFunc.paramTypes().size() == 1, "fetch has 1 param");
+        check(fetchFunc.paramTypes().get(0) == Type.Int.INSTANCE, "fetch param is int");
+        check(fetchFunc.returnType() == Type.Int.INSTANCE, "fetch returns int");
+
+        // Sync function should have isAsync=false
+        Type syncType = exports.get("sync");
+        check(syncType instanceof Type.Func, "sync is a function type");
+        Type.Func syncFunc = (Type.Func) syncType;
+        check(!syncFunc.isAsync(), "sync should NOT be async");
+    }
+
+    private static void testExportExtractorAsyncFuncTypeAnnotation() throws Exception {
+        System.out.println("-- ExportExtractor: async function type annotation isAsync --");
+
+        // Test that a function type annotation with async in an export context
+        // propagates isAsync correctly.  We test this by exporting a function
+        // whose parameter type is an async function type.
+        String source = """
+            export function register(cb: async (p: int) => string): null { return null; }
+            """;
+
+        LexResult lex = new Lexer(source, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        check(!parse.hasErrors(), "Parser: no errors");
+
+        ExportExtractor extractor = new ExportExtractor("test", false);
+        Map<String, Type> exports = extractor.extract(parse.program());
+
+        check(exports.containsKey("register"), "exports contains register");
+        Type registerType = exports.get("register");
+        check(registerType instanceof Type.Func, "register is a function type");
+        Type.Func registerFunc = (Type.Func) registerType;
+        // register itself is sync, but its parameter is an async function type
+        check(!registerFunc.isAsync(), "register itself should be sync");
+        check(registerFunc.paramTypes().size() == 1, "register has 1 param");
+
+        Type cbType = registerFunc.paramTypes().get(0);
+        check(cbType instanceof Type.Func, "cb param is a function type");
+        Type.Func cbFunc = (Type.Func) cbType;
+        check(cbFunc.isAsync(), "cb param should be async");
+        check(cbFunc.paramTypes().size() == 1, "cb has 1 param");
+        check(cbFunc.returnType() instanceof Type.String, "cb returns string");
+    }
+
     // =========================================================================
     // ExportExtractor: .d.deal function body validation
     // =========================================================================
@@ -688,6 +760,63 @@ public class ModuleSystemTest {
     // =========================================================================
     // Circular Import: Runtime dependency (E2005)
     // =========================================================================
+
+
+    // =========================================================================
+    // ISSUE-0052: CompilationOrchestrator — import retention under await
+    // =========================================================================
+
+    /**
+     * Verify that exprReferencesImport correctly tracks import references
+     * through AwaitExpression nodes.  An import used only inside
+     * {@code await B.foo()} should still be detected as a runtime usage.
+     *
+     * <p>This test creates two modules: module A exports an async function,
+     * module B imports A and uses it only inside an await expression.
+     * The compilation should succeed (no unused import removal issues),
+     * confirming that the import is correctly tracked through the
+     * AwaitExpression in exprReferencesImport.</p>
+     */
+    private static void testCompilationOrchestratorAwaitImportRetention() throws Exception {
+        System.out.println("-- CompilationOrchestrator: await import retention --");
+
+        // Module A: exports an async function
+        writeFile("src/ai_await_lib.deal", """
+            export async function getValue(): int { return 42; }
+            """);
+
+        // Module B: imports A and uses it under await
+        // The import alias "Lib" is used only in: await Lib.getValue()
+        // exprReferencesImport must track through AwaitExpression
+        writeFile("src/ai_await_main.deal", """
+            import * as Lib from "./ai_await_lib"
+            async function main(): int { return await Lib.getValue(); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/ai_await_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/ai_await");
+        List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, moduleRoots, null);
+
+        boolean success = orchestrator.compile();
+        List<Diagnostic> diags = orchestrator.diagnostics();
+
+        // The compilation should succeed — if exprReferencesImport didn't
+        // handle AwaitExpression, the import might appear unused and cause
+        // errors or incorrect cycle detection.
+        if (!success) {
+            System.out.println("  Compilation diags: " + diags.stream()
+                .filter(d -> "error".equals(d.severity()))
+                .map(d -> d.code() + ": " + d.message()).toList());
+        }
+        check(success, "await import retention: compilation succeeds");
+        check(Files.exists(outputDir.resolve("ai_await_main.lua")),
+            "await import retention: main.lua exists");
+        check(Files.exists(outputDir.resolve("ai_await_lib.lua")),
+            "await import retention: lib.lua exists");
+    }
 
     private static void testCircularImportRuntime() throws Exception {
         System.out.println("-- Circular Import: Runtime Dependency --");
@@ -1477,6 +1606,8 @@ public class ModuleSystemTest {
         try {
             testDealConfig();
             testExportExtractor();
+            testExportExtractorAsyncFunc();
+            testExportExtractorAsyncFuncTypeAnnotation();
             testDeclarationFileBodyValidation();
             testDeclarationFileLetStmt();
             testModuleResolution();
@@ -1485,6 +1616,7 @@ public class ModuleSystemTest {
             testSingleModuleCompilation();
             testMultiModuleCompilation();
             testCompilationWithError();
+            testCompilationOrchestratorAwaitImportRetention();
             testCircularImportRuntime();
             testCircularImportDeclarationOnly();
             testTwoDisconnectedCyclesOneRuntime();
