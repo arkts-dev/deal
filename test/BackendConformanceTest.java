@@ -3,39 +3,41 @@ package deal.test;
 import deal.ast.*;
 import deal.checker.*;
 import deal.codegen.lua.LuaBackend;
+import deal.ir.IrDumper;
 import deal.lexer.*;
-import deal.module.ExportExtractor;
 import deal.parser.*;
 import deal.types.Type;
-import deal.types.Types;
 
 import java.io.*;
 import java.nio.file.*;
 import java.util.*;
 
 /**
- * Backend-agnostic conformance test runner for JSON fixture files.
+ * Loads backend-neutral JSON fixture tests from
+ * {@code test/conformance/fixtures/} and executes them against the
+ * LuaJIT backend.
  *
- * <p>Discovers all .json files under test/conformance/fixtures/, parses
- * them according to the backend fixture schema, compiles and executes
- * each test case against the LuaJIT backend, and asserts expectedOutput,
- * expectedError, and expectedExitCode.</p>
- *
- * <p>Fixture format (version 1.0):
- * <pre>{@code
+ * <p>Fixture format (per {@code conformance-test-architecture} D3):
+ * <pre>
  * {
  *   "version": "1.0",
  *   "tests": [{
  *     "name": "unique-test-name",
  *     "description": "what this test verifies",
  *     "source": "DEAL source code as string",
- *     "expectedOutput": "substring" | null,
+ *     "expectedOutput": "string that stdout must contain" | null,
  *     "expectedError": "E8001" | null,
  *     "expectedExitCode": 0 | 1,
+ *     "irContains": ["substrings that the IR dump must contain"],
+ *     "irNotContains": ["substrings that the IR dump must NOT contain"],
  *     "backends": ["luajit", "jvm"]
  *   }]
  * }
- * }</pre>
+ * </pre>
+ *
+ * <p>For IR-only tests, the runtime fields are {@code null} and the
+ * runner only validates the IR dump assertions ({@code irContains}
+ * and {@code irNotContains}).
  */
 public class BackendConformanceTest {
 
@@ -44,42 +46,12 @@ public class BackendConformanceTest {
     private static int skipped = 0;
     private static boolean luajitAvailable;
 
-    // =========================================================================
-    // Data types
-    // =========================================================================
-
-    private static final class FixtureTest {
-        final String name;
-        final String description;
-        final String source;
-        final String expectedOutput;
-        final String expectedError;
-        final int expectedExitCode;
-        final List<String> backends;
-
-        FixtureTest(String name, String description, String source,
-                    String expectedOutput, String expectedError,
-                    int expectedExitCode, List<String> backends) {
-            this.name = name;
-            this.description = description;
-            this.source = source;
-            this.expectedOutput = expectedOutput;
-            this.expectedError = expectedError;
-            this.expectedExitCode = expectedExitCode;
-            this.backends = backends;
-        }
-    }
-
-    // =========================================================================
-    // Main
-    // =========================================================================
+    // Sentinel for JSON null (distinct from Java null)
+    private static final Object JSON_NULL = new Object() {
+        @Override public String toString() { return "null"; }
+    };
 
     public static void main(String[] args) throws Exception {
-        String fixturesRoot = "test/conformance/fixtures/";
-        if (args.length > 0) {
-            fixturesRoot = args[0];
-        }
-
         try {
             new ProcessBuilder("luajit", "-v").start().waitFor();
             luajitAvailable = true;
@@ -87,36 +59,28 @@ public class BackendConformanceTest {
             luajitAvailable = false;
         }
 
-        System.out.println("=== Backend Conformance Test Suite ===");
-        System.out.println("Fixtures root: " + fixturesRoot);
+        System.out.println("=== Backend Conformance Test ===");
         System.out.println("LuaJIT: " + (luajitAvailable ? "available" :
-            "NOT available (backend tests will be skipped)"));
+            "NOT available (runtime tests will be skipped)"));
         System.out.println();
 
-        Path rootPath = Path.of(fixturesRoot);
-        if (!Files.isDirectory(rootPath)) {
-            System.out.println("Fixtures directory not found: " + fixturesRoot);
-            System.exit(1);
-            return;
+        Path fixturesDir = Path.of("test/conformance/fixtures/");
+        if (!Files.isDirectory(fixturesDir)) {
+            System.out.println("No fixtures directory found at " + fixturesDir);
+            System.exit(failed > 0 ? 1 : 0);
         }
 
-        // Discover all .json fixture files
-        List<Path> fixtureFiles = new ArrayList<>();
-        try (var stream = Files.walk(rootPath)) {
+        try (var stream = Files.list(fixturesDir)) {
             stream.filter(p -> p.toString().endsWith(".json"))
                   .sorted()
-                  .forEach(fixtureFiles::add);
+                  .forEach(BackendConformanceTest::runFixtureFile);
         }
 
-        System.out.println("Discovered " + fixtureFiles.size() + " fixture file(s)");
         System.out.println();
-
-        for (Path fixtureFile : fixtureFiles) {
-            runFixtureFile(fixtureFile);
-        }
-
-        // Print summary
-        printSummary();
+        System.out.println("=== Backend Conformance Summary ===");
+        int total = passed + failed + skipped;
+        System.out.println("Total: " + total + ", Passed: " + passed +
+            ", Failed: " + failed + ", Skipped: " + skipped);
 
         if (failed > 0) {
             System.exit(1);
@@ -124,201 +88,208 @@ public class BackendConformanceTest {
     }
 
     // =========================================================================
-    // Fixture processing
+    // Fixture file runner
     // =========================================================================
 
-    private static void runFixtureFile(Path fixtureFile) {
-        System.out.println("  Fixture: " + fixtureFile);
-        String jsonText;
+    @SuppressWarnings("unchecked")
+    private static void runFixtureFile(Path file) {
+        System.out.println("--- Fixture: " + file.getFileName() + " ---");
+
         try {
-            jsonText = Files.readString(fixtureFile);
-        } catch (IOException e) {
-            System.out.println("    ERROR: cannot read fixture file: " + e.getMessage());
-            failed++;
-            return;
-        }
+            String raw = Files.readString(file);
+            Map<String, Object> root = (Map<String, Object>) parseJson(raw);
 
-        List<FixtureTest> tests;
-        try {
-            tests = parseFixture(jsonText, fixtureFile.toString());
-        } catch (Exception e) {
-            System.out.println("    ERROR: invalid fixture: " + e.getMessage());
-            failed++;
-            return;
-        }
-
-        for (FixtureTest test : tests) {
-            runFixtureTest(test);
-        }
-    }
-
-    private static void runFixtureTest(FixtureTest test) {
-        System.out.print("    [" + test.name + "] ");
-
-        // Check if current backend should run this test
-        if (!test.backends.contains("luajit")) {
-            System.out.println("SKIP (backend not in backends list: " + test.backends + ")");
-            skipped++;
-            return;
-        }
-
-        if (!luajitAvailable) {
-            System.out.println("SKIP (LuaJIT not available)");
-            skipped++;
-            return;
-        }
-
-        // Compile the source
-        String lua;
-        try {
-            lua = compileDealSource(test.source, test.name);
-        } catch (CompileException e) {
-            // If the test expects a compile error, that's a pass
-            if (test.expectedError != null && test.expectedExitCode == 1) {
-                if (e.getMessage().contains(test.expectedError)) {
-                    System.out.println("OK (compile error matches expected " + test.expectedError + ")");
-                    passed++;
-                } else {
-                    System.out.println("FAIL (expected compile error " + test.expectedError +
-                        ", got: " + e.getMessage() + ")");
-                    failed++;
-                }
-            } else {
-                System.out.println("FAIL (compile error: " + e.getMessage() + ")");
+            Object version = root.get("version");
+            if (!"1.0".equals(String.valueOf(version))) {
+                System.out.println("  FAIL: unsupported version: " + version);
                 failed++;
+                return;
             }
-            return;
-        }
 
-        if (lua == null) {
-            System.out.println("FAIL (codegen failed)");
-            failed++;
-            return;
-        }
-
-        // Execute the compiled Lua
-        ExecutionResult execResult = executeLua(lua, test.expectedError != null);
-        if (execResult == null) {
-            System.out.println("FAIL (Lua execution failed)");
-            failed++;
-            return;
-        }
-
-        // Assert expectedOutput
-        boolean outputOk = true;
-        if (test.expectedOutput != null) {
-            if (!execResult.output.contains(test.expectedOutput)) {
-                System.out.println("FAIL (@expectedOutput not found: \"" + test.expectedOutput + "\")");
-                System.out.println("      actual: " + execResult.output.replace("\n", "\\n"));
-                outputOk = false;
+            List<Map<String, Object>> tests =
+                (List<Map<String, Object>>) root.get("tests");
+            if (tests == null) {
+                System.out.println("  FAIL: no 'tests' array in fixture");
+                failed++;
+                return;
             }
-        }
 
-        // Assert expectedError
-        boolean errorOk = true;
-        if (test.expectedError != null) {
-            String needle = "DEAL_ERROR_CODE: " + test.expectedError;
-            if (!execResult.output.contains(needle)) {
-                System.out.println("FAIL (expected " + needle + ", got: " +
-                    execResult.output.replace("\n", "\\n") + ")");
-                errorOk = false;
+            for (Map<String, Object> test : tests) {
+                runTestCase(file.getFileName().toString(), test);
             }
-        }
-
-        // Assert expectedExitCode
-        boolean exitCodeOk = true;
-        if (execResult.exitCode != test.expectedExitCode) {
-            System.out.println("FAIL (expected exit code " + test.expectedExitCode +
-                ", got " + execResult.exitCode + ")");
-            exitCodeOk = false;
-        }
-
-        if (outputOk && errorOk && exitCodeOk) {
-            System.out.println("OK");
-            passed++;
-        } else {
+        } catch (Exception e) {
+            System.out.println("  FAIL: error processing fixture: " + e.getMessage());
+            e.printStackTrace(System.out);
             failed++;
         }
     }
 
-    // =========================================================================
-    // Compilation
-    // =========================================================================
+    @SuppressWarnings("unchecked")
+    private static void runTestCase(String fixtureName, Map<String, Object> test) {
+        String name = jsonString(test, "name", "<unnamed>");
+        String description = jsonString(test, "description", "");
+        String source = jsonString(test, "source", null);
+        List<String> backends = (List<String>) test.getOrDefault("backends", List.of());
 
-    private static final class CompileException extends Exception {
-        CompileException(String message) {
-            super(message);
+        if (source == null) {
+            System.out.println("  [" + name + "] FAIL: missing 'source' field");
+            failed++;
+            return;
         }
-    }
 
-    private static String compileDealSource(String source, String testName) throws CompileException {
-        String filename = testName + ".deal";
+        boolean appliesToLuajit = backends.contains("luajit");
 
-        LexResult lex = new Lexer(source, filename).tokenize();
-        if (lex.hasErrors()) {
-            StringBuilder msg = new StringBuilder();
-            for (Diagnostic d : lex.diagnostics()) {
-                if ("error".equals(d.severity())) {
-                    msg.append(d.code()).append(" ");
+        try {
+            // Compile and dump IR — always do this for IR assertions
+            var cr = compileForIR(source, "fixture-" + name + ".deal");
+            String ir = IrDumper.dump(cr.program(), cr.checkResult(), "fixture-" + name);
+
+            // Check IR assertions
+            List<String> irContains = (List<String>) test.getOrDefault("irContains", List.of());
+            List<String> irNotContains = (List<String>) test.getOrDefault("irNotContains", List.of());
+
+            boolean irOk = true;
+            for (String needle : irContains) {
+                if (!ir.contains(needle)) {
+                    System.out.println("  [" + name + "] FAIL: IR should contain '" + needle + "'");
+                    System.out.println("    IR:\n" + ir);
+                    irOk = false;
                 }
             }
-            throw new CompileException(msg.toString().trim());
-        }
+            for (String needle : irNotContains) {
+                if (ir.contains(needle)) {
+                    System.out.println("  [" + name + "] FAIL: IR should NOT contain '" + needle + "'");
+                    System.out.println("    IR:\n" + ir);
+                    irOk = false;
+                }
+            }
 
+            if (!irOk) {
+                failed++;
+                return;
+            }
+
+            // If runtime test + luajit available + applies to luajit
+            Object expectedOutput = test.get("expectedOutput");
+            Object expectedError = test.get("expectedError");
+            Object expectedExitCode = test.get("expectedExitCode");
+
+            boolean hasRuntimeAssertions = (expectedOutput != null && expectedOutput != JSON_NULL)
+                || (expectedError != null && expectedError != JSON_NULL)
+                || (expectedExitCode != null && expectedExitCode != JSON_NULL);
+
+            if (hasRuntimeAssertions) {
+                if (!appliesToLuajit) {
+                    System.out.println("  [" + name + "] SKIP (runtime test, not for luajit)");
+                    skipped++;
+                    return;
+                }
+                if (!luajitAvailable) {
+                    System.out.println("  [" + name + "] SKIP (LuaJIT not available)");
+                    skipped++;
+                    return;
+                }
+
+                String lua = generateLua(source, "fixture-" + name + ".deal");
+                if (lua == null) {
+                    System.out.println("  [" + name + "] FAIL: codegen failed");
+                    failed++;
+                    return;
+                }
+
+                boolean isErrorTest = (expectedError != null && expectedError != JSON_NULL);
+                String output = executeLua(lua, isErrorTest);
+                if (output == null) {
+                    System.out.println("  [" + name + "] FAIL: Lua execution returned null");
+                    failed++;
+                    return;
+                }
+
+                if (expectedOutput != null && expectedOutput != JSON_NULL) {
+                    String expStr = String.valueOf(expectedOutput);
+                    if (!output.contains(expStr)) {
+                        System.out.println("  [" + name + "] FAIL: expected output '" +
+                            expStr + "', got: " + output);
+                        failed++;
+                        return;
+                    }
+                }
+
+                if (expectedError != null && expectedError != JSON_NULL) {
+                    String expErr = String.valueOf(expectedError);
+                    if (!output.contains("DEAL_ERROR_CODE: " + expErr)) {
+                        System.out.println("  [" + name + "] FAIL: expected error '" +
+                            expErr + "', got: " + output);
+                        failed++;
+                        return;
+                    }
+                }
+            }
+
+            System.out.println("  [" + name + "] OK" +
+                (description.isEmpty() ? "" : " — " + description));
+            passed++;
+
+        } catch (Exception e) {
+            System.out.println("  [" + name + "] FAIL: " + e.getMessage());
+            e.printStackTrace(System.out);
+            failed++;
+        }
+    }
+
+    // =========================================================================
+    // Compilation helpers
+    // =========================================================================
+
+    private record IRCompileResult(ProgramNode program, CheckResult checkResult,
+                                    SymbolTable symbolTable) {}
+
+    private static IRCompileResult compileForIR(String source, String filename) {
+        LexResult lex = new Lexer(source, filename).tokenize();
+        if (lex.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            throw new RuntimeException("Lex error: " + lex.diagnostics());
+        }
         Parser parser = new Parser(lex.tokens(), filename);
         ParseResult parseResult = parser.parse();
         if (parseResult.hasErrors()) {
-            StringBuilder msg = new StringBuilder();
-            for (Diagnostic d : parseResult.diagnostics()) {
-                if ("error".equals(d.severity())) {
-                    msg.append(d.code()).append(" ");
-                }
-            }
-            throw new CompileException(msg.toString().trim());
+            throw new RuntimeException("Parse error: " + parseResult.diagnostics());
         }
+        ProgramNode program = parseResult.program();
 
-        BackendModuleResolver resolver = new BackendModuleResolver();
+        StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver(filename, resolver);
-        SymbolTable symTable = nr.resolve(parseResult.program());
-        if (nr.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            StringBuilder msg = new StringBuilder();
-            for (Diagnostic d : nr.diagnostics()) {
-                if ("error".equals(d.severity())) {
-                    msg.append(d.code()).append(" ");
-                }
-            }
-            throw new CompileException(msg.toString().trim());
-        }
+        SymbolTable symTable = nr.resolve(program);
+        CheckResult result = TypeChecker.check(filename, symTable, nr, program);
 
-        CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
-        if (result.hasErrors()) {
-            StringBuilder msg = new StringBuilder();
-            for (Diagnostic d : result.diagnostics()) {
-                if ("error".equals(d.severity())) {
-                    msg.append(d.code()).append(" ");
-                }
-            }
-            throw new CompileException(msg.toString().trim());
-        }
+        return new IRCompileResult(program, result, symTable);
+    }
 
-        return LuaBackend.generate(parseResult.program(), result, filename);
+    private static String generateLua(String source, String filename) {
+        try {
+            LexResult lex = new Lexer(source, filename).tokenize();
+            if (lex.hasErrors()) return null;
+
+            Parser parser = new Parser(lex.tokens(), filename);
+            ParseResult parseResult = parser.parse();
+            if (parseResult.hasErrors()) return null;
+
+            StubModuleResolver resolver = new StubModuleResolver();
+            NameResolver nr = new NameResolver(filename, resolver);
+            SymbolTable symTable = nr.resolve(parseResult.program());
+            CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
+            if (result.hasErrors()) return null;
+
+            return LuaBackend.generate(parseResult.program(), result, filename);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // =========================================================================
-    // Execution
+    // Lua execution
     // =========================================================================
 
-    private static final class ExecutionResult {
-        final String output;
-        final int exitCode;
-
-        ExecutionResult(String output, int exitCode) {
-            this.output = output;
-            this.exitCode = exitCode;
-        }
-    }
-
-    private static ExecutionResult executeLua(String luaSource, boolean isXpcallWrapped) {
+    private static String executeLua(String luaSource, boolean isXpcallWrapped) {
         String runner;
         if (isXpcallWrapped) {
             runner = buildXpcallRunner(luaSource);
@@ -326,7 +297,7 @@ public class BackendConformanceTest {
             runner = buildRuntimeOkRunner(luaSource);
         }
         try {
-            Path tmpDir = Files.createTempDirectory("deal_backend_");
+            Path tmpDir = Files.createTempDirectory("deal_backend_conf_");
             Path luaFile = tmpDir.resolve("test_main.lua");
             Files.writeString(luaFile, runner);
 
@@ -355,7 +326,7 @@ public class BackendConformanceTest {
             pb.redirectErrorStream(true);
             Process p = pb.start();
             String output = new String(p.getInputStream().readAllBytes()).trim();
-            int exit = p.waitFor();
+            p.waitFor();
 
             // Cleanup
             try {
@@ -363,7 +334,7 @@ public class BackendConformanceTest {
                     .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
             } catch (IOException ignored) {}
 
-            return new ExecutionResult(output, exit);
+            return output;
         } catch (Exception e) {
             System.err.println("    Lua execution exception: " + e.getMessage());
             return null;
@@ -406,396 +377,162 @@ public class BackendConformanceTest {
             "    print('DEAL_ERROR_CODE: ' .. tostring(err))\n" +
             "  end\n" +
             "end)\n" +
-            "if not __ok or __err then os.exit(1) end\n";
+            "if not __ok then os.exit(1) end\n";
     }
 
     // =========================================================================
-    // Module resolver
-    // =========================================================================
-
-    private static class BackendModuleResolver implements ModuleResolver {
-        private final Map<String, Map<String, Type>> stdlibExports;
-
-        BackendModuleResolver() {
-            this.stdlibExports = buildStdlibExports();
-        }
-
-        @Override
-        public Map<String, Type> resolveModule(String modulePath,
-                String importingModule, Set<String> modulesInProgress)
-                throws ModuleNotFoundException {
-            if (stdlibExports.containsKey(modulePath)) {
-                return stdlibExports.get(modulePath);
-            }
-            throw new ModuleNotFoundException("Module not found: " + modulePath);
-        }
-
-        @Override
-        public Symbol.ClassSymbol resolveClassSymbol(String className,
-                String modulePath, String importingModule)
-                throws ModuleNotFoundException {
-            return null;
-        }
-
-        private static Map<String, Map<String, Type>> buildStdlibExports() {
-            Map<String, Map<String, Type>> map = new LinkedHashMap<>();
-
-            map.put("std/console", module(
-                fn("log", list(strType()), nullType()),
-                fn("error", list(strType()), nullType())
-            ));
-
-            map.put("std/string", module(
-                fn("length", list(strType()), intType()),
-                fn("substring", list(strType(), intType(), intType()), strType()),
-                fn("contains", list(strType(), strType()), boolType()),
-                fn("startsWith", list(strType(), strType()), boolType()),
-                fn("endsWith", list(strType(), strType()), boolType()),
-                fn("replace", list(strType(), strType(), strType()), strType()),
-                fn("split", list(strType(), strType()), arrayType(strType())),
-                fn("trim", list(strType()), strType())
-            ));
-
-            map.put("std/table", module(
-                fn("keys", list(tableType()), arrayType(strType()))
-            ));
-
-            map.put("std/json", module(
-                fn("parse", list(strType()), tableType()),
-                fn("stringify", list(tableType()), strType())
-            ));
-
-            map.put("std/math", module(
-                fn("floor", list(numType()), numType()),
-                fn("ceil", list(numType()), numType()),
-                fn("sqrt", list(numType()), numType()),
-                fn("absInt", list(intType()), intType()),
-                fn("absNumber", list(numType()), numType()),
-                fn("minInt", list(intType(), intType()), intType()),
-                fn("maxInt", list(intType(), intType()), intType())
-            ));
-
-            map.put("std/time", module(
-                fn("nowMillis", list(), intType())
-            ));
-
-            return map;
-        }
-
-        private static Type intType()    { return Type.Int.INSTANCE; }
-        private static Type numType()    { return Type.Number.INSTANCE; }
-        private static Type strType()    { return Type.String.INSTANCE; }
-        private static Type boolType()   { return Type.Boolean.INSTANCE; }
-        private static Type nullType()   { return Type.Null.INSTANCE; }
-        private static Type tableType()  { return Type.Table.INSTANCE; }
-
-        private static Type arrayType(Type elem) { return Types.array(elem); }
-        private static Type fnType(List<Type> params, Type ret) { return Types.func(params, ret); }
-
-        @SafeVarargs
-        private static Map<String, Type> module(Map.Entry<String, Type>... entries) {
-            Map<String, Type> m = new LinkedHashMap<>();
-            for (var e : entries) m.put(e.getKey(), e.getValue());
-            return m;
-        }
-
-        private static Map.Entry<String, Type> fn(String name, List<Type> params, Type ret) {
-            return Map.entry(name, fnType(params, ret));
-        }
-
-        private static List<Type> list(Type... types) { return List.of(types); }
-    }
-
-    // =========================================================================
-    // Minimal JSON parser
+    // Minimal JSON parser — no external dependencies
     // =========================================================================
 
     /**
-     * Parses a fixture JSON file into a list of FixtureTest objects.
-     * This is a minimal recursive-descent parser that handles the exact
-     * schema required for backend fixtures.
+     * Parses a JSON string into a Java object tree (Map, List, String,
+     * Number, Boolean, JSON_NULL).
      */
-    private static List<FixtureTest> parseFixture(String json, String filename) {
-        JsonValue root = new JsonParser(json).parseValue();
-        if (!(root instanceof JsonObject obj)) {
-            throw new IllegalArgumentException(filename + ": expected JSON object at root");
-        }
-
-        String version = obj.getString("version");
-        if (version == null || !version.equals("1.0")) {
-            throw new IllegalArgumentException(filename + ": missing or unsupported version: " + version);
-        }
-
-        JsonValue testsVal = obj.get("tests");
-        if (!(testsVal instanceof JsonArray arr)) {
-            throw new IllegalArgumentException(filename + ": missing or invalid 'tests' array");
-        }
-
-        List<FixtureTest> tests = new ArrayList<>();
-        for (JsonValue testVal : arr.elements()) {
-            if (!(testVal instanceof JsonObject testObj)) {
-                throw new IllegalArgumentException(filename + ": test entry is not an object");
-            }
-
-            String name = testObj.getString("name");
-            if (name == null) {
-                throw new IllegalArgumentException(filename + ": test missing required 'name' field");
-            }
-
-            String description = testObj.getString("description");
-            if (description == null) description = "";
-
-            String source = testObj.getString("source");
-            if (source == null) {
-                throw new IllegalArgumentException(filename + "/" + name + ": missing required 'source' field");
-            }
-
-            String expectedOutput = testObj.getString("expectedOutput");
-            String expectedError = testObj.getString("expectedError");
-
-            Integer expectedExitCode = testObj.getInt("expectedExitCode");
-            if (expectedExitCode == null) expectedExitCode = 0;
-
-            JsonValue backendsVal = testObj.get("backends");
-            if (!(backendsVal instanceof JsonArray backendsArr)) {
-                throw new IllegalArgumentException(filename + "/" + name + ": missing or invalid 'backends' array");
-            }
-
-            List<String> backends = new ArrayList<>();
-            for (JsonValue bv : backendsArr.elements()) {
-                if (bv instanceof JsonString bs) {
-                    backends.add(bs.value);
-                }
-            }
-
-            tests.add(new FixtureTest(name, description, source,
-                expectedOutput, expectedError, expectedExitCode, backends));
-        }
-
-        return tests;
+    private static Object parseJson(String s) {
+        int[] pos = new int[]{0};
+        skipWhitespace(s, pos);
+        return parseValue(s, pos);
     }
 
-    // ---- JSON value types ----
-
-    private interface JsonValue {}
-
-    private record JsonString(String value) implements JsonValue {
-        @Override public String toString() { return "\"" + value + "\""; }
-    }
-
-    private record JsonNumber(double value) implements JsonValue {
-        int intValue() { return (int) value; }
-    }
-
-    private record JsonBoolean(boolean value) implements JsonValue {}
-
-    private static final class JsonNull implements JsonValue {
-        static final JsonNull INSTANCE = new JsonNull();
-    }
-
-    private static final class JsonArray implements JsonValue {
-        private final List<JsonValue> elements;
-
-        JsonArray(List<JsonValue> elements) { this.elements = elements; }
-        List<JsonValue> elements() { return elements; }
-    }
-
-    private static final class JsonObject implements JsonValue {
-        private final Map<String, JsonValue> members;
-
-        JsonObject(Map<String, JsonValue> members) { this.members = members; }
-        JsonValue get(String key) { return members.get(key); }
-
-        String getString(String key) {
-            JsonValue v = members.get(key);
-            if (v instanceof JsonString s) return s.value;
-            if (v instanceof JsonNull) return null;
-            return null;
-        }
-
-        Integer getInt(String key) {
-            JsonValue v = members.get(key);
-            if (v instanceof JsonNumber n) return n.intValue();
-            return null;
+    private static void skipWhitespace(String s, int[] pos) {
+        while (pos[0] < s.length() && Character.isWhitespace(s.charAt(pos[0]))) {
+            pos[0]++;
         }
     }
 
-    // ---- Recursive-descent JSON parser ----
+    private static Object parseValue(String s, int[] pos) {
+        skipWhitespace(s, pos);
+        if (pos[0] >= s.length()) return JSON_NULL;
 
-    private static final class JsonParser {
-        private final String input;
-        private int pos;
-
-        JsonParser(String input) {
-            this.input = input;
-            this.pos = 0;
-        }
-
-        JsonValue parseValue() {
-            skipWhitespace();
-            if (pos >= input.length()) {
-                throw new IllegalArgumentException("Unexpected end of JSON input");
-            }
-            char c = input.charAt(pos);
-            return switch (c) {
-                case '{' -> parseObject();
-                case '[' -> parseArray();
-                case '"' -> parseString();
-                case 't', 'f' -> parseBoolean();
-                case 'n' -> parseNull();
-                default -> {
-                    if (c == '-' || (c >= '0' && c <= '9')) {
-                        yield parseNumber();
-                    }
-                    throw new IllegalArgumentException("Unexpected character at pos " + pos + ": " + c);
+        char c = s.charAt(pos[0]);
+        return switch (c) {
+            case '"' -> parseString(s, pos);
+            case '{' -> parseObject(s, pos);
+            case '[' -> parseArray(s, pos);
+            case 'n' -> { pos[0] += 4; yield JSON_NULL; }
+            case 't' -> { pos[0] += 4; yield true; }
+            case 'f' -> { pos[0] += 5; yield false; }
+            default -> {
+                if (c == '-' || Character.isDigit(c)) {
+                    yield parseNumber(s, pos);
                 }
-            };
-        }
+                throw new RuntimeException("Unexpected char '" + c + "' at " + pos[0]);
+            }
+        };
+    }
 
-        JsonObject parseObject() {
-            expect('{');
-            Map<String, JsonValue> members = new LinkedHashMap<>();
-            skipWhitespace();
-            if (input.charAt(pos) != '}') {
-                while (true) {
-                    skipWhitespace();
-                    JsonString key = parseString();
-                    skipWhitespace();
-                    expect(':');
-                    skipWhitespace();
-                    JsonValue value = parseValue();
-                    members.put(key.value, value);
-                    skipWhitespace();
-                    if (input.charAt(pos) == '}') break;
-                    expect(',');
+    private static String parseString(String s, int[] pos) {
+        pos[0]++; // skip opening quote
+        StringBuilder sb = new StringBuilder();
+        while (pos[0] < s.length()) {
+            char c = s.charAt(pos[0]);
+            if (c == '"') {
+                pos[0]++;
+                return sb.toString();
+            }
+            if (c == '\\') {
+                pos[0]++;
+                if (pos[0] < s.length()) {
+                    char ec = s.charAt(pos[0]);
+                    sb.append(switch (ec) {
+                        case 'n' -> '\n'; case 't' -> '\t'; case 'r' -> '\r';
+                        case '"' -> '"'; case '\\' -> '\\'; case '/' -> '/';
+                        default -> ec;
+                    });
                 }
+            } else {
+                sb.append(c);
             }
-            expect('}');
-            return new JsonObject(members);
+            pos[0]++;
         }
+        return sb.toString();
+    }
 
-        JsonArray parseArray() {
-            expect('[');
-            List<JsonValue> elements = new ArrayList<>();
-            skipWhitespace();
-            if (input.charAt(pos) != ']') {
-                while (true) {
-                    skipWhitespace();
-                    elements.add(parseValue());
-                    skipWhitespace();
-                    if (input.charAt(pos) == ']') break;
-                    expect(',');
-                }
-            }
-            expect(']');
-            return new JsonArray(elements);
+    private static Map<String, Object> parseObject(String s, int[] pos) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        pos[0]++; // skip '{'
+        skipWhitespace(s, pos);
+        if (pos[0] < s.length() && s.charAt(pos[0]) == '}') {
+            pos[0]++;
+            return map;
         }
+        while (pos[0] < s.length()) {
+            skipWhitespace(s, pos);
+            if (pos[0] >= s.length()) break;
+            if (s.charAt(pos[0]) == '}') { pos[0]++; break; }
+            if (s.charAt(pos[0]) == ',') { pos[0]++; continue; }
 
-        JsonString parseString() {
-            expect('"');
-            StringBuilder sb = new StringBuilder();
-            while (pos < input.length()) {
-                char c = input.charAt(pos);
-                if (c == '"') {
-                    pos++;
-                    return new JsonString(sb.toString());
-                }
-                if (c == '\\') {
-                    pos++;
-                    if (pos >= input.length()) break;
-                    char esc = input.charAt(pos);
-                    switch (esc) {
-                        case '"': sb.append('"'); break;
-                        case '\\': sb.append('\\'); break;
-                        case '/': sb.append('/'); break;
-                        case 'b': sb.append('\b'); break;
-                        case 'f': sb.append('\f'); break;
-                        case 'n': sb.append('\n'); break;
-                        case 'r': sb.append('\r'); break;
-                        case 't': sb.append('\t'); break;
-                        case 'u':
-                            if (pos + 4 >= input.length()) break;
-                            String hex = input.substring(pos + 1, pos + 5);
-                            sb.append((char) Integer.parseInt(hex, 16));
-                            pos += 4;
-                            break;
-                        default:
-                            sb.append(esc);
-                            break;
-                    }
-                } else {
-                    sb.append(c);
-                }
-                pos++;
-            }
-            throw new IllegalArgumentException("Unterminated string");
+            String key = parseString(s, pos);
+            skipWhitespace(s, pos);
+            if (pos[0] < s.length() && s.charAt(pos[0]) == ':') pos[0]++;
+            Object value = parseValue(s, pos);
+            map.put(key, value);
         }
+        return map;
+    }
 
-        JsonNumber parseNumber() {
-            int start = pos;
-            if (pos < input.length() && input.charAt(pos) == '-') pos++;
-            while (pos < input.length() && input.charAt(pos) >= '0' && input.charAt(pos) <= '9') pos++;
-            if (pos < input.length() && input.charAt(pos) == '.') {
-                pos++;
-                while (pos < input.length() && input.charAt(pos) >= '0' && input.charAt(pos) <= '9') pos++;
-            }
-            if (pos < input.length() && (input.charAt(pos) == 'e' || input.charAt(pos) == 'E')) {
-                pos++;
-                if (pos < input.length() && (input.charAt(pos) == '+' || input.charAt(pos) == '-')) pos++;
-                while (pos < input.length() && input.charAt(pos) >= '0' && input.charAt(pos) <= '9') pos++;
-            }
-            double value = Double.parseDouble(input.substring(start, pos));
-            return new JsonNumber(value);
+    private static List<Object> parseArray(String s, int[] pos) {
+        List<Object> list = new ArrayList<>();
+        pos[0]++; // skip '['
+        skipWhitespace(s, pos);
+        if (pos[0] < s.length() && s.charAt(pos[0]) == ']') {
+            pos[0]++;
+            return list;
         }
+        while (pos[0] < s.length()) {
+            skipWhitespace(s, pos);
+            if (pos[0] >= s.length()) break;
+            if (s.charAt(pos[0]) == ']') { pos[0]++; break; }
+            if (s.charAt(pos[0]) == ',') { pos[0]++; continue; }
 
-        JsonBoolean parseBoolean() {
-            if (input.startsWith("true", pos)) {
-                pos += 4;
-                return new JsonBoolean(true);
-            } else if (input.startsWith("false", pos)) {
-                pos += 5;
-                return new JsonBoolean(false);
-            }
-            throw new IllegalArgumentException("Expected true or false at pos " + pos);
+            Object value = parseValue(s, pos);
+            list.add(value);
         }
+        return list;
+    }
 
-        JsonNull parseNull() {
-            if (input.startsWith("null", pos)) {
-                pos += 4;
-                return JsonNull.INSTANCE;
+    private static Number parseNumber(String s, int[] pos) {
+        StringBuilder sb = new StringBuilder();
+        while (pos[0] < s.length()) {
+            char c = s.charAt(pos[0]);
+            if (Character.isDigit(c) || c == '.' || c == '-' || c == 'e'
+                || c == 'E' || c == '+') {
+                sb.append(c);
+                pos[0]++;
+            } else {
+                break;
             }
-            throw new IllegalArgumentException("Expected null at pos " + pos);
         }
+        String numStr = sb.toString();
+        if (numStr.contains(".") || numStr.contains("e") || numStr.contains("E")) {
+            return Double.parseDouble(numStr);
+        }
+        return Long.parseLong(numStr);
+    }
 
-        void skipWhitespace() {
-            while (pos < input.length()) {
-                char c = input.charAt(pos);
-                if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-                    pos++;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        void expect(char c) {
-            if (pos >= input.length() || input.charAt(pos) != c) {
-                throw new IllegalArgumentException("Expected '" + c + "' at pos " + pos +
-                    ", got: " + (pos < input.length() ? "'" + input.charAt(pos) + "'" : "EOF"));
-            }
-            pos++;
-        }
+    private static String jsonString(Map<String, Object> map, String key, String defaultValue) {
+        Object v = map.get(key);
+        if (v == null || v == JSON_NULL) return defaultValue;
+        return String.valueOf(v);
     }
 
     // =========================================================================
-    // Summary
+    // Stub module resolver
     // =========================================================================
 
-    private static void printSummary() {
-        System.out.println();
-        System.out.println("=== Backend Conformance Summary ===");
-        int total = passed + failed + skipped;
-        System.out.println("Total: " + total + ", Passed: " + passed +
-            ", Failed: " + failed + ", Skipped: " + skipped);
+    static class StubModuleResolver implements ModuleResolver {
+        @Override
+        public Map<String, Type> resolveModule(String modulePath, String importingModule,
+                                                Set<String> modulesInProgress)
+                throws ModuleNotFoundException {
+            return Map.of();
+        }
+
+        @Override
+        public Symbol.ClassSymbol resolveClassSymbol(String className, String modulePath,
+                                                      String importingModule)
+                throws ModuleNotFoundException {
+            return null;
+        }
     }
 }

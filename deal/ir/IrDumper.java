@@ -19,7 +19,8 @@ import java.util.*;
  * </ul>
  *
  * <p>Type descriptors use the spec's {@code RuntimeTypeDescriptor} format:
- * {@code ?T} for nullables, {@code [T]} for arrays, {@code @path/Name} for classes.
+ * {@code ?T} for nullables, {@code [T]} for arrays, {@code @path/Name} for classes,
+ * and {@code async} prefix for async function types.
  *
  * <p>Spans use compact one-line format: {@code @file:startLine:startCol-endLine:endCol}.
  *
@@ -92,6 +93,14 @@ public final class IrDumper implements Visitor<String> {
     // Type descriptors — spec RuntimeTypeDescriptor format
     // =========================================================================
 
+    /**
+     * Converts an internal {@link Type} to its spec-format
+     * {@code RuntimeTypeDescriptor} string.
+     *
+     * <p>When {@link Type.Func} gains an {@code isAsync} field (ISSUE-0017),
+     * the async prefix will be emitted automatically via the reflective
+     * {@link #funcIsAsync(Type.Func)} check.</p>
+     */
     private String specTypeDescriptor(Type t) {
         if (t == null) return "null";
         return switch (t) {
@@ -114,7 +123,12 @@ public final class IrDumper implements Visitor<String> {
                 }
             }
             case Type.Func f -> {
-                StringBuilder sb = new StringBuilder("(");
+                StringBuilder sb = new StringBuilder();
+                // Async prefix: use reflective check until Type.Func gains isAsync (ISSUE-0017)
+                if (funcIsAsync(f)) {
+                    sb.append("async");
+                }
+                sb.append("(");
                 for (int i = 0; i < f.paramTypes().size(); i++) {
                     if (i > 0) sb.append(",");
                     sb.append(specTypeDescriptor(f.paramTypes().get(i)));
@@ -127,6 +141,21 @@ public final class IrDumper implements Visitor<String> {
                 yield sb.toString();
             }
         };
+    }
+
+    /**
+     * Reflective check for {@code Type.Func.isAsync()}.
+     * Returns {@code false} when the method is not yet available (pre-ISSUE-0017).
+     * Once ISSUE-0017 adds {@code isAsync} to {@code Type.Func}, this method
+     * will transparently start returning the actual value.
+     */
+    private static boolean funcIsAsync(Type.Func f) {
+        try {
+            return (boolean) Type.Func.class.getMethod("isAsync").invoke(f);
+        } catch (Exception e) {
+            // isAsync not yet available (ISSUE-0017)
+            return false;
+        }
     }
 
     private String typeNodeToSpecDescriptor(TypeNode tn) {
@@ -338,7 +367,8 @@ public final class IrDumper implements Visitor<String> {
         Type savedReturnType = this.currentReturnType;
         boolean savedAsync = this.currentFunctionIsAsync;
 
-        boolean isAsync = false;
+        // Check if this function is async via reflection (ISSUE-0017 will add isAsync field)
+        boolean isAsync = funcDeclIsAsync(node);
         this.currentFunctionIsAsync = isAsync;
 
         Type funcReturnType = null;
@@ -375,6 +405,21 @@ public final class IrDumper implements Visitor<String> {
         this.currentReturnType = savedReturnType;
         this.currentFunctionIsAsync = savedAsync;
         return sb.toString();
+    }
+
+    /**
+     * Reflective check for {@code FunctionDeclaration.isAsync()}.
+     * Returns {@code false} when the method is not yet available (pre-ISSUE-0017).
+     * Once ISSUE-0017 adds {@code isAsync} to {@code FunctionDeclaration},
+     * this method will transparently start returning the actual value.
+     */
+    private static boolean funcDeclIsAsync(FunctionDeclaration node) {
+        try {
+            return (boolean) FunctionDeclaration.class.getMethod("isAsync").invoke(node);
+        } catch (Exception e) {
+            // isAsync not yet available (ISSUE-0017)
+            return false;
+        }
     }
 
     private String visitParam(Parameter param) {
@@ -433,7 +478,8 @@ public final class IrDumper implements Visitor<String> {
         sb.append(indent()).append("return ").append(spanStr(node.span())).append("\n");
         if (currentReturnType != null && !(currentReturnType instanceof Type.Null)
                 && !(currentReturnType instanceof Type.Void)) {
-            sb.append(indent()).append("  ").append(boundary("return")).append("\n");
+            String boundaryKind = currentFunctionIsAsync ? "async-completion" : "return";
+            sb.append(indent()).append("  ").append(boundary(boundaryKind)).append("\n");
         }
         if (node.expr().isPresent()) {
             pushIndent();
