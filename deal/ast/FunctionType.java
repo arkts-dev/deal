@@ -11,5 +11,6 @@ public record FunctionType(
     Span span,
     List<FunctionTypeParam> params,
     Optional<FunctionTypeParam> rest,
-    TypeNode returnType
+    TypeNode returnType,
+    boolean isAsync
 ) implements TypeNode {}

@@ -230,7 +230,7 @@ public final class Parser {
 
         Span sp = spanBetween(funcToken, previousOrCurrent());
         return new FunctionDeclaration(sp, nameToken.lexeme(),
-                paramResult.params, paramResult.restParam, returnType, body);
+                paramResult.params, paramResult.restParam, returnType, body, false);
     }
 
     // -- VariableDeclaration --
@@ -572,7 +572,7 @@ public final class Parser {
         }
 
         return new FunctionType(spanBetween(lparen, previousOrCurrent()),
-                List.copyOf(params), rest, returnType);
+                List.copyOf(params), rest, returnType, false);
     }
 
     private FunctionTypeParam parseFunctionTypeParam() {
@@ -1007,7 +1007,7 @@ public final class Parser {
         }
 
         Span sp = spanBetween(funcToken, previousOrCurrent());
-        return new FunctionExpr(sp, paramResult.params, paramResult.restParam, returnType, body);
+        return new FunctionExpr(sp, paramResult.params, paramResult.restParam, returnType, body, false);
     }
 
     private ExpressionNode parseArrayLiteral() {

@@ -483,7 +483,7 @@ public class TypeDescriptorTest {
             new Block(new Span("test.deal", 1, 42, 2, 2),
                 List.of(new ReturnStatement(new Span("test.deal", 2, 3, 2, 15),
                     Optional.of(new LiteralExpr(new Span("test.deal", 2, 10, 2, 10),
-                        new LiteralValue.IntLiteral(0)))))));
+                        new LiteralValue.IntLiteral(0)))))), false);
 
         IdentifierExpr sumId = new IdentifierExpr(
             new Span("test.deal", 3, 1, 3, 4), "sum");
@@ -575,7 +575,7 @@ public class TypeDescriptorTest {
             new NamedType(new Span("test.deal", 1, 48, 1, 50), "null"),
             new Block(new Span("test.deal", 1, 52, 2, 2),
                 List.of(new ReturnStatement(new Span("test.deal", 2, 3, 2, 15),
-                    Optional.empty()))));
+                    Optional.empty()))), false);
 
         IdentifierExpr descId = new IdentifierExpr(
             new Span("test.deal", 3, 1, 3, 8), "describe");
@@ -621,7 +621,7 @@ public class TypeDescriptorTest {
             List.of(),
             Optional.of(restParam),
             new NamedType(new Span("test.deal", 1, 38, 1, 40), "null"),
-            new Block(new Span("test.deal", 1, 42, 2, 2), List.of()));
+            new Block(new Span("test.deal", 1, 42, 2, 2), List.of()), false);
 
         ProgramNode prog = new ProgramNode(span, List.of(fd));
 
@@ -759,7 +759,7 @@ public class TypeDescriptorTest {
             new Block(new Span("test.deal", 1, 37, 2, 2),
                 List.of(new ReturnStatement(new Span("test.deal", 2, 3, 2, 15),
                     Optional.of(new LiteralExpr(new Span("test.deal", 2, 10, 2, 10),
-                        new LiteralValue.IntLiteral(42)))))));
+                        new LiteralValue.IntLiteral(42)))))), false);
 
         IdentifierExpr id = new IdentifierExpr(new Span("test.deal", 3, 1, 3, 6), "fetch");
         VariableDeclaration var = new VariableDeclaration(
@@ -771,7 +771,7 @@ public class TypeDescriptorTest {
         // Build async func type: async(int)->string
         Type.Array retArr = new Type.Array(Type.String.INSTANCE);
         Type.Func funcType = new Type.Func(
-            List.of(Type.Int.INSTANCE), Optional.empty(), Type.String.INSTANCE);
+            List.of(Type.Int.INSTANCE), Optional.empty(), Type.String.INSTANCE, true);
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
         typeMap.put(id, funcType);

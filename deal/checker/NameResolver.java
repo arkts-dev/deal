@@ -277,7 +277,7 @@ public final class NameResolver {
         Optional<Type.Array> restType = fd.restParam()
             .map(rp -> (Type.Array) resolveTypeNode(rp.type()));
 
-        Type.Func ft = new Type.Func(paramTypes, restType, funcType);
+        Type.Func ft = new Type.Func(paramTypes, restType, funcType, fd.isAsync());
         root.define(name, new Symbol.FunctionSymbol(name, ft));
     }
 
@@ -489,7 +489,7 @@ public final class NameResolver {
             Optional<Type.Array> restType = fd.restParam()
                 .map(rp -> (Type.Array) resolveTypeNode(rp.type()));
 
-            Type.Func ft = new Type.Func(paramTypes, restType, funcType);
+            Type.Func ft = new Type.Func(paramTypes, restType, funcType, fd.isAsync());
             currentScope.define(fd.name(), new Symbol.FunctionSymbol(fd.name(), ft));
         }
 
@@ -652,7 +652,7 @@ public final class NameResolver {
                 }
                 Type ret = resolveTypeNode(ft.returnType());
                 if (ret == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
-                yield new Type.Func(paramTypes, restType, ret);
+                yield new Type.Func(paramTypes, restType, ret, ft.isAsync());
             }
         };
     }

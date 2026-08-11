@@ -249,7 +249,7 @@ public class IrDumperTest {
             new Span("test.deal", 1, 1, 3, 2), "f",
             List.of(), Optional.empty(),
             new NamedType(new Span("test.deal", 1, 19, 1, 22), "null"),
-            new Block(new Span("test.deal", 1, 24, 3, 2), List.of(throwStmt)));
+            new Block(new Span("test.deal", 1, 24, 3, 2), List.of(throwStmt)), false);
         ProgramNode prog = new ProgramNode(span, List.of(fd));
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
@@ -359,7 +359,7 @@ public class IrDumperTest {
             new Span("test.d.deal", 1, 1, 1, 30),
             "log", List.of(p1), Optional.empty(),
             new NamedType(new Span("test.d.deal", 1, 1, 1, 1), "null"),
-            null);
+            null, false);
         ExportDeclaration exp = new ExportDeclaration(
             new Span("test.d.deal", 1, 1, 1, 30), fd);
         ProgramNode prog = new ProgramNode(span, List.of(exp));
@@ -633,7 +633,7 @@ public class IrDumperTest {
                 "b", new ArrayType(new Span("test.deal", 1, 28, 1, 31),
                     new NamedType(new Span("test.deal", 1, 28, 1, 30), "int")))),
             new NamedType(new Span("test.deal", 1, 35, 1, 38), "null"),
-            new Block(new Span("test.deal", 1, 39, 1, 41), List.of()));
+            new Block(new Span("test.deal", 1, 39, 1, 41), List.of()), false);
 
         // Create an identifier reference to g
         IdentifierExpr gId = new IdentifierExpr(

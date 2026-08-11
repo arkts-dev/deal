@@ -127,7 +127,7 @@ public final class ExportExtractor {
         Optional<Type.Array> restType = fd.restParam()
             .map(rp -> (Type.Array) resolveTypeNodeSimple(rp.type(), classMap));
 
-        return new Type.Func(paramTypes, restType, retType);
+        return new Type.Func(paramTypes, restType, retType, fd.isAsync());
     }
 
     /**
@@ -171,7 +171,7 @@ public final class ExportExtractor {
                 Type ret = resolveTypeNodeSimple(ft.returnType(), classMap);
                 Optional<Type.Array> rest = ft.rest()
                     .map(r -> (Type.Array) resolveTypeNodeSimple(r.type(), classMap));
-                yield new Type.Func(pts, rest, ret);
+                yield new Type.Func(pts, rest, ret, ft.isAsync());
             }
         };
     }
