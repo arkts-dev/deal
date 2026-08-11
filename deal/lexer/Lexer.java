@@ -439,7 +439,6 @@ public final class Lexer {
      * </ol>
      */
     private Token readTemplateLiteral() {
-        int startPos = pos;
         bump(); // opening backtick
 
         // Record start of raw content (after the opening backtick)
