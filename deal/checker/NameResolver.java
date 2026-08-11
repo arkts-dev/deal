@@ -223,6 +223,25 @@ public final class NameResolver {
                 }
             });
         }
+
+        // D6: Add synthetic C$fromJson and C$toJson function symbols for @jsonable classes.
+        // These are added programmatically and never pass through the user-identifier
+        // $ prohibition check (checkNoDollar is not called for these names).
+        if (cd.isJsonable()) {
+            Type clsType = Types.classType(cd.name(), modulePath);
+
+            Type.Func fromJsonType = new Type.Func(
+                List.of(Type.String.INSTANCE), Optional.empty(),
+                Types.nullable(clsType));
+            root.define(cd.name() + "$fromJson",
+                new Symbol.FunctionSymbol(cd.name() + "$fromJson", fromJsonType));
+
+            Type.Func toJsonType = new Type.Func(
+                List.of(clsType), Optional.empty(),
+                Type.String.INSTANCE);
+            root.define(cd.name() + "$toJson",
+                new Symbol.FunctionSymbol(cd.name() + "$toJson", toJsonType));
+        }
     }
 
     /**
@@ -824,6 +843,37 @@ public final class NameResolver {
             return moduleResolver.resolveClassSymbol(className, modulePath, this.modulePath);
         } catch (ModuleResolver.ModuleNotFoundException e) {
             return null;
+        }
+    }
+
+    /**
+     * Checks whether a function is exported from a given module.
+     *
+     * <p>For same-module queries ({@code modulePath} is null, empty, or
+     * equals {@code this.modulePath}), the root symbol table is checked
+     * directly.  For cross-module queries, the module resolver is used
+     * to check the target module's export map.
+     *
+     * <p>This is used by the type checker ({@link TypeChecker}) to
+     * validate that a class type used as a jsonable field has the
+     * required {@code C$fromJson} / {@code C$toJson} exports.
+     *
+     * @param modulePath the module path where the function is expected
+     * @param functionName the function name (e.g. "User$fromJson")
+     * @return true if the function is exported from the module
+     */
+    public boolean isFunctionExportedFromModule(String modulePath, String functionName) {
+        if (modulePath == null || modulePath.isEmpty()
+                || modulePath.equals(this.modulePath)) {
+            // Same-module: check the root symbol table directly
+            return root.resolve(functionName) != null;
+        }
+        try {
+            Map<String, Type> exports = moduleResolver.resolveModule(
+                modulePath, this.modulePath, new HashSet<>());
+            return exports.containsKey(functionName);
+        } catch (ModuleResolver.ModuleNotFoundException e) {
+            return false;
         }
     }
 

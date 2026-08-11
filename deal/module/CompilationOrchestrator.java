@@ -743,6 +743,34 @@ public final class CompilationOrchestrator {
                     }
                 }
             }
+
+            // D6: Append synthetic C$fromJson and C$toJson exports for @jsonable
+            // classes.  These are added after the symbol-table-based correction
+            // so that synthetic entries are present in the final export map
+            // consumed by downstream modules.
+            for (StatementNode stmt : info.rawAst.statements()) {
+                if (stmt instanceof ExportDeclaration exp
+                        && exp.declaration() instanceof ClassDeclaration cd
+                        && cd.isJsonable()) {
+                    Symbol clsSym = symTable.resolve(cd.name());
+                    if (clsSym instanceof Symbol.ClassSymbol cs) {
+                        Type clsType = Types.classType(cs.name(), cs.modulePath());
+
+                        // C$fromJson: (string) -> C | null
+                        Type.Func fromJsonType = new Type.Func(
+                            List.of(Type.String.INSTANCE), Optional.empty(),
+                            Types.nullable(clsType));
+                        correctedExports.put(cd.name() + "$fromJson", fromJsonType);
+
+                        // C$toJson: (C) -> string
+                        Type.Func toJsonType = new Type.Func(
+                            List.of(clsType), Optional.empty(),
+                            Type.String.INSTANCE);
+                        correctedExports.put(cd.name() + "$toJson", toJsonType);
+                    }
+                }
+            }
+
             info.exports = correctedExports;
 
             diagnostics.addAll(nr.diagnostics());
