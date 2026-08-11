@@ -3,6 +3,7 @@ package deal.module;
 import deal.ast.*;
 import deal.checker.*;
 import deal.codegen.lua.LuaBackend;
+import deal.ir.IrDumper;
 import deal.lexer.*;
 import deal.parser.*;
 import deal.types.Type;
@@ -37,6 +38,7 @@ public final class CompilationOrchestrator {
     private final Path entryFile;
     private final Path outputRoot;
     private final boolean verbose;
+    private final boolean dumpIr;
     private final List<Path> moduleRoots;
     private final Path stdlibDir;
 
@@ -69,9 +71,17 @@ public final class CompilationOrchestrator {
     public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
                                     DealConfig config, List<Path> moduleRoots,
                                     Path stdlibDir) {
+        this(entryFile, outputRoot, verbose, false, config, moduleRoots, stdlibDir);
+    }
+
+    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
+                                    boolean dumpIr,
+                                    DealConfig config, List<Path> moduleRoots,
+                                    Path stdlibDir) {
         this.entryFile = entryFile.toAbsolutePath().normalize();
         this.outputRoot = outputRoot.toAbsolutePath().normalize();
         this.verbose = verbose;
+        this.dumpIr = dumpIr;
         this.moduleRoots = moduleRoots;
         this.stdlibDir = stdlibDir;
     }
@@ -241,6 +251,19 @@ public final class CompilationOrchestrator {
                 hasErrors = true;
             }
 
+            // IR dump for declaration files
+            if (dumpIr && info.isDeclarationFile && info.rawAst != null) {
+                try {
+                    String irText = IrDumper.dump(info.rawAst, info.symbolTable, info.modulePath);
+                    if (!irText.isEmpty()) {
+                        writeIrDump(info.modulePath, irText);
+                    }
+                } catch (Exception e) {
+                    error("E6001", "IR dump failed for " + info.sourcePath
+                        + ": " + e.getMessage(), info.sourcePath, 1, 1);
+                }
+            }
+
             long modElapsed = System.currentTimeMillis() - modStart;
             log("  Signatures extracted: " + info.sourcePath + " (" + modElapsed + "ms)");
         }
@@ -253,6 +276,7 @@ public final class CompilationOrchestrator {
 
     // =========================================================================
     // Phase 2: Dependency graph and topological ordering
+    // ... (unchanged)
     // =========================================================================
 
     private List<String> buildCheckOrder() {
@@ -721,6 +745,19 @@ public final class CompilationOrchestrator {
                 hasErrors = true;
             }
 
+            // IR dump for full modules (after type checking, before codegen)
+            if (dumpIr && !result.hasErrors() && info.rawAst != null) {
+                try {
+                    String irText = IrDumper.dump(info.rawAst, result, info.modulePath);
+                    if (!irText.isEmpty()) {
+                        writeIrDump(info.modulePath, irText);
+                    }
+                } catch (Exception e) {
+                    error("E6001", "IR dump failed for " + info.sourcePath
+                        + ": " + e.getMessage(), info.sourcePath, 1, 1);
+                }
+            }
+
             long modElapsed = System.currentTimeMillis() - modStart;
             log("  Checked: " + sourcePath + " (" + modElapsed + "ms)");
         }
@@ -835,6 +872,22 @@ public final class CompilationOrchestrator {
                 log("  Copied stdlib: " + stdlibModule);
             }
         }
+    }
+
+    // =========================================================================
+    // IR dump helper
+    // =========================================================================
+
+    /**
+     * Writes an IR dump string to the output directory.
+     * The file is placed at {@code <outputRoot>/<module-path>.ir.txt}.
+     */
+    private void writeIrDump(String modulePath, String irText) throws IOException {
+        String filePath = modulePath.replace('.', '/') + ".ir.txt";
+        Path outputPath = outputRoot.resolve(filePath);
+        Files.createDirectories(outputPath.getParent());
+        Files.writeString(outputPath, irText);
+        log("  IR dumped: " + outputPath);
     }
 
     // =========================================================================

@@ -16,7 +16,7 @@ import java.util.List;
  *
  * <p>Usage:
  * <pre>{@code
- * deal compile <entry.deal> [--output <dir>] [--verbose]
+ * deal compile <entry.deal> [--output <dir>] [--verbose] [--dump-ir]
  * }</pre>
  *
  * <p>Options:
@@ -24,6 +24,7 @@ import java.util.List;
  *   <li>{@code compile <entry.deal>} — compile a DEAL project (required)</li>
  *   <li>{@code --output <dir>} / {@code -o <dir>} — output directory (default: ./build/lua)</li>
  *   <li>{@code --verbose} / {@code -v} — verbose output with per-module timing</li>
+ *   <li>{@code --dump-ir} — produce IR dump files at {@code <outputDir>/<module-path>.ir.txt}</li>
  * </ul>
  */
 public final class Main {
@@ -59,6 +60,7 @@ public final class Main {
         String entryPath = null;
         Path outputDir = null;
         boolean verbose = false;
+        boolean dumpIr = false;
 
         int i = 0;
         while (i < remaining.length) {
@@ -72,6 +74,7 @@ public final class Main {
                     outputDir = Path.of(remaining[++i]).toAbsolutePath();
                 }
                 case "--verbose", "-v" -> verbose = true;
+                case "--dump-ir" -> dumpIr = true;
                 default -> {
                     if (arg.startsWith("-")) {
                         System.err.println("deal: unknown option '" + arg + "'");
@@ -147,11 +150,14 @@ public final class Main {
             System.out.println("Output: " + outputDir);
             System.out.println("Module roots: " + moduleRoots);
             System.out.println("Stdlib dir: " + (stdlibDir != null ? stdlibDir : "none"));
+            if (dumpIr) {
+                System.out.println("IR dump: enabled");
+            }
         }
 
         // Run compilation
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entryFile, outputDir, verbose, config, moduleRoots, stdlibDir);
+            entryFile, outputDir, verbose, dumpIr, config, moduleRoots, stdlibDir);
 
         boolean success = orchestrator.compile();
 
@@ -163,10 +169,11 @@ public final class Main {
     }
 
     private static void printUsage() {
-        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--verbose]");
+        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--verbose] [--dump-ir]");
         System.err.println();
         System.err.println("Options:");
         System.err.println("  --output, -o <dir>   Output directory (default: ./build/lua)");
         System.err.println("  --verbose, -v        Verbose output with per-module timing");
+        System.err.println("  --dump-ir            Produce IR dump files at <outputDir>/<module-path>.ir.txt");
     }
 }
