@@ -1,0 +1,8 @@
+// IR golden fixture: tables
+// Tests table type and member access on tables. Table reads
+// use contextual typing via the table-read boundary.
+
+function main(): null {
+    let t: table = { key1: "val1", key2: 42 };
+    let v: string = t.key1;
+}

@@ -1,0 +1,19 @@
+module @test/ir-goldens/fixtures/variables.deal:5:1-11:1
+  function main: null @test/ir-goldens/fixtures/variables.deal:5:1-11:1
+    body
+      let x: int @test/ir-goldens/fixtures/variables.deal:6:5-7:7
+        [boundary: var-annotation]
+        literal 100 : int @test/ir-goldens/fixtures/variables.deal:6:18-6:20
+      let y: int @test/ir-goldens/fixtures/variables.deal:7:5-8:7
+        literal 200 : int @test/ir-goldens/fixtures/variables.deal:7:13-7:15
+      let z: [int] @test/ir-goldens/fixtures/variables.deal:8:5-9:5
+        [boundary: var-annotation]
+        array : [int] @test/ir-goldens/fixtures/variables.deal:8:20-8:28
+          literal 1 : int @test/ir-goldens/fixtures/variables.deal:8:21-8:21
+          literal 2 : int @test/ir-goldens/fixtures/variables.deal:8:24-8:24
+          literal 3 : int @test/ir-goldens/fixtures/variables.deal:8:27-8:27
+      expr-stmt @test/ir-goldens/fixtures/variables.deal:9:5-9:11
+        assign = : int @test/ir-goldens/fixtures/variables.deal:9:5-9:11
+          [boundary: assignment]
+          ident x : int @test/ir-goldens/fixtures/variables.deal:9:5-9:5
+          literal 500 : int @test/ir-goldens/fixtures/variables.deal:9:9-9:11

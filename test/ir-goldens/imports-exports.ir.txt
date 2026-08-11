@@ -1,0 +1,10 @@
+module @test/ir-goldens/fixtures/imports-exports.deal:5:1-10:1
+  import * as Lib from "./lib/modules-helper" @test/ir-goldens/fixtures/imports-exports.deal:5:1-7:6
+    [boundary: import]
+  export @test/ir-goldens/fixtures/imports-exports.deal:7:1-10:1
+    [boundary: export]
+    function greet: string @test/ir-goldens/fixtures/imports-exports.deal:7:8-10:1
+      body
+        return @test/ir-goldens/fixtures/imports-exports.deal:8:5-9:1
+          [boundary: return]
+          literal "Hello" : string @test/ir-goldens/fixtures/imports-exports.deal:8:12-8:18

@@ -1,0 +1,7 @@
+// IR golden fixture: await-expressions
+// TODO(v1.1): Add await expressions when async/await lands.
+// Currently contains a minimal valid program as a placeholder.
+
+function placeholder(): null {
+    return;
+}

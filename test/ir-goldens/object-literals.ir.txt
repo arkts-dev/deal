@@ -1,0 +1,22 @@
+module @test/ir-goldens/fixtures/object-literals.deal:4:1-13:1
+  class Point @test/ir-goldens/fixtures/object-literals.deal:4:1-7:1
+    field x: int @test/ir-goldens/fixtures/object-literals.deal:5:5-6:5
+      [boundary: class-default]
+      literal 0 : int @test/ir-goldens/fixtures/object-literals.deal:5:14-5:14
+    field y: int @test/ir-goldens/fixtures/object-literals.deal:6:5-7:1
+      [boundary: class-default]
+      literal 0 : int @test/ir-goldens/fixtures/object-literals.deal:6:14-6:14
+  function main: null @test/ir-goldens/fixtures/object-literals.deal:9:1-13:1
+    body
+      let p: @test/ir-goldens/fixtures/object-literals.deal/Point @test/ir-goldens/fixtures/object-literals.deal:10:5-11:7
+        [boundary: var-annotation]
+        object : @test/ir-goldens/fixtures/object-literals.deal/Point @test/ir-goldens/fixtures/object-literals.deal:10:20-10:33
+          [boundary: class-construct]
+          literal 1 : int @test/ir-goldens/fixtures/object-literals.deal:10:25-10:25
+          literal 2 : int @test/ir-goldens/fixtures/object-literals.deal:10:31-10:31
+      let q: @test/ir-goldens/fixtures/object-literals.deal/Point @test/ir-goldens/fixtures/object-literals.deal:11:5-12:1
+        [boundary: var-annotation]
+        object : @test/ir-goldens/fixtures/object-literals.deal/Point @test/ir-goldens/fixtures/object-literals.deal:11:20-11:33
+          [boundary: class-construct]
+          literal 3 : int @test/ir-goldens/fixtures/object-literals.deal:11:25-11:25
+          literal 4 : int @test/ir-goldens/fixtures/object-literals.deal:11:31-11:31

@@ -1,0 +1,15 @@
+// IR golden fixture: functions
+// Tests function declarations with parameters, rest params,
+// return type annotations, and recursion.
+
+function add(a: int, b: int): int {
+    return a + b;
+}
+
+function greet(name: string): string {
+    return "Hello, " + name;
+}
+
+function noop(): null {
+    return;
+}

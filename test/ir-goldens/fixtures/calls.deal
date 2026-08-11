@@ -1,0 +1,14 @@
+// IR golden fixture: calls
+// Tests function call expressions with various argument patterns.
+
+function add(a: int, b: int): int {
+    return a + b;
+}
+
+function double(x: int): int {
+    return add(x, x);
+}
+
+function main(): null {
+    let r: int = double(5);
+}

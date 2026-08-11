@@ -1,0 +1,12 @@
+// IR golden fixture: object-literals
+// Tests object literal expressions used to construct class instances.
+
+class Point {
+    x: int = 0;
+    y: int = 0;
+}
+
+function main(): null {
+    let p: Point = { x: 1, y: 2 };
+    let q: Point = { x: 3, y: 4 };
+}

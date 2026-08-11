@@ -1,0 +1,7 @@
+// IR golden fixture: jsonable-classes
+// TODO(v1.1): Add @jsonable class when the feature lands.
+// Currently contains a minimal valid class as a placeholder.
+
+class Placeholder {
+    name: string = "";
+}

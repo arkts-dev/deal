@@ -1,0 +1,29 @@
+module @test/ir-goldens/fixtures/calls.deal:4:1-15:1
+  function add: int @test/ir-goldens/fixtures/calls.deal:4:1-8:8
+    param a: int @test/ir-goldens/fixtures/calls.deal:4:14-4:20
+      [boundary: param-entry]
+    param b: int @test/ir-goldens/fixtures/calls.deal:4:22-4:28
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/calls.deal:5:5-6:1
+        [boundary: return]
+        binary + : int @test/ir-goldens/fixtures/calls.deal:5:12-5:16
+          ident a : int @test/ir-goldens/fixtures/calls.deal:5:12-5:12
+          ident b : int @test/ir-goldens/fixtures/calls.deal:5:16-5:16
+  function double: int @test/ir-goldens/fixtures/calls.deal:8:1-12:8
+    param x: int @test/ir-goldens/fixtures/calls.deal:8:17-8:23
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/calls.deal:9:5-10:1
+        [boundary: return]
+        call : int @test/ir-goldens/fixtures/calls.deal:9:12-9:20
+          ident add : (int,int)->int @test/ir-goldens/fixtures/calls.deal:9:12-9:14
+          ident x : int @test/ir-goldens/fixtures/calls.deal:9:16-9:16
+          ident x : int @test/ir-goldens/fixtures/calls.deal:9:19-9:19
+  function main: null @test/ir-goldens/fixtures/calls.deal:12:1-15:1
+    body
+      let r: int @test/ir-goldens/fixtures/calls.deal:13:5-14:1
+        [boundary: var-annotation]
+        call : int @test/ir-goldens/fixtures/calls.deal:13:18-13:26
+          ident double : (int)->int @test/ir-goldens/fixtures/calls.deal:13:18-13:23
+          literal 5 : int @test/ir-goldens/fixtures/calls.deal:13:25-13:25

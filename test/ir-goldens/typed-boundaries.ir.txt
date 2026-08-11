@@ -1,0 +1,39 @@
+module @test/ir-goldens/fixtures/typed-boundaries.deal:7:1-21:1
+  class Counter @test/ir-goldens/fixtures/typed-boundaries.deal:7:1-9:1
+    field count: int @test/ir-goldens/fixtures/typed-boundaries.deal:8:5-9:1
+      [boundary: class-default]
+      literal 0 : int @test/ir-goldens/fixtures/typed-boundaries.deal:8:18-8:18
+  function increment: int @test/ir-goldens/fixtures/typed-boundaries.deal:11:1-16:8
+    param c: Counter @test/ir-goldens/fixtures/typed-boundaries.deal:11:20-11:30
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/typed-boundaries.deal:12:5-12:25
+        assign = : int @test/ir-goldens/fixtures/typed-boundaries.deal:12:5-12:25
+          [boundary: field-write]
+          member .count : int @test/ir-goldens/fixtures/typed-boundaries.deal:12:5-12:11
+            ident c : @test/ir-goldens/fixtures/typed-boundaries.deal/Counter @test/ir-goldens/fixtures/typed-boundaries.deal:12:5-12:5
+          binary + : int @test/ir-goldens/fixtures/typed-boundaries.deal:12:15-12:25
+            member .count : int @test/ir-goldens/fixtures/typed-boundaries.deal:12:15-12:21
+              ident c : @test/ir-goldens/fixtures/typed-boundaries.deal/Counter @test/ir-goldens/fixtures/typed-boundaries.deal:12:15-12:15
+            literal 1 : int @test/ir-goldens/fixtures/typed-boundaries.deal:12:25-12:25
+      return @test/ir-goldens/fixtures/typed-boundaries.deal:13:5-14:1
+        [boundary: return]
+        member .count : int @test/ir-goldens/fixtures/typed-boundaries.deal:13:12-13:18
+          ident c : @test/ir-goldens/fixtures/typed-boundaries.deal/Counter @test/ir-goldens/fixtures/typed-boundaries.deal:13:12-13:12
+  function main: null @test/ir-goldens/fixtures/typed-boundaries.deal:16:1-21:1
+    body
+      let c: @test/ir-goldens/fixtures/typed-boundaries.deal/Counter @test/ir-goldens/fixtures/typed-boundaries.deal:17:5-18:7
+        [boundary: var-annotation]
+        object : @test/ir-goldens/fixtures/typed-boundaries.deal/Counter @test/ir-goldens/fixtures/typed-boundaries.deal:17:22-17:33
+          [boundary: class-construct]
+          literal 0 : int @test/ir-goldens/fixtures/typed-boundaries.deal:17:31-17:31
+      let n: int @test/ir-goldens/fixtures/typed-boundaries.deal:18:5-19:5
+        [boundary: var-annotation]
+        call : int @test/ir-goldens/fixtures/typed-boundaries.deal:18:18-18:29
+          ident increment : (@test/ir-goldens/fixtures/typed-boundaries.deal/Counter)->int @test/ir-goldens/fixtures/typed-boundaries.deal:18:18-18:26
+          ident c : @test/ir-goldens/fixtures/typed-boundaries.deal/Counter @test/ir-goldens/fixtures/typed-boundaries.deal:18:28-18:28
+      expr-stmt @test/ir-goldens/fixtures/typed-boundaries.deal:19:5-19:10
+        assign = : int @test/ir-goldens/fixtures/typed-boundaries.deal:19:5-19:10
+          [boundary: assignment]
+          ident n : int @test/ir-goldens/fixtures/typed-boundaries.deal:19:5-19:5
+          literal 42 : int @test/ir-goldens/fixtures/typed-boundaries.deal:19:9-19:10

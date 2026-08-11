@@ -1,0 +1,7 @@
+// IR golden fixture: for-of-loops
+// TODO(v1.1): Add for-of loops when the feature lands.
+// Currently contains a minimal valid program as a placeholder.
+
+function placeholder(): null {
+    return;
+}
