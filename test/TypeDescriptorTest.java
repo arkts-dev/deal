@@ -565,43 +565,42 @@ public class TypeDescriptorTest {
             "sep", new NamedType(new Span("test.deal", 1, 21, 1, 26), "string"));
         Parameter restParam = new Parameter(
             new Span("test.deal", 1, 30, 1, 45),
-            "parts",
+            "values",
             new ArrayType(new Span("test.deal", 1, 39, 1, 45),
-                new NamedType(new Span("test.deal", 1, 39, 1, 44), "string")));
+                new NamedType(new Span("test.deal", 1, 39, 1, 44), "int")));
         FunctionDeclaration fd = new FunctionDeclaration(
-            new Span("test.deal", 1, 1, 1, 50), "join",
+            new Span("test.deal", 1, 1, 1, 50), "describe",
             List.of(sep),
             Optional.of(restParam),
-            new NamedType(new Span("test.deal", 1, 48, 1, 50), "string"),
+            new NamedType(new Span("test.deal", 1, 48, 1, 50), "null"),
             new Block(new Span("test.deal", 1, 52, 2, 2),
                 List.of(new ReturnStatement(new Span("test.deal", 2, 3, 2, 15),
-                    Optional.of(new LiteralExpr(new Span("test.deal", 2, 10, 2, 14),
-                        new LiteralValue.StringLiteral("x")))))));
+                    Optional.empty()))));
 
-        IdentifierExpr joinId = new IdentifierExpr(
-            new Span("test.deal", 3, 1, 3, 5), "join");
+        IdentifierExpr descId = new IdentifierExpr(
+            new Span("test.deal", 3, 1, 3, 8), "describe");
         VariableDeclaration var = new VariableDeclaration(
-            new Span("test.deal", 3, 1, 3, 5), "j",
-            Optional.empty(), joinId);
+            new Span("test.deal", 3, 1, 3, 8), "d",
+            Optional.empty(), descId);
 
         ProgramNode prog = new ProgramNode(span, List.of(fd, var));
 
         Type.Func funcType = Types.func(
             List.of(Type.String.INSTANCE),
-            new Type.Array(Type.String.INSTANCE),
-            Type.String.INSTANCE);
+            new Type.Array(Type.Int.INSTANCE),
+            Type.Null.INSTANCE);
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
-        typeMap.put(joinId, funcType);
+        typeMap.put(descId, funcType);
         typeMap.put(var.initializer(), funcType);
 
         SymbolTable st = new SymbolTable();
-        st.define("join", new Symbol.FunctionSymbol("join", funcType));
-        st.define("j", new Symbol.VariableSymbol("j", funcType, false));
+        st.define("describe", new Symbol.FunctionSymbol("describe", funcType));
+        st.define("d", new Symbol.VariableSymbol("d", funcType, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
         String ir = IrDumper.dump(prog, result, "test");
-        assertContains(ir, "(string,...[string])->string", "mixed fixed+rest uses spec format");
+        assertContains(ir, "(string,...[int])->null", "critical edge case (string,...[int])->null");
         System.out.println("OK");
     }
 

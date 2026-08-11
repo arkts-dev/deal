@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "Backend-neutral type descriptor tests — verifies that IR dump produces spec-format RuntimeTypeDescriptor strings for all DEAL types.",
+  "description": "Backend-neutral type descriptor tests \u2014 verifies that IR dump produces spec-format RuntimeTypeDescriptor strings for all DEAL types.",
   "tests": [
     {
       "name": "primitive-null",
@@ -9,9 +9,13 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["literal null : null"],
+      "irContains": [
+        "literal null : null"
+      ],
       "irNotContains": [],
-      "backends": ["luajit"]
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "primitive-boolean",
@@ -20,9 +24,13 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["literal true : boolean"],
+      "irContains": [
+        "literal true : boolean"
+      ],
       "irNotContains": [],
-      "backends": ["luajit"]
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "primitive-int",
@@ -31,9 +39,13 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["literal 42 : int"],
+      "irContains": [
+        "literal 42 : int"
+      ],
       "irNotContains": [],
-      "backends": ["luajit"]
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "primitive-number",
@@ -42,9 +54,13 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["literal 3.14 : number"],
+      "irContains": [
+        "literal 3.14 : number"
+      ],
       "irNotContains": [],
-      "backends": ["luajit"]
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "primitive-string",
@@ -53,9 +69,13 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["string"],
+      "irContains": [
+        "string"
+      ],
       "irNotContains": [],
-      "backends": ["luajit"]
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "primitive-table",
@@ -64,9 +84,13 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["table"],
+      "irContains": [
+        "table"
+      ],
       "irNotContains": [],
-      "backends": ["luajit"]
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "array-int-spec-format",
@@ -75,9 +99,15 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["param a: [int]"],
-      "irNotContains": ["int[]"],
-      "backends": ["luajit"]
+      "irContains": [
+        "param a: [int]"
+      ],
+      "irNotContains": [
+        "int[]"
+      ],
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "array-string-spec-format",
@@ -86,9 +116,15 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["param a: [string]"],
-      "irNotContains": ["string[]"],
-      "backends": ["luajit"]
+      "irContains": [
+        "param a: [string]"
+      ],
+      "irNotContains": [
+        "string[]"
+      ],
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "nested-array-spec-format",
@@ -97,9 +133,15 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["param a: [[int]]"],
-      "irNotContains": ["int[][]"],
-      "backends": ["luajit"]
+      "irContains": [
+        "param a: [[int]]"
+      ],
+      "irNotContains": [
+        "int[][]"
+      ],
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "nullable-int-spec-format",
@@ -108,9 +150,15 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["param n: ?int"],
-      "irNotContains": ["|null"],
-      "backends": ["luajit"]
+      "irContains": [
+        "param n: ?int"
+      ],
+      "irNotContains": [
+        "|null"
+      ],
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "nullable-string-spec-format",
@@ -119,9 +167,15 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["param n: ?string"],
-      "irNotContains": ["|null"],
-      "backends": ["luajit"]
+      "irContains": [
+        "param n: ?string"
+      ],
+      "irNotContains": [
+        "|null"
+      ],
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "class-descriptor-spec-format",
@@ -130,9 +184,13 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["/User"],
+      "irContains": [
+        "/User"
+      ],
       "irNotContains": [],
-      "backends": ["luajit"]
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "nullable-class-descriptor",
@@ -141,20 +199,30 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["param u: ?User"],
-      "irNotContains": ["|null"],
-      "backends": ["luajit"]
+      "irContains": [
+        "param u: ?User"
+      ],
+      "irNotContains": [
+        "|null"
+      ],
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "function-type-array-param",
-      "description": "Array param type in function — rest param uses [...[T]]",
+      "description": "Array param type in function \u2014 rest param uses [...[T]]",
       "source": "function sumValues(...xs: int[]): null { return; }",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["rest param xs: [int]"],
+      "irContains": [
+        "rest param xs: [int]"
+      ],
       "irNotContains": [],
-      "backends": ["luajit"]
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "rest-param-mixed",
@@ -163,9 +231,14 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["rest param values: [int]", "param label: string"],
+      "irContains": [
+        "rest param values: [int]",
+        "param label: string"
+      ],
       "irNotContains": [],
-      "backends": ["luajit"]
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "nullable-array-param",
@@ -174,9 +247,15 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["param a: ?[int]"],
-      "irNotContains": ["|null"],
-      "backends": ["luajit"]
+      "irContains": [
+        "param a: ?[int]"
+      ],
+      "irNotContains": [
+        "|null"
+      ],
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "array-of-nullable-int",
@@ -185,9 +264,15 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["param a: [?int]"],
-      "irNotContains": ["|null"],
-      "backends": ["luajit"]
+      "irContains": [
+        "param a: [?int]"
+      ],
+      "irNotContains": [
+        "|null"
+      ],
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "no-legacy-format",
@@ -196,13 +281,117 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
-      "irContains": ["[int]", "?int", "?string", "[string]"],
-      "irNotContains": ["int[]", "|null"],
-      "backends": ["luajit"]
+      "irContains": [
+        "[int]",
+        "?int",
+        "?string",
+        "[string]"
+      ],
+      "irNotContains": [
+        "int[]",
+        "|null"
+      ],
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "function-type-descriptor-multi-arg",
+      "description": "Function type (int,int)->int appears in IR for function-typed ident",
+      "source": "function add(a: int, b: int): int { return a + b; }\nlet f: (a: int, b: int) => int = add;",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "irContains": [
+        "(int,int)->int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "function-type-descriptor-null-return",
+      "description": "Function type ()->null appears in IR for function-typed ident",
+      "source": "function noop(): null { return; }\nlet f: () => null = noop;",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "irContains": [
+        "()->null"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "function-type-descriptor-nullable-return",
+      "description": "Function type (int)->?string appears in IR for nullable-return function",
+      "source": "function maybe(x: int): int | null { if (x === 0) { return null; } return x; }\nlet f: (x: int) => int | null = maybe;",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "irContains": [
+        "(int)->?int"
+      ],
+      "irNotContains": [
+        "|null"
+      ],
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "function-type-descriptor-mixed-params",
+      "description": "Function type (int,string)->boolean appears in IR for mixed-param function",
+      "source": "function check(x: int, s: string): boolean { return true; }\nlet f: (x: int, s: string) => boolean = check;",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "irContains": [
+        "(int,string)->boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "function-type-descriptor-array-param",
+      "description": "Function type ([int])->int appears in IR for array-param function",
+      "source": "function head(xs: int[]): int { return xs[0]; }\nlet f: (xs: int[]) => int = head;",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "irContains": [
+        "([int])->int"
+      ],
+      "irNotContains": [
+        "int[]"
+      ],
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "function-type-descriptor-rest-param",
+      "description": "Function type (string,...[int])->null appears in IR for mixed fixed+rest function",
+      "source": "function describe(label: string, ...values: int[]): null { return; }\nlet f: (label: string, ...values: int[]) => null = describe;",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "irContains": [
+        "(string,...[int])->null"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit"
+      ]
     },
     {
       "name": "async-function-pending",
-      "description": "Async function descriptor — pending ISSUE-0017. SKIP (empty backends).",
+      "description": "Async function descriptor \u2014 pending ISSUE-0017. SKIP (empty backends).",
       "source": "function fetch(x: int): string { return \"\"; }",
       "expectedOutput": null,
       "expectedError": null,

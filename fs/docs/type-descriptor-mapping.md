@@ -109,6 +109,7 @@ From `docs/spec-v1.1.md` §Runtime type descriptor format:
 ```
 RuntimeTypeDescriptor ::=
     PrimitiveDescriptor
+    | BuiltinClassDescriptor
     | ClassDescriptor
     | ArrayDescriptor
     | NullableDescriptor
@@ -117,8 +118,14 @@ RuntimeTypeDescriptor ::=
 PrimitiveDescriptor ::=
     "null" | "boolean" | "int" | "number" | "string" | "table"
 
+BuiltinClassDescriptor ::=
+    "Error"
+
 ClassDescriptor ::=
-    "@" ModuleRoot "/" ClassName
+    "@" ModuleRoot "/" ModuleRelativePath "/" ClassName
+
+ModuleRoot ::= /* the configured module root from deal.json, e.g. "src", "lib/utils" */
+ModuleRelativePath ::= /* path components from module root to defining file, e.g. "models"; may be empty for root-level classes */
 
 ArrayDescriptor ::=
     "[" RuntimeTypeDescriptor "]"
@@ -144,3 +151,7 @@ ParamDescriptor ::=
 - `NullableDescriptor` inner type must not be `null` and must not be another `NullableDescriptor`.
 - `ParamDescriptor` with `...` requires `ArrayDescriptor` (not a bare primitive).
 - `AsyncMarker` is only valid immediately before a `FunctionDescriptor`.
+
+**Notes**:
+- The `Error` builtin class is a nominal type with special runtime representation; it is not a primitive but is handled as a standalone builtin in the descriptor grammar.
+- The `ClassDescriptor` production uses two path components (`ModuleRoot` and `ModuleRelativePath`) as defined in the spec. In practice, `ModuleRelativePath` may be empty when the class is defined at the module root level, yielding a descriptor like `@src//User`; the compiler's IR dumper may collapse consecutive slashes for readability.

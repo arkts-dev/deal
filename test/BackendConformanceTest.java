@@ -7,6 +7,7 @@ import deal.ir.IrDumper;
 import deal.lexer.*;
 import deal.parser.*;
 import deal.types.Type;
+import deal.types.Types;
 
 import java.io.*;
 import java.nio.file.*;
@@ -521,10 +522,73 @@ public class BackendConformanceTest {
     // =========================================================================
 
     static class StubModuleResolver implements ModuleResolver {
+        private static final Map<String, Map<String, Type>> STDLIB;
+
+        static {
+            STDLIB = new HashMap<>();
+            STDLIB.put("std/console", module(
+                fn("log", list(strType()), nullType()),
+                fn("error", list(strType()), nullType())
+            ));
+            STDLIB.put("std/string", module(
+                fn("length", list(strType()), intType()),
+                fn("substring", list(strType(), intType(), intType()), strType()),
+                fn("contains", list(strType(), strType()), boolType()),
+                fn("startsWith", list(strType(), strType()), boolType()),
+                fn("endsWith", list(strType(), strType()), boolType()),
+                fn("replace", list(strType(), strType(), strType()), strType()),
+                fn("split", list(strType(), strType()), arrayType(strType())),
+                fn("trim", list(strType()), strType())
+            ));
+            STDLIB.put("std/table", module(
+                fn("keys", list(tableType()), arrayType(strType()))
+            ));
+            STDLIB.put("std/json", module(
+                fn("parse", list(strType()), tableType()),
+                fn("stringify", list(tableType()), strType())
+            ));
+            STDLIB.put("std/math", module(
+                fn("floor", list(numType()), numType()),
+                fn("ceil", list(numType()), numType()),
+                fn("sqrt", list(numType()), numType()),
+                fn("absInt", list(intType()), intType()),
+                fn("absNumber", list(numType()), numType()),
+                fn("minInt", list(intType(), intType()), intType()),
+                fn("maxInt", list(intType(), intType()), intType())
+            ));
+            STDLIB.put("std/time", module(
+                fn("nowMillis", list(), intType())
+            ));
+        }
+
+        private static Type intType()    { return Type.Int.INSTANCE; }
+        private static Type numType()    { return Type.Number.INSTANCE; }
+        private static Type strType()    { return Type.String.INSTANCE; }
+        private static Type boolType()   { return Type.Boolean.INSTANCE; }
+        private static Type nullType()   { return Type.Null.INSTANCE; }
+        private static Type tableType()  { return Type.Table.INSTANCE; }
+        private static Type arrayType(Type elem) { return Types.array(elem); }
+        private static Type fnType(List<Type> params, Type ret) { return Types.func(params, ret); }
+
+        @SafeVarargs
+        private static Map<String, Type> module(Map.Entry<String, Type>... entries) {
+            Map<String, Type> m = new LinkedHashMap<>();
+            for (var e : entries) m.put(e.getKey(), e.getValue());
+            return m;
+        }
+
+        private static Map.Entry<String, Type> fn(String name, List<Type> params, Type ret) {
+            return Map.entry(name, fnType(params, ret));
+        }
+
+        private static List<Type> list(Type... types) { return List.of(types); }
+
         @Override
         public Map<String, Type> resolveModule(String modulePath, String importingModule,
                                                 Set<String> modulesInProgress)
                 throws ModuleNotFoundException {
+            Map<String, Type> exports = STDLIB.get(modulePath);
+            if (exports != null) return exports;
             return Map.of();
         }
 
