@@ -71,6 +71,8 @@ public class AstAndTypesTest {
         testNullableTypeInvariants();
         testTypeEquality();
         testArityExtension();
+        testAsyncTypeEquality();
+        testAsyncAssignability();
         testVisitor();
 
         System.out.println();
@@ -778,4 +780,70 @@ public class AstAndTypesTest {
         check(fullVisitor.visit(id).equals("Ident"), "full visitor IdentifierExpr");
         check(fullVisitor.visit(lit).equals("Literal"), "full visitor LiteralExpr");
     }
+
+    // -----------------------------------------------------------------------
+    // Async function type equality (ISSUE-0053)
+    // -----------------------------------------------------------------------
+
+    static void testAsyncTypeEquality() {
+        System.out.println("-- Async Type Equality --");
+
+        // Sync vs async: not equal
+        Type.Func sync = Types.func(List.of(Type.Int.INSTANCE), Type.Boolean.INSTANCE);
+        Type.Func async = Types.func(List.of(Type.Int.INSTANCE), Type.Boolean.INSTANCE, true);
+        check(!Types.equals(sync, async), "sync != async (same params/return)");
+        check(!Types.equals(async, sync), "async != sync (same params/return)");
+
+        // Async vs async: equal when same
+        Type.Func async2 = Types.func(List.of(Type.Int.INSTANCE), Type.Boolean.INSTANCE, true);
+        check(Types.equals(async, async2), "async == async (same params/return)");
+
+        // Async with different params: not equal
+        Type.Func async3 = Types.func(List.of(Type.Number.INSTANCE), Type.Boolean.INSTANCE, true);
+        check(!Types.equals(async, async3), "async(int)=>bool != async(number)=>bool");
+
+        // Async with different return: not equal
+        Type.Func async4 = Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE, true);
+        check(!Types.equals(async, async4), "async(int)=>bool != async(int)=>int");
+
+        // Sync equals sync (regression)
+        Type.Func sync2 = Types.func(List.of(Type.Int.INSTANCE), Type.Boolean.INSTANCE);
+        check(Types.equals(sync, sync2), "sync == sync (same params/return)");
+    }
+
+    // -----------------------------------------------------------------------
+    // Async function type assignability (ISSUE-0053)
+    // -----------------------------------------------------------------------
+
+    static void testAsyncAssignability() {
+        System.out.println("-- Async Assignability --");
+
+        Type.Func syncIntBool = Types.func(List.of(Type.Int.INSTANCE), Type.Boolean.INSTANCE);
+        Type.Func asyncIntBool = Types.func(List.of(Type.Int.INSTANCE), Type.Boolean.INSTANCE, true);
+
+        // Async to sync: NOT assignable
+        check(!Types.isAssignable(asyncIntBool, syncIntBool),
+            "async NOT assignable to sync");
+        check(!Types.isAssignable(syncIntBool, asyncIntBool),
+            "sync NOT assignable to async");
+
+        // Async to async with arity extension
+        Type.Func asyncOneArg = Types.func(List.of(Type.Int.INSTANCE), Type.Boolean.INSTANCE, true);
+        Type.Func asyncTwoArg = Types.func(
+            List.of(Type.Int.INSTANCE, Type.Int.INSTANCE), Type.Boolean.INSTANCE, true);
+        check(Types.isAssignable(asyncOneArg, asyncTwoArg),
+            "async(int)=>bool assignable to async(int,int)=>bool (arity extension)");
+
+        // Async arity extension reverse: NOT assignable
+        check(!Types.isAssignable(asyncTwoArg, asyncOneArg),
+            "async(int,int)=>bool NOT assignable to async(int)=>bool");
+
+        // Sync to same sync with arity extension (regression)
+        Type.Func syncOneArg = Types.func(List.of(Type.Int.INSTANCE), Type.Boolean.INSTANCE);
+        Type.Func syncTwoArg = Types.func(
+            List.of(Type.Int.INSTANCE, Type.Int.INSTANCE), Type.Boolean.INSTANCE);
+        check(Types.isAssignable(syncOneArg, syncTwoArg),
+            "sync(int)=>bool assignable to sync(int,int)=>bool");
+    }
+
 }

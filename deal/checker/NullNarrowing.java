@@ -140,6 +140,14 @@ public final class NullNarrowing {
     }
 
     /**
+     * Clears all narrowed entries. Used after await expressions
+     * because async suspension invalidates all flow-sensitive refinements.
+     */
+    public void invalidateAll() {
+        narrowed.clear();
+    }
+
+    /**
      * Merges narrowings from two branches (intersection: only keep if both
      * branches agree).
      */

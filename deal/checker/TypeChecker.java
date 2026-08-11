@@ -16,7 +16,7 @@ import deal.diagnostics.DiagnosticCode;
  * null narrowing, contextual typing for table reads, and class construction
  * checking.
  *
- * <p>Errors produced: E3001–E3011, E4001–E4008, E5001–E5004.</p>
+ * <p>Errors produced: E3001–E3016, E4001–E4008, E5001–E5004.</p>
  */
 public final class TypeChecker {
 
@@ -38,6 +38,10 @@ public final class TypeChecker {
     // -- Tracking variables assigned in try blocks --
     private final Set<String> varsAssignedInTry = new HashSet<>();
     private boolean insideTry = false;
+
+    // -- Async/await tracking --
+    private boolean insideAsyncFunction = false;
+    private boolean insideAwaitExpression = false;
 
     // -- Current function return type (for return checking) --
     private Type currentReturnType = null;
@@ -396,8 +400,10 @@ public final class TypeChecker {
         }
 
         Type savedReturnType = currentReturnType;
+        boolean savedInsideAsync = insideAsyncFunction;
         if (funcType != null) {
             currentReturnType = funcType.returnType();
+            insideAsyncFunction = funcType.isAsync();
         }
 
         // F1: Use walkStatement(fd.body()) instead of walkStatements(fd.body().statements())
@@ -415,6 +421,7 @@ public final class TypeChecker {
         }
 
         currentReturnType = savedReturnType;
+        insideAsyncFunction = savedInsideAsync;
     }
 
     // =======================================================================
@@ -708,7 +715,7 @@ public final class TypeChecker {
             case FunctionExpr fe       -> checkFunctionExpr(fe);
             case HasExpr has           -> checkHas(has);
             case AssignmentExpr assign -> checkAssignmentExpr(assign);
-            case AwaitExpression await -> checkExpression(await.callee());
+            case AwaitExpression await -> checkAwaitExpression(await);
             case TemplateLiteralExpr tl -> {
                 for (int i = 0; i < tl.parts().size(); i++) {
                     ExpressionNode part = tl.parts().get(i);
@@ -722,6 +729,55 @@ public final class TypeChecker {
                 yield Type.String.INSTANCE;
             }
         };
+    }
+
+    // =======================================================================
+    // Await expression (async/await type checking)
+    // =======================================================================
+
+    private Type checkAwaitExpression(AwaitExpression await) {
+        // E3012: await is only allowed inside an async function
+        if (!insideAsyncFunction) {
+            error(DiagnosticCode.E3012,
+                "'await' is only allowed inside an async function",
+                await.span());
+        }
+
+        // Suppress E3014 inside await: the call expression inside await is
+        // explicitly allowed to call an async function without its own await.
+        // This flag is checked in checkCall() before emitting E3014.
+        boolean savedInsideAwait = insideAwaitExpression;
+        insideAwaitExpression = true;
+        Type resultType = checkExpression(await.callee());
+        insideAwaitExpression = savedInsideAwait;
+
+        // After checkExpression runs, the callee function's type is cached
+        // in the type map. Retrieve it to verify async-ness.
+        // Guard against non-CallExpr callees: the parser emits E1042 but still
+        // constructs an AwaitExpression with the invalid callee during error
+        // recovery (e.g., `await 42`). A bare cast would throw ClassCastException.
+        if (!(await.callee() instanceof CallExpr call)) {
+            // Parser already reported E1042; avoid cascading errors.
+            narrowing.invalidateAll();
+            return Type.Error.INSTANCE;
+        }
+
+        Type calleeFuncType = typeOf(call.callee());
+
+        if (calleeFuncType instanceof Type.Func f && f.isAsync()) {
+            // Valid await: resultType is the return type R of the async function.
+            // Invalidate narrowing after await.
+            narrowing.invalidateAll();
+            return resultType;
+        }
+
+        if (calleeFuncType != Type.Error.INSTANCE) {
+            error(DiagnosticCode.E3013,
+                "'await' must be applied to an async function call",
+                await.callee().span());
+        }
+        narrowing.invalidateAll();
+        return Type.Error.INSTANCE;
     }
 
     // =======================================================================
@@ -902,6 +958,16 @@ public final class TypeChecker {
             if (sym instanceof Symbol.IntrinsicSymbol is) {
                 return is.resolver().checkCall(call, argTypes, ctx);
             }
+        }
+
+        // E3014: async function called without await (after intrinsic check,
+        // so intrinsics handle their own async logic if ever needed)
+        if (calleeType instanceof Type.Func funcType && funcType.isAsync()
+                && !insideAwaitExpression) {
+            error(DiagnosticCode.E3014,
+                "Direct call to async function requires 'await'",
+                call.span());
+            return Type.Error.INSTANCE;
         }
 
         if (calleeType instanceof Type.Func funcType) {
@@ -1289,7 +1355,9 @@ public final class TypeChecker {
         }
 
         Type savedReturnType = currentReturnType;
+        boolean savedInsideAsync = insideAsyncFunction;
         currentReturnType = returnType;
+        insideAsyncFunction = fe.isAsync();
 
         // F1: Use walkStatement(fe.body()) instead of walkStatements(fe.body().statements())
         // so that the Block's scope is entered.
@@ -1302,6 +1370,7 @@ public final class TypeChecker {
         }
 
         currentReturnType = savedReturnType;
+        insideAsyncFunction = savedInsideAsync;
         currentScope = savedScope;
 
         return funcType;
@@ -1494,6 +1563,10 @@ public final class TypeChecker {
             }
             case HasExpr has -> exprType;
             case TemplateLiteralExpr tl -> exprType;
+            case AwaitExpression await -> {
+                // Await in inference context: use the result type directly.
+                yield exprType;
+            }
             default -> {
                 error(DiagnosticCode.E3002, "Cannot infer type of this expression", init.span());
                 yield null;

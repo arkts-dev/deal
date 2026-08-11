@@ -162,6 +162,12 @@ public enum DiagnosticCode {
     E3010(Phase.FRONTEND, "Invalid operand types for '+'"),
     /** Array element type mismatch. */
     E3011(Phase.FRONTEND, "Array element type mismatch"),
+    /** 'await' is only allowed inside an async function. */
+    E3012(Phase.FRONTEND, "'await' outside async function"),
+    /** 'await' must be applied to an async function call. */
+    E3013(Phase.FRONTEND, "'await' on non-async call"),
+    /** Direct call to async function requires 'await'. */
+    E3014(Phase.FRONTEND, "Async call without 'await'"),
     /** For-of iterable must be an array or string. */
     E3015(Phase.FRONTEND, "Invalid for-of iterable type"),
     /** Template literal interpolation must be string. */

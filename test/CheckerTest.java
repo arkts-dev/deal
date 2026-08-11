@@ -166,6 +166,18 @@ public class CheckerTest {
         testNameResolution_asyncFuncTypeAnnotationIsAsync();
         testNameResolution_awaitWalkExpressionHoistsNestedFuncExpr();
 
+        // ISSUE-0053: TypeChecker async/await rules
+        testAwaitOutsideAsync_E3012();
+        testAwaitOnNonAsyncCall_E3013();
+        testAsyncCallWithoutAwait_E3014();
+        testAwaitAsyncCallNoE3014();
+        testNestedAwaitSuppression();
+        testNarrowingInvalidatedAfterAwait();
+        testAwait42DoesNotCrash();
+        testAsyncFuncNotAssignableToSync();
+        testSyncFuncNotAssignableToAsync();
+        testNullNarrowingInvalidateAll();
+
         // -- Type Checking: Literals and Identifiers --
         testLiteralTypes();
         testIdentifierType();
@@ -2231,4 +2243,170 @@ public class CheckerTest {
         check(!hasUndeclared,
             "nested function expr variable should be hoisted (no E2001)");
     }
+
+    // =========================================================================
+    // ISSUE-0053: Async/await TypeChecker tests
+    // =========================================================================
+
+    /** E3012: await outside async function. */
+    static void testAwaitOutsideAsync_E3012() {
+        System.out.println("-- E3012: await outside async function --");
+        // await inside a sync function body
+        CheckerOutput out = checkProgram(
+            "async function g(): int { return 5; }" +
+            "function f(): int { return await g(); }"
+        );
+        assertError(out, "E3012", "await outside async function → E3012");
+    }
+
+    /** E3013: await on non-async call. */
+    static void testAwaitOnNonAsyncCall_E3013() {
+        System.out.println("-- E3013: await on non-async call --");
+        CheckerOutput out = checkProgram(
+            "function syncFunc(): int { return 42; }" +
+            "async function f(): int {" +
+            "  return await syncFunc();" +
+            "}"
+        );
+        assertError(out, "E3013", "await on non-async call → E3013");
+    }
+
+    /** E3014: async call without await. */
+    static void testAsyncCallWithoutAwait_E3014() {
+        System.out.println("-- E3014: async call without await --");
+        CheckerOutput out = checkProgram(
+            "async function g(): int { return 5; }" +
+            "function f(): null {" +
+            "  let x: int = g();" +
+            "  return null;" +
+            "}"
+        );
+        assertError(out, "E3014", "async call without await → E3014");
+    }
+
+    /** await asyncCall() does NOT produce E3014 (suppression works). */
+    static void testAwaitAsyncCallNoE3014() {
+        System.out.println("-- E3014 suppression: await asyncCall() no E3014 --");
+        CheckerOutput out = checkProgram(
+            "async function g(): int { return 5; }" +
+            "async function f(): int {" +
+            "  return await g();" +
+            "}"
+        );
+        assertNoErrors(out, "await asyncCall() should not produce E3014");
+    }
+
+    /** Nested await: await asyncCall(await otherAsyncCall()) — zero E3014. */
+    static void testNestedAwaitSuppression() {
+        System.out.println("-- E3014 suppression: nested await --");
+        CheckerOutput out = checkProgram(
+            "async function inner(): int { return 42; }" +
+            "async function outer(x: int): int { return x; }" +
+            "async function f(): int {" +
+            "  return await outer(await inner());" +
+            "}"
+        );
+        boolean hasE3014 = out.result.diagnostics().stream()
+            .anyMatch(d -> d.code().equals("E3014"));
+        check(!hasE3014, "nested await should have zero E3014 errors");
+    }
+
+    /** Narrowing invalidated after await: variables revert to declared types. */
+    static void testNarrowingInvalidatedAfterAwait() {
+        System.out.println("-- Narrowing invalidated after await --");
+        // After await, a variable narrowed via if (x !== null) reverts to its
+        // nullable declared type. So using it as non-null after await → E3001.
+        CheckerOutput out = checkProgram(
+            "async function g(): int { return 5; }" +
+            "async function f(n: int | null): int {" +
+            "  if (n !== null) {" +
+            "    let x: int = n;" +  // narrowed — ok
+            "    let result: int = await g();" +  // await invalidates narrowing
+            "    let y: int = n;" +  // n is back to int|null → E3001
+            "    return result;" +
+            "  }" +
+            "  return 0;" +
+            "}"
+        );
+        assertError(out, "E3001", "narrowing invalidated after await → E3001");
+    }
+
+    /** await 42 does NOT crash the TypeChecker — instanceof guard works. */
+    static void testAwait42DoesNotCrash() {
+        System.out.println("-- await 42: instanceof guard prevents ClassCastException --");
+        // The parser emits E1042 for await 42 (not a call), but still
+        // constructs an AwaitExpression. The TypeChecker must handle it
+        // gracefully.
+        CheckerOutput out = checkProgram(
+            "async function f(): null {" +
+            "  await 42;" +
+            "  return null;" +
+            "}"
+        );
+        // Should not crash. May produce E3013 or E1042 depending on parse order.
+        // Just verify no ClassCastException occurred.
+        List<Diagnostic> diags = out.result.diagnostics();
+        boolean crashed = diags.stream()
+            .anyMatch(d -> d.message().contains("ClassCastException")
+                        || d.message().contains("cannot be cast"));
+        check(!crashed, "await 42 should not throw ClassCastException");
+        // Should have some error (E1042 from parser or E3013 from type checker)
+        boolean hasError = diags.stream()
+            .anyMatch(d -> "error".equals(d.severity()));
+        check(hasError, "await 42 should produce some error");
+    }
+
+    /** async (int)=>int not assignable to (int)=>int. */
+    static void testAsyncFuncNotAssignableToSync() {
+        System.out.println("-- async function type not assignable to sync --");
+        CheckerOutput out = checkProgram(
+            "async function g(): int { return 5; }" +
+            "let f: (x: int) => int = g;"
+        );
+        assertError(out, "E3001", "async func not assignable to sync → E3001");
+    }
+
+    /** (int)=>int not assignable to async (int)=>int. */
+    static void testSyncFuncNotAssignableToAsync() {
+        System.out.println("-- sync function type not assignable to async --");
+        CheckerOutput out = checkProgram(
+            "function g(): int { return 5; }" +
+            "let f: async (x: int) => int = g;"
+        );
+        assertError(out, "E3001", "sync func not assignable to async → E3001");
+    }
+
+    /** NullNarrowing.invalidateAll() clears all narrowed entries. */
+    static void testNullNarrowingInvalidateAll() {
+        System.out.println("-- NullNarrowing.invalidateAll() clears all entries --");
+        deal.checker.NullNarrowing nn = new deal.checker.NullNarrowing();
+
+        // Simulate some narrowing
+        nn.onIfCondition(
+            new BinaryExpr(
+                new Span("test", 1, 1, 1, 10),
+                new IdentifierExpr(new Span("test", 1, 1, 1, 2), "x"),
+                BinaryOp.NEQ,
+                new LiteralExpr(new Span("test", 1, 8, 1, 12),
+                    new LiteralValue.NullLiteral())
+            ),
+            true,
+            name -> {
+                if ("x".equals(name))
+                    return deal.types.Types.nullable(Type.Int.INSTANCE);
+                return Type.Error.INSTANCE;
+            }
+        );
+        check(nn.getNarrowedType("x") == Type.Int.INSTANCE,
+            "x should be narrowed to int (non-null)");
+        check(!nn.narrowedVariableNames().isEmpty(),
+            "narrowedVariableNames should be non-empty before invalidate");
+
+        nn.invalidateAll();
+        check(nn.getNarrowedType("x") == null,
+            "x narrowing should be null after invalidateAll");
+        check(nn.narrowedVariableNames().isEmpty(),
+            "narrowedVariableNames should be empty after invalidateAll");
+    }
+
 }

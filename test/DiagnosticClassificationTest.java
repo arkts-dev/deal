@@ -248,6 +248,9 @@ public class DiagnosticClassificationTest {
         coverage.put("E3009", "CheckerTest (arg count mismatch)");
         coverage.put("E3010", "CheckerTest (string+int)");
         coverage.put("E3011", "CheckerTest (array element mismatch)");
+        coverage.put("E3012", "CheckerTest (await outside async)");
+        coverage.put("E3013", "CheckerTest (await on non-async call)");
+        coverage.put("E3014", "CheckerTest (async call without await)");
         coverage.put("E3015", "CheckerTest (for-of iterable type)");
         coverage.put("E3016", "CheckerTest (template literal interpolation)");
 
