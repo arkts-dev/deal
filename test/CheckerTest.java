@@ -2231,3 +2231,4 @@ public class CheckerTest {
         check(!hasUndeclared,
             "nested function expr variable should be hoisted (no E2001)");
     }
+}
