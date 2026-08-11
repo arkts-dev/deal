@@ -1,0 +1,17 @@
+// @spec: Classes — @jsonable fromJson rejects extra keys
+// @description: @jsonable fromJson returns null when JSON contains unknown keys
+// @expected: runtime-ok
+// @features: jsonable, fromJson, validation
+
+// @jsonable
+export class Item {
+  name: string = "";
+}
+
+export function test_fromJson_extra_keys(): null {
+  let result: Item | null = Item$fromJson("{\"name\":\"ok\",\"extra\":42}");
+  if (result !== null) {
+    throw { code: "TEST_FAIL", message: "fromJson should return null for extra keys" };
+  }
+  return null;
+}

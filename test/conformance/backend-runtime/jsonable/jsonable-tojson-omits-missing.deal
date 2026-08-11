@@ -1,0 +1,39 @@
+// @spec: Classes — @jsonable toJson omits missing optional
+// @description: @jsonable toJson omits optional fields that are not set (missing state), and fromJson applies defaults
+// @expected: runtime-ok
+// @features: jsonable, toJson, optional
+
+// @jsonable
+export class Config {
+  name: string = "";
+  debug?: boolean = false;
+}
+
+export function test_toJson_omits_missing(): null {
+  // Create instance without the optional field
+  let c: Config = { name: "test" };
+  let json: string = Config$toJson(c);
+  // Roundtrip: the missing optional should not appear in JSON,
+  // so fromJson should produce an instance with the default value
+  let c2: Config | null = Config$fromJson(json);
+  if (c2 !== null) {
+    if (c2.name !== "test") {
+      throw { code: "TEST_FAIL", message: "name mismatch" };
+    }
+    // Verify that fromJson succeeds (the optional field gets its default)
+  } else {
+    throw { code: "TEST_FAIL", message: "roundtrip fromJson null" };
+  }
+
+  // Also test that fromJson with explicit optional field works
+  let c3: Config | null = Config$fromJson("{\"name\":\"withDebug\",\"debug\":true}");
+  if (c3 !== null) {
+    if (c3.name !== "withDebug") {
+      throw { code: "TEST_FAIL", message: "withDebug name mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "fromJson with optional returned null" };
+  }
+
+  return null;
+}

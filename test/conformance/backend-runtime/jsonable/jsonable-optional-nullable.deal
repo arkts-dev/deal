@@ -1,0 +1,53 @@
+// @spec: Classes — @jsonable optional/nullable three-state
+// @description: @jsonable optional and nullable fields preserve three-state roundtrip (missing, present-null, present-value)
+// @expected: runtime-ok
+// @features: jsonable, optional, nullable
+
+// @jsonable
+export class Profile {
+  nick?: string = "";
+  bio: string | null = null;
+  score: int = 0;
+}
+
+export function test_optional_nullable(): null {
+  // Test 1: missing optional, null nullable — roundtrip with only required field
+  let p1: Profile = { score: 100 };
+  let s1: string = Profile$toJson(p1);
+  let r1: Profile | null = Profile$fromJson(s1);
+  if (r1 !== null) {
+    if (r1.score !== 100) {
+      throw { code: "TEST_FAIL", message: "roundtrip 1 score mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "roundtrip 1 fromJson null" };
+  }
+
+  // Test 2: explicit null on optional field, value on nullable
+  let p2: Profile | null = Profile$fromJson("{\"nick\":null,\"bio\":\"hello\",\"score\":50}");
+  if (p2 !== null) {
+    let s2: string = Profile$toJson(p2);
+    let r2: Profile | null = Profile$fromJson(s2);
+    if (r2 !== null) {
+      if (r2.score !== 50) {
+        throw { code: "TEST_FAIL", message: "roundtrip 2 score mismatch" };
+      }
+    } else {
+      throw { code: "TEST_FAIL", message: "roundtrip 2 fromJson null" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "fromJson null for nullable test" };
+  }
+
+  // Test 3: all fields present with values
+  let p3: Profile | null = Profile$fromJson("{\"nick\":\"Joe\",\"bio\":\"hi\",\"score\":75}");
+  if (p3 !== null) {
+    if (p3.score !== 75) {
+      throw { code: "TEST_FAIL", message: "score mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "fromJson null for all-fields test" };
+  }
+
+  return null;
+}

@@ -1,0 +1,25 @@
+// @spec: Classes — @jsonable fromJson
+// @description: @jsonable fromJson parses valid JSON and returns a correctly populated instance
+// @expected: runtime-ok
+// @features: jsonable, fromJson
+
+// @jsonable
+export class User {
+  name: string = "";
+  age: int = 0;
+}
+
+export function test_fromJson(): null {
+  let u: User | null = User$fromJson("{\"name\":\"Alice\",\"age\":30}");
+  if (u !== null) {
+    if (u.name !== "Alice") {
+      throw { code: "TEST_FAIL", message: "fromJson name mismatch" };
+    }
+    if (u.age !== 30) {
+      throw { code: "TEST_FAIL", message: "fromJson age mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "fromJson returned null for valid JSON" };
+  }
+  return null;
+}

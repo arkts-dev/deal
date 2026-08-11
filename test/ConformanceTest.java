@@ -13,6 +13,7 @@ import deal.types.Types;
 import java.io.*;
 import java.nio.file.*;
 import java.util.*;
+import java.util.regex.*;
 
 /**
  * Spec-centric conformance test runner for DEAL v1.1.
@@ -29,6 +30,7 @@ public class ConformanceTest {
     private static int skipped = 0;
     private static final Map<String, List<TestResult>> specGroups = new LinkedHashMap<>();
     private static boolean luajitAvailable;
+    private static boolean luajitSupportsDollar;
 
     // =========================================================================
     // Data types
@@ -66,10 +68,18 @@ public class ConformanceTest {
             luajitAvailable = false;
         }
 
+        if (luajitAvailable) {
+            luajitSupportsDollar = checkLuajitSupportsDollar();
+        }
+
         System.out.println("=== DEAL v1.1 Conformance Test Suite ===");
         System.out.println("Root: " + conformanceRoot);
         System.out.println("LuaJIT: " + (luajitAvailable ? "available" :
             "NOT available (runtime tests will be skipped)"));
+        if (luajitAvailable) {
+            System.out.println("LuaJIT $ support: " +
+                (luajitSupportsDollar ? "yes" : "no (@jsonable runtime tests will be skipped)"));
+        }
         System.out.println();
 
         // Discover test files
@@ -90,6 +100,26 @@ public class ConformanceTest {
 
         if (failed > 0) {
             System.exit(1);
+        }
+    }
+
+    /**
+     * Check whether LuaJIT supports {@code $} in identifiers.
+     * Required for @jsonable tests which generate identifiers like
+     * {@code C$fromJson}.  Older LuaJIT builds (pre-2020) reject {@code $}.
+     */
+    private static boolean checkLuajitSupportsDollar() {
+        try {
+            Path tmp = Files.createTempFile("deal_dollar_test_", ".lua");
+            Files.writeString(tmp, "local a$b = 1; return a$b\n");
+            ProcessBuilder pb = new ProcessBuilder("luajit", tmp.toString());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            int exit = p.waitFor();
+            try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+            return exit == 0;
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -235,7 +265,19 @@ public class ConformanceTest {
             return;
         }
 
-        String output = executeLua(lua, false);
+        // Check if generated Lua uses $ identifiers (from @jsonable codegen)
+        // and skip runtime test if LuaJIT doesn't support $ in identifiers.
+        if (luaContainsDollarIdentifiers(lua) && !luajitSupportsDollar) {
+            System.out.println("SKIP (LuaJIT does not support $ in identifiers; @jsonable runtime test skipped)");
+            skipped++;
+            addResult(test, false, "skipped: LuaJIT $ support required for @jsonable");
+            return;
+        }
+
+        // Compile companion modules referenced in the generated Lua
+        Map<String, String> companionLuas = compileCompanionModules(test.path());
+
+        String output = executeLua(lua, false, companionLuas);
         if (output == null) {
             System.out.println("FAIL (Lua execution failed)");
             failed++;
@@ -305,7 +347,18 @@ public class ConformanceTest {
             return;
         }
 
-        String output = executeLua(lua, true);
+        // Check if generated Lua uses $ identifiers
+        if (luaContainsDollarIdentifiers(lua) && !luajitSupportsDollar) {
+            System.out.println("SKIP (LuaJIT does not support $ in identifiers; @jsonable runtime test skipped)");
+            skipped++;
+            addResult(test, false, "skipped: LuaJIT $ support required for @jsonable");
+            return;
+        }
+
+        // Compile companion modules referenced in the generated Lua
+        Map<String, String> companionLuas = compileCompanionModules(test.path());
+
+        String output = executeLua(lua, true, companionLuas);
         if (output == null) {
             System.out.println("FAIL (Lua execution returned null)");
             failed++;
@@ -387,11 +440,104 @@ public class ConformanceTest {
         return LuaBackend.generate(parseResult.program(), result, filename);
     }
 
+    /**
+     * Compile a DEAL source file to Lua.  Used for companion modules.
+     * Returns the Lua source string, or null on failure.
+     */
+    private static String generateLuaForFile(Path file) throws Exception {
+        String source = Files.readString(file);
+        String filename = file.toString();
+
+        LexResult lex = new Lexer(source, filename).tokenize();
+        if (lex.hasErrors()) return null;
+
+        Parser parser = new Parser(lex.tokens(), filename);
+        ParseResult parseResult = parser.parse();
+        if (parseResult.hasErrors()) return null;
+
+        // Use a resolver rooted at the companion file's directory
+        ConformanceModuleResolver resolver = new ConformanceModuleResolver(file);
+        NameResolver nr = new NameResolver(filename, resolver);
+        SymbolTable symTable = nr.resolve(parseResult.program());
+        if (nr.diagnostics().stream().anyMatch(d -> "error".equals(d.severity())))
+            return null;
+
+        CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
+        if (result.hasErrors()) return null;
+
+        return LuaBackend.generate(parseResult.program(), result, filename);
+    }
+
+    /**
+     * Check whether a Lua source string contains {@code $} used as an
+     * identifier character (as opposed to inside a string literal).
+     *
+     * <p>Heuristic: {@code $} preceded by a letter, digit, or underscore
+     * and followed by a letter or digit is treated as an identifier
+     * character.  This matches the pattern used by @jsonable codegen
+     * for names like {@code C$fromJson}.</p>
+     */
+    private static boolean luaContainsDollarIdentifiers(String lua) {
+        // Match patterns like: local Foo$bar, Foo$fromJson, exports.Foo$bar
+        // $ preceded by letter/digit and followed by letter
+        return Pattern.compile("[a-zA-Z0-9_]\\$[a-zA-Z]").matcher(lua).find();
+    }
+
+    /**
+     * Find and compile companion modules referenced by relative
+     * {@code require} calls in the generated Lua.
+     */
+    private static Map<String, String> compileCompanionModules(Path testFile)
+            throws Exception {
+        Map<String, String> result = new LinkedHashMap<>();
+        Path testDir = testFile.toAbsolutePath().getParent();
+
+        // Find require("./...") patterns in the generated Lua
+        String mainLua = generateLua(testFile);
+        if (mainLua == null) return result;
+
+        // Match require("./xxx") or require("../xxx")
+        Pattern requirePattern = Pattern.compile(
+            "require\\(\"(\\.\\.?/[^\"]+)\"\\)");
+        Matcher m = requirePattern.matcher(mainLua);
+
+        while (m.find()) {
+            String requirePath = m.group(1);
+            // Try to find the corresponding .deal file
+            Path resolved = testDir.resolve(requirePath + ".deal").normalize();
+            if (!Files.exists(resolved)) {
+                resolved = testDir.resolve(requirePath + ".d.deal").normalize();
+            }
+            if (Files.exists(resolved) && !resolved.equals(testFile.toAbsolutePath().normalize())) {
+                // Skip if already compiled
+                if (!result.containsKey(requirePath)) {
+                    try {
+                        String companionLua = generateLuaForFile(resolved);
+                        if (companionLua != null &&
+                            luaContainsDollarIdentifiers(companionLua) &&
+                            !luajitSupportsDollar) {
+                            // Companion requires $ support — skip but don't fail
+                            continue;
+                        }
+                        if (companionLua != null) {
+                            result.put(requirePath, companionLua);
+                        }
+                    } catch (Exception e) {
+                        System.err.println("    Warning: failed to compile companion " +
+                            resolved + ": " + e.getMessage());
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
     // =========================================================================
     // Lua execution
     // =========================================================================
 
-    private static String executeLua(String luaSource, boolean isXpcallWrapped) {
+    private static String executeLua(String luaSource, boolean isXpcallWrapped,
+            Map<String, String> companionLuas) {
         // Build a runner that loads the module and invokes exported functions
         String runner;
         if (isXpcallWrapped) {
@@ -424,6 +570,16 @@ public class ConformanceTest {
                 }
             }
 
+            // Write companion module Lua files
+            for (var entry : companionLuas.entrySet()) {
+                String modulePath = entry.getKey();  // e.g., "./jsonable_lib"
+                String lua = entry.getValue();
+                // require("./jsonable_lib") looks for ./jsonable_lib.lua
+                Path companionFile = tmpDir.resolve(modulePath + ".lua");
+                Files.createDirectories(companionFile.getParent());
+                Files.writeString(companionFile, lua);
+            }
+
             ProcessBuilder pb = new ProcessBuilder("luajit", luaFile.toString());
             pb.directory(tmpDir.toFile());
             pb.redirectErrorStream(true);
@@ -454,7 +610,9 @@ public class ConformanceTest {
 
     /**
      * Build a runner for runtime-ok tests: load the module and call all
-     * exported zero-argument functions.
+     * exported zero-argument functions.  Compiler-generated functions
+     * (those with {@code $} in their name) are skipped because they
+     * typically require arguments (e.g., {@code C$fromJson(s: string)}).
      */
     private static String buildRuntimeOkRunner(String generatedLua) {
         return
@@ -465,7 +623,11 @@ public class ConformanceTest {
             "if type(__mod) == 'table' then\n" +
             "  for __k, __v in pairs(__mod) do\n" +
             "    if type(__v) == 'table' and __v.__kind == 'function' then\n" +
-            "      __v.f()\n" +
+            "      -- Skip compiler-generated functions ($ in name)\n" +
+            "      -- as they typically require arguments\n" +
+            "      if not string.find(__k, \"$\", 1, true) then\n" +
+            "        __v.f()\n" +
+            "      end\n" +
             "    end\n" +
             "  end\n" +
             "end\n";
@@ -473,6 +635,8 @@ public class ConformanceTest {
 
     /**
      * Build an xpcall-wrapped runner for runtime-error tests (D7).
+     * Compiler-generated functions (those with {@code $} in name) are
+     * skipped because they typically require arguments.
      */
     private static String buildXpcallRunner(String generatedLua) {
         return
@@ -484,7 +648,10 @@ public class ConformanceTest {
             "  if type(__mod) == 'table' then\n" +
             "    for __k, __v in pairs(__mod) do\n" +
             "      if type(__v) == 'table' and __v.__kind == 'function' then\n" +
-            "        __v.f()\n" +
+            "        -- Skip compiler-generated functions ($ in name)\n" +
+            "        if not string.find(__k, \"$\", 1, true) then\n" +
+            "          __v.f()\n" +
+            "        end\n" +
             "      end\n" +
             "    end\n" +
             "  end\n" +

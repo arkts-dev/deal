@@ -1,0 +1,33 @@
+// @spec: Classes — @jsonable cross-module import
+// @description: @jsonable generated functions can be imported and used cross-module
+// @expected: runtime-ok
+// @features: jsonable, cross-module, import
+
+import * as Lib from "./jsonable_lib"
+
+export function test_cross_module(): null {
+  let w: Lib.Widget | null = Lib.Widget$fromJson("{\"label\":\"test\",\"count\":5}");
+  if (w !== null) {
+    if (w.label !== "test") {
+      throw { code: "TEST_FAIL", message: "cross-module label mismatch" };
+    }
+    if (w.count !== 5) {
+      throw { code: "TEST_FAIL", message: "cross-module count mismatch" };
+    }
+
+    // Also test toJson via import
+    let json: string = Lib.Widget$toJson(w);
+    let w2: Lib.Widget | null = Lib.Widget$fromJson(json);
+    if (w2 !== null) {
+      // w2 should have same values
+      if (w2.label !== "test") {
+        throw { code: "TEST_FAIL", message: "cross-module roundtrip label mismatch" };
+      }
+    } else {
+      throw { code: "TEST_FAIL", message: "cross-module roundtrip failed" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "cross-module fromJson returned null" };
+  }
+  return null;
+}

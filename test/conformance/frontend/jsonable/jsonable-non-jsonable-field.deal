@@ -1,0 +1,13 @@
+// @spec: Classes — @jsonable non-jsonable field
+// @description: A @jsonable class with a field whose type is not jsonable (a non-@jsonable class) is rejected with E4007
+// @expected: compile-error E4007
+// @features: jsonable, type-checking
+
+class NonJsonable {
+  data: int = 0;
+}
+
+// @jsonable
+export class BadClass {
+  x: NonJsonable = {};
+}

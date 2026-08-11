@@ -1,0 +1,13 @@
+// @spec: Classes — @jsonable directive placement
+// @description: @jsonable directive on a non-export class emits a compiler warning (per jsonable-v1.1.md D2) but the directive is harmlessly ignored. The conformance runner cannot assert warnings; this test verifies that no compilation error occurs.
+// @expected: compile-ok
+// @features: jsonable, warning
+
+// @jsonable
+class C {
+  x: int = 0;
+}
+
+export function test_exists(): null {
+  return null;
+}

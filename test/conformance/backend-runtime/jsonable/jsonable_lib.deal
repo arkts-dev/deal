@@ -1,0 +1,5 @@
+// @jsonable
+export class Widget {
+  label: string = "";
+  count: int = 0;
+}

@@ -1,0 +1,28 @@
+// @spec: Classes — @jsonable toJson
+// @description: @jsonable toJson serializes an instance to a JSON string
+// @expected: runtime-ok
+// @features: jsonable, toJson
+
+// @jsonable
+export class User {
+  name: string = "";
+  age: int = 0;
+}
+
+export function test_toJson(): null {
+  let u: User = { name: "Bob", age: 25 };
+  let s: string = User$toJson(u);
+  // Roundtrip: parse the JSON back and verify values
+  let u2: User | null = User$fromJson(s);
+  if (u2 !== null) {
+    if (u2.name !== "Bob") {
+      throw { code: "TEST_FAIL", message: "toJson roundtrip name mismatch" };
+    }
+    if (u2.age !== 25) {
+      throw { code: "TEST_FAIL", message: "toJson roundtrip age mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "toJson produced invalid JSON" };
+  }
+  return null;
+}
