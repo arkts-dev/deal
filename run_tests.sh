@@ -42,6 +42,11 @@ javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*
 java -ea -cp build deal.test.IrGoldenTest
 
 echo ""
+echo "=== Compiling and Running Type Descriptor Tests ==="
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/ir/*.java test/StubModuleResolver.java test/TypeDescriptorTest.java
+java -ea -cp build deal.test.TypeDescriptorTest
+
+echo ""
 echo "=== Compiling and Running Lua Backend Tests ==="
 javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java test/StubModuleResolver.java test/LuaBackendTest.java
 java -ea -cp build deal.test.LuaBackendTest

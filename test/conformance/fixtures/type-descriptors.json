@@ -1,77 +1,125 @@
 {
-  "version": "1.0",
+  "version": 1,
+  "description": "Backend-neutral type descriptor tests — verifies that IR dump produces spec-format RuntimeTypeDescriptor strings for all DEAL types.",
   "tests": [
     {
-      "name": "type-descriptor-primitive-int",
-      "description": "int type descriptor renders as 'int'",
-      "source": "export function test(): int { return 42; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": 0,
+      "name": "primitive-null",
+      "source": "function f(): null { let x: null = null; return; }",
+      "expectedIrContains": ["literal null : null"],
+      "expectedIrNotContains": [],
       "backends": ["luajit"]
     },
     {
-      "name": "type-descriptor-primitive-number",
-      "description": "number type descriptor renders as 'number'",
-      "source": "export function test(): number { return 3.14; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": 0,
+      "name": "primitive-boolean",
+      "source": "function f(): null { let x: boolean = true; return; }",
+      "expectedIrContains": ["boolean"],
+      "expectedIrNotContains": [],
       "backends": ["luajit"]
     },
     {
-      "name": "type-descriptor-primitive-string",
-      "description": "string type descriptor renders as 'string'",
-      "source": "export function test(): string { return \"hello\"; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": 0,
+      "name": "primitive-int",
+      "source": "function f(): null { let x: int = 42; return; }",
+      "expectedIrContains": ["int"],
+      "expectedIrNotContains": [],
       "backends": ["luajit"]
     },
     {
-      "name": "type-descriptor-primitive-bool",
-      "description": "boolean type descriptor renders as 'boolean'",
-      "source": "export function test(): boolean { return true; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": 0,
+      "name": "primitive-number",
+      "source": "function f(): null { let x: number = 3.14; return; }",
+      "expectedIrContains": ["number"],
+      "expectedIrNotContains": [],
       "backends": ["luajit"]
     },
     {
-      "name": "type-descriptor-nullable-int",
-      "description": "nullable int type descriptor renders as 'int|null'",
-      "source": "export function test(): int | null { return null; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": 0,
+      "name": "primitive-string",
+      "source": "function f(): null { let x: string = \"hello\"; return; }",
+      "expectedIrContains": ["string"],
+      "expectedIrNotContains": [],
       "backends": ["luajit"]
     },
     {
-      "name": "type-descriptor-array-int",
-      "description": "array of int type renders correctly",
-      "source": "export function test(): int { let xs: int[] = [10, 20]; return xs[0]; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": 0,
+      "name": "primitive-table",
+      "source": "function f(): null { let t: table = {}; return; }",
+      "expectedIrContains": ["table"],
+      "expectedIrNotContains": [],
       "backends": ["luajit"]
     },
     {
-      "name": "type-descriptor-function",
-      "description": "function type renders with parameter and return types",
-      "source": "export function test(): int { let f: (x: int) => int = function(x: int): int { return x + 1; }; return f(41); }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": 0,
+      "name": "array-int-spec-format",
+      "source": "function f(): null { let a: int[] = [1, 2, 3]; return; }",
+      "expectedIrContains": ["[int]"],
+      "expectedIrNotContains": ["int[]"],
       "backends": ["luajit"]
     },
     {
-      "name": "jvm-backend-skipped",
-      "description": "Test with only jvm backend is skipped under LuaJIT",
-      "source": "export function test(): int { return 1; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": ["jvm"]
+      "name": "array-string-spec-format",
+      "source": "function f(): null { let a: string[] = [\"a\", \"b\"]; return; }",
+      "expectedIrContains": ["[string]"],
+      "expectedIrNotContains": ["string[]"],
+      "backends": ["luajit"]
+    },
+    {
+      "name": "nested-array-spec-format",
+      "source": "function f(): null { let a: int[][] = [[1, 2], [3, 4]]; return; }",
+      "expectedIrContains": ["[[int]]"],
+      "expectedIrNotContains": ["int[][]"],
+      "backends": ["luajit"]
+    },
+    {
+      "name": "nullable-int-spec-format",
+      "source": "function f(): null { let n: int | null = null; return; }",
+      "expectedIrContains": ["?int"],
+      "expectedIrNotContains": ["|null"],
+      "backends": ["luajit"]
+    },
+    {
+      "name": "nullable-string-spec-format",
+      "source": "function f(): null { let n: string | null = null; return; }",
+      "expectedIrContains": ["?string"],
+      "expectedIrNotContains": ["|null"],
+      "backends": ["luajit"]
+    },
+    {
+      "name": "class-descriptor-spec-format",
+      "source": "class User { name: string = \"\"; }\nfunction f(): null { let u: User = { name: \"Ada\" }; return; }",
+      "expectedIrContains": ["@test/User"],
+      "expectedIrNotContains": [],
+      "backends": ["luajit"]
+    },
+    {
+      "name": "nullable-class-descriptor",
+      "source": "class User { name: string = \"\"; }\nfunction f(): null { let u: User | null = null; return; }",
+      "expectedIrContains": ["?@test/User"],
+      "expectedIrNotContains": ["|null"],
+      "backends": ["luajit"]
+    },
+    {
+      "name": "function-type-descriptor",
+      "source": "function add(a: int, b: int): int { return a + b; }",
+      "expectedIrContains": ["(int,int)->int"],
+      "expectedIrNotContains": [],
+      "backends": ["luajit"]
+    },
+    {
+      "name": "function-type-mixed-params",
+      "source": "function check(x: int, s: string): boolean { return true; }",
+      "expectedIrContains": ["(int,string)->boolean"],
+      "expectedIrNotContains": [],
+      "backends": ["luajit"]
+    },
+    {
+      "name": "function-type-nullable-return",
+      "source": "function maybe(x: int): int | null { if (x === 0) { return null; } return x; }",
+      "expectedIrContains": ["(int)->?int"],
+      "expectedIrNotContains": ["|null"],
+      "backends": ["luajit"]
+    },
+    {
+      "name": "function-type-array-param",
+      "source": "function sum(xs: int[]): int { return xs[0]; }",
+      "expectedIrContains": ["([int])->int"],
+      "expectedIrNotContains": ["int[]"],
+      "backends": ["luajit"]
     }
   ]
 }
