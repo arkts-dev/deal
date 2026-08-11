@@ -2,6 +2,8 @@ package deal.test;
 
 import deal.ast.*;
 import deal.types.*;
+import deal.lexer.Diagnostic;
+import deal.diagnostics.DiagnosticCode;
 import java.util.List;
 import java.util.Optional;
 
@@ -59,6 +61,7 @@ public class AstAndTypesTest {
     public static void main(String[] args) {
         System.out.println("=== Running AST and Type Representation Tests ===");
 
+        testDiagnosticWarning();
         testSpan();
         testForInit();
         testEither();
@@ -75,6 +78,66 @@ public class AstAndTypesTest {
         if (failed > 0) {
             System.exit(1);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Diagnostic factory tests
+    // -----------------------------------------------------------------------
+
+    static void testDiagnosticWarning() {
+        System.out.println("-- Diagnostic warning factory --");
+
+        // Test warning via DiagnosticCode (preferred)
+        Diagnostic w1 = Diagnostic.warning(DiagnosticCode.E1001,
+            "test warning", "test.deal", 3, 7);
+        check(w1.severity().equals("warning"),
+            "warning severity should be 'warning'");
+        check(w1.code().equals("E1001"),
+            "warning code should be E1001");
+        check(w1.message().equals("test warning"),
+            "warning message preserved");
+        check(w1.file().equals("test.deal"),
+            "warning file preserved");
+        check(w1.line() == 3,
+            "warning line preserved: " + w1.line());
+        check(w1.column() == 7,
+            "warning column preserved: " + w1.column());
+        check(w1.diagnosticCode() == DiagnosticCode.E1001,
+            "warning diagnosticCode should be E1001");
+
+        // Test warning via string code (deprecated path)
+        Diagnostic w2 = Diagnostic.warning("W0001", "string-code warning",
+            "test.deal", 5, 2);
+        check(w2.severity().equals("warning"),
+            "string-code warning severity should be 'warning'");
+        check(w2.code().equals("W0001"),
+            "string-code warning code preserved");
+        check(w2.message().equals("string-code warning"),
+            "string-code warning message preserved");
+
+        // Test that error() still produces 'error' severity (no regression)
+        Diagnostic e1 = Diagnostic.error(DiagnosticCode.E1001,
+            "test error", "test.deal", 1, 1);
+        check(e1.severity().equals("error"),
+            "error severity should still be 'error'");
+        check(e1.code().equals("E1001"),
+            "error code preserved");
+
+        Diagnostic e2 = Diagnostic.error("E9999", "string error",
+            "test.deal", 1, 1);
+        check(e2.severity().equals("error"),
+            "string-code error severity should still be 'error'");
+
+        // Test toString formatting
+        String ws = w1.toString();
+        check(ws.contains("WARNING"),
+            "warning toString contains WARNING: " + ws);
+        check(ws.contains("E1001"),
+            "warning toString contains code: " + ws);
+
+        String es = e1.toString();
+        check(es.contains("ERROR"),
+            "error toString contains ERROR: " + es);
     }
 
     // -----------------------------------------------------------------------
