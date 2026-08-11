@@ -16,7 +16,7 @@ import deal.diagnostics.DiagnosticCode;
  * null narrowing, contextual typing for table reads, and class construction
  * checking.
  *
- * <p>Errors produced: E3001–E3011, E4001–E4005, E5001–E5004.</p>
+ * <p>Errors produced: E3001–E3011, E4001–E4008, E5001–E5004.</p>
  */
 public final class TypeChecker {
 
@@ -52,6 +52,10 @@ public final class TypeChecker {
     //    treated as a write target (no contextual typing required) --
     private boolean assignmentTargetMode = false;
 
+    // -- Jsonable cycle detection (D3) --
+    // Maps @jsonable class name → same-module @jsonable dependency names
+    private final Map<String, Set<String>> jsonableClassDeps = new LinkedHashMap<>();
+
     private TypeChecker(String modulePath, SymbolTable rootTable,
                         NameResolver nameResolver,
                         Map<StatementNode, SymbolTable> scopeMap) {
@@ -75,6 +79,7 @@ public final class TypeChecker {
         TypeChecker checker = new TypeChecker(modulePath, symbolTable,
             nameResolver, scopeMap);
         checker.walkStatements(program.statements());
+        checker.detectJsonableCycles();
         return new CheckResult(
             Map.copyOf(checker.typeMap),
             checker.rootTable,
@@ -125,7 +130,7 @@ public final class TypeChecker {
         switch (stmt) {
             case VariableDeclaration vd -> checkVariableDeclaration(vd);
             case FunctionDeclaration fd  -> checkFunctionDeclaration(fd);
-            case ClassDeclaration cd     -> { /* checked on construction sites */ }
+            case ClassDeclaration cd     -> checkClassDeclaration(cd);
             case ReturnStatement rs      -> checkReturnStatement(rs);
             case IfStatement is          -> checkIfStatement(is);
             case WhileStatement ws       -> checkWhileStatement(ws);
@@ -144,6 +149,179 @@ public final class TypeChecker {
         }
 
         currentScope = savedScope;
+    }
+
+    // =======================================================================
+    // Class declaration — also handles @jsonable field validation (D3)
+    // =======================================================================
+
+    private void checkClassDeclaration(ClassDeclaration cd) {
+        if (!cd.isJsonable()) {
+            return; // nothing extra to check for non-jsonable classes
+        }
+
+        // Validate each field type and collect same-module dependencies
+        Set<String> deps = new LinkedHashSet<>();
+        for (ClassField cf : cd.fields()) {
+            Type fieldType = nameResolver.resolveTypeNode(cf.type());
+            if (fieldType == Type.Error.INSTANCE) continue;
+
+            if (!isJsonableType(fieldType)) {
+                error(DiagnosticCode.E4007,
+                    "Field type is not jsonable: " + typeName(fieldType),
+                    cf.span());
+            }
+
+            // Collect same-module @jsonable class dependencies for cycle detection
+            Set<String> fieldDeps = new HashSet<>();
+            collectSameModuleJsonableClassDeps(fieldType, fieldDeps);
+            deps.addAll(fieldDeps);
+        }
+
+        if (!deps.isEmpty()) {
+            jsonableClassDeps.put(cd.name(), deps);
+        }
+    }
+
+    // =======================================================================
+    // Jsonable type validation (D3)
+    // =======================================================================
+
+    /**
+     * Checks whether a type is valid for a @jsonable field (D3).
+     * Recursively unwraps Array and Nullable wrappers.
+     */
+    private boolean isJsonableType(Type t) {
+        return switch (t) {
+            case Type.Null ignored       -> true;
+            case Type.Boolean ignored    -> true;
+            case Type.Int ignored        -> true;
+            case Type.Number ignored     -> true;
+            case Type.String ignored     -> true;
+            case Type.Table ignored      -> true;
+            case Type.Array arr          -> isJsonableType(arr.element());
+            case Type.Nullable n         -> isJsonableType(n.inner());
+            case Type.Class cls          -> {
+                String mPath = cls.modulePath();
+                // For null/empty modulePath, treat as same-module
+                if (mPath == null || mPath.isEmpty()) {
+                    mPath = this.modulePath;
+                }
+                boolean hasFromJson = nameResolver.isFunctionExportedFromModule(
+                    mPath, cls.name() + "$fromJson");
+                boolean hasToJson = nameResolver.isFunctionExportedFromModule(
+                    mPath, cls.name() + "$toJson");
+                yield hasFromJson && hasToJson;
+            }
+            default -> false;
+        };
+    }
+
+    /**
+     * Checks whether a Type.Class refers to a same-module @jsonable class.
+     * Used for cycle detection — a same-module @jsonable class dependency
+     * is a candidate for E4008.
+     */
+    private boolean isSameModuleJsonable(Type.Class cls) {
+        String mPath = cls.modulePath();
+        // Treat null/empty modulePath as same-module
+        if (mPath != null && !mPath.isEmpty() && !mPath.equals(this.modulePath)) {
+            return false;
+        }
+        // Check if C$fromJson exists in root symbol table (means the class is @jsonable)
+        Symbol sym = rootTable.resolve(cls.name() + "$fromJson");
+        return sym instanceof Symbol.FunctionSymbol;
+    }
+
+    /**
+     * Recursively extracts same-module @jsonable class references from a
+     * resolved field type by unwrapping Array and Nullable wrappers (D3 cycle 7).
+     *
+     * <p>This mirrors the recursion in {@link #isJsonableType} but collects
+     * dependency class names instead of returning a boolean.
+     */
+    private void collectSameModuleJsonableClassDeps(Type t, Set<String> deps) {
+        switch (t) {
+            case Type.Class cls -> {
+                if (isSameModuleJsonable(cls)) {
+                    deps.add(cls.name());
+                }
+            }
+            case Type.Array arr ->
+                collectSameModuleJsonableClassDeps(arr.element(), deps);
+            case Type.Nullable n ->
+                collectSameModuleJsonableClassDeps(n.inner(), deps);
+            default -> { /* stop: no deeper class references possible */ }
+        }
+    }
+
+    // =======================================================================
+    // Jsonable cycle detection (D3)
+    // =======================================================================
+
+    /**
+     * DFS-based cycle detection on same-module @jsonable class dependencies.
+     * Emits E4008 for each cycle found.
+     *
+     * <p>Called after all statements have been walked, so
+     * {@link #jsonableClassDeps} is fully populated.
+     */
+    private void detectJsonableCycles() {
+        if (jsonableClassDeps.isEmpty()) return;
+
+        // Colors: 0 = white (unvisited), 1 = gray (in current path), 2 = black (done)
+        Map<String, Integer> color = new HashMap<>();
+        Map<String, String> parent = new HashMap<>();
+        for (String className : jsonableClassDeps.keySet()) {
+            color.put(className, 0);
+        }
+
+        for (String start : jsonableClassDeps.keySet()) {
+            if (color.get(start) == 0) {
+                dfsDetectCycle(start, color, parent);
+            }
+        }
+    }
+
+    private void dfsDetectCycle(String node, Map<String, Integer> color,
+                                 Map<String, String> parent) {
+        color.put(node, 1); // gray — in current path
+
+        Set<String> deps = jsonableClassDeps.getOrDefault(node, Set.of());
+        for (String neighbor : deps) {
+            Integer neighborColor = color.get(neighbor);
+            if (neighborColor == null) {
+                // Neighbor is not a @jsonable class (should not happen, but safe)
+                continue;
+            }
+            if (neighborColor == 1) {
+                // Cycle detected: node → neighbor (back edge)
+                // Build the cycle path for the error message
+                String a = node;
+                String b = neighbor;
+                // Ensure consistent ordering for the message
+                if (a.compareTo(b) > 0) {
+                    String tmp = a; a = b; b = tmp;
+                }
+                // Emit E4008 at a representative span.
+                // We don't have the specific field span here, so we use
+                // the class name to look up the span from the AST.
+                // Since we can't easily access the AST here, we use a
+                // synthetic span with the module path. The error message
+                // identifies both classes.
+                Span span = Span.synthetic(modulePath);
+                error(DiagnosticCode.E4008,
+                    "Circular @jsonable class dependency between '"
+                    + a + "' and '" + b + "'",
+                    span);
+            } else if (neighborColor == 0) {
+                parent.put(neighbor, node);
+                dfsDetectCycle(neighbor, color, parent);
+            }
+            // black (2): already fully processed, no cycle through this neighbor
+        }
+
+        color.put(node, 2); // black — done
     }
 
     // =======================================================================

@@ -150,6 +150,8 @@ public class DiagnosticClassificationTest {
             "class Foo { name: string; } let f: Foo = {};");
         triggers.put("E4002",
             "class Foo { name: string; } let f: Foo = { name: \"x\", extra: 1 };");
+        triggers.put("E4007",
+            "// @jsonable\nexport class Foo { fn: (x: int) => null = function(x: int): null { return null; }; }");
         triggers.put("E5001", "function f(x: int): null {} f(true);");
         triggers.put("E5003",
             "function f(): int { return \"hi\"; }");
@@ -255,6 +257,8 @@ public class DiagnosticClassificationTest {
         coverage.put("E4004", "CheckerTest (delete required field)");
         coverage.put("E4005", "CheckerTest (has() on required field)");
         coverage.put("E4006", "CheckerTest (class Error prohibition)");
+        coverage.put("E4007", "CheckerTest (jsonable field validation)");
+        coverage.put("E4008", "CheckerTest (jsonable cycle detection)");
 
         coverage.put("E5001", "CheckerTest (arg type mismatch)");
         coverage.put("E5002", "CheckerTest (missing return)");

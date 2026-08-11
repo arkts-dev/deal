@@ -185,6 +185,11 @@ public enum DiagnosticCode {
     /** Cannot declare class 'Error': it is a built-in type. */
     E4006(Phase.FRONTEND, "Cannot declare class Error"),
 
+    /** Non-jsonable field type in @jsonable class. */
+    E4007(Phase.FRONTEND, "Non-jsonable field type"),
+    /** Circular @jsonable class dependency between same-module classes. */
+    E4008(Phase.FRONTEND, "Circular @jsonable class dependency"),
+
     // =========================================================================
     // E5xxx — function signature and call validation (FRONTEND)
     // =========================================================================

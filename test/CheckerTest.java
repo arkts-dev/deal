@@ -333,6 +333,22 @@ public class CheckerTest {
         testTemplateLiteral_nonStringInterpolation();
         testTemplateLiteral_typeInference();
         testTemplateLiteral_nameResolution();
+        // v1.1: @jsonable field validation and cycle detection (ISSUE-0048)
+        testJsonablePrimitiveTypes();
+        testJsonableArrayType();
+        testJsonableNullableType();
+        testJsonableNestedClass();
+        testJsonableNonJsonableType_function();
+        testJsonableNonJsonableType_nonJsonableClass();
+        testJsonableCycle();
+        testJsonableCycleThroughArray();
+        testJsonableCycleThroughNullable();
+        testJsonableNonCycle_nonJsonableClass();
+        testJsonableThreeClassCycle();
+        testJsonableNonCircularChain();
+        testJsonableImportedClass_valid();
+        testJsonableImportedClass_invalid();
+
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -1858,4 +1874,230 @@ public class CheckerTest {
         boolean hasE2003 = diags.stream().anyMatch(d -> d.code().equals("E2003"));
         check(!hasE2003, "valid module import should NOT produce E2003");
     }
+    // =========================================================================
+    // v1.1: @jsonable field validation (E4007) and cycle detection (E4008)
+    // =========================================================================
+
+    static void testJsonablePrimitiveTypes() {
+        System.out.println("-- @jsonable: primitive types are jsonable --");
+        CheckerOutput out = checkProgram(
+            "// @jsonable\n" +
+            "export class Foo {\n" +
+            "  a: null;\n" +
+            "  b: boolean;\n" +
+            "  c: int;\n" +
+            "  d: number;\n" +
+            "  e: string;\n" +
+            "  f: table;\n" +
+            "}"
+        );
+        assertNoErrors(out, "all primitive types are jsonable");
+    }
+
+    static void testJsonableArrayType() {
+        System.out.println("-- @jsonable: array of jsonable type --");
+        CheckerOutput out = checkProgram(
+            "// @jsonable\n" +
+            "export class Foo {\n" +
+            "  items: int[];\n" +
+            "  strings: string[];\n" +
+            "}"
+        );
+        assertNoErrors(out, "array of jsonable type is jsonable");
+    }
+
+    static void testJsonableNullableType() {
+        System.out.println("-- @jsonable: nullable jsonable type --");
+        CheckerOutput out = checkProgram(
+            "// @jsonable\n" +
+            "export class Foo {\n" +
+            "  name: string | null;\n" +
+            "  count: int | null;\n" +
+            "}"
+        );
+        assertNoErrors(out, "nullable jsonable type is jsonable");
+    }
+
+    static void testJsonableNestedClass() {
+        System.out.println("-- @jsonable: nested @jsonable class field --");
+        CheckerOutput out = checkProgram(
+            "// @jsonable\n" +
+            "export class Inner {\n" +
+            "  value: string;\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class Outer {\n" +
+            "  child: Inner;\n" +
+            "}"
+        );
+        assertNoErrors(out, "nested @jsonable class field is jsonable");
+    }
+
+    static void testJsonableNonJsonableType_function() {
+        System.out.println("-- @jsonable: function type → E4007 --");
+        CheckerOutput out = checkProgram(
+            "// @jsonable\n" +
+            "export class Foo {\n" +
+            "  callback: (x: int) => null;\n" +
+            "}"
+        );
+        assertError(out, "E4007", "function type is not jsonable");
+    }
+
+    static void testJsonableNonJsonableType_nonJsonableClass() {
+        System.out.println("-- @jsonable: non-@jsonable class field → E4007 --");
+        CheckerOutput out = checkProgram(
+            "class Plain { x: int; }\n" +
+            "// @jsonable\n" +
+            "export class Foo {\n" +
+            "  p: Plain;\n" +
+            "}"
+        );
+        assertError(out, "E4007", "non-@jsonable class field → E4007");
+    }
+
+    static void testJsonableCycle() {
+        System.out.println("-- @jsonable: cycle A ↔ B → E4008 --");
+        CheckerOutput out = checkProgram(
+            "// @jsonable\n" +
+            "export class A {\n" +
+            "  b: B;\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class B {\n" +
+            "  a: A;\n" +
+            "}"
+        );
+        assertError(out, "E4008", "circular dependency A ↔ B → E4008");
+    }
+
+    static void testJsonableCycleThroughArray() {
+        System.out.println("-- @jsonable: cycle through array wrapper → E4008 --");
+        CheckerOutput out = checkProgram(
+            "// @jsonable\n" +
+            "export class A {\n" +
+            "  bs: B[];\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class B {\n" +
+            "  a: A;\n" +
+            "}"
+        );
+        assertError(out, "E4008", "circular dependency through B[] → E4008");
+    }
+
+    static void testJsonableCycleThroughNullable() {
+        System.out.println("-- @jsonable: cycle through nullable wrapper → E4008 --");
+        CheckerOutput out = checkProgram(
+            "// @jsonable\n" +
+            "export class A {\n" +
+            "  b: B | null;\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class B {\n" +
+            "  a: A;\n" +
+            "}"
+        );
+        assertError(out, "E4008", "circular dependency through B | null → E4008");
+    }
+
+    static void testJsonableNonCycle_nonJsonableClass() {
+        System.out.println("-- @jsonable: non-circular: A has B (not @jsonable) → E4007 --");
+        CheckerOutput out = checkProgram(
+            "// @jsonable\n" +
+            "export class A {\n" +
+            "  b: B;\n" +
+            "}\n" +
+            "class B { x: int; }"
+        );
+        // Should get E4007 on A's field (B is not @jsonable), not E4008
+        assertError(out, "E4007", "non-@jsonable class field → E4007, not E4008");
+        // Also verify no E4008
+        List<Diagnostic> diags = out.result.diagnostics();
+        boolean hasE4008 = diags.stream().anyMatch(d -> d.code().equals("E4008"));
+        check(!hasE4008, "should NOT produce E4008 when B is not @jsonable");
+    }
+
+    static void testJsonableThreeClassCycle() {
+        System.out.println("-- @jsonable: three-class cycle A→B→C→A → E4008 --");
+        CheckerOutput out = checkProgram(
+            "// @jsonable\n" +
+            "export class A {\n" +
+            "  b: B;\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class B {\n" +
+            "  c: C;\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class C {\n" +
+            "  a: A;\n" +
+            "}"
+        );
+        assertError(out, "E4008", "three-class cycle A→B→C→A → E4008");
+    }
+
+    static void testJsonableNonCircularChain() {
+        System.out.println("-- @jsonable: non-circular chain A→B→C (all @jsonable) → no E4008 --");
+        CheckerOutput out = checkProgram(
+            "// @jsonable\n" +
+            "export class A {\n" +
+            "  b: B;\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class B {\n" +
+            "  c: C;\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class C {\n" +
+            "  value: string;\n" +
+            "}"
+        );
+        assertNoErrors(out, "non-circular chain A→B→C → no E4008");
+    }
+
+    static void testJsonableImportedClass_valid() {
+        System.out.println("-- @jsonable: imported @jsonable class → valid --");
+        StubModuleResolver resolver = new StubModuleResolver();
+        // Register exports for the foreign module including $fromJson/$toJson
+        Map<String, Type> exports = new HashMap<>();
+        exports.put("Foreign", Types.classType("Foreign", "./foreign"));
+        exports.put("Foreign$fromJson",
+            new Type.Func(List.of(Type.String.INSTANCE), Optional.empty(),
+                Types.nullable(Types.classType("Foreign", "./foreign"))));
+        exports.put("Foreign$toJson",
+            new Type.Func(List.of(Types.classType("Foreign", "./foreign")),
+                Optional.empty(), Type.String.INSTANCE));
+        resolver.register("./foreign", exports);
+
+        CheckerOutput out = checkProgramWithModule(
+            "import * as Other from \"./foreign\";\n" +
+            "// @jsonable\n" +
+            "export class Foo {\n" +
+            "  f: Other.Foreign;\n" +
+            "}",
+            resolver
+        );
+        assertNoErrors(out, "imported @jsonable class field is valid");
+    }
+
+    static void testJsonableImportedClass_invalid() {
+        System.out.println("-- @jsonable: imported non-@jsonable class → E4007 --");
+        StubModuleResolver resolver = new StubModuleResolver();
+        // Register exports WITHOUT $fromJson/$toJson (class is not @jsonable)
+        Map<String, Type> exports = new HashMap<>();
+        exports.put("Plain", Types.classType("Plain", "./foreign"));
+        resolver.register("./foreign", exports);
+
+        CheckerOutput out = checkProgramWithModule(
+            "import * as Other from \"./foreign\";\n" +
+            "// @jsonable\n" +
+            "export class Foo {\n" +
+            "  p: Other.Plain;\n" +
+            "}",
+            resolver
+        );
+        assertError(out, "E4007", "imported non-@jsonable class field → E4007");
+    }
+
 }
