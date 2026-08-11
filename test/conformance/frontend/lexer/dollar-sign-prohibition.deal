@@ -1,0 +1,19 @@
+// @spec: Lexical elements — $ prohibition
+// @description: $ in user-declared identifiers is a compile-time error (E2008)
+// @expected: compile-error E2008
+// @features: lexer, dollar-prohibition
+
+// Case 1: $ in import alias
+import * as foo$bar from "./nonexistent_lib";
+
+// Case 2: $ in function name
+function f$(): null { return null; }
+
+// Case 3: $ in parameter name
+function g(p$: int): null { return null; }
+
+// Case 4: $ in variable name
+let x$: int = 1;
+
+// Case 5: $ in field name
+class MyClass { f$: int = 0; }

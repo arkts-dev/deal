@@ -1,0 +1,10 @@
+// @spec: Classes — Error class prohibition
+// @description: User-declared class Error is prohibited per v1.1 Error handling / Type system (E4006). The rule originates in Error handling but is placed in classes/ for directory consistency.
+// @expected: compile-error E4006
+// @features: classes, error-prohibition
+
+// Case 1: module-level class Error
+class Error { message: string = ""; }
+
+// Case 2: nested class Error inside a function body
+function f(): null { class Error { code: string = ""; } return null; }
