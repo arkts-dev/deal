@@ -1,0 +1,15 @@
+// @spec: Async/Await — multiple sequential await calls
+// @description: Multiple await calls in sequence in same async function
+// @expected: runtime-ok
+// @features: async, await, runtime
+
+async function a(): int { return 1; }
+async function b(): int { return 2; }
+async function c(): int { return 3; }
+
+export async function f(): int {
+  let x: int = await a();
+  let y: int = await b();
+  let z: int = await c();
+  return x + y + z;
+}

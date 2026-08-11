@@ -1,0 +1,10 @@
+// @spec: Async/Await — await only valid inside async function body
+// @description: await in sync function → compile error E3012
+// @expected: compile-error E3012
+// @features: async, await
+
+async function g(): int { return 5; }
+
+function f(): int {
+  return await g();
+}

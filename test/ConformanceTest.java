@@ -555,6 +555,7 @@ public class ConformanceTest {
                 long sectionTotal = sectionResults.size();
                 System.out.printf("  %-55s %d/%d passed%n",
                     "\u00a7" + section, sectionPassed, sectionTotal);
+
             }
         }
     }

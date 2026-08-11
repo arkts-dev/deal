@@ -1,0 +1,10 @@
+// @spec: Async/Await — E3014 suppression by await
+// @description: await asyncCall() does NOT produce E3014
+// @expected: compile-ok
+// @features: async, await
+
+async function g(): int { return 5; }
+
+async function f(): int {
+  return await g();
+}

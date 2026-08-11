@@ -1,0 +1,8 @@
+// @spec: Async/Await — async function without internal await
+// @description: Async function that completes synchronously (no internal await) does not crash
+// @expected: runtime-ok
+// @features: async, runtime
+
+export async function f(): int {
+  return 5;
+}

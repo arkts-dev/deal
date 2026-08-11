@@ -1,0 +1,6 @@
+// @spec: Async/Await — async function expression
+// @description: async function expression parses and type-checks correctly
+// @expected: compile-ok
+// @features: async, functions
+
+let f: async () => int = async function(): int { return 5; };

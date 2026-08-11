@@ -1,0 +1,8 @@
+// @spec: Async/Await — async function type annotation
+// @description: async function type annotation parses and resolves with isAsync=true
+// @expected: compile-ok
+// @features: async, types
+
+async function g(id: int): string { return "x"; }
+
+let f: async (id: int) => string = g;

@@ -1,0 +1,10 @@
+// @spec: Async/Await — async function with parameters
+// @description: Async function with parameters and await compiles and runs
+// @expected: runtime-ok
+// @features: async, await, runtime
+
+async function add(a: int, b: int): int { return a + b; }
+
+export async function compute(): int {
+  return await add(1, 2);
+}

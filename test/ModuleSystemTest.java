@@ -818,6 +818,60 @@ public class ModuleSystemTest {
             "await import retention: lib.lua exists");
     }
 
+
+    // =========================================================================
+    // ISSUE-0056: Cross-module async call without await → E3014
+    // =========================================================================
+
+    /**
+     * Verify that calling an imported async function without {@code await}
+     * produces E3014 across module boundaries.  Module A exports an async
+     * function; module B imports A and calls it without await.
+     *
+     * <p>This is the cross-module complement of the single-file E3014 test
+     * in {@code CheckerTest.testAsyncCallWithoutAwait_E3014}.  It exercises
+     * the full pipeline: ExportExtractor propagates {@code isAsync},
+     * NameResolver resolves the imported symbol to an async function type,
+     * and TypeChecker fires E3014 when the call is not inside an
+     * {@code await} expression.</p>
+     */
+    private static void testCrossModuleAsyncCallWithoutAwait_E3014() throws Exception {
+        System.out.println("-- Cross-module E3014: imported async called without await --");
+
+        // Module A: exports an async function
+        writeFile("src/e3014_xm_lib.deal", """
+            export async function compute(): int { return 99; }
+            """);
+
+        // Module B: imports A and calls the async function WITHOUT await
+        writeFile("src/e3014_xm_main.deal", """
+            import * as Lib from "./e3014_xm_lib"
+            export function run(): int { return Lib.compute(); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/e3014_xm_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/e3014_xm");
+        List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, moduleRoots, null);
+
+        boolean success = orchestrator.compile();
+        List<Diagnostic> diags = orchestrator.diagnostics();
+
+        // The compilation must fail because Lib.compute() is async and called without await
+        check(!success, "cross-module async call without await: compilation must fail");
+
+        boolean hasE3014 = diags.stream()
+            .anyMatch(d -> "E3014".equals(d.code()) && "error".equals(d.severity()));
+        if (!hasE3014) {
+            System.out.println("  Compilation diags: " + diags.stream()
+                .filter(d -> "error".equals(d.severity()))
+                .map(d -> d.code() + ": " + d.message()).toList());
+        }
+        check(hasE3014, "cross-module async call without await → E3014");
+    }
+
     private static void testCircularImportRuntime() throws Exception {
         System.out.println("-- Circular Import: Runtime Dependency --");
 
@@ -1617,6 +1671,7 @@ public class ModuleSystemTest {
             testMultiModuleCompilation();
             testCompilationWithError();
             testCompilationOrchestratorAwaitImportRetention();
+            testCrossModuleAsyncCallWithoutAwait_E3014();
             testCircularImportRuntime();
             testCircularImportDeclarationOnly();
             testTwoDisconnectedCyclesOneRuntime();

@@ -1,0 +1,8 @@
+// @spec: Async/Await — async function declaration
+// @description: async function declaration parses and type-checks correctly
+// @expected: compile-ok
+// @features: async, functions
+
+async function fetchUser(id: int): string {
+  return "user";
+}

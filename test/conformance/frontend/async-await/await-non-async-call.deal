@@ -1,0 +1,10 @@
+// @spec: Async/Await — await on non-async call
+// @description: await applied to sync function call → compile error E3013
+// @expected: compile-error E3013
+// @features: async, await
+
+function syncFunc(): int { return 42; }
+
+async function f(): int {
+  return await syncFunc();
+}

@@ -1,0 +1,8 @@
+// @spec: Async/Await — export async function
+// @description: export async function parses and type-checks correctly
+// @expected: compile-ok
+// @features: async, export, modules
+
+export async function fetchUser(id: int): string {
+  return "user";
+}
