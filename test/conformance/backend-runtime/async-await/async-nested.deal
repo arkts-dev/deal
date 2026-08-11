@@ -1,0 +1,11 @@
+// @spec: Async/Await — nested async calls
+// @description: Nested async calls (A awaits B awaits C) work correctly
+// @expected: runtime-ok
+// @features: async, await, runtime
+
+async function c(): int { return 10; }
+async function b(): int { return await c(); }
+
+export async function a(): int {
+  return await b();
+}

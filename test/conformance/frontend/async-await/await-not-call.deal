@@ -1,0 +1,9 @@
+// @spec: Async/Await — await must be followed by a function call
+// @description: await 42 (not a call) → parse error E1042
+// @expected: compile-error E1042
+// @features: async, await, parser
+
+async function f(): null {
+  await 42;
+  return null;
+}

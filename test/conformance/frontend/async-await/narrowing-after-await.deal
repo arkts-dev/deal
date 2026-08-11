@@ -1,0 +1,16 @@
+// @spec: Async/Await — narrowing invalidated after await
+// @description: After await, narrowed variables revert to declared types
+// @expected: compile-error E3001
+// @features: async, await, nullable, narrowing
+
+async function g(): int { return 5; }
+
+async function f(n: int | null): int {
+  if (n !== null) {
+    let x: int = n;        // OK: narrowed to int
+    let r: int = await g(); // await invalidates narrowing
+    let y: int = n;        // ERROR: n back to int|null
+    return r;
+  }
+  return 0;
+}

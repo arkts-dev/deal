@@ -1,0 +1,11 @@
+// @spec: Async/Await — nested await E3014 suppression
+// @description: await f(await g()) produces zero E3014 errors
+// @expected: compile-ok
+// @features: async, await
+
+async function inner(): int { return 42; }
+async function outer(x: int): int { return x; }
+
+async function f(): int {
+  return await outer(await inner());
+}

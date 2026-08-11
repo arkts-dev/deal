@@ -1,0 +1,10 @@
+// @spec: Async/Await — simple async with await
+// @description: Simple async function with await compiles and runs correctly
+// @expected: runtime-ok
+// @features: async, await, runtime
+
+async function g(): int { return 42; }
+
+export async function f(): int {
+  return await g();
+}

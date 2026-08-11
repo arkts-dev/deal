@@ -1,0 +1,8 @@
+// @spec: Async/Await — async function with nullable return type
+// @description: Async function with nullable return type compiles, runs, and descriptor correctly parsed
+// @expected: runtime-ok
+// @features: async, nullable, runtime
+
+export async function f(): string | null {
+  return null;
+}

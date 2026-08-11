@@ -1,0 +1,11 @@
+// @spec: Async/Await — async call without await
+// @description: Direct call to async function without await → compile error E3014
+// @expected: compile-error E3014
+// @features: async
+
+async function g(): int { return 5; }
+
+function f(): null {
+  let x: int = g();
+  return null;
+}

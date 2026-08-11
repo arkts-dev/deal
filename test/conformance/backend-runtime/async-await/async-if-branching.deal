@@ -1,0 +1,15 @@
+// @spec: Async/Await — async with if branching around await
+// @description: Async function with if/else branching uses await in both branches
+// @expected: runtime-ok
+// @features: async, await, control-flow, runtime
+
+async function g(x: int): int { return x * 2; }
+
+export async function f(): int {
+  let n: int = 5;
+  if (n > 0) {
+    return await g(n);
+  } else {
+    return await g(0);
+  }
+}

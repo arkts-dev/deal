@@ -1,0 +1,13 @@
+// @spec: Async/Await — throw inside async caught by catch
+// @description: throw inside async function caught by catch in same async function
+// @expected: runtime-ok
+// @features: async, error-handling, runtime
+
+export async function f(): string {
+  try {
+    throw { code: "E_TEST", message: "test error" };
+    return "unreachable";
+  } catch (e) {
+    return e.code;
+  }
+}

@@ -1,0 +1,9 @@
+// @spec: Async/Await — await 42 does not crash TypeChecker
+// @description: Malformed await expression with non-call callee handled gracefully
+// @expected: compile-error E1042
+// @features: async, await, error-recovery
+
+async function f(): null {
+  await 42;
+  return null;
+}

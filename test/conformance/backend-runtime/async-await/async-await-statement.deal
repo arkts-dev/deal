@@ -1,0 +1,11 @@
+// @spec: Async/Await — await as expression statement
+// @description: await expression used as a statement (discarding result) compiles and runs
+// @expected: runtime-ok
+// @features: async, await, runtime
+
+async function g(): int { return 42; }
+
+export async function f(): int {
+  await g();
+  return 0;
+}
