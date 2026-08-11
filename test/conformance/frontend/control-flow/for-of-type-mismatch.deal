@@ -1,0 +1,6 @@
+// @spec: Control flow — For-of — Type mismatch
+// @description: for-of loop variable type must match element type
+// @expected: compile-error E3015
+// @features: for-of, type-checking
+
+for (let x: string of [1, 2, 3]) { }

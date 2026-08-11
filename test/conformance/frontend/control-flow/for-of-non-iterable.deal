@@ -1,0 +1,6 @@
+// @spec: Control flow — For-of — Non-iterable
+// @description: for-of on a non-iterable type (not T[] or string) is rejected with E3015
+// @expected: compile-error E3015
+// @features: for-of, type-checking
+
+for (let x: int of 42) { }

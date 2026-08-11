@@ -1,4 +1,4 @@
-// @spec: For-of — String iteration
+// @spec: Control flow — For-of — String iteration
 // @description: For-of over string counts characters
 // @expected: runtime-ok
 // @features: for-of, string

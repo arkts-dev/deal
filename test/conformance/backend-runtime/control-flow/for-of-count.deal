@@ -1,0 +1,22 @@
+// @spec: Control flow — For-of — Iteration count
+// @description: for-of iterates exactly the number of elements in the array/string
+// @expected: runtime-ok
+// @features: for-of
+
+export function test_array_count(): int {
+  let xs: int[] = [1, 2, 3, 4, 5];
+  let n: int = 0;
+  for (let x: int of xs) {
+    n = n + 1;
+  }
+  return n;
+}
+
+export function test_string_count(): int {
+  let s: string = "hello";
+  let n: int = 0;
+  for (let c: string of s) {
+    n = n + 1;
+  }
+  return n;
+}

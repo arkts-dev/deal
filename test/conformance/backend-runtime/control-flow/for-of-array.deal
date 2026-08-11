@@ -1,4 +1,4 @@
-// @spec: For-of — Array iteration
+// @spec: Control flow — For-of — Array iteration
 // @description: For-of over int[] sums the array elements
 // @expected: runtime-ok
 // @features: for-of, array
