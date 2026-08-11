@@ -1,6 +1,6 @@
 // @spec: Standard library declarations — std/io
-// @description: std/io can be imported
-// @expected: compile-ok
+// @description: std/io import is rejected (not a spec-listed stdlib module)
+// @expected: compile-error E2003
 // @features: stdlib, io
 
 import * as io from "std/io"

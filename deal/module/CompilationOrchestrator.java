@@ -46,10 +46,6 @@ public final class CompilationOrchestrator {
     private final List<Diagnostic> diagnostics = new ArrayList<>();
     private boolean hasErrors = false;
 
-    private static final List<String> STDLIB_MODULES = List.of(
-        "std/console", "std/string", "std/table", "std/json", "std/math", "std/time", "std/io"
-    );
-
     private static final class ModuleInfo {
         final String sourcePath;
         final String modulePath;
@@ -846,8 +842,12 @@ public final class CompilationOrchestrator {
         error(DiagnosticCode.E6000, "Runtime library not found: deal/runtime.lua", "", 1, 1);
     }
 
+    /**
+     * Copies the spec-listed stdlib .lua implementation files to the output.
+     * The module list is derived from the 6 spec-listed stdlib modules.
+     */
     private void copyStdlibModules() throws IOException {
-        for (String stdlibModule : STDLIB_MODULES) {
+        for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
             Path destFile = outputRoot.resolve(stdlibModule + ".lua");
             if (Files.exists(destFile)) continue;
 
@@ -927,8 +927,26 @@ public final class CompilationOrchestrator {
     /**
      * Tries to resolve an import path without emitting diagnostics.
      * Returns the resolved source file path, or {@code null} if not found.
+     *
+     * <p>For bare imports that look like stdlib module paths (e.g.,
+     * {@code "std/io"}), only spec-listed stdlib modules are resolved.
+     * Non-spec modules like {@code std/io} and {@code std/coroutine} are
+     * rejected with {@code null}, resulting in an E2003 diagnostic.
+     * Note: {@code std/coroutine} is additionally rejected with E6003
+     * by {@code NameResolver.processImport}.
      */
     private String tryResolveImportPath(String importPath, Path fromFile) {
+        // Reject non-spec stdlib modules at the discovery/import-resolution level.
+        // Bare imports that start with "std/" but are not in the spec list
+        // should not resolve (they are not valid stdlib modules).
+        if (importPath.startsWith("std/")
+                && !importPath.startsWith("./")
+                && !importPath.startsWith("../")) {
+            if (!StdlibModuleResolver.isSpecStdlibModule(importPath)) {
+                return null;
+            }
+        }
+
         List<String> candidates = buildCandidates(importPath, fromFile);
 
         // Try filesystem candidates
