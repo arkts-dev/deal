@@ -1594,6 +1594,22 @@ Compile-time rules:
 - `await` applied to a non-`async` call is a compile-time error.
 - An async function call without `await` is a compile-time error.
 
+### Async operation semantics
+
+An async function call creates an internal async operation. The operation is not a source-language value and cannot be stored, passed, returned, compared, or inspected.
+
+Each async operation completes exactly once, either with a value of the function's declared return type or by raising `Error`.
+
+`await` waits for that operation to complete. If it completes with a value, `await` evaluates to that value. If it raises `Error`, `await` raises that `Error`.
+
+An `Error` raised by an awaited operation is caught by the nearest enclosing `catch` around the `await`.
+
+Within one async function invocation, evaluation before an `await` happens before evaluation resumed after that `await`.
+
+DEAL defines no source-level concurrent start, scheduling, cancellation, polling, task, future, promise, or shared-memory concurrency primitive.
+
+Mutable DEAL values are not concurrently shared by source-language semantics. Host values crossing untyped boundaries are validated as DEAL values or remain backend-defined opaque host values.
+
 ### Backend lowering
 
 Async/await is lowered backend-specifically.
@@ -1744,6 +1760,7 @@ Host ABI:
 - Host module runtime object must expose exported names from its `.d.deal` declaration.
 - Extra host exports are ignored; missing declared exports are load-time errors.
 - Every call/value crossing the host boundary is runtime-checked.
+- External declaration files may declare async functions. A host function declared as `async (...) => R` must return a backend async operation accepted by the backend's `await` lowering. Source code cannot observe that operation except through `await`.
 
 Declaration metadata versioning:
 
