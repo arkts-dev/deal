@@ -86,6 +86,7 @@ public class AstAndTypesTest {
     // Diagnostic factory tests
     // -----------------------------------------------------------------------
 
+    @SuppressWarnings("deprecation")
     static void testDiagnosticWarning() {
         System.out.println("-- Diagnostic warning factory --");
 

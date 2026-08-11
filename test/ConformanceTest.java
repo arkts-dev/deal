@@ -385,6 +385,7 @@ public class ConformanceTest {
     // Compilation helpers
     // =========================================================================
 
+    @SuppressWarnings("deprecation")
     private static List<Diagnostic> compileAndGetDiagnostics(TestFile test) throws Exception {
         String source = Files.readString(test.path());
         String filename = test.path().toString();
