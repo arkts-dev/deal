@@ -55,6 +55,8 @@ public final class TypeChecker {
     // -- Jsonable cycle detection (D3) --
     // Maps @jsonable class name → same-module @jsonable dependency names
     private final Map<String, Set<String>> jsonableClassDeps = new LinkedHashMap<>();
+    // Maps @jsonable class name → its class declaration span (for E4008)
+    private final Map<String, Span> jsonableClassSpans = new LinkedHashMap<>();
 
     private TypeChecker(String modulePath, SymbolTable rootTable,
                         NameResolver nameResolver,
@@ -159,6 +161,9 @@ public final class TypeChecker {
         if (!cd.isJsonable()) {
             return; // nothing extra to check for non-jsonable classes
         }
+
+        // Store the class declaration span for later use in E4008 emission
+        jsonableClassSpans.put(cd.name(), cd.span());
 
         // Validate each field type and collect same-module dependencies
         Set<String> deps = new LinkedHashSet<>();
@@ -295,24 +300,31 @@ public final class TypeChecker {
                 continue;
             }
             if (neighborColor == 1) {
-                // Cycle detected: node → neighbor (back edge)
-                // Build the cycle path for the error message
-                String a = node;
-                String b = neighbor;
-                // Ensure consistent ordering for the message
-                if (a.compareTo(b) > 0) {
-                    String tmp = a; a = b; b = tmp;
+                // Cycle detected: node → neighbor (back edge).
+                // Walk the parent chain from node back to neighbor to
+                // reconstruct the full cycle path.
+                List<String> cyclePath = new ArrayList<>();
+                cyclePath.add(neighbor);
+                String cur = node;
+                while (cur != null && !cur.equals(neighbor)) {
+                    cyclePath.add(cur);
+                    cur = parent.get(cur);
                 }
-                // Emit E4008 at a representative span.
-                // We don't have the specific field span here, so we use
-                // the class name to look up the span from the AST.
-                // Since we can't easily access the AST here, we use a
-                // synthetic span with the module path. The error message
-                // identifies both classes.
-                Span span = Span.synthetic(modulePath);
+                cyclePath.add(neighbor); // close the cycle
+
+                // Build the cycle path string
+                StringBuilder pathStr = new StringBuilder();
+                for (int i = 0; i < cyclePath.size(); i++) {
+                    if (i > 0) pathStr.append(" → ");
+                    pathStr.append(cyclePath.get(i));
+                }
+
+                // Use the class declaration span for the node that closes
+                // the cycle. Fall back to a synthetic span if no span is stored.
+                Span span = jsonableClassSpans.getOrDefault(
+                    node, Span.synthetic(modulePath));
                 error(DiagnosticCode.E4008,
-                    "Circular @jsonable class dependency between '"
-                    + a + "' and '" + b + "'",
+                    "Circular @jsonable class dependency: " + pathStr,
                     span);
             } else if (neighborColor == 0) {
                 parent.put(neighbor, node);
