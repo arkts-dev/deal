@@ -1090,7 +1090,8 @@ public final class Parser {
                     exprEnd = raw.length();
                 }
 
-                String exprSource = raw.substring(exprStart, exprEnd);
+                String rawExprSource = raw.substring(exprStart, exprEnd);
+                String exprSource = unescapeTemplateExpression(rawExprSource);
 
                 // Calculate position of expression in original source.
                 // +1 because raw content starts at baseCol + 1 (past the opening backtick).
@@ -1199,6 +1200,87 @@ public final class Parser {
         return -1;
     }
 
+    /**
+     * Unescapes template-literal escape sequences in the expression substring
+     * before passing it to the sub-lexer.  This converts {@code \\`} to {@code `},
+     * {@code \\$} to {@code $}, {@code \\\\} to {@code \\}, etc., respecting string
+     * literal and nested template literal boundaries so that escapes inside strings
+     * are preserved verbatim.
+     */
+    private String unescapeTemplateExpression(String expr) {
+        StringBuilder sb = new StringBuilder();
+        int pos = 0;
+        while (pos < expr.length()) {
+            char c = expr.charAt(pos);
+
+            // Top-level escape sequence: unescape it
+            if (c == '\\' && pos + 1 < expr.length()) {
+                char next = expr.charAt(pos + 1);
+                switch (next) {
+                    case 'n'  -> sb.append('\n');
+                    case 't'  -> sb.append('\t');
+                    case '\\' -> sb.append('\\');
+                    case '"'  -> sb.append('"');
+                    case '\''  -> sb.append('\'');
+                    case '`'  -> sb.append('`');
+                    case '$'  -> sb.append('$');
+                    default -> { sb.append(c); sb.append(next); }
+                }
+                pos += 2;
+                continue;
+            }
+
+            // String literal: copy verbatim to preserve internal escapes
+            if (c == '"' || c == '\'') {
+                char quote = c;
+                sb.append(c);
+                pos++;
+                while (pos < expr.length()) {
+                    char sc = expr.charAt(pos);
+                    if (sc == '\\' && pos + 1 < expr.length()) {
+                        sb.append(sc);
+                        sb.append(expr.charAt(pos + 1));
+                        pos += 2;
+                    } else if (sc == quote) {
+                        sb.append(sc);
+                        pos++;
+                        break;
+                    } else {
+                        sb.append(sc);
+                        pos++;
+                    }
+                }
+                continue;
+            }
+
+            // Nested template literal: copy verbatim (sub-lexer will handle it)
+            if (c == '`') {
+                sb.append(c);
+                pos++;
+                while (pos < expr.length()) {
+                    char tc = expr.charAt(pos);
+                    if (tc == '\\' && pos + 1 < expr.length()) {
+                        sb.append(tc);
+                        sb.append(expr.charAt(pos + 1));
+                        pos += 2;
+                    } else if (tc == '`') {
+                        sb.append(tc);
+                        pos++;
+                        break;
+                    } else {
+                        sb.append(tc);
+                        pos++;
+                    }
+                }
+                continue;
+            }
+
+            // Regular character
+            sb.append(c);
+            pos++;
+        }
+        return sb.toString();
+    }
     /**
      * Creates a LiteralExpr from an accumulated string part and adds it to the list.
      */

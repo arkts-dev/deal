@@ -158,6 +158,7 @@ public class LuaBackendIntegrationTest {
         testTemplateComplexExpression();
         testTemplateStringWithRBrace();
         testTemplateMalformedExpr();
+        testTemplateNestedLiteral();
         testForOfTryCatchInside();
         testForOfStringMemberAccess();
 
@@ -2410,6 +2411,100 @@ public class LuaBackendIntegrationTest {
         } catch (Exception e) {
             check(false, "malformed expr: codegen should not throw: " + e.getMessage());
         }
+    }
+
+    // =========================================================================
+    // ISSUE-0037: Nested template literal integration test
+    // =========================================================================
+
+    static void testTemplateNestedLiteral() throws Exception {
+        System.out.println("-- Template Literal: Nested Template (D14) --");
+        // A nested template literal inside ${} — the inner template uses escaped
+        // backticks so the lexer does not close the outer template prematurely.
+        // The parser's unescapeTemplateExpression converts the escape sequences
+        // back to literal backticks for the sub-lexer, which then parses the
+        // inner template correctly.
+        //
+        // Expected: the inner template has type string (no E3016), codegen
+        // produces correct Lua output with .. concatenation, and runtime
+        // result is "[inner]" (the inner template surrounded by brackets).
+        String dealSrc =
+            "export function testNested(): string {\n" +
+            "  return \"[\" + `inner` + \"]\";\n" +
+            "}\n" +
+            "export function testOuter(): string {\n" +
+            "  return `[${ \\`inner\\` }]`;\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+
+        // Should have no parser diagnostics — the unescape fix ensures
+        // the sub-lexer receives clean source
+        if (!parse.diagnostics().isEmpty()) {
+            for (Diagnostic d : parse.diagnostics()) {
+                System.err.println("  Parser diagnostic: " + d);
+            }
+            check(false, "nested template: unexpected parser diagnostics");
+            return;
+        }
+
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Type error: " + d);
+            }
+            check(false, "nested template: compilation failed");
+            return;
+        }
+
+        // Verify no E3016 — the inner template must be accepted as string type
+        boolean hasE3016 = result.diagnostics().stream()
+            .anyMatch(d -> "E3016".equals(d.code()));
+        check(!hasE3016, "nested template: no E3016 (inner template type is string)");
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        // Verify the Lua output contains .. concatenation
+        check(lua.contains(".."), "nested template: Lua output uses .. concatenation");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r1 = mod.testNested.f()\n" +
+            "local r2 = mod.testOuter.f()\n" +
+            "print(r1)\n" +
+            "print(r2)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "nested template: luajit exit 0 (got: " + output + ")");
+
+        // Both testNested and testOuter should produce "[inner]"
+        String[] lines = output.split("\\n");
+        check(lines.length == 2, "nested template: expected 2 output lines, got: " + output);
+        check(lines[0].equals("[inner]"), "nested template: testNested expected '[inner]', got: '" + lines[0] + "'");
+        check(lines[1].equals("[inner]"), "nested template: testOuter expected '[inner]', got: '" + lines[1] + "'");
     }
 
     // =========================================================================
