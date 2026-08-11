@@ -15,7 +15,7 @@ import java.nio.file.*;
 import java.util.*;
 
 /**
- * Spec-centric conformance test runner for DEAL v1.0.
+ * Spec-centric conformance test runner for DEAL v1.1.
  *
  * <p>Discovers all .deal files under test/conformance/, parses metadata
  * header comments, compiles and/or executes each test according to its
@@ -66,7 +66,7 @@ public class ConformanceTest {
             luajitAvailable = false;
         }
 
-        System.out.println("=== DEAL v1.0 Conformance Test Suite ===");
+        System.out.println("=== DEAL v1.1 Conformance Test Suite ===");
         System.out.println("Root: " + conformanceRoot);
         System.out.println("LuaJIT: " + (luajitAvailable ? "available" :
             "NOT available (runtime tests will be skipped)"));
@@ -532,7 +532,7 @@ public class ConformanceTest {
             "Arrays",
             "Control flow",
             "Error handling",
-            "Coroutines",
+            "Async/Await",
             "Modules, declarations, standard library, and host ABI",
             "Diagnostics",
             "Runtime execution model",
@@ -547,11 +547,6 @@ public class ConformanceTest {
                 }
             }
 
-            if (section.equals("Coroutines")) {
-                System.out.printf("  %-55s %s%n", "\u00a7Coroutines", "excluded");
-                continue;
-            }
-
             if (sectionResults.isEmpty()) {
                 System.out.printf("  %-55s %s%n",
                     "\u00a7" + section, "UNCOVERED (0 tests)");
@@ -562,10 +557,6 @@ public class ConformanceTest {
                     "\u00a7" + section, sectionPassed, sectionTotal);
             }
         }
-
-        System.out.println();
-        System.out.println(
-            "Note: \u00a7Coroutines is excluded from v1.0 per epic objective.");
     }
 
     // =========================================================================
