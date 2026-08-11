@@ -513,6 +513,23 @@ public final class LuaBackend implements Visitor<Void> {
     // =========================================================================
 
     private void walkStatements(List<StatementNode> statements) {
+        // DEAL function declarations are hoisted. Lua locals, however, are not
+        // visible inside their own initializer (`local f = function() f() end`
+        // resolves the inner f as a global). Declare every function in the
+        // current statement scope first, then assign its wrapper when visiting
+        // the declaration. This supports recursion, forward calls, and mutual
+        // recursion while retaining lexical scope.
+        for (StatementNode stmt : statements) {
+            FunctionDeclaration function = switch (stmt) {
+                case FunctionDeclaration fd -> fd;
+                case ExportDeclaration ed
+                    when ed.declaration() instanceof FunctionDeclaration fd -> fd;
+                default -> null;
+            };
+            if (function != null) {
+                emitLine("local " + function.name());
+            }
+        }
         for (StatementNode stmt : statements) visitStatement(stmt);
     }
 
@@ -618,7 +635,7 @@ public final class LuaBackend implements Visitor<Void> {
         }
 
         String sig = funcType != null ? typeDescriptor(funcType) : "()";
-        emitLine("local " + name + " = __rt.function_(\"" + sig
+        emitLine(name + " = __rt.function_(\"" + sig
             + "\", function(" + paramList.toString() + ")");
 
         functionDepth++;

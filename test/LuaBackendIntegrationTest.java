@@ -115,6 +115,7 @@ public class LuaBackendIntegrationTest {
         }
 
         testBasicFunctionCall();
+        testRecursiveFunctionCall();
         testTryCatchPreserveErrorCode();
         testTryCatchRuntimeTypeError();
         testClassOptionalField();
@@ -231,6 +232,49 @@ public class LuaBackendIntegrationTest {
 
         check(exit == 0, "basic function call: luajit exit 0");
         check(output.equals("5"), "basic function call: add(2,3) = 5, got: " + output);
+    }
+
+    static void testRecursiveFunctionCall() throws Exception {
+        System.out.println("-- Recursive Function Call --");
+        String dealSrc =
+            "export function down(n: int): int {\n" +
+            "  if (n === 0) { return 0; }\n" +
+            "  return down(n - 1);\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "print(mod.down.f(5))\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "recursive function call: luajit exit 0 (got: " + output + ")");
+        check(output.equals("0"), "recursive function call: down(5) = 0, got: " + output);
     }
 
     // =========================================================================

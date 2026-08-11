@@ -218,6 +218,7 @@ public class LuaBackendTest {
         testVariableDeclaration();
         testVariableInference();
         testFunctionDeclaration();
+        testRecursiveFunctionDeclaration();
         testFunctionCall();
         testArrayLiteral();
         testArrayRead();
@@ -405,6 +406,19 @@ public class LuaBackendTest {
         assertContains(out.lua, "__rt.check_int(a, \"test.deal\"", "param check a");
         assertContains(out.lua, "__rt.check_int(b, \"test.deal\"", "param check b");
         assertContains(out.lua, "__rt.int_add", "int add in body");
+    }
+
+    static void testRecursiveFunctionDeclaration() {
+        System.out.println("-- Recursive Function Declaration --");
+        CompileOutput out = compile(
+            "function down(n: int): int { " +
+            "if (n === 0) { return 0; } return down(n - 1); }"
+        );
+        assertNoErrors(out, "recursive function decl");
+        assertContains(out.lua, "local down\n", "function is predeclared");
+        assertContains(out.lua, "down = __rt.function_", "wrapper assigned after predeclaration");
+        assertNotContains(out.lua, "local down = __rt.function_", "initializer does not shadow recursive binding");
+        assertContains(out.lua, "down.f(", "recursive call uses local wrapper");
     }
 
     // =========================================================================
