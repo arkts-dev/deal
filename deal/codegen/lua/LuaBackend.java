@@ -16,6 +16,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import deal.diagnostics.DiagnosticCode;
 
 /**
  * Lua code generator (ISSUE-0007). Walks the typed AST and emits Lua source code
@@ -198,7 +199,7 @@ public final class LuaBackend implements Visitor<Void> {
 
     private void emitLine() { out.append('\n'); }
 
-    private void addDiagnostic(String code, String message, Span span) {
+    private void addDiagnostic(DiagnosticCode code, String message, Span span) {
         diagnostics.add(Diagnostic.error(code, message,
             span.file(), span.startLine(), span.startColumn()));
     }
@@ -341,7 +342,7 @@ public final class LuaBackend implements Visitor<Void> {
             case TryStatement ts -> visit(ts);
             case ThrowStatement ts2 -> visit(ts2);
             case Block b -> visit(b);
-            default -> addDiagnostic("E6000",
+            default -> addDiagnostic(DiagnosticCode.E6000,
                 "unsupported statement type: " + stmt.getClass().getSimpleName(),
                 stmt.span());
         }
@@ -722,7 +723,7 @@ public final class LuaBackend implements Visitor<Void> {
         } else if (currentContinueLabel != null) {
             emitLine("goto " + currentContinueLabel);
         } else {
-            addDiagnostic("E6001", "continue outside loop", node.span());
+            addDiagnostic(DiagnosticCode.E6001, "continue outside loop", node.span());
         }
         return null;
     }

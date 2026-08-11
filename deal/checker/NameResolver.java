@@ -6,6 +6,7 @@ import deal.types.Type;
 import deal.types.Types;
 
 import java.util.*;
+import deal.diagnostics.DiagnosticCode;
 
 /**
  * Pass 1 of the type checker: name resolution.
@@ -143,7 +144,7 @@ public final class NameResolver {
         // D6/ISSUE-0008: Coroutines are not supported on this backend.
         // Emit E6003 and do not bind the import alias.
         if (path.equals("std/coroutine")) {
-            error("E6003", "Coroutines are not supported on this backend",
+            error(DiagnosticCode.E6003, "Coroutines are not supported on this backend",
                 imp.span());
             return;
         }
@@ -151,7 +152,7 @@ public final class NameResolver {
         // F2: Circular import detection — check if the IMPORTED module
         // is already being resolved (not the importing module).
         if (modulesInProgress.contains(path)) {
-            error("E2005", "Circular import with runtime dependency: '" + path + "'",
+            error(DiagnosticCode.E2005, "Circular import with runtime dependency: '" + path + "'",
                 imp.span());
             return;
         }
@@ -163,7 +164,7 @@ public final class NameResolver {
                 path, modulePath, modulesInProgress);
             root.define(alias, new Symbol.ModuleSymbol(alias, exports, imp.span()));
         } catch (ModuleResolver.ModuleNotFoundException e) {
-            error("E2003", "Module not found: '" + path + "'", imp.span());
+            error(DiagnosticCode.E2003, "Module not found: '" + path + "'", imp.span());
         } finally {
             modulesInProgress.remove(path);
         }
@@ -188,7 +189,7 @@ public final class NameResolver {
         String name = cd.name();
         if (root.containsLocally(name)) {
             if (shadowsImport(name, cd.span())) return;
-            error("E2002", "Redeclaration of '" + name + "'", cd.span());
+            error(DiagnosticCode.E2002, "Redeclaration of '" + name + "'", cd.span());
             return;
         }
         root.define(name, new Symbol.ClassSymbol(name, cd.fields(), modulePath));
@@ -206,7 +207,7 @@ public final class NameResolver {
                                  && Types.equals(ne.inner(), defaultType))
                             && !(fieldType instanceof Type.Nullable
                                  && defaultType instanceof Type.Null)) {
-                        error("E3001",
+                        error(DiagnosticCode.E3001,
                             "Default value type mismatch for field '" + cf.name()
                             + "': expected " + TypeChecker.typeName(fieldType)
                             + ", got " + TypeChecker.typeName(defaultType),
@@ -264,7 +265,7 @@ public final class NameResolver {
         String name = fd.name();
         if (root.containsLocally(name)) {
             if (shadowsImport(name, fd.span())) return;
-            error("E2002", "Redeclaration of '" + name + "'", fd.span());
+            error(DiagnosticCode.E2002, "Redeclaration of '" + name + "'", fd.span());
             return;
         }
 
@@ -305,14 +306,14 @@ public final class NameResolver {
                 // the declaration.  The real error is the import, not the
                 // declaration.  Emit E2006 and remove the import so the
                 // declaration can be used.
-                error("E2006",
+                error(DiagnosticCode.E2006,
                     "Import '" + name + "' shadows module-level declaration",
                     ms.importSpan());
                 root.remove(name);
                 return false; // allow the declaration to be added below
             }
             // Declaration came after import → E2007
-            error("E2007",
+            error(DiagnosticCode.E2007,
                 "Module-level declaration '" + name + "' shadows import",
                 declSpan);
             return true;
@@ -413,7 +414,7 @@ public final class NameResolver {
         Type type = vd.typeAnnotation().map(this::resolveTypeNode).orElse(null);
         if (currentScope.containsLocally(name)) {
             if (currentScope == root && shadowsImport(name, vd.span())) return;
-            error("E2002", "Redeclaration of '" + name + "'", vd.span());
+            error(DiagnosticCode.E2002, "Redeclaration of '" + name + "'", vd.span());
             return;
         }
         currentScope.define(name, new Symbol.VariableSymbol(name, type, false));
@@ -452,7 +453,7 @@ public final class NameResolver {
         for (Parameter p : fe.params()) {
             String name = p.name();
             if (paramNames.contains(name)) {
-                error("E2002", "Duplicate parameter '" + name + "'", p.span());
+                error(DiagnosticCode.E2002, "Duplicate parameter '" + name + "'", p.span());
                 continue;
             }
             paramNames.add(name);
@@ -463,7 +464,7 @@ public final class NameResolver {
         fe.restParam().ifPresent(rp -> {
             String name = rp.name();
             if (paramNames.contains(name)) {
-                error("E2002", "Duplicate parameter '" + name + "'", rp.span());
+                error(DiagnosticCode.E2002, "Duplicate parameter '" + name + "'", rp.span());
                 return;
             }
             paramNames.add(name);
@@ -500,7 +501,7 @@ public final class NameResolver {
         for (Parameter p : fd.params()) {
             String name = p.name();
             if (paramNames.contains(name)) {
-                error("E2002", "Duplicate parameter '" + name + "'", p.span());
+                error(DiagnosticCode.E2002, "Duplicate parameter '" + name + "'", p.span());
                 continue;
             }
             paramNames.add(name);
@@ -511,7 +512,7 @@ public final class NameResolver {
         fd.restParam().ifPresent(rp -> {
             String name = rp.name();
             if (paramNames.contains(name)) {
-                error("E2002", "Duplicate parameter '" + name + "'", rp.span());
+                error(DiagnosticCode.E2002, "Duplicate parameter '" + name + "'", rp.span());
                 return;
             }
             paramNames.add(name);
@@ -595,13 +596,13 @@ public final class NameResolver {
     // F8: Validate break/continue inside loops
     private void walkBreak(BreakStatement bs) {
         if (loopDepth == 0) {
-            error("E2000", "'break' must be inside a loop", bs.span());
+            error(DiagnosticCode.E2000, "'break' must be inside a loop", bs.span());
         }
     }
 
     private void walkContinue(ContinueStatement cs) {
         if (loopDepth == 0) {
-            error("E2000", "'continue' must be inside a loop", cs.span());
+            error(DiagnosticCode.E2000, "'continue' must be inside a loop", cs.span());
         }
     }
 
@@ -627,7 +628,7 @@ public final class NameResolver {
                 try {
                     yield Types.nullable(inner);
                 } catch (IllegalArgumentException e) {
-                    error("E3005", "Invalid nullable type: " + e.getMessage(), tn.span());
+                    error(DiagnosticCode.E3005, "Invalid nullable type: " + e.getMessage(), tn.span());
                     yield Type.Error.INSTANCE;
                 }
             }
@@ -645,7 +646,7 @@ public final class NameResolver {
                     if (rt instanceof Type.Array arr) {
                         restType = Optional.of(arr);
                     } else {
-                        error("E3005", "Rest parameter type must be an array type", tn.span());
+                        error(DiagnosticCode.E3005, "Rest parameter type must be an array type", tn.span());
                         yield Type.Error.INSTANCE;
                     }
                 }
@@ -663,12 +664,12 @@ public final class NameResolver {
     private Type resolveQualifiedType(QualifiedType qt) {
         Symbol sym = currentScope.resolve(qt.moduleName());
         if (!(sym instanceof Symbol.ModuleSymbol ms)) {
-            error("E3004", "Unknown module '" + qt.moduleName() + "'", qt.span());
+            error(DiagnosticCode.E3004, "Unknown module '" + qt.moduleName() + "'", qt.span());
             return Type.Error.INSTANCE;
         }
         Type exportType = ms.exports().get(qt.typeName());
         if (exportType == null) {
-            error("E2004", "Export '" + qt.typeName() + "' not found in module '"
+            error(DiagnosticCode.E2004, "Export '" + qt.typeName() + "' not found in module '"
                 + qt.moduleName() + "'. Available: "
                 + String.join(", ", ms.exports().keySet()), qt.span());
             return Type.Error.INSTANCE;
@@ -693,7 +694,7 @@ public final class NameResolver {
                 if (sym instanceof Symbol.ClassSymbol cs) {
                     yield Types.classType(cs.name(), cs.modulePath());
                 }
-                error("E3004", "Unknown type '" + name + "'", nt.span());
+                error(DiagnosticCode.E3004, "Unknown type '" + name + "'", nt.span());
                 yield Type.Error.INSTANCE;
             }
         };
@@ -730,8 +731,8 @@ public final class NameResolver {
     // Helpers
     // =======================================================================
 
-    private void error(String code, String message, Span span) {
-        diagnostics.add(new Diagnostic(code, "error", message,
+    private void error(DiagnosticCode code, String message, Span span) {
+        diagnostics.add(Diagnostic.error(code, message,
             span.file(), span.startLine(), span.startColumn()));
     }
 }

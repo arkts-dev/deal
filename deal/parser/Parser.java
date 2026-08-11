@@ -7,6 +7,7 @@ import deal.lexer.Token;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import deal.diagnostics.DiagnosticCode;
 
 /**
  * Hand-written recursive descent parser with precedence climbing for expressions.
@@ -112,14 +113,14 @@ public final class Parser {
             case THROW     -> parseThrowStatement();
             case SEMICOLON -> { advance(); yield null; }
             case EOF       -> null;
-            case RBRACE    -> { advance(); error("E1041", "Unexpected '}'", previous()); yield null; }
+            case RBRACE    -> { advance(); error(DiagnosticCode.E1041, "Unexpected '}'", previous()); yield null; }
             default        -> parseExpressionStatement();
         };
     }
 
     // -- Block --
     private Block parseBlock() {
-        Token lbrace = expect(TokenType.LBRACE, "E1005", "Expected '{'");
+        Token lbrace = expect(TokenType.LBRACE, DiagnosticCode.E1005, "Expected '{'");
         if (lbrace == null) { synchronize(); return emptyBlock(); }
 
         List<StatementNode> statements = new ArrayList<>();
@@ -132,7 +133,7 @@ public final class Parser {
         if (match(TokenType.RBRACE)) {
             rbrace = previous();
         } else {
-            error("E1006", "Expected '}'", peek());
+            error(DiagnosticCode.E1006, "Expected '}'", peek());
             rbrace = previousOrCurrent();
         }
         return new Block(spanBetween(lbrace, rbrace), List.copyOf(statements));
@@ -141,10 +142,10 @@ public final class Parser {
     // -- ClassDeclaration --
     private StatementNode parseClassDeclaration() {
         Token classToken = advance();
-        Token nameToken = expect(TokenType.IDENTIFIER, "E1007", "Expected class name after 'class'");
+        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, "Expected class name after 'class'");
         if (nameToken == null) { synchronize(); return null; }
 
-        Token lbrace = expect(TokenType.LBRACE, "E1005", "Expected '{' after class name");
+        Token lbrace = expect(TokenType.LBRACE, DiagnosticCode.E1005, "Expected '{' after class name");
         if (lbrace == null) { synchronize(); return null; }
 
         List<ClassField> fields = new ArrayList<>();
@@ -163,7 +164,7 @@ public final class Parser {
         if (match(TokenType.RBRACE)) {
             rbrace = previous();
         } else {
-            error("E1006", "Expected '}' at end of class body", peek());
+            error(DiagnosticCode.E1006, "Expected '}' at end of class body", peek());
             rbrace = previousOrCurrent();
         }
         return new ClassDeclaration(spanBetween(classToken, rbrace),
@@ -172,7 +173,7 @@ public final class Parser {
 
     private ClassField parseClassField() {
         if (peek().type() != TokenType.IDENTIFIER) {
-            error("E1007", "Expected field name (identifier)", peek());
+            error(DiagnosticCode.E1007, "Expected field name (identifier)", peek());
             advance();
             return null;
         }
@@ -180,7 +181,7 @@ public final class Parser {
         boolean optional = match(TokenType.QUESTION);
 
         if (!match(TokenType.COLON)) {
-            error("E1008", "Expected ':' after field name", peek());
+            error(DiagnosticCode.E1008, "Expected ':' after field name", peek());
             return null;
         }
         TypeNode type = parseType();
@@ -202,15 +203,15 @@ public final class Parser {
     // -- FunctionDeclaration --
     private StatementNode parseFunctionDeclaration() {
         Token funcToken = advance();
-        Token nameToken = expect(TokenType.IDENTIFIER, "E1007", "Expected function name after 'function'");
+        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, "Expected function name after 'function'");
         if (nameToken == null) { synchronize(); return null; }
 
-        expect(TokenType.LPAREN, "E1009", "Expected '(' after function name");
+        expect(TokenType.LPAREN, DiagnosticCode.E1009, "Expected '(' after function name");
         var paramResult = parseParameterList();
-        expect(TokenType.RPAREN, "E1010", "Expected ')' after function parameters");
+        expect(TokenType.RPAREN, DiagnosticCode.E1010, "Expected ')' after function parameters");
 
         if (!match(TokenType.COLON)) {
-            error("E1011", "Expected ':' return type annotation", peek());
+            error(DiagnosticCode.E1011, "Expected ':' return type annotation", peek());
             synchronize(); return null;
         }
         TypeNode returnType = parseType();
@@ -222,7 +223,7 @@ public final class Parser {
         } else if (match(TokenType.SEMICOLON)) {
             body = new Block(spanOf(previous()), List.of());
         } else {
-            error("E1012", "Expected '{' for function body", peek());
+            error(DiagnosticCode.E1012, "Expected '{' for function body", peek());
             body = emptyBlock();
             synchronize();
         }
@@ -235,7 +236,7 @@ public final class Parser {
     // -- VariableDeclaration --
     private StatementNode parseVariableDeclaration() {
         Token letToken = advance();
-        Token nameToken = expect(TokenType.IDENTIFIER, "E1007", "Expected variable name after 'let'");
+        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, "Expected variable name after 'let'");
         if (nameToken == null) { synchronize(); return null; }
 
         Optional<TypeNode> typeAnnotation = Optional.empty();
@@ -245,7 +246,7 @@ public final class Parser {
         }
 
         if (!match(TokenType.EQ_SIGN)) {
-            error("E1013", "Expected '=' initializer in variable declaration", peek());
+            error(DiagnosticCode.E1013, "Expected '=' initializer in variable declaration", peek());
             synchronize(); return null;
         }
 
@@ -277,10 +278,10 @@ public final class Parser {
     private StatementNode parseIfStatement() {
         Token ifToken = advance();
 
-        expect(TokenType.LPAREN, "E1014", "Expected '(' after 'if'");
+        expect(TokenType.LPAREN, DiagnosticCode.E1014, "Expected '(' after 'if'");
         ExpressionNode condition = parseExpression();
         if (condition == null) { synchronize(); return null; }
-        expect(TokenType.RPAREN, "E1015", "Expected ')' after if condition");
+        expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after if condition");
 
         Block thenBlock = parseBlock();
 
@@ -295,7 +296,7 @@ public final class Parser {
                 Block elseBlock = parseBlock();
                 elseBranch = Optional.of(new Either.Right<>(elseBlock));
             } else {
-                error("E1016", "Expected 'if' or '{' after 'else'", peek());
+                error(DiagnosticCode.E1016, "Expected 'if' or '{' after 'else'", peek());
             }
         }
 
@@ -307,10 +308,10 @@ public final class Parser {
     private StatementNode parseWhileStatement() {
         Token whileToken = advance();
 
-        expect(TokenType.LPAREN, "E1014", "Expected '(' after 'while'");
+        expect(TokenType.LPAREN, DiagnosticCode.E1014, "Expected '(' after 'while'");
         ExpressionNode condition = parseExpression();
         if (condition == null) { synchronize(); return null; }
-        expect(TokenType.RPAREN, "E1015", "Expected ')' after while condition");
+        expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after while condition");
 
         Block body = parseBlock();
 
@@ -321,13 +322,13 @@ public final class Parser {
     // -- ForStatement --
     private StatementNode parseForStatement() {
         Token forToken = advance();
-        expect(TokenType.LPAREN, "E1014", "Expected '(' after 'for'");
+        expect(TokenType.LPAREN, DiagnosticCode.E1014, "Expected '(' after 'for'");
 
         // --- Init ---
         Optional<ForInit> init = Optional.empty();
         if (peek().type() == TokenType.LET) {
             Token letToken = advance();
-            Token nameToken = expect(TokenType.IDENTIFIER, "E1007",
+            Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007,
                     "Expected loop variable name after 'let'");
             if (nameToken == null) { synchronize(); return null; }
 
@@ -337,7 +338,7 @@ public final class Parser {
             }
 
             if (!match(TokenType.EQ_SIGN)) {
-                error("E1013", "Expected '=' initializer in for-loop variable", peek());
+                error(DiagnosticCode.E1013, "Expected '=' initializer in for-loop variable", peek());
                 synchronize(); return null;
             }
 
@@ -354,7 +355,7 @@ public final class Parser {
             if (expr instanceof AssignmentExpr assign) {
                 init = Optional.of(new ForInit.AssignExpr(assign));
             } else if (expr != null) {
-                error("E1017",
+                error(DiagnosticCode.E1017,
                     "For-loop initializer must be a variable declaration or assignment",
                     expr);
                 // Wrap in a synthetic assignment for recovery
@@ -365,7 +366,7 @@ public final class Parser {
             }
         }
 
-        expect(TokenType.SEMICOLON, "E1018", "Expected ';' after for-loop initializer");
+        expect(TokenType.SEMICOLON, DiagnosticCode.E1018, "Expected ';' after for-loop initializer");
 
         // --- Condition ---
         Optional<ExpressionNode> condition = Optional.empty();
@@ -373,7 +374,7 @@ public final class Parser {
             ExpressionNode cond = parseExpression();
             if (cond != null) condition = Optional.of(cond);
         }
-        expect(TokenType.SEMICOLON, "E1018", "Expected ';' after for-loop condition");
+        expect(TokenType.SEMICOLON, DiagnosticCode.E1018, "Expected ';' after for-loop condition");
 
         // --- Update ---
         Optional<ExpressionNode> update = Optional.empty();
@@ -381,7 +382,7 @@ public final class Parser {
             ExpressionNode upd = parseExpression();
             if (upd != null) update = Optional.of(upd);
         }
-        expect(TokenType.RPAREN, "E1015", "Expected ')' after for-loop update");
+        expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after for-loop update");
 
         Block body = parseBlock();
 
@@ -407,21 +408,21 @@ public final class Parser {
         Token importToken = advance();
 
         if (!match(TokenType.STAR)) {
-            error("E1019", "Expected '*' after 'import' (only namespace imports supported)", peek());
+            error(DiagnosticCode.E1019, "Expected '*' after 'import' (only namespace imports supported)", peek());
             synchronize(); return null;
         }
         if (!match(TokenType.AS)) {
-            error("E1020", "Expected 'as' after '*' in import", peek());
+            error(DiagnosticCode.E1020, "Expected 'as' after '*' in import", peek());
             synchronize(); return null;
         }
-        Token aliasToken = expect(TokenType.IDENTIFIER, "E1021", "Expected import alias name");
+        Token aliasToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1021, "Expected import alias name");
         if (aliasToken == null) { synchronize(); return null; }
 
         if (!match(TokenType.FROM)) {
-            error("E1022", "Expected 'from' after import alias", peek());
+            error(DiagnosticCode.E1022, "Expected 'from' after import alias", peek());
             synchronize(); return null;
         }
-        Token pathToken = expect(TokenType.STRING_LITERAL, "E1023",
+        Token pathToken = expect(TokenType.STRING_LITERAL, DiagnosticCode.E1023,
                 "Expected module path string literal after 'from'");
         if (pathToken == null) { synchronize(); return null; }
 
@@ -444,7 +445,7 @@ public final class Parser {
         } else if (nextType == TokenType.CLASS) {
             declaration = parseClassDeclaration();
         } else {
-            error("E1024", "'export' must be followed by 'function' or 'class'", peek());
+            error(DiagnosticCode.E1024, "'export' must be followed by 'function' or 'class'", peek());
             synchronize(); return null;
         }
 
@@ -462,7 +463,7 @@ public final class Parser {
         if (target == null) { synchronize(); return null; }
 
         if (!(target instanceof MemberAccessExpr) && !(target instanceof IndexExpr)) {
-            error("E1025",
+            error(DiagnosticCode.E1025,
                 "Delete target must be a member access (obj.field) or index access (arr[idx])",
                 target);
         }
@@ -478,15 +479,15 @@ public final class Parser {
         Block tryBlock = parseBlock();
 
         if (!match(TokenType.CATCH)) {
-            error("E1026", "Expected 'catch' after try block", peek());
+            error(DiagnosticCode.E1026, "Expected 'catch' after try block", peek());
             synchronize(); return null;
         }
 
-        expect(TokenType.LPAREN, "E1027", "Expected '(' after 'catch'");
-        Token catchVarToken = expect(TokenType.IDENTIFIER, "E1028",
+        expect(TokenType.LPAREN, DiagnosticCode.E1027, "Expected '(' after 'catch'");
+        Token catchVarToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1028,
                 "Expected catch variable name");
         if (catchVarToken == null) { synchronize(); return null; }
-        expect(TokenType.RPAREN, "E1015", "Expected ')' after catch variable");
+        expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after catch variable");
 
         Block catchBlock = parseBlock();
 
@@ -575,12 +576,12 @@ public final class Parser {
     }
 
     private FunctionTypeParam parseFunctionTypeParam() {
-        Token nameToken = expect(TokenType.IDENTIFIER, "E1029",
+        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1029,
                 "Expected parameter name in function type");
         if (nameToken == null) return null;
 
         if (!match(TokenType.COLON)) {
-            error("E1008", "Expected ':' after parameter name in function type", peek());
+            error(DiagnosticCode.E1008, "Expected ':' after parameter name in function type", peek());
             return null;
         }
         TypeNode type = parseType();
@@ -592,12 +593,12 @@ public final class Parser {
 
     private FunctionTypeParam parseFunctionTypeRest() {
         Token ellipsis = advance();
-        Token nameToken = expect(TokenType.IDENTIFIER, "E1029",
+        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1029,
                 "Expected rest parameter name");
         if (nameToken == null) return null;
 
         if (!match(TokenType.COLON)) {
-            error("E1008", "Expected ':' after rest parameter name", peek());
+            error(DiagnosticCode.E1008, "Expected ':' after rest parameter name", peek());
             return null;
         }
         TypeNode type = parseType();
@@ -630,7 +631,7 @@ public final class Parser {
                         spanBetween(tokenSpanStart(inner), previousOrCurrent()),
                         inner);
             } else {
-                error("E1030", "Expected 'null' after '|' in nullable type", peek());
+                error(DiagnosticCode.E1030, "Expected 'null' after '|' in nullable type", peek());
                 break;
             }
         }
@@ -644,7 +645,7 @@ public final class Parser {
 
         while (match(TokenType.LBRACKET)) {
             if (!match(TokenType.RBRACKET)) {
-                error("E1031", "Expected ']' in array type", peek());
+                error(DiagnosticCode.E1031, "Expected ']' in array type", peek());
             }
             type = new ArrayType(spanBetween(tokenSpanStart(type), previousOrCurrent()), type);
         }
@@ -673,7 +674,7 @@ public final class Parser {
                 while (peek().type() == TokenType.DOT) {
                     advance(); // DOT
                     if (peek().type() != TokenType.IDENTIFIER) {
-                        error("E1032", "Expected type name after '.'", peek());
+                        error(DiagnosticCode.E1032, "Expected type name after '.'", peek());
                         break;
                     }
                     Token nameToken = advance();
@@ -705,7 +706,7 @@ public final class Parser {
             advance(); // '('
             TypeNode inner = parseType();
             if (inner == null) { synchronize(); return null; }
-            expect(TokenType.RPAREN, "E1015", "Expected ')' after parenthesized type");
+            expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after parenthesized type");
             return inner;
         }
 
@@ -715,7 +716,7 @@ public final class Parser {
             return new NamedType(spanOf(t), t.lexeme());
         }
 
-        error("E1032", "Expected type name", peek());
+        error(DiagnosticCode.E1032, "Expected type name", peek());
         return null;
     }
 
@@ -758,11 +759,11 @@ public final class Parser {
     }
 
     private Parameter parseParameter() {
-        Token nameToken = expect(TokenType.IDENTIFIER, "E1029", "Expected parameter name");
+        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1029, "Expected parameter name");
         if (nameToken == null) return null;
 
         if (!match(TokenType.COLON)) {
-            error("E1008", "Expected ':' after parameter name", peek());
+            error(DiagnosticCode.E1008, "Expected ':' after parameter name", peek());
             return null;
         }
         TypeNode type = parseType();
@@ -774,11 +775,11 @@ public final class Parser {
 
     private Parameter parseRestParameter() {
         Token ellipsis = advance();
-        Token nameToken = expect(TokenType.IDENTIFIER, "E1029", "Expected rest parameter name");
+        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1029, "Expected rest parameter name");
         if (nameToken == null) return null;
 
         if (!match(TokenType.COLON)) {
-            error("E1008", "Expected ':' after rest parameter name", peek());
+            error(DiagnosticCode.E1008, "Expected ':' after rest parameter name", peek());
             return null;
         }
         TypeNode type = parseType();
@@ -804,7 +805,7 @@ public final class Parser {
             if (right == null) return left;
 
             if (!isValidAssignmentTarget(left)) {
-                error("E1033", "Invalid assignment target", left);
+                error(DiagnosticCode.E1033, "Invalid assignment target", left);
             }
 
             Span sp = spanBetween(left.span(), right.span());
@@ -862,7 +863,7 @@ public final class Parser {
 
         while (true) {
             if (match(TokenType.DOT)) {
-                Token fieldToken = expect(TokenType.IDENTIFIER, "E1034",
+                Token fieldToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1034,
                         "Expected field name after '.'");
                 if (fieldToken == null) break;
                 Span sp = spanBetween(expr.span(), spanOf(fieldToken));
@@ -870,7 +871,7 @@ public final class Parser {
             } else if (match(TokenType.LBRACKET)) {
                 ExpressionNode index = parseExpression();
                 if (index == null) { synchronize(); break; }
-                Token rbracket = expect(TokenType.RBRACKET, "E1035", "Expected ']'");
+                Token rbracket = expect(TokenType.RBRACKET, DiagnosticCode.E1035, "Expected ']'");
                 Span sp;
                 if (rbracket != null) {
                     sp = spanBetween(expr.span(), spanOf(rbracket));
@@ -890,7 +891,7 @@ public final class Parser {
                         else break;
                     }
                 }
-                Token rparen = expect(TokenType.RPAREN, "E1010",
+                Token rparen = expect(TokenType.RPAREN, DiagnosticCode.E1010,
                         "Expected ')' after arguments");
                 Span sp;
                 if (rparen != null) {
@@ -931,7 +932,7 @@ public final class Parser {
                 try {
                     value = Long.parseLong(previous().lexeme());
                 } catch (NumberFormatException e) {
-                    error("E1036", "Integer literal out of range: " + previous().lexeme(), previous());
+                    error(DiagnosticCode.E1036, "Integer literal out of range: " + previous().lexeme(), previous());
                     value = 0;
                 }
                 return new LiteralExpr(spanOf(previous()), new LiteralValue.IntLiteral(value));
@@ -942,7 +943,7 @@ public final class Parser {
                 try {
                     value = Double.parseDouble(previous().lexeme());
                 } catch (NumberFormatException e) {
-                    error("E1036", "Invalid number literal: " + previous().lexeme(), previous());
+                    error(DiagnosticCode.E1036, "Invalid number literal: " + previous().lexeme(), previous());
                     value = 0.0;
                 }
                 return new LiteralExpr(spanOf(previous()),
@@ -965,7 +966,7 @@ public final class Parser {
                     synchronize();
                     return new LiteralExpr(spanOf(token), new LiteralValue.NullLiteral());
                 }
-                expect(TokenType.RPAREN, "E1015", "Expected ')' after expression");
+                expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after expression");
                 return inner;
             }
             case LBRACKET -> { return parseArrayLiteral(); }
@@ -973,7 +974,7 @@ public final class Parser {
             case FUNCTION -> { return parseFunctionExpression(); }
             case HAS      -> { return parseHasExpression(); }
             default -> {
-                error("E1037", "Expected expression", token);
+                error(DiagnosticCode.E1037, "Expected expression", token);
                 if (!isStatementBoundary(token.type())) {
                     advance();
                 }
@@ -985,12 +986,12 @@ public final class Parser {
     private ExpressionNode parseFunctionExpression() {
         Token funcToken = advance();
 
-        expect(TokenType.LPAREN, "E1009", "Expected '(' after 'function'");
+        expect(TokenType.LPAREN, DiagnosticCode.E1009, "Expected '(' after 'function'");
         var paramResult = parseParameterList();
-        expect(TokenType.RPAREN, "E1010", "Expected ')' after function parameters");
+        expect(TokenType.RPAREN, DiagnosticCode.E1010, "Expected ')' after function parameters");
 
         if (!match(TokenType.COLON)) {
-            error("E1011", "Expected ':' return type annotation on function expression", peek());
+            error(DiagnosticCode.E1011, "Expected ':' return type annotation on function expression", peek());
             synchronize(); return null;
         }
         TypeNode returnType = parseType();
@@ -1000,7 +1001,7 @@ public final class Parser {
         if (peek().type() == TokenType.LBRACE) {
             body = parseBlock();
         } else {
-            error("E1012", "Expected '{' for function body", peek());
+            error(DiagnosticCode.E1012, "Expected '{' for function body", peek());
             body = emptyBlock();
             synchronize();
         }
@@ -1029,7 +1030,7 @@ public final class Parser {
         if (match(TokenType.RBRACKET)) {
             rbracket = previous();
         } else {
-            error("E1035", "Expected ']' to close array literal", peek());
+            error(DiagnosticCode.E1035, "Expected ']' to close array literal", peek());
             rbracket = previousOrCurrent();
         }
 
@@ -1047,7 +1048,7 @@ public final class Parser {
             while (match(TokenType.COMMA)) {
                 if (peek().type() == TokenType.RBRACE) break;
                 if (peek().type() != TokenType.IDENTIFIER) {
-                    error("E1038",
+                    error(DiagnosticCode.E1038,
                         "Expected property name (identifier) in object literal", peek());
                     break;
                 }
@@ -1056,14 +1057,14 @@ public final class Parser {
                 else break;
             }
         } else if (peek().type() != TokenType.RBRACE) {
-            error("E1038", "Expected property name or '}' in object literal", peek());
+            error(DiagnosticCode.E1038, "Expected property name or '}' in object literal", peek());
         }
 
         Token rbrace;
         if (match(TokenType.RBRACE)) {
             rbrace = previous();
         } else {
-            error("E1006", "Expected '}' to close object literal", peek());
+            error(DiagnosticCode.E1006, "Expected '}' to close object literal", peek());
             rbrace = previousOrCurrent();
         }
 
@@ -1074,7 +1075,7 @@ public final class Parser {
         Token nameToken = advance();
 
         if (!match(TokenType.COLON)) {
-            error("E1008", "Expected ':' after property name", peek());
+            error(DiagnosticCode.E1008, "Expected ':' after property name", peek());
             return null;
         }
 
@@ -1088,13 +1089,13 @@ public final class Parser {
     private ExpressionNode parseHasExpression() {
         Token hasToken = advance();
 
-        expect(TokenType.LPAREN, "E1039", "Expected '(' after 'has'");
+        expect(TokenType.LPAREN, DiagnosticCode.E1039, "Expected '(' after 'has'");
 
         // Parse the full expression including the .field part.
         // parsePostfix() will consume the chain like obj.field or a.b.c.
         ExpressionNode full = parsePostfix();
 
-        expect(TokenType.RPAREN, "E1015", "Expected ')' after has() expression");
+        expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after has() expression");
 
         // Decompose: the expression must be a MemberAccessExpr.
         // For a.b.c, the full expression is MemberAccessExpr(MemberAccessExpr(a, "b"), "c"),
@@ -1106,9 +1107,9 @@ public final class Parser {
         }
 
         if (full != null) {
-            error("E1040", "Expected member access (obj.field) in has() expression", full);
+            error(DiagnosticCode.E1040, "Expected member access (obj.field) in has() expression", full);
         } else {
-            error("E1040", "Expected member access (obj.field) in has() expression", hasToken);
+            error(DiagnosticCode.E1040, "Expected member access (obj.field) in has() expression", hasToken);
         }
         Span sp = spanBetween(hasToken, previousOrCurrent());
         return new HasExpr(sp, full, "?");
@@ -1152,7 +1153,7 @@ public final class Parser {
         return peek().type() == TokenType.EOF;
     }
 
-    private Token expect(TokenType type, String code, String message) {
+    private Token expect(TokenType type, DiagnosticCode code, String message) {
         if (peek().type() == type) {
             return advance();
         }
@@ -1204,11 +1205,11 @@ public final class Parser {
     // Helper methods — errors
     // =======================================================================
 
-    private void error(String code, String message, Token token) {
+    private void error(DiagnosticCode code, String message, Token token) {
         diagnostics.add(Diagnostic.error(code, message, file, token.line(), token.column()));
     }
 
-    private void error(String code, String message, ExpressionNode node) {
+    private void error(DiagnosticCode code, String message, ExpressionNode node) {
         Span sp = node.span();
         diagnostics.add(Diagnostic.error(code, message, file,
                 sp.startLine(), sp.startColumn()));

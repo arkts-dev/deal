@@ -6,6 +6,7 @@ import deal.types.Type;
 import deal.types.Types;
 
 import java.util.*;
+import deal.diagnostics.DiagnosticCode;
 
 /**
  * Extracts export signatures from a parsed DEAL module AST.
@@ -69,7 +70,7 @@ public final class ExportExtractor {
             if (stmt instanceof ExportDeclaration exp) {
                 extractExport(exp, classMap);
             } else if (isDeclarationFile && !isAllowedDeclarationFileStmt(stmt)) {
-                diagnostics.add(Diagnostic.error("E7001",
+                diagnostics.add(Diagnostic.error(DiagnosticCode.E7001,
                     "Declaration files may only contain export declarations and class declarations",
                     stmt.span().file(), stmt.span().startLine(),
                     stmt.span().startColumn()));
@@ -100,7 +101,7 @@ public final class ExportExtractor {
                 if (isDeclarationFile && fd.body() != null
                         && fd.body().statements() != null
                         && !fd.body().statements().isEmpty()) {
-                    diagnostics.add(Diagnostic.error("E7001",
+                    diagnostics.add(Diagnostic.error(DiagnosticCode.E7001,
                         "Exported function '" + fd.name()
                             + "' in declaration file must not have a body",
                         fd.span().file(), fd.span().startLine(),

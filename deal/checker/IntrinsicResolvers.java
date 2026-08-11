@@ -6,6 +6,7 @@ import deal.types.Type;
 import deal.types.Types;
 
 import java.util.List;
+import deal.diagnostics.DiagnosticCode;
 
 /**
  * Built-in intrinsic resolvers for {@code int()}, {@code number()}, and {@code has()}.
@@ -30,7 +31,7 @@ final class IntrinsicResolvers {
      */
     static final IntrinsicResolver INT = (call, argTypes, ctx) -> {
         if (argTypes.size() != 1) {
-            ctx.error("E5001", "int() expects exactly 1 argument, got " + argTypes.size(),
+            ctx.error(DiagnosticCode.E5001, "int() expects exactly 1 argument, got " + argTypes.size(),
                 call.span());
             return Type.Error.INSTANCE;
         }
@@ -38,7 +39,7 @@ final class IntrinsicResolvers {
         if (isNumber(arg) || isNullableInt(arg)) {
             return Type.Int.INSTANCE;
         }
-        ctx.error("E5001",
+        ctx.error(DiagnosticCode.E5001,
             "int() argument must be number or int|null, got " + typeName(arg),
             call.span());
         return Type.Error.INSTANCE;
@@ -55,7 +56,7 @@ final class IntrinsicResolvers {
      */
     static final IntrinsicResolver NUMBER = (call, argTypes, ctx) -> {
         if (argTypes.size() != 1) {
-            ctx.error("E5001", "number() expects exactly 1 argument, got " + argTypes.size(),
+            ctx.error(DiagnosticCode.E5001, "number() expects exactly 1 argument, got " + argTypes.size(),
                 call.span());
             return Type.Error.INSTANCE;
         }
@@ -63,7 +64,7 @@ final class IntrinsicResolvers {
         if (isInt(arg) || isNullableNumber(arg)) {
             return Type.Number.INSTANCE;
         }
-        ctx.error("E5001",
+        ctx.error(DiagnosticCode.E5001,
             "number() argument must be int or number|null, got " + typeName(arg),
             call.span());
         return Type.Error.INSTANCE;
@@ -77,7 +78,7 @@ final class IntrinsicResolvers {
      */
     static final IntrinsicResolver HAS = (call, argTypes, ctx) -> {
         if (call.args().size() != 1) {
-            ctx.error("E5001", "has() expects exactly 1 argument, got " + call.args().size(),
+            ctx.error(DiagnosticCode.E5001, "has() expects exactly 1 argument, got " + call.args().size(),
                 call.span());
             return Type.Error.INSTANCE;
         }
@@ -85,7 +86,7 @@ final class IntrinsicResolvers {
 
         // The argument must be a member access expression
         if (!(arg instanceof MemberAccessExpr mae)) {
-            ctx.error("E4005",
+            ctx.error(DiagnosticCode.E4005,
                 "'has' argument must be a class field access (obj.field)",
                 arg.span());
             return Type.Error.INSTANCE;
@@ -102,7 +103,7 @@ final class IntrinsicResolvers {
         if (objActualType instanceof Type.Error) return Type.Error.INSTANCE;
 
         if (!(objActualType instanceof Type.Class cls)) {
-            ctx.error("E4005",
+            ctx.error(DiagnosticCode.E4005,
                 "'has' argument must be a class field access, got " + typeName(objActualType),
                 arg.span());
             return Type.Error.INSTANCE;
@@ -111,20 +112,20 @@ final class IntrinsicResolvers {
         // Look up the field in the class
         Symbol sym = ctx.resolveSymbol(cls.name());
         if (!(sym instanceof Symbol.ClassSymbol cs)) {
-            ctx.error("E4005", "Class '" + cls.name() + "' not found", arg.span());
+            ctx.error(DiagnosticCode.E4005, "Class '" + cls.name() + "' not found", arg.span());
             return Type.Error.INSTANCE;
         }
 
         String fieldName = mae.field();
         ClassField field = findField(cs.fields(), fieldName);
         if (field == null) {
-            ctx.error("E4005",
+            ctx.error(DiagnosticCode.E4005,
                 "Field '" + fieldName + "' not declared in class '" + cls.name() + "'",
                 arg.span());
             return Type.Error.INSTANCE;
         }
         if (!field.optional()) {
-            ctx.error("E4005",
+            ctx.error(DiagnosticCode.E4005,
                 "'has' argument must be an optional class field; '" + fieldName
                 + "' is required",
                 arg.span());

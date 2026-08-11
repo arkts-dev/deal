@@ -3,47 +3,52 @@ set -e
 
 mkdir -p build
 
-echo "=== Compiling DEAL AST, Types, Lexer, Parser, Checker, Codegen, Module System, and CLI ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java deal/module/*.java deal/Main.java
+echo "=== Compiling DEAL AST, Types, Diagnostics, Lexer, Parser, Checker, Codegen, Module System, and CLI ==="
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java deal/module/*.java deal/Main.java
+
+echo ""
+echo "=== Compiling and Running Diagnostic Classification Tests ==="
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java deal/module/*.java deal/Main.java test/StubModuleResolver.java test/DiagnosticClassificationTest.java
+java -ea -cp build deal.test.DiagnosticClassificationTest
 
 echo ""
 echo "=== Compiling and Running AST/Types Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java test/AstAndTypesTest.java
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java test/AstAndTypesTest.java
 java -ea -cp build deal.test.AstAndTypesTest
 
 echo ""
 echo "=== Compiling and Running Lexer Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java test/LexerTest.java
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java test/LexerTest.java
 java -ea -cp build deal.test.LexerTest
 
 echo ""
 echo "=== Compiling and Running Parser Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java deal/parser/*.java test/ParserTest.java
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java test/ParserTest.java
 java -ea -cp build deal.test.ParserTest
 
 echo ""
 echo "=== Compiling and Running Checker Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java test/StubModuleResolver.java test/CheckerTest.java
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java test/StubModuleResolver.java test/CheckerTest.java
 java -ea -cp build deal.test.CheckerTest
 
 echo ""
 echo "=== Compiling and Running Lua Backend Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java test/StubModuleResolver.java test/LuaBackendTest.java
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java test/StubModuleResolver.java test/LuaBackendTest.java
 java -ea -cp build deal.test.LuaBackendTest
 
 echo ""
 echo "=== Compiling and Running Lua Backend Integration Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java test/StubModuleResolver.java test/LuaBackendIntegrationTest.java
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java test/StubModuleResolver.java test/LuaBackendIntegrationTest.java
 java -ea -cp build deal.test.LuaBackendIntegrationTest
 
 echo ""
 echo "=== Compiling and Running Module System Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java deal/module/*.java deal/Main.java test/ModuleSystemTest.java
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java deal/module/*.java deal/Main.java test/ModuleSystemTest.java
 java -ea -cp build deal.test.ModuleSystemTest
 
 echo ""
 echo "=== Compiling and Running Stdlib .d.deal Parse Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java deal/parser/*.java test/StdlibDeclParseTest.java
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java test/StdlibDeclParseTest.java
 java -ea -cp build deal.test.StdlibDeclParseTest
 
 echo ""
@@ -64,7 +69,7 @@ fi
 
 echo ""
 echo "=== Compiling and Running Conformance Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java deal/module/*.java deal/Main.java test/StubModuleResolver.java test/ConformanceTest.java
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java deal/module/*.java deal/Main.java test/StubModuleResolver.java test/ConformanceTest.java
 java -ea -cp build deal.test.ConformanceTest test/conformance/
 
 echo ""

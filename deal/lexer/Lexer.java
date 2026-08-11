@@ -5,6 +5,7 @@ import deal.ast.TokenType;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import deal.diagnostics.DiagnosticCode;
 
 /**
  * Tokenizer that converts DEAL source text into a list of {@link Token}s.
@@ -252,7 +253,7 @@ public final class Lexer {
         }
 
         // Unterminated block comment
-        error("E1004", "Unterminated multi-line comment", startLine, startCol);
+        error(DiagnosticCode.E1004, "Unterminated multi-line comment", startLine, startCol);
     }
 
     // =========================================================================
@@ -285,7 +286,7 @@ public final class Lexer {
                 // (This fires for patterns like .5.3 where leading dot was consumed
                 //  as integer part, but also catches internal double-dot in theory.)
                 if (hasDot) {
-                    error("E1002",
+                    error(DiagnosticCode.E1002,
                         "Malformed number literal: multiple decimal points",
                         tokenStartLine, tokenStartCol);
                     String lexeme = source.substring(startPos, pos);
@@ -303,7 +304,7 @@ public final class Lexer {
         // character is another dot followed by digits (e.g. "1.2.3").
         if (hasDot && pos < source.length() && source.charAt(pos) == '.'
                 && pos + 1 < source.length() && isDigit(source.charAt(pos + 1))) {
-            error("E1002",
+            error(DiagnosticCode.E1002,
                 "Malformed number literal: multiple decimal points",
                 tokenStartLine, tokenStartCol);
         }
@@ -335,14 +336,14 @@ public final class Lexer {
                             && (source.charAt(pos) == '+' || source.charAt(pos) == '-')) {
                         bump(); // sign
                     }
-                    error("E1002",
+                    error(DiagnosticCode.E1002,
                         "Malformed number literal: exponent without digits",
                         tokenStartLine, tokenStartCol);
                 }
             } else if (hasDot) {
                 hasExponent = true;
                 bump();
-                error("E1002",
+                error(DiagnosticCode.E1002,
                     "Malformed number literal: exponent without digits",
                     tokenStartLine, tokenStartCol);
             }
@@ -372,14 +373,14 @@ public final class Lexer {
             char c = source.charAt(pos);
 
             if (c == '\n') {
-                error("E1003", "Unterminated string literal: missing closing " + quote,
+                error(DiagnosticCode.E1003, "Unterminated string literal: missing closing " + quote,
                     tokenStartLine, tokenStartCol);
                 String lexeme = source.substring(startPos, pos);
                 newline();
                 return makeToken(TokenType.STRING_LITERAL, lexeme);
             }
             if (c == '\r') {
-                error("E1003", "Unterminated string literal: missing closing " + quote,
+                error(DiagnosticCode.E1003, "Unterminated string literal: missing closing " + quote,
                     tokenStartLine, tokenStartCol);
                 String lexeme = source.substring(startPos, pos);
                 newline();
@@ -392,7 +393,7 @@ public final class Lexer {
             if (c == '\\') {
                 bump(); // backslash
                 if (pos >= source.length()) {
-                    error("E1003", "Unterminated string literal: escape at end of file",
+                    error(DiagnosticCode.E1003, "Unterminated string literal: escape at end of file",
                         tokenStartLine, tokenStartCol);
                     String lexeme = source.substring(startPos, pos);
                     return makeToken(TokenType.STRING_LITERAL, lexeme);
@@ -408,7 +409,7 @@ public final class Lexer {
         }
 
         // Reached EOF without closing quote
-        error("E1003", "Unterminated string literal: missing closing " + quote,
+        error(DiagnosticCode.E1003, "Unterminated string literal: missing closing " + quote,
             tokenStartLine, tokenStartCol);
         String lexeme = source.substring(startPos, pos);
         return makeToken(TokenType.STRING_LITERAL, lexeme);
@@ -544,7 +545,7 @@ public final class Lexer {
 
             default -> {
                 String ch = String.valueOf(c);
-                error("E1001", "Unrecognized character: '" + ch + "'",
+                error(DiagnosticCode.E1001, "Unrecognized character: '" + ch + "'",
                     line, column);
                 bump();
                 yield null;
@@ -605,7 +606,7 @@ public final class Lexer {
     // Error reporting
     // =========================================================================
 
-    private void error(String code, String message, int errLine, int errCol) {
+    private void error(DiagnosticCode code, String message, int errLine, int errCol) {
         diagnostics.add(Diagnostic.error(code, message, file, errLine, errCol));
     }
 }

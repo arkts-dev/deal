@@ -6,6 +6,7 @@ import deal.types.Type;
 import deal.types.Types;
 
 import java.util.*;
+import deal.diagnostics.DiagnosticCode;
 
 /**
  * Pass 2 of the type checker: type checking.
@@ -88,7 +89,7 @@ public final class TypeChecker {
     public interface Context {
         Type typeOf(ExpressionNode expr);
         Symbol resolveSymbol(String name);
-        void error(String code, String message, Span span);
+        void error(DiagnosticCode code, String message, Span span);
     }
 
     private final Context ctx = new Context() {
@@ -98,7 +99,7 @@ public final class TypeChecker {
         @Override public Symbol resolveSymbol(String name) {
             return currentScope.resolve(name);
         }
-        @Override public void error(String code, String message, Span span) {
+        @Override public void error(DiagnosticCode code, String message, Span span) {
             TypeChecker.this.error(code, message, span);
         }
     };
@@ -216,7 +217,7 @@ public final class TypeChecker {
             Type retType = funcType.returnType();
             if (!Types.isNullOrVoid(retType)
                     && !ReturnAnalysis.definitelyReturns(fd.body())) {
-                error("E5002",
+                error(DiagnosticCode.E5002,
                     "Function '" + fd.name() + "' must return a value on all paths",
                     fd.span());
             }
@@ -243,14 +244,14 @@ public final class TypeChecker {
             if (exprType == Type.Error.INSTANCE) return;
 
             if (!isAssignable(currentReturnType, exprType)) {
-                error("E5003",
+                error(DiagnosticCode.E5003,
                     "Return type mismatch: expected " + typeName(currentReturnType)
                     + ", got " + typeName(exprType),
                     rs.expr().get().span());
             }
         } else {
             if (currentReturnType != null && !Types.isNullOrVoid(currentReturnType)) {
-                error("E5003",
+                error(DiagnosticCode.E5003,
                     "Return type mismatch: expected " + typeName(currentReturnType)
                     + ", got null",
                     rs.span());
@@ -270,7 +271,7 @@ public final class TypeChecker {
         expectedType = savedExpected;
 
         if (condType != Type.Error.INSTANCE && !(condType instanceof Type.Boolean)) {
-            error("E3007", "If condition must be boolean, got " + typeName(condType),
+            error(DiagnosticCode.E3007, "If condition must be boolean, got " + typeName(condType),
                 is.condition().span());
         }
 
@@ -317,7 +318,7 @@ public final class TypeChecker {
         expectedType = savedExpected;
 
         if (condType != Type.Error.INSTANCE && !(condType instanceof Type.Boolean)) {
-            error("E3007", "While condition must be boolean, got " + typeName(condType),
+            error(DiagnosticCode.E3007, "While condition must be boolean, got " + typeName(condType),
                 ws.condition().span());
         }
 
@@ -349,7 +350,7 @@ public final class TypeChecker {
             expectedType = savedExpected;
 
             if (condType != Type.Error.INSTANCE && !(condType instanceof Type.Boolean)) {
-                error("E3007", "For condition must be boolean, got " + typeName(condType),
+                error(DiagnosticCode.E3007, "For condition must be boolean, got " + typeName(condType),
                     cond.span());
             }
         });
@@ -370,13 +371,13 @@ public final class TypeChecker {
 
     private void checkBreak(BreakStatement bs) {
         if (loopDepth == 0) {
-            error("E2000", "'break' must be inside a loop", bs.span());
+            error(DiagnosticCode.E2000, "'break' must be inside a loop", bs.span());
         }
     }
 
     private void checkContinue(ContinueStatement cs) {
         if (loopDepth == 0) {
-            error("E2000", "'continue' must be inside a loop", cs.span());
+            error(DiagnosticCode.E2000, "'continue' must be inside a loop", cs.span());
         }
     }
 
@@ -410,7 +411,7 @@ public final class TypeChecker {
         expectedType = savedExpected;
 
         if (exprType != Type.Error.INSTANCE && !isAssignable(errorType, exprType)) {
-            error("E3001",
+            error(DiagnosticCode.E3001,
                 "throw expression must have type Error, got " + typeName(exprType),
                 ts.expr().span());
         }
@@ -437,7 +438,7 @@ public final class TypeChecker {
                 if (sym instanceof Symbol.ClassSymbol cs) {
                     ClassField field = IntrinsicResolvers.findField(cs.fields(), mae.field());
                     if (field != null && !field.optional()) {
-                        error("E4004",
+                        error(DiagnosticCode.E4004,
                             "Cannot delete required field '" + mae.field() + "'",
                             ds.span());
                     }
@@ -504,7 +505,7 @@ public final class TypeChecker {
     private Type checkIdentifier(IdentifierExpr id) {
         Symbol sym = currentScope.resolve(id.name());
         if (sym == null) {
-            error("E2001", "Undeclared identifier '" + id.name() + "'", id.span());
+            error(DiagnosticCode.E2001, "Undeclared identifier '" + id.name() + "'", id.span());
             return Type.Error.INSTANCE;
         }
 
@@ -534,7 +535,7 @@ public final class TypeChecker {
             if (Types.equals(leftType, rightType)) return Type.Boolean.INSTANCE;
             if (isNullableOf(leftType, rightType) || isNullableOf(rightType, leftType))
                 return Type.Boolean.INSTANCE;
-            error("E3006",
+            error(DiagnosticCode.E3006,
                 "Cannot compare " + typeName(leftType) + " with " + typeName(rightType),
                 bin.span());
             return Type.Error.INSTANCE;
@@ -542,12 +543,12 @@ public final class TypeChecker {
 
         if (op == BinaryOp.AND || op == BinaryOp.OR) {
             if (!(leftType instanceof Type.Boolean)) {
-                error("E3007", "Left operand of '" + opSymbol(op) + "' must be boolean, got "
+                error(DiagnosticCode.E3007, "Left operand of '" + opSymbol(op) + "' must be boolean, got "
                     + typeName(leftType), bin.left().span());
                 return Type.Error.INSTANCE;
             }
             if (!(rightType instanceof Type.Boolean)) {
-                error("E3007", "Right operand of '" + opSymbol(op) + "' must be boolean, got "
+                error(DiagnosticCode.E3007, "Right operand of '" + opSymbol(op) + "' must be boolean, got "
                     + typeName(rightType), bin.right().span());
                 return Type.Error.INSTANCE;
             }
@@ -561,7 +562,7 @@ public final class TypeChecker {
                     return Type.Boolean.INSTANCE;
                 }
             }
-            error("E3007", "Invalid operand types for comparison: "
+            error(DiagnosticCode.E3007, "Invalid operand types for comparison: "
                 + typeName(leftType) + " and " + typeName(rightType), bin.span());
             return Type.Error.INSTANCE;
         }
@@ -574,14 +575,14 @@ public final class TypeChecker {
                     return leftType;
                 }
             }
-            error("E3010", "Invalid operand types for '+': "
+            error(DiagnosticCode.E3010, "Invalid operand types for '+': "
                 + typeName(leftType) + " and " + typeName(rightType), bin.span());
             return Type.Error.INSTANCE;
         }
 
         // Other arithmetic: types must match and be int or number
         if (!Types.equals(leftType, rightType)) {
-            error("E3007", "Invalid operand types for '" + opSymbol(op) + "': "
+            error(DiagnosticCode.E3007, "Invalid operand types for '" + opSymbol(op) + "': "
                 + typeName(leftType) + " and " + typeName(rightType), bin.span());
             return Type.Error.INSTANCE;
         }
@@ -589,7 +590,7 @@ public final class TypeChecker {
             return leftType;
         }
 
-        error("E3007", "Invalid operand types for '" + opSymbol(op) + "': "
+        error(DiagnosticCode.E3007, "Invalid operand types for '" + opSymbol(op) + "': "
             + typeName(leftType) + " and " + typeName(rightType), bin.span());
         return Type.Error.INSTANCE;
     }
@@ -605,7 +606,7 @@ public final class TypeChecker {
         return switch (un.op()) {
             case NOT -> {
                 if (!(exprType instanceof Type.Boolean)) {
-                    error("E3007", "Operand of '!' must be boolean, got "
+                    error(DiagnosticCode.E3007, "Operand of '!' must be boolean, got "
                         + typeName(exprType), un.expr().span());
                     yield Type.Error.INSTANCE;
                 }
@@ -613,7 +614,7 @@ public final class TypeChecker {
             }
             case NEG -> {
                 if (!(exprType instanceof Type.Int) && !(exprType instanceof Type.Number)) {
-                    error("E3007", "Operand of unary '-' must be int or number, got "
+                    error(DiagnosticCode.E3007, "Operand of unary '-' must be int or number, got "
                         + typeName(exprType), un.expr().span());
                     yield Type.Error.INSTANCE;
                 }
@@ -667,7 +668,7 @@ public final class TypeChecker {
             return checkFunctionCall(call, funcType, argTypes);
         }
 
-        error("E3008", typeName(calleeType) + " is not callable", call.callee().span());
+        error(DiagnosticCode.E3008, typeName(calleeType) + " is not callable", call.callee().span());
         return Type.Error.INSTANCE;
     }
 
@@ -744,14 +745,14 @@ public final class TypeChecker {
         boolean hasRest = funcType.restType().isPresent();
 
         if (!hasRest && argTypes.size() != paramCount) {
-            error("E3009",
+            error(DiagnosticCode.E3009,
                 "Function argument count mismatch: expected " + paramCount
                 + ", got " + argTypes.size(),
                 call.span());
             return Type.Error.INSTANCE;
         }
         if (hasRest && argTypes.size() < paramCount) {
-            error("E3009",
+            error(DiagnosticCode.E3009,
                 "Function argument count mismatch: expected at least " + paramCount
                 + ", got " + argTypes.size(),
                 call.span());
@@ -763,7 +764,7 @@ public final class TypeChecker {
             Type argType = argTypes.get(i);
             if (argType == Type.Error.INSTANCE) continue;
             if (!isAssignable(paramType, argType)) {
-                error("E5001",
+                error(DiagnosticCode.E5001,
                     "Function argument type mismatch at position " + (i + 1)
                     + ": expected " + typeName(paramType)
                     + ", got " + typeName(argType),
@@ -778,7 +779,7 @@ public final class TypeChecker {
                 Type argType = argTypes.get(i);
                 if (argType == Type.Error.INSTANCE) continue;
                 if (!isAssignable(restElemType, argType)) {
-                    error("E5001",
+                    error(DiagnosticCode.E5001,
                         "Rest argument type mismatch at position " + (i + 1)
                         + ": expected " + typeName(restElemType)
                         + ", got " + typeName(argType),
@@ -811,7 +812,7 @@ public final class TypeChecker {
             if (sym instanceof Symbol.ModuleSymbol ms) {
                 Type exportType = ms.exports().get(field);
                 if (exportType != null) return exportType;
-                error("E2004", "Export '" + field + "' not found in module '"
+                error(DiagnosticCode.E2004, "Export '" + field + "' not found in module '"
                     + id.name() + "'. Available: " + String.join(", ", ms.exports().keySet()), mae.span());
                 return Type.Error.INSTANCE;
             }
@@ -837,7 +838,7 @@ public final class TypeChecker {
                     }
                     return fieldType;
                 } else {
-                    error("E4002", "Field '" + field + "' not declared in class '"
+                    error(DiagnosticCode.E4002, "Field '" + field + "' not declared in class '"
                         + cls.name() + "'", mae.span());
                     return Type.Error.INSTANCE;
                 }
@@ -854,12 +855,12 @@ public final class TypeChecker {
             if (expectedType != null && !Types.isNullOrVoid(expectedType)) {
                 return expectedType;
             }
-            error("E3003",
+            error(DiagnosticCode.E3003,
                 "Table field read requires contextual target type", mae.span());
             return Type.Error.INSTANCE;
         }
 
-        error("E3003",
+        error(DiagnosticCode.E3003,
             "Cannot access field '" + field + "' on type " + typeName(objType), mae.span());
         return Type.Error.INSTANCE;
     }
@@ -882,7 +883,7 @@ public final class TypeChecker {
 
         // For arrays and reads, the index must be int
         if (!(indexType instanceof Type.Int)) {
-            error("E3007", "Array index must be int, got " + typeName(indexType),
+            error(DiagnosticCode.E3007, "Array index must be int, got " + typeName(indexType),
                 idx.index().span());
             return Type.Error.INSTANCE;
         }
@@ -890,7 +891,7 @@ public final class TypeChecker {
             return arr.element();
         }
 
-        error("E3007", "Cannot index type " + typeName(arrayType), idx.array().span());
+        error(DiagnosticCode.E3007, "Cannot index type " + typeName(arrayType), idx.array().span());
         return Type.Error.INSTANCE;
     }
 
@@ -902,7 +903,7 @@ public final class TypeChecker {
         List<ExpressionNode> elements = arr.elements();
         if (elements.isEmpty()) {
             if (expectedType instanceof Type.Array expectedArr) return expectedArr;
-            error("E3002", "Cannot infer type of empty array literal", arr.span());
+            error(DiagnosticCode.E3002, "Cannot infer type of empty array literal", arr.span());
             return Type.Error.INSTANCE;
         }
 
@@ -914,7 +915,7 @@ public final class TypeChecker {
             if (firstType == null) firstType = elemType;
             else if (!Types.equals(firstType, elemType)) {
                 mixed = true;
-                error("E3011",
+                error(DiagnosticCode.E3011,
                     "Mixed types in array literal: " + typeName(firstType)
                     + " and " + typeName(elemType),
                     elem.span());
@@ -936,7 +937,7 @@ public final class TypeChecker {
             checkExpression(prop.value());
         }
         if (obj.properties().isEmpty() && expectedType == null) {
-            error("E3002", "Cannot infer type of empty object literal", obj.span());
+            error(DiagnosticCode.E3002, "Cannot infer type of empty object literal", obj.span());
             return Type.Error.INSTANCE;
         }
         return Type.Table.INSTANCE;
@@ -951,7 +952,7 @@ public final class TypeChecker {
             if (importedCs != null) sym = importedCs;
         }
         if (!(sym instanceof Symbol.ClassSymbol cs)) {
-            error("E3004", "Unknown class '" + cls.name() + "'", obj.span());
+            error(DiagnosticCode.E3004, "Unknown class '" + cls.name() + "'", obj.span());
             return Type.Error.INSTANCE;
         }
 
@@ -966,7 +967,7 @@ public final class TypeChecker {
 
         for (String propName : provided.keySet()) {
             if (!classFieldNames.contains(propName)) {
-                error("E4002",
+                error(DiagnosticCode.E4002,
                     "Extra field '" + propName + "' in class literal for '" + cls.name() + "'",
                     provided.get(propName).span());
             }
@@ -983,7 +984,7 @@ public final class TypeChecker {
                 expectedType = savedExpected;
                 if (valueType != Type.Error.INSTANCE) {
                     if (!isAssignable(fieldType, valueType)) {
-                        error("E4003",
+                        error(DiagnosticCode.E4003,
                             "Type mismatch for field '" + cf.name() + "': expected "
                             + typeName(fieldType) + ", got " + typeName(valueType),
                             prop.span());
@@ -991,7 +992,7 @@ public final class TypeChecker {
                 }
             } else {
                 if (!cf.optional() && cf.defaultExpr().isEmpty()) {
-                    error("E4001",
+                    error(DiagnosticCode.E4001,
                         "Missing required field '" + cf.name()
                         + "' in class literal for '" + cls.name() + "'",
                         obj.span());
@@ -1029,7 +1030,7 @@ public final class TypeChecker {
             Set<String> paramNames = new HashSet<>();
             for (Parameter p : fe.params()) {
                 if (paramNames.contains(p.name())) {
-                    error("E2002", "Duplicate parameter '" + p.name() + "'", p.span());
+                    error(DiagnosticCode.E2002, "Duplicate parameter '" + p.name() + "'", p.span());
                     continue;
                 }
                 paramNames.add(p.name());
@@ -1038,7 +1039,7 @@ public final class TypeChecker {
             }
             fe.restParam().ifPresent(rp -> {
                 if (paramNames.contains(rp.name())) {
-                    error("E2002", "Duplicate parameter '" + rp.name() + "'", rp.span());
+                    error(DiagnosticCode.E2002, "Duplicate parameter '" + rp.name() + "'", rp.span());
                     return;
                 }
                 paramNames.add(rp.name());
@@ -1056,7 +1057,7 @@ public final class TypeChecker {
 
         if (!Types.isNullOrVoid(returnType)
                 && !ReturnAnalysis.definitelyReturns(fe.body())) {
-            error("E5002",
+            error(DiagnosticCode.E5002,
                 "Function expression must return a value on all paths", fe.span());
         }
 
@@ -1075,7 +1076,7 @@ public final class TypeChecker {
         if (objType == Type.Error.INSTANCE) return Type.Error.INSTANCE;
 
         if (!(objType instanceof Type.Class cls)) {
-            error("E4005",
+            error(DiagnosticCode.E4005,
                 "'has' argument must be a class field access, got " + typeName(objType),
                 has.span());
             return Type.Error.INSTANCE;
@@ -1089,19 +1090,19 @@ public final class TypeChecker {
             if (importedCs != null) sym = importedCs;
         }
         if (!(sym instanceof Symbol.ClassSymbol cs)) {
-            error("E4005", "Class '" + cls.name() + "' not found", has.span());
+            error(DiagnosticCode.E4005, "Class '" + cls.name() + "' not found", has.span());
             return Type.Error.INSTANCE;
         }
 
         ClassField field = IntrinsicResolvers.findField(cs.fields(), has.field());
         if (field == null) {
-            error("E4005",
+            error(DiagnosticCode.E4005,
                 "Field '" + has.field() + "' not declared in class '" + cls.name() + "'",
                 has.span());
             return Type.Error.INSTANCE;
         }
         if (!field.optional()) {
-            error("E4005",
+            error(DiagnosticCode.E4005,
                 "'has' argument must be an optional class field; '" + has.field()
                 + "' is required",
                 has.span());
@@ -1142,13 +1143,13 @@ public final class TypeChecker {
             // F10: Detect reverse arity for E5004
             if (targetType instanceof Type.Func tf && valueType instanceof Type.Func af
                     && isReverseArity(af, tf)) {
-                error("E5004",
+                error(DiagnosticCode.E5004,
                     "Arity extension failed: actual function has more parameters ("
                     + af.paramTypes().size() + ") than target ("
                     + tf.paramTypes().size() + ")",
                     assign.span());
             } else {
-                error("E3001",
+                error(DiagnosticCode.E3001,
                     "Cannot assign " + typeName(valueType) + " to " + typeName(targetType),
                     assign.span());
             }
@@ -1173,13 +1174,13 @@ public final class TypeChecker {
             // F10: Detect reverse arity for E5004
             if (targetType instanceof Type.Func tf && exprType instanceof Type.Func af
                     && isReverseArity(af, tf)) {
-                error("E5004",
+                error(DiagnosticCode.E5004,
                     "Arity extension failed: actual function has more parameters ("
                     + af.paramTypes().size() + ") than target ("
                     + tf.paramTypes().size() + ")",
                     span);
             } else {
-                error("E3001",
+                error(DiagnosticCode.E3001,
                     "Cannot assign " + typeName(exprType) + " to " + typeName(targetType),
                     span);
             }
@@ -1231,14 +1232,14 @@ public final class TypeChecker {
             case LiteralExpr lit -> exprType;
             case ArrayLiteralExpr arr -> {
                 if (arr.elements().isEmpty()) {
-                    error("E3002", "Cannot infer type of empty array literal", init.span());
+                    error(DiagnosticCode.E3002, "Cannot infer type of empty array literal", init.span());
                     yield null;
                 }
                 yield exprType;
             }
             case ObjectLiteralExpr obj -> {
                 if (obj.properties().isEmpty()) {
-                    error("E3002", "Cannot infer type of empty object literal", init.span());
+                    error(DiagnosticCode.E3002, "Cannot infer type of empty object literal", init.span());
                     yield null;
                 }
                 yield exprType;
@@ -1251,7 +1252,7 @@ public final class TypeChecker {
             case BinaryExpr bin -> exprType;
             case MemberAccessExpr mae -> {
                 if (typeOf(mae.object()) instanceof Type.Table) {
-                    error("E3003",
+                    error(DiagnosticCode.E3003,
                         "Table field read requires contextual target type", init.span());
                     yield null;
                 }
@@ -1259,7 +1260,7 @@ public final class TypeChecker {
             }
             case HasExpr has -> exprType;
             default -> {
-                error("E3002", "Cannot infer type of this expression", init.span());
+                error(DiagnosticCode.E3002, "Cannot infer type of this expression", init.span());
                 yield null;
             }
         };
@@ -1343,8 +1344,8 @@ public final class TypeChecker {
         };
     }
 
-    private void error(String code, String message, Span span) {
-        diagnostics.add(new Diagnostic(code, "error", message,
+    private void error(DiagnosticCode code, String message, Span span) {
+        diagnostics.add(Diagnostic.error(code, message,
             span.file(), span.startLine(), span.startColumn()));
     }
 }

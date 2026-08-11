@@ -13,6 +13,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import deal.diagnostics.DiagnosticCode;
 
 /**
  * Orchestrates multi-module compilation: discovery, parsing, type checking,
@@ -130,7 +131,7 @@ public final class CompilationOrchestrator {
 
             Path file = Path.of(sourcePath);
             if (!Files.exists(file)) {
-                error("E2003", "Module not found: " + sourcePath,
+                error(DiagnosticCode.E2003, "Module not found: " + sourcePath,
                     file.toString(), 1, 1);
                 continue;
             }
@@ -142,7 +143,7 @@ public final class CompilationOrchestrator {
             try {
                 source = Files.readString(file);
             } catch (IOException e) {
-                error("E2003", "Cannot read module: " + sourcePath + " (" + e.getMessage() + ")",
+                error(DiagnosticCode.E2003, "Cannot read module: " + sourcePath + " (" + e.getMessage() + ")",
                     sourcePath, 1, 1);
                 continue;
             }
@@ -180,7 +181,7 @@ public final class CompilationOrchestrator {
                     if (resolved == null) {
                         // Record E2003 with the import statement's span for
                         // accurate error location.
-                        error("E2003",
+                        error(DiagnosticCode.E2003,
                             "Module not found: '" + importPath
                                 + "'. Searched in: " + describeSearchPaths(importPath, file),
                             imp.span().file(), imp.span().startLine(),
@@ -313,7 +314,7 @@ public final class CompilationOrchestrator {
                 if (i > 0) cyclePath.append(" -> ");
                 cyclePath.append(cycle.get(i));
             }
-            error("E2005", "Circular import with runtime dependency: " + cyclePath,
+            error(DiagnosticCode.E2005, "Circular import with runtime dependency: " + cyclePath,
                 cycle.get(0), 1, 1);
             return null;
         }
@@ -334,7 +335,7 @@ public final class CompilationOrchestrator {
                     if (i > 0) cyclePath.append(" -> ");
                     cyclePath.append(additionalCycle.get(i));
                 }
-                error("E2005", "Circular import with runtime dependency: " + cyclePath,
+                error(DiagnosticCode.E2005, "Circular import with runtime dependency: " + cyclePath,
                     additionalCycle.get(0), 1, 1);
                 return null;
             }
@@ -805,7 +806,7 @@ public final class CompilationOrchestrator {
             return;
         }
 
-        error("E6000", "Runtime library not found: deal/runtime.lua", "", 1, 1);
+        error(DiagnosticCode.E6000, "Runtime library not found: deal/runtime.lua", "", 1, 1);
     }
 
     private void copyStdlibModules() throws IOException {
@@ -865,7 +866,7 @@ public final class CompilationOrchestrator {
                 if (i > 0) msg.append(", ");
                 msg.append(candidates.get(i));
             }
-            error("E2003", msg.toString(), errorFile, errorLine, errorCol);
+            error(DiagnosticCode.E2003, msg.toString(), errorFile, errorLine, errorCol);
         }
         return resolved;
     }
@@ -1044,7 +1045,7 @@ public final class CompilationOrchestrator {
         if (verbose) System.out.println(msg);
     }
 
-    private void error(String code, String message, String file, int line, int col) {
+    private void error(DiagnosticCode code, String message, String file, int line, int col) {
         diagnostics.add(Diagnostic.error(code, message, file, line, col));
         hasErrors = true;
     }
