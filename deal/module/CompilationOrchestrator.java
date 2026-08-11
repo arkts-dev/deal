@@ -602,6 +602,11 @@ public final class CompilationOrchestrator {
             case DeleteStatement ds -> false;
             case BreakStatement bs -> false;
             case ContinueStatement cs -> false;
+            case ForOfStatement fos -> {
+                if (exprReferencesImport(fos.iterable(), alias)) yield true;
+                if (hasRuntimeImportUsage(fos.body(), alias)) yield true;
+                yield false;
+            }
         };
     }
 
@@ -654,6 +659,12 @@ public final class CompilationOrchestrator {
             }
             case FunctionExpr fe -> false;
             case LiteralExpr le -> false;
+            case TemplateLiteralExpr tl -> {
+                for (ExpressionNode part : tl.parts()) {
+                    if (exprReferencesImport(part, alias)) yield true;
+                }
+                yield false;
+            }
         };
     }
 

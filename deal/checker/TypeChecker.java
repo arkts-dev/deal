@@ -481,6 +481,12 @@ public final class TypeChecker {
             case FunctionExpr fe       -> checkFunctionExpr(fe);
             case HasExpr has           -> checkHas(has);
             case AssignmentExpr assign -> checkAssignmentExpr(assign);
+            case TemplateLiteralExpr tl -> {
+                for (ExpressionNode part : tl.parts()) {
+                    checkExpression(part);
+                }
+                yield Type.String.INSTANCE;
+            }
         };
     }
 
@@ -1259,6 +1265,7 @@ public final class TypeChecker {
                 yield exprType;
             }
             case HasExpr has -> exprType;
+            case TemplateLiteralExpr tl -> exprType;
             default -> {
                 error(DiagnosticCode.E3002, "Cannot infer type of this expression", init.span());
                 yield null;

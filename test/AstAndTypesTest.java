@@ -312,6 +312,14 @@ public class AstAndTypesTest {
         ThrowStatement throwStmt = new ThrowStatement(span, id);
         check(throwStmt.expr() == id, "ThrowStatement");
         check(throwStmt instanceof StatementNode, "ThrowStatement is StatementNode");
+        // --- ForOfStatement ---
+        ForOfStatement forOfStmt = new ForOfStatement(span, "x",
+            new NamedType(span, "int"), id, emptyBlock);
+        check(forOfStmt.varName().equals("x"), "ForOfStatement varName");
+        check(forOfStmt.iterable() == id, "ForOfStatement iterable");
+        check(forOfStmt.body() == emptyBlock, "ForOfStatement body");
+        check(forOfStmt instanceof StatementNode, "ForOfStatement is StatementNode");
+
 
         Block block = new Block(span, List.of(varDecl, ret));
         check(block.statements().size() == 2, "Block with 2 statements");
@@ -363,6 +371,23 @@ public class AstAndTypesTest {
         AssignmentExpr assign = new AssignmentExpr(span, id, lit0);
         check(assign.target() == id && assign.value() == lit0, "AssignmentExpr");
         check(assign instanceof ExpressionNode, "AssignmentExpr is ExpressionNode");
+
+        // --- TemplateLiteralExpr ---
+        LiteralExpr helloPart = new LiteralExpr(span, new LiteralValue.StringLiteral("Hello "));
+        LiteralExpr worldPart = new LiteralExpr(span, new LiteralValue.StringLiteral("!"));
+        TemplateLiteralExpr template = new TemplateLiteralExpr(span,
+            List.of(helloPart, id, worldPart));
+        check(template.parts().size() == 3, "TemplateLiteralExpr with 3 parts");
+        check(template.parts().get(0) == helloPart, "TemplateLiteralExpr part 0 is string");
+        check(template.parts().get(1) == id, "TemplateLiteralExpr part 1 is expression");
+        check(template.parts().get(2) == worldPart, "TemplateLiteralExpr part 2 is string");
+        check(template instanceof ExpressionNode, "TemplateLiteralExpr is ExpressionNode");
+
+        // Single-part template (no interpolation)
+        TemplateLiteralExpr plain = new TemplateLiteralExpr(span,
+            List.of(new LiteralExpr(span, new LiteralValue.StringLiteral("plain"))));
+        check(plain.parts().size() == 1, "TemplateLiteralExpr plain has 1 part");
+        check(plain instanceof ExpressionNode, "TemplateLiteralExpr plain is ExpressionNode");
 
         // --- Type nodes ---
         NamedType namedType = new NamedType(span, "int");
@@ -675,6 +700,8 @@ public class AstAndTypesTest {
             @Override public String visit(FunctionExpr n) { return "FuncExpr"; }
             @Override public String visit(HasExpr n) { return "Has"; }
             @Override public String visit(AssignmentExpr n) { return "Assign"; }
+            @Override public String visit(TemplateLiteralExpr n) { return "TemplateLiteral"; }
+            @Override public String visit(ForOfStatement n) { return "ForOf"; }
             @Override public String visit(NamedType n) { return "NamedType"; }
             @Override public String visit(deal.ast.ArrayType n) { return "ASTArrayType"; }
             @Override public String visit(deal.ast.NullableType n) { return "ASTNullableType"; }

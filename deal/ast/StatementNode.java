@@ -14,6 +14,7 @@ public sealed interface StatementNode
             IfStatement,
             WhileStatement,
             ForStatement,
+            ForOfStatement,
             BreakStatement,
             ContinueStatement,
             ExpressionStatement,

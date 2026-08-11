@@ -22,6 +22,7 @@ public interface Visitor<T> {
     default T visit(IfStatement node) { return null; }
     default T visit(WhileStatement node) { return null; }
     default T visit(ForStatement node) { return null; }
+    default T visit(ForOfStatement node) { return null; }
     default T visit(BreakStatement node) { return null; }
     default T visit(ContinueStatement node) { return null; }
     default T visit(ExpressionStatement node) { return null; }
@@ -45,6 +46,7 @@ public interface Visitor<T> {
     default T visit(FunctionExpr node) { return null; }
     default T visit(HasExpr node) { return null; }
     default T visit(AssignmentExpr node) { return null; }
+    default T visit(TemplateLiteralExpr node) { return null; }
 
     // -- Type nodes (for visitors that walk type annotations) --
     default T visit(NamedType node) { return null; }

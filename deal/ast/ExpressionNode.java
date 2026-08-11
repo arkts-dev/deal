@@ -15,7 +15,8 @@ public sealed interface ExpressionNode
             ObjectLiteralExpr,
             FunctionExpr,
             HasExpr,
-            AssignmentExpr {
+            AssignmentExpr,
+            TemplateLiteralExpr {
 
     Span span();
 }

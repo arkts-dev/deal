@@ -242,6 +242,7 @@ public final class IrDumper implements Visitor<String> {
             case TryStatement ts            -> visit(ts);
             case ThrowStatement ths         -> visit(ths);
             case Block b                    -> visit(b);
+            case ForOfStatement fos         -> visit(fos);
         };
     }
 
@@ -260,6 +261,7 @@ public final class IrDumper implements Visitor<String> {
             case FunctionExpr fe           -> visit(fe);
             case HasExpr he                -> visit(he);
             case AssignmentExpr ae         -> visit(ae);
+            case TemplateLiteralExpr tl      -> visit(tl);
         };
     }
 

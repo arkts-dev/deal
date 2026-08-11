@@ -1159,6 +1159,7 @@ public final class LuaBackend implements Visitor<Void> {
             case FunctionExpr fe -> emitFunctionExpr(fe);
             case HasExpr has -> emitHas(has);
             case AssignmentExpr assign -> emitAssignment(assign);
+            case TemplateLiteralExpr tl -> emitTemplateLiteral(tl);
         };
     }
 
@@ -1527,6 +1528,16 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override public Void visit(AssignmentExpr node) {
         emitLine(emitAssignment(node)); return null;
+    }
+
+    private String emitTemplateLiteral(TemplateLiteralExpr tl) {
+        StringBuilder sb = new StringBuilder("(");
+        for (int i = 0; i < tl.parts().size(); i++) {
+            if (i > 0) sb.append(" .. ");
+            sb.append(emitExpression(tl.parts().get(i)));
+        }
+        sb.append(")");
+        return sb.toString();
     }
 
     private String emitAssignment(AssignmentExpr assign) {
