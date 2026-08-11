@@ -1503,6 +1503,21 @@ public final class Parser {
                 sp.startLine(), sp.startColumn()));
     }
 
+
+    // =======================================================================
+    // Helper methods — warnings
+    // =======================================================================
+
+    public void warn(DiagnosticCode code, String message, Token token) {
+        diagnostics.add(Diagnostic.warning(code, message, file, token.line(), token.column()));
+    }
+
+    public void warn(DiagnosticCode code, String message, ExpressionNode node) {
+        Span sp = node.span();
+        diagnostics.add(Diagnostic.warning(code, message, file,
+                sp.startLine(), sp.startColumn()));
+    }
+
     // =======================================================================
     // Helper methods — error recovery
     // =======================================================================

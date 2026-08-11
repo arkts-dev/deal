@@ -1,6 +1,7 @@
 package deal.test;
 
 import deal.ast.*;
+import deal.diagnostics.DiagnosticCode;
 import deal.lexer.*;
 import deal.parser.*;
 
@@ -166,6 +167,9 @@ public class ParserTest {
         testReturnFunctionExpr();
 
         // Span tests
+        // Parser warn helpers
+        testParserWarn();
+
         testSpanPositions();
 
         // Edge cases
@@ -1315,6 +1319,67 @@ public class ParserTest {
     // =========================================================================
     // Span tests
     // =========================================================================
+
+    static void testParserWarn() {
+        System.out.println("-- Parser warn() --");
+
+        // Create parser with minimal tokens
+        Parser parser = new Parser(List.of(), "test.deal");
+
+        // Test warn with Token
+        Token tok = new Token(TokenType.IDENTIFIER, "test", 5, 3, 4);
+        parser.warn(DiagnosticCode.E1001, "warning from token", tok);
+
+        List<Diagnostic> diags = parser.parse().diagnostics();
+        check(diags.size() == 1,
+            "warn with token should add 1 diagnostic, got " + diags.size());
+        if (!diags.isEmpty()) {
+            Diagnostic d = diags.get(0);
+            check(d.severity().equals("warning"),
+                "severity should be 'warning', got: " + d.severity());
+            check(d.code().equals("E1001"),
+                "code should be E1001, got: " + d.code());
+            check(d.message().equals("warning from token"),
+                "message preserved");
+            check(d.file().equals("test.deal"),
+                "file preserved");
+            check(d.line() == 5,
+                "line from token: " + d.line());
+            check(d.column() == 3,
+                "column from token: " + d.column());
+        }
+
+        // Test warn with ExpressionNode (IdentifierExpr)
+        Span span = new Span("test.deal", 10, 2, 10, 8);
+        ExpressionNode expr = new IdentifierExpr(span, "myVar");
+        parser.warn(DiagnosticCode.E1002, "warning from node", expr);
+
+        diags = parser.parse().diagnostics();
+        check(diags.size() == 2,
+            "warn with node should add another diagnostic, got " + diags.size());
+        if (diags.size() >= 2) {
+            Diagnostic d = diags.get(1);
+            check(d.severity().equals("warning"),
+                "node warning severity should be 'warning'");
+            check(d.line() == 10,
+                "node warning line should be 10, got: " + d.line());
+            check(d.column() == 2,
+                "node warning column should be 2, got: " + d.column());
+            check(d.message().equals("warning from node"),
+                "node warning message preserved");
+        }
+
+        // Verify warnings don't cause parse.hasErrors() to return true
+        ParseResult result = parser.parse();
+        check(!result.hasErrors(),
+            "warnings should not cause hasErrors() to return true");
+
+        // Verify separate parser: no warnings by default
+        Parser cleanParser = new Parser(List.of(), "clean.deal");
+        ParseResult cleanResult = cleanParser.parse();
+        check(cleanResult.diagnostics().isEmpty(),
+            "clean parser should have no diagnostics");
+    }
 
     static void testSpanPositions() {
         System.out.println("-- Span Positions --");

@@ -30,7 +30,7 @@ public record Diagnostic(
     }
 
     /**
-     * Creates a Diagnostic from a {@link DiagnosticCode} enum value.
+     * Creates an error Diagnostic from a {@link DiagnosticCode} enum value.
      * This is the preferred factory method.
      */
     public static Diagnostic error(DiagnosticCode dCode, String message, String file, int line, int column) {
@@ -38,7 +38,7 @@ public record Diagnostic(
     }
 
     /**
-     * Creates a Diagnostic from a string code.
+     * Creates an error Diagnostic from a string code.
      *
      * @deprecated Use {@link #error(DiagnosticCode, String, String, int, int)} instead.
      *             This overload is kept for backward compatibility with test-only
@@ -48,6 +48,30 @@ public record Diagnostic(
     public static Diagnostic error(String code, String message, String file, int line, int column) {
         DiagnosticCode dc = DiagnosticCode.fromCode(code);
         return new Diagnostic(code, "error", message, file, line, column, dc);
+    }
+
+    /**
+     * Creates a warning Diagnostic from a {@link DiagnosticCode} enum value.
+     * This is the preferred factory method.
+     *
+     * <p>Warnings do not block compilation. They are counted and printed
+     * separately from errors by {@code CompilationOrchestrator}.</p>
+     */
+    public static Diagnostic warning(DiagnosticCode dCode, String message, String file, int line, int column) {
+        return new Diagnostic(dCode.code(), "warning", message, file, line, column, dCode);
+    }
+
+    /**
+     * Creates a warning Diagnostic from a string code.
+     *
+     * @deprecated Use {@link #warning(DiagnosticCode, String, String, int, int)} instead.
+     *             This overload is kept for backward compatibility with test-only
+     *             pseudo codes.
+     */
+    @Deprecated
+    public static Diagnostic warning(String code, String message, String file, int line, int column) {
+        DiagnosticCode dc = DiagnosticCode.fromCode(code);
+        return new Diagnostic(code, "warning", message, file, line, column, dc);
     }
 
     @Override
