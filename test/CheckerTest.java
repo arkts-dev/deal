@@ -307,6 +307,7 @@ public class CheckerTest {
         testForOfTypeCheck_arrayCorrect();
         testForOfTypeCheck_stringCorrect();
         testForOfTypeCheck_nonIterable();
+        testForOfTypeCheck_tableIterable();
         testForOfTypeCheck_arrayWrongVarType();
         testForOfTypeCheck_stringWrongVarType();
 
@@ -1539,7 +1540,7 @@ public class CheckerTest {
     }
 
     static void testForOfTypeCheck_nonIterable() {
-        System.out.println("-- For-of Type Check: non-iterable -> E3015 --");
+        System.out.println("-- For-of Type Check: non-iterable (boolean) -> E3015 --");
         CheckerOutput out = checkProgram(
             "function f(b: boolean): null {\n" +
             "  for (let x: int of b) {\n" +
@@ -1549,6 +1550,19 @@ public class CheckerTest {
             "}"
         );
         assertError(out, "E3015", "for-of over boolean -> E3015");
+    }
+
+    static void testForOfTypeCheck_tableIterable() {
+        System.out.println("-- For-of Type Check: non-iterable (table) -> E3015 --");
+        CheckerOutput out = checkProgram(
+            "function f(t: table): null {\n" +
+            "  for (let x: int of t) {\n" +
+            "    let y: int = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E3015", "for-of over table -> E3015");
     }
 
     static void testForOfTypeCheck_arrayWrongVarType() {
