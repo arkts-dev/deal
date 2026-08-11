@@ -575,4 +575,162 @@ function __rt._deep_copy(t)
   return copy
 end
 
+-- ===== JSON serialization helpers (v1.1 @jsonable) =====
+
+--- Deserialize a parsed JSON table into a tagged class instance.
+-- Operates on an already-parsed Lua table (from json.parse via pcall).
+-- Does NOT call json.parse itself — the JSON I/O boundary is in generated code.
+--
+-- @param descriptor string  classifier for error messages and __classname tag
+-- @param parsed     table   already-decoded JSON object (from json.parse)
+-- @param defaults   table   default values per field (contains __NULL/__MISSING sentinels)
+-- @param fields     array   array of field descriptor tables
+-- @return tagged instance table on success, or nil on validation failure
+function __rt.json_from_json(descriptor, parsed, defaults, fields)
+  -- 1. Validate that all keys in parsed are declared in fields
+  local valid_keys = {}
+  for _, f in ipairs(fields) do
+    valid_keys[f.name] = true
+  end
+  for k, _ in pairs(parsed) do
+    if not valid_keys[k] then
+      return nil
+    end
+  end
+
+  -- 2. Start with deep-copied defaults (preserves __NULL/__MISSING sentinels by identity)
+  local instance = __rt._deep_copy(defaults)
+
+  -- 3. Overlay parsed values with type validation
+  for _, f in ipairs(fields) do
+    local raw = parsed[f.name]
+    if raw ~= nil then
+      if raw == __rt.__NULL and f.nullable then
+        -- Explicit null on a nullable field
+        instance[f.name] = __rt.__NULL
+      elseif f.jtype == "class" then
+        -- Nested class: recursive deserialization
+        if type(raw) ~= "table" then
+          return nil
+        end
+        local nested = __rt.json_from_json(f.className, raw, f.defaults, f.fields)
+        if nested == nil then
+          return nil
+        end
+        instance[f.name] = nested
+      elseif f.jtype == "array" then
+        -- Array: iterate elements, deserialize each recursively
+        if type(raw) ~= "table" then
+          return nil
+        end
+        local arr = {}
+        for i = 1, #raw do
+          local ev = raw[i]
+          if f.element.jtype == "class" then
+            if type(ev) ~= "table" then
+              return nil
+            end
+            local nested = __rt.json_from_json(f.element.className, ev, f.element.defaults, f.element.fields)
+            if nested == nil then
+              return nil
+            end
+            arr[i] = nested
+          elseif f.element.jtype == "array" then
+            -- Nested array: recursively process via json_from_json with synthetic descriptor
+            if type(ev) ~= "table" then
+              return nil
+            end
+            local nested_arr = {}
+            for j = 1, #ev do
+              local eev = ev[j]
+              if f.element.element.jtype == "class" then
+                if type(eev) ~= "table" then return nil end
+                local nested = __rt.json_from_json(f.element.element.className, eev, f.element.element.defaults, f.element.element.fields)
+                if nested == nil then return nil end
+                nested_arr[j] = nested
+              else
+                nested_arr[j] = eev
+              end
+            end
+            arr[i] = nested_arr
+          else
+            -- Primitive element: store directly
+            arr[i] = ev
+          end
+        end
+        instance[f.name] = arr
+      else
+        -- Primitive type: store raw value directly
+        instance[f.name] = raw
+      end
+    end
+    -- Key absent: keep default from step 2
+  end
+
+  -- 4. Remove __MISSING entries: optional fields not provided stay missing (nil)
+  for k, v in pairs(instance) do
+    if v == __rt.__MISSING then
+      instance[k] = nil
+    end
+  end
+
+  -- 5. Tag with class name and kind
+  instance.__classname = descriptor
+  instance.__kind = "class"
+
+  return instance
+end
+
+--- Serialize a class instance to a JSON-compatible Lua table.
+-- Operates on an already-tagged class instance (from class_ or json_from_json).
+-- Does NOT call json.stringify — the JSON I/O boundary is in generated code.
+--
+-- @param descriptor string  classifier for error messages
+-- @param value      table   class instance table
+-- @param fields     array   array of field descriptor tables
+-- @return table suitable for json.stringify
+function __rt.json_to_json(descriptor, value, fields)
+  local result = {}
+  for _, f in ipairs(fields) do
+    local v = value[f.name]
+    if v == nil and f.optional then
+      -- Missing optional: omit key from output
+    elseif v == __rt.__NULL and f.nullable then
+      -- Explicit null on nullable field: emit __NULL (json.stringify encodes as null)
+      result[f.name] = __rt.__NULL
+    elseif f.jtype == "class" then
+      -- Nested class: recursive serialization
+      result[f.name] = __rt.json_to_json(f.className, v, f.fields)
+    elseif f.jtype == "array" then
+      -- Array: iterate elements, serialize each recursively
+      local arr = {}
+      for i = 1, #v do
+        local ev = v[i]
+        if f.element.jtype == "class" then
+          arr[i] = __rt.json_to_json(f.element.className, ev, f.element.fields)
+        elseif f.element.jtype == "array" then
+          -- Nested array: recursively process
+          local nested_arr = {}
+          for j = 1, #ev do
+            local eev = ev[j]
+            if f.element.element.jtype == "class" then
+              nested_arr[j] = __rt.json_to_json(f.element.element.className, eev, f.element.element.fields)
+            else
+              nested_arr[j] = eev
+            end
+          end
+          arr[i] = nested_arr
+        else
+          arr[i] = ev
+        end
+      end
+      result[f.name] = arr
+    else
+      -- Primitive type: assign directly
+      result[f.name] = v
+    end
+  end
+  return result
+end
+
 return __rt
