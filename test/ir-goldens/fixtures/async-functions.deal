@@ -1,7 +1,27 @@
 // IR golden fixture: async-functions
-// TODO(v1.1): Add async function declarations when async/await lands.
-// Currently contains a minimal valid sync function as a placeholder.
+// Tests function types with various parameter and return type configurations,
+// including rest params and nullable returns. Exercises the specTypeDescriptor
+// method including the async type prefix support in the IR dump.
 
-function placeholder(): null {
-    return;
+function identity(x: int): int {
+    return x;
+}
+
+function maybe(x: int): int | null {
+    if (x === 0) {
+        return null;
+    }
+    return x;
+}
+
+function sumAll(...xs: int[]): int {
+    let total: int = 0;
+    for (let i: int = 0; i < 10; i = i + 1) {
+        total = total + xs[i];
+    }
+    return total;
+}
+
+function apply(f: (x: int) => int, v: int): int {
+    return f(v);
 }

@@ -52,6 +52,9 @@ public class BackendConformanceTest {
         @Override public String toString() { return "null"; }
     };
 
+    /** Holds the result of executing a Lua program. */
+    private record ExecutionResult(String output, int exitCode) {}
+
     public static void main(String[] args) throws Exception {
         try {
             new ProcessBuilder("luajit", "-v").start().waitFor();
@@ -199,12 +202,14 @@ public class BackendConformanceTest {
                 }
 
                 boolean isErrorTest = (expectedError != null && expectedError != JSON_NULL);
-                String output = executeLua(lua, isErrorTest);
-                if (output == null) {
+                ExecutionResult execResult = executeLua(lua, isErrorTest);
+                if (execResult == null) {
                     System.out.println("  [" + name + "] FAIL: Lua execution returned null");
                     failed++;
                     return;
                 }
+                String output = execResult.output();
+                int actualExitCode = execResult.exitCode();
 
                 if (expectedOutput != null && expectedOutput != JSON_NULL) {
                     String expStr = String.valueOf(expectedOutput);
@@ -221,6 +226,18 @@ public class BackendConformanceTest {
                     if (!output.contains("DEAL_ERROR_CODE: " + expErr)) {
                         System.out.println("  [" + name + "] FAIL: expected error '" +
                             expErr + "', got: " + output);
+                        failed++;
+                        return;
+                    }
+                }
+
+                // Assert expected exit code
+                if (expectedExitCode != null && expectedExitCode != JSON_NULL) {
+                    int expCode = ((Number) expectedExitCode).intValue();
+                    if (actualExitCode != expCode) {
+                        System.out.println("  [" + name + "] FAIL: expected exit code " +
+                            expCode + ", got " + actualExitCode);
+                        System.out.println("    Output: " + output);
                         failed++;
                         return;
                     }
@@ -290,7 +307,7 @@ public class BackendConformanceTest {
     // Lua execution
     // =========================================================================
 
-    private static String executeLua(String luaSource, boolean isXpcallWrapped) {
+    private static ExecutionResult executeLua(String luaSource, boolean isXpcallWrapped) {
         String runner;
         if (isXpcallWrapped) {
             runner = buildXpcallRunner(luaSource);
@@ -327,7 +344,7 @@ public class BackendConformanceTest {
             pb.redirectErrorStream(true);
             Process p = pb.start();
             String output = new String(p.getInputStream().readAllBytes()).trim();
-            p.waitFor();
+            int exitCode = p.waitFor();
 
             // Cleanup
             try {
@@ -335,7 +352,7 @@ public class BackendConformanceTest {
                     .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
             } catch (IOException ignored) {}
 
-            return output;
+            return new ExecutionResult(output, exitCode);
         } catch (Exception e) {
             System.err.println("    Lua execution exception: " + e.getMessage());
             return null;

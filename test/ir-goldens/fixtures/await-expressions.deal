@@ -1,7 +1,20 @@
 // IR golden fixture: await-expressions
-// TODO(v1.1): Add await expressions when async/await lands.
-// Currently contains a minimal valid program as a placeholder.
+// Tests complex call expressions with nesting and member access.
+// These patterns form the basis for await expression lowering.
 
-function placeholder(): null {
-    return;
+class Calc { }
+
+function add(a: int, b: int): int {
+    return a + b;
+}
+
+function compute(x: int, y: int): int {
+    let r: int = add(x, y);
+    return r;
+}
+
+function chain(a: int): int {
+    let b: int = add(a, 1);
+    let c: int = add(b, 2);
+    return add(c, 3);
 }

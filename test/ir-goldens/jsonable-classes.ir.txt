@@ -1,5 +1,41 @@
-module @test/ir-goldens/fixtures/jsonable-classes.deal:5:1-7:1
-  class Placeholder @test/ir-goldens/fixtures/jsonable-classes.deal:5:1-7:1
-    field name: string @test/ir-goldens/fixtures/jsonable-classes.deal:6:5-7:1
+module @test/ir-goldens/fixtures/jsonable-classes.deal:5:1-26:1
+  class Point @test/ir-goldens/fixtures/jsonable-classes.deal:5:1-8:1
+    field x: int @test/ir-goldens/fixtures/jsonable-classes.deal:6:5-7:5
       [boundary: class-default]
-      literal "" : string @test/ir-goldens/fixtures/jsonable-classes.deal:6:20-6:21
+      literal 0 : int @test/ir-goldens/fixtures/jsonable-classes.deal:6:14-6:14
+    field y: int @test/ir-goldens/fixtures/jsonable-classes.deal:7:5-8:1
+      [boundary: class-default]
+      literal 0 : int @test/ir-goldens/fixtures/jsonable-classes.deal:7:14-7:14
+  class User @test/ir-goldens/fixtures/jsonable-classes.deal:10:1-14:1
+    field name: string @test/ir-goldens/fixtures/jsonable-classes.deal:11:5-12:7
+      [boundary: class-default]
+      literal "" : string @test/ir-goldens/fixtures/jsonable-classes.deal:11:20-11:21
+    field age?: int @test/ir-goldens/fixtures/jsonable-classes.deal:12:5-13:10
+    field active: boolean @test/ir-goldens/fixtures/jsonable-classes.deal:13:5-14:1
+      [boundary: class-default]
+      literal true : boolean @test/ir-goldens/fixtures/jsonable-classes.deal:13:23-13:26
+  class Config @test/ir-goldens/fixtures/jsonable-classes.deal:16:1-21:1
+    field title: string @test/ir-goldens/fixtures/jsonable-classes.deal:17:5-18:9
+      [boundary: class-default]
+      literal "untitled" : string @test/ir-goldens/fixtures/jsonable-classes.deal:17:21-17:30
+    field count: int @test/ir-goldens/fixtures/jsonable-classes.deal:18:5-19:9
+      [boundary: class-default]
+      literal 1 : int @test/ir-goldens/fixtures/jsonable-classes.deal:18:18-18:18
+    field ratio: number @test/ir-goldens/fixtures/jsonable-classes.deal:19:5-20:11
+      [boundary: class-default]
+      literal 1.0 : number @test/ir-goldens/fixtures/jsonable-classes.deal:19:21-19:23
+    field enabled: boolean @test/ir-goldens/fixtures/jsonable-classes.deal:20:5-21:1
+      [boundary: class-default]
+      literal false : boolean @test/ir-goldens/fixtures/jsonable-classes.deal:20:24-20:28
+  function makePoint: Point @test/ir-goldens/fixtures/jsonable-classes.deal:23:1-26:1
+    param x: int @test/ir-goldens/fixtures/jsonable-classes.deal:23:20-23:26
+      [boundary: param-entry]
+    param y: int @test/ir-goldens/fixtures/jsonable-classes.deal:23:28-23:34
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jsonable-classes.deal:24:5-25:1
+        [boundary: return]
+        object : @test/ir-goldens/fixtures/jsonable-classes.deal/Point @test/ir-goldens/fixtures/jsonable-classes.deal:24:12-24:25
+          [boundary: class-construct]
+          ident x : int @test/ir-goldens/fixtures/jsonable-classes.deal:24:17-24:17
+          ident y : int @test/ir-goldens/fixtures/jsonable-classes.deal:24:23-24:23

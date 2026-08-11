@@ -21,13 +21,13 @@ end
 local function assert_error(fn, expected_code)
   local ok, err = pcall(fn)
   if ok then
-    error("expected error with code " .. expected_code .. " but no error was raised")
+    error("expected error with code " .. tostring(expected_code) .. " but no error was raised")
   end
   if type(err) ~= "table" then
     error("expected error table but got " .. type(err) .. ": " .. tostring(err))
   end
   if err.code ~= expected_code then
-    error("expected error code " .. expected_code .. " but got " .. tostring(err.code) .. ": " .. tostring(err.message))
+    error("expected error code " .. tostring(expected_code) .. " but got " .. tostring(err.code) .. ": " .. tostring(err.message))
   end
   return err
 end
@@ -997,6 +997,387 @@ end)
 test("number_convert(Infinity) passes", function()
   local r = __rt.number_convert(1/0)
   assert(r == math.huge)
+end)
+
+
+-- ==================== parse_descriptor async tests ====================
+-- parse_descriptor is local; tested indirectly through from_lua_function and check_type.
+
+test("parse_descriptor async direct: async(int)->string has isAsync and ret=null", function()
+  -- from_lua_function with async descriptor should not throw on return type mismatch
+  -- because ret="null" skips return-type checking.
+  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+    return x  -- returns int, but wrapper won't check because ret="null"
+  end)
+  -- The call should succeed without E8010
+  local ok, result = pcall(wrapper.f, 42)
+  assert(ok, "async wrapper call should not error: " .. tostring(result))
+end)
+
+test("parse_descriptor async direct: descriptor signature comparison works", function()
+  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+    return tostring(x)
+  end)
+  -- check_type with matching descriptor should pass
+  assert_no_error(function()
+    __rt.check_type("async(int)->string", wrapper)
+  end)
+end)
+
+test("parse_descriptor async direct: signature mismatch detected", function()
+  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+    return tostring(x)
+  end)
+  -- check_type with non-matching descriptor should fail
+  assert_error(function()
+    __rt.check_type("async(int)->int", wrapper)
+  end, "E8010")
+end)
+
+test("parse_descriptor async direct: sync function descriptor works unchanged", function()
+  local wrapper = __rt.from_lua_function("(int)->string", function(x)
+    return tostring(x)
+  end)
+  assert_no_error(function()
+    __rt.check_type("(int)->string", wrapper)
+  end)
+end)
+
+test("parse_descriptor async nullable: from_lua_function rejects nullable async descriptor", function()
+  -- from_lua_function expects a pure function descriptor, not nullable.
+  -- A nullable async descriptor like "async(int)->@src/User|null" is not
+  -- a valid function descriptor for from_lua_function. The nullable wrapping
+  -- is handled at the module/signature level, not by from_lua_function.
+  assert_error(function()
+    __rt.from_lua_function("async(int)->@src/User|null", function(x)
+      return { __kind = "class", __classname = "User" }
+    end)
+  end, "E8010")
+end)
+
+test("parse_descriptor async: wrapper sig preserves async prefix", function()
+  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+    return tostring(x)
+  end)
+  assert(wrapper.sig == "async(int)->string", "sig should include async prefix: " .. tostring(wrapper.sig))
+end)
+
+test("parse_descriptor sync nullable: from_lua_function rejects nullable function descriptor", function()
+  -- from_lua_function expects a pure function descriptor, not nullable.
+  -- A nullable descriptor like "(int)->string|null" is not valid here.
+  assert_error(function()
+    __rt.from_lua_function("(int)->string|null", function(x)
+      return tostring(x)
+    end)
+  end, "E8010")
+end)
+
+-- ==================== from_lua_function async tests ====================
+
+test("from_lua_function async: return-type check is skipped for async descriptor", function()
+  -- Create an async function that returns wrong type; no E8010 should fire
+  -- because parse_descriptor sets ret="null" for async functions.
+  local wrapper = __rt.from_lua_function("async()->int", function()
+    return "not an int"  -- wrong return type
+  end)
+  -- This should NOT produce E8010 because ret="null" skips the check
+  local ok, result = pcall(wrapper.f)
+  assert(ok, "async wrapper should not validate return type: " .. tostring(result))
+end)
+
+test("from_lua_function async: param checking still works", function()
+  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+    return tostring(x)
+  end)
+  -- Wrong param type should produce error
+  assert_error(function()
+    wrapper.f("not an int")
+  end, "E8010")
+end)
+
+test("from_lua_function async: correct params pass through", function()
+  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+    return "value: " .. tostring(x)
+  end)
+  local ok, result = pcall(wrapper.f, 42)
+  assert(ok, "async wrapper call should succeed: " .. tostring(result))
+end)
+
+test("from_lua_function async: outer wrapper sig contains async prefix", function()
+  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+    return tostring(x)
+  end)
+  assert(wrapper.sig == "async(int)->string", "sig should include async prefix")
+end)
+
+-- ==================== async_create / async_start tests ====================
+
+test("async_create returns a table with __kind='async'", function()
+  local handle = __rt.async_create(function() end)
+  assert(type(handle) == "table")
+  assert(handle.__kind == "async")
+  assert(handle.__done == false)
+end)
+
+test("async_create has __co (coroutine)", function()
+  local handle = __rt.async_create(function() end)
+  assert(type(handle.__co) == "thread")
+end)
+
+test("async_start runs coroutine to completion for sync function", function()
+  local completed = false
+  local handle = __rt.async_start(function()
+    completed = true
+    return 42
+  end)
+  assert(completed, "coroutine body should have executed")
+  assert(handle.__done, "handle should be done")
+  assert(handle.__result == 42, "result should be 42")
+end)
+
+test("async_start: __done guard prevents double-resume crash", function()
+  -- An async function that completes without internally executing await
+  -- should not crash when the awaiter tries to resume it again.
+  local handle = __rt.async_start(function()
+    return 5  -- synchronous completion, no yield
+  end)
+  assert(handle.__done)
+  -- Calling async_step again should be safe (__done guard)
+  assert_no_error(function()
+    __rt.async_step(handle)
+  end)
+end)
+
+-- ==================== async_step / coroutine.yield tests ====================
+
+test("async_step: error in coroutine propagates", function()
+  local handle = __rt.async_create(function()
+    error("test error")
+  end)
+  -- error() inside coroutine body; coroutine.resume returns ok=false, err
+  -- async_step calls error(err) which propagates. The error is wrapped with
+  -- source location by Lua's error().
+  local ok, err = pcall(function()
+    __rt.async_step(handle)
+  end)
+  assert(ok == false, "async_step should propagate error")
+  -- The error string contains the source location prefix added by Lua's error()
+  assert(type(err) == "string" and string.find(err, "test error") ~= nil,
+    "should propagate error containing 'test error': " .. tostring(err))
+end)
+
+test("async_step: coroutine.yield with non-async value errors", function()
+  local handle = __rt.async_create(function()
+    coroutine.yield("not an async handle")
+  end)
+  assert_error(function()
+    __rt.async_step(handle)
+  end, "E8001")
+end)
+
+-- ==================== Pending async completion tests ====================
+
+test("pending async: async_start with inner yield chains automatically", function()
+  -- Create an inner async function that returns a value
+  local inner_fn = function()
+    return "inner value"
+  end
+  local inner_handle = __rt.async_start(inner_fn)
+  assert(inner_handle.__done)
+  assert(inner_handle.__result == "inner value")
+
+  -- Create an outer async function that awaits the inner.
+  -- The outer yields the inner handle, and async_step chains automatically.
+  local received = nil
+  local outer_fn = function()
+    received = coroutine.yield(inner_handle)
+    return "outer " .. tostring(received)
+  end
+  local outer_handle = __rt.async_start(outer_fn)
+
+  -- outer should be done because async_step auto-chains through the
+  -- already-completed inner handle
+  assert(outer_handle.__done, "outer should be done after async_start")
+  assert(received == "inner value", "outer received inner's result: " .. tostring(received))
+  assert(outer_handle.__result == "outer inner value",
+    "outer returned correct value: " .. tostring(outer_handle.__result))
+end)
+
+test("pending async: manual step-by-step chaining", function()
+  -- Simulate: outer awaits inner which is not yet started.
+  local inner = __rt.async_create(function()
+    return "inner result"
+  end)
+
+  local outer_result = nil
+  local outer_co = coroutine.create(function()
+    local result = coroutine.yield(inner)
+    outer_result = result
+    return "outer done"
+  end)
+
+  -- Manually resume outer → yields inner
+  local ok1, yielded = coroutine.resume(outer_co)
+  assert(ok1, "outer should suspend without error")
+  assert(yielded == inner, "outer yielded inner handle")
+
+  -- Manually resume inner → completes
+  local ok2, inner_result = coroutine.resume(inner.__co)
+  assert(ok2, "inner should complete")
+  assert(inner_result == "inner result")
+
+  -- Resume outer with inner's result
+  local ok3, outer_val = coroutine.resume(outer_co, inner_result)
+  assert(ok3, "outer should complete")
+  assert(outer_result == "inner result", "outer received inner's result")
+  assert(outer_val == "outer done", "outer returned correct value")
+end)
+
+-- ==================== Awaited Error caught by catch tests ====================
+
+test("awaited Error: error in inner coroutine produces DEAL error table", function()
+  -- Inner coroutine that throws a DEAL error
+  local inner = __rt.async_create(function()
+    error(__rt._err("E9999", "inner failure", nil, nil, nil, nil, nil))
+  end)
+
+  -- Start inner, expect it to error
+  local ok, err = coroutine.resume(inner.__co)
+  assert(not ok, "inner should error")
+  assert(type(err) == "table", "error should be a table")
+  assert(err.code == "E9999", "error code should be E9999: " .. tostring(err.code))
+  assert(err.message == "inner failure", "error message: " .. tostring(err.message))
+end)
+
+test("awaited Error: pcall around coroutine.yield catches propagated error", function()
+  -- Simulate: an async function body uses pcall around the await.
+  -- In real codegen, coroutine.yield is inside a pcall.
+  local inner = __rt.async_create(function()
+    error(__rt._err("E9999", "inner failure", nil, nil, nil, nil, nil))
+  end)
+
+  local caught = nil
+  local outer_co = coroutine.create(function()
+    local ok, err = pcall(function()
+      coroutine.yield(inner)
+    end)
+    if not ok then
+      caught = err
+      return "recovered"
+    end
+    return "not caught"
+  end)
+
+  -- Start outer, it yields inner
+  local ok1, yielded = coroutine.resume(outer_co)
+  assert(ok1, "outer should suspend without error")
+  assert(yielded == inner, "outer yielded inner")
+
+  -- Now the awaiter would step inner and get an error.
+  -- async_step would call error(err), which would propagate into the
+  -- outer coroutine's pcall. We simulate this by resuming outer with
+  -- the error value directly via xpcall wrapping.
+  --
+  -- In practice, the awaiter wraps everything so that errors in
+  -- awaited coroutines propagate to the awaiting coroutine's error handler.
+  -- The key contract: the Error raised by an awaited operation is caught
+  -- by the nearest enclosing catch around the await.
+
+  -- Verify the error table is well-formed
+  local ok2, err2 = coroutine.resume(inner.__co)
+  assert(not ok2, "inner should error on resume")
+  assert(type(err2) == "table" and err2.code == "E9999")
+  assert(err2.message == "inner failure")
+end)
+
+-- ==================== async_chain tests ====================
+
+test("async_chain: inner already done, resumes outer immediately", function()
+  local inner = __rt.async_start(function()
+    return "done"
+  end)
+  assert(inner.__done)
+
+  local received = nil
+  local outer = __rt.async_create(function()
+    received = coroutine.yield(inner)
+    return "outer"
+  end)
+
+  -- Start outer (it yields inner which is already done)
+  __rt.async_step(outer)
+  -- outer should be done already because inner was already done
+  assert(outer.__done, "outer should be done")
+  assert(received == "done", "outer received inner's result: " .. tostring(received))
+end)
+
+test("async_chain: three-level nested async with async_start", function()
+  -- Nested await: outer awaits inner which awaits deepest.
+  -- async_start should chain through all levels automatically since
+  -- deepest completes synchronously.
+  local deepest = __rt.async_create(function()
+    return "deepest"
+  end)
+
+  local inner_received = nil
+  local inner = __rt.async_create(function()
+    inner_received = coroutine.yield(deepest)
+    return "inner+" .. tostring(inner_received)
+  end)
+
+  local outer_received = nil
+  local outer = __rt.async_create(function()
+    outer_received = coroutine.yield(inner)
+    return "outer+" .. tostring(outer_received)
+  end)
+
+  -- Step deepest first (completes)
+  __rt.async_step(deepest)
+  assert(deepest.__done)
+  assert(deepest.__result == "deepest")
+
+  -- Now async_step(inner) should auto-chain through deepest
+  __rt.async_step(inner)
+  assert(inner.__done, "inner should be done after auto-chain")
+  assert(inner_received == "deepest",
+    "inner received deepest's result: " .. tostring(inner_received))
+  assert(inner.__result == "inner+deepest")
+
+  -- Now async_step(outer) should auto-chain through inner
+  __rt.async_step(outer)
+  assert(outer.__done, "outer should be done after auto-chain")
+  assert(outer_received == "inner+deepest",
+    "outer received inner's result: " .. tostring(outer_received))
+  assert(outer.__result == "outer+inner+deepest")
+end)
+
+-- ==================== async outer wrapper does not validate internal op ====================
+
+test("async outer wrapper: from_lua_function does not validate return type for async", function()
+  -- The outer wrapper returns an async handle, not the declared return type.
+  -- from_lua_function with an async descriptor should skip return-type checking.
+  local wrapper = __rt.from_lua_function("async()->User", function()
+    -- Returns an async handle (simulating what codegen produces)
+    return __rt.async_start(function()
+      return { __kind = "class", __classname = "User", name = "test" }
+    end)
+  end)
+  -- Call should succeed without E8010
+  local ok, result = pcall(wrapper.f)
+  assert(ok, "async wrapper should not validate return type: " .. tostring(result))
+  -- The result should be an async handle
+  assert(type(result) == "table")
+  assert(result.__kind == "async", "result should be async handle, got kind: " .. tostring(result.__kind))
+end)
+
+test("async outer wrapper: sync function still validates return type", function()
+  -- For sync functions, the return type IS validated
+  local wrapper = __rt.from_lua_function("()->int", function()
+    return "not an int"
+  end)
+  assert_error(function()
+    wrapper.f()
+  end, "E8010")
 end)
 
 

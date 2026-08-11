@@ -1,4 +1,67 @@
-module @test/ir-goldens/fixtures/async-functions.deal:5:1-8:1
-  function placeholder: null @test/ir-goldens/fixtures/async-functions.deal:5:1-8:1
+module @test/ir-goldens/fixtures/async-functions.deal:6:1-28:1
+  function identity: int @test/ir-goldens/fixtures/async-functions.deal:6:1-10:8
+    param x: int @test/ir-goldens/fixtures/async-functions.deal:6:19-6:25
+      [boundary: param-entry]
     body
-      return @test/ir-goldens/fixtures/async-functions.deal:6:5-7:1
+      return @test/ir-goldens/fixtures/async-functions.deal:7:5-8:1
+        [boundary: return]
+        ident x : int @test/ir-goldens/fixtures/async-functions.deal:7:12-7:12
+  function maybe: ?int @test/ir-goldens/fixtures/async-functions.deal:10:1-17:8
+    param x: int @test/ir-goldens/fixtures/async-functions.deal:10:16-10:22
+      [boundary: param-entry]
+    body
+      if @test/ir-goldens/fixtures/async-functions.deal:11:5-14:10
+        binary === : boolean @test/ir-goldens/fixtures/async-functions.deal:11:9-11:15
+          ident x : int @test/ir-goldens/fixtures/async-functions.deal:11:9-11:9
+          literal 0 : int @test/ir-goldens/fixtures/async-functions.deal:11:15-11:15
+        block @test/ir-goldens/fixtures/async-functions.deal:11:18-13:5
+          return @test/ir-goldens/fixtures/async-functions.deal:12:9-13:5
+            [boundary: return]
+            literal null : null @test/ir-goldens/fixtures/async-functions.deal:12:16-12:19
+      return @test/ir-goldens/fixtures/async-functions.deal:14:5-15:1
+        [boundary: return]
+        ident x : int @test/ir-goldens/fixtures/async-functions.deal:14:12-14:12
+  function sumAll: int @test/ir-goldens/fixtures/async-functions.deal:17:1-25:8
+    rest param xs: [int] @test/ir-goldens/fixtures/async-functions.deal:17:17-17:29
+      [boundary: rest-construct]
+    body
+      let total: int @test/ir-goldens/fixtures/async-functions.deal:18:5-19:7
+        [boundary: var-annotation]
+        literal 0 : int @test/ir-goldens/fixtures/async-functions.deal:18:22-18:22
+      for @test/ir-goldens/fixtures/async-functions.deal:19:5-22:10
+        let i: int @test/ir-goldens/fixtures/async-functions.deal:19:10-19:24
+          [boundary: var-annotation]
+          literal 0 : int @test/ir-goldens/fixtures/async-functions.deal:19:23-19:23
+        binary < : boolean @test/ir-goldens/fixtures/async-functions.deal:19:26-19:31
+          ident i : int @test/ir-goldens/fixtures/async-functions.deal:19:26-19:26
+          literal 10 : int @test/ir-goldens/fixtures/async-functions.deal:19:30-19:31
+        assign = : int @test/ir-goldens/fixtures/async-functions.deal:19:34-19:42
+          [boundary: assignment]
+          ident i : int @test/ir-goldens/fixtures/async-functions.deal:19:34-19:34
+          binary + : int @test/ir-goldens/fixtures/async-functions.deal:19:38-19:42
+            ident i : int @test/ir-goldens/fixtures/async-functions.deal:19:38-19:38
+            literal 1 : int @test/ir-goldens/fixtures/async-functions.deal:19:42-19:42
+        block @test/ir-goldens/fixtures/async-functions.deal:19:45-21:5
+          expr-stmt @test/ir-goldens/fixtures/async-functions.deal:20:9-20:29
+            assign = : int @test/ir-goldens/fixtures/async-functions.deal:20:9-20:29
+              [boundary: assignment]
+              ident total : int @test/ir-goldens/fixtures/async-functions.deal:20:9-20:13
+              binary + : int @test/ir-goldens/fixtures/async-functions.deal:20:17-20:29
+                ident total : int @test/ir-goldens/fixtures/async-functions.deal:20:17-20:21
+                index [] : int @test/ir-goldens/fixtures/async-functions.deal:20:25-20:29
+                  ident xs : [int] @test/ir-goldens/fixtures/async-functions.deal:20:25-20:26
+                  ident i : int @test/ir-goldens/fixtures/async-functions.deal:20:28-20:28
+      return @test/ir-goldens/fixtures/async-functions.deal:22:5-23:1
+        [boundary: return]
+        ident total : int @test/ir-goldens/fixtures/async-functions.deal:22:12-22:16
+  function apply: int @test/ir-goldens/fixtures/async-functions.deal:25:1-28:1
+    param f: (int)->int @test/ir-goldens/fixtures/async-functions.deal:25:16-25:34
+      [boundary: param-entry]
+    param v: int @test/ir-goldens/fixtures/async-functions.deal:25:36-25:42
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/async-functions.deal:26:5-27:1
+        [boundary: return]
+        call : int @test/ir-goldens/fixtures/async-functions.deal:26:12-26:15
+          ident f : (int)->int @test/ir-goldens/fixtures/async-functions.deal:26:12-26:12
+          ident v : int @test/ir-goldens/fixtures/async-functions.deal:26:14-26:14

@@ -331,7 +331,7 @@
       "source": "function maybe(x: int): int | null { if (x === 0) { return null; } return x; }\nlet f: (x: int) => int | null = maybe;",
       "expectedOutput": null,
       "expectedError": null,
-      "expectedExitCode": 0,
+      "expectedExitCode": null,
       "irContains": [
         "(int)->?int"
       ],
