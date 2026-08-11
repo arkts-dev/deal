@@ -249,10 +249,27 @@ public final class IrGoldenTest {
     // =========================================================================
 
     /**
+     * Node kinds that MUST carry a type annotation in the IR dump.
+     * These are expression nodes and declaration nodes whose format
+     * always includes {@code : <type>} before the span {@code @}.
+     */
+    private static final Set<String> KINDS_REQUIRING_TYPE = Set.of(
+        // Expression nodes
+        "literal", "ident", "binary", "unary", "call", "member",
+        "index", "array", "object", "func-expr", "has", "assign",
+        "await",
+        // Declaration nodes
+        "let", "param", "rest param", "field", "function",
+        "async function"
+    );
+
+    /**
      * Checks IR dump invariants:
      * <ul>
      *   <li>Non-empty</li>
-     *   <li>Every expression node has a type annotation</li>
+     *   <li>Starts with {@code module} header</li>
+     *   <li>Every expression node has a type annotation ({@code : <type>} before span)</li>
+     *   <li>Every declaration node has a type annotation</li>
      *   <li>Every node has a span or synthetic marker</li>
      * </ul>
      */
@@ -268,36 +285,59 @@ public final class IrGoldenTest {
             errors.add("IR dump does not begin with 'module' header");
         }
 
-        // Check that expression-type lines have ':' type annotations
-        // Expression lines: indent + kind + ... + " : " + type + " @..."
-        // Lines like "literal 42 : int @..." or "binary + : int @..."
         List<String> lines = ir.lines().toList();
         for (int i = 0; i < lines.size(); i++) {
             String line = lines.get(i);
-            // Skip blank lines, boundary markers, body markers, block markers
             String trimmed = line.stripLeading();
             if (trimmed.isEmpty()) continue;
+
+            // Boundary annotations and bare "body" have no spans — always OK
             if (trimmed.startsWith("[boundary:")) continue;
             if (trimmed.equals("body")) continue;
-            if (trimmed.startsWith("module ")) continue;
 
-            // Check for span
-            if (!line.contains("@") && !line.contains("synthetic")) {
-                // Allow "body", "block" lines, boundary annotations without spans
-                if (!trimmed.equals("body") && !trimmed.startsWith("block ")
-                        && !trimmed.startsWith("[boundary:")
-                        && !trimmed.startsWith("export ")
-                        && !trimmed.equals("return")
-                        && !trimmed.equals("break")
-                        && !trimmed.equals("continue")
-                        && !trimmed.equals("throw")) {
-                    errors.add("Line " + (i + 1)
-                        + " missing span: " + trimmed);
+            // Check span presence
+            boolean hasSpan = line.contains("@") || line.contains("synthetic");
+            if (!hasSpan) {
+                errors.add("Line " + (i + 1) + " missing span: " + trimmed);
+                continue;
+            }
+
+            // Determine the node kind for this line
+            String kind = extractKind(trimmed);
+
+            // If this kind requires a type annotation, verify that ": " appears
+            // before the last " @" (the span marker).
+            if (KINDS_REQUIRING_TYPE.contains(kind)) {
+                int spanIdx = trimmed.lastIndexOf(" @");
+                if (spanIdx < 0) {
+                    // synthetic span — still need a type annotation
+                    spanIdx = trimmed.indexOf(" synthetic");
+                }
+                int typeSepIdx = trimmed.indexOf(": ");
+                if (typeSepIdx < 0 || (spanIdx >= 0 && typeSepIdx >= spanIdx)) {
+                    errors.add("Line " + (i + 1) + " missing type annotation"
+                        + " (kind='" + kind + "'): " + trimmed);
                 }
             }
         }
 
         return errors;
+    }
+
+    /**
+     * Extract the node kind from a trimmed IR line.
+     * Handles multi-word kinds like {@code rest param} and {@code async function}.
+     */
+    private static String extractKind(String trimmed) {
+        // Check multi-word kinds first
+        if (trimmed.startsWith("async function ")) return "async function";
+        if (trimmed.startsWith("rest param "))     return "rest param";
+        if (trimmed.startsWith("for-of "))          return "for-of";
+
+        // Single-word kind: first whitespace-delimited token
+        int spaceIdx = trimmed.indexOf(' ');
+        if (spaceIdx < 0) return trimmed; // e.g., "body", "return", "break"
+        return trimmed.substring(0, spaceIdx);
     }
 
     // =========================================================================
