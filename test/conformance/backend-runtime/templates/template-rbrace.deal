@@ -1,0 +1,8 @@
+// @spec: Template literals — String containing '}' inside interpolation
+// @description: The '}' inside a string literal within ${} must not close the interpolation
+// @expected: runtime-ok
+// @features: template-literal, brace-scanning
+
+export function test_rbrace(): string {
+  return `${ "}" }`;
+}

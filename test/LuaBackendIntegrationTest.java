@@ -154,6 +154,14 @@ public class LuaBackendIntegrationTest {
         testForOfNested();
         testForOfStringSingleEval();
 
+        // ISSUE-0037: Additional template literal and for-of integration tests
+        testTemplateComplexExpression();
+        testTemplateStringWithRBrace();
+        testTemplateMalformedExpr();
+        testTemplateNestedLiteral();
+        testForOfTryCatchInside();
+        testForOfStringMemberAccess();
+
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -2255,4 +2263,382 @@ public class LuaBackendIntegrationTest {
         check(output.equals("1"),
             "for-of string single eval: expected 1, got: " + output);
     }
+
+    // =========================================================================
+    // ISSUE-0037: Template literal with complex expression (function call + member access)
+    // =========================================================================
+
+    static void testTemplateComplexExpression() throws Exception {
+        System.out.println("-- Template Literal: Complex Expressions --");
+        // Test template literal with function call and identifier interpolation.
+        // The expression inside ${} is a function call returning string.
+        String dealSrc =
+            "export function label(): string { return \"Name\"; }\n" +
+            "export function greet(name: string): string {\n" +
+            "  return `${label()}: ${name}`;\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "template complex expr: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r = mod.greet.f(\"Alice\")\n" +
+            "print(r)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "template complex expr: luajit exit 0 (got: " + output + ")");
+        check(output.equals("Name: Alice"),
+            "template complex expr: expected 'Name: Alice', got: " + output);
+    }
+
+    static void testTemplateStringWithRBrace() throws Exception {
+        System.out.println("-- Template Literal: String with '}' in interpolation --");
+        String dealSrc =
+            "export function testRbrace(): string {\n" +
+            "  return `${ \"}\" }`;\n" +
+            "  // the } inside the string literal must not close the interpolation\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "template string with }: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r = mod.testRbrace.f()\n" +
+            "print(r)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "template string with }: luajit exit 0 (got: " + output + ")");
+        check(output.equals("}"),
+            "template string with }: expected '}', got: " + output);
+    }
+
+    // =========================================================================
+    // ISSUE-0037: Malformed expression inside ${} does not crash compiler (D16)
+    // =========================================================================
+
+    static void testTemplateMalformedExpr() throws Exception {
+        System.out.println("-- Template Literal: Malformed Expression (D16) --");
+        // ${@} is syntactically invalid. The compiler must emit diagnostics and
+        // produce valid Lua output for the rest of the template without crashing.
+        String dealSrc =
+            "export function testMalformed(): string {\n" +
+            "  return `hello ${@} world`;\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+
+        // We expect parser diagnostics for the malformed expression
+        boolean hasParserDiags = !parse.diagnostics().isEmpty();
+        check(hasParserDiags, "malformed expr: parser emits diagnostics");
+
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        // Compilation may have errors but should not crash
+        // Verify that Lua can still be generated (compiler continues past error)
+        try {
+            String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+            check(lua != null && !lua.isEmpty(), "malformed expr: Lua output generated despite malformed expression");
+        } catch (Exception e) {
+            check(false, "malformed expr: codegen should not throw: " + e.getMessage());
+        }
+    }
+
+    // =========================================================================
+    // ISSUE-0037: Nested template literal integration test
+    // =========================================================================
+
+    static void testTemplateNestedLiteral() throws Exception {
+        System.out.println("-- Template Literal: Nested Template (D14) --");
+        // A nested template literal inside ${} — the inner template uses escaped
+        // backticks so the lexer does not close the outer template prematurely.
+        // The parser's unescapeTemplateExpression converts the escape sequences
+        // back to literal backticks for the sub-lexer, which then parses the
+        // inner template correctly.
+        //
+        // Expected: the inner template has type string (no E3016), codegen
+        // produces correct Lua output with .. concatenation, and runtime
+        // result is "[inner]" (the inner template surrounded by brackets).
+        String dealSrc =
+            "export function testNested(): string {\n" +
+            "  return \"[\" + `inner` + \"]\";\n" +
+            "}\n" +
+            "export function testOuter(): string {\n" +
+            "  return `[${ \\`inner\\` }]`;\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+
+        // Should have no parser diagnostics — the unescape fix ensures
+        // the sub-lexer receives clean source
+        if (!parse.diagnostics().isEmpty()) {
+            for (Diagnostic d : parse.diagnostics()) {
+                System.err.println("  Parser diagnostic: " + d);
+            }
+            check(false, "nested template: unexpected parser diagnostics");
+            return;
+        }
+
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Type error: " + d);
+            }
+            check(false, "nested template: compilation failed");
+            return;
+        }
+
+        // Verify no E3016 — the inner template must be accepted as string type
+        boolean hasE3016 = result.diagnostics().stream()
+            .anyMatch(d -> "E3016".equals(d.code()));
+        check(!hasE3016, "nested template: no E3016 (inner template type is string)");
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        // Verify the Lua output contains .. concatenation
+        check(lua.contains(".."), "nested template: Lua output uses .. concatenation");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r1 = mod.testNested.f()\n" +
+            "local r2 = mod.testOuter.f()\n" +
+            "print(r1)\n" +
+            "print(r2)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "nested template: luajit exit 0 (got: " + output + ")");
+
+        // Both testNested and testOuter should produce "[inner]"
+        String[] lines = output.split("\\n");
+        check(lines.length == 2, "nested template: expected 2 output lines, got: " + output);
+        check(lines[0].equals("[inner]"), "nested template: testNested expected '[inner]', got: '" + lines[0] + "'");
+        check(lines[1].equals("[inner]"), "nested template: testOuter expected '[inner]', got: '" + lines[1] + "'");
+    }
+
+    // =========================================================================
+    // ISSUE-0037: For-of with try/catch inside body (break/continue flag pattern)
+    // =========================================================================
+
+    static void testForOfTryCatchInside() throws Exception {
+        System.out.println("-- For-Of with Try/Catch Inside Body --");
+        // break inside try within for-of should exit the loop correctly
+        String dealSrc =
+            "export function testForOfBreakInTry(xs: int[]): int {\n" +
+            "  let found: int = 0;\n" +
+            "  for (let x: int of xs) {\n" +
+            "    try {\n" +
+            "      if (x === 3) { break; }\n" +
+            "    } catch (e) {}\n" +
+            "    found = x;\n" +
+            "  }\n" +
+            "  return found;\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "for-of try/catch: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r = mod.testForOfBreakInTry.f({1, 2, 3, 4, 5})\n" +
+            "print(r)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        // Break at x=3 before found=x, so found should be 2 (last value before break)
+        check(exit == 0, "for-of try/catch break: luajit exit 0 (got: " + output + ")");
+        check(output.equals("2"),
+            "for-of try/catch break: found should be 2, got: " + output);
+    }
+
+    // =========================================================================
+    // ISSUE-0037: String for-of with member access iterable (D17)
+    // =========================================================================
+
+    static void testForOfStringMemberAccess() throws Exception {
+        System.out.println("-- For-Of String: Member Access Iterable (D17) --");
+        // Verify that for-of over a member access expression (w.str) compiles and
+        // runs correctly. The iterable expression is a field access on a class instance.
+        String dealSrc =
+            "class Wrapper { str: string = \"\"; }\n" +
+            "export function countWrapper(): int {\n" +
+            "  let w: Wrapper = { str: \"hello\" };\n" +
+            "  let n: int = 0;\n" +
+            "  for (let c: string of w.str) {\n" +
+            "    n = n + 1;\n" +
+            "  }\n" +
+            "  return n;\n" +
+            "}\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "for-of string member access: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        // Verify that the Lua output hoists the member access to a local variable
+        check(lua.contains("__iterable"), "string member access: __iterable hoisting present in Lua output");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "local r = mod.countWrapper.f()\n" +
+            "print(r)\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "for-of string member access: luajit exit 0 (got: " + output + ")");
+        check(output.equals("5"),
+            "for-of string member access: expected 5, got: " + output);
+    }
+
 }

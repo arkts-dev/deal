@@ -1,0 +1,9 @@
+// @spec: Template literals — Nested template literal
+// @description: A template literal inside ${} (nested template) compiles and runs correctly.
+//   The inner backticks are escaped so the lexer does not close the outer template prematurely.
+// @expected: runtime-ok
+// @features: template-literal, nested-template
+
+export function test_nested(): string {
+  return `[${ \`inner\` }]`;
+}
