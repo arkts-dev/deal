@@ -1953,7 +1953,10 @@ public final class LuaBackend implements Visitor<Void> {
      * Emits the element sub-descriptor for an array field.
      */
     private String emitElementDescriptor(TypeNode elementType) {
-        // Unwrap NullableType (element itself is typically not nullable in the descriptor)
+        // Check if the element itself is nullable before unwrapping
+        boolean nullable = elementType instanceof NullableType;
+
+        // Unwrap NullableType to get the inner type for jtype determination
         TypeNode inner = elementType;
         if (inner instanceof NullableType nt) {
             inner = nt.innerType();
@@ -1962,7 +1965,7 @@ public final class LuaBackend implements Visitor<Void> {
 
         StringBuilder sb = new StringBuilder();
         sb.append("{ jtype = \"").append(jtype).append("\"");
-        sb.append(", optional = false, nullable = false");
+        sb.append(", optional = false, nullable = ").append(nullable ? "true" : "false");
 
         if (jtype.equals("class")) {
             sb.append(", className = \"")
