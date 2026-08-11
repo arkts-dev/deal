@@ -1,0 +1,13 @@
+// @spec: For-of — String iteration
+// @description: For-of over string counts characters
+// @expected: runtime-ok
+// @features: for-of, string
+
+export function test_count(): int {
+  let s: string = "hello";
+  let n: int = 0;
+  for (let c: string of s) {
+    n = n + 1;
+  }
+  return n;
+}

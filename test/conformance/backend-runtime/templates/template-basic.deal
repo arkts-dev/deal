@@ -1,0 +1,9 @@
+// @spec: Template literals — Basic interpolation
+// @description: Template literal with identifier interpolation produces correct string
+// @expected: runtime-ok
+// @features: template-literal
+
+export function test_greet(): string {
+  let name: string = "World";
+  return `Hello, ${name}!`;
+}
