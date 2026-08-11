@@ -1,7 +1,15 @@
 // IR golden fixture: for-of-loops
-// TODO(v1.1): Add for-of loops when the feature lands.
-// Currently contains a minimal valid program as a placeholder.
 
-function placeholder(): null {
+function testForOfArray(xs: int[]): null {
+    for (let x: int of xs) {
+        let y: int = x;
+    }
+    return;
+}
+
+function testForOfString(s: string): null {
+    for (let c: string of s) {
+        let d: string = c;
+    }
     return;
 }

@@ -1,4 +1,23 @@
-module @test/ir-goldens/fixtures/for-of-loops.deal:5:1-8:1
-  function placeholder: null @test/ir-goldens/fixtures/for-of-loops.deal:5:1-8:1
+module @test/ir-goldens/fixtures/for-of-loops.deal:3:1-16:1
+  function testForOfArray: null @test/ir-goldens/fixtures/for-of-loops.deal:3:1-10:8
+    param xs: [int] @test/ir-goldens/fixtures/for-of-loops.deal:3:25-3:34
+      [boundary: param-entry]
     body
-      return @test/ir-goldens/fixtures/for-of-loops.deal:6:5-7:1
+      for-of @test/ir-goldens/fixtures/for-of-loops.deal:4:5-7:10
+        ident xs : [int] @test/ir-goldens/fixtures/for-of-loops.deal:4:24-4:25
+        block @test/ir-goldens/fixtures/for-of-loops.deal:4:28-6:5
+          let y: int @test/ir-goldens/fixtures/for-of-loops.deal:5:9-6:5
+            [boundary: var-annotation]
+            ident x : int @test/ir-goldens/fixtures/for-of-loops.deal:5:22-5:22
+      return @test/ir-goldens/fixtures/for-of-loops.deal:7:5-8:1
+  function testForOfString: null @test/ir-goldens/fixtures/for-of-loops.deal:10:1-16:1
+    param s: string @test/ir-goldens/fixtures/for-of-loops.deal:10:26-10:35
+      [boundary: param-entry]
+    body
+      for-of @test/ir-goldens/fixtures/for-of-loops.deal:11:5-14:10
+        ident s : string @test/ir-goldens/fixtures/for-of-loops.deal:11:27-11:27
+        block @test/ir-goldens/fixtures/for-of-loops.deal:11:30-13:5
+          let d: string @test/ir-goldens/fixtures/for-of-loops.deal:12:9-13:5
+            [boundary: var-annotation]
+            ident c : string @test/ir-goldens/fixtures/for-of-loops.deal:12:25-12:25
+      return @test/ir-goldens/fixtures/for-of-loops.deal:14:5-15:1

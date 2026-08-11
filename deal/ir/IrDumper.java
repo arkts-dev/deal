@@ -546,6 +546,17 @@ public final class IrDumper implements Visitor<String> {
     }
 
     @Override
+    public String visit(ForOfStatement node) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(indent()).append("for-of ").append(spanStr(node.span())).append("\n");
+        pushIndent();
+        sb.append(dispatchExpr(node.iterable()));
+        sb.append(dispatchStatement(node.body()));
+        popIndent();
+        return sb.toString();
+    }
+
+    @Override
     public String visit(BreakStatement node) {
         return indent() + "break " + spanStr(node.span()) + "\n";
     }
@@ -888,6 +899,21 @@ public final class IrDumper implements Visitor<String> {
         pushIndent();
         sb.append(dispatchExpr(node.target()));
         sb.append(dispatchExpr(node.value()));
+        popIndent();
+        return sb.toString();
+    }
+
+    @Override
+    public String visit(TemplateLiteralExpr node) {
+        String typeStr = hasType(node) ? specTypeDescriptor(typeOf(node))
+            : (isDeclFile ? "[no-expr-in-decl]" : "?");
+        StringBuilder sb = new StringBuilder();
+        sb.append(indent()).append("template-literal : ").append(typeStr)
+            .append(" ").append(spanStr(node.span())).append("\n");
+        pushIndent();
+        for (ExpressionNode part : node.parts()) {
+            sb.append(dispatchExpr(part));
+        }
         popIndent();
         return sb.toString();
     }

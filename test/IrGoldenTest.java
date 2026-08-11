@@ -256,8 +256,8 @@ public final class IrGoldenTest {
     private static final Set<String> KINDS_REQUIRING_TYPE = Set.of(
         // Expression nodes
         "literal", "ident", "binary", "unary", "call", "member",
-        "index", "array", "object", "func-expr", "has", "assign",
-        "await",
+        "index", "array", "object", "func-expr", "has",         "assign",
+        "template-literal", "await",
         // Declaration nodes
         "let", "param", "rest param", "field", "function",
         "async function"

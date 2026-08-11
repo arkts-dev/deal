@@ -1,4 +1,27 @@
-module @test/ir-goldens/fixtures/template-literals.deal:5:1-8:1
-  function placeholder: null @test/ir-goldens/fixtures/template-literals.deal:5:1-8:1
+module @test/ir-goldens/fixtures/template-literals.deal:3:1-14:1
+  function testPlainTemplate: string @test/ir-goldens/fixtures/template-literals.deal:3:1-7:8
     body
-      return @test/ir-goldens/fixtures/template-literals.deal:6:5-7:1
+      return @test/ir-goldens/fixtures/template-literals.deal:4:5-5:1
+        [boundary: return]
+        template-literal : string @test/ir-goldens/fixtures/template-literals.deal:4:12-4:16
+          literal "hello" : string @test/ir-goldens/fixtures/template-literals.deal:4:13-4:17
+  function testTemplateWithExpr: string @test/ir-goldens/fixtures/template-literals.deal:7:1-11:8
+    param name: string @test/ir-goldens/fixtures/template-literals.deal:7:31-7:43
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/template-literals.deal:8:5-9:1
+        [boundary: return]
+        template-literal : string @test/ir-goldens/fixtures/template-literals.deal:8:12-8:24
+          literal "Hello " : string @test/ir-goldens/fixtures/template-literals.deal:8:13-8:18
+          ident name : string @test/ir-goldens/fixtures/template-literals.deal:8:21-8:24
+          literal "" : string @test/ir-goldens/fixtures/template-literals.deal:8:26-8:26
+  function testLeadingExpr: string @test/ir-goldens/fixtures/template-literals.deal:11:1-14:1
+    param greeting: string @test/ir-goldens/fixtures/template-literals.deal:11:26-11:42
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/template-literals.deal:12:5-13:1
+        [boundary: return]
+        template-literal : string @test/ir-goldens/fixtures/template-literals.deal:12:12-12:28
+          literal "" : string @test/ir-goldens/fixtures/template-literals.deal:12:13-12:13
+          ident greeting : string @test/ir-goldens/fixtures/template-literals.deal:12:15-12:22
+          literal " world" : string @test/ir-goldens/fixtures/template-literals.deal:12:24-12:29

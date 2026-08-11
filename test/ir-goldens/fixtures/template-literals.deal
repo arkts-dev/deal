@@ -1,7 +1,13 @@
 // IR golden fixture: template-literals
-// TODO(v1.1): Add template literals when the feature lands.
-// Currently contains a minimal valid program as a placeholder.
 
-function placeholder(): null {
-    return;
+function testPlainTemplate(): string {
+    return `hello`;
+}
+
+function testTemplateWithExpr(name: string): string {
+    return `Hello ${name}`;
+}
+
+function testLeadingExpr(greeting: string): string {
+    return `${greeting} world`;
 }

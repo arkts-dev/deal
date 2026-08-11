@@ -124,6 +124,21 @@ public class ParserTest {
         testHasExpression();
         testAssignmentExpression();
 
+        // v1.1: Template literals and for-of
+        testTemplateLiteralPlain();
+        testTemplateLiteralWithExpr();
+        testTemplateLiteralLeadingExpr();
+        testForOfStatement();
+        testForOfMissingIterable();
+        testTemplateInvalidEscape();
+        testTemplateEmptyInterpolation();
+        testTemplateUnterminatedInterpolation();
+        testTemplateNestedBraces();
+        testTemplateStringLiteralWithRBrace();
+        testTemplateNestedTemplateLiteral();
+        testTemplateEscapedBacktick();
+        testTemplateMalformedExpression();
+
         // Precedence
         testPrecedenceAddMul();
         testPrecedenceSubAssoc();
@@ -1070,6 +1085,230 @@ public class ParserTest {
             check(ret.expr().get() instanceof FunctionExpr,
                 "return-func-expr: expression is FunctionExpr, got "
                 + ret.expr().get().getClass().getSimpleName());
+        }
+    }
+
+    // =========================================================================
+    // v1.1 Template literal and for-of parser tests
+    // =========================================================================
+
+    static void testTemplateLiteralPlain() {
+        System.out.println("-- Template Literal: plain --");
+
+        ParseResult r = parse("let x = `hello`;");
+        assertNoParseErrors(r, "plain template");
+        assertStmtCount(r.program(), 1, "plain template");
+        VariableDeclaration vd = assertInstance(r.program().statements().get(0),
+                VariableDeclaration.class, "vd");
+        if (vd != null) {
+            TemplateLiteralExpr tl = assertExprInstance(vd.initializer(),
+                    TemplateLiteralExpr.class, "template literal");
+            if (tl != null) {
+                check(tl.parts().size() == 1, "plain template: 1 part, got " + tl.parts().size());
+                LiteralExpr part = assertExprInstance(tl.parts().get(0),
+                        LiteralExpr.class, "part 0");
+                if (part != null && part.value() instanceof LiteralValue.StringLiteral sl) {
+                    check(sl.value().equals("hello"), "string part 'hello', got '" + sl.value() + "'");
+                }
+            }
+        }
+    }
+
+    static void testTemplateLiteralWithExpr() {
+        System.out.println("-- Template Literal: with expression --");
+
+        ParseResult r = parse("let x = `Hello ${name}`;");
+        assertNoParseErrors(r, "template with expr");
+        assertStmtCount(r.program(), 1, "template with expr");
+        VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
+        TemplateLiteralExpr tl = assertExprInstance(vd.initializer(),
+                TemplateLiteralExpr.class, "template literal");
+        if (tl != null) {
+            check(tl.parts().size() == 3, "template with expr: 3 parts, got " + tl.parts().size());
+            // Part 0: string "Hello "
+            check(tl.parts().get(0) instanceof LiteralExpr, "part 0 is LiteralExpr");
+            LiteralExpr p0 = (LiteralExpr) tl.parts().get(0);
+            check(p0.value() instanceof LiteralValue.StringLiteral
+                && ((LiteralValue.StringLiteral) p0.value()).value().equals("Hello "),
+                "part 0 = 'Hello '");
+            // Part 1: identifier "name"
+            check(tl.parts().get(1) instanceof IdentifierExpr, "part 1 is IdentifierExpr");
+            IdentifierExpr p1 = (IdentifierExpr) tl.parts().get(1);
+            check(p1.name().equals("name"), "part 1 name = 'name'");
+            // Part 2: empty string
+            check(tl.parts().get(2) instanceof LiteralExpr, "part 2 is LiteralExpr");
+            LiteralExpr p2 = (LiteralExpr) tl.parts().get(2);
+            check(p2.value() instanceof LiteralValue.StringLiteral
+                && ((LiteralValue.StringLiteral) p2.value()).value().equals(""),
+                "part 2 = ''");
+        }
+    }
+
+    static void testTemplateLiteralLeadingExpr() {
+        System.out.println("-- Template Literal: leading expression --");
+
+        ParseResult r = parse("let x = `${greeting} world`;");
+        assertNoParseErrors(r, "leading expr template");
+        VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
+        TemplateLiteralExpr tl = assertExprInstance(vd.initializer(),
+                TemplateLiteralExpr.class, "template literal");
+        if (tl != null) {
+            check(tl.parts().size() == 3, "leading expr: 3 parts, got " + tl.parts().size());
+            // Part 0: empty string
+            check(tl.parts().get(0) instanceof LiteralExpr, "part 0 is LiteralExpr");
+            LiteralExpr p0 = (LiteralExpr) tl.parts().get(0);
+            check(p0.value() instanceof LiteralValue.StringLiteral
+                && ((LiteralValue.StringLiteral) p0.value()).value().equals(""),
+                "part 0 = ''");
+            // Part 1: identifier "greeting"
+            check(tl.parts().get(1) instanceof IdentifierExpr, "part 1 is IdentifierExpr");
+            // Part 2: string " world"
+            check(tl.parts().get(2) instanceof LiteralExpr, "part 2 is LiteralExpr");
+            LiteralExpr p2 = (LiteralExpr) tl.parts().get(2);
+            check(p2.value() instanceof LiteralValue.StringLiteral
+                && ((LiteralValue.StringLiteral) p2.value()).value().equals(" world"),
+                "part 2 = ' world'");
+        }
+    }
+
+    static void testForOfStatement() {
+        System.out.println("-- ForOfStatement --");
+
+        ParseResult r = parse("function f(xs: int[]): null { for (let x: int of xs) { } return; }");
+        assertNoParseErrors(r, "for-of array");
+        FunctionDeclaration fd = (FunctionDeclaration) r.program().statements().get(0);
+        check(fd.body().statements().size() == 2, "2 body stmts");
+        ForOfStatement fos = assertInstance(fd.body().statements().get(0),
+                ForOfStatement.class, "ForOfStatement");
+        if (fos != null) {
+            check(fos.varName().equals("x"), "var name = x");
+            check(fos.varType() instanceof NamedType, "var type is NamedType");
+            check(((NamedType) fos.varType()).name().equals("int"), "var type = int");
+            check(fos.iterable() instanceof IdentifierExpr, "iterable is identifier");
+            check(((IdentifierExpr) fos.iterable()).name().equals("xs"), "iterable = xs");
+        }
+
+        // For-of over string
+        r = parse("function f(s: string): null { for (let c: string of s) { } return; }");
+        assertNoParseErrors(r, "for-of string");
+        fd = (FunctionDeclaration) r.program().statements().get(0);
+        fos = assertInstance(fd.body().statements().get(0),
+                ForOfStatement.class, "for-of string");
+        if (fos != null) {
+            check(fos.varName().equals("c"), "var name = c");
+            check(((NamedType) fos.varType()).name().equals("string"), "var type = string");
+        }
+    }
+
+    static void testForOfMissingIterable() {
+        System.out.println("-- ForOfStatement: missing iterable (D20) --");
+
+        // Parse the for-of with missing iterable. Should not NPE.
+        ParseResult r = parse("function f(): null { for (let x: int of ) { } return; }");
+        // We just check it doesn't throw — error diagnostics are expected
+        check(r.program() != null, "program not null");
+        // The for-of statement should not be present in the AST because the parser
+        // should have called synchronize() and returned null.
+        System.out.println("    (D20: for-of with missing iterable handled gracefully)");
+    }
+
+    static void testTemplateInvalidEscape() {
+        System.out.println("-- Template Literal: invalid escape --");
+
+        ParseResult r = parse("let x = `hello \\q world`;");
+        assertParseError(r, "E1042", "invalid escape -> E1042");
+    }
+
+    static void testTemplateEmptyInterpolation() {
+        System.out.println("-- Template Literal: empty interpolation --");
+
+        ParseResult r = parse("let x = `${}`;");
+        assertParseError(r, "E1042", "empty interpolation -> E1042");
+    }
+
+    static void testTemplateUnterminatedInterpolation() {
+        System.out.println("-- Template Literal: unterminated interpolation --");
+
+        ParseResult r = parse("let x = `${name;");
+        assertParseError(r, "E1042", "unterminated interpolation -> E1042");
+    }
+
+    static void testTemplateNestedBraces() {
+        System.out.println("-- Template Literal: nested braces in expr --");
+
+        // ${ {x:1} } — the object literal has braces; the brace scan must not
+        // be confused by them.
+        ParseResult r = parse("let x = `${ {x:1} }`;");
+        // May or may not parse cleanly (object literal inside template may have
+        // type-checking issues, but it should parse without crashing).
+        check(r.program() != null, "nested braces parses without crash");
+    }
+
+    static void testTemplateStringLiteralWithRBrace() {
+        System.out.println("-- Template Literal: string with } inside interpolation --");
+
+        // The } inside the string literal must not be mistaken for the closing brace.
+        ParseResult r = parse("let x = `${ \"}\" }`;");
+        check(r.program() != null, "string with } parses without crash");
+        // Verify the expression inside ${} is a string literal containing "}"
+        VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
+        TemplateLiteralExpr tl = (TemplateLiteralExpr) vd.initializer();
+        if (tl != null && tl.parts().size() >= 2) {
+            ExpressionNode expr = tl.parts().get(1);
+            check(expr instanceof LiteralExpr, "expr part is LiteralExpr");
+            if (expr instanceof LiteralExpr le && le.value() instanceof LiteralValue.StringLiteral sl) {
+                check(sl.value().equals("}"), "string literal = '}', got '" + sl.value() + "'");
+            }
+        }
+    }
+
+    static void testTemplateNestedTemplateLiteral() {
+        System.out.println("-- Template Literal: nested template in interpolation --");
+
+        // The nested template literal inside ${} must not confuse the parser.
+        // Escaped backticks inside the expression — the backslash prevents
+        // the lexer from treating them as template delimiters. The parser's
+        // splitTemplateLiteral processes \` as an escaped backtick character.
+        ParseResult r = parse("let x = `${ \\`nested\\` }`;");
+        check(r.program() != null, "nested template parses without crash");
+        VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
+        TemplateLiteralExpr tl = (TemplateLiteralExpr) vd.initializer();
+        if (tl != null && tl.parts().size() >= 2) {
+            ExpressionNode expr = tl.parts().get(1);
+            // The expression contains escaped backticks, which are string content,
+            // so the expression should be a BinaryExpr or similar (depending on
+            // what the expression parses as). The key invariant: no crash.
+            check(expr != null, "expr part is not null");
+        }
+    }
+
+    static void testTemplateEscapedBacktick() {
+        System.out.println("-- Template Literal: escaped backtick in interpolation --");
+
+        // \` must not be mistaken for a nested template start.
+        ParseResult r = parse("let x = `${ \\`escaped\\` }`;");
+        check(r.program() != null, "escaped backtick parses without crash");
+    }
+
+    static void testTemplateMalformedExpression() {
+        System.out.println("-- Template Literal: malformed expression (D16) --");
+
+        // ${@} is syntactically invalid. The parser must emit diagnostics and
+        // substitute a placeholder — not crash or NPE.
+        ParseResult r = parse("let x = `${@}`;");
+        check(r.program() != null, "malformed expr: program not null");
+        // Should have diagnostics
+        boolean hasDiag = !r.diagnostics().isEmpty();
+        check(hasDiag, "malformed expr: has diagnostics");
+        // Verify the template literal still has parts (placeholder substituted)
+        VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
+        if (vd != null) {
+            TemplateLiteralExpr tl = (TemplateLiteralExpr) vd.initializer();
+            if (tl != null) {
+                // ${@} produces 3 parts: empty string, placeholder, empty string
+                check(tl.parts().size() == 3,
+                    "malformed expr: 3 parts, got " + tl.parts().size());
+            }
         }
     }
 

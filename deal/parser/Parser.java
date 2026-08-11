@@ -1026,6 +1026,12 @@ public final class Parser {
         List<ExpressionNode> parts = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         int pos = 0;
+        // Track where the current string accumulation started in the raw content.
+        // The raw content begins at source column baseCol + 1 (after the opening backtick).
+        int stringStart = 0;
+
+        // Helper to compute the source column for a given offset in the raw content.
+        // Adds 1 because raw[0] is at column baseCol + 1 (just after the opening backtick).
 
         while (pos < raw.length()) {
             char c = raw.charAt(pos);
@@ -1047,7 +1053,7 @@ public final class Parser {
                     default -> {
                         error(DiagnosticCode.E1042,
                             "Invalid escape sequence in template literal: '\\" + esc + "'",
-                            new Token(TokenType.IDENTIFIER, "", baseLine, baseCol + pos, 1));
+                            new Token(TokenType.IDENTIFIER, "", baseLine, baseCol + 1 + pos, 1));
                     }
                 }
                 pos++;
@@ -1057,7 +1063,7 @@ public final class Parser {
             // 2. Interpolation start: ${
             if (c == '$' && pos + 1 < raw.length() && raw.charAt(pos + 1) == '{') {
                 // Flush accumulated string part
-                flushStringPart(parts, current.toString(), baseLine, baseCol);
+                flushStringPart(parts, current.toString(), baseLine, baseCol + 1 + stringStart);
                 current.setLength(0);
 
                 pos += 2; // skip '$' and '{'
@@ -1073,9 +1079,10 @@ public final class Parser {
 
                 String exprSource = raw.substring(exprStart, exprEnd);
 
-                // Calculate position of expression in original source
+                // Calculate position of expression in original source.
+                // +1 because raw content starts at baseCol + 1 (past the opening backtick).
                 int exprLine = baseLine;
-                int exprCol = baseCol + exprStart;
+                int exprCol = baseCol + 1 + exprStart;
 
                 ExpressionNode expr = parseEmbeddedExpression(exprSource, exprLine, exprCol);
                 parts.add(expr);
@@ -1084,6 +1091,8 @@ public final class Parser {
                 if (pos < raw.length() && raw.charAt(pos) == '}') {
                     pos++; // skip '}'
                 }
+                // Next string part starts after the closing brace
+                stringStart = pos;
                 continue;
             }
 
@@ -1091,7 +1100,7 @@ public final class Parser {
             if (c == '}') {
                 error(DiagnosticCode.E1042,
                     "Unexpected '}' in template literal",
-                    new Token(TokenType.IDENTIFIER, "", baseLine, baseCol + pos, 1));
+                    new Token(TokenType.IDENTIFIER, "", baseLine, baseCol + 1 + pos, 1));
                 pos++;
                 continue;
             }
@@ -1102,7 +1111,7 @@ public final class Parser {
         }
 
         // Flush remaining accumulator
-        flushStringPart(parts, current.toString(), baseLine, baseCol);
+        flushStringPart(parts, current.toString(), baseLine, baseCol + 1 + stringStart);
 
         return parts;
     }
@@ -1173,7 +1182,7 @@ public final class Parser {
         // Unterminated
         error(DiagnosticCode.E1042,
             "Unterminated '${' in template literal",
-            new Token(TokenType.IDENTIFIER, "", baseLine, baseCol + startPos, 2));
+            new Token(TokenType.IDENTIFIER, "", baseLine, baseCol + 1 + startPos, 2));
         return -1;
     }
 
@@ -1202,11 +1211,16 @@ public final class Parser {
 
         // 2. Merge lexer diagnostics with position adjustment
         for (deal.lexer.Diagnostic d : subResult.diagnostics()) {
-            diagnostics.add(Diagnostic.error(
-                d.diagnosticCode() != null ? d.diagnosticCode() : DiagnosticCode.valueOf(d.code()),
-                d.message(), d.file(),
-                baseLine + d.line() - 1,
-                baseCol + d.column() - 1));
+            DiagnosticCode dc = d.diagnosticCode();
+            if (dc == null) {
+                dc = DiagnosticCode.fromCode(d.code());
+            }
+            if (dc != null) {
+                diagnostics.add(Diagnostic.error(
+                    dc, d.message(), d.file(),
+                    baseLine + d.line() - 1,
+                    baseCol + d.column() - 1));
+            }
         }
 
         // 3. Remove trailing EOF token
