@@ -4,6 +4,7 @@ import deal.ast.*;
 import deal.checker.*;
 import deal.codegen.lua.LuaBackend;
 import deal.lexer.*;
+import deal.module.CompilationOrchestrator;
 import deal.parser.*;
 import deal.types.Type;
 
@@ -145,6 +146,89 @@ public class RuntimeSourceLocationTest {
         return map;
     }
 
+    /**
+     * Compile and run a multi-module project and capture the error output.
+     * Uses CompilationOrchestrator to compile two modules, then runs with LuaJIT.
+     */
+    private static String compileMultiModuleAndRun(
+            String mainSource, String mainModuleName,
+            String importedSource, String importedModuleName,
+            String importedFileName) throws Exception {
+
+        try {
+            new ProcessBuilder("luajit", "-v").start().waitFor();
+        } catch (IOException e) {
+            return null;
+        }
+
+        Path tmpDir = Files.createTempDirectory("deal_rtloc_multi_");
+
+        // Create source files
+        Path srcDir = tmpDir.resolve("src");
+        Files.createDirectories(srcDir);
+
+        Path mainFile = srcDir.resolve(mainModuleName + ".deal");
+        Files.writeString(mainFile, mainSource);
+
+        Path importedFile = srcDir.resolve(importedFileName);
+        Files.createDirectories(importedFile.getParent());
+        Files.writeString(importedFile, importedSource);
+
+        // Also copy runtime.lua to std/ for the orchestrator
+        Path stdlibDir = tmpDir;
+        // stdlibDir is tmpDir itself
+        // runtime.lua is copied by orchestrator
+
+        Path outputDir = tmpDir.resolve("build/lua");
+        List<Path> moduleRoots = List.of(srcDir);
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            mainFile, outputDir, false, false, false, null, moduleRoots, stdlibDir);
+
+        boolean success = orchestrator.compile();
+        if (!success) {
+            fail("Compilation failed for multi-module test");
+            return null;
+        }
+
+        // Run with pcall wrapper
+        String wrapper =
+            "package.path = '" + outputDir.toString().replace("\\", "/") + "/?.lua;' .. package.path\n" +
+            "local ok, err = pcall(function()\n" +
+            "  local mod = require(\"" + mainModuleName + "\")\n" +
+            "  if mod.main ~= nil then mod.main.f() end\n" +
+            "end)\n" +
+            "if not ok then\n" +
+            "  if type(err) == 'table' then\n" +
+            "    print('FILE:' .. tostring(err.file))\n" +
+            "    print('LINE:' .. tostring(err.line))\n" +
+            "    print('COLUMN:' .. tostring(err.column))\n" +
+            "    print('CODE:' .. tostring(err.code))\n" +
+            "    print('MESSAGE:' .. tostring(err.message))\n" +
+            "  else\n" +
+            "    print('RAW_ERROR:' .. tostring(err))\n" +
+            "  end\n" +
+            "end\n";
+
+        Path wrapperFile = tmpDir.resolve("wrapper.lua");
+        Files.writeString(wrapperFile, wrapper);
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", wrapperFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        p.waitFor();
+
+        try {
+            Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+                .forEach(f -> { try { Files.deleteIfExists(f); }
+                    catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        return output;
+    }
+
     // =========================================================================
     // Main
     // =========================================================================
@@ -171,6 +255,15 @@ public class RuntimeSourceLocationTest {
         testArrayOutOfBounds();
         testTypeMismatch();
 
+        // Critical case: multi-line expression
+        testMultiLineExpression();
+
+        // Critical case: nested function calls
+        testNestedFunctionCalls();
+
+        // Critical case: module boundary
+        testModuleBoundary();
+
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -185,7 +278,6 @@ public class RuntimeSourceLocationTest {
     static void testDivisionByZero() throws Exception {
         System.out.println("-- Division By Zero --");
 
-        // The division by zero is at line 4
         String source =
             "export function main(): int {\n" +    // line 1
             "  let a: int = 10;\n" +                // line 2
@@ -206,12 +298,10 @@ public class RuntimeSourceLocationTest {
         check("4".equals(err.get("line")),
             "line is 4, got: " + err.get("line"));
 
-        // Column should be present and positive
         if (err.containsKey("column") && !err.get("column").equals("nil")) {
             int col = Integer.parseInt(err.get("column"));
             check(col >= 1, "column >= 1: " + col);
         } else {
-            // Even if column is nil, we just check file and line
             System.out.println("  Note: column is nil (no span for binary op)");
         }
     }
@@ -223,7 +313,6 @@ public class RuntimeSourceLocationTest {
     static void testThrowStatement() throws Exception {
         System.out.println("-- Throw Statement --");
 
-        // The throw is at line 3
         String source =
             "export function main(): int {\n" +     // line 1
             "  let x: int = 1;\n" +                  // line 2
@@ -240,12 +329,10 @@ public class RuntimeSourceLocationTest {
         check("test_throw.deal".equals(err.get("file")),
             "file is test_throw.deal, got: " + err.get("file"));
 
-        // The throw statement includes file/line/column in the error object
         if (err.containsKey("line") && !err.get("line").equals("nil")) {
             check("3".equals(err.get("line")),
                 "throw line is 3, got: " + err.get("line"));
         } else {
-            // check for line in raw error
             System.out.println("  Note: line info not extracted, raw: " + err.get("raw_error"));
         }
     }
@@ -257,9 +344,6 @@ public class RuntimeSourceLocationTest {
     static void testArrayOutOfBounds() throws Exception {
         System.out.println("-- Array Out Of Bounds --");
 
-        // Access xs[99] where xs has 3 elements — line 4
-        // This won't be a bounds error per se (Lua doesn't bounds-check),
-        // but accessing beyond length returns nil, which then fails type check
         String source =
             "export function main(): int {\n" +     // line 1
             "  let xs: int[] = [1, 2, 3];\n" +       // line 2
@@ -274,11 +358,9 @@ public class RuntimeSourceLocationTest {
         Map<String, String> err = parseErrorOutput(output);
         System.out.println("  Error output: " + output);
 
-        // The error should reference the source file
         check("test_oob.deal".equals(err.get("file")),
             "file is test_oob.deal, got: " + err.get("file"));
 
-        // The index expression on line 4 should report some error
         if (err.containsKey("code")) {
             System.out.println("  Error code: " + err.get("code"));
             System.out.println("  Message: " + err.get("message"));
@@ -291,14 +373,12 @@ public class RuntimeSourceLocationTest {
     static void testTypeMismatch() throws Exception {
         System.out.println("-- Type Mismatch --");
 
-        // Line 3: read a table field into a string variable, but it is int
         String source =
             "export function main(): string {\n" +  // line 1
             "  let t: table = { x: 42 };\n" +        // line 2
             "  let s: string = t.x;\n" +              // line 3 (runtime: number is not string)
             "  return s;\n" +                          // line 4
             "}\n";
-
 
         String output = compileAndRunExpectError(source, "test_mismatch.deal");
         if (output == null) return;
@@ -317,6 +397,149 @@ public class RuntimeSourceLocationTest {
         if (err.containsKey("code")) {
             System.out.println("  Error code: " + err.get("code"));
             System.out.println("  Message: " + err.get("message"));
+        }
+    }
+
+    // =========================================================================
+    // Test: Multi-line expression — error reports the inner line
+    // =========================================================================
+
+    static void testMultiLineExpression() throws Exception {
+        System.out.println("-- Multi-Line Expression --");
+
+        // The division expression spans lines 3-5 (starting at the / operator).
+        // The error should report the line where the operator is (line 4), not
+        // the line of the enclosing return statement (line 3).
+        String source =
+            "export function main(): int {\n" +      // line 1
+            "  let a: int = 10;\n" +                  // line 2
+            "  return a /\n" +                         // line 3 (operator here)
+            "    (5 -\n" +                              // line 4
+            "     5);\n" +                              // line 5 (b = 0 here)
+            "}\n";
+
+        String output = compileAndRunExpectError(source, "test_multiline.deal");
+        if (output == null) return;
+
+        Map<String, String> err = parseErrorOutput(output);
+        System.out.println("  Error output: " + output);
+
+        // The division operator is on line 3, so the error should report
+        // line 3 (not line 1 or some other line).
+        check("test_multiline.deal".equals(err.get("file")),
+            "multi-line: file is test_multiline.deal, got: " + err.get("file"));
+
+        // The binary expression span starts on line 3 (the division operator line)
+        if (err.containsKey("line") && !err.get("line").equals("nil")) {
+            int line = Integer.parseInt(err.get("line"));
+            check(line >= 3 && line <= 5,
+                "multi-line: error line " + line + " is within expression bounds [3,5]");
+            // It should not be line 1 (the function declaration line)
+            check(line != 1,
+                "multi-line: error line is not the first line of the function");
+        }
+
+        if (err.containsKey("code")) {
+            System.out.println("  Error code: " + err.get("code"));
+        }
+    }
+
+    // =========================================================================
+    // Test: Nested function calls — inner call reports inner line
+    // =========================================================================
+
+    static void testNestedFunctionCalls() throws Exception {
+        System.out.println("-- Nested Function Calls --");
+
+        // f calls g, g calls h, h divides by zero.
+        // The error should report the line inside h (where division happens),
+        // not the line in main where f is called.
+        String source =
+            "function h(a: int, b: int): int {\n" +   // line 1
+            "  return a / b;\n" +                        // line 2 (division by zero here)
+            "}\n" +
+            "function g(x: int, y: int): int {\n" +    // line 4
+            "  return h(x, y);\n" +                      // line 5
+            "}\n" +
+            "function f(p: int, q: int): int {\n" +    // line 7
+            "  return g(p, q);\n" +                      // line 8
+            "}\n" +
+            "export function main(): int {\n" +         // line 10
+            "  return f(10, 0);\n" +                     // line 11
+            "}\n";
+
+        String output = compileAndRunExpectError(source, "test_nested.deal");
+        if (output == null) return;
+
+        Map<String, String> err = parseErrorOutput(output);
+        System.out.println("  Error output: " + output);
+
+        check("test_nested.deal".equals(err.get("file")),
+            "nested: file is test_nested.deal, got: " + err.get("file"));
+
+        // The error should be on line 2 (inside h), not line 11 (main call)
+        if (err.containsKey("line") && !err.get("line").equals("nil")) {
+            int line = Integer.parseInt(err.get("line"));
+            check("2".equals(err.get("line")),
+                "nested: error line is 2 (inside h), got: " + err.get("line"));
+            check(line != 11,
+                "nested: error line is not 11 (main call site)");
+        }
+
+        if (err.containsKey("code")) {
+            check("E8005".equals(err.get("code")),
+                "nested: error code is E8005, got: " + err.get("code"));
+        }
+    }
+
+    // =========================================================================
+    // Test: Module boundary — error in imported module reports its file
+    // =========================================================================
+
+    static void testModuleBoundary() throws Exception {
+        System.out.println("-- Module Boundary --");
+
+        // Imported module (lib.deal) has a function that divides by zero.
+        // Main module imports and calls it. Error should report lib.deal's
+        // file name, not main.deal's.
+        String mainSource =
+            "import * as lib from \"./lib\";\n" +      // line 1
+            "export function main(): int {\n" +         // line 2
+            "  return lib.div(10, 0);\n" +               // line 3
+            "}\n";
+
+        String importedSource =
+            "export function div(a: int, b: int): int {\n" +  // line 1
+            "  return a / b;\n" +                               // line 2 (error here)
+            "}\n";
+
+        String output = compileMultiModuleAndRun(
+            mainSource, "main",
+            importedSource, "lib",
+            "lib.deal");
+
+        if (output == null) return;
+
+        Map<String, String> err = parseErrorOutput(output);
+        System.out.println("  Error output: " + output);
+
+        // The error file should reference the imported module, not main
+        if (err.containsKey("file") && !err.get("file").equals("nil")) {
+            // The file should contain "lib" (the imported module's source path)
+            String file = err.get("file");
+            check(file.contains("lib"),
+                "module boundary: error file contains 'lib', got: " + file);
+        }
+
+        // The error line should be 2 (inside div function in lib)
+        if (err.containsKey("line") && !err.get("line").equals("nil")) {
+            check("2".equals(err.get("line")),
+                "module boundary: error line is 2 (inside div), got: " + err.get("line"));
+        }
+
+        if (err.containsKey("code")) {
+            check("E8005".equals(err.get("code")),
+                "module boundary: error code is E8005, got: " + err.get("code"));
         }
     }
 }

@@ -162,8 +162,12 @@ public final class Main {
         }
 
         // Run compilation
+        // When --dump-ir is passed, also enable source maps since they
+        // are part of IR hardening. When --source-map is explicitly passed,
+        // enable source maps without enabling IR dumps.
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entryFile, outputDir, verbose, dumpIr || sourceMap, config, moduleRoots, stdlibDir);
+            entryFile, outputDir, verbose, dumpIr, dumpIr || sourceMap,
+            config, moduleRoots, stdlibDir);
 
         boolean success = orchestrator.compile();
 

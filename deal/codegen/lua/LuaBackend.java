@@ -630,7 +630,7 @@ public final class LuaBackend implements Visitor<Void> {
             if (targetType instanceof Type.Func tf
                 && exprType instanceof Type.Func ef
                 && isArityExtension(ef, tf)) {
-                String adapter = emitArityAdapter(tf, ef, initLua);
+                String adapter = emitArityAdapter(tf, ef, initLua, span);
                 emitLine("local " + name + " = " + adapter);
             } else {
                 String checked = emitCheckExpr(initLua, targetType, span);
@@ -1273,7 +1273,7 @@ public final class LuaBackend implements Visitor<Void> {
         if (call.callee() instanceof IdentifierExpr id) {
             Symbol sym = symbols.resolve(id.name());
             if (sym instanceof Symbol.IntrinsicSymbol) {
-                return emitExpression(call.callee()) + "(" + args.toString() + ")";
+                return emitExpression(call.callee()) + "(" + args.toString() + ", " + spanArgs(call.span()) + ")";
             }
         }
         if (calleeType instanceof Type.Func) {
@@ -1376,8 +1376,9 @@ public final class LuaBackend implements Visitor<Void> {
             defaultsRef = "{}";
         }
 
+        Span cspan = obj.span();
         return "__rt.class_(\"" + className + "\", " + defaultsRef
-            + ", " + provided.toString() + ")";
+            + ", " + provided.toString() + ", " + spanArgs(cspan) + ")";
     }
 
     /**
@@ -1494,7 +1495,7 @@ public final class LuaBackend implements Visitor<Void> {
 
         if (isArityExtension(valueType, targetType)) {
             return targetLua + " = "
-                + emitArityAdapter((Type.Func) targetType, (Type.Func) valueType, valueLua);
+                + emitArityAdapter((Type.Func) targetType, (Type.Func) valueType, valueLua, span);
         }
 
         if (assign.target() instanceof IndexExpr idx) {
@@ -1534,7 +1535,7 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     private String emitArityAdapter(Type.Func targetFunc, Type.Func valueFunc,
-                                     String valueLua) {
+                                     String valueLua, Span span) {
         StringBuilder sb = new StringBuilder();
         sb.append("__rt.function_(\"").append(typeDescriptor(targetFunc))
             .append("\", function(");
@@ -1547,13 +1548,13 @@ public final class LuaBackend implements Visitor<Void> {
         String bodyIndent = "  ".repeat(indent + 1);
         for (int i = 0; i < targetFunc.paramTypes().size(); i++) {
             Type pt = targetFunc.paramTypes().get(i);
-            sb.append(bodyIndent).append(emitCheckExpr("__p" + i, pt)).append("\n");
+            sb.append(bodyIndent).append(emitCheckExpr("__p" + i, pt, span)).append("\n");
         }
 
         sb.append(bodyIndent).append("return ");
         sb.append(emitCheckExpr(
             valueLua + ".f(" + buildOverlappingArgs(valueFunc.paramTypes().size()) + ")",
-            targetFunc.returnType()));
+            targetFunc.returnType(), span));
         sb.append("\n");
         sb.append("  ".repeat(indent)).append("end)");
         return sb.toString();

@@ -470,10 +470,13 @@ end
 -- @param defaults table - all declared fields: required fields with default values,
 --        optional fields with __MISSING sentinel
 -- @param provided table - user-provided field values
+-- @param file string    - optional source file for error reporting
+-- @param line number    - optional source line for error reporting
+-- @param column number  - optional source column for error reporting
 -- @return table - the constructed class instance
-function __rt.class_(classname, defaults, provided)
+function __rt.class_(classname, defaults, provided, file, line, column)
   if type(defaults) ~= "table" then
-    error(__rt._err("E8001", "class defaults must be a table", nil, nil, nil, "table", type(defaults)))
+    error(__rt._err("E8001", "class defaults must be a table", file, line, column, "table", type(defaults)))
   end
 
   -- 1. Deep-copy defaults (__MISSING and __NULL sentinels preserved by identity)
@@ -482,12 +485,12 @@ function __rt.class_(classname, defaults, provided)
   -- 2. Overlay provided fields, rejecting extras
   if provided ~= nil then
     if type(provided) ~= "table" then
-      error(__rt._err("E8001", "class field values must be a table", nil, nil, nil, "table", type(provided)))
+      error(__rt._err("E8001", "class field values must be a table", file, line, column, "table", type(provided)))
     end
     for k, v in pairs(provided) do
       if instance[k] == nil then
         -- Key is not in the defaults table → extra field
-        error(__rt._err("E8007", "extra field '" .. tostring(k) .. "' in class '" .. classname .. "'", nil, nil, nil, nil, nil))
+        error(__rt._err("E8007", "extra field '" .. tostring(k) .. "' in class '" .. classname .. "'", file, line, column, nil, nil))
       end
       instance[k] = v
     end
@@ -531,12 +534,12 @@ end
 --- as a callback), the codegen emits `.f()` which fails at runtime. This is
 --- because int/number are emitted as plain Lua local aliases, not function
 --- wrappers. Direct calls like int(3.0) work correctly.
-function __rt.int_convert(v)
+function __rt.int_convert(v, file, line, column)
   if v == nil or v == __rt.__NULL then
-    error(__rt._err("E8001", "cannot convert null to int", nil, nil, nil, "int", "null"))
+    error(__rt._err("E8001", "cannot convert null to int", file, line, column, "int", "null"))
   end
   -- Reuse check_int which validates range, NaN, Infinity, and integer-ness
-  return __rt.check_int(v)
+  return __rt.check_int(v, file, line, column)
 end
 
 --- Convert a value to number. Handles both overloads:
@@ -544,11 +547,11 @@ end
 ---   (number | null) => number — unwraps nullable number, rejecting null
 --- Delegates to check_number for type validation.
 --- KNOWN LIMIT (v1.0): Same indirect-use limitation as int_convert.
-function __rt.number_convert(v)
+function __rt.number_convert(v, file, line, column)
   if v == nil or v == __rt.__NULL then
-    error(__rt._err("E8001", "cannot convert null to number", nil, nil, nil, "number", "null"))
+    error(__rt._err("E8001", "cannot convert null to number", file, line, column, "number", "null"))
   end
-  return __rt.check_number(v)
+  return __rt.check_number(v, file, line, column)
 end
 
 -- ===== Internal helpers =====

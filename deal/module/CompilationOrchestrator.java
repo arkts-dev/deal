@@ -39,6 +39,7 @@ public final class CompilationOrchestrator {
     private final Path outputRoot;
     private final boolean verbose;
     private final boolean dumpIr;
+    private final boolean sourceMap;
     private final List<Path> moduleRoots;
     private final Path stdlibDir;
 
@@ -67,17 +68,25 @@ public final class CompilationOrchestrator {
     public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
                                     DealConfig config, List<Path> moduleRoots,
                                     Path stdlibDir) {
-        this(entryFile, outputRoot, verbose, false, config, moduleRoots, stdlibDir);
+        this(entryFile, outputRoot, verbose, false, false, config, moduleRoots, stdlibDir);
     }
 
     public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
                                     boolean dumpIr,
                                     DealConfig config, List<Path> moduleRoots,
                                     Path stdlibDir) {
+        this(entryFile, outputRoot, verbose, dumpIr, false, config, moduleRoots, stdlibDir);
+    }
+
+    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
+                                    boolean dumpIr, boolean sourceMap,
+                                    DealConfig config, List<Path> moduleRoots,
+                                    Path stdlibDir) {
         this.entryFile = entryFile.toAbsolutePath().normalize();
         this.outputRoot = outputRoot.toAbsolutePath().normalize();
         this.verbose = verbose;
         this.dumpIr = dumpIr;
+        this.sourceMap = sourceMap;
         this.moduleRoots = moduleRoots;
         this.stdlibDir = stdlibDir;
     }
@@ -796,13 +805,20 @@ public final class CompilationOrchestrator {
                 }
             }
 
-            String luaSource = LuaBackend.generateWithImports(
-                info.rawAst, info.checkResult, info.sourcePath, importResolutions);
-
             String filePath = info.modulePath.replace('.', '/') + ".lua";
             Path outputPath = outputRoot.resolve(filePath);
             Files.createDirectories(outputPath.getParent());
-            Files.writeString(outputPath, luaSource);
+
+            if (sourceMap) {
+                // Use generateToFile with emitSourceMap=true to produce
+                // both the .lua file and the .deal.map.json sidecar
+                LuaBackend.generateToFile(info.rawAst, info.checkResult,
+                    info.sourcePath, outputRoot, outputPath, true);
+            } else {
+                String luaSource = LuaBackend.generateWithImports(
+                    info.rawAst, info.checkResult, info.sourcePath, importResolutions);
+                Files.writeString(outputPath, luaSource);
+            }
 
             long modElapsed = System.currentTimeMillis() - modStart;
             log("  Generated: " + outputPath + " (" + modElapsed + "ms)");

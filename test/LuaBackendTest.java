@@ -603,7 +603,7 @@ public class LuaBackendTest {
             "export function test_int(): int { return int(3.0); }"
         );
         assertNoErrors(out, "intrinsic int call");
-        assertContains(out.lua, "int(3.0)", "int(3.0) direct call");
+        assertContains(out.lua, "int(3.0", "int(3.0) direct call");
         assertNotContains(out.lua, "int.f(", "no int.f() pattern");
         assertContains(out.lua, "local int = __rt.int_convert", "int alias defined");
     }
@@ -618,7 +618,7 @@ public class LuaBackendTest {
             "export function test_number(): number { return number(42); }"
         );
         assertNoErrors(out, "intrinsic number call");
-        assertContains(out.lua, "number(42)", "number(42) direct call");
+        assertContains(out.lua, "number(42", "number(42) direct call");
         assertNotContains(out.lua, "number.f(", "no number.f() pattern");
         assertContains(out.lua, "local number = __rt.number_convert", "number alias defined");
     }
