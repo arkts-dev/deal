@@ -177,6 +177,17 @@ public class ParserTest {
         testMultipleStatements();
         testSemicolons();
 
+        // @jsonable directive tests (ISSUE-0046)
+        testJsonableExportClass();
+        testJsonableExportFunction();
+        testJsonableStandaloneClass();
+        testJsonableStandaloneFunction();
+        testJsonableLet();
+        testJsonableNotPresent();
+        testJsonableWarningSeverity();
+        testJsonableInvalidPlacementIsJsonableFalse();
+        testJsonableEndToEndLexParse();
+
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -1440,4 +1451,179 @@ public class ParserTest {
         assertNoParseErrors(r3, "without semicolon at EOF");
         assertStmtCount(r3.program(), 1, "1 stmt without semicolon at EOF");
     }
+
+    // =========================================================================
+    // @jsonable directive tests (ISSUE-0046)
+    // =========================================================================
+
+    static void testJsonableExportClass() {
+        System.out.println("-- @jsonable export class -> isJsonable=true --");
+
+        ParseResult r = parse("// @jsonable\nexport class C { x: int; }");
+        assertNoParseErrors(r, "@jsonable export class");
+        ProgramNode prog = r.program();
+        assertStmtCount(prog, 1, "@jsonable export class");
+
+        ExportDeclaration ed = assertInstance(prog.statements().get(0),
+                ExportDeclaration.class, "@jsonable export class node");
+        ClassDeclaration cd = assertInstance(ed.declaration(),
+                ClassDeclaration.class, "exported declaration is class");
+        check(cd.isJsonable(),
+            "ClassDeclaration.isJsonable should be true with @jsonable directive");
+    }
+
+    static void testJsonableExportFunction() {
+        System.out.println("-- @jsonable export function -> warning --");
+
+        ParseResult r = parse("// @jsonable\nexport function f(): int { return 0; }");
+        assertParseError(r, "E1043", "@jsonable export function");
+
+        List<Diagnostic> diags = r.diagnostics();
+        Diagnostic warnDiag = diags.stream()
+                .filter(d -> d.code().equals("E1043"))
+                .findFirst().orElse(null);
+        check(warnDiag != null, "warning diagnostic present for export function");
+        if (warnDiag != null) {
+            check(warnDiag.severity().equals("warning"),
+                "severity is warning, got: " + warnDiag.severity());
+            check(warnDiag.message().contains("export class"),
+                "message mentions export class: " + warnDiag.message());
+        }
+    }
+
+    static void testJsonableStandaloneClass() {
+        System.out.println("-- @jsonable standalone class -> warning, isJsonable=false --");
+
+        ParseResult r = parse("// @jsonable\nclass C { x: int; }");
+        assertParseError(r, "E1043", "@jsonable standalone class");
+
+        List<Diagnostic> diags = r.diagnostics();
+        Diagnostic warnDiag = diags.stream()
+                .filter(d -> d.code().equals("E1043"))
+                .findFirst().orElse(null);
+        check(warnDiag != null, "warning diagnostic present for standalone class");
+        if (warnDiag != null) {
+            check(warnDiag.severity().equals("warning"),
+                "severity is warning, got: " + warnDiag.severity());
+        }
+
+        // isJsonable should be false since directive was ignored
+        ProgramNode prog = r.program();
+        assertStmtCount(prog, 1, "standalone class");
+        ClassDeclaration cd = assertInstance(prog.statements().get(0),
+                ClassDeclaration.class, "standalone class node");
+        check(!cd.isJsonable(),
+            "ClassDeclaration.isJsonable should be false - directive ignored");
+    }
+
+    static void testJsonableStandaloneFunction() {
+        System.out.println("-- @jsonable standalone function -> warning --");
+
+        ParseResult r = parse("// @jsonable\nfunction f(): int { return 0; }");
+        assertParseError(r, "E1043", "@jsonable standalone function");
+
+        List<Diagnostic> diags = r.diagnostics();
+        Diagnostic warnDiag = diags.stream()
+                .filter(d -> d.code().equals("E1043"))
+                .findFirst().orElse(null);
+        check(warnDiag != null, "warning diagnostic present for standalone function");
+        if (warnDiag != null) {
+            check(warnDiag.severity().equals("warning"),
+                "severity is warning, got: " + warnDiag.severity());
+        }
+    }
+
+    static void testJsonableLet() {
+        System.out.println("-- @jsonable let -> warning --");
+
+        ParseResult r = parse("// @jsonable\nlet x: int = 1;");
+        assertParseError(r, "E1043", "@jsonable let");
+
+        List<Diagnostic> diags = r.diagnostics();
+        Diagnostic warnDiag = diags.stream()
+                .filter(d -> d.code().equals("E1043"))
+                .findFirst().orElse(null);
+        check(warnDiag != null, "warning diagnostic present for let");
+        if (warnDiag != null) {
+            check(warnDiag.severity().equals("warning"),
+                "severity is warning, got: " + warnDiag.severity());
+        }
+    }
+
+    static void testJsonableNotPresent() {
+        System.out.println("-- no @jsonable -> isJsonable=false --");
+
+        ParseResult r = parse("export class C { x: int; }");
+        assertNoParseErrors(r, "export class without @jsonable");
+
+        ExportDeclaration ed = (ExportDeclaration) r.program().statements().get(0);
+        ClassDeclaration cd = (ClassDeclaration) ed.declaration();
+        check(!cd.isJsonable(),
+            "ClassDeclaration.isJsonable should be false without directive");
+    }
+
+    static void testJsonableWarningSeverity() {
+        System.out.println("-- @jsonable warning severity is warning --");
+
+        ParseResult r = parse("// @jsonable\nclass C { x: int; }");
+        List<Diagnostic> diags = r.diagnostics();
+
+        for (Diagnostic d : diags) {
+            if (d.code().equals("E1043")) {
+                check(d.severity().equals("warning"),
+                    "severity should be 'warning', got: '" + d.severity() + "'");
+                check(!d.severity().equals("error"),
+                    "severity should NOT be 'error'");
+            }
+        }
+
+        // Warnings should not cause hasErrors() to return true
+        check(!r.hasErrors(),
+            "warnings should not cause hasErrors() to return true");
+    }
+
+    static void testJsonableInvalidPlacementIsJsonableFalse() {
+        System.out.println("-- @jsonable invalid placement -> isJsonable remains false --");
+
+        // After warning, the standalone class should have isJsonable=false
+        ParseResult r = parse("// @jsonable\nclass C { x: int; }");
+        ProgramNode prog = r.program();
+        assertStmtCount(prog, 1, "one statement");
+        ClassDeclaration cd = assertInstance(prog.statements().get(0),
+                ClassDeclaration.class, "class node");
+        check(!cd.isJsonable(),
+            "isJsonable should be false after invalid placement warning");
+    }
+
+    static void testJsonableEndToEndLexParse() {
+        System.out.println("-- @jsonable end-to-end lex + parse --");
+
+        // Verify that lexing + parsing @jsonable + let produces correct warning
+        LexResult lex = new Lexer("// @jsonable\nlet x: int = 1;", "test.deal").tokenize();
+        Parser parser = new Parser(lex.tokens(), "test.deal");
+        ParseResult r = parser.parse();
+
+        List<Diagnostic> diags = r.diagnostics();
+        boolean foundWarn = diags.stream().anyMatch(
+                d -> d.code().equals("E1043") && d.severity().equals("warning"));
+        check(foundWarn, "end-to-end: warning with code E1043 and severity 'warning'");
+
+        // Verify no error-level diagnostics
+        boolean hasErrors = diags.stream().anyMatch(
+                d -> d.severity().equals("error"));
+        check(!hasErrors, "end-to-end: no errors, only warnings");
+
+        // Verify the LET token had the directive from the lexer
+        Token letToken = null;
+        for (Token t : lex.tokens()) {
+            if (t.type() == TokenType.LET) {
+                letToken = t;
+                break;
+            }
+        }
+        check(letToken != null, "end-to-end: LET token found");
+        check(letToken.directives().contains("@jsonable"),
+            "end-to-end: LET token has @jsonable directive");
+    }
+
 }

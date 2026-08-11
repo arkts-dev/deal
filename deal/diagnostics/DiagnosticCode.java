@@ -110,6 +110,9 @@ public enum DiagnosticCode {
     /** Invalid template literal escape or malformed interpolation. */
     E1042(Phase.FRONTEND, "Invalid template literal"),
 
+    /** @jsonable directive is only valid on 'export class'. */
+    E1043(Phase.FRONTEND, "Invalid @jsonable directive placement"),
+
     // =========================================================================
     // E2xxx — name resolution and module resolution (FRONTEND)
     // =========================================================================

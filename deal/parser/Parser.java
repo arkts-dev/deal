@@ -87,6 +87,10 @@ public final class Parser {
     private StatementNode parseStatement() {
         TokenType type = peek().type();
 
+        // General guard: @jsonable directive is only valid on export class (D2)
+        if (type != TokenType.EXPORT && peek().directives().contains("@jsonable")) {
+            warn(DiagnosticCode.E1043, "@jsonable directive is only valid on 'export class', ignoring", peek());
+        }
         return switch (type) {
             case LBRACE    -> parseBlock();
             case CLASS     -> parseClassDeclaration();
@@ -462,6 +466,15 @@ public final class Parser {
         }
 
         if (declaration == null) return null;
+
+        // @jsonable directive handling (D2)
+        if (exportToken.directives().contains("@jsonable")) {
+            if (declaration instanceof ClassDeclaration cd) {
+                declaration = new ClassDeclaration(cd.span(), cd.name(), cd.fields(), true);
+            } else {
+                warn(DiagnosticCode.E1043, "@jsonable directive is only valid on 'export class', ignoring", exportToken);
+            }
+        }
 
         Span sp = spanBetween(exportToken, previousOrCurrent());
         return new ExportDeclaration(sp, declaration);

@@ -223,7 +223,7 @@ public class DiagnosticClassificationTest {
         Map<String, String> coverage = new LinkedHashMap<>();
 
         for (int i = 1001; i <= 1004; i++) coverage.put("E" + i, "LexerTest");
-        for (int i = 1005; i <= 1042; i++) coverage.put("E" + i, "ParserTest");
+        for (int i = 1005; i <= 1043; i++) coverage.put("E" + i, "ParserTest");
 
         coverage.put("E2000", "CheckerTest (break/continue)");
         coverage.put("E2001", "CheckerTest (undeclared identifier)");
