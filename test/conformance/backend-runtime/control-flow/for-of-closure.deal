@@ -1,0 +1,15 @@
+// @spec: Control flow — For-of — Closure capture
+// @description: Each for-of iteration creates a fresh binding; closures capture distinct values
+// @expected: runtime-ok
+// @features: for-of, closure
+
+export function test_closure_capture(): int {
+  let vals: int[] = [1, 2, 3];
+  let fs: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];
+  let i: int = 0;
+  for (let x: int of vals) {
+    fs[i] = function(): int { return x; };
+    i = i + 1;
+  }
+  return fs[0]() * 100 + fs[1]() * 10 + fs[2]();
+}

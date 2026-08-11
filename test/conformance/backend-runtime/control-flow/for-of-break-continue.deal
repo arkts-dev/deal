@@ -1,4 +1,4 @@
-// @spec: For-of — Break and continue
+// @spec: Control flow — For-of — Break and continue
 // @description: break exits for-of early, continue skips an element
 // @expected: runtime-ok
 // @features: for-of, break, continue
