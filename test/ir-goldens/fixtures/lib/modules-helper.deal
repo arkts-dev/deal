@@ -1,0 +1,7 @@
+// Helper module for imports-exports golden fixture.
+// This is NOT a golden test fixture itself; it lives in a subdirectory
+// and is imported by imports-exports.deal.
+
+export function helper(): string {
+    return "helper";
+}

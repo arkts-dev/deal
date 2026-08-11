@@ -1,0 +1,4 @@
+module @test/ir-goldens/fixtures/await-expressions.deal:5:1-8:1
+  function placeholder: null @test/ir-goldens/fixtures/await-expressions.deal:5:1-8:1
+    body
+      return @test/ir-goldens/fixtures/await-expressions.deal:6:5-7:1

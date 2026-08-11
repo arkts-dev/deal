@@ -1,0 +1,16 @@
+module @test/ir-goldens/fixtures/classes.deal:5:1-14:1
+  class Point @test/ir-goldens/fixtures/classes.deal:5:1-8:1
+    field x: int @test/ir-goldens/fixtures/classes.deal:6:5-7:5
+      [boundary: class-default]
+      literal 0 : int @test/ir-goldens/fixtures/classes.deal:6:14-6:14
+    field y: int @test/ir-goldens/fixtures/classes.deal:7:5-8:1
+      [boundary: class-default]
+      literal 0 : int @test/ir-goldens/fixtures/classes.deal:7:14-7:14
+  class User @test/ir-goldens/fixtures/classes.deal:10:1-14:1
+    field name: string @test/ir-goldens/fixtures/classes.deal:11:5-12:7
+      [boundary: class-default]
+      literal "" : string @test/ir-goldens/fixtures/classes.deal:11:20-11:21
+    field age?: int @test/ir-goldens/fixtures/classes.deal:12:5-13:10
+    field active: boolean @test/ir-goldens/fixtures/classes.deal:13:5-14:1
+      [boundary: class-default]
+      literal true : boolean @test/ir-goldens/fixtures/classes.deal:13:23-13:26

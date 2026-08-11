@@ -1,0 +1,5 @@
+module @test/ir-goldens/fixtures/jsonable-classes.deal:5:1-7:1
+  class Placeholder @test/ir-goldens/fixtures/jsonable-classes.deal:5:1-7:1
+    field name: string @test/ir-goldens/fixtures/jsonable-classes.deal:6:5-7:1
+      [boundary: class-default]
+      literal "" : string @test/ir-goldens/fixtures/jsonable-classes.deal:6:20-6:21

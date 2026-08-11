@@ -1,0 +1,4 @@
+module @test/ir-goldens/fixtures/for-of-loops.deal:5:1-8:1
+  function placeholder: null @test/ir-goldens/fixtures/for-of-loops.deal:5:1-8:1
+    body
+      return @test/ir-goldens/fixtures/for-of-loops.deal:6:5-7:1

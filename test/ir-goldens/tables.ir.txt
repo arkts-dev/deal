@@ -1,0 +1,13 @@
+module @test/ir-goldens/fixtures/tables.deal:5:1-9:1
+  function main: null @test/ir-goldens/fixtures/tables.deal:5:1-9:1
+    body
+      let t: table @test/ir-goldens/fixtures/tables.deal:6:5-7:7
+        [boundary: var-annotation]
+        object : table @test/ir-goldens/fixtures/tables.deal:6:20-6:45
+          literal "val1" : string @test/ir-goldens/fixtures/tables.deal:6:28-6:33
+          literal 42 : int @test/ir-goldens/fixtures/tables.deal:6:42-6:43
+      let v: string @test/ir-goldens/fixtures/tables.deal:7:5-8:1
+        [boundary: var-annotation]
+        member .key1 : string @test/ir-goldens/fixtures/tables.deal:7:21-7:26
+          [boundary: table-read]
+          ident t : table @test/ir-goldens/fixtures/tables.deal:7:21-7:21

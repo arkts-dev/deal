@@ -1,0 +1,10 @@
+// IR golden fixture: variables
+// Tests variable declarations with and without type annotations,
+// and variable assignment.
+
+function main(): null {
+    let x: int = 100;
+    let y = 200;
+    let z: int[] = [1, 2, 3];
+    x = 500;
+}

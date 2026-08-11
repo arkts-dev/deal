@@ -1,0 +1,15 @@
+module @test/ir-goldens/fixtures/stdlib-calls.deal:5:1-10:1
+  import * as S from "std/string" @test/ir-goldens/fixtures/stdlib-calls.deal:5:1-7:8
+    [boundary: host-in]
+    [boundary: import]
+  function main: null @test/ir-goldens/fixtures/stdlib-calls.deal:7:1-10:1
+    body
+      let len: int @test/ir-goldens/fixtures/stdlib-calls.deal:8:5-9:1
+        [boundary: var-annotation]
+        call : int @test/ir-goldens/fixtures/stdlib-calls.deal:8:20-8:36
+          [boundary: stdlib-boundary]
+          member .length : (string)->int @test/ir-goldens/fixtures/stdlib-calls.deal:8:20-8:27
+            [boundary: table-read]
+            ident S : table @test/ir-goldens/fixtures/stdlib-calls.deal:8:20-8:20
+              [boundary: import]
+          literal "hello" : string @test/ir-goldens/fixtures/stdlib-calls.deal:8:29-8:35

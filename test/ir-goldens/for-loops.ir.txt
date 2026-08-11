@@ -1,0 +1,20 @@
+module @test/ir-goldens/fixtures/for-loops.deal:4:1-9:1
+  function main: null @test/ir-goldens/fixtures/for-loops.deal:4:1-9:1
+    body
+      for @test/ir-goldens/fixtures/for-loops.deal:5:5-8:1
+        let i: int @test/ir-goldens/fixtures/for-loops.deal:5:10-5:24
+          [boundary: var-annotation]
+          literal 0 : int @test/ir-goldens/fixtures/for-loops.deal:5:23-5:23
+        binary < : boolean @test/ir-goldens/fixtures/for-loops.deal:5:26-5:31
+          ident i : int @test/ir-goldens/fixtures/for-loops.deal:5:26-5:26
+          literal 10 : int @test/ir-goldens/fixtures/for-loops.deal:5:30-5:31
+        assign = : int @test/ir-goldens/fixtures/for-loops.deal:5:34-5:42
+          [boundary: assignment]
+          ident i : int @test/ir-goldens/fixtures/for-loops.deal:5:34-5:34
+          binary + : int @test/ir-goldens/fixtures/for-loops.deal:5:38-5:42
+            ident i : int @test/ir-goldens/fixtures/for-loops.deal:5:38-5:38
+            literal 1 : int @test/ir-goldens/fixtures/for-loops.deal:5:42-5:42
+        block @test/ir-goldens/fixtures/for-loops.deal:5:45-7:5
+          let x: int @test/ir-goldens/fixtures/for-loops.deal:6:9-7:5
+            [boundary: var-annotation]
+            ident i : int @test/ir-goldens/fixtures/for-loops.deal:6:22-6:22

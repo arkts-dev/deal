@@ -1,0 +1,16 @@
+module @test/ir-goldens/fixtures/try-catch-throw.deal:4:1-11:1
+  function main: null @test/ir-goldens/fixtures/try-catch-throw.deal:4:1-11:1
+    body
+      try @test/ir-goldens/fixtures/try-catch-throw.deal:5:5-10:1
+        block @test/ir-goldens/fixtures/try-catch-throw.deal:5:9-7:5
+          throw @test/ir-goldens/fixtures/try-catch-throw.deal:6:9-7:5
+            object : Error @test/ir-goldens/fixtures/try-catch-throw.deal:6:15-6:63
+              [boundary: class-construct]
+              literal "E001" : string @test/ir-goldens/fixtures/try-catch-throw.deal:6:23-6:28
+              literal "something went wrong" : string @test/ir-goldens/fixtures/try-catch-throw.deal:6:40-6:61
+      catch e @test/ir-goldens/fixtures/try-catch-throw.deal:7:17-9:5
+        block @test/ir-goldens/fixtures/try-catch-throw.deal:7:17-9:5
+          let msg: string @test/ir-goldens/fixtures/try-catch-throw.deal:8:9-9:5
+            [boundary: var-annotation]
+            member .message : string @test/ir-goldens/fixtures/try-catch-throw.deal:8:27-8:35
+              ident e : Error @test/ir-goldens/fixtures/try-catch-throw.deal:8:27-8:27

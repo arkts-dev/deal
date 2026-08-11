@@ -1,0 +1,9 @@
+// IR golden fixture: stdlib-calls
+// Tests calls to standard library functions.
+// Requires the test harness to register stdlib module exports.
+
+import * as S from "std/string"
+
+function main(): null {
+    let len: int = S.length("hello");
+}

@@ -1,0 +1,7 @@
+// IR golden fixture: async-functions
+// TODO(v1.1): Add async function declarations when async/await lands.
+// Currently contains a minimal valid sync function as a placeholder.
+
+function placeholder(): null {
+    return;
+}

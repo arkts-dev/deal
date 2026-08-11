@@ -1,0 +1,16 @@
+module @test/ir-goldens/fixtures/errors.deal:5:1-12:1
+  function main: null @test/ir-goldens/fixtures/errors.deal:5:1-12:1
+    body
+      try @test/ir-goldens/fixtures/errors.deal:6:5-11:1
+        block @test/ir-goldens/fixtures/errors.deal:6:9-8:5
+          throw @test/ir-goldens/fixtures/errors.deal:7:9-8:5
+            object : Error @test/ir-goldens/fixtures/errors.deal:7:15-7:53
+              [boundary: class-construct]
+              literal "E999" : string @test/ir-goldens/fixtures/errors.deal:7:23-7:28
+              literal "test error" : string @test/ir-goldens/fixtures/errors.deal:7:40-7:51
+      catch e @test/ir-goldens/fixtures/errors.deal:8:17-10:5
+        block @test/ir-goldens/fixtures/errors.deal:8:17-10:5
+          let code: string @test/ir-goldens/fixtures/errors.deal:9:9-10:5
+            [boundary: var-annotation]
+            member .code : string @test/ir-goldens/fixtures/errors.deal:9:28-9:33
+              ident e : Error @test/ir-goldens/fixtures/errors.deal:9:28-9:28

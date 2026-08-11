@@ -1,0 +1,11 @@
+// IR golden fixture: errors
+// Tests Error type construction and manipulation.
+// Exercises throw/catch with Error values.
+
+function main(): null {
+    try {
+        throw { code: "E999", message: "test error" };
+    } catch (e) {
+        let code: string = e.code;
+    }
+}

@@ -1,0 +1,11 @@
+// IR golden fixture: literals
+// Tests all literal types in the IR dump.
+
+function main(): null {
+    let a: int = 42;
+    let b: number = 3.14;
+    let c: string = "hello";
+    let d: boolean = true;
+    let e: boolean = false;
+    let f: null = null;
+}

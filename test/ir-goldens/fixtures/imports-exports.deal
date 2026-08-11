@@ -1,0 +1,9 @@
+// IR golden fixture: imports-exports
+// Tests import and export declarations with boundary annotations.
+// Imports from a helper module in the lib/ subdirectory.
+
+import * as Lib from "./lib/modules-helper"
+
+export function greet(): string {
+    return "Hello";
+}

@@ -1,0 +1,24 @@
+module @test/ir-goldens/fixtures/functions.deal:5:1-16:1
+  function add: int @test/ir-goldens/fixtures/functions.deal:5:1-9:8
+    param a: int @test/ir-goldens/fixtures/functions.deal:5:14-5:20
+      [boundary: param-entry]
+    param b: int @test/ir-goldens/fixtures/functions.deal:5:22-5:28
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/functions.deal:6:5-7:1
+        [boundary: return]
+        binary + : int @test/ir-goldens/fixtures/functions.deal:6:12-6:16
+          ident a : int @test/ir-goldens/fixtures/functions.deal:6:12-6:12
+          ident b : int @test/ir-goldens/fixtures/functions.deal:6:16-6:16
+  function greet: string @test/ir-goldens/fixtures/functions.deal:9:1-13:8
+    param name: string @test/ir-goldens/fixtures/functions.deal:9:16-9:28
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/functions.deal:10:5-11:1
+        [boundary: return]
+        binary + : string @test/ir-goldens/fixtures/functions.deal:10:12-10:27
+          literal "Hello, " : string @test/ir-goldens/fixtures/functions.deal:10:12-10:20
+          ident name : string @test/ir-goldens/fixtures/functions.deal:10:24-10:27
+  function noop: null @test/ir-goldens/fixtures/functions.deal:13:1-16:1
+    body
+      return @test/ir-goldens/fixtures/functions.deal:14:5-15:1

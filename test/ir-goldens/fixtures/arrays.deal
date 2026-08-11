@@ -1,0 +1,9 @@
+// IR golden fixture: arrays
+// Tests array literal expressions and index access.
+
+function main(): null {
+    let a: int[] = [1, 2, 3, 4, 5];
+    let x: int = a[0];
+    let y: int = a[2];
+    let empty: int[] = [];
+}

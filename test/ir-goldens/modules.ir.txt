@@ -1,0 +1,24 @@
+module @test/ir-goldens/fixtures/modules.deal:4:1-14:1
+  import * as Lib from "./lib/modules-helper" @test/ir-goldens/fixtures/modules.deal:4:1-6:8
+    [boundary: import]
+  function compute: int @test/ir-goldens/fixtures/modules.deal:6:1-10:6
+    param x: int @test/ir-goldens/fixtures/modules.deal:6:18-6:24
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/modules.deal:7:5-8:1
+        [boundary: return]
+        binary + : int @test/ir-goldens/fixtures/modules.deal:7:12-7:16
+          ident x : int @test/ir-goldens/fixtures/modules.deal:7:12-7:12
+          literal 1 : int @test/ir-goldens/fixtures/modules.deal:7:16-7:16
+  export @test/ir-goldens/fixtures/modules.deal:10:1-14:1
+    [boundary: export]
+    function run: int @test/ir-goldens/fixtures/modules.deal:10:8-14:1
+      body
+        let base: int @test/ir-goldens/fixtures/modules.deal:11:5-12:10
+          [boundary: var-annotation]
+          literal 10 : int @test/ir-goldens/fixtures/modules.deal:11:21-11:22
+        return @test/ir-goldens/fixtures/modules.deal:12:5-13:1
+          [boundary: return]
+          call : int @test/ir-goldens/fixtures/modules.deal:12:12-12:24
+            ident compute : (int)->int @test/ir-goldens/fixtures/modules.deal:12:12-12:18
+            ident base : int @test/ir-goldens/fixtures/modules.deal:12:20-12:23
