@@ -90,6 +90,14 @@ else
 fi
 
 echo ""
+echo "=== Running Jsonable Runtime Tests ==="
+if command -v luajit &> /dev/null; then
+  luajit test_runtime_jsonable.lua
+else
+  echo "WARNING: luajit not found, skipping jsonable runtime tests"
+fi
+
+echo ""
 echo "=== Running Standard Library Tests ==="
 if command -v luajit &> /dev/null; then
   luajit test_stdlib.lua
