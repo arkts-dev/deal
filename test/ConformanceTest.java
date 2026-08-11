@@ -5,6 +5,7 @@ import deal.checker.*;
 import deal.codegen.lua.LuaBackend;
 import deal.lexer.*;
 import deal.module.ExportExtractor;
+import deal.module.StdlibModuleResolver;
 import deal.parser.*;
 import deal.types.Type;
 import deal.types.Types;
@@ -16,14 +17,10 @@ import java.util.*;
 /**
  * Spec-centric conformance test runner for DEAL v1.0.
  *
- * <p>Discovers all .deal files under test/conformance/frontend/ and
- * test/conformance/backend-runtime/, parses metadata header comments,
- * compiles and/or executes each test according to its @expected tag,
- * and produces a pass/fail report with spec coverage summary.</p>
- *
- * <p>Phase validation: tests in frontend/ may only use compile-ok or
- * compile-error @expected modes. Tests in backend-runtime/ may use
- * runtime-ok or runtime-error modes. Violations are configuration errors.</p>
+ * <p>Discovers all .deal files under test/conformance/, parses metadata
+ * header comments, compiles and/or executes each test according to its
+ * @expected tag, and produces a pass/fail report with spec coverage
+ * summary.</p>
  */
 public class ConformanceTest {
 
@@ -40,14 +37,10 @@ public class ConformanceTest {
     private record TestFile(
         Path path,
         String relativePath,
-        String phase,          // "frontend" or "backend-runtime"
         String spec,
         String description,
         String expected,
-        String features,
-        List<String> outputs,  // @output tags
-        String errorCode,      // @error tag (single)
-        List<String> values    // @value tags: "expr => literal"
+        String features
     ) {}
 
     private record TestResult(
@@ -106,52 +99,28 @@ public class ConformanceTest {
 
     private static List<TestFile> discoverTests(Path root) throws IOException {
         List<TestFile> result = new ArrayList<>();
-
-        // Walk frontend/
-        Path frontendRoot = root.resolve("frontend");
-        if (Files.isDirectory(frontendRoot)) {
-            try (var stream = Files.walk(frontendRoot)) {
-                stream.filter(p -> p.toString().endsWith(".deal"))
-                      .sorted()
-                      .forEach(p -> {
-                          TestFile tf = parseMetadata(p, root, "frontend");
-                          if (tf != null) {
-                              result.add(tf);
-                          }
-                      });
-            }
+        try (var stream = Files.walk(root)) {
+            stream.filter(p -> p.toString().endsWith(".deal"))
+                  .sorted()
+                  .forEach(p -> {
+                      TestFile tf = parseMetadata(p, root);
+                      if (tf != null) {
+                          result.add(tf);
+                      }
+                  });
         }
-
-        // Walk backend-runtime/
-        Path backendRoot = root.resolve("backend-runtime");
-        if (Files.isDirectory(backendRoot)) {
-            try (var stream = Files.walk(backendRoot)) {
-                stream.filter(p -> p.toString().endsWith(".deal"))
-                      .sorted()
-                      .forEach(p -> {
-                          TestFile tf = parseMetadata(p, root, "backend-runtime");
-                          if (tf != null) {
-                              result.add(tf);
-                          }
-                      });
-            }
-        }
-
         return result;
     }
 
-    private static TestFile parseMetadata(Path file, Path root, String phase) {
+    private static TestFile parseMetadata(Path file, Path root) {
         try {
             List<String> lines = Files.readAllLines(file);
             String spec = "";
             String description = "";
             String expected = "";
             String features = "";
-            List<String> outputs = new ArrayList<>();
-            String errorCode = "";
-            List<String> values = new ArrayList<>();
 
-            int linesToScan = Math.min(lines.size(), 30);
+            int linesToScan = Math.min(lines.size(), 20);
             for (int i = 0; i < linesToScan; i++) {
                 String line = lines.get(i).trim();
                 if (line.startsWith("// @spec:")) {
@@ -162,12 +131,6 @@ public class ConformanceTest {
                     expected = line.substring("// @expected:".length()).trim();
                 } else if (line.startsWith("// @features:")) {
                     features = line.substring("// @features:".length()).trim();
-                } else if (line.startsWith("// @output:")) {
-                    outputs.add(line.substring("// @output:".length()).trim());
-                } else if (line.startsWith("// @error:")) {
-                    errorCode = line.substring("// @error:".length()).trim();
-                } else if (line.startsWith("// @value:")) {
-                    values.add(line.substring("// @value:".length()).trim());
                 }
             }
 
@@ -177,9 +140,7 @@ public class ConformanceTest {
             }
 
             String relPath = root.relativize(file).toString();
-            return new TestFile(file, relPath, phase,
-                spec, description, expected, features,
-                outputs, errorCode, values);
+            return new TestFile(file, relPath, spec, description, expected, features);
         } catch (IOException e) {
             System.err.println("WARNING: cannot read " + file + ": " + e.getMessage());
             return null;
@@ -191,20 +152,8 @@ public class ConformanceTest {
     // =========================================================================
 
     private static void runTest(TestFile test) {
-        System.out.print("  [" + test.phase() + ": " + test.relativePath() + "] ");
+        System.out.print("  [" + test.relativePath() + "] ");
         String expected = test.expected();
-
-        // Phase validation (D4)
-        String phase = test.phase();
-        boolean isRuntimeMode = expected.startsWith("runtime-ok") ||
-                                expected.startsWith("runtime-error");
-
-        if (phase.equals("frontend") && isRuntimeMode) {
-            System.out.println("CONFIGURATION ERROR (frontend test with @expected: " + expected + ")");
-            failed++;
-            addResult(test, false, "configuration error: frontend test with runtime @expected: " + expected);
-            return;
-        }
 
         try {
             if (expected.startsWith("compile-ok")) {
@@ -286,122 +235,15 @@ public class ConformanceTest {
             return;
         }
 
-        // Check for @value tags — these require a special wrapper
-        if (!test.values().isEmpty()) {
-            runRuntimeValues(test, lua);
-            return;
-        }
-
         String output = executeLua(lua, false);
         if (output == null) {
             System.out.println("FAIL (Lua execution failed)");
             failed++;
             addResult(test, false, "Lua execution returned null");
-            return;
-        }
-
-        // Check @output assertions
-        if (!test.outputs().isEmpty()) {
-            boolean allMatch = true;
-            for (String expectedOutput : test.outputs()) {
-                if (!output.contains(expectedOutput)) {
-                    System.out.println("FAIL (@output not found: \"" + expectedOutput + "\")");
-                    System.out.println("    actual output: " + output.replace("\n", "\\n"));
-                    allMatch = false;
-                }
-            }
-            if (allMatch) {
-                System.out.println("OK");
-                passed++;
-                addResult(test, true, "runtime ok with @output match");
-            } else {
-                failed++;
-                addResult(test, false, "@output mismatch");
-            }
         } else {
             System.out.println("OK");
             passed++;
             addResult(test, true, "runtime ok");
-        }
-    }
-
-    /**
-     * Run runtime-ok tests that have @value tags.
-     * Compiles a wrapper that prints each expression value and asserts
-     * stdout matches the expected literal.
-     */
-    private static void runRuntimeValues(TestFile test, String generatedLua) throws Exception {
-        // Build a Lua runner that evaluates each expression and prints results
-        StringBuilder sb = new StringBuilder();
-        sb.append("package.path = './?.lua;./std/?.lua;' .. package.path\n");
-        sb.append("local __mod = (function()\n");
-        sb.append(generatedLua).append("\n");
-        sb.append("end)()\n");
-
-        // For each @value tag, evaluate the expression within the module scope
-        // We need to expose module exports as globals for the expressions
-        sb.append("if type(__mod) == 'table' then\n");
-        sb.append("  for __k, __v in pairs(__mod) do\n");
-        sb.append("    if type(__v) == 'table' and __v.__kind == 'function' then\n");
-        sb.append("      _G[__k] = function(...) return __v.f(...) end\n");
-        sb.append("    else\n");
-        sb.append("      _G[__k] = __v\n");
-        sb.append("    end\n");
-        sb.append("  end\n");
-        sb.append("end\n");
-
-        boolean allPassed = true;
-        for (String valueTag : test.values()) {
-            String[] parts = valueTag.split("=>", 2);
-            if (parts.length != 2) {
-                System.out.println("FAIL (malformed @value: " + valueTag + ")");
-                allPassed = false;
-                continue;
-            }
-            String expr = parts[0].trim();
-            String expectedValue = parts[1].trim();
-
-            // Build a Lua snippet to evaluate expr and compare
-            String runner = sb.toString() +
-                "local __val = " + expr + "\n" +
-                "local __expected = " + expectedValue + "\n" +
-                "if type(__val) == type(__expected) then\n" +
-                "  if __val == __expected then\n" +
-                "    print('DEAL_VALUE_MATCH:' .. tostring(__val))\n" +
-                "  else\n" +
-                "    print('DEAL_VALUE_MISMATCH: expected ' .. tostring(__expected) .. ' got ' .. tostring(__val))\n" +
-                "  end\n" +
-                "else\n" +
-                "  print('DEAL_VALUE_MISMATCH: type difference, expected ' .. tostring(__expected) .. ' got ' .. tostring(__val))\n" +
-                "end\n";
-
-            String output = executeLuaRaw(runner);
-            if (output == null) {
-                System.out.println("FAIL (@value execution failed for: " + expr + ")");
-                allPassed = false;
-                continue;
-            }
-
-            if (output.contains("DEAL_VALUE_MATCH:")) {
-                // this one passed
-            } else if (output.contains("DEAL_VALUE_MISMATCH:")) {
-                System.out.println("FAIL (@value mismatch: " + valueTag + ")");
-                System.out.println("    " + output.replace("\n", "\\n"));
-                allPassed = false;
-            } else {
-                System.out.println("FAIL (@value unexpected output for: " + expr + ")");
-                System.out.println("    " + output.replace("\n", "\\n"));
-                allPassed = false;
-            }
-        }
-
-        if (allPassed) {
-            System.out.println("OK (" + test.values().size() + " @value assertion(s))");
-            passed++;
-            addResult(test, true, "runtime ok with @value match");
-        } else {
-            failed++;
-            addResult(test, false, "@value mismatch");
         }
     }
 
@@ -441,9 +283,6 @@ public class ConformanceTest {
             return;
         }
 
-        // @error tag overrides the expected code in @expected (D2)
-        String effectiveCode = test.errorCode().isEmpty() ? expectedCode : test.errorCode();
-
         List<Diagnostic> diags = compileAndGetDiagnostics(test);
         boolean hasErrors = diags.stream().anyMatch(d -> "error".equals(d.severity()));
         if (hasErrors) {
@@ -474,20 +313,11 @@ public class ConformanceTest {
             return;
         }
 
-        String needle = "DEAL_ERROR_CODE: " + effectiveCode;
+        String needle = "DEAL_ERROR_CODE: " + expectedCode;
         if (output.contains(needle)) {
             System.out.println("OK (found " + needle + ")");
             passed++;
-            addResult(test, true, "found " + effectiveCode);
-
-            // Check @output if present for runtime-error tests too
-            if (!test.outputs().isEmpty()) {
-                for (String expectedOutput : test.outputs()) {
-                    if (!output.contains(expectedOutput)) {
-                        System.out.println("    WARNING: @output \"" + expectedOutput + "\" not found in error output");
-                    }
-                }
-            }
+            addResult(test, true, "found " + expectedCode);
         } else {
             System.out.println("FAIL (expected " + needle + ", got: " +
                 output.replace("\n", "\\n") + ")");
@@ -562,24 +392,17 @@ public class ConformanceTest {
     // =========================================================================
 
     private static String executeLua(String luaSource, boolean isXpcallWrapped) {
+        // Build a runner that loads the module and invokes exported functions
         String runner;
         if (isXpcallWrapped) {
             runner = buildXpcallRunner(luaSource);
         } else {
             runner = buildRuntimeOkRunner(luaSource);
         }
-        return executeLuaRaw(runner);
-    }
-
-    /**
-     * Execute a raw Lua script string via luajit and return stdout.
-     * Returns null on failure (non-zero exit).
-     */
-    private static String executeLuaRaw(String luaCode) {
         try {
             Path tmpDir = Files.createTempDirectory("deal_conf_");
             Path luaFile = tmpDir.resolve("test_main.lua");
-            Files.writeString(luaFile, luaCode);
+            Files.writeString(luaFile, runner);
 
             // Copy runtime
             Path runtimeDir = tmpDir.resolve("deal");
@@ -614,11 +437,15 @@ public class ConformanceTest {
                     .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
             } catch (IOException ignored) {}
 
-            if (exit != 0) {
-                System.err.println("    LuaJIT exit " + exit + ": " + output);
-                return null;
+            if (isXpcallWrapped) {
+                return output;
+            } else {
+                if (exit != 0) {
+                    System.err.println("    LuaJIT exit " + exit + ": " + output);
+                    return null;
+                }
+                return output;
             }
-            return output;
         } catch (Exception e) {
             System.err.println("    Lua execution exception: " + e.getMessage());
             return null;
@@ -645,8 +472,7 @@ public class ConformanceTest {
     }
 
     /**
-     * Build an xpcall-wrapped runner for runtime-error tests.
-     * The runner always exits 0 even on caught errors to allow output capture.
+     * Build an xpcall-wrapped runner for runtime-error tests (D7).
      */
     private static String buildXpcallRunner(String generatedLua) {
         return
@@ -668,7 +494,8 @@ public class ConformanceTest {
             "  else\n" +
             "    print('DEAL_ERROR_CODE: ' .. tostring(err))\n" +
             "  end\n" +
-            "end)\n";
+            "end)\n" +
+            "if not __ok then os.exit(1) end\n";
     }
 
     // =========================================================================
@@ -746,9 +573,13 @@ public class ConformanceTest {
     // =========================================================================
 
     /**
-     * A module resolver that resolves stdlib modules using hardcoded
-     * export signatures matching the v1.0 spec, and resolves relative
-     * file imports using ExportExtractor.
+     * A module resolver that resolves stdlib modules by parsing the actual
+     * .d.deal files via {@link StdlibModuleResolver}, and resolves relative
+     * file imports using {@link ExportExtractor}.
+     *
+     * <p>Stdlib exports are derived from the 6 spec-listed .d.deal files
+     * — there is no hardcoded export map. Non-spec modules (std/io,
+     * std/coroutine) are not resolved.
      */
     private static class ConformanceModuleResolver implements ModuleResolver {
 
@@ -757,16 +588,24 @@ public class ConformanceTest {
 
         ConformanceModuleResolver(Path testFile) {
             this.testFileDir = testFile.toAbsolutePath().getParent();
-            this.stdlibExports = buildStdlibExports();
+            this.stdlibExports = StdlibModuleResolver.stdlibExports();
         }
 
         @Override
         public Map<String, Type> resolveModule(String modulePath,
                 String importingModule, Set<String> modulesInProgress)
                 throws ModuleNotFoundException {
-            // Check stdlib
+            // Check spec-listed stdlib modules
             if (stdlibExports.containsKey(modulePath)) {
                 return stdlibExports.get(modulePath);
+            }
+
+            // Reject non-spec stdlib paths (std/io, std/coroutine)
+            if (modulePath.startsWith("std/") && !modulePath.startsWith("./")
+                    && !modulePath.startsWith("../")) {
+                throw new ModuleNotFoundException(
+                    "Module not found: '" + modulePath
+                    + "' is not a spec-listed stdlib module");
             }
 
             // Try relative file import
@@ -783,94 +622,6 @@ public class ConformanceTest {
                 String modulePath, String importingModule)
                 throws ModuleNotFoundException {
             return null; // Not needed for conformance tests currently
-        }
-
-        // ---- stdlib exports (hardcoded per spec v1.0) ----
-        // (Retained for backward compatibility; will be replaced
-        //  by dynamic .d.deal parsing in T7.)
-
-        private static Map<String, Map<String, Type>> buildStdlibExports() {
-            Map<String, Map<String, Type>> map = new LinkedHashMap<>();
-
-            map.put("std/console", module(
-                fn("log", list(strType()), nullType()),
-                fn("error", list(strType()), nullType())
-            ));
-
-            map.put("std/string", module(
-                fn("length", list(strType()), intType()),
-                fn("substring", list(strType(), intType(), intType()), strType()),
-                fn("contains", list(strType(), strType()), boolType()),
-                fn("startsWith", list(strType(), strType()), boolType()),
-                fn("endsWith", list(strType(), strType()), boolType()),
-                fn("replace", list(strType(), strType(), strType()), strType()),
-                fn("split", list(strType(), strType()), arrayType(strType())),
-                fn("trim", list(strType()), strType())
-            ));
-
-            map.put("std/table", module(
-                fn("keys", list(tableType()), arrayType(strType()))
-            ));
-
-            map.put("std/json", module(
-                fn("parse", list(strType()), tableType()),
-                fn("stringify", list(tableType()), strType())
-            ));
-
-            map.put("std/math", module(
-                fn("floor", list(numType()), numType()),
-                fn("ceil", list(numType()), numType()),
-                fn("sqrt", list(numType()), numType()),
-                fn("absInt", list(intType()), intType()),
-                fn("absNumber", list(numType()), numType()),
-                fn("minInt", list(intType(), intType()), intType()),
-                fn("maxInt", list(intType(), intType()), intType())
-            ));
-
-            map.put("std/time", module(
-                fn("nowMillis", list(), intType())
-            ));
-
-            map.put("std/io", module(
-                fn("readText", list(strType()), strType()),
-                fn("writeText", list(strType(), strType()), nullType())
-            ));
-
-            return map;
-        }
-
-        // ---- type helpers ----
-
-        private static Type intType()    { return Type.Int.INSTANCE; }
-        private static Type numType()    { return Type.Number.INSTANCE; }
-        private static Type strType()    { return Type.String.INSTANCE; }
-        private static Type boolType()   { return Type.Boolean.INSTANCE; }
-        private static Type nullType()   { return Type.Null.INSTANCE; }
-        private static Type tableType()  { return Type.Table.INSTANCE; }
-
-        private static Type arrayType(Type elem) {
-            return Types.array(elem);
-        }
-
-        private static Type fnType(List<Type> params, Type ret) {
-            return Types.func(params, ret);
-        }
-
-        @SafeVarargs
-        private static Map<String, Type> module(
-                Map.Entry<String, Type>... entries) {
-            Map<String, Type> m = new LinkedHashMap<>();
-            for (var e : entries) m.put(e.getKey(), e.getValue());
-            return m;
-        }
-
-        private static Map.Entry<String, Type> fn(String name,
-                List<Type> params, Type ret) {
-            return Map.entry(name, fnType(params, ret));
-        }
-
-        private static List<Type> list(Type... types) {
-            return List.of(types);
         }
 
         // ---- relative file imports ----

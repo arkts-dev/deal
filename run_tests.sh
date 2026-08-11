@@ -73,6 +73,33 @@ else
 fi
 
 echo ""
+echo "=== Compiling and Running Stdlib Contract Tests ==="
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java deal/ir/*.java deal/module/*.java deal/Main.java test/StubModuleResolver.java test/StdlibContractTest.java
+java -ea -cp build deal.test.StdlibContractTest
+
+echo ""
+echo "=== Stdlib Golden IR Check ==="
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/ir/*.java deal/module/*.java test/GenerateStdlibGoldenIr.java
+GOLDEN_FILE="test/goldens/stdlib-declarations.ir.txt"
+TEMP_FILE="/tmp/deal-stdlib-ir-$$.txt"
+java -ea -cp build deal.test.GenerateStdlibGoldenIr "$TEMP_FILE" 2>/dev/null
+if [ "${DEAL_UPDATE_GOLDENS}" = "true" ]; then
+  cp "$TEMP_FILE" "$GOLDEN_FILE"
+  echo "  Golden IR file updated"
+else
+  if diff -q "$GOLDEN_FILE" "$TEMP_FILE" > /dev/null 2>&1; then
+    echo "  Golden IR file is current"
+  else
+    echo "  ERROR: Golden IR file differs from generated output!"
+    echo "  Run 'DEAL_UPDATE_GOLDENS=true ./run_tests.sh' to update."
+    diff "$GOLDEN_FILE" "$TEMP_FILE" || true
+    rm -f "$TEMP_FILE"
+    exit 1
+  fi
+fi
+rm -f "$TEMP_FILE"
+
+echo ""
 echo "=== Compiling and Running Conformance Tests ==="
 javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java deal/ir/*.java deal/module/*.java deal/Main.java test/StubModuleResolver.java test/ConformanceTest.java
 java -ea -cp build deal.test.ConformanceTest test/conformance/
