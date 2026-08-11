@@ -248,7 +248,7 @@ public class LuaBackendTest {
         testThrowDefaultFields();
         testArityExtension();
         testReturnStatement();
-        testReturnVoid();
+        testReturnNull();
         testModuleExports();
         testBreakStatement();
         testBreakInsideTry();
@@ -920,13 +920,13 @@ public class LuaBackendTest {
     }
 
     // =========================================================================
-    // Test: Return without expression (void)
+    // Test: Return without expression (null return type)
     // =========================================================================
 
-    static void testReturnVoid() {
-        System.out.println("-- Return Void --");
+    static void testReturnNull() {
+        System.out.println("-- Return Null --");
         CompileOutput out = compile("function f(): null { return; }");
-        assertNoErrors(out, "return void");
+        assertNoErrors(out, "return null");
         assertContains(out.lua, "return", "bare return");
     }
 

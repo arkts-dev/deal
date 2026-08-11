@@ -1366,8 +1366,7 @@ public final class TypeChecker {
 
     /**
      * Returns a human-readable name for a type for use in diagnostic messages.
-     * Distinguishes {@code void} from {@code null}, and returns {@code "<error>"}
-     * for the internal error sentinel.
+     * Returns {@code "<error>"} for the internal error sentinel.
      */
     static String typeName(Type t) {
         if (t == null) return "null";

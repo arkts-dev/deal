@@ -97,9 +97,8 @@ public final class IrDumper implements Visitor<String> {
      * Converts an internal {@link Type} to its spec-format
      * {@code RuntimeTypeDescriptor} string.
      *
-     * <p>When {@link Type.Func} gains an {@code isAsync} field (ISSUE-0017),
-     * the async prefix will be emitted automatically via the reflective
-     * {@link #funcIsAsync(Type.Func)} check.</p>
+     * <p>When {@link Type.Func#isAsync()} is {@code true},
+     * the async prefix is emitted automatically.</p>
      */
     private String specTypeDescriptor(Type t) {
         if (t == null) return "null";
@@ -122,7 +121,7 @@ public final class IrDumper implements Visitor<String> {
             }
             case Type.Func f -> {
                 StringBuilder sb = new StringBuilder();
-                // Async prefix: use reflective check until Type.Func gains isAsync (ISSUE-0017)
+                // Async prefix
                 if (f.isAsync()) {
                     sb.append("async");
                 }
@@ -359,7 +358,7 @@ public final class IrDumper implements Visitor<String> {
         Type savedReturnType = this.currentReturnType;
         boolean savedAsync = this.currentFunctionIsAsync;
 
-        // Check if this function is async via reflection (ISSUE-0017 will add isAsync field)
+        // Check if this function is async
         boolean isAsync = node.isAsync();
         this.currentFunctionIsAsync = isAsync;
 
@@ -400,10 +399,8 @@ public final class IrDumper implements Visitor<String> {
     }
 
     /**
-     * Reflective check for {@code FunctionDeclaration.isAsync()}.
-     * Returns {@code false} when the method is not yet available (pre-ISSUE-0017).
-     * Once ISSUE-0017 adds {@code isAsync} to {@code FunctionDeclaration},
-     * this method will transparently start returning the actual value.
+     * Returns {@code node.isAsync()}, delegating directly to
+     * {@link FunctionDeclaration#isAsync()}.
      */
     private static boolean funcDeclIsAsync(FunctionDeclaration node) {
         return node.isAsync();
