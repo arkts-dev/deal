@@ -142,10 +142,7 @@ public final class IrDumper implements Visitor<String> {
     }
 
     /**
-     * Reflective check for {@code Type.Func.isAsync()}.
-     * Returns {@code false} when the method is not yet available (pre-ISSUE-0017).
-     * Once ISSUE-0017 adds {@code isAsync} to {@code Type.Func}, this method
-     * will transparently start returning the actual value.
+     * Returns {@code f.isAsync()}, delegating directly to {@link Type.Func#isAsync()}.
      */
     private static boolean funcIsAsync(Type.Func f) {
         return f.isAsync();

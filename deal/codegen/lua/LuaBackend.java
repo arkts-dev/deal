@@ -686,7 +686,6 @@ public final class LuaBackend implements Visitor<Void> {
         } else {
             Type checkType = targetType != null ? targetType : exprType;
             if (checkType != null && !(checkType instanceof Type.Error)
-                && !(checkType instanceof Type.Null)
                 && !(checkType instanceof Type.Null)) {
                 String checked = emitCheckExpr(initLua, checkType, span);
                 emitLine("local " + name + " = " + checked);
@@ -704,7 +703,6 @@ public final class LuaBackend implements Visitor<Void> {
             String checkedExpr;
             if (currentReturnType != null
                 && !(currentReturnType instanceof Type.Error)
-                && !(currentReturnType instanceof Type.Null)
                 && !(currentReturnType instanceof Type.Null)) {
                 checkedExpr = emitCheckExpr(exprLua, currentReturnType,
                     node.expr().get().span());

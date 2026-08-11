@@ -199,8 +199,10 @@ public final class NameResolver {
         }
         root.define(name, new Symbol.ClassSymbol(name, cd.fields(), modulePath));
 
-        // F9: Check class field default values against declared types
+        // Check for $ in field names (E2008) and default value type mismatches
         for (ClassField cf : cd.fields()) {
+            checkNoDollar(cf.name(), cf.span());
+
             cf.defaultExpr().ifPresent(defaultExpr -> {
                 Type fieldType = resolveTypeNode(cf.type());
                 if (fieldType == Type.Error.INSTANCE) return;
@@ -457,6 +459,11 @@ public final class NameResolver {
         if (name.equals("Error")) {
             error(DiagnosticCode.E4006, "Cannot declare class 'Error': 'Error' is a built-in type", cd.span());
             return;
+        }
+
+        // Check for $ in class field names (E2008)
+        for (ClassField cf : cd.fields()) {
+            checkNoDollar(cf.name(), cf.span());
         }
 
         if (!currentScope.containsLocally(name)) {

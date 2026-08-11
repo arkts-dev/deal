@@ -1068,6 +1068,18 @@ public final class CheckerTest {
             "function f() { class Nested$Class { } }"
         );
         assertError(out, "E2008", "dollar in nested class name produces E2008");
+
+        // Test 7: dollar in class field name (module-level class)
+        out = checkProgram(
+            "class Foo { bar$baz: int }"
+        );
+        assertError(out, "E2008", "dollar in class field name produces E2008");
+
+        // Test 8: dollar in class field name (nested class)
+        out = checkProgram(
+            "function f() { class Foo { bar$baz: int } }"
+        );
+        assertError(out, "E2008", "dollar in nested class field name produces E2008");
     }
 
 
