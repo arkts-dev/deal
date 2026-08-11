@@ -179,6 +179,9 @@ public enum DiagnosticCode {
     /** Invalid has() argument. */
     E4005(Phase.FRONTEND, "Invalid has() argument"),
 
+    /** Cannot declare class 'Error': it is a built-in type. */
+    E4006(Phase.FRONTEND, "Cannot declare class Error"),
+
     // =========================================================================
     // E5xxx — function signature and call validation (FRONTEND)
     // =========================================================================
@@ -202,7 +205,7 @@ public enum DiagnosticCode {
     E6001(Phase.BACKEND_LOWERING, "Continue outside loop"),
     /** Historical code — no longer emitted (try/break/continue, ISSUE-0011). */
     E6002(Phase.BACKEND_LOWERING, "Cannot break/continue across try boundary"),
-    /** Import of std/coroutine is not allowed. */
+    /** Retired — import of std/coroutine is no longer a special case (ISSUE-0040). */
     E6003(Phase.BACKEND_LOWERING, "Import of std/coroutine is not allowed"),
 
     // =========================================================================

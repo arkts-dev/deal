@@ -43,7 +43,7 @@ public class ModuleSystemTest {
 
         writeFile("src/sci_console.deal", """
             import * as console from "std/console"
-            export function test(): void { console.log("hello"); }
+            export function test(): null { console.log("hello"); }
             """);
 
         Path entryFile = tmpDir.resolve("src/sci_console.deal").toAbsolutePath();

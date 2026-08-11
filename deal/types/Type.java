@@ -5,20 +5,18 @@ import java.util.Optional;
 
 /**
  * Sealed hierarchy for internal type representation used during type checking.
- * All 12 canonical forms are covered.
+ * All canonical forms are covered.
  *
  * <p>Type equality is structural identity for primitives/arrays/nullables,
  * nominal for classes, and exact match for functions (with arity extension).</p>
  */
 public sealed interface Type
     permits Type.Null,
-           Type.Void,
            Type.Boolean,
            Type.Int,
            Type.Number,
            Type.String,
            Type.Table,
-           Type.Coroutine,
            Type.Error,
            Type.Array,
            Type.Nullable,
@@ -30,18 +28,11 @@ public sealed interface Type
     /** The {@code null} literal type. */
     enum Null implements Type { INSTANCE }
 
-    /**
-     * The {@code void} return type.  Behaves like {@code Null} for
-     * assignability but displays as {@code "void"} in diagnostics.
-     */
-    enum Void implements Type { INSTANCE }
-
     enum Boolean implements Type { INSTANCE }
     enum Int implements Type { INSTANCE }
     enum Number implements Type { INSTANCE }
     enum String implements Type { INSTANCE }
     enum Table implements Type { INSTANCE }
-    enum Coroutine implements Type { INSTANCE }
 
     /**
      * Internal error sentinel returned when type checking fails on a
@@ -66,7 +57,6 @@ public sealed interface Type
      * <ul>
      *   <li>inner != Null.INSTANCE</li>
      *   <li>inner is not instanceof Nullable</li>
-     *   <li>inner is not instanceof Void</li>
      * </ul>
      */
     record Nullable(Type inner) implements Type {
@@ -74,8 +64,6 @@ public sealed interface Type
             if (inner == null) throw new IllegalArgumentException("inner must not be null");
             if (inner instanceof Null) throw new IllegalArgumentException(
                 "Nullable inner must not be null; use Null.INSTANCE directly");
-            if (inner instanceof Void) throw new IllegalArgumentException(
-                "Nullable inner must not be void; use Void.INSTANCE directly");
             if (inner instanceof Nullable) throw new IllegalArgumentException(
                 "Nullable inner must not be another Nullable; flatten at construction");
         }

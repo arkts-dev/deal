@@ -406,13 +406,11 @@ public final class LuaBackend implements Visitor<Void> {
         if (t == null) return "null";
         return switch (t) {
             case Type.Null ignored -> "null";
-            case Type.Void ignored -> "void";
             case Type.Boolean ignored -> "boolean";
             case Type.Int ignored -> "int";
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
-            case Type.Coroutine ignored -> "coroutine";
             case Type.Error ignored -> "Error";
             case Type.Array arr -> typeDescriptor(arr.element()) + "[]";
             case Type.Nullable n -> typeDescriptor(n.inner()) + "|null";
@@ -467,8 +465,6 @@ public final class LuaBackend implements Visitor<Void> {
                 "__rt.check_string(" + valueExpr + ", " + spanParam + ")";
             case Type.Table ignored ->
                 "__rt.check_table(" + valueExpr + ", " + spanParam + ")";
-            case Type.Coroutine ignored ->
-                "__rt.check_coroutine(" + valueExpr + ", " + spanParam + ")";
             case Type.Array arr ->
                 "__rt.check_array(\"" + typeDescriptor(type) + "\", "
                     + valueExpr + ", " + spanParam + ")";
@@ -494,7 +490,6 @@ public final class LuaBackend implements Visitor<Void> {
             case Type.Number ignored -> "__rt.check_number";
             case Type.String ignored -> "__rt.check_string";
             case Type.Table ignored -> "__rt.check_table";
-            case Type.Coroutine ignored -> "__rt.check_coroutine";
             default -> null;
         };
     }
@@ -629,7 +624,7 @@ public final class LuaBackend implements Visitor<Void> {
         for (Parameter param : node.params()) {
             Type paramType = resolveTypeNode(param.type());
             if (paramType != null && !(paramType instanceof Type.Error)
-                && !(paramType instanceof Type.Void)) {
+                && !(paramType instanceof Type.Null)) {
                 String checkFn = checkFunctionFor(paramType);
                 Span paramSpan = param.type().span();
                 if (checkFn != null) {
@@ -691,7 +686,6 @@ public final class LuaBackend implements Visitor<Void> {
         } else {
             Type checkType = targetType != null ? targetType : exprType;
             if (checkType != null && !(checkType instanceof Type.Error)
-                && !(checkType instanceof Type.Void)
                 && !(checkType instanceof Type.Null)) {
                 String checked = emitCheckExpr(initLua, checkType, span);
                 emitLine("local " + name + " = " + checked);
@@ -709,7 +703,6 @@ public final class LuaBackend implements Visitor<Void> {
             String checkedExpr;
             if (currentReturnType != null
                 && !(currentReturnType instanceof Type.Error)
-                && !(currentReturnType instanceof Type.Void)
                 && !(currentReturnType instanceof Type.Null)) {
                 checkedExpr = emitCheckExpr(exprLua, currentReturnType,
                     node.expr().get().span());
@@ -1536,7 +1529,7 @@ public final class LuaBackend implements Visitor<Void> {
             for (Parameter param : fe.params()) {
                 Type paramType = resolveTypeNode(param.type());
                 if (paramType != null && !(paramType instanceof Type.Error)
-                    && !(paramType instanceof Type.Void)) {
+                    && !(paramType instanceof Type.Null)) {
                     String checkFn = checkFunctionFor(paramType);
                     Span paramSpan = param.type().span();
                     if (checkFn != null) {
@@ -1753,13 +1746,11 @@ public final class LuaBackend implements Visitor<Void> {
         return switch (typeNode) {
             case NamedType nt -> switch (nt.name()) {
                 case "null" -> Type.Null.INSTANCE;
-                case "void" -> Type.Void.INSTANCE;
                 case "boolean" -> Type.Boolean.INSTANCE;
                 case "int" -> Type.Int.INSTANCE;
                 case "number" -> Type.Number.INSTANCE;
                 case "string" -> Type.String.INSTANCE;
                 case "table" -> Type.Table.INSTANCE;
-                case "coroutine" -> Type.Coroutine.INSTANCE;
                 case "Error" -> Types.classType("Error", "");
                 default -> {
                     Symbol sym = symbols.resolve(nt.name());

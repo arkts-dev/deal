@@ -180,13 +180,11 @@ public final class ExportExtractor {
                                      Map<String, List<ClassField>> classMap) {
         return switch (name) {
             case "null" -> Type.Null.INSTANCE;
-            case "void" -> Type.Void.INSTANCE;
             case "boolean" -> Type.Boolean.INSTANCE;
             case "int" -> Type.Int.INSTANCE;
             case "number" -> Type.Number.INSTANCE;
             case "string" -> Type.String.INSTANCE;
             case "table" -> Type.Table.INSTANCE;
-            case "coroutine" -> Type.Coroutine.INSTANCE;
             case "Error" -> Types.classType("Error", "");
             default -> {
                 if (classMap.containsKey(name)) {

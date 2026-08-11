@@ -216,7 +216,7 @@ public final class TypeChecker {
 
         if (funcType != null) {
             Type retType = funcType.returnType();
-            if (!Types.isNullOrVoid(retType)
+            if (!Types.isNull(retType)
                     && !ReturnAnalysis.definitelyReturns(fd.body())) {
                 error(DiagnosticCode.E5002,
                     "Function '" + fd.name() + "' must return a value on all paths",
@@ -251,7 +251,7 @@ public final class TypeChecker {
                     rs.expr().get().span());
             }
         } else {
-            if (currentReturnType != null && !Types.isNullOrVoid(currentReturnType)) {
+            if (currentReturnType != null && !Types.isNull(currentReturnType)) {
                 error(DiagnosticCode.E5003,
                     "Return type mismatch: expected " + typeName(currentReturnType)
                     + ", got null",
@@ -901,7 +901,7 @@ public final class TypeChecker {
             if (assignmentTargetMode) {
                 return Type.Table.INSTANCE;
             }
-            if (expectedType != null && !Types.isNullOrVoid(expectedType)) {
+            if (expectedType != null && !Types.isNull(expectedType)) {
                 return expectedType;
             }
             error(DiagnosticCode.E3003,
@@ -1104,7 +1104,7 @@ public final class TypeChecker {
         // so that the Block's scope is entered.
         walkStatement(fe.body());
 
-        if (!Types.isNullOrVoid(returnType)
+        if (!Types.isNull(returnType)
                 && !ReturnAnalysis.definitelyReturns(fe.body())) {
             error(DiagnosticCode.E5002,
                 "Function expression must return a value on all paths", fe.span());
@@ -1242,17 +1242,11 @@ public final class TypeChecker {
             if (Types.equals(ne.inner(), actual)) return true;
             if (actual instanceof Type.Null) return true;
         }
-        // Void and Null are interchangeable for assignment purposes
-        // (e.g., assigning null to void return is OK, void return type
-        //  matches when expression is null)
-        if (expected instanceof Type.Void && actual instanceof Type.Null) return true;
-        if (expected instanceof Type.Null && actual instanceof Type.Void) return true;
         if (expected instanceof Type.Func ef && actual instanceof Type.Func af) {
             return Types.isAssignable(af, ef);
         }
         return false;
     }
-
     /**
      * F10: Detects the reverse arity case where the actual function has more
      * parameters than the target, but the overlapping params and return type
@@ -1372,20 +1366,17 @@ public final class TypeChecker {
 
     /**
      * Returns a human-readable name for a type for use in diagnostic messages.
-     * Distinguishes {@code void} from {@code null}, and returns {@code "<error>"}
-     * for the internal error sentinel.
+     * Returns {@code "<error>"} for the internal error sentinel.
      */
     static String typeName(Type t) {
         if (t == null) return "null";
         return switch (t) {
             case Type.Null ignored -> "null";
-            case Type.Void ignored -> "void";
             case Type.Boolean ignored -> "boolean";
             case Type.Int ignored -> "int";
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
-            case Type.Coroutine ignored -> "coroutine";
             case Type.Error ignored -> "<error>";
             case Type.Array a -> typeName(a.element()) + "[]";
             case Type.Nullable n -> typeName(n.inner()) + " | null";

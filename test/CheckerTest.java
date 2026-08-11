@@ -289,14 +289,19 @@ public class CheckerTest {
         // F3: Class field default null for nullable fields
         testClassFieldDefaultNull();
 
-        // F6: Void return type message uses "void" not "null"
-        testVoidReturnTypeMessage();
+        // ISSUE-0040: void type name produces E3004
+        testVoidTypeNameProducesE3004();
 
         // Runtime intrinsics: int() and number()
         testIntrinsicIntRejectsIntLiteral();
         testIntrinsicNumberRejectsBoolean();
-        // ISSUE-0008: E6003 coroutine import rejection
-        testE6003_coroutineImport();
+        // ISSUE-0040: coroutine import now fails with E2003
+        testCoroutineImportRejected();
+
+        // ISSUE-0040: Error class prohibition (E4006)
+        testE4006_classErrorProhibition();
+        // ISSUE-0040: Dollar prohibition (E2008)
+        testE2008_dollarInIdentifier();
 
         // v1.1: For-of scoping and type checking (ISSUE-0034)
         testForOfScoping_loopVarInBody();
@@ -796,7 +801,7 @@ public class CheckerTest {
     static void testFunctionCallContextualTyping() {
         System.out.println("-- Function Call Contextual Typing --");
         CheckerOutput out = checkProgram(
-            "function f(s: string): void {}\n" +
+            "function f(s: string): null {}\n" +
             "let t: table = { value: \"hello\" };\n" +
             "f(t.value);\n"
         );
@@ -848,7 +853,7 @@ public class CheckerTest {
     static void testNestedFunctionReturnType() {
         System.out.println("-- F2: Nested function return type --");
         CheckerOutput out = checkProgram(
-            "function outer(): void {\n" +
+            "function outer(): null {\n" +
             "  function inner(): int { return 42; }\n" +
             "  return;\n" +
             "}"
@@ -1003,7 +1008,7 @@ public class CheckerTest {
     static void testNestedClass() {
         System.out.println("-- Nested Class --");
         CheckerOutput out = checkProgram(
-            "function make(): void { class Inner { x: int; } let i: Inner = { x: 1 }; }"
+            "function make(): null { class Inner { x: int; } let i: Inner = { x: 1 }; }"
         );
         assertNoErrors(out, "nested class inside function");
     }
@@ -1032,7 +1037,7 @@ public class CheckerTest {
     static void testThrowIntError() {
         System.out.println("-- Throw: int → E3001 --");
         CheckerOutput out = checkProgram(
-            "function f(): void { throw 42; }"
+            "function f(): null { throw 42; }"
         );
         assertError(out, "E3001", "throw int must produce E3001");
     }
@@ -1040,7 +1045,7 @@ public class CheckerTest {
     static void testThrowStringError() {
         System.out.println("-- Throw: string → E3001 --");
         CheckerOutput out = checkProgram(
-            "function f(): void { throw \"oops\"; }"
+            "function f(): null { throw \"oops\"; }"
         );
         assertError(out, "E3001", "throw string must produce E3001");
     }
@@ -1048,7 +1053,7 @@ public class CheckerTest {
     static void testThrowMessageOnly() {
         System.out.println("-- Throw: { message: \"x\" } → OK --");
         CheckerOutput out = checkProgram(
-            "function f(): void { throw { message: \"x\" }; }"
+            "function f(): null { throw { message: \"x\" }; }"
         );
         assertNoErrors(out, "throw { message: \"x\" } must compile");
     }
@@ -1056,7 +1061,7 @@ public class CheckerTest {
     static void testThrowFullError() {
         System.out.println("-- Throw: { code: \"E001\", message: \"x\" } → OK --");
         CheckerOutput out = checkProgram(
-            "function f(): void { throw { code: \"E001\", message: \"x\" }; }"
+            "function f(): null { throw { code: \"E001\", message: \"x\" }; }"
         );
         assertNoErrors(out, "throw { code, message } must compile");
     }
@@ -1064,7 +1069,7 @@ public class CheckerTest {
     static void testThrowErrorVariable() {
         System.out.println("-- Throw: Error variable → OK --");
         CheckerOutput out = checkProgram(
-            "function f(): void {\n" +
+            "function f(): null {\n" +
             "  let e: Error = { message: \"x\" };\n" +
             "  throw e;\n" +
             "}"
@@ -1365,20 +1370,20 @@ public class CheckerTest {
     }
 
     // =========================================================================
-    // F6: Void return type displays as \"void\" not \"null\"
+    // ISSUE-0040: void type name produces E3004
     // =========================================================================
 
-    static void testVoidReturnTypeMessage() {
-        System.out.println("-- F6: Void return type message --");
+    static void testVoidTypeNameProducesE3004() {
+        System.out.println("-- ISSUE-0040: void type name produces E3004 --");
+        // void is no longer a recognized type name; produces E3004
         CheckerOutput out = checkProgram(
             "function f(): void { return 42; }"
         );
-        // Should produce E5003 with \"void\" (not \"null\")
         List<Diagnostic> diags = out.result.diagnostics();
-        boolean hasVoidMessage = diags.stream()
-            .anyMatch(d -> d.code().equals("E5003") && d.message().contains("void"));
-        check(hasVoidMessage,
-            "void return type mismatch message should contain 'void', got: " + diags);
+        boolean hasE3004 = diags.stream()
+            .anyMatch(d -> d.code().equals("E3004") && d.message().contains("void"));
+        check(hasE3004,
+            "void type name should produce E3004 'Unknown type', got: " + diags);
     }
 
     // =========================================================================
@@ -1408,34 +1413,35 @@ public class CheckerTest {
         check(hasE5001,
             "number(true) should reject boolean with E5001, got: " + diags);
     }
-    // ISSUE-0008: E6003 — coroutine import rejection
+    // =========================================================================
+    // ISSUE-0040: E6003 retired — coroutine import now fails with E2003
     // =========================================================================
 
-    static void testE6003_coroutineImport() {
-        System.out.println("-- ISSUE-0008: E6003 coroutine import rejection --");
+    static void testCoroutineImportRejected() {
+        System.out.println("-- ISSUE-0040: coroutine import produces E2003 (module not found) --");
 
-        // Test 1: import * as c from "std/coroutine" should produce E6003
+        // Test 1: import * as c from "std/coroutine" should produce E2003
         CheckerOutput out = checkProgram(
             "import * as c from \"std/coroutine\";"
         );
-        assertError(out, "E6003", "coroutine import produces E6003");
+        assertError(out, "E2003", "coroutine import produces E2003 (module not found)");
 
-        // Test 2: import alongside other code — E6003 still fires.
+        // Test 2: import alongside other code — E2003 still fires.
         out = checkProgram(
             "import * as c from \"std/coroutine\";\n" +
             "let x: int = 42;"
         );
-        assertError(out, "E6003", "coroutine import with other code still produces E6003");
+        assertError(out, "E2003", "coroutine import with other code still produces E2003");
 
-        // Test 3: use of c.resumeInt after failed import — E6003 fires first.
-        // If the import somehow succeeded (e.g., E6003 check removed),
-        // the TypeChecker would emit E2001 for the undeclared identifier 'c'.
+        // Test 3: use of c.resumeInt after failed import — E2003 fires first.
         out = checkProgram(
             "import * as c from \"std/coroutine\";\n" +
             "let x: int = c.resumeInt(null);"
         );
-        assertError(out, "E6003", "coroutine import with c.resumeInt usage produces E6003");
+        assertError(out, "E2003", "coroutine import with c.resumeInt usage produces E2003");
     }
+
+
 
 
     // =================================================================
@@ -1619,7 +1625,7 @@ public class CheckerTest {
         System.out.println("-- Template Literal: type inference (D15) --");
         // let without :string annotation should infer string
         CheckerOutput out = checkProgram(
-            "function f(name: string): void {\n" +
+            "function f(name: string): null {\n" +
             "  let msg = `Hello ${name}`;\n" +
             "  let s: string = msg;\n" +
             "}"
@@ -1638,4 +1644,87 @@ public class CheckerTest {
         );
         assertNoErrors(out, "template literal parts walked for name resolution");
     }
+
+    // =========================================================================
+    // ISSUE-0040: Error class prohibition (E4006)
+    // =========================================================================
+
+    static void testE4006_classErrorProhibition() {
+        System.out.println("-- ISSUE-0040: class Error prohibition (E4006) --");
+
+        // Test 1: module-level class Error should produce E4006
+        CheckerOutput out = checkProgram(
+            "class Error { code: string, message: string }"
+        );
+        assertError(out, "E4006", "module-level class Error produces E4006");
+
+        // Test 2: exported class Error should produce E4006
+        out = checkProgram(
+            "export class Error { code: string, message: string }"
+        );
+        assertError(out, "E4006", "exported class Error produces E4006");
+
+        // Test 3: nested class Error inside a function should produce E4006
+        out = checkProgram(
+            "function f() { class Error { code: string, message: string } }"
+        );
+        assertError(out, "E4006", "nested class Error inside function produces E4006");
+    }
+
+    // =========================================================================
+    // ISSUE-0040: Dollar prohibition (E2008)
+    // =========================================================================
+
+    static void testE2008_dollarInIdentifier() {
+        System.out.println("-- ISSUE-0040: dollar prohibition (E2008) --");
+
+        // Test 1: dollar in class name
+        CheckerOutput out = checkProgram(
+            "class Foo$Bar { }"
+        );
+        assertError(out, "E2008", "dollar in class name produces E2008");
+
+        // Test 2: dollar in function name
+        out = checkProgram(
+            "function foo$bar(): null { return null; }"
+        );
+        assertError(out, "E2008", "dollar in function name produces E2008");
+
+        // Test 3: dollar in let variable name
+        out = checkProgram(
+            "let my$var: int = 42;"
+        );
+        assertError(out, "E2008", "dollar in let variable name produces E2008");
+
+        // Test 4: dollar in parameter name
+        out = checkProgram(
+            "function f(param$name: int): null { return null; }"
+        );
+        assertError(out, "E2008", "dollar in parameter name produces E2008");
+
+        // Test 5: dollar in import alias
+        out = checkProgram(
+            "import * as mod$name from \"./lib\";"
+        );
+        assertError(out, "E2008", "dollar in import alias produces E2008");
+
+        // Test 6: dollar in nested class name
+        out = checkProgram(
+            "function f() { class Nested$Class { } }"
+        );
+        assertError(out, "E2008", "dollar in nested class name produces E2008");
+
+        // Test 7: dollar in class field name (module-level class)
+        out = checkProgram(
+            "class Foo { bar$baz: int }"
+        );
+        assertError(out, "E2008", "dollar in class field name produces E2008");
+
+        // Test 8: dollar in class field name (nested class)
+        out = checkProgram(
+            "function f() { class Foo { bar$baz: int } }"
+        );
+        assertError(out, "E2008", "dollar in nested class field name produces E2008");
+    }
+
 }

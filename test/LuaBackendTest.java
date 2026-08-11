@@ -248,7 +248,7 @@ public class LuaBackendTest {
         testThrowDefaultFields();
         testArityExtension();
         testReturnStatement();
-        testReturnVoid();
+        testReturnNull();
         testModuleExports();
         testBreakStatement();
         testBreakInsideTry();
@@ -822,7 +822,7 @@ public class LuaBackendTest {
     static void testTryCatchPreserveErrorCode() {
         System.out.println("-- Try/Catch Preserve Error Code --");
         CompileOutput out = compile(
-            "function f(): void {\n" +
+            "function f(): null {\n" +
             "  throw { code: \"E_LIMIT\", message: \"fail\" };\n" +
             "}\n" +
             "try {\n" +
@@ -920,13 +920,13 @@ public class LuaBackendTest {
     }
 
     // =========================================================================
-    // Test: Return without expression (void)
+    // Test: Return without expression (null return type)
     // =========================================================================
 
-    static void testReturnVoid() {
-        System.out.println("-- Return Void --");
+    static void testReturnNull() {
+        System.out.println("-- Return Null --");
         CompileOutput out = compile("function f(): null { return; }");
-        assertNoErrors(out, "return void");
+        assertNoErrors(out, "return null");
         assertContains(out.lua, "return", "bare return");
     }
 
@@ -1533,7 +1533,7 @@ public class LuaBackendTest {
     static void testTryBreakContinueInFunction() {
         System.out.println("-- Try Break/Continue In Function (ISSUE-0011) --");
         String source =
-            "function f(): void {\n" +
+            "function f(): null {\n" +
             "  while (true) {\n" +
             "    try {\n" +
             "      break;\n" +

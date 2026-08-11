@@ -962,8 +962,6 @@ public final class CompilationOrchestrator {
      * {@code "std/io"}), only spec-listed stdlib modules are resolved.
      * Non-spec modules like {@code std/io} and {@code std/coroutine} are
      * rejected with {@code null}, resulting in an E2003 diagnostic.
-     * Note: {@code std/coroutine} is additionally rejected with E6003
-     * by {@code NameResolver.processImport}.
      */
     private String tryResolveImportPath(String importPath, Path fromFile) {
         // Reject non-spec stdlib modules at the discovery/import-resolution level.
