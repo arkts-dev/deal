@@ -128,7 +128,7 @@ public final class LuaBackend implements Visitor<Void> {
     public static void generateToFile(ProgramNode program, CheckResult result,
                                        String sourcePath, Path outputRoot,
                                        Path outputPath) throws IOException {
-        generateToFile(program, result, sourcePath, outputRoot, outputPath, false);
+        generateToFile(program, result, sourcePath, outputRoot, outputPath, false, Map.of());
     }
 
     /**
@@ -143,14 +143,31 @@ public final class LuaBackend implements Visitor<Void> {
                                        String sourcePath, Path outputRoot,
                                        Path outputPath, boolean emitSourceMap)
                                        throws IOException {
+        generateToFile(program, result, sourcePath, outputRoot, outputPath,
+            emitSourceMap, Map.of());
+    }
+
+    /**
+     * Generate Lua source and write it to the output path, optionally producing
+     * a source map sidecar file, with import resolution mapping.
+     *
+     * @param outputRoot        the root output directory
+     * @param outputPath        the full path for this module's .lua file
+     * @param emitSourceMap     if true, a {@code .deal.map.json} sidecar is written
+     * @param importResolutions raw import path → Lua require path mapping
+     */
+    public static void generateToFile(ProgramNode program, CheckResult result,
+                                       String sourcePath, Path outputRoot,
+                                       Path outputPath, boolean emitSourceMap,
+                                       Map<String, String> importResolutions)
+                                       throws IOException {
         SourceMapGenerator smg = emitSourceMap ? new SourceMapGenerator() : null;
-        Map<String, String> emptyImports = Map.of();
         String luaSource;
         if (smg != null) {
             luaSource = generateWithSourceMap(program, result, sourcePath,
-                emptyImports, smg);
+                importResolutions, smg);
         } else {
-            luaSource = generate(program, result, sourcePath);
+            luaSource = generateWithImports(program, result, sourcePath, importResolutions);
         }
 
         Files.createDirectories(outputPath.getParent());
@@ -158,8 +175,32 @@ public final class LuaBackend implements Visitor<Void> {
 
         // Write source map sidecar
         if (smg != null && smg.hasMappings()) {
-            String mapJson = smg.toJson(sourcePath,
-                outputRoot.relativize(outputPath).toString());
+            // Normalize both source and generated paths to be project-relative.
+            // The project root is inferred as outputRoot/../.. (for a typical
+            // build/lua output dir, this yields the project root).  When that
+            // fails we fall back to keeping absolute/relative paths consistent.
+            String relSourcePath = sourcePath;
+            String relGeneratedPath = outputRoot.relativize(outputPath).toString();
+
+            try {
+                Path absOutputRoot = outputRoot.toAbsolutePath().normalize();
+                Path projectRoot = absOutputRoot.resolve("..").resolve("..").normalize();
+                Path absSource = Path.of(sourcePath).toAbsolutePath();
+
+                Path srcRel = projectRoot.relativize(absSource);
+                if (!srcRel.startsWith("..")) {
+                    relSourcePath = srcRel.toString();
+                }
+
+                Path genRel = projectRoot.relativize(outputPath.toAbsolutePath());
+                if (!genRel.startsWith("..")) {
+                    relGeneratedPath = genRel.toString();
+                }
+            } catch (IllegalArgumentException e) {
+                // Keep fallback paths if relativization fails
+            }
+
+            String mapJson = smg.toJson(relSourcePath, relGeneratedPath);
             Path mapPath = Path.of(outputPath.toString() + ".map.json");
             Files.writeString(mapPath, mapJson);
         }
@@ -180,9 +221,7 @@ public final class LuaBackend implements Visitor<Void> {
                 }
             }
         }
-    }
-
-    public List<Diagnostic> diagnostics() {
+    }    public List<Diagnostic> diagnostics() {
         return Collections.unmodifiableList(diagnostics);
     }
 

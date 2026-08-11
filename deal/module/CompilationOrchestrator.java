@@ -810,10 +810,13 @@ public final class CompilationOrchestrator {
             Files.createDirectories(outputPath.getParent());
 
             if (sourceMap) {
-                // Use generateToFile with emitSourceMap=true to produce
-                // both the .lua file and the .deal.map.json sidecar
+                // Use generateToFile with emitSourceMap=true and the resolved
+                // import map to produce both the .lua file and the .deal.map.json
+                // sidecar.  importResolutions are required so that multi-module
+                // projects compile correctly when --source-map is active.
                 LuaBackend.generateToFile(info.rawAst, info.checkResult,
-                    info.sourcePath, outputRoot, outputPath, true);
+                    info.sourcePath, outputRoot, outputPath, true,
+                    importResolutions);
             } else {
                 String luaSource = LuaBackend.generateWithImports(
                     info.rawAst, info.checkResult, info.sourcePath, importResolutions);

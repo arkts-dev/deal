@@ -361,6 +361,16 @@ public class RuntimeSourceLocationTest {
         check("test_oob.deal".equals(err.get("file")),
             "file is test_oob.deal, got: " + err.get("file"));
 
+        // The array index access is on line 4, column 12 (xs[idx])
+        if (err.containsKey("line") && !err.get("line").equals("nil")) {
+            check("4".equals(err.get("line")),
+                "OOB: error line is 4, got: " + err.get("line"));
+        }
+        if (err.containsKey("column") && !err.get("column").equals("nil")) {
+            check("12".equals(err.get("column")),
+                "OOB: error column is 12, got: " + err.get("column"));
+        }
+
         if (err.containsKey("code")) {
             System.out.println("  Error code: " + err.get("code"));
             System.out.println("  Message: " + err.get("message"));
@@ -429,14 +439,13 @@ public class RuntimeSourceLocationTest {
         check("test_multiline.deal".equals(err.get("file")),
             "multi-line: file is test_multiline.deal, got: " + err.get("file"));
 
-        // The binary expression span starts on line 3 (the division operator line)
+        // The division operator is on line 3, so the error must report
+        // line 3 exactly — not the first line of the enclosing function (line 1),
+        // not an adjacent line.  A range check is too loose; if a regression
+        // shifted the line to 4 or 5 the test would still pass spuriously.
         if (err.containsKey("line") && !err.get("line").equals("nil")) {
-            int line = Integer.parseInt(err.get("line"));
-            check(line >= 3 && line <= 5,
-                "multi-line: error line " + line + " is within expression bounds [3,5]");
-            // It should not be line 1 (the function declaration line)
-            check(line != 1,
-                "multi-line: error line is not the first line of the function");
+            check("3".equals(err.get("line")),
+                "multi-line: error line is 3 (the division operator), got: " + err.get("line"));
         }
 
         if (err.containsKey("code")) {

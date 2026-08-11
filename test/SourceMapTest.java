@@ -395,8 +395,8 @@ public class SourceMapTest {
                 knownFound++;
             }
         }
-        check(knownFound >= 3,
-            "at least 3 of the 4 known lines have mappings, got: " + knownFound);
+        check(knownFound == 4,
+            "all 4 known lines have mappings, got: " + knownFound);
 
         // ================================================================
         // Round-trip 4: Verify generated positions are monotonically
