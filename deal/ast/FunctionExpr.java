@@ -9,5 +9,6 @@ public record FunctionExpr(
     List<Parameter> params,
     Optional<Parameter> restParam,
     TypeNode returnType,
-    Block body
+    Block body,
+    boolean isAsync
 ) implements ExpressionNode {}

@@ -1014,7 +1014,7 @@ public final class TypeChecker {
         Optional<Type.Array> restType = fe.restParam()
             .map(rp -> (Type.Array) nameResolver.resolveTypeNode(rp.type()));
         Type returnType = nameResolver.resolveTypeNode(fe.returnType());
-        Type.Func funcType = new Type.Func(paramTypes, restType, returnType);
+        Type.Func funcType = new Type.Func(paramTypes, restType, returnType, fe.isAsync());
 
         // F1: Check if Pass 1 recorded a scope for this function expression.
         // If so, use it instead of creating a fresh scope — this ensures

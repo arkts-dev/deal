@@ -99,16 +99,23 @@ public sealed interface Type
      * @param paramTypes non-rest parameter types in order
      * @param restType   rest parameter type, if any (must be an Array type)
      * @param returnType return type
+     * @param isAsync    whether this function type is async
      */
     record Func(
         List<Type> paramTypes,
         Optional<Array> restType,
-        Type returnType
+        Type returnType,
+        boolean isAsync
     ) implements Type {
         public Func {
             if (paramTypes == null) throw new IllegalArgumentException("paramTypes must not be null");
             if (restType == null) throw new IllegalArgumentException("restType must not be null");
             if (returnType == null) throw new IllegalArgumentException("returnType must not be null");
+        }
+
+        /** Convenience constructor: sync function (isAsync = false). */
+        public Func(List<Type> paramTypes, Optional<Array> restType, Type returnType) {
+            this(paramTypes, restType, returnType, false);
         }
     }
 }

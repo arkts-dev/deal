@@ -424,7 +424,9 @@ public final class LuaBackend implements Visitor<Void> {
                 }
             }
             case Type.Func f -> {
-                StringBuilder sb = new StringBuilder("(");
+                StringBuilder sb = new StringBuilder();
+                if (f.isAsync()) sb.append("async");
+                sb.append("(");
                 for (int i = 0; i < f.paramTypes().size(); i++) {
                     if (i > 0) sb.append(",");
                     sb.append(typeDescriptor(f.paramTypes().get(i)));
@@ -1729,11 +1731,11 @@ public final class LuaBackend implements Visitor<Void> {
                 if (ft.rest().isPresent()) {
                     Type rest = resolveTypeNode(ft.rest().get().type());
                     if (rest instanceof Type.Array ra) {
-                        yield new Type.Func(paramTypes, Optional.of(ra), ret);
+                        yield new Type.Func(paramTypes, Optional.of(ra), ret, ft.isAsync());
                     }
                     yield Type.Error.INSTANCE;
                 }
-                yield new Type.Func(paramTypes, Optional.empty(), ret);
+                yield new Type.Func(paramTypes, Optional.empty(), ret, ft.isAsync());
             }
         };
     }

@@ -49,7 +49,7 @@ public final class Types {
             Optional<Type.Array> canonRest = f.restType()
                 .map(r -> (Type.Array) canonicalize(r));
             Type canonRet = canonicalize(f.returnType());
-            return new Type.Func(canonParams, canonRest, canonRet);
+            return new Type.Func(canonParams, canonRest, canonRet, f.isAsync());
         }
         return type;
     }
@@ -66,7 +66,8 @@ public final class Types {
      *   <li>Array: equal element types</li>
      *   <li>Nullable: equal inner types</li>
      *   <li>Class: same name AND same modulePath (nominal)</li>
-     *   <li>Function: equal paramTypes, equal restType, equal returnType</li>
+     *   <li>Function: equal paramTypes, equal restType, equal returnType,
+     *       AND equal isAsync</li>
      * </ul>
      */
     public static boolean equals(Type a, Type b) {
@@ -101,6 +102,7 @@ public final class Types {
             }
             case Type.Func fa -> {
                 Type.Func fb = (Type.Func) b;
+                if (fa.isAsync() != fb.isAsync()) yield false;
                 if (!equals(fa.returnType(), fb.returnType())) yield false;
                 if (fa.paramTypes().size() != fb.paramTypes().size()) yield false;
                 for (int i = 0; i < fa.paramTypes().size(); i++) {
@@ -133,7 +135,8 @@ public final class Types {
      * <p>Rest parameters do NOT participate in arity extension.
      * If either function has a rest parameter, only exact equality applies.</p>
      *
-     * <p>Return types must match exactly.</p>
+     * <p>Return types must match exactly.
+     * Async/sync mismatch is rejected.</p>
      *
      * @param actual the source function type (e.g., the value being assigned)
      * @param target the destination function type (e.g., the variable/parameter type)
@@ -141,6 +144,9 @@ public final class Types {
      *         under arity extension rules
      */
     public static boolean isAssignable(Type.Func actual, Type.Func target) {
+        // Async/sync mismatch — always reject
+        if (actual.isAsync() != target.isAsync()) return false;
+
         // Exact match: always assignable
         if (equals(actual, target)) return true;
 
@@ -210,6 +216,18 @@ public final class Types {
     public static Type.Func func(List<Type> paramTypes, Type.Array restType, Type returnType) {
         return (Type.Func) canonicalize(
             new Type.Func(List.copyOf(paramTypes), Optional.of(restType), returnType));
+    }
+
+    /** Make a Function type without rest param, with isAsync. */
+    public static Type.Func func(List<Type> paramTypes, Type returnType, boolean isAsync) {
+        return (Type.Func) canonicalize(
+            new Type.Func(List.copyOf(paramTypes), Optional.empty(), returnType, isAsync));
+    }
+
+    /** Make a Function type with rest param, with isAsync. */
+    public static Type.Func func(List<Type> paramTypes, Type.Array restType, Type returnType, boolean isAsync) {
+        return (Type.Func) canonicalize(
+            new Type.Func(List.copyOf(paramTypes), Optional.of(restType), returnType, isAsync));
     }
 
     // =========================================================================

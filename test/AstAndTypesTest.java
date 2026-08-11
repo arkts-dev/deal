@@ -236,7 +236,7 @@ public class AstAndTypesTest {
 
         FunctionDeclaration funcDecl = new FunctionDeclaration(span, "f",
             List.of(param), Optional.empty(),
-            new NamedType(span, "int"), emptyBlock);
+            new NamedType(span, "int"), emptyBlock, false);
         check(funcDecl.name().equals("f"), "FunctionDeclaration");
         check(funcDecl instanceof StatementNode, "FunctionDeclaration is StatementNode");
 
@@ -353,7 +353,7 @@ public class AstAndTypesTest {
         check(obj instanceof ExpressionNode, "ObjectLiteralExpr is ExpressionNode");
 
         FunctionExpr funcExpr = new FunctionExpr(span, List.of(),
-            Optional.empty(), new NamedType(span, "null"), emptyBlock);
+            Optional.empty(), new NamedType(span, "null"), emptyBlock, false);
         check(funcExpr instanceof ExpressionNode, "FunctionExpr is ExpressionNode");
 
         HasExpr has = new HasExpr(span, id, "optField");
@@ -379,7 +379,7 @@ public class AstAndTypesTest {
 
         FunctionTypeParam ftp = new FunctionTypeParam(span, "p", namedType);
         deal.ast.FunctionType funcType = new deal.ast.FunctionType(span,
-            List.of(ftp), Optional.empty(), namedType);
+            List.of(ftp), Optional.empty(), namedType, false);
         check(funcType.params().size() == 1, "FunctionType with 1 param");
         check(funcType instanceof TypeNode, "FunctionType is TypeNode");
 
