@@ -16,7 +16,7 @@ import java.util.List;
  *
  * <p>Usage:
  * <pre>{@code
- * deal compile <entry.deal> [--output <dir>] [--verbose] [--dump-ir]
+ * deal compile <entry.deal> [--output <dir>] [--verbose] [--dump-ir] [--source-map]
  * }</pre>
  *
  * <p>Options:
@@ -25,6 +25,7 @@ import java.util.List;
  *   <li>{@code --output <dir>} / {@code -o <dir>} — output directory (default: ./build/lua)</li>
  *   <li>{@code --verbose} / {@code -v} — verbose output with per-module timing</li>
  *   <li>{@code --dump-ir} — produce IR dump files at {@code <outputDir>/<module-path>.ir.txt}</li>
+ *   <li>{@code --source-map} — produce source map sidecar files ({@code .deal.map.json})</li>
  * </ul>
  */
 public final class Main {
@@ -61,6 +62,7 @@ public final class Main {
         Path outputDir = null;
         boolean verbose = false;
         boolean dumpIr = false;
+        boolean sourceMap = false;
 
         int i = 0;
         while (i < remaining.length) {
@@ -75,6 +77,7 @@ public final class Main {
                 }
                 case "--verbose", "-v" -> verbose = true;
                 case "--dump-ir" -> dumpIr = true;
+                case "--source-map" -> sourceMap = true;
                 default -> {
                     if (arg.startsWith("-")) {
                         System.err.println("deal: unknown option '" + arg + "'");
@@ -153,11 +156,14 @@ public final class Main {
             if (dumpIr) {
                 System.out.println("IR dump: enabled");
             }
+            if (sourceMap) {
+                System.out.println("Source maps: enabled");
+            }
         }
 
         // Run compilation
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entryFile, outputDir, verbose, dumpIr, config, moduleRoots, stdlibDir);
+            entryFile, outputDir, verbose, dumpIr || sourceMap, config, moduleRoots, stdlibDir);
 
         boolean success = orchestrator.compile();
 
@@ -169,11 +175,12 @@ public final class Main {
     }
 
     private static void printUsage() {
-        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--verbose] [--dump-ir]");
+        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--verbose] [--dump-ir] [--source-map]");
         System.err.println();
         System.err.println("Options:");
         System.err.println("  --output, -o <dir>   Output directory (default: ./build/lua)");
         System.err.println("  --verbose, -v        Verbose output with per-module timing");
         System.err.println("  --dump-ir            Produce IR dump files at <outputDir>/<module-path>.ir.txt");
+        System.err.println("  --source-map         Produce source map sidecar files (.deal.map.json)");
     }
 }

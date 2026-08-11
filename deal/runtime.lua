@@ -1,6 +1,9 @@
--- DEAL Runtime Library v0.6
+-- DEAL Runtime Library v0.7
 -- Provides type checks, integer arithmetic, class construction, and function wrapping.
 -- Loaded by every generated Lua module via require("deal.runtime").
+--
+-- All check_* functions accept optional trailing (file, line, column) arguments
+-- for source-location tracking in runtime errors. When omitted, these default to nil.
 
 local __rt = {}
 
@@ -26,64 +29,64 @@ end
 
 -- ===== Primitive type checks =====
 
-function __rt.check_null(v)
+function __rt.check_null(v, file, line, column)
   if v ~= __rt.__NULL then
-    error(__rt._err("E8001", "expected null", nil, nil, nil, "null", type(v)))
+    error(__rt._err("E8001", "expected null", file, line, column, "null", type(v)))
   end
   return v
 end
 
-function __rt.check_boolean(v)
+function __rt.check_boolean(v, file, line, column)
   if type(v) ~= "boolean" then
-    error(__rt._err("E8001", "expected boolean", nil, nil, nil, "boolean", type(v)))
+    error(__rt._err("E8001", "expected boolean", file, line, column, "boolean", type(v)))
   end
   return v
 end
 
-function __rt.check_int(v)
+function __rt.check_int(v, file, line, column)
   if type(v) ~= "number" then
-    error(__rt._err("E8001", "expected int", nil, nil, nil, "int", type(v)))
+    error(__rt._err("E8001", "expected int", file, line, column, "int", type(v)))
   end
   if v ~= v then  -- NaN check: NaN is the only value not equal to itself
-    error(__rt._err("E8001", "expected int, got NaN", nil, nil, nil, "int", "NaN"))
+    error(__rt._err("E8001", "expected int, got NaN", file, line, column, "int", "NaN"))
   end
   v = v + 0  -- normalize -0 to 0 (per spec.md lines 60-65, 2024)
   if v == math.huge or v == -math.huge then
-    error(__rt._err("E8001", "expected int, got infinity", nil, nil, nil, "int", "infinity"))
+    error(__rt._err("E8001", "expected int, got infinity", file, line, column, "int", "infinity"))
   end
   if v % 1 ~= 0 then
-    error(__rt._err("E8001", "expected int, got non-integer number", nil, nil, nil, "int", "number"))
+    error(__rt._err("E8001", "expected int, got non-integer number", file, line, column, "int", "number"))
   end
   if v < -9007199254740991 or v > 9007199254740991 then
-    error(__rt._err("E8004", "int out of safe range", nil, nil, nil, nil, nil))
+    error(__rt._err("E8004", "int out of safe range", file, line, column, nil, nil))
   end
   return v
 end
 
-function __rt.check_number(v)
+function __rt.check_number(v, file, line, column)
   if type(v) ~= "number" then
-    error(__rt._err("E8001", "expected number", nil, nil, nil, "number", type(v)))
+    error(__rt._err("E8001", "expected number", file, line, column, "number", type(v)))
   end
   return v
 end
 
-function __rt.check_string(v)
+function __rt.check_string(v, file, line, column)
   if type(v) ~= "string" then
-    error(__rt._err("E8001", "expected string", nil, nil, nil, "string", type(v)))
+    error(__rt._err("E8001", "expected string", file, line, column, "string", type(v)))
   end
   return v
 end
 
-function __rt.check_table(v)
+function __rt.check_table(v, file, line, column)
   if type(v) ~= "table" then
-    error(__rt._err("E8001", "expected table", nil, nil, nil, "table", type(v)))
+    error(__rt._err("E8001", "expected table", file, line, column, "table", type(v)))
   end
   return v
 end
 
-function __rt.check_coroutine(v)
+function __rt.check_coroutine(v, file, line, column)
   if type(v) ~= "thread" then
-    error(__rt._err("E8001", "expected coroutine", nil, nil, nil, "coroutine", type(v)))
+    error(__rt._err("E8001", "expected coroutine", file, line, column, "coroutine", type(v)))
   end
   return v
 end
@@ -93,19 +96,19 @@ end
 --- Check a nullable value.
 -- nil (missing optional field) and __NULL (explicit null) both return __NULL.
 -- Otherwise delegates to check_type for the inner descriptor.
-function __rt.check_nullable(inner_descriptor, v)
+function __rt.check_nullable(inner_descriptor, v, file, line, column)
   if v == nil or v == __rt.__NULL then
     return __rt.__NULL
   end
-  return __rt.check_type(inner_descriptor, v)
+  return __rt.check_type(inner_descriptor, v, file, line, column)
 end
 
 --- Extract the element descriptor from an array descriptor.
 -- Supports "T[]" format (e.g., "int[]" → "int", "int[][]" → "int[]")
 -- and "[T]" format (e.g., "[int]" → "int").
-function __rt.array_element_descriptor(array_descriptor)
+function __rt.array_element_descriptor(array_descriptor, file, line, column)
   if array_descriptor == nil then
-    error(__rt._err("E8001", "internal: nil array descriptor", nil, nil, nil, nil, nil))
+    error(__rt._err("E8001", "internal: nil array descriptor", file, line, column, nil, nil))
   end
   -- Format: "T[]" → element descriptor is "T"
   local len = #array_descriptor
@@ -116,19 +119,19 @@ function __rt.array_element_descriptor(array_descriptor)
   if len >= 2 and array_descriptor:sub(1, 1) == "[" and array_descriptor:sub(len, len) == "]" then
     return array_descriptor:sub(2, len - 1)
   end
-  error(__rt._err("E8001", "invalid array descriptor: " .. tostring(array_descriptor), nil, nil, nil, nil, nil))
+  error(__rt._err("E8001", "invalid array descriptor: " .. tostring(array_descriptor), file, line, column, nil, nil))
 end
 
 --- Check that value is an array whose elements match the array descriptor.
-function __rt.check_array(array_descriptor, v)
+function __rt.check_array(array_descriptor, v, file, line, column)
   if type(v) ~= "table" then
-    error(__rt._err("E8001", "expected array", nil, nil, nil, "array", type(v)))
+    error(__rt._err("E8001", "expected array", file, line, column, "array", type(v)))
   end
-  local element_descriptor = __rt.array_element_descriptor(array_descriptor)
+  local element_descriptor = __rt.array_element_descriptor(array_descriptor, file, line, column)
   for i = 1, #v do
-    local ok, err = pcall(__rt.check_type, element_descriptor, v[i])
+    local ok, err = pcall(__rt.check_type, element_descriptor, v[i], file, line, column)
     if not ok then
-      error(__rt._err("E8003", "array element " .. i .. " type mismatch: " .. tostring(err), nil, nil, nil, element_descriptor, type(v[i])))
+      error(__rt._err("E8003", "array element " .. i .. " type mismatch: " .. tostring(err), file, line, column, element_descriptor, type(v[i])))
     end
   end
   return v
@@ -254,52 +257,52 @@ end
 -- ===== Type dispatch =====
 
 --- Dispatch type check by descriptor string.
-function __rt.check_type(descriptor, v)
+function __rt.check_type(descriptor, v, file, line, column)
   if descriptor == nil then
-    error(__rt._err("E8001", "internal: nil type descriptor", nil, nil, nil, nil, nil))
+    error(__rt._err("E8001", "internal: nil type descriptor", file, line, column, nil, nil))
   end
 
   local parsed = parse_descriptor(descriptor)
   if parsed == nil then
-    error(__rt._err("E8001", "internal: cannot parse type descriptor: " .. tostring(descriptor), nil, nil, nil, nil, nil))
+    error(__rt._err("E8001", "internal: cannot parse type descriptor: " .. tostring(descriptor), file, line, column, nil, nil))
   end
 
   if parsed.kind == "primitive" then
     if parsed.name == "null" then
-      return __rt.check_null(v)
+      return __rt.check_null(v, file, line, column)
     elseif parsed.name == "boolean" then
-      return __rt.check_boolean(v)
+      return __rt.check_boolean(v, file, line, column)
     elseif parsed.name == "int" then
-      return __rt.check_int(v)
+      return __rt.check_int(v, file, line, column)
     elseif parsed.name == "number" then
-      return __rt.check_number(v)
+      return __rt.check_number(v, file, line, column)
     elseif parsed.name == "string" then
-      return __rt.check_string(v)
+      return __rt.check_string(v, file, line, column)
     elseif parsed.name == "table" then
-      return __rt.check_table(v)
+      return __rt.check_table(v, file, line, column)
     elseif parsed.name == "coroutine" then
-      return __rt.check_coroutine(v)
+      return __rt.check_coroutine(v, file, line, column)
     else
-      error(__rt._err("E8001", "unknown primitive type: " .. parsed.name, nil, nil, nil, nil, nil))
+      error(__rt._err("E8001", "unknown primitive type: " .. parsed.name, file, line, column, nil, nil))
     end
   elseif parsed.kind == "nullable" then
-    return __rt.check_nullable(parsed.inner, v)
+    return __rt.check_nullable(parsed.inner, v, file, line, column)
   elseif parsed.kind == "array" then
-    return __rt.check_array(descriptor, v)
+    return __rt.check_array(descriptor, v, file, line, column)
   elseif parsed.kind == "function" then
     -- Check that v is a function wrapper with matching signature
     if type(v) ~= "table" or v.__kind ~= "function" then
-      error(__rt._err("E8001", "expected function", nil, nil, nil, "function", type(v)))
+      error(__rt._err("E8001", "expected function", file, line, column, "function", type(v)))
     end
     -- Signature comparison: the stored sig must match the expected descriptor
     if v.sig ~= descriptor then
-      error(__rt._err("E8010", "function signature mismatch: expected " .. descriptor .. ", got " .. (v.sig or "nil"), nil, nil, nil, descriptor, v.sig))
+      error(__rt._err("E8010", "function signature mismatch: expected " .. descriptor .. ", got " .. (v.sig or "nil"), file, line, column, descriptor, v.sig))
     end
     return v
   elseif parsed.kind == "class" then
     -- Check that v is a class instance with matching class name
     if type(v) ~= "table" or v.__kind ~= "class" then
-      error(__rt._err("E8001", "expected class instance", nil, nil, nil, "class", type(v)))
+      error(__rt._err("E8001", "expected class instance", file, line, column, "class", type(v)))
     end
     -- For class checking, we compare class names
     -- The descriptor may be "@path/ClassName" or just "ClassName"
@@ -321,47 +324,47 @@ function __rt.check_type(descriptor, v)
     end
     local actual_class = v.__classname
     if actual_class ~= expected_class then
-      error(__rt._err("E8001", "expected instance of " .. expected_class .. ", got " .. (actual_class or "unknown"), nil, nil, nil, expected_class, actual_class))
+      error(__rt._err("E8001", "expected instance of " .. expected_class .. ", got " .. (actual_class or "unknown"), file, line, column, expected_class, actual_class))
     end
     return v
   else
-    error(__rt._err("E8001", "internal: unhandled descriptor kind: " .. parsed.kind, nil, nil, nil, nil, nil))
+    error(__rt._err("E8001", "internal: unhandled descriptor kind: " .. parsed.kind, file, line, column, nil, nil))
   end
 end
 
 -- ===== Integer arithmetic =====
 
-function __rt.int_add(a, b)
-  return __rt.check_int(a + b)
+function __rt.int_add(a, b, file, line, column)
+  return __rt.check_int(a + b, file, line, column)
 end
 
-function __rt.int_sub(a, b)
-  return __rt.check_int(a - b)
+function __rt.int_sub(a, b, file, line, column)
+  return __rt.check_int(a - b, file, line, column)
 end
 
-function __rt.int_mul(a, b)
-  return __rt.check_int(a * b)
+function __rt.int_mul(a, b, file, line, column)
+  return __rt.check_int(a * b, file, line, column)
 end
 
-function __rt.int_div(a, b)
+function __rt.int_div(a, b, file, line, column)
   if b == 0 then
-    error(__rt._err("E8005", "integer division by zero", nil, nil, nil, nil, nil))
+    error(__rt._err("E8005", "integer division by zero", file, line, column, nil, nil))
   end
-  return __rt.check_int(math.modf(a / b))
+  return __rt.check_int(math.modf(a / b), file, line, column)
 end
 
-function __rt.int_mod(a, b)
+function __rt.int_mod(a, b, file, line, column)
   if b == 0 then
-    error(__rt._err("E8005", "integer division by zero", nil, nil, nil, nil, nil))
+    error(__rt._err("E8005", "integer division by zero", file, line, column, nil, nil))
   end
-  return __rt.check_int(a - math.modf(a / b) * b)
+  return __rt.check_int(a - math.modf(a / b) * b, file, line, column)
 end
 
-function __rt.int_pow(a, b)
+function __rt.int_pow(a, b, file, line, column)
   if b < 0 then
-    error(__rt._err("E8006", "integer exponent must be non-negative", nil, nil, nil, nil, nil))
+    error(__rt._err("E8006", "integer exponent must be non-negative", file, line, column, nil, nil))
   end
-  return __rt.check_int(a ^ b)
+  return __rt.check_int(a ^ b, file, line, column)
 end
 
 -- ===== Function infrastructure =====

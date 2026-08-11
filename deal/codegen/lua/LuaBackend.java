@@ -7,6 +7,7 @@ import deal.ast.NullableType;
 import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
+import deal.codegen.SourceMapGenerator;
 import deal.lexer.Diagnostic;
 import deal.types.Type;
 import deal.types.Types;
@@ -65,6 +66,9 @@ public final class LuaBackend implements Visitor<Void> {
     // and update expressions are remapped to "_name" (the outer counter).
     private String forLoopShadowVar = null;
 
+    // Source map support
+    private SourceMapGenerator sourceMapGenerator = null;
+
     /**
      * Entry point: generate Lua source for a complete program.
      */
@@ -93,6 +97,28 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     /**
+     * Generate Lua source with source map tracking.
+     * Returns both the Lua source and the SourceMapGenerator (which can produce
+     * the JSON sidecar).
+     */
+    public static String generateWithSourceMap(ProgramNode program, CheckResult result,
+                                                String sourcePath,
+                                                Map<String, String> importResolutions,
+                                                SourceMapGenerator smg) {
+        LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable());
+        backend.sourceFilePath = sourcePath;
+        backend.importResolutions = Map.copyOf(importResolutions);
+        backend.sourceMapGenerator = smg;
+        backend.emitHeader();
+        backend.emitLine("local Error_defaults = { code = \"\", message = \"\" }");
+        backend.emitLine("");
+
+        backend.walkStatements(program.statements());
+        backend.emitExports();
+        return backend.out.toString();
+    }
+
+    /**
      * Generate Lua source and write it to the output path.
      * Runtime library is copied to {@code outputRoot/deal/runtime.lua}.
      *
@@ -102,9 +128,41 @@ public final class LuaBackend implements Visitor<Void> {
     public static void generateToFile(ProgramNode program, CheckResult result,
                                        String sourcePath, Path outputRoot,
                                        Path outputPath) throws IOException {
-        String luaSource = generate(program, result, sourcePath);
+        generateToFile(program, result, sourcePath, outputRoot, outputPath, false);
+    }
+
+    /**
+     * Generate Lua source and write it to the output path, optionally producing
+     * a source map sidecar file.
+     *
+     * @param outputRoot the root output directory
+     * @param outputPath the full path for this module's .lua file
+     * @param emitSourceMap if true, a {@code .deal.map.json} sidecar is written
+     */
+    public static void generateToFile(ProgramNode program, CheckResult result,
+                                       String sourcePath, Path outputRoot,
+                                       Path outputPath, boolean emitSourceMap)
+                                       throws IOException {
+        SourceMapGenerator smg = emitSourceMap ? new SourceMapGenerator() : null;
+        Map<String, String> emptyImports = Map.of();
+        String luaSource;
+        if (smg != null) {
+            luaSource = generateWithSourceMap(program, result, sourcePath,
+                emptyImports, smg);
+        } else {
+            luaSource = generate(program, result, sourcePath);
+        }
+
         Files.createDirectories(outputPath.getParent());
         Files.writeString(outputPath, luaSource);
+
+        // Write source map sidecar
+        if (smg != null && smg.hasMappings()) {
+            String mapJson = smg.toJson(sourcePath,
+                outputRoot.relativize(outputPath).toString());
+            Path mapPath = Path.of(outputPath.toString() + ".map.json");
+            Files.writeString(mapPath, mapJson);
+        }
 
         Path runtimeDest = outputRoot.resolve("deal/runtime.lua");
         if (!Files.exists(runtimeDest)) {
@@ -158,12 +216,39 @@ public final class LuaBackend implements Visitor<Void> {
         return this.out.toString();
     }
 
+    /**
+     * Generate Lua source using this instance with source map tracking.
+     * Returns the Lua source; source map can be retrieved via {@link #getSourceMapJson}.
+     */
+    public String generateFromInstanceWithSourceMap(ProgramNode program) {
+        this.sourceMapGenerator = new SourceMapGenerator();
+        return generateFromInstance(program);
+    }
+
+    /**
+     * Returns the source map JSON string, or null if source map generation
+     * was not enabled.
+     */
+    public String getSourceMapJson(String sourcePath, String generatedPath) {
+        if (sourceMapGenerator == null || !sourceMapGenerator.hasMappings()) {
+            return null;
+        }
+        return sourceMapGenerator.toJson(sourcePath, generatedPath);
+    }
+
+    /**
+     * Returns the SourceMapGenerator for inspection in tests.
+     */
+    public SourceMapGenerator sourceMapGenerator() {
+        return sourceMapGenerator;
+    }
+
     // =========================================================================
     // Header / Exports
     // =========================================================================
 
     private void emitHeader() {
-        emitLine("-- Generated by DEAL compiler v0.6");
+        emitLine("-- Generated by DEAL compiler v0.7");
         emitLine("-- Source: " + sourceFilePath);
         emitLine("");
         emitLine("local __rt = require(\"deal.runtime\")");
@@ -202,6 +287,37 @@ public final class LuaBackend implements Visitor<Void> {
     private void addDiagnostic(DiagnosticCode code, String message, Span span) {
         diagnostics.add(Diagnostic.error(code, message,
             span.file(), span.startLine(), span.startColumn()));
+    }
+
+    /** Returns the current 1-based line number in the output buffer. */
+    private int currentGeneratedLine() {
+        int line = 1;
+        for (int i = 0; i < out.length(); i++) {
+            if (out.charAt(i) == '\n') line++;
+        }
+        return line;
+    }
+
+    /** Returns the current 1-based column number in the output buffer. */
+    private int currentGeneratedColumn() {
+        int lastNewline = out.lastIndexOf("\n");
+        if (lastNewline == -1) return out.length() + 1;
+        return out.length() - lastNewline;
+    }
+
+    /** Records a source mapping for the given AST span at the current output position. */
+    private void recordMapping(Span span) {
+        if (sourceMapGenerator != null && span != null) {
+            sourceMapGenerator.emitStatement(
+                currentGeneratedLine(), currentGeneratedColumn(), span);
+        }
+    }
+
+    /** Formats span coordinates for a Lua function call argument list. */
+    private String spanArgs(Span span) {
+        if (span == null) return "nil, nil, nil";
+        return "\"" + escapeLuaStringNoQuotes(span.file()) + "\", "
+            + span.startLine() + ", " + span.startColumn();
     }
 
     private Type typeOf(ExpressionNode expr) {
@@ -280,24 +396,46 @@ public final class LuaBackend implements Visitor<Void> {
         };
     }
 
+    /**
+     * Emits a runtime type check expression.
+     */
     private String emitCheckExpr(String valueExpr, Type type) {
+        return emitCheckExpr(valueExpr, type, null);
+    }
+
+    /**
+     * Emits a runtime type check expression with source location information.
+     */
+    private String emitCheckExpr(String valueExpr, Type type, Span span) {
         if (type == null) return valueExpr;
+        String spanParam = spanArgs(span);
         return switch (type) {
-            case Type.Null ignored -> "__rt.check_null(" + valueExpr + ")";
-            case Type.Boolean ignored -> "__rt.check_boolean(" + valueExpr + ")";
-            case Type.Int ignored -> "__rt.check_int(" + valueExpr + ")";
-            case Type.Number ignored -> "__rt.check_number(" + valueExpr + ")";
-            case Type.String ignored -> "__rt.check_string(" + valueExpr + ")";
-            case Type.Table ignored -> "__rt.check_table(" + valueExpr + ")";
-            case Type.Coroutine ignored -> "__rt.check_coroutine(" + valueExpr + ")";
+            case Type.Null ignored ->
+                "__rt.check_null(" + valueExpr + ", " + spanParam + ")";
+            case Type.Boolean ignored ->
+                "__rt.check_boolean(" + valueExpr + ", " + spanParam + ")";
+            case Type.Int ignored ->
+                "__rt.check_int(" + valueExpr + ", " + spanParam + ")";
+            case Type.Number ignored ->
+                "__rt.check_number(" + valueExpr + ", " + spanParam + ")";
+            case Type.String ignored ->
+                "__rt.check_string(" + valueExpr + ", " + spanParam + ")";
+            case Type.Table ignored ->
+                "__rt.check_table(" + valueExpr + ", " + spanParam + ")";
+            case Type.Coroutine ignored ->
+                "__rt.check_coroutine(" + valueExpr + ", " + spanParam + ")";
             case Type.Array arr ->
-                "__rt.check_array(\"" + typeDescriptor(type) + "\", " + valueExpr + ")";
+                "__rt.check_array(\"" + typeDescriptor(type) + "\", "
+                    + valueExpr + ", " + spanParam + ")";
             case Type.Nullable n ->
-                "__rt.check_nullable(\"" + typeDescriptor(n.inner()) + "\", " + valueExpr + ")";
+                "__rt.check_nullable(\"" + typeDescriptor(n.inner()) + "\", "
+                    + valueExpr + ", " + spanParam + ")";
             case Type.Class cls ->
-                "__rt.check_type(\"" + typeDescriptor(cls) + "\", " + valueExpr + ")";
+                "__rt.check_type(\"" + typeDescriptor(cls) + "\", "
+                    + valueExpr + ", " + spanParam + ")";
             case Type.Func f ->
-                "__rt.check_type(\"" + typeDescriptor(f) + "\", " + valueExpr + ")";
+                "__rt.check_type(\"" + typeDescriptor(f) + "\", "
+                    + valueExpr + ", " + spanParam + ")";
             default -> valueExpr;
         };
     }
@@ -325,6 +463,9 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     private void visitStatement(StatementNode stmt) {
+        // Record source mapping before emitting the statement
+        recordMapping(stmt.span());
+
         switch (stmt) {
             case VariableDeclaration vd -> visit(vd);
             case FunctionDeclaration fd -> visit(fd);
@@ -434,7 +575,8 @@ public final class LuaBackend implements Visitor<Void> {
             Type restType = resolveTypeNode(rest.type());
             if (restType instanceof Type.Array arr) {
                 emitLine("__rt.check_array(\"" + typeDescriptor(arr)
-                    + "\", " + rest.name() + ")");
+                    + "\", " + rest.name() + ", "
+                    + spanArgs(rest.type().span()) + ")");
             }
         }
 
@@ -443,10 +585,12 @@ public final class LuaBackend implements Visitor<Void> {
             if (paramType != null && !(paramType instanceof Type.Error)
                 && !(paramType instanceof Type.Void)) {
                 String checkFn = checkFunctionFor(paramType);
+                Span paramSpan = param.type().span();
                 if (checkFn != null) {
-                    emitLine(checkFn + "(" + param.name() + ")");
+                    emitLine(checkFn + "(" + param.name() + ", "
+                        + spanArgs(paramSpan) + ")");
                 } else {
-                    emitLine(emitCheckExpr(param.name(), paramType));
+                    emitLine(emitCheckExpr(param.name(), paramType, paramSpan));
                 }
             }
         }
@@ -478,6 +622,10 @@ public final class LuaBackend implements Visitor<Void> {
         Type exprType = typeOf(node.initializer());
         String initLua = emitExpression(node.initializer());
 
+        Span span = node.typeAnnotation().isPresent()
+            ? node.typeAnnotation().get().span()
+            : node.initializer().span();
+
         if (hasAnnotation && targetType != null && !(targetType instanceof Type.Error)) {
             if (targetType instanceof Type.Func tf
                 && exprType instanceof Type.Func ef
@@ -485,7 +633,7 @@ public final class LuaBackend implements Visitor<Void> {
                 String adapter = emitArityAdapter(tf, ef, initLua);
                 emitLine("local " + name + " = " + adapter);
             } else {
-                String checked = emitCheckExpr(initLua, targetType);
+                String checked = emitCheckExpr(initLua, targetType, span);
                 emitLine("local " + name + " = " + checked);
             }
         } else if (!hasAnnotation && exprType != null
@@ -499,7 +647,7 @@ public final class LuaBackend implements Visitor<Void> {
             if (checkType != null && !(checkType instanceof Type.Error)
                 && !(checkType instanceof Type.Void)
                 && !(checkType instanceof Type.Null)) {
-                String checked = emitCheckExpr(initLua, checkType);
+                String checked = emitCheckExpr(initLua, checkType, span);
                 emitLine("local " + name + " = " + checked);
             } else {
                 emitLine("local " + name + " = " + initLua);
@@ -517,7 +665,8 @@ public final class LuaBackend implements Visitor<Void> {
                 && !(currentReturnType instanceof Type.Error)
                 && !(currentReturnType instanceof Type.Void)
                 && !(currentReturnType instanceof Type.Null)) {
-                checkedExpr = emitCheckExpr(exprLua, currentReturnType);
+                checkedExpr = emitCheckExpr(exprLua, currentReturnType,
+                    node.expr().get().span());
             } else {
                 checkedExpr = exprLua;
             }
@@ -547,7 +696,8 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(IfStatement node) {
-        String condLua = "__rt.check_boolean(" + emitExpression(node.condition()) + ")";
+        String condLua = "__rt.check_boolean(" + emitExpression(node.condition())
+            + ", " + spanArgs(node.condition().span()) + ")";
         emitLine("if " + condLua + " then");
         indent++;
         visit(node.thenBlock());
@@ -558,7 +708,8 @@ public final class LuaBackend implements Visitor<Void> {
                 case Either.Left<IfStatement, Block> left -> {
                     IfStatement elseIf = left.value();
                     emitLine("elseif __rt.check_boolean("
-                        + emitExpression(elseIf.condition()) + ") then");
+                        + emitExpression(elseIf.condition())
+                        + ", " + spanArgs(elseIf.condition().span()) + ") then");
                     indent++;
                     visit(elseIf.thenBlock());
                     indent--;
@@ -584,7 +735,8 @@ public final class LuaBackend implements Visitor<Void> {
                 case Either.Left<IfStatement, Block> left -> {
                     IfStatement elseIf = left.value();
                     emitLine("elseif __rt.check_boolean("
-                        + emitExpression(elseIf.condition()) + ") then");
+                        + emitExpression(elseIf.condition())
+                        + ", " + spanArgs(elseIf.condition().span()) + ") then");
                     indent++;
                     visit(elseIf.thenBlock());
                     indent--;
@@ -605,7 +757,8 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(WhileStatement node) {
-        String condLua = "__rt.check_boolean(" + emitExpression(node.condition()) + ")";
+        String condLua = "__rt.check_boolean(" + emitExpression(node.condition())
+            + ", " + spanArgs(node.condition().span()) + ")";
 
         String savedLabel = currentContinueLabel;
         String loopLabel = freshLabel("__continue");
@@ -652,9 +805,12 @@ public final class LuaBackend implements Visitor<Void> {
                     String initExpr = emitExpression(decl.initializer());
                     // Emit the outer counter as "_name" instead of "name"
                     String shadowName = "_" + decl.name();
+                    Span initSpan = decl.typeAnnotation().isPresent()
+                        ? decl.typeAnnotation().get().span()
+                        : decl.initializer().span();
                     if (varType != null && !(varType instanceof Type.Error)) {
                         emitLine("local " + shadowName + " = "
-                            + emitCheckExpr(initExpr, varType));
+                            + emitCheckExpr(initExpr, varType, initSpan));
                     } else {
                         emitLine("local " + shadowName + " = " + initExpr);
                     }
@@ -666,8 +822,11 @@ public final class LuaBackend implements Visitor<Void> {
         // Condition: remap loop variable references to the shadow name
         String savedShadowVar = this.forLoopShadowVar;
         this.forLoopShadowVar = hasLetInit ? loopVarName : null;
+        Span condSpan = node.condition().isPresent()
+            ? node.condition().get().span() : null;
         String condStr = node.condition().isPresent()
-            ? "__rt.check_boolean(" + emitExpression(node.condition().get()) + ")"
+            ? "__rt.check_boolean(" + emitExpression(node.condition().get())
+                + ", " + spanArgs(condSpan) + ")"
             : "true";
         this.forLoopShadowVar = savedShadowVar;
 
@@ -891,6 +1050,7 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(ThrowStatement node) {
+        Span throwSpan = node.span();
         if (node.expr() instanceof ObjectLiteralExpr objLit) {
             // Include default Error fields when not provided
             Set<String> providedFields = new HashSet<>();
@@ -918,6 +1078,12 @@ public final class LuaBackend implements Visitor<Void> {
                     sb.append("message = \"\"");
                 }
             }
+            // Add source location to the error object
+            sb.append(", file = \"")
+                .append(escapeLuaStringNoQuotes(throwSpan.file()))
+                .append("\"");
+            sb.append(", line = ").append(throwSpan.startLine());
+            sb.append(", column = ").append(throwSpan.startColumn());
             sb.append("})");
             emitLine(sb.toString());
         } else {
@@ -999,6 +1165,8 @@ public final class LuaBackend implements Visitor<Void> {
         String left = emitExpression(bin.left());
         String right = emitExpression(bin.right());
         BinaryOp op = bin.op();
+        Span span = bin.span();
+        String spanParam = spanArgs(span);
 
         if (op == BinaryOp.ADD && leftType instanceof Type.String
             && rightType instanceof Type.String) {
@@ -1007,12 +1175,18 @@ public final class LuaBackend implements Visitor<Void> {
 
         if (leftType instanceof Type.Int && rightType instanceof Type.Int) {
             return switch (op) {
-                case ADD -> "__rt.int_add(" + left + ", " + right + ")";
-                case SUB -> "__rt.int_sub(" + left + ", " + right + ")";
-                case MUL -> "__rt.int_mul(" + left + ", " + right + ")";
-                case DIV -> "__rt.int_div(" + left + ", " + right + ")";
-                case MOD -> "__rt.int_mod(" + left + ", " + right + ")";
-                case POW -> "__rt.int_pow(" + left + ", " + right + ")";
+                case ADD -> "__rt.int_add(" + left + ", " + right
+                    + ", " + spanParam + ")";
+                case SUB -> "__rt.int_sub(" + left + ", " + right
+                    + ", " + spanParam + ")";
+                case MUL -> "__rt.int_mul(" + left + ", " + right
+                    + ", " + spanParam + ")";
+                case DIV -> "__rt.int_div(" + left + ", " + right
+                    + ", " + spanParam + ")";
+                case MOD -> "__rt.int_mod(" + left + ", " + right
+                    + ", " + spanParam + ")";
+                case POW -> "__rt.int_pow(" + left + ", " + right
+                    + ", " + spanParam + ")";
                 default -> "(" + left + " " + opSymbolLua(op) + " " + right + ")";
             };
         }
@@ -1129,8 +1303,10 @@ public final class LuaBackend implements Visitor<Void> {
         Type arrayType = typeOf(idx.array());
         String arr = emitExpression(idx.array());
         String index = emitExpression(idx.index());
+        Span span = idx.span();
         if (arrayType instanceof Type.Array) {
-            return arr + "[__rt.check_int(" + index + ") + 1]";
+            return arr + "[__rt.check_int(" + index + ", "
+                + spanArgs(span) + ") + 1]";
         }
         return arr + "[" + index + "]";
     }
@@ -1266,7 +1442,8 @@ public final class LuaBackend implements Visitor<Void> {
                 Type restType = resolveTypeNode(rest.type());
                 if (restType instanceof Type.Array arr) {
                     emitLine("__rt.check_array(\"" + typeDescriptor(arr)
-                        + "\", " + rest.name() + ")");
+                        + "\", " + rest.name() + ", "
+                        + spanArgs(rest.type().span()) + ")");
                 }
             }
 
@@ -1275,10 +1452,12 @@ public final class LuaBackend implements Visitor<Void> {
                 if (paramType != null && !(paramType instanceof Type.Error)
                     && !(paramType instanceof Type.Void)) {
                     String checkFn = checkFunctionFor(paramType);
+                    Span paramSpan = param.type().span();
                     if (checkFn != null) {
-                        emitLine(checkFn + "(" + param.name() + ")");
+                        emitLine(checkFn + "(" + param.name() + ", "
+                            + spanArgs(paramSpan) + ")");
                     } else {
-                        emitLine(emitCheckExpr(param.name(), paramType));
+                        emitLine(emitCheckExpr(param.name(), paramType, paramSpan));
                     }
                 }
             }
@@ -1311,6 +1490,7 @@ public final class LuaBackend implements Visitor<Void> {
         Type valueType = typeOf(assign.value());
         String targetLua = emitExpression(assign.target());
         String valueLua = emitExpression(assign.value());
+        Span span = assign.span();
 
         if (isArityExtension(valueType, targetType)) {
             return targetLua + " = "
@@ -1327,15 +1507,17 @@ public final class LuaBackend implements Visitor<Void> {
                     && mae.field().equals("length")
                     && typeOf(mae.object()) instanceof Type.Array) {
                     return arr + "[#" + arr + " + 1] = "
-                        + emitCheckExpr(valueLua, arrT.element());
+                        + emitCheckExpr(valueLua, arrT.element(), span);
                 }
 
                 String myIndent = "  ".repeat(indent);
                 return "do\n"
-                    + myIndent + "  local __idx = __rt.check_int(" + index + ")\n"
-                    + myIndent + "  if __idx < 0 then error(__rt._err(\"E8002\", \"negative array index\")) end\n"
+                    + myIndent + "  local __idx = __rt.check_int(" + index
+                    + ", " + spanArgs(idx.span()) + ")\n"
+                    + myIndent + "  if __idx < 0 then error(__rt._err(\"E8002\", "
+                    + "\"negative array index\", " + spanArgs(idx.span()) + ")) end\n"
                     + myIndent + "  " + arr + "[__idx + 1] = "
-                    + emitCheckExpr(valueLua, arrT.element()) + "\n"
+                    + emitCheckExpr(valueLua, arrT.element(), span) + "\n"
                     + myIndent + "end";
             }
         }
@@ -1418,6 +1600,26 @@ public final class LuaBackend implements Visitor<Void> {
             }
         }
         sb.append("\"");
+        return sb.toString();
+    }
+
+    /**
+     * Like {@link #escapeLuaString} but without surrounding quotes.
+     * Used for embedding file paths in generated code.
+     */
+    private String escapeLuaStringNoQuotes(String s) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '\\' -> sb.append("\\\\");
+                case '"' -> sb.append("\\\"");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> sb.append(c);
+            }
+        }
         return sb.toString();
     }
 
