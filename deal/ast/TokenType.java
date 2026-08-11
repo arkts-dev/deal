@@ -6,15 +6,18 @@ package deal.ast;
  */
 public enum TokenType {
 
-    // -- Keywords (spec lines 12-13, 76-81) --
+    // -- Keywords (spec v1.1) --
     LET,
     CLASS,
     FUNCTION,
+    ASYNC,
+    AWAIT,
     RETURN,
     IF,
     ELSE,
     WHILE,
     FOR,
+    OF,
     BREAK,
     CONTINUE,
     NULL,       // keyword + null literal
@@ -29,7 +32,6 @@ public enum TokenType {
     CATCH,
     THROW,
     AS,         // implicit keyword used in import declaration
-    IN,         // reserved for future use
 
     // -- Literals --
     INT_LITERAL,

@@ -29,11 +29,14 @@ public final class Lexer {
         Map.entry("let",      TokenType.LET),
         Map.entry("class",    TokenType.CLASS),
         Map.entry("function", TokenType.FUNCTION),
+        Map.entry("async",    TokenType.ASYNC),
+        Map.entry("await",    TokenType.AWAIT),
         Map.entry("return",   TokenType.RETURN),
         Map.entry("if",       TokenType.IF),
         Map.entry("else",     TokenType.ELSE),
         Map.entry("while",    TokenType.WHILE),
         Map.entry("for",      TokenType.FOR),
+        Map.entry("of",       TokenType.OF),
         Map.entry("break",    TokenType.BREAK),
         Map.entry("continue", TokenType.CONTINUE),
         Map.entry("null",     TokenType.NULL),
@@ -47,8 +50,7 @@ public final class Lexer {
         Map.entry("try",      TokenType.TRY),
         Map.entry("catch",    TokenType.CATCH),
         Map.entry("throw",    TokenType.THROW),
-        Map.entry("as",       TokenType.AS),
-        Map.entry("in",       TokenType.IN)
+        Map.entry("as",       TokenType.AS)
     );
 
     private final String source;
