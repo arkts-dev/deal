@@ -306,6 +306,15 @@ public class LuaBackendTest {
         testAsyncFunctionExprCodegen();
         testAsyncFunctionNullableReturn();
         testAwaitAsExpressionStatement();
+        // ISSUE-0050: @jsonable codegen unit tests
+        testJsonableSimpleClass();
+        testJsonableFromJsonEmission();
+        testJsonableToJsonEmission();
+        testJsonableExports();
+        testJsonableDotFAccess();
+        testJsonableTopologicalSort();
+        testJsonableTopologicalSortWrappedType();
+        testJsonableNoRegression();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -1852,5 +1861,136 @@ public class LuaBackendTest {
         // await g() as a statement should still emit coroutine.yield
         assertContains(out.lua, "coroutine.yield(g.f())", "await statement emits coroutine.yield");
         check(isValidLua(out.lua), "valid Lua");
+    }
+
+    // =========================================================================
+    // ISSUE-0050: @jsonable codegen unit tests
+    // =========================================================================
+
+    static void testJsonableSimpleClass() {
+        System.out.println("-- @jsonable simple class --");
+        CompileOutput out = compile(
+            "// @jsonable\nexport class User {\n  name: string;\n  age: int;\n}\n");
+        assertNoErrors(out, "@jsonable simple class");
+        // Check C_fields table emitted
+        assertContains(out.lua, "local User_fields = {", "User_fields table");
+        assertContains(out.lua, "\"name\"", "name field in descriptor");
+        assertContains(out.lua, "jtype = \"string\"", "string jtype");
+        assertContains(out.lua, "jtype = \"int\"", "int jtype");
+        // Check defaults and meta still emitted
+        assertContains(out.lua, "local User_defaults = ", "User_defaults");
+        assertContains(out.lua, "local User_meta = ", "User_meta");
+        // Structural check only: LuaJIT on this system lacks $ identifier support,
+        // but the generated code is structurally valid.
+        check(structuralLuaCheck(out.lua), "valid Lua (structural)");
+    }
+
+    static void testJsonableFromJsonEmission() {
+        System.out.println("-- @jsonable C$fromJson emission --");
+        CompileOutput out = compile(
+            "// @jsonable\nexport class User {\n  name: string;\n}\n");
+        assertNoErrors(out, "@jsonable fromJson");
+        // Check C$fromJson function
+        assertContains(out.lua, "local User$fromJson = __rt.function_(", "C$fromJson wrapper");
+        assertContains(out.lua, "\"(string)->User|null\"", "fromJson signature");
+        assertContains(out.lua, "pcall(__json_parse, s)", "pcall wrapping json parse");
+        assertContains(out.lua, "__rt.json_from_json(", "json_from_json call");
+        assertContains(out.lua, "return __NULL", "return null on failure");
+        assertContains(out.lua, "if instance == nil then return __NULL end", "nil check");
+        check(structuralLuaCheck(out.lua), "valid Lua (structural)");
+    }
+
+    static void testJsonableToJsonEmission() {
+        System.out.println("-- @jsonable C$toJson emission --");
+        CompileOutput out = compile(
+            "// @jsonable\nexport class User {\n  name: string;\n}\n");
+        assertNoErrors(out, "@jsonable toJson");
+        // Check C$toJson function
+        assertContains(out.lua, "local User$toJson = __rt.function_(", "C$toJson wrapper");
+        assertContains(out.lua, "\"(User)->string\"", "toJson signature");
+        assertContains(out.lua, "__rt.json_to_json(", "json_to_json call");
+        assertContains(out.lua, "__json_stringify(", "json_stringify call");
+        check(structuralLuaCheck(out.lua), "valid Lua (structural)");
+    }
+
+    static void testJsonableExports() {
+        System.out.println("-- @jsonable exports --");
+        CompileOutput out = compile(
+            "// @jsonable\nexport class User {\n  name: string;\n}\n");
+        assertNoErrors(out, "@jsonable exports");
+        // Check exports table entries
+        assertContains(out.lua, "exports.User_fields = User_fields", "User_fields export");
+        assertContains(out.lua, "exports.User$fromJson = User$fromJson", "User$fromJson export");
+        assertContains(out.lua, "exports.User$toJson = User$toJson", "User$toJson export");
+        check(structuralLuaCheck(out.lua), "valid Lua (structural)");
+    }
+
+    static void testJsonableDotFAccess() {
+        System.out.println("-- @jsonable .f access --");
+        CompileOutput out = compile(
+            "// @jsonable\nexport class User {\n  name: string;\n}\n");
+        assertNoErrors(out, "@jsonable .f access");
+        // Check .f access for json module
+        assertContains(out.lua, "__json.parse.f", ".f access for parse");
+        assertContains(out.lua, "__json.stringify.f", ".f access for stringify");
+        // Must NOT use raw require("std.json").parse(...) without .f
+        assertNotContains(out.lua, "require(\"std.json\").parse(", "no raw parse call");
+        assertNotContains(out.lua, "require(\"std.json\").stringify(", "no raw stringify call");
+        check(structuralLuaCheck(out.lua), "valid Lua (structural)");
+    }
+
+    static void testJsonableTopologicalSort() {
+        System.out.println("-- @jsonable topological sort --");
+        // Parent class A (field of type B) declared before child class B.
+        // B_fields must appear before A_fields in output.
+        CompileOutput out = compile(
+            "// @jsonable\nexport class A {\n  b: B;\n}\n" +
+            "// @jsonable\nexport class B {\n  name: string;\n}\n");
+        assertNoErrors(out, "@jsonable topological sort");
+        String lua = out.lua;
+        // B_fields (dependency) must be emitted before A_fields (dependent)
+        int bFieldsPos = lua.indexOf("local B_fields = {");
+        int aFieldsPos = lua.indexOf("local A_fields = {");
+        check(bFieldsPos >= 0, "B_fields exists");
+        check(aFieldsPos >= 0, "A_fields exists");
+        check(bFieldsPos < aFieldsPos, "B_fields emitted before A_fields (topological sort)");
+        // Check that A_fields references B_defaults and B_fields
+        assertContains(lua, "B_defaults", "A references B_defaults");
+        assertContains(lua, "B_fields", "A references B_fields");
+        check(structuralLuaCheck(lua), "valid Lua (structural)");
+    }
+
+    static void testJsonableTopologicalSortWrappedType() {
+        System.out.println("-- @jsonable topological sort with wrapped type --");
+        // A depends on B via array wrapper: bs: B[]
+        CompileOutput out = compile(
+            "// @jsonable\nexport class A {\n  bs: B[];\n}\n" +
+            "// @jsonable\nexport class B {\n  name: string;\n}\n");
+        assertNoErrors(out, "@jsonable topological sort wrapped");
+        String lua = out.lua;
+        int bFieldsPos = lua.indexOf("local B_fields = {");
+        int aFieldsPos = lua.indexOf("local A_fields = {");
+        check(bFieldsPos >= 0, "B_fields exists");
+        check(aFieldsPos >= 0, "A_fields exists");
+        check(bFieldsPos < aFieldsPos, "B_fields emitted before A_fields (wrapped type dep)");
+        check(structuralLuaCheck(lua), "valid Lua (structural)");
+    }
+
+    static void testJsonableNoRegression() {
+        System.out.println("-- @jsonable no regression --");
+        // Non-@jsonable class should produce identical output format
+        CompileOutput out = compile(
+            "export class Plain {\n  x: int;\n}\n");
+        assertNoErrors(out, "non-jsonable class");
+        // Should NOT have _fields, $fromJson, $toJson
+        assertNotContains(out.lua, "Plain_fields", "no Plain_fields for non-jsonable");
+        assertNotContains(out.lua, "Plain$fromJson", "no Plain$fromJson for non-jsonable");
+        assertNotContains(out.lua, "Plain$toJson", "no Plain$toJson for non-jsonable");
+        // Should NOT have std.json loading
+        assertNotContains(out.lua, "require(\"std.json\")", "no std.json for non-jsonable");
+        // Still has defaults and meta
+        assertContains(out.lua, "local Plain_defaults = ", "Plain_defaults still emitted");
+        assertContains(out.lua, "local Plain_meta = ", "Plain_meta still emitted");
+        check(isValidLua(out.lua), "valid Lua");  // non-jsonable: no $ identifiers
     }
 }

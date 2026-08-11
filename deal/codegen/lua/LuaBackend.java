@@ -1015,7 +1015,7 @@ public final class LuaBackend implements Visitor<Void> {
                 if (cd.isJsonable()) {
                     // Record metadata for deferred emission
                     deferredJsonables.add(new JsonableClassMeta(
-                        cd.name(), cd.fields(), cd, cd.span()));
+                        cd.name(), cd.fields()));
                     // Register exports for generated jsonable artifacts
                     exportedValues.putIfAbsent(cd.name() + "_fields",
                         cd.name() + "_fields");
@@ -1746,15 +1746,10 @@ public final class LuaBackend implements Visitor<Void> {
     private static final class JsonableClassMeta {
         final String className;
         final List<ClassField> fields;
-        final ClassDeclaration classDecl;
-        final Span span;
 
-        JsonableClassMeta(String className, List<ClassField> fields,
-                          ClassDeclaration classDecl, Span span) {
+        JsonableClassMeta(String className, List<ClassField> fields) {
             this.className = className;
             this.fields = fields;
-            this.classDecl = classDecl;
-            this.span = span;
         }
     }
 
@@ -1776,6 +1771,13 @@ public final class LuaBackend implements Visitor<Void> {
         if (deferredJsonables.isEmpty()) return;
 
         // Emit JSON module loading only when there are @jsonable classes.
+        // This conditional emission avoids an unconditional require("std.json")
+        // at the top of every module including non-jsonable ones, which would
+        // force all modules to have std/ available at runtime.  Module-level
+        // locals are scoped to the entire Lua chunk regardless of where they
+        // appear, so emitting them here (after walkStatements) is functionally
+        // identical to emitting them in emitHeader() — the generated C$fromJson
+        // and C$toJson closures capture these locals correctly.
         // Access raw functions via .f because std.json exports are __rt.function_
         // wrappers (tables with no __call metamethod).
         emitLine("-- @jsonable: JSON module loading");

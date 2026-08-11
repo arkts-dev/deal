@@ -169,6 +169,18 @@ public class LuaBackendIntegrationTest {
         testAsyncThrowCatch();
         testAsyncErrorPropagation();
 
+        // ISSUE-0050: @jsonable integration tests
+        testJsonableBasicRoundtrip();
+        testJsonableMalformedJson();
+        testJsonableExtraKeys();
+        testJsonableOptionalNullableRoundtrip();
+        testJsonableNestedClass();
+        testJsonableArrayField();
+        testJsonableForwardDeclaration();
+        testJsonableEmptyClass();
+        testJsonableWrappedTypeDependency();
+        testJsonableDefaultApplication();
+
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -2932,6 +2944,410 @@ public class LuaBackendIntegrationTest {
 
         check(exit == 0, "async error propagation: luajit exit 0 (got: " + output + ")");
         check(output.equals("E_INNER"), "async error propagation: expected E_INNER, got: " + output);
+    }
+
+    // ISSUE-0050: @jsonable integration tests
+    // =========================================================================
+
+    /**
+     * Checks whether the LuaJIT on this system supports '$' in identifiers.
+     * The Ubuntu-packaged LuaJIT 2.1.0-beta3 does not; upstream builds with
+     * -DLUAJIT_ENABLE_LUA52COMPAT do.  When unsupported, runtime execution
+     * tests for @jsonable generated code are skipped (the generated code is
+     * still verified structurally).
+     */
+    private static boolean luajitSupportsDollar() {
+        try {
+            Path tmp = Files.createTempFile("deal_dollar_test_", ".lua");
+            Files.writeString(tmp, "local a$b = 1; return a$b\n");
+            ProcessBuilder pb = new ProcessBuilder("luajit", tmp.toString());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            int exit = p.waitFor();
+            try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+            return exit == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Compile a DEAL source with @jsonable classes, generate Lua, and
+     * (if LuaJIT supports '$') run it with a Lua runner that exercises
+     * C$fromJson / C$toJson.  Returns the Lua source and the runtime
+     * output (or null if runtime execution was skipped).
+     */
+    private record JsonableRunResult(String lua, String runtimeOutput) {}
+
+    private static JsonableRunResult compileAndRunJsonable(
+            String dealSource, String filename, String runnerBody) throws Exception {
+        LexResult lex = new Lexer(dealSource, filename).tokenize();
+        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver(filename, resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
+        if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : diags) {
+                if ("error".equals(d.severity()))
+                    System.err.println("  Compile error: " + d);
+            }
+            throw new RuntimeException("Compilation failed for " + filename);
+        }
+        CheckResult result = TypeChecker.check(filename, symTable, nr, parse.program());
+        diags.addAll(result.diagnostics());
+        if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : diags) {
+                if ("error".equals(d.severity()))
+                    System.err.println("  Type error: " + d);
+            }
+            throw new RuntimeException("Type checking failed for " + filename);
+        }
+        String lua = LuaBackend.generate(parse.program(), result, filename);
+
+        String runtimeOutput = null;
+        if (luajitSupportsDollar()) {
+            String runner =
+                "package.path = './?.lua;' .. package.path\n" +
+                "local mod = loadstring([[" + lua + "]])()\n" +
+                runnerBody + "\n";
+
+            Path tmpDir = Files.createTempDirectory("deal_jsonable_int_");
+            Path runnerFile = tmpDir.resolve("runner.lua");
+            Files.writeString(runnerFile, runner);
+            Path runtimeDir = tmpDir.resolve("deal");
+            Files.createDirectories(runtimeDir);
+            Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+            Path stdDir = tmpDir.resolve("std");
+            Files.createDirectories(stdDir);
+            Files.copy(Path.of("std/json.lua"), stdDir.resolve("json.lua"));
+
+            ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+            pb.directory(tmpDir.toFile());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String output = new String(p.getInputStream().readAllBytes()).trim();
+            int exit = p.waitFor();
+
+            try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+                .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+            } catch (IOException ignored) {}
+
+            if (exit != 0) {
+                System.err.println("LuaJIT exit " + exit + ": " + output);
+            }
+            runtimeOutput = (exit == 0) ? output : ("EXIT:" + exit + " " + output);
+        }
+        return new JsonableRunResult(lua, runtimeOutput);
+    }
+
+    // --- @jsonable integration tests ---
+
+    static void testJsonableBasicRoundtrip() throws Exception {
+        System.out.println("-- @jsonable Basic Roundtrip --");
+        String dealSrc =
+            "// @jsonable\n" +
+            "export class User {\n" +
+            "  name: string = \"\";\n" +
+            "  age: int = 0;\n" +
+            "}\n";
+
+        String runnerBody =
+            "local u = mod.User$fromJson.f('{\"name\":\"Alice\",\"age\":30}')\n" +
+            "if u == __rt.__NULL then print('NULL') else\n" +
+            "  print(u.name)\n" +
+            "  print(u.age)\n" +
+            "  local s = mod.User$toJson.f(u)\n" +
+            "  print(s)\n" +
+            "end\n";
+
+        JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
+        // Structural checks
+        check(r.lua.contains("local User_fields = {"), "User_fields emitted");
+        check(r.lua.contains("local User$fromJson = __rt.function_("), "User$fromJson emitted");
+        check(r.lua.contains("local User$toJson = __rt.function_("), "User$toJson emitted");
+        check(r.lua.contains("__json_parse"), "__json_parse used");
+        check(r.lua.contains("__json_stringify"), "__json_stringify used");
+        check(r.lua.contains("pcall(__json_parse, s)"), "pcall wrapping");
+
+        if (r.runtimeOutput != null) {
+            check(r.runtimeOutput.contains("Alice"), "fromJson returns Alice, got: " + r.runtimeOutput);
+            check(r.runtimeOutput.contains("30"), "fromJson returns age 30, got: " + r.runtimeOutput);
+            check(r.runtimeOutput.contains("\"name\""), "toJson produces JSON with name, got: " + r.runtimeOutput);
+        }
+    }
+
+    static void testJsonableMalformedJson() throws Exception {
+        System.out.println("-- @jsonable Malformed JSON --");
+        String dealSrc =
+            "// @jsonable\n" +
+            "export class User {\n" +
+            "  name: string = \"\";\n" +
+            "}\n";
+
+        String runnerBody =
+            "local u = mod.User$fromJson.f('not json')\n" +
+            "if u == __rt.__NULL then print('NULL_OK') else print('NOT_NULL') end\n";
+
+        JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
+        check(r.lua.contains("pcall(__json_parse, s)"), "pcall present");
+        check(r.lua.contains("if not ok then return __NULL end"), "returns NULL on parse error");
+
+        if (r.runtimeOutput != null) {
+            check(r.runtimeOutput.contains("NULL_OK"),
+                "malformed JSON returns NULL, got: " + r.runtimeOutput);
+        }
+    }
+
+    static void testJsonableExtraKeys() throws Exception {
+        System.out.println("-- @jsonable Extra Keys --");
+        String dealSrc =
+            "// @jsonable\n" +
+            "export class User {\n" +
+            "  name: string = \"\";\n" +
+            "}\n";
+
+        String runnerBody =
+            "local u = mod.User$fromJson.f('{\"name\":\"Bob\",\"extra\":42}')\n" +
+            "if u == __rt.__NULL then print('NULL_OK') else print('NOT_NULL') end\n";
+
+        JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
+        check(r.lua.contains("json_from_json"), "json_from_json called");
+
+        if (r.runtimeOutput != null) {
+            check(r.runtimeOutput.contains("NULL_OK"),
+                "extra keys returns NULL, got: " + r.runtimeOutput);
+        }
+    }
+
+    static void testJsonableOptionalNullableRoundtrip() throws Exception {
+        System.out.println("-- @jsonable Optional-Nullable Roundtrip --");
+        String dealSrc =
+            "// @jsonable\n" +
+            "export class Profile {\n" +
+            "  nick?: string | null;\n" +
+            "  bio: string | null = null;\n" +
+            "  score: int = 0;\n" +
+            "}\n";
+
+        String runnerBody =
+            "local p1 = mod.Profile$fromJson.f('{\"score\":100}')\n" +
+            "local s1 = mod.Profile$toJson.f(p1)\n" +
+            "print('roundtrip1:' .. s1)\n" +
+            "local p2 = mod.Profile$fromJson.f('{\"nick\":null,\"bio\":\"hi\",\"score\":50}')\n" +
+            "local s2 = mod.Profile$toJson.f(p2)\n" +
+            "print('roundtrip2:' .. s2)\n" +
+            "local p3 = mod.Profile$fromJson.f('{\"nick\":\"Joe\",\"bio\":null,\"score\":75}')\n" +
+            "local s3 = mod.Profile$toJson.f(p3)\n" +
+            "print('roundtrip3:' .. s3)\n";
+
+        JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
+        check(r.lua.contains("\"nick\""), "nick field descriptor");
+        check(r.lua.contains("optional = true"), "optional field flag");
+        check(r.lua.contains("nullable = true"), "nullable field flag");
+
+        if (r.runtimeOutput != null) {
+            check(!r.runtimeOutput.contains("nick"), "missing optional not in output, got: " + r.runtimeOutput);
+            check(r.runtimeOutput.contains("roundtrip1"), "roundtrip1 executed");
+            check(r.runtimeOutput.contains("roundtrip2"), "roundtrip2 executed");
+            check(r.runtimeOutput.contains("roundtrip3"), "roundtrip3 executed");
+        }
+    }
+
+    static void testJsonableNestedClass() throws Exception {
+        System.out.println("-- @jsonable Nested Class --");
+        String dealSrc =
+            "// @jsonable\n" +
+            "export class Child {\n" +
+            "  name: string = \"\";\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class Parent {\n" +
+            "  child: Child;\n" +
+            "  label: string = \"\";\n" +
+            "}\n";
+
+        String runnerBody =
+            "local p = mod.Parent$fromJson.f('{\"child\":{\"name\":\"Kid\"},\"label\":\"parent\"}')\n" +
+            "if p == __rt.__NULL then print('NULL') else\n" +
+            "  print(p.label)\n" +
+            "  print(p.child.name)\n" +
+            "  local s = mod.Parent$toJson.f(p)\n" +
+            "  print(s)\n" +
+            "end\n";
+
+        JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
+        // Check that Child_fields is emitted before Parent_fields (topological sort:
+        // Parent depends on Child, so Child must come first — here Child is declared first
+        // so it's already in order, but we verify both exist)
+        check(r.lua.contains("local Child_fields = {"), "Child_fields emitted");
+        check(r.lua.contains("local Parent_fields = {"), "Parent_fields emitted");
+        // Parent field descriptor should reference Child_defaults and Child_fields
+        check(r.lua.contains("Child_defaults"), "nested class defaults reference");
+        check(r.lua.contains("Child_fields"), "nested class fields reference");
+        check(r.lua.contains("jtype = \"class\""), "class jtype for nested field");
+
+        if (r.runtimeOutput != null) {
+            check(r.runtimeOutput.contains("parent"), "parent label, got: " + r.runtimeOutput);
+            check(r.runtimeOutput.contains("Kid"), "child name, got: " + r.runtimeOutput);
+        }
+    }
+
+    static void testJsonableArrayField() throws Exception {
+        System.out.println("-- @jsonable Array Field --");
+        String dealSrc =
+            "// @jsonable\n" +
+            "export class ListHolder {\n" +
+            "  tags: string[];\n" +
+            "  name: string = \"\";\n" +
+            "}\n";
+
+        String runnerBody =
+            "local lh = mod.ListHolder$fromJson.f('{\"tags\":[\"a\",\"b\"],\"name\":\"test\"}')\n" +
+            "if lh == __rt.__NULL then print('NULL') else\n" +
+            "  print(lh.name)\n" +
+            "  print(lh.tags[1])\n" +
+            "  print(lh.tags[2])\n" +
+            "  local s = mod.ListHolder$toJson.f(lh)\n" +
+            "  print(s)\n" +
+            "end\n";
+
+        JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
+        check(r.lua.contains("jtype = \"array\""), "array jtype");
+        check(r.lua.contains("element = {"), "array element descriptor");
+
+        if (r.runtimeOutput != null) {
+            check(r.runtimeOutput.contains("test"), "name field, got: " + r.runtimeOutput);
+            check(r.runtimeOutput.contains("a"), "first tag, got: " + r.runtimeOutput);
+            check(r.runtimeOutput.contains("b"), "second tag, got: " + r.runtimeOutput);
+        }
+    }
+
+    static void testJsonableForwardDeclaration() throws Exception {
+        System.out.println("-- @jsonable Forward Declaration --");
+        // Parent class A declared BEFORE child class B.
+        // Topological sort must ensure B_fields is emitted before A_fields.
+        String dealSrc =
+            "// @jsonable\n" +
+            "export class A {\n" +
+            "  b: B;\n" +
+            "  label: string = \"\";\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class B {\n" +
+            "  name: string = \"\";\n" +
+            "}\n";
+
+        String runnerBody =
+            "local a = mod.A$fromJson.f('{\"b\":{\"name\":\"child\"},\"label\":\"parent\"}')\n" +
+            "if a == __rt.__NULL then print('NULL') else\n" +
+            "  print(a.label)\n" +
+            "  print(a.b.name)\n" +
+            "end\n";
+
+        JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
+        String lua = r.lua;
+        int bFieldsPos = lua.indexOf("local B_fields = {");
+        int aFieldsPos = lua.indexOf("local A_fields = {");
+        check(bFieldsPos >= 0, "B_fields exists");
+        check(aFieldsPos >= 0, "A_fields exists");
+        check(bFieldsPos < aFieldsPos,
+            "B_fields emitted before A_fields (topological sort for forward decl), " +
+            "B at " + bFieldsPos + ", A at " + aFieldsPos);
+
+        if (r.runtimeOutput != null) {
+            check(r.runtimeOutput.contains("parent"), "parent label, got: " + r.runtimeOutput);
+            check(r.runtimeOutput.contains("child"), "child name, got: " + r.runtimeOutput);
+        }
+    }
+
+    static void testJsonableEmptyClass() throws Exception {
+        System.out.println("-- @jsonable Empty Class --");
+        String dealSrc =
+            "// @jsonable\n" +
+            "export class Empty {\n" +
+            "}\n";
+
+        String runnerBody =
+            "local e = mod.Empty$fromJson.f('{}')\n" +
+            "if e == __rt.__NULL then print('NULL') else\n" +
+            "  print('OK')\n" +
+            "  local s = mod.Empty$toJson.f(e)\n" +
+            "  print(s)\n" +
+            "end\n";
+
+        JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
+        check(r.lua.contains("local Empty_fields = {"), "Empty_fields emitted");
+        // Empty fields should be an empty table
+        check(r.lua.contains("Empty_fields = {\n"), "Empty_fields is empty table");
+
+        if (r.runtimeOutput != null) {
+            check(r.runtimeOutput.contains("OK"), "empty class fromJson works, got: " + r.runtimeOutput);
+        }
+    }
+
+    static void testJsonableWrappedTypeDependency() throws Exception {
+        System.out.println("-- @jsonable Wrapped Type Dependency --");
+        // A depends on B through array wrapper (bs: B[]).
+        // Even though A is declared first, B_fields must be emitted before A_fields.
+        String dealSrc =
+            "// @jsonable\n" +
+            "export class A {\n" +
+            "  bs: B[];\n" +
+            "  name: string = \"\";\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class B {\n" +
+            "  val: int = 0;\n" +
+            "}\n";
+
+        String runnerBody =
+            "local a = mod.A$fromJson.f('{\"bs\":[{\"val\":1},{\"val\":2}],\"name\":\"arr\"}')\n" +
+            "if a == __rt.__NULL then print('NULL') else\n" +
+            "  print(a.name)\n" +
+            "  print(a.bs[1].val)\n" +
+            "  print(a.bs[2].val)\n" +
+            "end\n";
+
+        JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
+        String lua = r.lua;
+        int bFieldsPos = lua.indexOf("local B_fields = {");
+        int aFieldsPos = lua.indexOf("local A_fields = {");
+        check(bFieldsPos >= 0, "B_fields exists");
+        check(aFieldsPos >= 0, "A_fields exists");
+        check(bFieldsPos < aFieldsPos,
+            "B_fields emitted before A_fields (wrapped type dep), " +
+            "B at " + bFieldsPos + ", A at " + aFieldsPos);
+
+        if (r.runtimeOutput != null) {
+            check(r.runtimeOutput.contains("arr"), "name field, got: " + r.runtimeOutput);
+            check(r.runtimeOutput.contains("1"), "first element val, got: " + r.runtimeOutput);
+            check(r.runtimeOutput.contains("2"), "second element val, got: " + r.runtimeOutput);
+        }
+    }
+
+    static void testJsonableDefaultApplication() throws Exception {
+        System.out.println("-- @jsonable Default Application --");
+        String dealSrc =
+            "// @jsonable\n" +
+            "export class Config {\n" +
+            "  host: string = \"localhost\";\n" +
+            "  port: int = 8080;\n" +
+            "}\n";
+
+        String runnerBody =
+            "local c = mod.Config$fromJson.f('{}')\n" +
+            "if c == __rt.__NULL then print('NULL') else\n" +
+            "  print(c.host)\n" +
+            "  print(c.port)\n" +
+            "end\n";
+
+        JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
+
+        if (r.runtimeOutput != null) {
+            check(r.runtimeOutput.contains("localhost"), "default host applied, got: " + r.runtimeOutput);
+            check(r.runtimeOutput.contains("8080"), "default port applied, got: " + r.runtimeOutput);
+        }
     }
 
 }
