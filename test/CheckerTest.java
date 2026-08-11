@@ -298,6 +298,24 @@ public class CheckerTest {
         // ISSUE-0008: E6003 coroutine import rejection
         testE6003_coroutineImport();
 
+        // v1.1: For-of scoping and type checking (ISSUE-0034)
+        testForOfScoping_loopVarInBody();
+        testForOfScoping_iterableCannotRefLoopVar();
+        testForOfScoping_iterableRefsOuterVar();
+        testForOfScoping_breakInside();
+        testForOfScoping_continueInside();
+        testForOfTypeCheck_arrayCorrect();
+        testForOfTypeCheck_stringCorrect();
+        testForOfTypeCheck_nonIterable();
+        testForOfTypeCheck_arrayWrongVarType();
+        testForOfTypeCheck_stringWrongVarType();
+
+        // v1.1: Template literal type checking (ISSUE-0034)
+        testTemplateLiteral_stringParts();
+        testTemplateLiteral_nonStringInterpolation();
+        testTemplateLiteral_typeInference();
+        testTemplateLiteral_nameResolution();
+
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -1418,4 +1436,192 @@ public class CheckerTest {
         assertError(out, "E6003", "coroutine import with c.resumeInt usage produces E6003");
     }
 
+
+    // =================================================================
+    // v1.1: For-of Scoping Tests (ISSUE-0034)
+    // =================================================================
+
+    static void testForOfScoping_loopVarInBody() {
+        System.out.println("-- For-of Scoping: loop var in body --");
+        CheckerOutput out = checkProgram(
+            "function f(xs: int[]): null {\n" +
+            "  for (let x: int of xs) {\n" +
+            "    let y: int = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(out, "loop variable visible in for-of body");
+    }
+
+    static void testForOfScoping_iterableCannotRefLoopVar() {
+        System.out.println("-- For-of Scoping: iterable cannot ref loop var --");
+        // The iterable x should resolve to outer scope. If there is no outer x, E2001.
+        CheckerOutput out = checkProgram(
+            "function f(): null {\n" +
+            "  for (let x: int of x) {\n" +
+            "    let y: int = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E2001", "iterable x should not see loop variable (E2001)");
+    }
+
+    static void testForOfScoping_iterableRefsOuterVar() {
+        System.out.println("-- For-of Scoping: iterable refs outer var --");
+        // The iterable x should resolve to the outer x (the parameter).
+        CheckerOutput out = checkProgram(
+            "function f(x: int[]): null {\n" +
+            "  for (let x: int of x) {\n" +
+            "    let y: int = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(out, "iterable x resolves to outer parameter");
+    }
+
+    static void testForOfScoping_breakInside() {
+        System.out.println("-- For-of Scoping: break inside --");
+        CheckerOutput out = checkProgram(
+            "function f(xs: int[]): null {\n" +
+            "  for (let x: int of xs) {\n" +
+            "    break;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(out, "break inside for-of");
+    }
+
+    static void testForOfScoping_continueInside() {
+        System.out.println("-- For-of Scoping: continue inside --");
+        CheckerOutput out = checkProgram(
+            "function f(xs: int[]): null {\n" +
+            "  for (let x: int of xs) {\n" +
+            "    continue;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(out, "continue inside for-of");
+    }
+
+    // ================================================================="
+    // v1.1: For-of Type Checking Tests (ISSUE-0034)
+    // ================================================================="
+
+    static void testForOfTypeCheck_arrayCorrect() {
+        System.out.println("-- For-of Type Check: array correct --");
+        CheckerOutput out = checkProgram(
+            "function f(xs: int[]): null {\n" +
+            "  for (let x: int of xs) {\n" +
+            "    let y: int = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(out, "for-of over int[] with int loop var");
+    }
+
+    static void testForOfTypeCheck_stringCorrect() {
+        System.out.println("-- For-of Type Check: string correct --");
+        CheckerOutput out = checkProgram(
+            "function f(s: string): null {\n" +
+            "  for (let c: string of s) {\n" +
+            "    let d: string = c;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(out, "for-of over string with string loop var");
+    }
+
+    static void testForOfTypeCheck_nonIterable() {
+        System.out.println("-- For-of Type Check: non-iterable -> E3015 --");
+        CheckerOutput out = checkProgram(
+            "function f(b: boolean): null {\n" +
+            "  for (let x: int of b) {\n" +
+            "    let y: int = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E3015", "for-of over boolean -> E3015");
+    }
+
+    static void testForOfTypeCheck_arrayWrongVarType() {
+        System.out.println("-- For-of Type Check: array wrong var type -> E3015 --");
+        CheckerOutput out = checkProgram(
+            "function f(xs: int[]): null {\n" +
+            "  for (let x: string of xs) {\n" +
+            "    let y: string = x;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E3015", "for-of over int[] with string var -> E3015");
+    }
+
+    static void testForOfTypeCheck_stringWrongVarType() {
+        System.out.println("-- For-of Type Check: string wrong var type -> E3015 --");
+        CheckerOutput out = checkProgram(
+            "function f(s: string): null {\n" +
+            "  for (let c: int of s) {\n" +
+            "    let d: int = c;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E3015", "for-of over string with int var -> E3015");
+    }
+
+    // ================================================================="
+    // v1.1: Template Literal Type Checking Tests (ISSUE-0034)
+    // ================================================================="
+
+    static void testTemplateLiteral_stringParts() {
+        System.out.println("-- Template Literal: all string parts --");
+        CheckerOutput out = checkProgram(
+            "function f(name: string): string {\n" +
+            "  return `Hello ${name}`;\n" +
+            "}"
+        );
+        assertNoErrors(out, "template literal with string interpolation");
+    }
+
+    static void testTemplateLiteral_nonStringInterpolation() {
+        System.out.println("-- Template Literal: non-string interpolation -> E3016 --");
+        CheckerOutput out = checkProgram(
+            "function f(n: int): string {\n" +
+            "  return `Value: ${n}`;\n" +
+            "}"
+        );
+        assertError(out, "E3016", "template literal with int interpolation -> E3016");
+    }
+
+    static void testTemplateLiteral_typeInference() {
+        System.out.println("-- Template Literal: type inference (D15) --");
+        // let without :string annotation should infer string
+        CheckerOutput out = checkProgram(
+            "function f(name: string): void {\n" +
+            "  let msg = `Hello ${name}`;\n" +
+            "  let s: string = msg;\n" +
+            "}"
+        );
+        assertNoErrors(out, "template literal infers string type");
+    }
+
+    static void testTemplateLiteral_nameResolution() {
+        System.out.println("-- Template Literal: name resolution walks parts --");
+        // FunctionExpr inside template interpolation should be found by NameResolver
+        CheckerOutput out = checkProgram(
+            "function f(): string {\n" +
+            "  let g = function(): string { return \"world\"; };\n" +
+            "  return `Hello ${g()}`;\n" +
+            "}"
+        );
+        assertNoErrors(out, "template literal parts walked for name resolution");
+    }
 }
