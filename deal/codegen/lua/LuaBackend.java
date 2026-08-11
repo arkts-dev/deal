@@ -223,7 +223,9 @@ public final class LuaBackend implements Visitor<Void> {
                 }
             }
         }
-    }    public List<Diagnostic> diagnostics() {
+    }
+
+    public List<Diagnostic> diagnostics() {
         return Collections.unmodifiableList(diagnostics);
     }
 
