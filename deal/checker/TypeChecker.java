@@ -518,6 +518,7 @@ public final class TypeChecker {
             case FunctionExpr fe       -> checkFunctionExpr(fe);
             case HasExpr has           -> checkHas(has);
             case AssignmentExpr assign -> checkAssignmentExpr(assign);
+            case AwaitExpression await -> checkExpression(await.callee());
             case TemplateLiteralExpr tl -> {
                 for (int i = 0; i < tl.parts().size(); i++) {
                     ExpressionNode part = tl.parts().get(i);

@@ -1193,6 +1193,7 @@ public final class LuaBackend implements Visitor<Void> {
             case FunctionExpr fe -> emitFunctionExpr(fe);
             case HasExpr has -> emitHas(has);
             case AssignmentExpr assign -> emitAssignment(assign);
+            case AwaitExpression await -> emitExpression(await.callee());
             case TemplateLiteralExpr tl -> emitTemplateLiteral(tl);
         };
     }

@@ -659,6 +659,9 @@ public final class CompilationOrchestrator {
             }
             case FunctionExpr fe -> false;
             case LiteralExpr le -> false;
+            case AwaitExpression await -> {
+                yield exprReferencesImport(await.callee(), alias);
+            }
             case TemplateLiteralExpr tl -> {
                 for (ExpressionNode part : tl.parts()) {
                     if (exprReferencesImport(part, alias)) yield true;

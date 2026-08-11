@@ -47,6 +47,7 @@ public interface Visitor<T> {
     default T visit(HasExpr node) { return null; }
     default T visit(AssignmentExpr node) { return null; }
     default T visit(TemplateLiteralExpr node) { return null; }
+    default T visit(AwaitExpression node) { return null; }
 
     // -- Type nodes (for visitors that walk type annotations) --
     default T visit(NamedType node) { return null; }

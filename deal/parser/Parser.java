@@ -103,6 +103,17 @@ public final class Parser {
                 }
                 yield parseExpressionStatement();
             }
+            case ASYNC  -> {
+                if (pos + 1 < tokens.size()
+                        && tokens.get(pos + 1).type() == TokenType.FUNCTION
+                        && pos + 2 < tokens.size()
+                        && tokens.get(pos + 2).type() == TokenType.IDENTIFIER
+                        && pos + 3 < tokens.size()
+                        && tokens.get(pos + 3).type() == TokenType.LPAREN) {
+                    yield parseFunctionDeclaration();
+                }
+                yield parseExpressionStatement();
+            }
             case LET       -> parseVariableDeclaration();
             case RETURN    -> parseReturnStatement();
             case IF        -> parseIfStatement();
@@ -206,7 +217,9 @@ public final class Parser {
 
     // -- FunctionDeclaration --
     private StatementNode parseFunctionDeclaration() {
-        Token funcToken = advance();
+        boolean isAsync = match(TokenType.ASYNC);
+        Token startToken = isAsync ? previous() : peek();
+        Token funcToken = advance();  // consumes FUNCTION
         Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, "Expected function name after 'function'");
         if (nameToken == null) { synchronize(); return null; }
 
@@ -232,9 +245,9 @@ public final class Parser {
             synchronize();
         }
 
-        Span sp = spanBetween(funcToken, previousOrCurrent());
+        Span sp = spanBetween(startToken, previousOrCurrent());
         return new FunctionDeclaration(sp, nameToken.lexeme(),
-                paramResult.params, paramResult.restParam, returnType, body, false);
+                paramResult.params, paramResult.restParam, returnType, body, isAsync);
     }
 
     // -- VariableDeclaration --
@@ -456,12 +469,12 @@ public final class Parser {
         StatementNode declaration;
 
         TokenType nextType = peek().type();
-        if (nextType == TokenType.FUNCTION) {
+        if (nextType == TokenType.FUNCTION || nextType == TokenType.ASYNC) {
             declaration = parseFunctionDeclaration();
         } else if (nextType == TokenType.CLASS) {
             declaration = parseClassDeclaration();
         } else {
-            error(DiagnosticCode.E1024, "'export' must be followed by 'function' or 'class'", peek());
+            error(DiagnosticCode.E1024, "'export' must be followed by 'function', 'async function', or 'class'", peek());
             synchronize(); return null;
         }
 
@@ -546,8 +559,8 @@ public final class Parser {
     // =======================================================================
 
     private TypeNode parseType() {
-        // Try function type first: '(' params ')' '=>' Type
-        if (peek().type() == TokenType.LPAREN) {
+        // Try function type first: '(' params ')' '=>' Type   or   async '(' params ')' '=>' Type
+        if (peek().type() == TokenType.LPAREN || peek().type() == TokenType.ASYNC) {
             TypeNode funcType = tryParseFunctionType();
             if (funcType != null) return funcType;
         }
@@ -558,7 +571,8 @@ public final class Parser {
         int savedPos = pos;
         int diagSize = diagnostics.size();
 
-        Token lparen = advance();
+        boolean isAsync = match(TokenType.ASYNC);
+        Token lparen = advance();  // consumes LPAREN (or whatever if not a function type)
 
         List<FunctionTypeParam> params = new ArrayList<>();
         Optional<FunctionTypeParam> rest = Optional.empty();
@@ -597,7 +611,7 @@ public final class Parser {
         }
 
         return new FunctionType(spanBetween(lparen, previousOrCurrent()),
-                List.copyOf(params), rest, returnType, false);
+                List.copyOf(params), rest, returnType, isAsync);
     }
 
     private FunctionTypeParam parseFunctionTypeParam() {
@@ -863,6 +877,18 @@ public final class Parser {
     }
 
     private ExpressionNode parseUnary() {
+        // await expression: await PostfixExpression
+        if (match(TokenType.AWAIT)) {
+            Token awaitToken = previous();
+            ExpressionNode expr = parsePostfix();
+            if (expr == null) return null;
+            if (!(expr instanceof CallExpr)) {
+                error(DiagnosticCode.E1042, "'await' must be followed by a function call", awaitToken);
+            }
+            Span sp = spanBetween(spanOf(awaitToken), expr.span());
+            return new AwaitExpression(sp, expr);
+        }
+
         if (match(TokenType.BANG)) {
             Token bang = previous();
             ExpressionNode operand = parseUnary();
@@ -1001,6 +1027,7 @@ public final class Parser {
             case LBRACKET -> { return parseArrayLiteral(); }
             case LBRACE   -> { return parseObjectLiteral(); }
             case FUNCTION -> { return parseFunctionExpression(); }
+            case ASYNC    -> { return parseFunctionExpression(); }
             case HAS      -> { return parseHasExpression(); }
             default -> {
                 error(DiagnosticCode.E1037, "Expected expression", token);
@@ -1367,7 +1394,9 @@ public final class Parser {
 
 
     private ExpressionNode parseFunctionExpression() {
-        Token funcToken = advance();
+        boolean isAsync = match(TokenType.ASYNC);
+        Token startToken = isAsync ? previous() : peek();
+        Token funcToken = advance();  // consumes FUNCTION
 
         expect(TokenType.LPAREN, DiagnosticCode.E1009, "Expected '(' after 'function'");
         var paramResult = parseParameterList();
@@ -1389,8 +1418,8 @@ public final class Parser {
             synchronize();
         }
 
-        Span sp = spanBetween(funcToken, previousOrCurrent());
-        return new FunctionExpr(sp, paramResult.params, paramResult.restParam, returnType, body, false);
+        Span sp = spanBetween(startToken, previousOrCurrent());
+        return new FunctionExpr(sp, paramResult.params, paramResult.restParam, returnType, body, isAsync);
     }
 
     private ExpressionNode parseArrayLiteral() {
@@ -1640,7 +1669,7 @@ public final class Parser {
 
     private boolean isStatementBoundary(TokenType type) {
         return switch (type) {
-            case RBRACE, LET, CLASS, FUNCTION, RETURN, IF, WHILE, FOR,
+            case RBRACE, LET, CLASS, FUNCTION, ASYNC, RETURN, IF, WHILE, FOR,
                  BREAK, CONTINUE, IMPORT, EXPORT, DELETE, TRY, THROW,
                  SEMICOLON, EOF -> true;
             default -> false;
@@ -1651,7 +1680,7 @@ public final class Parser {
         return switch (type) {
             case NULL, TRUE, FALSE, INT_LITERAL, NUMBER_LITERAL, STRING_LITERAL, TEMPLATE_LITERAL,
                  IDENTIFIER, BANG, MINUS, LPAREN, LBRACKET, LBRACE,
-                 FUNCTION, HAS -> true;
+                 FUNCTION, HAS, AWAIT, ASYNC -> true;
             default -> false;
         };
     }

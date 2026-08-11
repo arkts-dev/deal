@@ -188,6 +188,15 @@ public class ParserTest {
         testJsonableInvalidPlacementIsJsonableFalse();
         testJsonableEndToEndLexParse();
 
+        testAsyncFunctionDeclaration();
+        testAwaitExpression();
+        testAwaitNotCall();
+        testAsyncFunctionType();
+        testAsyncFunctionExprInLet();
+        testAsyncTypeAnnotation();
+        testExportAsyncFunction();
+        testAsyncExprStatement();
+
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -1593,6 +1602,181 @@ public class ParserTest {
                 ClassDeclaration.class, "class node");
         check(!cd.isJsonable(),
             "isJsonable should be false after invalid placement warning");
+    }
+
+    // =========================================================================
+    // Async/Await parser tests
+    // =========================================================================
+
+    static void testAsyncFunctionDeclaration() {
+        System.out.println("-- Async Function Declaration --");
+
+        ParseResult r = parse("async function f(): int { return await g(); }");
+        ProgramNode prog = r.program();
+        assertNoParseErrors(r, "async function decl");
+        assertStmtCount(prog, 1, "one statement");
+
+        FunctionDeclaration fd = assertInstance(prog.statements().get(0),
+                FunctionDeclaration.class, "function decl node");
+        check(fd.isAsync(), "isAsync should be true");
+        check(fd.name().equals("f"), "name should be f");
+
+        // Check body: should contain return with await
+        check(fd.body().statements().size() == 1, "body has one statement");
+        ReturnStatement ret = assertInstance(fd.body().statements().get(0),
+                ReturnStatement.class, "return statement");
+        check(ret.expr().isPresent(), "return has expression");
+        AwaitExpression await = assertExprInstance(ret.expr().get(),
+                AwaitExpression.class, "await expression");
+        CallExpr call = assertExprInstance(await.callee(),
+                CallExpr.class, "call expression");
+        IdentifierExpr callee = assertExprInstance(call.callee(),
+                IdentifierExpr.class, "callee is identifier");
+        check(callee.name().equals("g"), "callee is g");
+    }
+
+    static void testAwaitExpression() {
+        System.out.println("-- Await Expression --");
+
+        ParseResult r = parse("async function f(): int { await g(1, 2); }");
+        ProgramNode prog = r.program();
+        assertNoParseErrors(r, "await expression");
+        assertStmtCount(prog, 1, "one statement");
+
+        FunctionDeclaration fd = assertInstance(prog.statements().get(0),
+                FunctionDeclaration.class, "function decl");
+        check(fd.isAsync(), "isAsync should be true");
+
+        // Body contains expression statement with await
+        ExpressionStatement es = assertInstance(fd.body().statements().get(0),
+                ExpressionStatement.class, "expression statement");
+        AwaitExpression await = assertExprInstance(es.expr(),
+                AwaitExpression.class, "await expression");
+        CallExpr call = assertExprInstance(await.callee(),
+                CallExpr.class, "call expression");
+        IdentifierExpr callee = assertExprInstance(call.callee(),
+                IdentifierExpr.class, "callee is identifier");
+        check(callee.name().equals("g"), "callee is g");
+        check(call.args().size() == 2, "two args");
+    }
+
+    static void testAwaitNotCall() {
+        System.out.println("-- Await Not Call -> E1042 --");
+
+        ParseResult r = parse("async function f(): int { await 42; }");
+        assertParseError(r, "E1042", "await not followed by call");
+
+        // Should still produce an AwaitExpression (error recovery)
+        ProgramNode prog = r.program();
+        if (!prog.statements().isEmpty()) {
+            FunctionDeclaration fd = assertInstance(prog.statements().get(0),
+                    FunctionDeclaration.class, "function decl");
+            if (!fd.body().statements().isEmpty()) {
+                // The expression statement should still exist
+                check(fd.body().statements().get(0) instanceof ExpressionStatement,
+                        "expression statement exists despite error");
+            }
+        }
+    }
+
+    static void testAsyncFunctionType() {
+        System.out.println("-- Async Function Type --");
+
+        // Test: let f: async (int) => string;
+        ParseResult r = parse("let f: async (p: int) => string = g;");
+        ProgramNode prog = r.program();
+        assertNoParseErrors(r, "async function type annotation");
+        assertStmtCount(prog, 1, "one statement");
+
+        VariableDeclaration vd = assertInstance(prog.statements().get(0),
+                VariableDeclaration.class, "variable decl");
+        check(vd.typeAnnotation().isPresent(), "has type annotation");
+
+        TypeNode tn = vd.typeAnnotation().get();
+        check(tn instanceof FunctionType, "type is FunctionType");
+        FunctionType ft = (FunctionType) tn;
+        check(ft.isAsync(), "isAsync should be true on function type");
+        check(ft.params().size() == 1, "one param");
+        check(ft.params().get(0).name().equals("p"), "param name is p");
+
+        // Also test just the type in isolation via let with no init
+        ParseResult r2 = parse("let f: async (a: int, b: string) => boolean = h;");
+        ProgramNode prog2 = r2.program();
+        // Multi-param async function type
+        VariableDeclaration vd2 = assertInstance(prog2.statements().get(0),
+                VariableDeclaration.class, "variable decl with async type");
+        check(vd2.typeAnnotation().isPresent(), "has type annotation");
+        TypeNode tn2 = vd2.typeAnnotation().get();
+        check(tn2 instanceof FunctionType, "type is FunctionType");
+        FunctionType ft2 = (FunctionType) tn2;
+        check(ft2.isAsync(), "isAsync should be true with multi-param");
+        check(ft2.params().size() == 2, "two params");
+    }
+
+    static void testAsyncFunctionExprInLet() {
+        System.out.println("-- Async Function Expression in Let --");
+
+        ParseResult r = parse("let f = async function(): int { return 5; };");
+        ProgramNode prog = r.program();
+        assertNoParseErrors(r, "async function expr in let");
+        assertStmtCount(prog, 1, "one statement");
+
+        VariableDeclaration vd = assertInstance(prog.statements().get(0),
+                VariableDeclaration.class, "variable decl");
+        FunctionExpr fe = assertExprInstance(vd.initializer(),
+                FunctionExpr.class, "function expr");
+        check(fe.isAsync(), "isAsync should be true on function expr");
+    }
+
+    static void testAsyncTypeAnnotation() {
+        System.out.println("-- Async Type Annotation in Let --");
+
+        // let f: async (int) => string;
+        // But since let requires an initializer, use a valid one
+        ParseResult r = parse("let f: async (p: int) => string = someFunc;");
+        ProgramNode prog = r.program();
+        assertNoParseErrors(r, "async type annotation in let");
+        assertStmtCount(prog, 1, "one statement");
+
+        VariableDeclaration vd = assertInstance(prog.statements().get(0),
+                VariableDeclaration.class, "variable decl");
+        check(vd.typeAnnotation().isPresent(), "has type annotation");
+        TypeNode tn3 = vd.typeAnnotation().get();
+        check(tn3 instanceof FunctionType, "type is FunctionType");
+        FunctionType ft = (FunctionType) tn3;
+        check(ft.isAsync(), "isAsync in type annotation");
+    }
+
+    static void testExportAsyncFunction() {
+        System.out.println("-- Export Async Function --");
+
+        ParseResult r = parse("export async function f(): int { return 5; }");
+        ProgramNode prog = r.program();
+        assertNoParseErrors(r, "export async function");
+        assertStmtCount(prog, 1, "one statement");
+
+        ExportDeclaration ed = assertInstance(prog.statements().get(0),
+                ExportDeclaration.class, "export decl");
+        FunctionDeclaration fd = assertInstance(ed.declaration(),
+                FunctionDeclaration.class, "function inside export");
+        check(fd.isAsync(), "isAsync should be true on exported async function");
+        check(fd.name().equals("f"), "name is f");
+    }
+
+    static void testAsyncExprStatement() {
+        System.out.println("-- Async Function as Expression Statement --");
+
+        // Bare async function expression as a statement
+        ParseResult r = parse("async function(): int { return 5; };");
+        ProgramNode prog = r.program();
+        assertNoParseErrors(r, "async expr statement");
+        assertStmtCount(prog, 1, "one statement");
+
+        ExpressionStatement es = assertInstance(prog.statements().get(0),
+                ExpressionStatement.class, "expression statement");
+        FunctionExpr fe = assertExprInstance(es.expr(),
+                FunctionExpr.class, "function expr");
+        check(fe.isAsync(), "isAsync should be true");
     }
 
     static void testJsonableEndToEndLexParse() {

@@ -441,6 +441,7 @@ public final class NameResolver {
                     walkExpression(part);
                 }
             }
+            case AwaitExpression await -> walkExpression(await.callee());
             default -> { /* leaf expression — no nested FunctionExpr possible */ }
         }
     }

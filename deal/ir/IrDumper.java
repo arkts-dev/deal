@@ -250,6 +250,7 @@ public final class IrDumper implements Visitor<String> {
             case FunctionExpr fe           -> visit(fe);
             case HasExpr he                -> visit(he);
             case AssignmentExpr ae         -> visit(ae);
+            case AwaitExpression await2     -> visit(await2);
             case TemplateLiteralExpr tl      -> visit(tl);
         };
     }
