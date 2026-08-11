@@ -1414,7 +1414,7 @@ public class CheckerTest {
             "number(true) should reject boolean with E5001, got: " + diags);
     }
     // =========================================================================
-    // ISSUE-0040: E6003 retired — coroutine import now fails with E2003
+    // ISSUE-0042: coroutine import now fails with E2003
     // =========================================================================
 
     static void testCoroutineImportRejected() {

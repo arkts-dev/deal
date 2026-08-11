@@ -264,7 +264,6 @@ public class DiagnosticClassificationTest {
         coverage.put("E6000", "LuaBackendTest (unsupported stmt)");
         coverage.put("E6001", "LuaBackendTest (continue outside loop)");
         coverage.put("E6002", "Historical (ISSUE-0011, no longer emitted)");
-        coverage.put("E6003", "Retired (ISSUE-0040 — coroutine import guard removed)");
 
         coverage.put("E7001", "ModuleSystemTest (decl file exec stmt)");
 
