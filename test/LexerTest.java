@@ -110,6 +110,7 @@ public class LexerTest {
         testOfTokenizesAsKeyword();
         testAsyncTokenizesAsKeyword();
         testAwaitTokenizesAsKeyword();
+        testDirectiveComments();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -1152,4 +1153,131 @@ public class LexerTest {
         check(tokens.size() == 2, "'await': expected 2 tokens (keyword + EOF)");
         assertToken(tokens.get(0), TokenType.AWAIT, "await", 1, 1);
     }
+
+    // =========================================================================
+    // Directive comment tests (D1)
+    // =========================================================================
+
+    static void testDirectiveComments() {
+        System.out.println("-- Directive Comments --");
+
+        // --- @jsonable recognized on next token ---
+        LexResult r = tokenize("// @jsonable\nexport class C {}");
+        assertNoDiagnostics(r.diagnostics(), "@jsonable before export class");
+        List<Token> tokens = r.tokens();
+        Token exportToken = tokens.get(0);
+        check(exportToken.type() == TokenType.EXPORT,
+            "@jsonable before export: first token is EXPORT, got " + exportToken.type());
+        check(exportToken.directives().contains("@jsonable"),
+            "EXPORT token has @jsonable directive");
+        check(exportToken.directives().size() == 1,
+            "EXPORT token has exactly 1 directive, got " + exportToken.directives().size());
+
+        // --- @jsonable followed by blank line ---
+        r = tokenize("// @jsonable\n\nexport class D {}");
+        assertNoDiagnostics(r.diagnostics(), "@jsonable + blank line before export class");
+        tokens = r.tokens();
+        Token expToken2 = tokens.get(0);
+        check(expToken2.type() == TokenType.EXPORT,
+            "@jsonable + blank line: first token is EXPORT, got " + expToken2.type());
+        check(expToken2.directives().contains("@jsonable"),
+            "EXPORT token after blank line has @jsonable directive");
+
+        // --- Ordinary comment produces no directive ---
+        r = tokenize("// some comment\nlet x = 1;");
+        assertNoDiagnostics(r.diagnostics(), "ordinary comment");
+        tokens = r.tokens();
+        Token letToken = tokens.get(0);
+        check(letToken.type() == TokenType.LET,
+            "ordinary comment: first token is LET, got " + letToken.type());
+        check(letToken.directives().isEmpty(),
+            "LET token has no directives after ordinary comment");
+
+        // --- @jsonable with no space after // ---
+        r = tokenize("//@jsonable\nexport class E {}");
+        assertNoDiagnostics(r.diagnostics(), "@jsonable no space");
+        tokens = r.tokens();
+        Token expNoSpace = tokens.get(0);
+        check(expNoSpace.type() == TokenType.EXPORT,
+            "@jsonable no space: first token is EXPORT");
+        check(expNoSpace.directives().contains("@jsonable"),
+            "EXPORT token has @jsonable directive (no space)");
+
+        // --- Multiple @jsonable comment lines accumulate ---
+        r = tokenize("// @jsonable\n// @jsonable\nexport class F {}");
+        assertNoDiagnostics(r.diagnostics(), "double @jsonable");
+        tokens = r.tokens();
+        Token expDouble = tokens.get(0);
+        check(expDouble.type() == TokenType.EXPORT,
+            "double @jsonable: first token is EXPORT");
+        check(expDouble.directives().size() == 2,
+            "double @jsonable: 2 directives, got " + expDouble.directives().size());
+        check(expDouble.directives().get(0).equals("@jsonable")
+                && expDouble.directives().get(1).equals("@jsonable"),
+            "both directives are @jsonable");
+
+        // --- @jsonable at end of file with no following token ---
+        r = tokenize("// @jsonable");
+        assertNoDiagnostics(r.diagnostics(), "@jsonable at EOF");
+        tokens = r.tokens();
+        // Should only have EOF token, no crash
+        check(tokens.size() == 1,
+            "@jsonable at EOF: only EOF token, got " + tokens.size());
+        check(tokens.get(0).type() == TokenType.EOF,
+            "@jsonable at EOF: token is EOF");
+        check(tokens.get(0).directives().isEmpty(),
+            "EOF token has no directives");
+
+        // --- @jsonable with leading whitespace on comment line ---
+        r = tokenize("//   @jsonable  \nexport class G {}");
+        assertNoDiagnostics(r.diagnostics(), "@jsonable with extra whitespace");
+        tokens = r.tokens();
+        Token expWS = tokens.get(0);
+        check(expWS.type() == TokenType.EXPORT,
+            "@jsonable extra ws: first token is EXPORT");
+        check(expWS.directives().contains("@jsonable"),
+            "EXPORT token has @jsonable with extra whitespace");
+
+        // --- @jsonable before non-export keyword gets attached to that keyword ---
+        r = tokenize("// @jsonable\nclass C {}");
+        assertNoDiagnostics(r.diagnostics(), "@jsonable before standalone class");
+        tokens = r.tokens();
+        Token classToken = tokens.get(0);
+        check(classToken.type() == TokenType.CLASS,
+            "@jsonable before standalone class: first token is CLASS, got " + classToken.type());
+        check(classToken.directives().contains("@jsonable"),
+            "CLASS token has @jsonable directive");
+
+        // --- @jsonable does not leak to subsequent tokens ---
+        r = tokenize("// @jsonable\nlet x = 1;\nlet y = 2;");
+        tokens = r.tokens();
+        Token firstLet = tokens.get(0);
+        check(firstLet.type() == TokenType.LET && firstLet.lexeme().equals("let"),
+            "first non-comment is LET");
+        check(firstLet.directives().contains("@jsonable"),
+            "first LET gets directive");
+        // Find the second LET
+        Token secondLet = null;
+        for (Token t : tokens) {
+            if (t.type() == TokenType.LET && t != firstLet) {
+                secondLet = t;
+                break;
+            }
+        }
+        check(secondLet != null, "second LET found");
+        check(secondLet.directives().isEmpty(),
+            "second LET has no directives (directive consumed)");
+
+        // --- @jsonable between other comments still attaches ---
+        r = tokenize("// @jsonable\n// another comment\n// @jsonable\nexport class H {}");
+        assertNoDiagnostics(r.diagnostics(), "@jsonable with other comments between");
+        tokens = r.tokens();
+        Token expBetween = tokens.get(0);
+        check(expBetween.type() == TokenType.EXPORT,
+            "@jsonable with intervening comment: first token is EXPORT");
+        check(expBetween.directives().size() == 2,
+            "@jsonable with intervening comment: 2 directives accumulated, got "
+                + expBetween.directives().size());
+    }
+
 }
