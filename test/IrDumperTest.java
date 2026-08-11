@@ -35,6 +35,7 @@ public class IrDumperTest {
         testExpressionKinds();
         testBoundaryAnnotations();
         testSpecTypeDescriptors();
+        testRestParamSpecTypeDescriptor();
         testDeclFileMode();
         testDeterministicOrdering();
         testNullSpanThrows();
@@ -613,6 +614,59 @@ public class IrDumperTest {
     }
 
     // =========================================================================
+
+    /**
+     * Tests that rest parameter types in the spec type descriptor use
+     * {@code ...[T]} format (e.g., {@code ...[int]}) rather than
+     * {@code ...T} (e.g., {@code ...int}).
+     */
+    static void testRestParamSpecTypeDescriptor() {
+        System.out.print("  testRestParamSpecTypeDescriptor... ");
+        // Build a synthetic function with a rest param: function g(a: int, ...b: int[]): null
+        Span span = new Span("test.deal", 1, 1, 1, 30);
+        Span gSpan = new Span("test.deal", 1, 1, 1, 30);
+        FunctionDeclaration fd = new FunctionDeclaration(
+            gSpan, "g",
+            List.of(new Parameter(new Span("test.deal", 1, 15, 1, 20),
+                "a", new NamedType(new Span("test.deal", 1, 18, 1, 20), "int"))),
+            Optional.of(new Parameter(new Span("test.deal", 1, 23, 1, 31),
+                "b", new ArrayType(new Span("test.deal", 1, 28, 1, 31),
+                    new NamedType(new Span("test.deal", 1, 28, 1, 30), "int")))),
+            new NamedType(new Span("test.deal", 1, 35, 1, 38), "null"),
+            new Block(new Span("test.deal", 1, 39, 1, 41), List.of()));
+
+        // Create an identifier reference to g
+        IdentifierExpr gId = new IdentifierExpr(
+            new Span("test.deal", 2, 1, 2, 2), "g");
+        VariableDeclaration var = new VariableDeclaration(
+            new Span("test.deal", 2, 1, 2, 2), "h",
+            Optional.empty(), gId);
+
+        ProgramNode prog = new ProgramNode(span, List.of(fd, var));
+
+        // Build the function type with rest param: (int, ...[int]) -> null
+        Type.Func funcType = Types.func(
+            List.of(Type.Int.INSTANCE),
+            new Type.Array(Type.Int.INSTANCE),
+            Type.Null.INSTANCE);
+
+        Map<ExpressionNode, Type> typeMap = new HashMap<>();
+        typeMap.put(gId, funcType);
+        typeMap.put(var.initializer(), funcType);
+
+        SymbolTable st = new SymbolTable();
+        st.define("g", new Symbol.FunctionSymbol("g", funcType));
+        st.define("h", new Symbol.VariableSymbol("h", funcType, false));
+        CheckResult result = new CheckResult(typeMap, st, List.of());
+
+        String ir = IrDumper.dump(prog, result, "test");
+
+        // The function identifier type should be (int,...[int])->null
+        assertContains(ir, "...[int]", "rest param uses ...[T] format");
+        assertNotContains(ir, "...int)", "does NOT use ...int format (missing brackets)");
+
+        System.out.println("OK");
+    }
     // Stub module resolver
     // =========================================================================
 

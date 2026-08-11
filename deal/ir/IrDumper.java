@@ -121,7 +121,7 @@ public final class IrDumper implements Visitor<String> {
                 }
                 if (f.restType().isPresent()) {
                     if (!f.paramTypes().isEmpty()) sb.append(",");
-                    sb.append("...").append(specTypeDescriptor(f.restType().get().element()));
+                    sb.append("...").append(specTypeDescriptor(f.restType().get()));
                 }
                 sb.append(")->").append(specTypeDescriptor(f.returnType()));
                 yield sb.toString();
