@@ -1,3 +1,5 @@
+// @spec: Async/Await — cross-module companion module
+
 export async function getAnswer(): int {
   return 42;
 }
