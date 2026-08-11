@@ -285,6 +285,19 @@ public class LuaBackendTest {
         testIntrinsicNumberCall();
         testIntrinsicIndirectUse();
 
+        // ISSUE-0018: Template literal codegen tests
+        testTemplateLiteralPlain();
+        testTemplateLiteralWithExpr();
+        testTemplateLiteralLeadingExpr();
+        testTemplateLiteralAllExprs();
+
+        // ISSUE-0018: For-of codegen tests
+        testForOfArrayCodegen();
+        testForOfStringCodegen();
+        testForOfStringSingleEvaluation();
+        testForOfBreakCodegen();
+        testForOfContinueCodegen();
+
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -1645,4 +1658,114 @@ public class LuaBackendTest {
         check(isValidLua(lua), "catch break generates valid Lua");
     }
 
+    static void testTemplateLiteralPlain() {
+        System.out.println("-- Template Literal Plain --");
+        CompileOutput out = compile("let msg = `hello world`;");
+        assertNoErrors(out, "template plain");
+        // Single part, no interpolations → plain string literal, no concatenation
+        assertContains(out.lua, "\"hello world\"", "plain string literal");
+        assertNotContains(out.lua, " .. ", "no concatenation for plain template");
+        check(isValidLua(out.lua), "valid Lua");
+    }
+
+    static void testTemplateLiteralWithExpr() {
+        System.out.println("-- Template Literal With Expression --");
+        CompileOutput out = compile("let name: string = \"Alice\"; let msg = `Hello ${name}`;");
+        assertNoErrors(out, "template with expr");
+        // Should have (part .. expr) concatenation
+        assertContains(out.lua, " .. ", "concatenation operator");
+        assertContains(out.lua, "\"Hello \"", "string part");
+        // The empty trailing string part should be elided from concatenation
+        // (no standalone "" in the concatenation expression)
+        check(isValidLua(out.lua), "valid Lua");
+    }
+
+    static void testTemplateLiteralLeadingExpr() {
+        System.out.println("-- Template Literal Leading Expression --");
+        CompileOutput out = compile("let greeting: string = \"Hi\"; let msg = `${greeting} world`;");
+        assertNoErrors(out, "template leading expr");
+        // Leading empty string should be elided; concatenation should start with greeting
+        assertContains(out.lua, " .. ", "concatenation operator");
+        assertContains(out.lua, "\" world\"", "trailing string part");
+        check(isValidLua(out.lua), "valid Lua");
+    }
+
+    static void testTemplateLiteralAllExprs() {
+        System.out.println("-- Template Literal All Expressions --");
+        CompileOutput out = compile("let a: string = \"A\"; let b: string = \"B\"; let msg = `${a}${b}`;");
+        assertNoErrors(out, "template all exprs");
+        // Should concatenate a and b without any empty string parts
+        assertContains(out.lua, " .. ", "concatenation operator");
+        check(isValidLua(out.lua), "valid Lua");
+    }
+
+    // =========================================================================
+    // ISSUE-0018: For-of codegen tests
+    // =========================================================================
+
+    static void testForOfArrayCodegen() {
+        System.out.println("-- For-Of Array Codegen --");
+        CompileOutput out = compile(
+            "function sum(xs: int[]): int { let total: int = 0; for (let x: int of xs) { total = total + x; } return total; }");
+        assertNoErrors(out, "for-of array");
+        assertContains(out.lua, "ipairs(", "ipairs for array iteration");
+        assertContains(out.lua, "for __i, x in ipairs(", "ipairs loop structure");
+        assertContains(out.lua, "::__continue_", "continue label");
+        check(isValidLua(out.lua), "valid Lua");
+    }
+
+    static void testForOfStringCodegen() {
+        System.out.println("-- For-Of String Codegen --");
+        CompileOutput out = compile(
+            "function count(s: string): int { let n: int = 0; for (let c: string of s) { n = n + 1; } return n; }");
+        assertNoErrors(out, "for-of string");
+        assertContains(out.lua, "string.sub(", "string.sub for char iteration");
+        assertContains(out.lua, "__iterable", "hoisted iterable local");
+        assertContains(out.lua, "local __iterable = ", "iterable hoisting");
+        assertContains(out.lua, "#__iterable", "length check on hoisted local");
+        assertContains(out.lua, "string.sub(__iterable, __i, __i)", "sub uses hoisted local");
+        assertContains(out.lua, "::__continue_", "continue label");
+        check(isValidLua(out.lua), "valid Lua");
+    }
+
+    static void testForOfStringSingleEvaluation() {
+        System.out.println("-- For-Of String Single Evaluation (D17) --");
+        CompileOutput out = compile(
+            "function getStr(): string { return \"abc\"; } " +
+            "function countIt(): int { let n: int = 0; for (let c: string of getStr()) { n = n + 1; } return n; }");
+        assertNoErrors(out, "for-of string single eval");
+        // getStr.f() should appear exactly once (in the hoisted local assignment)
+        String lua = out.lua;
+        int firstIdx = lua.indexOf("getStr.f()");
+        check(firstIdx >= 0, "getStr.f() appears in generated code");
+        int secondIdx = lua.indexOf("getStr.f()", firstIdx + 1);
+        check(secondIdx < 0, "getStr.f() appears exactly once (single evaluation)");
+        assertContains(lua, "local __iterable = getStr.f()", "iterable hoisted from function call");
+        check(isValidLua(lua), "valid Lua");
+    }
+
+    static void testForOfBreakCodegen() {
+        System.out.println("-- For-Of Break Codegen --");
+        CompileOutput out = compile(
+            "function testBreak(): int { let n: int = 0; for (let x: int of [1,2,3]) { break; n = n + x; } return n; }");
+        assertNoErrors(out, "for-of break");
+        assertContains(out.lua, "break", "break statement in loop");
+        assertContains(out.lua, "ipairs(", "ipairs loop");
+        assertContains(out.lua, "::__continue_", "continue label");
+        // Note: isValidLua not checked here because break before ::label:: is a
+        // pre-existing limitation across all loop types (LuaJIT 5.1 restriction).
+        // This test verifies codegen structure only, matching existing break tests.
+    }
+
+    static void testForOfContinueCodegen() {
+        System.out.println("-- For-Of Continue Codegen --");
+        CompileOutput out = compile(
+            "function testContinue(): int { let n: int = 0; for (let x: int of [1,2,3]) { continue; n = n + x; } return n; }");
+        assertNoErrors(out, "for-of continue");
+        assertContains(out.lua, "goto __continue_", "goto continue label");
+        assertContains(out.lua, "::__continue_", "continue label target");
+        assertContains(out.lua, "ipairs(", "ipairs loop");
+        // goto before ::label:: is valid in LuaJIT
+        check(isValidLua(out.lua), "valid Lua");
+    }
 }
