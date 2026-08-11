@@ -201,7 +201,9 @@ public final class LuaBackend implements Visitor<Void> {
             }
 
             String mapJson = smg.toJson(relSourcePath, relGeneratedPath);
-            Path mapPath = Path.of(outputPath.toString() + ".map.json");
+            String baseName = outputPath.getFileName().toString();
+            baseName = baseName.substring(0, baseName.lastIndexOf('.'));
+            Path mapPath = outputPath.resolveSibling(baseName + ".deal.map.json");
             Files.writeString(mapPath, mapJson);
         }
 
