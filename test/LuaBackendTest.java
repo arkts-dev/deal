@@ -298,6 +298,15 @@ public class LuaBackendTest {
         testForOfBreakCodegen();
         testForOfContinueCodegen();
 
+        // ISSUE-0054: Async/await codegen tests
+        testAsyncFunctionCodegen();
+        testAwaitExpressionCodegen();
+        testSyncFunctionUnchanged();
+        testAsyncFunctionDescriptorPrefix();
+        testAsyncFunctionExprCodegen();
+        testAsyncFunctionNullableReturn();
+        testAwaitAsExpressionStatement();
+
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -1766,6 +1775,82 @@ public class LuaBackendTest {
         assertContains(out.lua, "::__continue_", "continue label target");
         assertContains(out.lua, "ipairs(", "ipairs loop");
         // goto before ::label:: is valid in LuaJIT
+        check(isValidLua(out.lua), "valid Lua");
+    }
+    // =========================================================================
+    // ISSUE-0054: Async/await codegen tests
+    // =========================================================================
+
+    static void testAsyncFunctionCodegen() {
+        System.out.println("-- Async Function Codegen --");
+        CompileOutput out = compile(
+            "async function f(): int { return 5; }");
+        assertNoErrors(out, "async function decl");
+        assertContains(out.lua, "__rt.async_start(function()", "async_start wrapper");
+        // Descriptor should have "async" prefix
+        assertContains(out.lua, "\"async()->int\"", "async descriptor prefix");
+        check(isValidLua(out.lua), "valid Lua");
+    }
+
+    static void testAwaitExpressionCodegen() {
+        System.out.println("-- Await Expression Codegen --");
+        CompileOutput out = compile(
+            "async function g(): int { return 42; }\n" +
+            "async function f(): int { return await g(); }");
+        assertNoErrors(out, "await expression");
+        assertContains(out.lua, "coroutine.yield(g.f())", "await lowers to coroutine.yield");
+        assertContains(out.lua, "__rt.async_start(function()", "async_start wrapper in f");
+        check(isValidLua(out.lua), "valid Lua");
+    }
+
+    static void testSyncFunctionUnchanged() {
+        System.out.println("-- Sync Function Unchanged --");
+        CompileOutput out = compile(
+            "function f(): int { return 5; }");
+        assertNoErrors(out, "sync function");
+        assertNotContains(out.lua, "__rt.async_start", "no async_start in sync function");
+        assertNotContains(out.lua, "coroutine.yield", "no coroutine.yield in sync function");
+        check(isValidLua(out.lua), "valid Lua");
+    }
+
+    static void testAsyncFunctionDescriptorPrefix() {
+        System.out.println("-- Async Function Descriptor Prefix --");
+        CompileOutput out = compile(
+            "async function fetchUser(id: int): string { return \"user\"; }");
+        assertNoErrors(out, "async function with params");
+        // Descriptor should be "async(int)->string"
+        assertContains(out.lua, "\"async(int)->string\"", "async descriptor with params");
+        check(isValidLua(out.lua), "valid Lua");
+    }
+
+    static void testAsyncFunctionExprCodegen() {
+        System.out.println("-- Async Function Expression Codegen --");
+        CompileOutput out = compile(
+            "let f: async () => int = async function(): int { return 5; };");
+        assertNoErrors(out, "async function expr");
+        assertContains(out.lua, "__rt.async_start(function()", "async_start in function expr");
+        assertContains(out.lua, "\"async()->int\"", "async descriptor in function expr");
+        check(isValidLua(out.lua), "valid Lua");
+    }
+
+    static void testAsyncFunctionNullableReturn() {
+        System.out.println("-- Async Function Nullable Return --");
+        CompileOutput out = compile(
+            "async function maybeUser(): string | null { return null; }");
+        assertNoErrors(out, "async nullable return");
+        // Descriptor should have async prefix before the params
+        assertContains(out.lua, "\"async()->string|null\"", "async descriptor with nullable return");
+        check(isValidLua(out.lua), "valid Lua");
+    }
+
+    static void testAwaitAsExpressionStatement() {
+        System.out.println("-- Await as Expression Statement --");
+        CompileOutput out = compile(
+            "async function g(): int { return 1; }\n" +
+            "async function f(): int { await g(); return 0; }");
+        assertNoErrors(out, "await as expression statement");
+        // await g() as a statement should still emit coroutine.yield
+        assertContains(out.lua, "coroutine.yield(g.f())", "await statement emits coroutine.yield");
         check(isValidLua(out.lua), "valid Lua");
     }
 }

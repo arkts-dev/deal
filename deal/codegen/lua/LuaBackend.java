@@ -638,12 +638,22 @@ public final class LuaBackend implements Visitor<Void> {
 
         Type savedReturn = currentReturnType;
         currentReturnType = funcType != null ? funcType.returnType() : null;
-        visit(node.body());
+
+        if (node.isAsync()) {
+            emitLine("return __rt.async_start(function()");
+            indent++;
+            visit(node.body());
+            indent--;
+            emitLine("end)");  // close async_start
+        } else {
+            visit(node.body());
+        }
+
         currentReturnType = savedReturn;
         indent--;
         functionDepth--;
 
-        emitLine("end)");
+        emitLine("end)");  // close outer function
         emitLine();
         return null;
     }
@@ -1193,7 +1203,7 @@ public final class LuaBackend implements Visitor<Void> {
             case FunctionExpr fe -> emitFunctionExpr(fe);
             case HasExpr has -> emitHas(has);
             case AssignmentExpr assign -> emitAssignment(assign);
-            case AwaitExpression await -> emitExpression(await.callee());
+            case AwaitExpression await -> "coroutine.yield(" + emitExpression(await.callee()) + ")";
             case TemplateLiteralExpr tl -> emitTemplateLiteral(tl);
         };
     }
@@ -1541,7 +1551,15 @@ public final class LuaBackend implements Visitor<Void> {
                     }
                 }
             }
-            visit(fe.body());
+            if (fe.isAsync()) {
+                emitLine("return __rt.async_start(function()");
+                indent++;
+                visit(fe.body());
+                indent--;
+                emitLine("end)");  // close async_start
+            } else {
+                visit(fe.body());
+            }
         });
 
         functionDepth--;
@@ -1563,6 +1581,11 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override public Void visit(AssignmentExpr node) {
         emitLine(emitAssignment(node)); return null;
+    }
+
+    @Override public Void visit(AwaitExpression node) {
+        emitLine(emitExpression(node));
+        return null;
     }
 
     private String emitTemplateLiteral(TemplateLiteralExpr tl) {
