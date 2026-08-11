@@ -105,6 +105,10 @@ public class LexerTest {
         testMultipleDotsInNumber();
         testBlockCommentNoNesting();
         testLineCommentColumnAtEOF();
+        testInTokenizesAsIdentifier();
+        testOfTokenizesAsKeyword();
+        testAsyncTokenizesAsKeyword();
+        testAwaitTokenizesAsKeyword();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -120,24 +124,32 @@ public class LexerTest {
     static void testKeywords() {
         System.out.println("-- Keywords --");
 
+        // v1.1 keyword set: 25 keywords
         String[] keywords = {
-            "let", "class", "function", "return", "if", "else",
-            "while", "for", "break", "continue",
+            "let", "class", "function", "async", "await",
+            "return", "if", "else",
+            "while", "for", "of", "break", "continue",
             "null", "true", "false",
             "import", "export", "from", "delete", "has",
             "try", "catch", "throw",
-            "as", "in"
+            "as"
         };
 
         TokenType[] types = {
-            TokenType.LET, TokenType.CLASS, TokenType.FUNCTION, TokenType.RETURN,
+            TokenType.LET, TokenType.CLASS, TokenType.FUNCTION,
+            TokenType.ASYNC, TokenType.AWAIT,
+            TokenType.RETURN,
             TokenType.IF, TokenType.ELSE, TokenType.WHILE, TokenType.FOR,
+            TokenType.OF,
             TokenType.BREAK, TokenType.CONTINUE,
             TokenType.NULL, TokenType.TRUE, TokenType.FALSE,
             TokenType.IMPORT, TokenType.EXPORT, TokenType.FROM, TokenType.DELETE,
             TokenType.HAS, TokenType.TRY, TokenType.CATCH, TokenType.THROW,
-            TokenType.AS, TokenType.IN
+            TokenType.AS
         };
+
+        check(keywords.length == 25, "keyword set has exactly 25 entries, got " + keywords.length);
+        check(keywords.length == types.length, "keywords and types arrays have same length");
 
         for (int i = 0; i < keywords.length; i++) {
             LexResult result = tokenize(keywords[i]);
@@ -720,7 +732,8 @@ public class LexerTest {
         }
 
         TokenType[] expected = {
-            TokenType.LET, TokenType.CLASS, TokenType.FUNCTION, TokenType.RETURN,
+            TokenType.LET, TokenType.CLASS, TokenType.FUNCTION,
+            TokenType.RETURN,
             TokenType.IF, TokenType.ELSE, TokenType.WHILE, TokenType.FOR,
             TokenType.BREAK, TokenType.CONTINUE,
             TokenType.NULL, TokenType.TRUE, TokenType.FALSE,
@@ -879,5 +892,50 @@ public class LexerTest {
             "EOF column after line comment: expected 11, got " + eof.column());
         check(eof.line() == 1,
             "EOF line after line comment: expected 1, got " + eof.line());
+    }
+
+    // =========================================================================
+    // v1.1 keyword changes: new keyword-specific tests
+    // =========================================================================
+
+    static void testInTokenizesAsIdentifier() {
+        System.out.println("-- 'in' tokenizes as identifier --");
+
+        // "in" is no longer a keyword in v1.1; it must tokenize as IDENTIFIER
+        LexResult r = tokenize("in");
+        assertNoDiagnostics(r.diagnostics(), "'in' as identifier");
+        List<Token> tokens = r.tokens();
+        check(tokens.size() == 2, "'in': expected 2 tokens (identifier + EOF)");
+        assertToken(tokens.get(0), TokenType.IDENTIFIER, "in", 1, 1);
+    }
+
+    static void testOfTokenizesAsKeyword() {
+        System.out.println("-- 'of' tokenizes as keyword --");
+
+        LexResult r = tokenize("of");
+        assertNoDiagnostics(r.diagnostics(), "'of' as keyword");
+        List<Token> tokens = r.tokens();
+        check(tokens.size() == 2, "'of': expected 2 tokens (keyword + EOF)");
+        assertToken(tokens.get(0), TokenType.OF, "of", 1, 1);
+    }
+
+    static void testAsyncTokenizesAsKeyword() {
+        System.out.println("-- 'async' tokenizes as keyword --");
+
+        LexResult r = tokenize("async");
+        assertNoDiagnostics(r.diagnostics(), "'async' as keyword");
+        List<Token> tokens = r.tokens();
+        check(tokens.size() == 2, "'async': expected 2 tokens (keyword + EOF)");
+        assertToken(tokens.get(0), TokenType.ASYNC, "async", 1, 1);
+    }
+
+    static void testAwaitTokenizesAsKeyword() {
+        System.out.println("-- 'await' tokenizes as keyword --");
+
+        LexResult r = tokenize("await");
+        assertNoDiagnostics(r.diagnostics(), "'await' as keyword");
+        List<Token> tokens = r.tokens();
+        check(tokens.size() == 2, "'await': expected 2 tokens (keyword + EOF)");
+        assertToken(tokens.get(0), TokenType.AWAIT, "await", 1, 1);
     }
 }
