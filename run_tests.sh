@@ -3,82 +3,104 @@ set -e
 
 mkdir -p build
 
-echo "=== Compiling DEAL AST, Types, Diagnostics, Lexer, Parser, Checker, Codegen, IR, Module System, and CLI ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/*.java deal/codegen/lua/*.java deal/ir/*.java deal/module/*.java deal/Main.java
+# =========================================================================
+# Single compilation step: compile all source and test files at once
+# =========================================================================
+echo "=== Compiling all DEAL sources and tests ==="
+javac --release 25 -d build \
+  deal/ast/*.java \
+  deal/types/*.java \
+  deal/diagnostics/*.java \
+  deal/lexer/*.java \
+  deal/parser/*.java \
+  deal/checker/*.java \
+  deal/codegen/*.java \
+  deal/codegen/lua/*.java \
+  deal/ir/*.java \
+  deal/module/*.java \
+  deal/Main.java \
+  test/StubModuleResolver.java \
+  test/DiagnosticClassificationTest.java \
+  test/AstAndTypesTest.java \
+  test/LexerTest.java \
+  test/ParserTest.java \
+  test/CheckerTest.java \
+  test/IrDumperTest.java \
+  test/IrGoldenTest.java \
+  test/TypeDescriptorTest.java \
+  test/BackendConformanceTest.java \
+  test/LuaBackendTest.java \
+  test/LuaBackendIntegrationTest.java \
+  test/ModuleSystemTest.java \
+  test/StdlibDeclParseTest.java \
+  test/SourceMapTest.java \
+  test/RuntimeSourceLocationTest.java \
+  test/StdlibContractTest.java \
+  test/GenerateStdlibGoldenIr.java \
+  test/ConformanceTest.java
+
+# =========================================================================
+# Run all tests
+# =========================================================================
 
 echo ""
-echo "=== Compiling and Running Diagnostic Classification Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/*.java deal/codegen/lua/*.java deal/module/*.java deal/Main.java test/StubModuleResolver.java test/DiagnosticClassificationTest.java
+echo "=== Running Diagnostic Classification Tests ==="
 java -ea -cp build deal.test.DiagnosticClassificationTest
 
 echo ""
-echo "=== Compiling and Running AST/Types Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java test/AstAndTypesTest.java
+echo "=== Running AST/Types Tests ==="
 java -ea -cp build deal.test.AstAndTypesTest
 
 echo ""
-echo "=== Compiling and Running Lexer Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java test/LexerTest.java
+echo "=== Running Lexer Tests ==="
 java -ea -cp build deal.test.LexerTest
 
 echo ""
-echo "=== Compiling and Running Parser Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java test/ParserTest.java
+echo "=== Running Parser Tests ==="
 java -ea -cp build deal.test.ParserTest
 
 echo ""
-echo "=== Compiling and Running Checker Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java test/StubModuleResolver.java test/CheckerTest.java
+echo "=== Running Checker Tests ==="
 java -ea -cp build deal.test.CheckerTest
 
 echo ""
-echo "=== Compiling and Running IR Dumper Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/ir/*.java test/StubModuleResolver.java test/IrDumperTest.java
+echo "=== Running IR Dumper Tests ==="
 java -ea -cp build deal.test.IrDumperTest
 
 echo ""
-echo "=== Compiling and Running IR Golden Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/ir/*.java deal/module/*.java test/StubModuleResolver.java test/IrGoldenTest.java
+echo "=== Running IR Golden Tests ==="
 java -ea -cp build deal.test.IrGoldenTest
 
 echo ""
-echo "=== Compiling and Running Type Descriptor Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/ir/*.java test/StubModuleResolver.java test/TypeDescriptorTest.java
+echo "=== Running Type Descriptor Tests ==="
 java -ea -cp build deal.test.TypeDescriptorTest
 
 echo ""
-echo "=== Compiling and Running Backend Conformance Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java deal/ir/*.java test/StubModuleResolver.java test/BackendConformanceTest.java
+echo "=== Running Backend Conformance Tests ==="
 java -ea -cp build deal.test.BackendConformanceTest
 
 echo ""
-echo "=== Compiling and Running Lua Backend Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/*.java deal/codegen/lua/*.java test/StubModuleResolver.java test/LuaBackendTest.java
+echo "=== Running Lua Backend Tests ==="
 java -ea -cp build deal.test.LuaBackendTest
 
 echo ""
-echo "=== Compiling and Running Lua Backend Integration Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/*.java deal/codegen/lua/*.java test/StubModuleResolver.java test/LuaBackendIntegrationTest.java
+echo "=== Running Lua Backend Integration Tests ==="
 java -ea -cp build deal.test.LuaBackendIntegrationTest
 
 echo ""
-echo "=== Compiling and Running Module System Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/*.java deal/codegen/lua/*.java deal/ir/*.java deal/module/*.java deal/Main.java test/ModuleSystemTest.java
+echo "=== Running Module System Tests ==="
 java -ea -cp build deal.test.ModuleSystemTest
 
 echo ""
-echo "=== Compiling and Running Stdlib .d.deal Parse Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java test/StdlibDeclParseTest.java
+echo "=== Running Stdlib .d.deal Parse Tests ==="
 java -ea -cp build deal.test.StdlibDeclParseTest
 
 echo ""
-echo "=== Compiling and Running Source Map Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/*.java deal/codegen/lua/*.java test/StubModuleResolver.java test/SourceMapTest.java
+echo "=== Running Source Map Tests ==="
 java -ea -cp build deal.test.SourceMapTest
 
 echo ""
-echo "=== Compiling and Running Runtime Source Location Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/*.java deal/codegen/lua/*.java test/StubModuleResolver.java test/RuntimeSourceLocationTest.java
+echo "=== Running Runtime Source Location Tests ==="
 java -ea -cp build deal.test.RuntimeSourceLocationTest
 
 echo ""
@@ -106,13 +128,11 @@ else
 fi
 
 echo ""
-echo "=== Compiling and Running Stdlib Contract Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java deal/ir/*.java deal/module/*.java deal/Main.java test/StubModuleResolver.java test/StdlibContractTest.java
+echo "=== Running Stdlib Contract Tests ==="
 java -ea -cp build deal.test.StdlibContractTest
 
 echo ""
 echo "=== Stdlib Golden IR Check ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/ir/*.java deal/module/*.java test/GenerateStdlibGoldenIr.java
 GOLDEN_FILE="test/goldens/stdlib-declarations.ir.txt"
 TEMP_FILE="/tmp/deal-stdlib-ir-$$.txt"
 java -ea -cp build deal.test.GenerateStdlibGoldenIr "$TEMP_FILE" 2>/dev/null
@@ -133,14 +153,8 @@ fi
 rm -f "$TEMP_FILE"
 
 echo ""
-echo "=== Compiling and Running Conformance Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/*.java deal/codegen/lua/*.java deal/ir/*.java deal/module/*.java deal/Main.java test/StubModuleResolver.java test/ConformanceTest.java
+echo "=== Running Conformance Tests ==="
 java -ea -cp build deal.test.ConformanceTest test/conformance/
-
-echo ""
-echo "=== Compiling and Running Backend Conformance Tests ==="
-javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java deal/module/*.java deal/Main.java test/StubModuleResolver.java test/BackendConformanceTest.java
-java -ea -cp build deal.test.BackendConformanceTest test/conformance/fixtures/
 
 echo ""
 echo "=== All Tests Passed ==="
