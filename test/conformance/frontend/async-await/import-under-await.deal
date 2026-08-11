@@ -3,7 +3,7 @@
 // @expected: compile-ok
 // @features: async, await, import, modules
 
-import * as M from "./async-lib";
+import * as M from "./async_lib";
 
 async function f(): int {
   return await M.fetch(1);

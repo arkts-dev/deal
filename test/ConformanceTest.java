@@ -435,9 +435,10 @@ public class ConformanceTest {
      * by the test file via relative paths. They are compiled to Lua and made
      * available for the Lua {@code require} system at runtime.
      * <p>
-     * Companion modules that themselves import other companion modules are
-     * recursively compiled (one level deep). Cyclic imports between companions
-     * are not yet supported.
+     * Companion modules that are directly imported by the test file are
+     * compiled to Lua. Transitive imports (companion-of-companion) are not
+     * yet compiled; only their export signatures are extracted for
+     * type-checking. Cyclic imports between companions are not yet supported.
      */
     private static GeneratedLua generateLuaWithCompanions(Path file) throws Exception {
         String source = Files.readString(file);
@@ -499,8 +500,12 @@ public class ConformanceTest {
      * Generate Lua for a companion module file (a .deal file that is imported
      * by a test file but is not itself a test).
      * <p>
-     * Companion modules may themselves import other companion modules.
-     * This method recursively discovers and compiles those imports.
+     * Companion modules may themselves import other modules. The import
+     * resolutions for these are extracted and passed to
+     * {@link LuaBackend#generateWithImports} so that {@code require} paths
+     * are correct in the generated Lua. However, transitive companion modules
+     * (companion-of-companion) are not themselves compiled to Lua files —
+     * only their export signatures are extracted for type-checking.
      */
     private static String generateModuleLua(Path file) throws Exception {
         String source = Files.readString(file);
@@ -576,61 +581,6 @@ public class ConformanceTest {
             return name.substring(0, name.length() - ".deal".length());
         }
         return name;
-    }
-
-    /**
-     * Simple Lua generation for a single file (no companion module handling).
-     * Used as a fallback and for standalone test files.
-     */
-    private static String generateLua(Path file) throws Exception {
-        String source = Files.readString(file);
-        String filename = file.toString();
-
-        LexResult lex = new Lexer(source, filename).tokenize();
-        if (lex.hasErrors()) return null;
-
-        Parser parser = new Parser(lex.tokens(), filename);
-        ParseResult parseResult = parser.parse();
-        if (parseResult.hasErrors()) return null;
-
-        ConformanceModuleResolver resolver = new ConformanceModuleResolver(file);
-        NameResolver nr = new NameResolver(filename, resolver);
-        SymbolTable symTable = nr.resolve(parseResult.program());
-        if (nr.diagnostics().stream().anyMatch(d -> "error".equals(d.severity())))
-            return null;
-
-        CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
-        if (result.hasErrors()) return null;
-
-        return LuaBackend.generate(parseResult.program(), result, filename);
-    }
-
-    /**
-     * Compile a DEAL source file to Lua.  Used for companion modules.
-     * Returns the Lua source string, or null on failure.
-     */
-    private static String generateLuaForFile(Path file) throws Exception {
-        String source = Files.readString(file);
-        String filename = file.toString();
-
-        LexResult lex = new Lexer(source, filename).tokenize();
-        if (lex.hasErrors()) return null;
-
-        Parser parser = new Parser(lex.tokens(), filename);
-        ParseResult parseResult = parser.parse();
-        if (parseResult.hasErrors()) return null;
-
-        // Use a resolver rooted at the companion file's directory
-        ConformanceModuleResolver resolver = new ConformanceModuleResolver(file);
-        NameResolver nr = new NameResolver(filename, resolver);
-        SymbolTable symTable = nr.resolve(parseResult.program());
-        if (nr.diagnostics().stream().anyMatch(d -> "error".equals(d.severity())))
-            return null;
-
-        CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
-        if (result.hasErrors()) return null;
-
-        return LuaBackend.generate(parseResult.program(), result, filename);
     }
 
     /**
