@@ -37,6 +37,9 @@ public final class LuaBackend implements Visitor<Void> {
 
     private final Map<String, String> exportedValues = new LinkedHashMap<>();
 
+    // ISSUE-0050: deferred @jsonable class metadata for two-pass emission
+    private final List<JsonableClassMeta> deferredJsonables = new ArrayList<>();
+
     private Type currentReturnType = null;
     private String sourceFilePath = "unknown.deal";
 
@@ -92,6 +95,7 @@ public final class LuaBackend implements Visitor<Void> {
         backend.emitLine("");
 
         backend.walkStatements(program.statements());
+        backend.emitJsonableCode();
         backend.emitExports();
         return backend.out.toString();
     }
@@ -114,6 +118,7 @@ public final class LuaBackend implements Visitor<Void> {
         backend.emitLine("");
 
         backend.walkStatements(program.statements());
+        backend.emitJsonableCode();
         backend.emitExports();
         return backend.out.toString();
     }
@@ -255,6 +260,7 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("local Error_defaults = { code = \"\", message = \"\" }");
         emitLine("");
         walkStatements(program.statements());
+        emitJsonableCode();
         emitExports();
         return this.out.toString();
     }
@@ -538,6 +544,7 @@ public final class LuaBackend implements Visitor<Void> {
     public Void visit(ProgramNode node) {
         emitHeader();
         walkStatements(node.statements());
+        emitJsonableCode();
         emitExports();
         return null;
     }
@@ -1003,6 +1010,20 @@ public final class LuaBackend implements Visitor<Void> {
                 exportedValues.putIfAbsent(cd.name() + "_defaults",
                     cd.name() + "_defaults");
                 visit(cd);
+
+                // ISSUE-0050: @jsonable deferred codegen
+                if (cd.isJsonable()) {
+                    // Record metadata for deferred emission
+                    deferredJsonables.add(new JsonableClassMeta(
+                        cd.name(), cd.fields(), cd, cd.span()));
+                    // Register exports for generated jsonable artifacts
+                    exportedValues.putIfAbsent(cd.name() + "_fields",
+                        cd.name() + "_fields");
+                    exportedValues.putIfAbsent(cd.name() + "$fromJson",
+                        cd.name() + "$fromJson");
+                    exportedValues.putIfAbsent(cd.name() + "$toJson",
+                        cd.name() + "$toJson");
+                }
             }
             default -> {}
         }
@@ -1709,6 +1730,349 @@ public final class LuaBackend implements Visitor<Void> {
     @Override public Void visit(ArrayType node) { return null; }
     @Override public Void visit(NullableType node) { return null; }
     @Override public Void visit(FunctionType node) { return null; }
+
+    // =========================================================================
+    // ISSUE-0050: @jsonable codegen — deferred two-pass emission with
+    // topological sort
+    // =========================================================================
+
+    /**
+     * Metadata for a single @jsonable class, recorded during statement
+     * walking and processed during {@link #emitJsonableCode()}.
+     * No dependency names are pre-computed — the dependency graph is
+     * built from scratch in emitJsonableCode() when deferredJsonables
+     * is complete.
+     */
+    private static final class JsonableClassMeta {
+        final String className;
+        final List<ClassField> fields;
+        final ClassDeclaration classDecl;
+        final Span span;
+
+        JsonableClassMeta(String className, List<ClassField> fields,
+                          ClassDeclaration classDecl, Span span) {
+            this.className = className;
+            this.fields = fields;
+            this.classDecl = classDecl;
+            this.span = span;
+        }
+    }
+
+    /**
+     * Emits all deferred @jsonable code after all statements have been walked.
+     *
+     * <p>Performs two sub-passes after topological sort by same-module
+     * class-typed field dependencies:
+     * <ol>
+     *   <li>Field descriptor tables ({@code C_fields}) in dependency order.</li>
+     *   <li>{@code C$fromJson} and {@code C$toJson} functions in the same order.</li>
+     * </ol>
+     *
+     * <p>Because same-module circular @jsonable class dependencies are caught
+     * as E4008 in Phase 3 (TypeChecker), the topological sort here is
+     * guaranteed acyclic — no cycle error is emitted during codegen.</p>
+     */
+    private void emitJsonableCode() {
+        if (deferredJsonables.isEmpty()) return;
+
+        // Emit JSON module loading only when there are @jsonable classes.
+        // Access raw functions via .f because std.json exports are __rt.function_
+        // wrappers (tables with no __call metamethod).
+        emitLine("-- @jsonable: JSON module loading");
+        emitLine("local __json = require(\"std.json\")");
+        emitLine("local __json_parse = __json.parse.f");
+        emitLine("local __json_stringify = __json.stringify.f");
+        emitLine("");
+
+        // Build lookup map by class name
+        Map<String, JsonableClassMeta> metaByName = new LinkedHashMap<>();
+        for (JsonableClassMeta meta : deferredJsonables) {
+            metaByName.put(meta.className, meta);
+        }
+        Set<String> jsonableNames = metaByName.keySet();
+
+        // Step 1: Build dependency graph from scratch against the complete set.
+        // For each class A, scan each field's AST type node, recursively
+        // unwrapping ArrayType and NullableType wrappers to find underlying
+        // NamedType references. For each same-module @jsonable class B found,
+        // add edge A → B (A depends on B, so B must be emitted before A).
+        Map<String, Set<String>> deps = new LinkedHashMap<>();
+        for (JsonableClassMeta meta : deferredJsonables) {
+            Set<String> classDeps = new LinkedHashSet<>();
+            for (ClassField field : meta.fields) {
+                collectSameModuleDeps(field.type(), classDeps, jsonableNames);
+            }
+            deps.put(meta.className, classDeps);
+        }
+
+        // Step 2: Topological sort (Kahn's algorithm).
+        // Build in-degree map: for each dep B of A, A must come after B.
+        Map<String, Integer> inDegree = new LinkedHashMap<>();
+        Map<String, List<String>> successors = new LinkedHashMap<>();
+        for (String name : jsonableNames) {
+            inDegree.put(name, 0);
+            successors.put(name, new ArrayList<>());
+        }
+        for (var entry : deps.entrySet()) {
+            String a = entry.getKey();
+            for (String b : entry.getValue()) {
+                // Edge B → A: B must precede A
+                successors.get(b).add(a);
+                inDegree.merge(a, 1, Integer::sum);
+            }
+        }
+
+        // Start with nodes having no dependencies
+        List<String> sorted = new ArrayList<>();
+        Deque<String> queue = new ArrayDeque<>();
+        for (var entry : inDegree.entrySet()) {
+            if (entry.getValue() == 0) {
+                queue.add(entry.getKey());
+            }
+        }
+
+        while (!queue.isEmpty()) {
+            String name = queue.poll();
+            sorted.add(name);
+            for (String succ : successors.get(name)) {
+                int deg = inDegree.merge(succ, -1, Integer::sum);
+                if (deg == 0) {
+                    queue.add(succ);
+                }
+            }
+        }
+
+        // If the sort didn't include all nodes, there's a cycle.
+        // This shouldn't happen (E4008 in Phase 3), but handle gracefully.
+        if (sorted.size() != jsonableNames.size()) {
+            // Fall back to declaration order for any remaining nodes
+            Set<String> sortedSet = new HashSet<>(sorted);
+            for (JsonableClassMeta meta : deferredJsonables) {
+                if (!sortedSet.contains(meta.className)) {
+                    sorted.add(meta.className);
+                }
+            }
+        }
+
+        // Sub-pass 1: Field descriptors in sorted order
+        emitLine("-- @jsonable field descriptors (topologically sorted)");
+        for (String className : sorted) {
+            JsonableClassMeta meta = metaByName.get(className);
+            emitFieldDescriptor(meta);
+        }
+        emitLine();
+
+        // Sub-pass 2: C$fromJson and C$toJson functions in sorted order
+        emitLine("-- @jsonable serialization functions (topologically sorted)");
+        for (String className : sorted) {
+            JsonableClassMeta meta = metaByName.get(className);
+            emitFromJson(meta);
+            emitToJson(meta);
+        }
+        emitLine();
+    }
+
+    /**
+     * Recursively scans an AST type node for same-module @jsonable class
+     * dependencies. Unwraps ArrayType and NullableType wrappers to find
+     * underlying NamedType references. QualifiedType (cross-module) is
+     * skipped — imported class locals are already available via require.
+     */
+    private void collectSameModuleDeps(TypeNode typeNode, Set<String> deps,
+                                        Set<String> jsonableNames) {
+        TypeNode inner = typeNode;
+        if (inner instanceof NullableType nt) {
+            inner = nt.innerType();
+        }
+        if (inner instanceof ArrayType at) {
+            collectSameModuleDeps(at.elementType(), deps, jsonableNames);
+        } else if (inner instanceof NamedType nt) {
+            if (jsonableNames.contains(nt.name())) {
+                deps.add(nt.name());
+            }
+        }
+        // QualifiedType: cross-module, no same-module dep
+        // FunctionType: not jsonable, skip
+    }
+
+    /**
+     * Emits the {@code C_fields} descriptor table for a single @jsonable class.
+     */
+    private void emitFieldDescriptor(JsonableClassMeta meta) {
+        String name = meta.className;
+        emitLine("local " + name + "_fields = {");
+        indent++;
+        List<ClassField> fields = meta.fields;
+        for (int i = 0; i < fields.size(); i++) {
+            ClassField field = fields.get(i);
+            String comma = (i < fields.size() - 1) ? "," : "";
+            emitLine(emitSingleFieldDescriptor(field) + comma);
+        }
+        indent--;
+        emitLine("}");
+    }
+
+    /**
+     * Emits a single field descriptor entry as a Lua table literal.
+     */
+    private String emitSingleFieldDescriptor(ClassField field) {
+        TypeNode typeNode = field.type();
+        boolean nullable = field.nullable();
+        boolean optional = field.optional();
+
+        // Unwrap NullableType to get the inner type for jtype determination
+        TypeNode innerType = typeNode;
+        if (innerType instanceof NullableType nt) {
+            innerType = nt.innerType();
+        }
+
+        String jtype = jtypeForTypeNode(innerType);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("{ name = \"").append(field.name()).append("\"");
+        sb.append(", jtype = \"").append(jtype).append("\"");
+        sb.append(", optional = ").append(optional ? "true" : "false");
+        sb.append(", nullable = ").append(nullable ? "true" : "false");
+
+        if (jtype.equals("class")) {
+            sb.append(", className = \"")
+                .append(classNameFromTypeNode(innerType)).append("\"");
+            sb.append(", defaults = ").append(defaultsRefForTypeNode(innerType));
+            sb.append(", fields = ").append(fieldsRefForTypeNode(innerType));
+        } else if (jtype.equals("array")) {
+            ArrayType at = (ArrayType) innerType;
+            sb.append(", element = ")
+                .append(emitElementDescriptor(at.elementType()));
+        }
+
+        sb.append(" }");
+        return sb.toString();
+    }
+
+    /**
+     * Emits the element sub-descriptor for an array field.
+     */
+    private String emitElementDescriptor(TypeNode elementType) {
+        // Unwrap NullableType (element itself is typically not nullable in the descriptor)
+        TypeNode inner = elementType;
+        if (inner instanceof NullableType nt) {
+            inner = nt.innerType();
+        }
+        String jtype = jtypeForTypeNode(inner);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("{ jtype = \"").append(jtype).append("\"");
+        sb.append(", optional = false, nullable = false");
+
+        if (jtype.equals("class")) {
+            sb.append(", className = \"")
+                .append(classNameFromTypeNode(inner)).append("\"");
+            sb.append(", defaults = ").append(defaultsRefForTypeNode(inner));
+            sb.append(", fields = ").append(fieldsRefForTypeNode(inner));
+        } else if (jtype.equals("array")) {
+            ArrayType at = (ArrayType) inner;
+            sb.append(", element = ")
+                .append(emitElementDescriptor(at.elementType()));
+        }
+
+        sb.append(" }");
+        return sb.toString();
+    }
+
+    /**
+     * Determines the jtype string for a TypeNode (after NullableType unwrapping).
+     */
+    private String jtypeForTypeNode(TypeNode typeNode) {
+        return switch (typeNode) {
+            case NamedType nt -> switch (nt.name()) {
+                case "null" -> "null";
+                case "boolean" -> "boolean";
+                case "int" -> "int";
+                case "number" -> "number";
+                case "string" -> "string";
+                case "table" -> "table";
+                default -> "class";  // user-defined class
+            };
+            case ArrayType at -> "array";
+            case QualifiedType qt -> "class";
+            case NullableType nt -> jtypeForTypeNode(nt.innerType());
+            case FunctionType ft -> "function";  // not expected for jsonable
+        };
+    }
+
+    /**
+     * Extracts the class name from a type node representing a class type.
+     */
+    private String classNameFromTypeNode(TypeNode typeNode) {
+        return switch (typeNode) {
+            case NamedType nt -> nt.name();
+            case QualifiedType qt -> qt.typeName();
+            default -> "Unknown";
+        };
+    }
+
+    /**
+     * Returns the Lua reference for the defaults table of a class-typed field.
+     */
+    private String defaultsRefForTypeNode(TypeNode typeNode) {
+        return switch (typeNode) {
+            case NamedType nt -> nt.name() + "_defaults";
+            case QualifiedType qt -> qt.moduleName() + "." + qt.typeName() + "_defaults";
+            default -> "{}";
+        };
+    }
+
+    /**
+     * Returns the Lua reference for the fields descriptor table of a class-typed field.
+     */
+    private String fieldsRefForTypeNode(TypeNode typeNode) {
+        return switch (typeNode) {
+            case NamedType nt -> nt.name() + "_fields";
+            case QualifiedType qt -> qt.moduleName() + "." + qt.typeName() + "_fields";
+            default -> "{}";
+        };
+    }
+
+    /**
+     * Emits the {@code C$fromJson} function for a single @jsonable class.
+     */
+    private void emitFromJson(JsonableClassMeta meta) {
+        String name = meta.className;
+        String sig = "(string)->" + name + "|null";
+
+        emitLine("local " + name + "$fromJson = __rt.function_(\"" + sig
+            + "\", function(s)");
+        indent++;
+        emitLine("__rt.check_string(s)");
+        emitLine("local ok, parsed = pcall(__json_parse, s)");
+        emitLine("if not ok then return __NULL end");
+        emitLine("local instance = __rt.json_from_json(\"" + name
+            + "\", parsed, " + name + "_defaults, " + name + "_fields)");
+        emitLine("if instance == nil then return __NULL end");
+        emitLine("return instance");
+        indent--;
+        emitLine("end)");
+        emitLine();
+    }
+
+    /**
+     * Emits the {@code C$toJson} function for a single @jsonable class.
+     */
+    private void emitToJson(JsonableClassMeta meta) {
+        String name = meta.className;
+        String sig = "(" + name + ")->string";
+
+        emitLine("local " + name + "$toJson = __rt.function_(\"" + sig
+            + "\", function(v)");
+        indent++;
+        emitLine("__rt.check_type(\"" + name + "\", v)");
+        emitLine("local t = __rt.json_to_json(\"" + name
+            + "\", v, " + name + "_fields)");
+        emitLine("return __json_stringify(t)");
+        indent--;
+        emitLine("end)");
+        emitLine();
+    }
 
     // =========================================================================
     // Helpers
