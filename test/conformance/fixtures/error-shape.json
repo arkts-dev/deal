@@ -1,0 +1,32 @@
+{
+  "version": "1.0",
+  "tests": [
+    {
+      "name": "error-catch-binding",
+      "description": "Caught error exposes code and message fields",
+      "source": "export function test(): string { try { throw { code: \"E_TEST\", message: \"test\" }; } catch (e) { return e.code; } }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": ["luajit"]
+    },
+    {
+      "name": "error-message-field",
+      "description": "Caught error exposes message field",
+      "source": "export function test(): string { try { throw { code: \"E_TEST\", message: \"hello\" }; } catch (e) { return e.message; } }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": ["luajit"]
+    },
+    {
+      "name": "error-runtime-oob",
+      "description": "Array OOB produces runtime error with code E8001",
+      "source": "export function test(): int { let xs: int[] = [1, 2, 3]; return xs[10]; }",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "backends": ["luajit"]
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "tests": [
+    {
+      "name": "json-parse-signature",
+      "description": "json.parse accepts string and returns table",
+      "source": "import * as json from \"std/json\"\nexport function test(): table { return json.parse(\"{}\"); }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": ["luajit"]
+    },
+    {
+      "name": "json-stringify-signature",
+      "description": "json.stringify accepts table and returns string",
+      "source": "import * as json from \"std/json\"\nexport function test(): string { let t: table = {}; return json.stringify(t); }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": ["luajit"]
+    }
+  ]
+}

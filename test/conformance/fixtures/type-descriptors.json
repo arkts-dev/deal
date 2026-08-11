@@ -1,0 +1,77 @@
+{
+  "version": "1.0",
+  "tests": [
+    {
+      "name": "type-descriptor-primitive-int",
+      "description": "int type descriptor renders as 'int'",
+      "source": "export function test(): int { return 42; }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": ["luajit"]
+    },
+    {
+      "name": "type-descriptor-primitive-number",
+      "description": "number type descriptor renders as 'number'",
+      "source": "export function test(): number { return 3.14; }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": ["luajit"]
+    },
+    {
+      "name": "type-descriptor-primitive-string",
+      "description": "string type descriptor renders as 'string'",
+      "source": "export function test(): string { return \"hello\"; }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": ["luajit"]
+    },
+    {
+      "name": "type-descriptor-primitive-bool",
+      "description": "boolean type descriptor renders as 'boolean'",
+      "source": "export function test(): boolean { return true; }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": ["luajit"]
+    },
+    {
+      "name": "type-descriptor-nullable-int",
+      "description": "nullable int type descriptor renders as 'int|null'",
+      "source": "export function test(): int | null { return null; }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": ["luajit"]
+    },
+    {
+      "name": "type-descriptor-array-int",
+      "description": "array of int type renders correctly",
+      "source": "export function test(): int { let xs: int[] = [10, 20]; return xs[0]; }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": ["luajit"]
+    },
+    {
+      "name": "type-descriptor-function",
+      "description": "function type renders with parameter and return types",
+      "source": "export function test(): int { let f: (x: int) => int = function(x: int): int { return x + 1; }; return f(41); }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": ["luajit"]
+    },
+    {
+      "name": "jvm-backend-skipped",
+      "description": "Test with only jvm backend is skipped under LuaJIT",
+      "source": "export function test(): int { return 1; }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": ["jvm"]
+    }
+  ]
+}

@@ -78,4 +78,9 @@ javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*
 java -ea -cp build deal.test.ConformanceTest test/conformance/
 
 echo ""
+echo "=== Compiling and Running Backend Conformance Tests ==="
+javac --release 25 -d build deal/ast/*.java deal/types/*.java deal/diagnostics/*.java deal/lexer/*.java deal/parser/*.java deal/checker/*.java deal/codegen/lua/*.java deal/module/*.java deal/Main.java test/StubModuleResolver.java test/BackendConformanceTest.java
+java -ea -cp build deal.test.BackendConformanceTest test/conformance/fixtures/
+
+echo ""
 echo "=== All Tests Passed ==="

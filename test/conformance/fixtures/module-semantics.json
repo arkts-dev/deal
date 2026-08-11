@@ -1,0 +1,32 @@
+{
+  "version": "1.0",
+  "tests": [
+    {
+      "name": "module-import-export-basic",
+      "description": "Module export and import works at runtime",
+      "source": "export function greet(): string { return \"hello\"; }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": ["luajit"]
+    },
+    {
+      "name": "module-export-constant",
+      "description": "Module can export a constant value",
+      "source": "export function getAnswer(): int { return 42; }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": ["luajit"]
+    },
+    {
+      "name": "module-import-not-found",
+      "description": "Importing a non-existent module is a compile error (frontend-only, backend skips)",
+      "source": "import * as X from \"./nonexistent\"\nexport function test(): int { return 1; }",
+      "expectedOutput": null,
+      "expectedError": "E2003",
+      "expectedExitCode": 1,
+      "backends": []
+    }
+  ]
+}
