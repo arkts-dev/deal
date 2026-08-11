@@ -1,0 +1,17 @@
+// @spec: Async/Await — narrowing invalidation after await
+// @description: nullable narrowing becomes invalid after await suspends and resumes; the narrowed variable reverts to its declared type
+// @expected: compile-error E5003
+// @features: async-await, type-system, narrowing
+
+async function helper(): int {
+  return 42;
+}
+
+async function test(): int {
+  let x: int | null = 42;
+  if (x !== null) {
+    await helper();
+    return x;
+  }
+  return 0;
+}

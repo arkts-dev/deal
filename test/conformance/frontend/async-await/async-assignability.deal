@@ -1,0 +1,13 @@
+// @spec: Async/Await — async/sync assignability
+// @description: async function type is not assignable to sync function type; sync function type is not assignable to async function type
+// @expected: compile-error E3001
+// @features: async-await, type-system
+
+async function f(): int {
+  return 42;
+}
+
+function test(): null {
+  let g: () => int = f;
+  return null;
+}

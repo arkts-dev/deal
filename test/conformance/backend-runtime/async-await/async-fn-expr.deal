@@ -1,0 +1,11 @@
+// @spec: Async/Await — async function expression
+// @description: async function expression assigned to variable and awaited
+// @expected: runtime-ok
+// @features: async-await
+
+export async function test_async_expr(): int {
+  let f: async () => int = async function(): int {
+    return 42;
+  };
+  return await f();
+}

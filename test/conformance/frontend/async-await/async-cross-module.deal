@@ -1,0 +1,16 @@
+// @spec: Async/Await — cross-module async import
+// @description: import an async function from a companion module, await it, verify compilation succeeds (runtime execution of cross-module imports not yet supported by conformance runner)
+// @expected: compile-ok
+// @features: async-await, modules
+
+import * as lib from "./async_lib.deal";
+
+export async function test_cross_module(): int {
+  let x: int = await lib.getAnswer();
+  return x;
+}
+
+export async function test_cross_module_greet(): string {
+  let s: string = await lib.greet("world");
+  return s;
+}

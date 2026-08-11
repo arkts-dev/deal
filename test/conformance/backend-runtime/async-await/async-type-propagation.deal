@@ -1,0 +1,22 @@
+// @spec: Async/Await — type propagation
+// @description: async function returning int, awaited result is int; async function returning string, awaited result is string
+// @expected: runtime-ok
+// @features: async-await, type-system
+
+async function intFn(): int {
+  return 42;
+}
+
+async function stringFn(): string {
+  return "hello";
+}
+
+export async function test_int_propagation(): int {
+  let x: int = await intFn();
+  return x;
+}
+
+export async function test_string_propagation(): string {
+  let s: string = await stringFn();
+  return s;
+}

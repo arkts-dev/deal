@@ -1,0 +1,13 @@
+// @spec: Async/Await — async function declaration
+// @description: basic async function returning a value, awaited in async function
+// @expected: runtime-ok
+// @features: async-await
+
+async function helper(): int {
+  return 42;
+}
+
+export async function test_async_decl(): int {
+  let x: int = await helper();
+  return x;
+}

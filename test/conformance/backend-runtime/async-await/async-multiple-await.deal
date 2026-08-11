@@ -1,0 +1,18 @@
+// @spec: Async/Await — multiple sequential await calls
+// @description: multiple await calls in sequence within a single async function, each suspending and resuming correctly
+// @expected: runtime-ok
+// @features: async-await
+
+async function double(x: int): int {
+  return x * 2;
+}
+
+async function triple(x: int): int {
+  return x * 3;
+}
+
+export async function test_multiple_await(): int {
+  let a: int = await double(10);
+  let b: int = await triple(a);
+  return b;
+}
