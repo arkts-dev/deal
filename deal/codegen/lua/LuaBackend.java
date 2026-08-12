@@ -983,7 +983,12 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(ExpressionStatement node) {
-        emitLine(emitExpression(node.expr()));
+        String expr = emitExpression(node.expr());
+        if (expr.startsWith("(")) {
+            emitLine(";" + expr);
+        } else {
+            emitLine(expr);
+        }
         return null;
     }
 
@@ -1032,6 +1037,25 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(DeleteStatement node) {
+        if (node.target() instanceof IndexExpr idx) {
+            Type arrType = typeOf(idx.array());
+            if (arrType instanceof Type.Array) {
+                String arr = emitExpression(idx.array());
+                String index = emitExpression(idx.index());
+                String myIndent = "  ".repeat(indent);
+                emitLine("do");
+                indent++;
+                emitLine("local __arr = " + arr);
+                emitLine("local __idx = __rt.check_int(" + index
+                    + ", " + spanArgs(idx.span()) + ")");
+                emitLine("if __idx < 0 or __idx > #__arr then error(__rt._err(\"E8002\", "
+                    + "\"array index out of bounds\", " + spanArgs(idx.span()) + ")) end");
+                emitLine("__arr[__idx + 1] = nil");
+                indent--;
+                emitLine("end");
+                return null;
+            }
+        }
         emitLine(emitExpression(node.target()) + " = nil");
         return null;
     }
@@ -1406,7 +1430,13 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     @Override public Void visit(IndexExpr node) {
-        emitLine(emitIndex(node)); return null;
+        String idx = emitIndex(node);
+        if (idx.startsWith("(")) {
+            emitLine(";" + idx);
+        } else {
+            emitLine(idx);
+        }
+        return null;
     }
 
     private String emitIndex(IndexExpr idx) {
@@ -1668,11 +1698,12 @@ public final class LuaBackend implements Visitor<Void> {
 
                 String myIndent = "  ".repeat(indent);
                 return "do\n"
+                    + myIndent + "  local __arr = " + arr + "\n"
                     + myIndent + "  local __idx = __rt.check_int(" + index
                     + ", " + spanArgs(idx.span()) + ")\n"
-                    + myIndent + "  if __idx < 0 or __idx > #" + arr + " then error(__rt._err(\"E8002\", "
+                    + myIndent + "  if __idx < 0 or __idx > #__arr then error(__rt._err(\"E8002\", "
                     + "\"array index out of bounds\", " + spanArgs(idx.span()) + ")) end\n"
-                    + myIndent + "  " + arr + "[__idx + 1] = "
+                    + myIndent + "  __arr[__idx + 1] = "
                     + emitCheckExpr(valueLua, arrT.element(), span) + "\n"
                     + myIndent + "end";
             }
