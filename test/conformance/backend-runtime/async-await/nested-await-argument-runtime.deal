@@ -1,0 +1,15 @@
+// @spec: Async/Await — Async operation semantics
+// @description: Nested awaited calls in argument position execute in dependency order
+// @expected: runtime-ok
+// @features: async, await, calls
+
+async function one(): int { return 1; }
+async function add_one(x: int): int { return x + 1; }
+
+export async function test_nested_await_argument(): null {
+  let v: int = await add_one(await one());
+  if (v !== 2) {
+    throw { code: "TEST_FAIL", message: "nested await argument result mismatch" };
+  }
+  return null;
+}

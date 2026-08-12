@@ -1,0 +1,19 @@
+// @spec: Tables — Deletion
+// @description: Explicit null table field is present until delete removes it
+// @expected: runtime-ok
+// @features: tables, null, delete
+
+export function test_table_null_and_delete(): null {
+  let t: table = {};
+  t.x = null;
+  let before: string | null = t.x;
+  if (before !== null) {
+    throw { code: "TEST_FAIL", message: "explicit null read mismatch" };
+  }
+  delete t.x;
+  let after: string | null = t.x;
+  if (after !== null) {
+    throw { code: "TEST_FAIL", message: "deleted field should read as null contextually" };
+  }
+  return null;
+}

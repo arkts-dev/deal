@@ -1,0 +1,17 @@
+// @spec: Classes — Field access — has() does not narrow field type
+// @description: has(obj.optionalNullable) checks presence but does not narrow the field from T|null to T
+// @expected: compile-error E3001
+// @features: classes, nullable, has, narrowing
+
+class User {
+  nick?: string | null;
+}
+
+function test_has_does_not_narrow(): string {
+  let u: User = { nick: null };
+  if (has(u.nick)) {
+    let s: string = u.nick;
+    return s;
+  }
+  return "missing";
+}

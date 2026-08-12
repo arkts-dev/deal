@@ -1,0 +1,8 @@
+// @spec: Runtime execution model — Intrinsic conversions
+// @description: int(non-integer number) raises E8001
+// @expected: runtime-error E8001
+// @features: runtime, int, conversion
+
+export function test_int_fraction(): int {
+  return int(3.5);
+}

@@ -1,0 +1,16 @@
+// @spec: Async/Await — Async operation semantics
+// @description: Async function with no internal await completes as an async operation and can be awaited
+// @expected: runtime-ok
+// @features: async, await
+
+async function immediate(): int {
+  return 42;
+}
+
+export async function test_immediate_async(): null {
+  let v: int = await immediate();
+  if (v !== 42) {
+    throw { code: "TEST_FAIL", message: "immediate async result mismatch" };
+  }
+  return null;
+}

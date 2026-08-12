@@ -1,0 +1,17 @@
+// @spec: Classes — @jsonable validation
+// @description: fromJson rejects extra keys by returning null, not throwing
+// @expected: runtime-ok
+// @features: jsonable, validation
+
+// @jsonable
+export class User {
+  name: string = "";
+}
+
+export function test_jsonable_extra_key_rejected(): null {
+  let u: User | null = User$fromJson("{\"name\":\"Ada\",\"extra\":1}");
+  if (u !== null) {
+    throw { code: "TEST_FAIL", message: "fromJson accepted extra key" };
+  }
+  return null;
+}

@@ -1,0 +1,22 @@
+// @spec: Standard library declarations — std/math.d.deal
+// @description: std/math number helpers return expected values
+// @expected: runtime-ok
+// @features: stdlib, math
+
+import * as math from "std/math";
+
+export function test_math_number_helpers(): null {
+  if (math.floor(3.8) !== 3.0) {
+    throw { code: "TEST_FAIL", message: "floor mismatch" };
+  }
+  if (math.ceil(3.2) !== 4.0) {
+    throw { code: "TEST_FAIL", message: "ceil mismatch" };
+  }
+  if (math.sqrt(9.0) !== 3.0) {
+    throw { code: "TEST_FAIL", message: "sqrt mismatch" };
+  }
+  if (math.absNumber(-2.5) !== 2.5) {
+    throw { code: "TEST_FAIL", message: "absNumber mismatch" };
+  }
+  return null;
+}

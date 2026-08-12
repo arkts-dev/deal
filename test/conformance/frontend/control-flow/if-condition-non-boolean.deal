@@ -1,0 +1,11 @@
+// @spec: Control flow — Truthiness
+// @description: if conditions must be boolean; integers are not truthy
+// @expected: compile-error E3007
+// @features: control-flow, boolean, diagnostics
+
+function test_if_requires_boolean(): int {
+  if (1) {
+    return 1;
+  }
+  return 0;
+}

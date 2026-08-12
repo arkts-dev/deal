@@ -1,0 +1,18 @@
+// @spec: Classes — Construction
+// @description: Mutable array defaults are freshly constructed per instance
+// @expected: runtime-ok
+// @features: classes, arrays, defaults
+
+class Box {
+  items: int[] = [];
+}
+
+export function test_array_default_is_fresh(): null {
+  let a: Box = {};
+  let b: Box = {};
+  a.items[0] = 7;
+  if (b.items.length !== 0) {
+    throw { code: "TEST_FAIL", message: "array default was shared across instances" };
+  }
+  return null;
+}

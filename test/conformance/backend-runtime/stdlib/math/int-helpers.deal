@@ -1,0 +1,19 @@
+// @spec: Standard library declarations — std/math.d.deal
+// @description: std/math integer helpers return expected values
+// @expected: runtime-ok
+// @features: stdlib, math
+
+import * as math from "std/math";
+
+export function test_math_int_helpers(): null {
+  if (math.absInt(-7) !== 7) {
+    throw { code: "TEST_FAIL", message: "absInt mismatch" };
+  }
+  if (math.minInt(3, 9) !== 3) {
+    throw { code: "TEST_FAIL", message: "minInt mismatch" };
+  }
+  if (math.maxInt(3, 9) !== 9) {
+    throw { code: "TEST_FAIL", message: "maxInt mismatch" };
+  }
+  return null;
+}

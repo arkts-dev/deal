@@ -1,0 +1,20 @@
+// @spec: Async/Await — Async operation semantics
+// @description: Error thrown by awaited async callee is catchable around await in caller
+// @expected: runtime-ok
+// @features: async, await, try-catch, error
+
+async function boom(): int {
+  throw { code: "E_INNER", message: "inner" };
+}
+
+export async function test_awaited_error_catch(): null {
+  try {
+    let x: int = await boom();
+    throw { code: "TEST_FAIL", message: "awaited throw returned a value" };
+  } catch (e) {
+    if (e.code !== "E_INNER") {
+      throw { code: "TEST_FAIL", message: "wrong error code" };
+    }
+  }
+  return null;
+}

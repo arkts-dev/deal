@@ -1,0 +1,11 @@
+// @spec: Async/Await — await operand directness
+// @description: A nested async call inside an awaited call argument still requires its own await
+// @expected: compile-error E3014
+// @features: async, await, diagnostics
+
+async function inner(): int { return 1; }
+async function outer(x: int): int { return x; }
+
+async function test_nested_unawaited_argument(): int {
+  return await outer(inner());
+}

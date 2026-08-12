@@ -1,0 +1,8 @@
+// @spec: Runtime execution model — Integer arithmetic overflow
+// @description: int addition outside the safe integer range raises E8004
+// @expected: runtime-error E8004
+// @features: runtime, int, overflow
+
+export function test_int_add_overflow(): int {
+  return 9007199254740991 + 1;
+}

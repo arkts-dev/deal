@@ -1,0 +1,8 @@
+// @spec: Runtime execution model — Integer exponentiation
+// @description: int exponentiation with a negative exponent raises E8006
+// @expected: runtime-error E8006
+// @features: runtime, int, arithmetic
+
+export function test_int_pow_negative(): int {
+  return 2 ** -1;
+}

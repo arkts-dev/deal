@@ -1,0 +1,17 @@
+// @spec: Async/Await — Async operation semantics
+// @description: Multiple awaits preserve state across yields
+// @expected: runtime-ok
+// @features: async, await, state
+
+async function inc(x: int): int { return x + 1; }
+
+export async function test_multiple_await_state(): null {
+  let v: int = 0;
+  v = await inc(v);
+  v = await inc(v);
+  v = await inc(v);
+  if (v !== 3) {
+    throw { code: "TEST_FAIL", message: "state after multiple awaits mismatch" };
+  }
+  return null;
+}

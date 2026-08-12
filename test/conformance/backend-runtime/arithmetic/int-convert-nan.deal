@@ -1,0 +1,10 @@
+// @spec: Runtime execution model — Intrinsic conversions
+// @description: int(NaN) raises E8001 because NaN is not a valid int value
+// @expected: runtime-error E8001
+// @features: runtime, int, conversion, nan
+
+export function test_int_nan(): int {
+  let z: number = 0.0;
+  let n: number = z / z;
+  return int(n);
+}

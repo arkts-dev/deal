@@ -1,0 +1,8 @@
+// @spec: Type system — Operators
+// @description: Unary negation requires int or number operand
+// @expected: compile-error E3007
+// @features: operators, diagnostics
+
+function test_unary_minus_boolean(): int {
+  return -true;
+}

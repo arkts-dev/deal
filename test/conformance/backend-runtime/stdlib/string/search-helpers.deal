@@ -1,0 +1,19 @@
+// @spec: Standard library declarations — std/string.d.deal
+// @description: std/string search helpers return expected values
+// @expected: runtime-ok
+// @features: stdlib, string
+
+import * as str from "std/string";
+
+export function test_string_search_helpers(): null {
+  if (!str.startsWith("abcdef", "abc")) {
+    throw { code: "TEST_FAIL", message: "startsWith mismatch" };
+  }
+  if (!str.endsWith("abcdef", "def")) {
+    throw { code: "TEST_FAIL", message: "endsWith mismatch" };
+  }
+  if (!str.contains("abcdef", "cd")) {
+    throw { code: "TEST_FAIL", message: "contains mismatch" };
+  }
+  return null;
+}

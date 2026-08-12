@@ -1,0 +1,23 @@
+// @spec: Classes — @jsonable nested arrays
+// @description: @jsonable supports nested arrays of primitive JSON values
+// @expected: runtime-ok
+// @features: jsonable, arrays, roundtrip
+
+// @jsonable
+export class Matrix {
+  values: int[][] = [];
+}
+
+export function test_jsonable_nested_arrays(): null {
+  let m: Matrix = { values: [[1, 2], [3, 4]] };
+  let json: string = Matrix$toJson(m);
+  let m2: Matrix | null = Matrix$fromJson(json);
+  if (m2 !== null) {
+    if (m2.values[0][0] !== 1 || m2.values[1][1] !== 4) {
+      throw { code: "TEST_FAIL", message: "nested array roundtrip mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "fromJson returned null" };
+  }
+  return null;
+}

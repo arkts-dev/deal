@@ -1,0 +1,8 @@
+// @spec: Runtime execution model — Integer division
+// @description: int division by zero raises E8005
+// @expected: runtime-error E8005
+// @features: runtime, int, arithmetic
+
+export function test_int_div_zero(): int {
+  return 5 / 0;
+}

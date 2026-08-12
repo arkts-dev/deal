@@ -1,0 +1,23 @@
+// @spec: Standard library declarations — std/string.d.deal
+// @description: std/string transform helpers return expected values
+// @expected: runtime-ok
+// @features: stdlib, string
+
+import * as str from "std/string";
+
+export function test_string_transform_helpers(): null {
+  if (str.trim("  deal  ") !== "deal") {
+    throw { code: "TEST_FAIL", message: "trim mismatch" };
+  }
+  if (str.replace("a-b-c", "-", ":") !== "a:b:c") {
+    throw { code: "TEST_FAIL", message: "replace mismatch" };
+  }
+  let parts: string[] = str.split("a,b,c", ",");
+  if (parts.length !== 3) {
+    throw { code: "TEST_FAIL", message: "split length mismatch" };
+  }
+  if (parts[0] !== "a" || parts[1] !== "b" || parts[2] !== "c") {
+    throw { code: "TEST_FAIL", message: "split values mismatch" };
+  }
+  return null;
+}

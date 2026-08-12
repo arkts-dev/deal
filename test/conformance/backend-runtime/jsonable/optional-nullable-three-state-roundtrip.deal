@@ -1,0 +1,54 @@
+// @spec: Classes — @jsonable optional nullable fields
+// @description: @jsonable preserves missing, explicit null, and non-null optional nullable states
+// @expected: runtime-ok
+// @features: jsonable, optional, nullable, roundtrip
+
+// @jsonable
+export class User {
+  name: string = "";
+  nick?: string | null;
+}
+
+export function test_jsonable_optional_nullable_three_state(): null {
+  let missing: User = { name: "A" };
+  let missingJson: string = User$toJson(missing);
+  let missing2: User | null = User$fromJson(missingJson);
+  if (missing2 !== null) {
+    if (has(missing2.nick)) {
+      throw { code: "TEST_FAIL", message: "missing optional field not preserved" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "fromJson returned null for missing-state user" };
+  }
+
+  let explicitNull: User = { name: "B", nick: null };
+  let nullJson: string = User$toJson(explicitNull);
+  let null2: User | null = User$fromJson(nullJson);
+  if (null2 !== null) {
+    if (!has(null2.nick) || null2.nick !== null) {
+      throw { code: "TEST_FAIL", message: "explicit null optional field not preserved" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "fromJson returned null for explicit-null user" };
+  }
+
+  let value: User = { name: "C", nick: "cee" };
+  let valueJson: string = User$toJson(value);
+  let value2: User | null = User$fromJson(valueJson);
+  if (value2 !== null) {
+    if (!has(value2.nick)) {
+      throw { code: "TEST_FAIL", message: "optional field value not present" };
+    }
+    let nick: string | null = value2.nick;
+    if (nick !== null) {
+      if (nick !== "cee") {
+        throw { code: "TEST_FAIL", message: "optional field value not preserved" };
+      }
+    } else {
+      throw { code: "TEST_FAIL", message: "optional field value became null" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "fromJson returned null for value user" };
+  }
+  return null;
+}

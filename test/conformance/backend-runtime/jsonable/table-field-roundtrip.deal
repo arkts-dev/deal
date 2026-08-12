@@ -1,0 +1,25 @@
+// @spec: Classes — @jsonable table fields
+// @description: @jsonable table fields roundtrip JSON object values
+// @expected: runtime-ok
+// @features: jsonable, table, roundtrip
+
+// @jsonable
+export class Wrapper {
+  data: table = {};
+}
+
+export function test_jsonable_table_field(): null {
+  let w: Wrapper = { data: { count: 3, name: "deal" } };
+  let json: string = Wrapper$toJson(w);
+  let w2: Wrapper | null = Wrapper$fromJson(json);
+  if (w2 !== null) {
+    let count: int = w2.data.count;
+    let name: string = w2.data.name;
+    if (count !== 3 || name !== "deal") {
+      throw { code: "TEST_FAIL", message: "table field roundtrip mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "fromJson returned null" };
+  }
+  return null;
+}

@@ -1,0 +1,16 @@
+// @spec: Type system — Equality and comparison operand rules
+// @description: NaN is not equal to itself and !=/!== observe LuaJIT NaN semantics
+// @expected: runtime-ok
+// @features: equality, number, nan
+
+export function test_nan_equality(): null {
+  let z: number = 0.0;
+  let n: number = z / z;
+  if (n === n) {
+    throw { code: "TEST_FAIL", message: "NaN === NaN must be false" };
+  }
+  if (!(n !== n)) {
+    throw { code: "TEST_FAIL", message: "NaN !== NaN must be true" };
+  }
+  return null;
+}

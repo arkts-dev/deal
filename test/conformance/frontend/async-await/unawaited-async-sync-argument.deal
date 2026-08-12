@@ -1,0 +1,11 @@
+// @spec: Async/Await — async calls as values
+// @description: Passing an async function result to a synchronous function requires await at the actual async call
+// @expected: compile-error E3014
+// @features: async, await, diagnostics
+
+async function fetch(): int { return 7; }
+function consume(x: int): int { return x; }
+
+async function test_nested_sync_argument(): int {
+  return consume(fetch());
+}
