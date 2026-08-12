@@ -30,7 +30,6 @@ public class ConformanceTest {
     private static int skipped = 0;
     private static final Map<String, List<TestResult>> specGroups = new LinkedHashMap<>();
     private static boolean luajitAvailable;
-    private static boolean luajitSupportsDollar;
 
     // =========================================================================
     // Data types
@@ -74,18 +73,10 @@ public class ConformanceTest {
             luajitAvailable = false;
         }
 
-        if (luajitAvailable) {
-            luajitSupportsDollar = checkLuajitSupportsDollar();
-        }
-
         System.out.println("=== DEAL v1.1 Conformance Test Suite ===");
         System.out.println("Root: " + conformanceRoot);
         System.out.println("LuaJIT: " + (luajitAvailable ? "available" :
             "NOT available (runtime tests will be skipped)"));
-        if (luajitAvailable) {
-            System.out.println("LuaJIT $ support: " +
-                (luajitSupportsDollar ? "yes" : "no (@jsonable runtime tests will be skipped)"));
-        }
         System.out.println();
 
         // Discover test files
@@ -109,25 +100,7 @@ public class ConformanceTest {
         }
     }
 
-    /**
-     * Check whether LuaJIT supports {@code $} in identifiers.
-     * Required for @jsonable tests which generate identifiers like
-     * {@code C$fromJson}.  Older LuaJIT builds (pre-2020) reject {@code $}.
-     */
-    private static boolean checkLuajitSupportsDollar() {
-        try {
-            Path tmp = Files.createTempFile("deal_dollar_test_", ".lua");
-            Files.writeString(tmp, "local a$b = 1; return a$b\n");
-            ProcessBuilder pb = new ProcessBuilder("luajit", tmp.toString());
-            pb.redirectErrorStream(true);
-            Process p = pb.start();
-            int exit = p.waitFor();
-            try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
-            return exit == 0;
-        } catch (Exception e) {
-            return false;
-        }
-    }
+
 
     // =========================================================================
     // Discovery
@@ -272,15 +245,6 @@ public class ConformanceTest {
             return;
         }
 
-        // Check if generated Lua uses $ identifiers (from @jsonable codegen)
-        // and skip runtime test if LuaJIT doesn't support $ in identifiers.
-        if (luaContainsDollarIdentifiers(generated.mainLua()) && !luajitSupportsDollar) {
-            System.out.println("SKIP (LuaJIT does not support $ in identifiers; @jsonable runtime test skipped)");
-            skipped++;
-            addResult(test, false, "skipped: LuaJIT $ support required for @jsonable");
-            return;
-        }
-
         String output = executeLua(generated.mainLua(), generated.companionModules(), false);
         if (output == null) {
             System.out.println("FAIL (Lua execution failed)");
@@ -349,14 +313,6 @@ public class ConformanceTest {
             System.out.println("FAIL (codegen failed)");
             failed++;
             addResult(test, false, "codegen failed");
-            return;
-        }
-
-        // Check if generated Lua uses $ identifiers
-        if (luaContainsDollarIdentifiers(generated.mainLua()) && !luajitSupportsDollar) {
-            System.out.println("SKIP (LuaJIT does not support $ in identifiers; @jsonable runtime test skipped)");
-            skipped++;
-            addResult(test, false, "skipped: LuaJIT $ support required for @jsonable");
             return;
         }
 
@@ -584,20 +540,7 @@ public class ConformanceTest {
         return name;
     }
 
-    /**
-     * Check whether a Lua source string contains {@code $} used as an
-     * identifier character (as opposed to inside a string literal).
-     *
-     * <p>Heuristic: {@code $} preceded by a letter, digit, or underscore
-     * and followed by a letter or digit is treated as an identifier
-     * character.  This matches the pattern used by @jsonable codegen
-     * for names like {@code C$fromJson}.</p>
-     */
-    private static boolean luaContainsDollarIdentifiers(String lua) {
-        // Match patterns like: local Foo$bar, Foo$fromJson, exports.Foo$bar
-        // $ preceded by letter/digit and followed by letter
-        return Pattern.compile("[a-zA-Z0-9_]\\$[a-zA-Z]").matcher(lua).find();
-    }
+
 
     // =========================================================================
     // Lua execution

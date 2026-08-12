@@ -94,6 +94,7 @@ public final class LuaBackend implements Visitor<Void> {
         backend.emitLine("local Error_defaults = { code = \"\", message = \"\" }");
         backend.emitLine("");
 
+        backend.emitJsonableForwardDecls(program);
         backend.walkStatements(program.statements());
         backend.emitJsonableCode();
         backend.emitExports();
@@ -117,6 +118,7 @@ public final class LuaBackend implements Visitor<Void> {
         backend.emitLine("local Error_defaults = { code = \"\", message = \"\" }");
         backend.emitLine("");
 
+        backend.emitJsonableForwardDecls(program);
         backend.walkStatements(program.statements());
         backend.emitJsonableCode();
         backend.emitExports();
@@ -315,7 +317,13 @@ public final class LuaBackend implements Visitor<Void> {
     private void emitExports() {
         emitLine("local exports = {}");
         for (var entry : exportedValues.entrySet()) {
-            emitLine("exports." + entry.getKey() + " = " + entry.getValue());
+            String key = entry.getKey();
+            String value = entry.getValue();
+            if (key.indexOf('$') >= 0) {
+                emitLine("exports[\"" + key + "\"] = " + value);
+            } else {
+                emitLine("exports." + key + " = " + value);
+            }
         }
         emitLine("return exports");
     }
@@ -1025,9 +1033,9 @@ public final class LuaBackend implements Visitor<Void> {
                     exportedValues.putIfAbsent(cd.name() + "_fields",
                         cd.name() + "_fields");
                     exportedValues.putIfAbsent(cd.name() + "$fromJson",
-                        cd.name() + "$fromJson");
+                        cd.name() + "_fromJson");
                     exportedValues.putIfAbsent(cd.name() + "$toJson",
-                        cd.name() + "$toJson");
+                        cd.name() + "_toJson");
                 }
             }
             default -> {}
@@ -1283,10 +1291,14 @@ public final class LuaBackend implements Visitor<Void> {
      * outer counter.
      */
     private String emitIdentifier(IdentifierExpr id) {
-        if (forLoopShadowVar != null && id.name().equals(forLoopShadowVar)) {
-            return "_" + id.name();
+        String name = id.name();
+        if (forLoopShadowVar != null && name.equals(forLoopShadowVar)) {
+            return "_" + name;
         }
-        return id.name();
+        if (name.indexOf('$') >= 0) {
+            return name.replace('$', '_');
+        }
+        return name;
     }
 
     @Override public Void visit(BinaryExpr node) {
@@ -1423,10 +1435,14 @@ public final class LuaBackend implements Visitor<Void> {
     private String emitMemberAccess(MemberAccessExpr mae) {
         String obj = emitExpression(mae.object());
         Type objType = typeOf(mae.object());
-        if (mae.field().equals("length") && objType instanceof Type.Array) {
+        String field = mae.field();
+        if (field.equals("length") && objType instanceof Type.Array) {
             return "#" + obj;
         }
-        return obj + "." + mae.field();
+        if (field.indexOf('$') >= 0) {
+            return obj + "[\"" + field + "\"]";
+        }
+        return obj + "." + field;
     }
 
     @Override public Void visit(IndexExpr node) {
@@ -1787,6 +1803,39 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     /**
+     * Emits forward {@code local} declarations for all @jsonable-generated
+     * artifacts before {@link #walkStatements} emits user functions that
+     * reference them.  Without these forward declarations, user-defined
+     * functions that call {@code C$fromJson} / {@code C$toJson} would
+     * reference those names as globals instead of capturing the module-level
+     * locals that {@link #emitJsonableCode} later assigns.
+     *
+     * <p>Pre-scans the program AST for {@code export class} declarations
+     * annotated with {@code // @jsonable} and emits a bare {@code local}
+     * for each generated function and field descriptor.  The actual
+     * definitions are assigned later in {@link #emitJsonableCode}.</p>
+     */
+    private void emitJsonableForwardDecls(ProgramNode program) {
+        List<String> names = new ArrayList<>();
+        for (StatementNode stmt : program.statements()) {
+            if (stmt instanceof ExportDeclaration exp
+                && exp.declaration() instanceof ClassDeclaration cd
+                && cd.isJsonable()) {
+                names.add(cd.name());
+            }
+        }
+        if (names.isEmpty()) return;
+
+        emitLine("-- @jsonable: forward declarations (captured by closures)");
+        for (String name : names) {
+            emitLine("local " + name + "_fields");
+            emitLine("local " + name + "_fromJson");
+            emitLine("local " + name + "_toJson");
+        }
+        emitLine();
+    }
+
+    /**
      * Emits all deferred @jsonable code after all statements have been walked.
      *
      * <p>Performs two sub-passes after topological sort by same-module
@@ -1935,7 +1984,7 @@ public final class LuaBackend implements Visitor<Void> {
      */
     private void emitFieldDescriptor(JsonableClassMeta meta) {
         String name = meta.className;
-        emitLine("local " + name + "_fields = {");
+        emitLine(name + "_fields = {");
         indent++;
         List<ClassField> fields = meta.fields;
         for (int i = 0; i < fields.size(); i++) {
@@ -2077,8 +2126,9 @@ public final class LuaBackend implements Visitor<Void> {
     private void emitFromJson(JsonableClassMeta meta) {
         String name = meta.className;
         String sig = "(string)->" + name + "|null";
+        String luaName = name + "_fromJson";
 
-        emitLine("local " + name + "$fromJson = __rt.function_(\"" + sig
+        emitLine(luaName + " = __rt.function_(\"" + sig
             + "\", function(s)");
         indent++;
         emitLine("__rt.check_string(s)");
@@ -2099,8 +2149,9 @@ public final class LuaBackend implements Visitor<Void> {
     private void emitToJson(JsonableClassMeta meta) {
         String name = meta.className;
         String sig = "(" + name + ")->string";
+        String luaName = name + "_toJson";
 
-        emitLine("local " + name + "$toJson = __rt.function_(\"" + sig
+        emitLine(luaName + " = __rt.function_(\"" + sig
             + "\", function(v)");
         indent++;
         emitLine("__rt.check_type(\"" + name + "\", v)");

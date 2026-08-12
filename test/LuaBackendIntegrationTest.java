@@ -3053,19 +3053,19 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         String runnerBody =
-            "local u = mod.User$fromJson.f('{\"name\":\"Alice\",\"age\":30}')\n" +
+            "local u = mod[\"User$fromJson\"].f('{\"name\":\"Alice\",\"age\":30}')\n" +
             "if u == __rt.__NULL then print('NULL') else\n" +
             "  print(u.name)\n" +
             "  print(u.age)\n" +
-            "  local s = mod.User$toJson.f(u)\n" +
+            "  local s = mod[\"User$toJson\"].f(u)\n" +
             "  print(s)\n" +
             "end\n";
 
         JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
         // Structural checks
-        check(r.lua.contains("local User_fields = {"), "User_fields emitted");
-        check(r.lua.contains("local User$fromJson = __rt.function_("), "User$fromJson emitted");
-        check(r.lua.contains("local User$toJson = __rt.function_("), "User$toJson emitted");
+        check(r.lua.contains("User_fields = {"), "User_fields emitted");
+        check(r.lua.contains("User_fromJson = __rt.function_("), "User$fromJson emitted");
+        check(r.lua.contains("User_toJson = __rt.function_("), "User$toJson emitted");
         check(r.lua.contains("__json_parse"), "__json_parse used");
         check(r.lua.contains("__json_stringify"), "__json_stringify used");
         check(r.lua.contains("pcall(__json_parse, s)"), "pcall wrapping");
@@ -3086,7 +3086,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         String runnerBody =
-            "local u = mod.User$fromJson.f('not json')\n" +
+            "local u = mod[\"User$fromJson\"].f('not json')\n" +
             "if u == __rt.__NULL then print('NULL_OK') else print('NOT_NULL') end\n";
 
         JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
@@ -3108,7 +3108,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         String runnerBody =
-            "local u = mod.User$fromJson.f('{\"name\":\"Bob\",\"extra\":42}')\n" +
+            "local u = mod[\"User$fromJson\"].f('{\"name\":\"Bob\",\"extra\":42}')\n" +
             "if u == __rt.__NULL then print('NULL_OK') else print('NOT_NULL') end\n";
 
         JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
@@ -3180,8 +3180,8 @@ public class LuaBackendIntegrationTest {
         // Check that Child_fields is emitted before Parent_fields (topological sort:
         // Parent depends on Child, so Child must come first — here Child is declared first
         // so it's already in order, but we verify both exist)
-        check(r.lua.contains("local Child_fields = {"), "Child_fields emitted");
-        check(r.lua.contains("local Parent_fields = {"), "Parent_fields emitted");
+        check(r.lua.contains("Child_fields = {"), "Child_fields emitted");
+        check(r.lua.contains("Parent_fields = {"), "Parent_fields emitted");
         // Parent field descriptor should reference Child_defaults and Child_fields
         check(r.lua.contains("Child_defaults"), "nested class defaults reference");
         check(r.lua.contains("Child_fields"), "nested class fields reference");
@@ -3247,8 +3247,8 @@ public class LuaBackendIntegrationTest {
 
         JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
         String lua = r.lua;
-        int bFieldsPos = lua.indexOf("local B_fields = {");
-        int aFieldsPos = lua.indexOf("local A_fields = {");
+        int bFieldsPos = lua.indexOf("B_fields = {");
+        int aFieldsPos = lua.indexOf("A_fields = {");
         check(bFieldsPos >= 0, "B_fields exists");
         check(aFieldsPos >= 0, "A_fields exists");
         check(bFieldsPos < aFieldsPos,
@@ -3277,7 +3277,7 @@ public class LuaBackendIntegrationTest {
             "end\n";
 
         JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
-        check(r.lua.contains("local Empty_fields = {"), "Empty_fields emitted");
+        check(r.lua.contains("Empty_fields = {"), "Empty_fields emitted");
         // Empty fields should be an empty table
         check(r.lua.contains("Empty_fields = {\n"), "Empty_fields is empty table");
 
@@ -3311,8 +3311,8 @@ public class LuaBackendIntegrationTest {
 
         JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
         String lua = r.lua;
-        int bFieldsPos = lua.indexOf("local B_fields = {");
-        int aFieldsPos = lua.indexOf("local A_fields = {");
+        int bFieldsPos = lua.indexOf("B_fields = {");
+        int aFieldsPos = lua.indexOf("A_fields = {");
         check(bFieldsPos >= 0, "B_fields exists");
         check(aFieldsPos >= 0, "A_fields exists");
         check(bFieldsPos < aFieldsPos,

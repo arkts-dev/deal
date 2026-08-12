@@ -1873,7 +1873,7 @@ public class LuaBackendTest {
             "// @jsonable\nexport class User {\n  name: string;\n  age: int;\n}\n");
         assertNoErrors(out, "@jsonable simple class");
         // Check C_fields table emitted
-        assertContains(out.lua, "local User_fields = {", "User_fields table");
+        assertContains(out.lua, "User_fields = {", "User_fields table");
         assertContains(out.lua, "\"name\"", "name field in descriptor");
         assertContains(out.lua, "jtype = \"string\"", "string jtype");
         assertContains(out.lua, "jtype = \"int\"", "int jtype");
@@ -1891,7 +1891,7 @@ public class LuaBackendTest {
             "// @jsonable\nexport class User {\n  name: string;\n}\n");
         assertNoErrors(out, "@jsonable fromJson");
         // Check C$fromJson function
-        assertContains(out.lua, "local User$fromJson = __rt.function_(", "C$fromJson wrapper");
+        assertContains(out.lua, "User_fromJson = __rt.function_(", "C$fromJson wrapper");
         assertContains(out.lua, "\"(string)->User|null\"", "fromJson signature");
         assertContains(out.lua, "pcall(__json_parse, s)", "pcall wrapping json parse");
         assertContains(out.lua, "__rt.json_from_json(", "json_from_json call");
@@ -1906,7 +1906,7 @@ public class LuaBackendTest {
             "// @jsonable\nexport class User {\n  name: string;\n}\n");
         assertNoErrors(out, "@jsonable toJson");
         // Check C$toJson function
-        assertContains(out.lua, "local User$toJson = __rt.function_(", "C$toJson wrapper");
+        assertContains(out.lua, "User_toJson = __rt.function_(", "C$toJson wrapper");
         assertContains(out.lua, "\"(User)->string\"", "toJson signature");
         assertContains(out.lua, "__rt.json_to_json(", "json_to_json call");
         assertContains(out.lua, "__json_stringify(", "json_stringify call");
@@ -1920,8 +1920,8 @@ public class LuaBackendTest {
         assertNoErrors(out, "@jsonable exports");
         // Check exports table entries
         assertContains(out.lua, "exports.User_fields = User_fields", "User_fields export");
-        assertContains(out.lua, "exports.User$fromJson = User$fromJson", "User$fromJson export");
-        assertContains(out.lua, "exports.User$toJson = User$toJson", "User$toJson export");
+        assertContains(out.lua, "exports[\"User$fromJson\"] = User_fromJson", "User$fromJson export");
+        assertContains(out.lua, "exports[\"User$toJson\"] = User_toJson", "User$toJson export");
         check(structuralLuaCheck(out.lua), "valid Lua (structural)");
     }
 
@@ -1949,8 +1949,8 @@ public class LuaBackendTest {
         assertNoErrors(out, "@jsonable topological sort");
         String lua = out.lua;
         // B_fields (dependency) must be emitted before A_fields (dependent)
-        int bFieldsPos = lua.indexOf("local B_fields = {");
-        int aFieldsPos = lua.indexOf("local A_fields = {");
+        int bFieldsPos = lua.indexOf("B_fields = {");
+        int aFieldsPos = lua.indexOf("A_fields = {");
         check(bFieldsPos >= 0, "B_fields exists");
         check(aFieldsPos >= 0, "A_fields exists");
         check(bFieldsPos < aFieldsPos, "B_fields emitted before A_fields (topological sort)");
@@ -1968,8 +1968,8 @@ public class LuaBackendTest {
             "// @jsonable\nexport class B {\n  name: string;\n}\n");
         assertNoErrors(out, "@jsonable topological sort wrapped");
         String lua = out.lua;
-        int bFieldsPos = lua.indexOf("local B_fields = {");
-        int aFieldsPos = lua.indexOf("local A_fields = {");
+        int bFieldsPos = lua.indexOf("B_fields = {");
+        int aFieldsPos = lua.indexOf("A_fields = {");
         check(bFieldsPos >= 0, "B_fields exists");
         check(aFieldsPos >= 0, "A_fields exists");
         check(bFieldsPos < aFieldsPos, "B_fields emitted before A_fields (wrapped type dep)");
