@@ -2950,32 +2950,9 @@ public class LuaBackendIntegrationTest {
     // =========================================================================
 
     /**
-     * Checks whether the LuaJIT on this system supports '$' in identifiers.
-     * The Ubuntu-packaged LuaJIT 2.1.0-beta3 does not; upstream builds with
-     * -DLUAJIT_ENABLE_LUA52COMPAT do.  When unsupported, runtime execution
-     * tests for @jsonable generated code are skipped (the generated code is
-     * still verified structurally).
-     */
-    private static boolean luajitSupportsDollar() {
-        try {
-            Path tmp = Files.createTempFile("deal_dollar_test_", ".lua");
-            Files.writeString(tmp, "local a$b = 1; return a$b\n");
-            ProcessBuilder pb = new ProcessBuilder("luajit", tmp.toString());
-            pb.redirectErrorStream(true);
-            Process p = pb.start();
-            int exit = p.waitFor();
-            try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
-            return exit == 0;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    /**
      * Compile a DEAL source with @jsonable classes, generate Lua, and
-     * (if LuaJIT supports '$') run it with a Lua runner that exercises
-     * C$fromJson / C$toJson.  Returns the Lua source and the runtime
-     * output (or null if runtime execution was skipped).
+     * run it with a Lua runner that exercises fromJson / toJson.
+     * Returns the Lua source and the runtime output.
      */
     private record JsonableRunResult(String lua, String runtimeOutput) {}
 
@@ -3005,39 +2982,38 @@ public class LuaBackendIntegrationTest {
         }
         String lua = LuaBackend.generate(parse.program(), result, filename);
 
-        String runtimeOutput = null;
-        if (luajitSupportsDollar()) {
-            String runner =
-                "package.path = './?.lua;' .. package.path\n" +
-                "local mod = loadstring([[" + lua + "]])()\n" +
-                runnerBody + "\n";
+        String runtimeOutput;
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local __rt = require('deal.runtime')\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            runnerBody + "\n";
 
-            Path tmpDir = Files.createTempDirectory("deal_jsonable_int_");
-            Path runnerFile = tmpDir.resolve("runner.lua");
-            Files.writeString(runnerFile, runner);
-            Path runtimeDir = tmpDir.resolve("deal");
-            Files.createDirectories(runtimeDir);
-            Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
-            Path stdDir = tmpDir.resolve("std");
-            Files.createDirectories(stdDir);
-            Files.copy(Path.of("std/json.lua"), stdDir.resolve("json.lua"));
+        Path tmpDir = Files.createTempDirectory("deal_jsonable_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+        Path stdDir = tmpDir.resolve("std");
+        Files.createDirectories(stdDir);
+        Files.copy(Path.of("std/json.lua"), stdDir.resolve("json.lua"));
 
-            ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
-            pb.directory(tmpDir.toFile());
-            pb.redirectErrorStream(true);
-            Process p = pb.start();
-            String output = new String(p.getInputStream().readAllBytes()).trim();
-            int exit = p.waitFor();
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
 
-            try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
-                .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
-            } catch (IOException ignored) {}
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
 
-            if (exit != 0) {
-                System.err.println("LuaJIT exit " + exit + ": " + output);
-            }
-            runtimeOutput = (exit == 0) ? output : ("EXIT:" + exit + " " + output);
+        if (exit != 0) {
+            System.err.println("LuaJIT exit " + exit + ": " + output);
         }
+        runtimeOutput = (exit == 0) ? output : ("EXIT:" + exit + " " + output);
         return new JsonableRunResult(lua, runtimeOutput);
     }
 
@@ -3131,14 +3107,14 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         String runnerBody =
-            "local p1 = mod.Profile$fromJson.f('{\"score\":100}')\n" +
-            "local s1 = mod.Profile$toJson.f(p1)\n" +
+            "local p1 = mod[\"Profile$fromJson\"].f('{\"score\":100}')\n" +
+            "local s1 = mod[\"Profile$toJson\"].f(p1)\n" +
             "print('roundtrip1:' .. s1)\n" +
-            "local p2 = mod.Profile$fromJson.f('{\"nick\":null,\"bio\":\"hi\",\"score\":50}')\n" +
-            "local s2 = mod.Profile$toJson.f(p2)\n" +
+            "local p2 = mod[\"Profile$fromJson\"].f('{\"nick\":null,\"bio\":\"hi\",\"score\":50}')\n" +
+            "local s2 = mod[\"Profile$toJson\"].f(p2)\n" +
             "print('roundtrip2:' .. s2)\n" +
-            "local p3 = mod.Profile$fromJson.f('{\"nick\":\"Joe\",\"bio\":null,\"score\":75}')\n" +
-            "local s3 = mod.Profile$toJson.f(p3)\n" +
+            "local p3 = mod[\"Profile$fromJson\"].f('{\"nick\":\"Joe\",\"bio\":null,\"score\":75}')\n" +
+            "local s3 = mod[\"Profile$toJson\"].f(p3)\n" +
             "print('roundtrip3:' .. s3)\n";
 
         JsonableRunResult r = compileAndRunJsonable(dealSrc, "test.deal", runnerBody);
@@ -3147,7 +3123,11 @@ public class LuaBackendIntegrationTest {
         check(r.lua.contains("nullable = true"), "nullable field flag");
 
         if (r.runtimeOutput != null) {
-            check(!r.runtimeOutput.contains("nick"), "missing optional not in output, got: " + r.runtimeOutput);
+            // Extract roundtrip1 line: the missing optional field should not appear
+            String rt1 = r.runtimeOutput.lines()
+                .filter(l -> l.startsWith("roundtrip1:"))
+                .findFirst().orElse("");
+            check(!rt1.contains("nick"), "missing optional not in roundtrip1 output, got: " + rt1);
             check(r.runtimeOutput.contains("roundtrip1"), "roundtrip1 executed");
             check(r.runtimeOutput.contains("roundtrip2"), "roundtrip2 executed");
             check(r.runtimeOutput.contains("roundtrip3"), "roundtrip3 executed");
@@ -3168,11 +3148,11 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         String runnerBody =
-            "local p = mod.Parent$fromJson.f('{\"child\":{\"name\":\"Kid\"},\"label\":\"parent\"}')\n" +
+            "local p = mod[\"Parent$fromJson\"].f('{\"child\":{\"name\":\"Kid\"},\"label\":\"parent\"}')\n" +
             "if p == __rt.__NULL then print('NULL') else\n" +
             "  print(p.label)\n" +
             "  print(p.child.name)\n" +
-            "  local s = mod.Parent$toJson.f(p)\n" +
+            "  local s = mod[\"Parent$toJson\"].f(p)\n" +
             "  print(s)\n" +
             "end\n";
 
@@ -3203,12 +3183,12 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         String runnerBody =
-            "local lh = mod.ListHolder$fromJson.f('{\"tags\":[\"a\",\"b\"],\"name\":\"test\"}')\n" +
+            "local lh = mod[\"ListHolder$fromJson\"].f('{\"tags\":[\"a\",\"b\"],\"name\":\"test\"}')\n" +
             "if lh == __rt.__NULL then print('NULL') else\n" +
             "  print(lh.name)\n" +
             "  print(lh.tags[1])\n" +
             "  print(lh.tags[2])\n" +
-            "  local s = mod.ListHolder$toJson.f(lh)\n" +
+            "  local s = mod[\"ListHolder$toJson\"].f(lh)\n" +
             "  print(s)\n" +
             "end\n";
 
@@ -3239,7 +3219,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         String runnerBody =
-            "local a = mod.A$fromJson.f('{\"b\":{\"name\":\"child\"},\"label\":\"parent\"}')\n" +
+            "local a = mod[\"A$fromJson\"].f('{\"b\":{\"name\":\"child\"},\"label\":\"parent\"}')\n" +
             "if a == __rt.__NULL then print('NULL') else\n" +
             "  print(a.label)\n" +
             "  print(a.b.name)\n" +
@@ -3269,10 +3249,10 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         String runnerBody =
-            "local e = mod.Empty$fromJson.f('{}')\n" +
+            "local e = mod[\"Empty$fromJson\"].f('{}')\n" +
             "if e == __rt.__NULL then print('NULL') else\n" +
             "  print('OK')\n" +
-            "  local s = mod.Empty$toJson.f(e)\n" +
+            "  local s = mod[\"Empty$toJson\"].f(e)\n" +
             "  print(s)\n" +
             "end\n";
 
@@ -3302,7 +3282,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         String runnerBody =
-            "local a = mod.A$fromJson.f('{\"bs\":[{\"val\":1},{\"val\":2}],\"name\":\"arr\"}')\n" +
+            "local a = mod[\"A$fromJson\"].f('{\"bs\":[{\"val\":1},{\"val\":2}],\"name\":\"arr\"}')\n" +
             "if a == __rt.__NULL then print('NULL') else\n" +
             "  print(a.name)\n" +
             "  print(a.bs[1].val)\n" +
@@ -3336,7 +3316,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         String runnerBody =
-            "local c = mod.Config$fromJson.f('{}')\n" +
+            "local c = mod[\"Config$fromJson\"].f('{}')\n" +
             "if c == __rt.__NULL then print('NULL') else\n" +
             "  print(c.host)\n" +
             "  print(c.port)\n" +
