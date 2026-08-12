@@ -1281,7 +1281,7 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     @Override public Void visit(IdentifierExpr node) {
-        emitLine(node.name()); return null;
+        emitLine(emitIdentifier(node)); return null;
     }
 
     /**
