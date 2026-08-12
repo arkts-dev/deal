@@ -1,0 +1,222 @@
+import * as console from "std/console";
+import * as json from "std/json";
+import * as math from "std/math";
+import * as strings from "std/string";
+import * as tables from "std/table";
+import * as time from "std/time";
+
+class Address {
+  city: string = "";
+  zip: int = 0;
+}
+
+class Profile {
+  name: string = "";
+  nick?: string;
+  bio: string | null = null;
+  active: boolean = true;
+  address: Address = {};
+  tags: string[] = [];
+  meta: table = {};
+}
+
+class Point {
+  x: number = 0.0;
+  y: number = 0.0;
+}
+
+function fail(message: string): null {
+  throw { code: "DEMO_FAIL", message: message };
+}
+
+function assertBoolean(value: boolean, message: string): null {
+  if (!value) {
+    fail(message);
+  }
+  return null;
+}
+
+function sumAll(...values: int[]): int {
+  let total: int = 0;
+  for (let value: int of values) {
+    total = total + value;
+  }
+  return total;
+}
+
+function safeDivide(a: int, b: int): int | null {
+  if (b === 0) {
+    return null;
+  }
+  return a / b;
+}
+
+function makeCounter(start: int): () => int {
+  let current: int = start;
+  return function(): int {
+    current = current + 1;
+    return current;
+  };
+}
+
+function chooseName(name: string | null): string {
+  if (name !== null) {
+    return name;
+  }
+  return "anonymous";
+}
+
+function describeProfile(p: Profile): string {
+  let nick: string | null = p.nick;
+  if (nick !== null) {
+    return `${p.name} aka ${nick} from ${p.address.city}`;
+  }
+  return `${p.name} from ${p.address.city}`;
+}
+
+function useArrays(): int {
+  let values: int[] = [1, 2, 3];
+  values[values.length] = 4;
+  values[0] = 10;
+  let total: int = 0;
+  for (let value: int of values) {
+    total = total + value;
+  }
+  return total;
+}
+
+function useStrings(): string {
+  let parts: string[] = strings.split("deal,v1,luajit", ",");
+  let joined: string = `${parts[0]}-${parts[1]}-${parts[2]}`;
+  let trimmed: string = strings.trim("  ready  ");
+  let replaced: string = strings.replace(joined, "luajit", trimmed);
+  if (!strings.startsWith(replaced, "deal")) {
+    fail("startsWith failed");
+  }
+  if (!strings.endsWith(replaced, "ready")) {
+    fail("endsWith failed");
+  }
+  if (!strings.contains(replaced, "v1")) {
+    fail("contains failed");
+  }
+  return replaced;
+}
+
+function useTables(): int {
+  let data: table = { name: "Ada", score: 7 };
+  data.extra = true;
+  data.note = null;
+  let score: int = data.score;
+  let keys: string[] = tables.keys(data);
+  delete data.note;
+  return score + keys.length;
+}
+
+function useJson(): string {
+  let raw: table = json.parse("{\"name\":\"Ada\",\"score\":7}");
+  let name: string = raw.name;
+  let score: int = raw.score;
+  if (name !== "Ada") {
+    fail("json name mismatch");
+  }
+  if (score !== 7) {
+    fail("json score mismatch");
+  }
+  return json.stringify(raw);
+}
+
+function useMath(): int {
+  let floor: number = math.floor(3.9);
+  let ceil: number = math.ceil(3.1);
+  let root: number = math.sqrt(9.0);
+  let abs: int = math.absInt(-5);
+  let min: int = math.minInt(8, 2);
+  let max: int = math.maxInt(8, 2);
+  return int(floor) + int(ceil) + int(root) + abs + min + max;
+}
+
+function useClasses(): string {
+  let p: Profile = {
+    name: "Ada",
+    nick: "countess",
+    address: { city: "London", zip: 1000 },
+    tags: ["math", "code"],
+    meta: { score: 99 },
+  };
+  assertBoolean(has(p.nick), "nick should be present");
+  let q: Profile = { name: "Grace", address: { city: "Arlington", zip: 2000 } };
+  assertBoolean(!has(q.nick), "nick should be missing");
+  let score: int = p.meta.score;
+  assertBoolean(score === 99, "table field in class mismatch");
+  return `${describeProfile(p)} / ${describeProfile(q)}`;
+}
+
+function useFunctions(): int {
+  let plus: (a: int, b: int) => int = function(a: int, b: int): int {
+    return a + b;
+  };
+  let oneArg = function(x: int): int {
+    return x;
+  };
+  let widened: (x: int, y: int) => int = oneArg;
+  let counter: () => int = makeCounter(40);
+  return plus(2, 3) + widened(9, 99) + counter() + counter();
+}
+
+function useErrors(): string {
+  try {
+    let values: int[] = [1, 2, 3];
+    let missing: int = values[99];
+    return "unexpected array read success";
+  } catch (e) {
+    return e.code;
+  }
+}
+
+async function delayedDouble(x: int): int {
+  return x * 2;
+}
+
+async function delayedAdd(a: int, b: int): int {
+  let left: int = await delayedDouble(a);
+  let right: int = await delayedDouble(b);
+  return left + right;
+}
+
+export function demo_summary(): string {
+  let arrays: int = useArrays();
+  let tableScore: int = useTables();
+  let mathScore: int = useMath();
+  let functionScore: int = useFunctions();
+  let selected: string = chooseName(null);
+  let stringsResult: string = useStrings();
+  let classesResult: string = useClasses();
+  let jsonResult: string = useJson();
+  let errorCode: string = useErrors();
+  let quotient: int | null = safeDivide(10, 2);
+  let zeroDivision: int | null = safeDivide(10, 0);
+  if (quotient !== null) {
+    assertBoolean(quotient === 5, "safe divide quotient mismatch");
+  } else {
+    fail("safe divide returned null");
+  }
+  assertBoolean(zeroDivision === null, "safe divide zero mismatch");
+  assertBoolean(arrays === 19, "array total mismatch");
+  assertBoolean(tableScore > 7, "table score mismatch");
+  assertBoolean(mathScore === 25, "math score mismatch");
+  assertBoolean(functionScore === 97, "function score mismatch");
+  console.log("DEAL v1.1 LuaJIT demo");
+  return `${selected}|${stringsResult}|${classesResult}|${jsonResult}|${errorCode}`;
+}
+
+export async function demo_async(): int {
+  return await delayedAdd(10, 20);
+}
+
+export function demo_runtime_checks(): null {
+  let point: Point = { x: 3.0, y: 4.0 };
+  assertBoolean(point.x === 3.0, "point x mismatch");
+  assertBoolean(number(5) === 5.0, "number conversion mismatch");
+  assertBoolean(int(5.0) === 5, "int conversion mismatch");
+  return null;
+}
