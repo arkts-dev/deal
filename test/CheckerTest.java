@@ -172,6 +172,7 @@ public class CheckerTest {
         testAsyncCallWithoutAwait_E3014();
         testAwaitAsyncCallNoE3014();
         testNestedAwaitSuppression();
+        testUnawaitedAsyncInArgument_E3014();
         testNarrowingInvalidatedAfterAwait();
         testAwait42DoesNotCrash();
         testAsyncFuncNotAssignableToSync();
@@ -2375,6 +2376,20 @@ public class CheckerTest {
         );
         assertError(out, "E3001", "sync func not assignable to async → E3001");
     }
+
+    /** E3014: await outer(inner()) where inner is async → E3014 on inner(). */
+    static void testUnawaitedAsyncInArgument_E3014() {
+        System.out.println("-- E3014: unawaited async in argument position --");
+        CheckerOutput out = checkProgram(
+            "async function inner(): int { return 42; }" +
+            "function outer(x: int): int { return x; }" +
+            "async function f(): int {" +
+            "  return await outer(inner());" +
+            "}"
+        );
+        assertError(out, "E3014", "unawaited async in argument → E3014");
+    }
+
 
     /** NullNarrowing.invalidateAll() clears all narrowed entries. */
     static void testNullNarrowingInvalidateAll() {

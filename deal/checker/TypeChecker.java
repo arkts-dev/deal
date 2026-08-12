@@ -41,7 +41,7 @@ public final class TypeChecker {
 
     // -- Async/await tracking --
     private boolean insideAsyncFunction = false;
-    private boolean insideAwaitExpression = false;
+    private CallExpr directAwaitCallee = null;
 
     // -- Current function return type (for return checking) --
     private Type currentReturnType = null;
@@ -743,13 +743,19 @@ public final class TypeChecker {
                 await.span());
         }
 
-        // Suppress E3014 inside await: the call expression inside await is
-        // explicitly allowed to call an async function without its own await.
-        // This flag is checked in checkCall() before emitting E3014.
-        boolean savedInsideAwait = insideAwaitExpression;
-        insideAwaitExpression = true;
+        // Suppress E3014 for the direct callee of await: the directAwaitCallee
+        // reference is set before checkExpression and checked in checkCall().
+        // Save the current direct await callee for nested await support.
+        CallExpr savedDirectAwaitCallee = directAwaitCallee;
+
+        // Set the direct callee of this await as the exempt CallExpr.
+        // Safe cast: parser enforces E1042; instanceof guard below handles malformed input.
+        if (await.callee() instanceof CallExpr call) {
+            directAwaitCallee = call;
+        }
+
         Type resultType = checkExpression(await.callee());
-        insideAwaitExpression = savedInsideAwait;
+        directAwaitCallee = savedDirectAwaitCallee;
 
         // After checkExpression runs, the callee function's type is cached
         // in the type map. Retrieve it to verify async-ness.
@@ -963,7 +969,7 @@ public final class TypeChecker {
         // E3014: async function called without await (after intrinsic check,
         // so intrinsics handle their own async logic if ever needed)
         if (calleeType instanceof Type.Func funcType && funcType.isAsync()
-                && !insideAwaitExpression) {
+                && call != directAwaitCallee) {
             error(DiagnosticCode.E3014,
                 "Direct call to async function requires 'await'",
                 call.span());
