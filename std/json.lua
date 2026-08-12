@@ -36,8 +36,12 @@ local function encode_value(v)
   if t == 'string' then
     return '"' .. escape(v) .. '"'
   elseif t == 'number' then
-    if v ~= v then return 'null' end -- NaN
-    if v == math.huge or v == -math.huge then return 'null' end
+    if v ~= v then
+      error(__rt._err("E8001", "cannot encode NaN as JSON", nil, nil, nil, nil, nil))
+    end
+    if v == math.huge or v == -math.huge then
+      error(__rt._err("E8001", "cannot encode Infinity as JSON", nil, nil, nil, nil, nil))
+    end
     return string.format('%.17g', v)
   elseif t == 'boolean' then
     return v and 'true' or 'false'

@@ -577,6 +577,47 @@ test("json.parse with non-string raises error", function()
   assert(type(err) == "table", "error should be a table")
 end)
 
+-- NaN and Infinity rejection tests
+test("json.stringify rejects NaN with E8001", function()
+  local err = assert_error(function() json.stringify.f({ x = 0.0/0.0 }) end)
+  assert(type(err) == "table", "should get error table for NaN")
+  assert(err.code == "E8001", "error code should be E8001, got " .. tostring(err.code))
+  assert(string.find(err.message, "NaN") ~= nil, "error message should mention NaN")
+end)
+
+test("json.stringify rejects Infinity with E8001", function()
+  local err = assert_error(function() json.stringify.f({ x = 1.0/0.0 }) end)
+  assert(type(err) == "table", "should get error table for Infinity")
+  assert(err.code == "E8001", "error code should be E8001, got " .. tostring(err.code))
+  assert(string.find(err.message, "Infinity") ~= nil, "error message should mention Infinity")
+end)
+
+test("json.stringify rejects negative Infinity with E8001", function()
+  local err = assert_error(function() json.stringify.f({ x = -1.0/0.0 }) end)
+  assert(type(err) == "table", "should get error table for negative Infinity")
+  assert(err.code == "E8001", "error code should be E8001, got " .. tostring(err.code))
+  assert(string.find(err.message, "Infinity") ~= nil, "error message should mention Infinity")
+end)
+
+test("json.stringify accepts finite numbers unchanged", function()
+  local result = json.stringify.f({ x = 42.0 })
+  assert(result == '{"x":42}' or string.find(result, '"x":42') ~= nil, "finite number should encode correctly, got: " .. tostring(result))
+end)
+
+test("json.stringify rejects NaN in nested object", function()
+  local err = assert_error(function() json.stringify.f({ data = { val = 0.0/0.0 } }) end)
+  assert(type(err) == "table", "should get error table for nested NaN")
+  assert(err.code == "E8001", "error code should be E8001")
+  assert(string.find(err.message, "NaN") ~= nil, "error message should mention NaN")
+end)
+
+test("json.stringify rejects Infinity in array", function()
+  local err = assert_error(function() json.stringify.f({ 1, 2, 1.0/0.0 }) end)
+  assert(type(err) == "table", "should get error table for array Infinity")
+  assert(err.code == "E8001", "error code should be E8001")
+  assert(string.find(err.message, "Infinity") ~= nil, "error message should mention Infinity")
+end)
+
 -- ===========================================================================
 -- std/math tests
 -- ===========================================================================
