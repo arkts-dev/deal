@@ -1,0 +1,28 @@
+// @spec: Classes — Field access
+// @description: has(optional nullable field) distinguishes missing, present null, and present non-null
+// @expected: runtime-ok
+// @features: classes, nullable, optional, has
+
+class User {
+  nick?: string | null;
+}
+
+export function test_has_optional_nullable(): null {
+  let u: User = {};
+  if (has(u.nick)) {
+    throw { code: "TEST_FAIL", message: "missing optional field reported present" };
+  }
+  u.nick = null;
+  if (!has(u.nick)) {
+    throw { code: "TEST_FAIL", message: "present null optional field reported missing" };
+  }
+  u.nick = "ada";
+  if (!has(u.nick)) {
+    throw { code: "TEST_FAIL", message: "present value optional field reported missing" };
+  }
+  delete u.nick;
+  if (has(u.nick)) {
+    throw { code: "TEST_FAIL", message: "deleted optional field reported present" };
+  }
+  return null;
+}

@@ -1358,7 +1358,7 @@ public final class LuaBackend implements Visitor<Void> {
     private String emitUnary(UnaryExpr un) {
         String expr = emitExpression(un.expr());
         return switch (un.op()) {
-            case NOT -> "(not " + expr + ")";
+            case NOT -> "(not (" + expr + "))";
             case NEG -> "(-" + expr + ")";
         };
     }

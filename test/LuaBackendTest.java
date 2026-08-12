@@ -728,7 +728,7 @@ public class LuaBackendTest {
         assertNoErrors(out, "boolean ops");
         assertContains(out.lua, "true and false", "&& → and");
         assertContains(out.lua, "true or false", "|| → or");
-        assertContains(out.lua, "not true", "! → not");
+        assertContains(out.lua, "not (true)", "! → not");
     }
 
     // =========================================================================
