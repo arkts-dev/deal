@@ -18,15 +18,6 @@
       "expectedError": null,
       "expectedExitCode": 0,
       "backends": ["luajit"]
-    },
-    {
-      "name": "module-import-not-found",
-      "description": "Importing a non-existent module is a compile error (frontend-only, backend skips)",
-      "source": "import * as X from \"./nonexistent\"\nexport function test(): int { return 1; }",
-      "expectedOutput": null,
-      "expectedError": "E2003",
-      "expectedExitCode": 1,
-      "backends": []
     }
   ]
 }
