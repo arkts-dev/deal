@@ -1415,8 +1415,10 @@ public final class LuaBackend implements Visitor<Void> {
         String index = emitExpression(idx.index());
         Span span = idx.span();
         if (arrayType instanceof Type.Array) {
-            return arr + "[__rt.check_int(" + index + ", "
-                + spanArgs(span) + ") + 1]";
+            return "(function() local __idx = __rt.check_int(" + index + ", "
+                + spanArgs(span) + "); if __idx < 0 then error(__rt._err(\"E8002\", "
+                + "\"negative array index\", " + spanArgs(span) + ")) end; "
+                + "return " + arr + "[__idx + 1] end)()";
         }
         return arr + "[" + index + "]";
     }
@@ -1668,8 +1670,8 @@ public final class LuaBackend implements Visitor<Void> {
                 return "do\n"
                     + myIndent + "  local __idx = __rt.check_int(" + index
                     + ", " + spanArgs(idx.span()) + ")\n"
-                    + myIndent + "  if __idx < 0 then error(__rt._err(\"E8002\", "
-                    + "\"negative array index\", " + spanArgs(idx.span()) + ")) end\n"
+                    + myIndent + "  if __idx < 0 or __idx > #" + arr + " then error(__rt._err(\"E8002\", "
+                    + "\"array index out of bounds\", " + spanArgs(idx.span()) + ")) end\n"
                     + myIndent + "  " + arr + "[__idx + 1] = "
                     + emitCheckExpr(valueLua, arrT.element(), span) + "\n"
                     + myIndent + "end";
