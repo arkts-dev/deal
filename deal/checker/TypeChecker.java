@@ -1135,9 +1135,20 @@ public final class TypeChecker {
         // reads the declared field of the inner class: the runtime guard
         // (e.g. `if (a.p !== null)`) protects the dereference, mirroring
         // the field-type shapes the defining module generates.
+        //
+        // This unwrap is restricted to cross-module classes (the
+        // conformance-gap-02 seam: a foreign companion's field type, e.g.
+        // `child?: Child | null`, resolves through the owning module with no
+        // property-path narrowing). Member access on a LOCAL nullable class
+        // reference keeps the baseline E3003 rejection -- local accesses are
+        // variable-narrowed before use, and silently widening them would
+        // change DEAL acceptance semantics.
         Type classTarget = objType;
         if (classTarget instanceof Type.Nullable nullable
-                && nullable.inner() instanceof Type.Class) {
+                && nullable.inner() instanceof Type.Class inner
+                && inner.modulePath() != null
+                && !inner.modulePath().isEmpty()
+                && !inner.modulePath().equals(this.modulePath)) {
             classTarget = nullable.inner();
         }
         if (classTarget instanceof Type.Class cls) {

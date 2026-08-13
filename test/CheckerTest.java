@@ -233,6 +233,11 @@ public class CheckerTest {
         testClassNominalTyping();
         testClassFieldAccess();
         testClassOptionalField();
+        // ISSUE-0075: nullable class member access is only widened for
+        // cross-module classes (conformance-gap-02 seam); local nullable
+        // class member access keeps the baseline E3003 rejection.
+        testLocalNullableClassMemberAccessRejected();
+        testLocalNullableClassMemberAccessNarrowedOk();
         testNestedClass();
         testErrorClassConstruction();
         // F9: Class field default values type-checked
@@ -1049,6 +1054,30 @@ public class CheckerTest {
             "let a: int | null = u.age;"
         );
         assertNoErrors(out, "class optional field");
+    }
+
+    static void testLocalNullableClassMemberAccessRejected() {
+        System.out.println("-- Local nullable class member access: unguarded -> E3003 --");
+        CheckerOutput out = checkProgram(
+            "class User { name: string = \"a\"; }\n" +
+            "export function f(u: User | null): string {\n" +
+            "  return u.name;\n" +
+            "}"
+        );
+        assertError(out, "E3003",
+            "unguarded local nullable class member access must be E3003");
+    }
+
+    static void testLocalNullableClassMemberAccessNarrowedOk() {
+        System.out.println("-- Local nullable class member access: narrowed -> OK --");
+        CheckerOutput out = checkProgram(
+            "class User { name: string = \"a\"; }\n" +
+            "export function f(u: User | null): string {\n" +
+            "  if (u !== null) { return u.name; }\n" +
+            "  return \"none\";\n" +
+            "}"
+        );
+        assertNoErrors(out, "narrowed local nullable class member access");
     }
 
     // F3: Nested class declarations
