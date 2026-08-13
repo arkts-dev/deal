@@ -1,0 +1,11 @@
+// @spec: Runtime execution model — Source locations for module errors
+// @description: Error thrown through imported function preserves explicit error code
+// @expected: runtime-error MODULE_SOURCE_FAIL
+// @features: source-location, modules, runtime-errors
+
+import * as Lib from "./source_module_lib"
+
+export function test_source_location_module_error(): null {
+  Lib.fail();
+  return null;
+}

@@ -1,0 +1,27 @@
+// @spec: Classes — Optional and nullable fields
+// @description: Optional nullable fields distinguish missing, explicit null, and value states
+// @expected: runtime-ok
+// @features: classes, optional, nullable, has
+
+class Tri {
+  field?: int | null;
+}
+
+export function test_optional_nullable_states(): null {
+  let missing: Tri = {};
+  if (has(missing.field)) { throw { code: "TEST_FAIL", message: "missing should not have field" }; }
+
+  let explicitNull: Tri = { field: null };
+  if (!has(explicitNull.field)) { throw { code: "TEST_FAIL", message: "explicit null should be present" }; }
+  if (explicitNull.field !== null) { throw { code: "TEST_FAIL", message: "explicit null mismatch" }; }
+
+  let value: Tri = { field: 5 };
+  if (!has(value.field)) { throw { code: "TEST_FAIL", message: "value should be present" }; }
+  let field: int | null = value.field;
+  if (field !== null) {
+    if (field !== 5) { throw { code: "TEST_FAIL", message: "value mismatch" }; }
+  } else {
+    throw { code: "TEST_FAIL", message: "value became null" };
+  }
+  return null;
+}

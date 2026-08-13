@@ -1,0 +1,10 @@
+// @spec: Runtime execution model — Source locations for array errors
+// @description: Nested array out-of-bounds reports the expected runtime error code at the indexed expression
+// @expected: runtime-error E8001
+// @features: source-location, arrays, runtime-errors
+
+export function test_source_location_nested_array_oob(): int {
+  let rows: int[][] = [[1]];
+  let value: int = rows[0][4];
+  return value;
+}

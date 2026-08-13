@@ -1,0 +1,19 @@
+// @spec: Functions — Nested loop closure capture
+// @description: Closures in nested loops capture the intended per-iteration values
+// @expected: runtime-ok
+// @features: closures, loops
+
+export function test_nested_loop_closure_capture(): int {
+  let fs: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];
+  let k: int = 0;
+  for (let i: int = 0; i < 2; i = i + 1) {
+    for (let j: int = 0; j < 2; j = j + 1) {
+      let value: int = i * 10 + j;
+      fs[k] = function(): int { return value; };
+      k = k + 1;
+    }
+  }
+  let result: int = fs[0]() + fs[1]() + fs[2]() + fs[3]();
+  if (result !== 22) { throw { code: "TEST_FAIL", message: "nested loop closure capture failed" }; }
+  return result;
+}

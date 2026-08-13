@@ -1,0 +1,13 @@
+// @spec: Async/Await — await returning classes
+// @description: Class returned from await supports member access after resumption
+// @expected: runtime-ok
+// @features: async, classes, await
+
+import * as Lib from "./async_batch2_lib"
+
+export async function test_await_returning_class_member(): int {
+  let b: Lib.Box = await Lib.makeBox();
+  let result: int = b.value;
+  if (result !== 12) { throw { code: "TEST_FAIL", message: "await class member failed" }; }
+  return result;
+}

@@ -1,0 +1,7 @@
+// @spec: Modules — Import alias shadowing
+// @description: A declaration that shadows an import alias is rejected
+// @expected: compile-error E2007
+// @features: modules, diagnostics
+
+import * as Shadow from "./shadow_lib"
+function Shadow(): int { return 1; }

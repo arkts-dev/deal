@@ -1,0 +1,14 @@
+// @spec: Modules — Imported recursive callback
+// @description: An imported recursive function can be passed as a callback and executed
+// @expected: runtime-ok
+// @features: modules, recursion, callbacks
+
+import * as Lib from "./module_extra_lib"
+
+function call(f: (n: int) => int, n: int): int { return f(n); }
+
+export function test_imported_recursive_callback(): int {
+  let result: int = call(Lib.recursiveCountdown, 4);
+  if (result !== 4) { throw { code: "TEST_FAIL", message: "imported recursive callback failed" }; }
+  return result;
+}

@@ -1,0 +1,13 @@
+// @spec: Modules — Cross-module classes
+// @description: Imported class metadata and factory function work together at runtime
+// @expected: runtime-ok
+// @features: modules, classes, imports
+
+import * as Lib from "./class_export_lib"
+
+export function test_cross_module_class_factory(): int {
+  let p: Lib.Point = Lib.make(3, 4);
+  let result: int = p.x + p.y;
+  if (result !== 7) { throw { code: "TEST_FAIL", message: "cross-module class factory failed" }; }
+  return result;
+}

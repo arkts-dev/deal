@@ -1,0 +1,12 @@
+// @spec: Standard library declarations — std/console errors
+// @description: std/console.log rejects dynamic non-string input at runtime
+// @expected: runtime-error E8001
+// @features: stdlib, console, runtime-errors
+
+import * as console from "std/console"
+
+export function test_console_log_dynamic_nonstring(): null {
+  let t: table = { value: 1 };
+  console.log(t.value);
+  return null;
+}

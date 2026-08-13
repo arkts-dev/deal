@@ -1,0 +1,7 @@
+// @spec: Tables — Delete target validation
+// @description: Deleting a non-member expression is rejected
+// @expected: compile-error E1025
+// @features: tables, delete, diagnostics
+
+let x: int = 1;
+delete x;

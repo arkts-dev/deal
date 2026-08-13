@@ -1,0 +1,14 @@
+// @spec: Arrays — Nullable element values
+// @description: Array of nullable element type is accepted by the frontend
+// @expected: compile-ok
+// @features: arrays, nullable
+
+function acceptNullable(xs: (int | null)[]): null {
+  return null;
+}
+
+export function test_nullable_array_values(): null {
+  let xs: (int | null)[] = [];
+  acceptNullable(xs);
+  return null;
+}

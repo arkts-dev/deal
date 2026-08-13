@@ -1,0 +1,2 @@
+import * as Bad from "./failing_once_lib"
+export function via(): int { return Bad.value(); }

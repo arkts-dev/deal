@@ -1,0 +1,4 @@
+export function mutate(t: table): null {
+  t.value = 13;
+  return null;
+}

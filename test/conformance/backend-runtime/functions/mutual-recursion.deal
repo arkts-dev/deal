@@ -1,0 +1,20 @@
+// @spec: Functions — Hoisting and mutually recursive bindings
+// @description: Mutually recursive functions in one module resolve through local wrappers
+// @expected: runtime-ok
+// @features: functions, recursion, mutual-recursion
+
+function even(n: int): boolean {
+  if (n === 0) { return true; }
+  return odd(n - 1);
+}
+
+function odd(n: int): boolean {
+  if (n === 0) { return false; }
+  return even(n - 1);
+}
+
+export function test_mutual_recursion(): boolean {
+  if (!even(10)) { throw { code: "TEST_FAIL", message: "even failed" }; }
+  if (!odd(9)) { throw { code: "TEST_FAIL", message: "odd failed" }; }
+  return true;
+}

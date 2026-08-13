@@ -1,0 +1,11 @@
+export class Box {
+  value: int = 0;
+}
+
+export function box(v: int): Box {
+  return { value: v };
+}
+
+export function makeBoxes(): Box[] {
+  return [box(1), box(6)];
+}

@@ -1,0 +1,14 @@
+// @spec: Runtime execution model — Nullable class checks
+// @description: Dynamic wrong table assigned to nullable class type fails when non-null
+// @expected: runtime-error E8001
+// @features: classes, nullable, runtime-errors
+
+import * as json from "std/json"
+
+class Box { value: int = 0; }
+
+export function test_dynamic_bad_nullable_class(): Box | null {
+  let holder: table = { item: json.parse("{\"value\":\"bad\"}") };
+  let b: Box | null = holder.item;
+  return b;
+}

@@ -1,0 +1,13 @@
+// @spec: Runtime execution model — Nullable class checks
+// @description: Dynamic null assigned to nullable class type is accepted
+// @expected: runtime-ok
+// @features: classes, nullable, type-system
+
+class Box { value: int = 0; }
+
+export function test_dynamic_null_to_nullable_class(): null {
+  let holder: table = { item: null };
+  let b: Box | null = holder.item;
+  if (b !== null) { throw { code: "TEST_FAIL", message: "nullable class null mismatch" }; }
+  return null;
+}

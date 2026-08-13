@@ -1,0 +1,8 @@
+// @spec: Lexical elements — identifier restrictions
+// @description: Function parameters containing $ are rejected
+// @expected: compile-error E2008
+// @features: diagnostics, lua-abi
+
+function badParam(bad$param: int): int {
+  return 1;
+}

@@ -1,0 +1,6 @@
+// @spec: Lexical elements — async keyword
+// @description: async cannot be used as a variable identifier
+// @expected: compile-error E1007
+// @features: async, diagnostics
+
+let async: int = 1;

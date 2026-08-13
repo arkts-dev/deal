@@ -1,0 +1,2 @@
+export class Box { value: int = 0; }
+export function needBox(b: Box): int { return b.value; }

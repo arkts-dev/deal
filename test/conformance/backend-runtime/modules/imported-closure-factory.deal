@@ -1,0 +1,13 @@
+// @spec: Modules — Imported closure factory
+// @description: A closure returned from an imported function retains its captured binding
+// @expected: runtime-ok
+// @features: modules, closures
+
+import * as Lib from "./module_extra_lib"
+
+export function test_imported_closure_factory(): int {
+  let f: (x: int) => int = Lib.makeAdder(10);
+  let result: int = f(5);
+  if (result !== 15) { throw { code: "TEST_FAIL", message: "imported closure factory failed" }; }
+  return result;
+}

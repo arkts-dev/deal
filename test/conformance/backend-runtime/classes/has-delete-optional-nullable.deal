@@ -1,0 +1,18 @@
+// @spec: Classes — has and delete
+// @description: has() and delete preserve missing versus explicit null state for optional fields
+// @expected: runtime-ok
+// @features: classes, has, delete, optional
+
+class Item {
+  tag?: string | null;
+}
+
+export function test_has_delete_optional_nullable(): null {
+  let item: Item = { tag: null };
+  if (!has(item.tag)) { throw { code: "TEST_FAIL", message: "tag should be present" }; }
+  delete item.tag;
+  if (has(item.tag)) { throw { code: "TEST_FAIL", message: "tag should be missing after delete" }; }
+  item.tag = "ok";
+  if (!has(item.tag)) { throw { code: "TEST_FAIL", message: "tag should be present after write" }; }
+  return null;
+}

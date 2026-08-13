@@ -1,0 +1,20 @@
+// @spec: Control flow — nested loops
+// @description: Nested for, while, and for-of loops interact correctly
+// @expected: runtime-ok
+// @features: loops, for-of, arrays
+
+export function test_nested_loop_mix(): int {
+  let values: int[] = [1, 2, 3];
+  let total: int = 0;
+  for (let i: int = 0; i < 2; i = i + 1) {
+    let j: int = 0;
+    while (j < 2) {
+      for (let v: int of values) {
+        total = total + v;
+      }
+      j = j + 1;
+    }
+  }
+  if (total !== 24) { throw { code: "TEST_FAIL", message: "nested loop mix failed" }; }
+  return total;
+}

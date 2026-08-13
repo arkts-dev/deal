@@ -1,0 +1,10 @@
+// @spec: Type system — Nullable runtime checks
+// @description: Assigning dynamic wrong type to nullable int fails with E8001
+// @expected: runtime-error E8001
+// @features: type-system, nullable, runtime-errors
+
+export function test_dynamic_wrong_to_nullable_runtime_error(): int | null {
+  let t: table = { value: "bad" };
+  let x: int | null = t.value;
+  return x;
+}

@@ -1,0 +1,20 @@
+// @spec: Classes — Class array values
+// @description: Arrays can contain class instances and preserve field mutation
+// @expected: runtime-ok
+// @features: classes, arrays
+
+class Box {
+  value: int = 0;
+}
+
+function box(v: int): Box {
+  return { value: v };
+}
+
+export function test_class_array_values(): int {
+  let xs: Box[] = [box(2), box(5)];
+  xs[0].value = 7;
+  let result: int = xs[0].value + xs[1].value;
+  if (result !== 12) { throw { code: "TEST_FAIL", message: "class array mutation failed" }; }
+  return result;
+}

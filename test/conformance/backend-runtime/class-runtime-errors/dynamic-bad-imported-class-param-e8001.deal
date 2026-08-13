@@ -1,0 +1,12 @@
+// @spec: Runtime execution model — Imported class parameter checks
+// @description: Dynamic table with bad imported class field fails at imported class function boundary
+// @expected: runtime-error E8001
+// @features: classes, modules, runtime-errors
+
+import * as json from "std/json"
+import * as Lib from "./imported_class_lib"
+
+export function test_dynamic_bad_imported_class_param(): int {
+  let holder: table = { item: json.parse("{\"value\":\"bad\"}") };
+  return Lib.needBox(holder.item);
+}

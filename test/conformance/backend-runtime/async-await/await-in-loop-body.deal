@@ -1,0 +1,15 @@
+// @spec: Async/Await — await inside loop body
+// @description: Await in a loop body preserves local loop state
+// @expected: runtime-ok
+// @features: async, await, loops
+
+async function inc(x: int): int { return x + 1; }
+
+export async function test_await_in_loop_body(): int {
+  let total: int = 0;
+  for (let i: int = 0; i < 3; i = i + 1) {
+    total = await inc(total);
+  }
+  if (total !== 3) { throw { code: "TEST_FAIL", message: "await in loop body failed" }; }
+  return total;
+}

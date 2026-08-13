@@ -1,0 +1,11 @@
+// @spec: Syntactic grammar — for forms
+// @description: Empty C-style for loop syntax parses and type-checks
+// @expected: compile-ok
+// @features: parser, for-loop
+
+export function test_empty_for_forms(): int {
+  let i: int = 0;
+  for (; i < 3; i = i + 1) {
+  }
+  return i;
+}

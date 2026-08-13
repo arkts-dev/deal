@@ -1,0 +1,23 @@
+// @spec: Control flow — break/continue through nested try
+// @description: Break and continue propagate correctly through nested try blocks in loops
+// @expected: runtime-ok
+// @features: loops, try, break, continue
+
+export function test_nested_try_break_continue(): int {
+  let total: int = 0;
+  for (let i: int = 0; i < 6; i = i + 1) {
+    try {
+      try {
+        if (i === 1) { continue; }
+        if (i === 4) { break; }
+        total = total + i;
+      } catch (e) {
+        total = total + 100;
+      }
+    } catch (e2) {
+      total = total + 1000;
+    }
+  }
+  if (total !== 5) { throw { code: "TEST_FAIL", message: "nested try break/continue failed" }; }
+  return total;
+}

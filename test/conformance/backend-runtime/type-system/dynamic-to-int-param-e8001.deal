@@ -1,0 +1,11 @@
+// @spec: Type system — Runtime checked function parameter boundaries
+// @description: Passing a dynamic table value to an int parameter fails with E8001
+// @expected: runtime-error E8001
+// @features: type-system, functions, runtime-errors
+
+function needInt(x: int): int { return x; }
+
+export function test_dynamic_to_int_param_runtime_error(): int {
+  let t: table = { value: "bad" };
+  return needInt(t.value);
+}

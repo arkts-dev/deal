@@ -1,0 +1,15 @@
+// @spec: Functions — Closures and mutable captured locals
+// @description: Multiple closures over the same local share the same mutable binding
+// @expected: runtime-ok
+// @features: closures, mutation
+
+export function test_shared_closure_binding(): int {
+  let x: int = 0;
+  let inc: () => int = function(): int { x = x + 1; return x; };
+  let read: () => int = function(): int { return x; };
+  inc();
+  inc();
+  let result: int = read();
+  if (result !== 2) { throw { code: "TEST_FAIL", message: "shared closure binding failed" }; }
+  return result;
+}

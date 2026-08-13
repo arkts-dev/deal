@@ -1,0 +1,9 @@
+// @spec: Arrays — Bounds checks
+// @description: Nested array out-of-bounds read reports E8001 from value type check
+// @expected: runtime-error E8001
+// @features: arrays, runtime-errors
+
+export function test_nested_array_oob(): int {
+  let rows: int[][] = [[1], [2]];
+  return rows[1][5];
+}

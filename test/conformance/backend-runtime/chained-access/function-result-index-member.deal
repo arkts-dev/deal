@@ -1,0 +1,14 @@
+// @spec: Functions — Chained access over function results
+// @description: Array indexing and field access over a local function result lowers correctly
+// @expected: runtime-ok
+// @features: functions, arrays, classes, chained-access
+
+class Box { value: int = 0; }
+function box(v: int): Box { return { value: v }; }
+function makeBoxes(): Box[] { return [box(5), box(11)]; }
+
+export function test_function_result_index_member(): int {
+  let result: int = makeBoxes()[1].value;
+  if (result !== 11) { throw { code: "TEST_FAIL", message: "function result index/member failed" }; }
+  return result;
+}

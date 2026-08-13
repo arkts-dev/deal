@@ -1,0 +1,12 @@
+// @spec: Standard library declarations — std/time
+// @description: std/time.nowMillis returns a positive int-like timestamp
+// @expected: runtime-ok
+// @features: stdlib, time
+
+import * as time from "std/time"
+
+export function test_time_now_millis_positive(): int {
+  let now: int = time.nowMillis();
+  if (now <= 0) { throw { code: "TEST_FAIL", message: "time.nowMillis not positive" }; }
+  return now;
+}

@@ -1,0 +1,13 @@
+// @spec: Async/Await — imported async function values
+// @description: Imported async functions can be stored in async function values and awaited
+// @expected: runtime-ok
+// @features: async, modules, function-values
+
+import * as Lib from "./async_batch2_lib"
+
+export async function test_imported_async_function_value(): int {
+  let f: async (x: int) => int = Lib.plus;
+  let result: int = await f(6);
+  if (result !== 7) { throw { code: "TEST_FAIL", message: "imported async function value failed" }; }
+  return result;
+}

@@ -1,0 +1,1 @@
+export async function fail(): int { throw { code: "ASYNC_MODULE_FAIL", message: "fail" }; }

@@ -1,0 +1,15 @@
+// @spec: Classes — Chained object array field access
+// @description: Field access after object array indexing lowers the array index correctly
+// @expected: runtime-ok
+// @features: classes, arrays, chained-access
+
+class Box { value: int = 0; }
+class Holder { boxes: Box[] = []; }
+function box(v: int): Box { return { value: v }; }
+
+export function test_object_array_index_field(): int {
+  let h: Holder = { boxes: [box(2), box(7)] };
+  let result: int = h.boxes[1].value;
+  if (result !== 7) { throw { code: "TEST_FAIL", message: "obj.arr[0].field lowering failed" }; }
+  return result;
+}

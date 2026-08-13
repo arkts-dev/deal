@@ -1,0 +1,8 @@
+// @spec: Runtime execution model — Arithmetic errors
+// @description: Integer division by zero reports E8005
+// @expected: runtime-error E8005
+// @features: arithmetic, runtime-errors
+
+export function test_div_zero_error(): int {
+  return 10 / 0;
+}

@@ -1,0 +1,9 @@
+// @spec: Classes — @jsonable field restrictions
+// @description: @jsonable classes reject function-typed fields
+// @expected: compile-error E4007
+// @features: jsonable, diagnostics
+
+// @jsonable
+export class BadJsonable {
+  f: () => int = function(): int { return 1; };
+}

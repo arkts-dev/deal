@@ -1,0 +1,9 @@
+// @spec: Type system — Runtime checked return boundaries
+// @description: Returning a dynamic table value from an int function fails with E8001
+// @expected: runtime-error E8001
+// @features: type-system, functions, runtime-errors
+
+export function test_dynamic_return_runtime_error(): int {
+  let t: table = { value: "bad" };
+  return t.value;
+}

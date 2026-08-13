@@ -1,0 +1,14 @@
+// @spec: Runtime execution model — Source locations for class runtime checks
+// @description: Bad dynamic class parameter reports runtime type error code
+// @expected: runtime-error E8001
+// @features: source-location, classes, runtime-errors
+
+import * as json from "std/json"
+
+class Box { value: int = 0; }
+function needBox(b: Box): int { return b.value; }
+
+export function test_source_class_param_error(): int {
+  let holder: table = { item: json.parse("{\"value\":\"bad\"}") };
+  return needBox(holder.item);
+}

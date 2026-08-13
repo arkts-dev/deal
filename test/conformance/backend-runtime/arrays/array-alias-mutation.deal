@@ -1,0 +1,14 @@
+// @spec: Arrays — Aliasing and mutation
+// @description: Array aliases observe read/write mutations through the same runtime table
+// @expected: runtime-ok
+// @features: arrays, mutation, aliasing
+
+export function test_array_alias_mutation(): int {
+  let a: int[] = [1, 2, 3];
+  let b: int[] = a;
+  b[2] = 4;
+  a[1] = 9;
+  let result: int = b[0] + b[1] + b[2];
+  if (result !== 14) { throw { code: "TEST_FAIL", message: "array alias mutation failed" }; }
+  return result;
+}

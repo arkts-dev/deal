@@ -1,0 +1,9 @@
+export function makeCounter(base: int): () => int {
+  let x: int = base;
+  return function(): int {
+    x = x + 1;
+    return x;
+  };
+}
+
+export function add(a: int, b: int): int { return a + b; }

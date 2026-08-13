@@ -1,0 +1,14 @@
+// @spec: Lua backend ABI — chained index lowering
+// @description: Function-result array indexing lowers before member access
+// @expected: runtime-ok
+// @features: lua-abi, arrays, chained-access, structural
+
+class Box { value: int = 0; }
+function box(v: int): Box { return { value: v }; }
+function boxes(): Box[] { return [box(1), box(2), box(3)]; }
+
+export function test_abi_function_result_index_field(): int {
+  let result: int = boxes()[2].value;
+  if (result !== 3) { throw { code: "TEST_FAIL", message: "function result index lowering failed" }; }
+  return result;
+}

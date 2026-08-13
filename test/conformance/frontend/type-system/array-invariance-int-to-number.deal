@@ -1,0 +1,7 @@
+// @spec: Type system — Invariance
+// @description: Assigning int[] to number[] is rejected because arrays are invariant
+// @expected: compile-error E3001
+// @features: type-system, arrays, diagnostics
+
+let ints: int[] = [1, 2];
+let nums: number[] = ints;

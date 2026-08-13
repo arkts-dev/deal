@@ -1,0 +1,16 @@
+// @spec: Error handling — Runtime errors through nested try
+// @description: Runtime error propagates to the nearest matching catch through nested try blocks
+// @expected: runtime-ok
+// @features: control-flow, try, runtime-errors
+
+export function test_nested_try_runtime_error_caught(): int {
+  try {
+    try {
+      return 1 / 0;
+    } catch (e) {
+      return 7;
+    }
+  } catch (outer) {
+    return 99;
+  }
+}

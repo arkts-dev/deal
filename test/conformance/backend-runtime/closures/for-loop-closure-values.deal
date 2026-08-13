@@ -1,0 +1,14 @@
+// @spec: Functions — Closures and captured variables
+// @description: For-loop closures stored in an array capture per-iteration values
+// @expected: runtime-ok
+// @features: closures, for-loop, arrays
+
+export function test_loop_closure_sum(): int {
+  let fs: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];
+  for (let i: int = 0; i < 4; i = i + 1) {
+    fs[i] = function(): int { return i; };
+  }
+  let total: int = fs[0]() + fs[1]() + fs[2]() + fs[3]();
+  if (total !== 6) { throw { code: "TEST_FAIL", message: "loop closure binding failed" }; }
+  return total;
+}

@@ -1,0 +1,12 @@
+// @spec: Control flow — Runtime errors in for-of
+// @description: Runtime error inside for-of loop propagates with its error code
+// @expected: runtime-error E8005
+// @features: control-flow, for-of, runtime-errors
+
+export function test_error_inside_for_of(): int {
+  let xs: int[] = [1, 2, 0];
+  for (let x: int of xs) {
+    if (x === 0) { return 1 / 0; }
+  }
+  return 0;
+}

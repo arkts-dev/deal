@@ -1,0 +1,11 @@
+// @spec: Async/Await — await in conditions
+// @description: Await can appear in an if condition and resume with boolean value
+// @expected: runtime-ok
+// @features: async, await, control-flow
+
+async function yes(): boolean { return true; }
+
+export async function test_await_in_if_condition(): int {
+  if (await yes()) { return 1; }
+  return 0;
+}

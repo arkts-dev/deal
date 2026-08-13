@@ -1,0 +1,15 @@
+// @spec: Functions — Closures capturing imported functions
+// @description: A closure captures an imported function and calls it later
+// @expected: runtime-ok
+// @features: closures, modules, imports
+
+import * as Lib from "./closure_batch2_lib"
+
+export function test_closure_captures_imported_function(): int {
+  let f: (x: int) => int = function(x: int): int {
+    return Lib.add(x, 3);
+  };
+  let result: int = f(4);
+  if (result !== 7) { throw { code: "TEST_FAIL", message: "closure imported function failed" }; }
+  return result;
+}

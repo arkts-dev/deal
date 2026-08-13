@@ -1,0 +1,6 @@
+// @spec: Lexical elements — identifier restrictions
+// @description: User declarations containing $ are rejected before Lua code generation
+// @expected: compile-error E2008
+// @features: lua-abi, diagnostics
+
+let bad$name: int = 1;

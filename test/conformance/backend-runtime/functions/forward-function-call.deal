@@ -1,0 +1,18 @@
+// @spec: Functions — Hoisting and forward references
+// @description: A function can call a later-declared function in the same module
+// @expected: runtime-ok
+// @features: functions, hoisting, forward-reference
+
+function first(n: int): int {
+  return second(n) + 1;
+}
+
+function second(n: int): int {
+  return n + 2;
+}
+
+export function test_forward_call(): int {
+  let result: int = first(4);
+  if (result !== 7) { throw { code: "TEST_FAIL", message: "forward call failed" }; }
+  return result;
+}

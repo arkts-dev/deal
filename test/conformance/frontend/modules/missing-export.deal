@@ -1,0 +1,10 @@
+// @spec: Modules — Missing export diagnostics
+// @description: Accessing a non-declared export of a module is a compile error
+// @expected: compile-error E2004
+// @features: modules, diagnostics
+
+import * as Lib from "./module_extra_lib"
+
+export function test_missing_export(): int {
+  return Lib.doesNotExist(1);
+}

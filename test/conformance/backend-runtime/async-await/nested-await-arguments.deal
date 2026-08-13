@@ -1,0 +1,14 @@
+// @spec: Async/Await — nested await expressions
+// @description: Await expressions inside call arguments evaluate and resume in order
+// @expected: runtime-ok
+// @features: async, await, nested-await
+
+async function one(): int { return 1; }
+async function two(): int { return 2; }
+function add(a: int, b: int): int { return a + b; }
+
+export async function test_nested_await_arguments(): int {
+  let result: int = add(await one(), await two());
+  if (result !== 3) { throw { code: "TEST_FAIL", message: "nested await arguments failed" }; }
+  return result;
+}

@@ -1,0 +1,11 @@
+// @spec: Runtime execution model — Runtime type checks
+// @description: Runtime type mismatch reports E8001
+// @expected: runtime-error E8001
+// @features: runtime-errors, type-checks
+
+function needInt(x: int): int { return x; }
+
+export function test_runtime_type_mismatch(): int {
+  let t: table = { value: "not-int" };
+  return needInt(t.value);
+}

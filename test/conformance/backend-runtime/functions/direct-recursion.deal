@@ -1,0 +1,13 @@
+// @spec: Functions — Hoisting and recursive bindings
+// @description: A function can recursively call itself through its local DEAL binding
+// @expected: runtime-ok
+// @features: functions, recursion, luajit
+
+function down(n: int): int {
+  if (n === 0) { return 0; }
+  return down(n - 1);
+}
+
+export function test_direct_recursion(): int {
+  return down(8);
+}

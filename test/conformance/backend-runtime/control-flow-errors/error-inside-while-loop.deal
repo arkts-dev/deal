@@ -1,0 +1,13 @@
+// @spec: Control flow — Runtime errors in loops
+// @description: Runtime error inside while loop propagates with its error code
+// @expected: runtime-error E8005
+// @features: control-flow, loops, runtime-errors
+
+export function test_error_inside_while_loop(): int {
+  let i: int = 0;
+  while (i < 2) {
+    if (i === 1) { return 1 / 0; }
+    i = i + 1;
+  }
+  return 0;
+}

@@ -1,0 +1,2 @@
+let state: int = 0;
+export function inc(): int { state = state + 1; return state; }

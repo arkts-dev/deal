@@ -1,0 +1,11 @@
+// @spec: Standard library declarations — std/string errors
+// @description: std/string.length rejects dynamic non-string input at runtime
+// @expected: runtime-error E8001
+// @features: stdlib, string, runtime-errors
+
+import * as str from "std/string"
+
+export function test_string_length_dynamic_nonstring(): int {
+  let t: table = { value: 123 };
+  return str.length(t.value);
+}

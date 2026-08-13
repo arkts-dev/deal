@@ -1,0 +1,12 @@
+// @spec: Classes — @jsonable nested element validation
+// @description: Malformed nested array element type is rejected by fromJson
+// @expected: runtime-ok
+// @features: jsonable, arrays, diagnostics
+
+import * as Lib from "./jsonable_batch2_lib"
+
+export function test_jsonable_nested_array_malformed_element(): null {
+  let p: Lib.Parent | null = Lib.Parent$fromJson("{\"children\":[1]}");
+  if (p !== null) { throw { code: "TEST_FAIL", message: "malformed nested element should be rejected" }; }
+  return null;
+}

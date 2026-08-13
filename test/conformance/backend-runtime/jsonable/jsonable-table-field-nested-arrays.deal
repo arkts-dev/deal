@@ -1,0 +1,18 @@
+// @spec: Classes — @jsonable table fields
+// @description: Table fields containing nested arrays roundtrip through @jsonable helpers
+// @expected: runtime-ok
+// @features: jsonable, tables, arrays
+
+import * as Lib from "./jsonable_batch2_lib"
+
+export function test_jsonable_table_field_nested_arrays(): null {
+  let w: Lib.TableWrap = Lib.makeTableWrap();
+  let json: string = Lib.TableWrap$toJson(w);
+  let w2: Lib.TableWrap | null = Lib.TableWrap$fromJson(json);
+  if (w2 !== null) {
+    let json2: string = Lib.TableWrap$toJson(w2);
+    let w3: Lib.TableWrap | null = Lib.TableWrap$fromJson(json2);
+    if (w3 !== null) { return null; }
+  }
+  throw { code: "TEST_FAIL", message: "table nested arrays roundtrip failed" };
+}

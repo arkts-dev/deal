@@ -1,0 +1,17 @@
+// @spec: Lua backend ABI — jsonable helper export keys
+// @description: @jsonable helper exports remain callable through DEAL $ helper names
+// @expected: runtime-ok
+// @features: lua-abi, jsonable, structural
+
+// @jsonable
+export class AbiUser { name: string = ""; }
+
+export function test_abi_jsonable_helper_export_keys(): null {
+  let u: AbiUser | null = AbiUser$fromJson("{\"name\":\"Ada\"}");
+  if (u !== null) {
+    let s: string = AbiUser$toJson(u);
+    let u2: AbiUser | null = AbiUser$fromJson(s);
+    if (u2 !== null) { return null; }
+  }
+  throw { code: "TEST_FAIL", message: "jsonable helper export key failed" };
+}

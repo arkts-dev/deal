@@ -1,0 +1,14 @@
+// @spec: Functions — Lexical scopes and recursive bindings
+// @description: A nested block function can recursively call itself without resolving as a Lua global
+// @expected: runtime-ok
+// @features: functions, recursion, lexical-scope
+
+export function test_nested_scope_recursion(): int {
+  {
+    function localDown(n: int): int {
+      if (n === 0) { return 0; }
+      return localDown(n - 1);
+    }
+    return localDown(6);
+  }
+}

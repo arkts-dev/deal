@@ -1,0 +1,14 @@
+// @spec: Tables — Module boundaries
+// @description: Table mutation through an imported function is visible to the caller
+// @expected: runtime-ok
+// @features: tables, modules, mutation
+
+import * as Lib from "./table_module_lib"
+
+export function test_table_mutation_through_module(): int {
+  let t: table = {};
+  Lib.mutate(t);
+  let result: int = t.value;
+  if (result !== 13) { throw { code: "TEST_FAIL", message: "table mutation through module failed" }; }
+  return result;
+}

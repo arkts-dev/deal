@@ -1,0 +1,11 @@
+// @spec: Lua backend ABI — chained nested index lowering
+// @description: Nested array indexing lowers every index in a chained expression
+// @expected: runtime-ok
+// @features: lua-abi, arrays, chained-access, structural
+
+export function test_abi_nested_index_chain(): int {
+  let rows: int[][] = [[10, 11], [20, 21], [30, 31]];
+  let result: int = rows[2][1];
+  if (result !== 31) { throw { code: "TEST_FAIL", message: "nested index lowering failed" }; }
+  return result;
+}

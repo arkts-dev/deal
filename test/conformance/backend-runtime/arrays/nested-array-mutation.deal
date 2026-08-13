@@ -1,0 +1,12 @@
+// @spec: Arrays — Nested arrays
+// @description: Nested arrays can be read and mutated through indexed access
+// @expected: runtime-ok
+// @features: arrays, nested-arrays
+
+export function test_nested_array_mutation(): int {
+  let rows: int[][] = [[1, 2], [3, 4]];
+  rows[1][0] = 8;
+  let result: int = rows[0][1] + rows[1][0];
+  if (result !== 10) { throw { code: "TEST_FAIL", message: "nested array mutation failed" }; }
+  return result;
+}

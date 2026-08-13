@@ -1,0 +1,11 @@
+// @spec: Runtime execution model — Source locations for stdlib errors
+// @description: Bad stdlib dynamic argument reports runtime type error code
+// @expected: runtime-error E8001
+// @features: source-location, stdlib, runtime-errors
+
+import * as str from "std/string"
+
+export function test_source_stdlib_error(): int {
+  let holder: table = { value: 10 };
+  return str.length(holder.value);
+}

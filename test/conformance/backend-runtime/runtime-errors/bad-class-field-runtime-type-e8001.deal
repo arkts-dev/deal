@@ -1,0 +1,12 @@
+// @spec: Runtime execution model — Class field runtime checks
+// @description: Assigning a plain table to a nominal class is rejected statically
+// @expected: compile-error E3001
+// @features: classes, diagnostics
+
+class Box { value: int = 0; }
+
+export function test_bad_class_field_runtime_type(): Box {
+  let t: table = { value: "bad" };
+  let b: Box = t;
+  return b;
+}

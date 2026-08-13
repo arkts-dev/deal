@@ -1,0 +1,12 @@
+// @spec: Lua backend ABI — Lua reserved word field names
+// @description: Dynamic table fields whose names are Lua reserved words remain accessible through DEAL member syntax
+// @expected: runtime-ok
+// @features: lua-abi, tables, reserved-words
+
+export function test_lua_reserved_word_table_fields(): int {
+  let t: table = { end: 4, local: 5 };
+  let a: int = t.end;
+  let b: int = t.local;
+  if (a + b !== 9) { throw { code: "TEST_FAIL", message: "reserved word table fields failed" }; }
+  return a + b;
+}

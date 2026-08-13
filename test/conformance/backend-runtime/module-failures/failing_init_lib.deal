@@ -1,0 +1,2 @@
+let boom: int = 1 / 0;
+export function value(): int { return boom; }

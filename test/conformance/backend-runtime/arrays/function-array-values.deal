@@ -1,0 +1,15 @@
+// @spec: Arrays — Function element values
+// @description: Arrays can contain function values and invoke them after mutation
+// @expected: runtime-ok
+// @features: arrays, functions
+
+function add1(x: int): int { return x + 1; }
+function add2(x: int): int { return x + 2; }
+
+export function test_function_array_values(): int {
+  let fs: ((x: int) => int)[] = [add1, add1];
+  fs[1] = add2;
+  let result: int = fs[0](3) + fs[1](3);
+  if (result !== 9) { throw { code: "TEST_FAIL", message: "function array failed" }; }
+  return result;
+}

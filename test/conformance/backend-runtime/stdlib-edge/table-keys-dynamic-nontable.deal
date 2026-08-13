@@ -1,0 +1,11 @@
+// @spec: Standard library declarations — std/table errors
+// @description: std/table.keys rejects dynamic non-table input at runtime
+// @expected: runtime-error E8001
+// @features: stdlib, table, runtime-errors
+
+import * as tables from "std/table"
+
+export function test_table_keys_dynamic_nontable(): string[] {
+  let t: table = { value: 1 };
+  return tables.keys(t.value);
+}

@@ -1,0 +1,11 @@
+// @spec: Async/Await — diagnostics for unawaited async calls
+// @description: Passing an unawaited async call as a synchronous argument is rejected
+// @expected: compile-error E3014
+// @features: async, diagnostics
+
+async function value(): int { return 1; }
+function consume(x: int): int { return x; }
+
+export async function test_unawaited_async_argument(): int {
+  return consume(value());
+}

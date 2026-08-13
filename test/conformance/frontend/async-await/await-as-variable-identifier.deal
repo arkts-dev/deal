@@ -1,0 +1,6 @@
+// @spec: Lexical elements — await keyword
+// @description: await cannot be used as a variable identifier
+// @expected: compile-error E1007
+// @features: async, await, diagnostics
+
+let await: int = 1;

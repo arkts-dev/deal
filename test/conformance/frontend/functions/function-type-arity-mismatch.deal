@@ -1,0 +1,7 @@
+// @spec: Functions — Function type arity
+// @description: Function type arity mismatch is rejected
+// @expected: compile-error E5004
+// @features: functions, diagnostics
+
+function two(a: int, b: int): int { return a + b; }
+let one: (a: int) => int = two;

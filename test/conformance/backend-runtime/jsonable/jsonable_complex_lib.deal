@@ -1,0 +1,12 @@
+// @jsonable
+export class Address {
+  city: string = "";
+}
+
+// @jsonable
+export class User {
+  name: string = "";
+  addresses: Address[] = [];
+  nickname?: string | null;
+  meta: table = {};
+}

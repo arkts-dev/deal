@@ -1,0 +1,17 @@
+// @spec: Lua backend ABI — @jsonable helper exports
+// @description: Generated @jsonable helper exports remain callable through imported DEAL names
+// @expected: runtime-ok
+// @features: jsonable, modules, lua-abi
+
+import * as Lib from "./jsonable_complex_lib"
+
+export function test_jsonable_helper_exports(): null {
+  let u: Lib.User | null = Lib.User$fromJson("{\"name\":\"Grace\",\"addresses\":[],\"meta\":{}}");
+  if (u !== null) {
+    let encoded: string = Lib.User$toJson(u);
+    let u2: Lib.User | null = Lib.User$fromJson(encoded);
+    if (u2 === null) { throw { code: "TEST_FAIL", message: "helper export toJson failed" }; }
+    return null;
+  }
+  throw { code: "TEST_FAIL", message: "helper export fromJson failed" };
+}

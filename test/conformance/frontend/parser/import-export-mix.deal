@@ -1,0 +1,14 @@
+// @spec: Syntactic grammar — imports and exports
+// @description: Import followed by exported class and exported function parses correctly
+// @expected: compile-ok
+// @features: parser, modules, exports
+
+import * as Lib from "./parser_import_lib"
+
+export class ParserShape {
+  value: int = 0;
+}
+
+export function test_import_export_mix(): int {
+  return Lib.value();
+}

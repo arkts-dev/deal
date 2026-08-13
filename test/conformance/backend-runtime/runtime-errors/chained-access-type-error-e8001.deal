@@ -1,0 +1,11 @@
+// @spec: Runtime execution model — Chained access runtime type checks
+// @description: Chained table member read into typed value reports E8001 on mismatched runtime type
+// @expected: runtime-error E8001
+// @features: runtime-errors, chained-access
+
+export function test_chained_access_type_error(): int {
+  let t: table = { inner: { value: "bad" } };
+  let inner: table = t.inner;
+  let result: int = inner.value;
+  return result;
+}

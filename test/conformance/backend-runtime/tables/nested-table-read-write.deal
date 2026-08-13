@@ -1,0 +1,13 @@
+// @spec: Tables — Nested table reads and writes
+// @description: Nested table values can be read after writing through intermediate table bindings
+// @expected: runtime-ok
+// @features: tables, mutation
+
+export function test_nested_table_read_write(): int {
+  let t: table = { inner: {} };
+  let inner: table = t.inner;
+  inner.value = 7;
+  let result: int = inner.value;
+  if (result !== 7) { throw { code: "TEST_FAIL", message: "nested table read/write failed" }; }
+  return result;
+}

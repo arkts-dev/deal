@@ -1,0 +1,6 @@
+// @spec: Lexical elements — identifier restrictions
+// @description: Import aliases containing $ are rejected
+// @expected: compile-error E2008
+// @features: diagnostics, imports, lua-abi
+
+import * as bad$alias from "./alias_lib"

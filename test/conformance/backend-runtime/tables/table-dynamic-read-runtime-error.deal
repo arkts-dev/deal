@@ -1,0 +1,10 @@
+// @spec: Tables — Assignment typing
+// @description: Assigning a table dynamic read to an incompatible annotated type fails at runtime
+// @expected: runtime-error E8001
+// @features: tables, runtime-errors
+
+export function test_table_dynamic_read_runtime_error(): int {
+  let t: table = { value: "bad" };
+  let result: int = t.value;
+  return result;
+}

@@ -1,0 +1,10 @@
+// @spec: Modules — Failed module initialization
+// @description: Importing the same failing module through one alias propagates init failure
+// @expected: runtime-error E8005
+// @features: modules, initialization, runtime-errors
+
+import * as Bad from "./failing_once_lib"
+
+export function test_single_failing_import(): int {
+  return Bad.value();
+}

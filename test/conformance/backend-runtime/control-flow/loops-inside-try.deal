@@ -1,0 +1,22 @@
+// @spec: Control flow — loops inside try
+// @description: Loops execute normally inside try blocks and return the expected result
+// @expected: runtime-ok
+// @features: loops, try
+
+export function test_loops_inside_try(): int {
+  let total: int = 0;
+  try {
+    let i: int = 0;
+    while (i < 3) {
+      total = total + i;
+      i = i + 1;
+    }
+    for (let j: int = 0; j < 3; j = j + 1) {
+      total = total + j;
+    }
+  } catch (e) {
+    throw { code: "TEST_FAIL", message: "unexpected catch" };
+  }
+  if (total !== 6) { throw { code: "TEST_FAIL", message: "loop total mismatch" }; }
+  return total;
+}

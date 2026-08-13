@@ -1,0 +1,12 @@
+// @spec: Modules — Chained access over imported function results
+// @description: Array indexing and field access over an imported function result lowers correctly
+// @expected: runtime-ok
+// @features: modules, arrays, classes, chained-access
+
+import * as Lib from "./chained_import_lib"
+
+export function test_imported_result_index_member(): int {
+  let result: int = Lib.makeBoxes()[1].value;
+  if (result !== 6) { throw { code: "TEST_FAIL", message: "imported result index/member failed" }; }
+  return result;
+}

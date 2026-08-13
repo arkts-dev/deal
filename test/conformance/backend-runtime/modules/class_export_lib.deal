@@ -1,0 +1,8 @@
+export class Point {
+  x: int = 0;
+  y: int = 0;
+}
+
+export function make(x: int, y: int): Point {
+  return { x: x, y: y };
+}

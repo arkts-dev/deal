@@ -1,0 +1,13 @@
+// @spec: Lua backend ABI — internal local names
+// @description: User locals near backend temporary prefixes do not collide with generated temporaries
+// @expected: runtime-ok
+// @features: lua-abi, naming
+
+export function test_backend_temp_name_near_collision(): int {
+  let __idx: int = 100;
+  let xs: int[] = [1, 2, 3];
+  let value: int = xs[1];
+  if (__idx !== 100) { throw { code: "TEST_FAIL", message: "temporary index collision" }; }
+  if (value !== 2) { throw { code: "TEST_FAIL", message: "array value mismatch" }; }
+  return __idx + value;
+}

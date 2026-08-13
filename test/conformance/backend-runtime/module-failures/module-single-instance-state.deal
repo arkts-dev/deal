@@ -1,0 +1,13 @@
+// @spec: Modules — Single runtime module instance
+// @description: Multiple calls through one import share module-level state
+// @expected: runtime-ok
+// @features: modules, initialization, mutation
+
+import * as Lib from "./stateful_lib"
+
+export function test_module_single_instance_state(): int {
+  let a: int = Lib.inc();
+  let b: int = Lib.inc();
+  if (a !== 1 || b !== 2) { throw { code: "TEST_FAIL", message: "module state not shared" }; }
+  return b;
+}

@@ -1,0 +1,13 @@
+// @spec: Modules — Imported class arrays
+// @description: Arrays of imported class instances preserve field access across module boundaries
+// @expected: runtime-ok
+// @features: modules, classes, arrays
+
+import * as Lib from "./module_extra_lib"
+
+export function test_imported_class_array(): int {
+  let pts: Lib.Point[] = Lib.makePoints();
+  let result: int = pts[1].x + pts[1].y;
+  if (result !== 7) { throw { code: "TEST_FAIL", message: "imported class array failed" }; }
+  return result;
+}

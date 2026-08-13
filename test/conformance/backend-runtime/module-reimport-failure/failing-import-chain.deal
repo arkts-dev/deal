@@ -1,0 +1,10 @@
+// @spec: Modules — Import-chain initialization failure
+// @description: Failed module initialization propagates through an import chain
+// @expected: runtime-error E8005
+// @features: modules, initialization, runtime-errors
+
+import * as Mid from "./failing_chain_mid"
+
+export function test_failing_import_chain(): int {
+  return Mid.via();
+}

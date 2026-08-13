@@ -1,0 +1,18 @@
+// @spec: Error handling — continue after caught error
+// @description: A caught runtime error does not corrupt later continue control flow
+// @expected: runtime-ok
+// @features: control-flow, try, continue, runtime-errors
+
+export function test_continue_after_caught_error(): int {
+  let total: int = 0;
+  for (let i: int = 0; i < 3; i = i + 1) {
+    try {
+      if (i === 1) { total = total + (1 / 0); }
+    } catch (e) {
+      continue;
+    }
+    total = total + i;
+  }
+  if (total !== 2) { throw { code: "TEST_FAIL", message: "continue after caught error failed" }; }
+  return total;
+}

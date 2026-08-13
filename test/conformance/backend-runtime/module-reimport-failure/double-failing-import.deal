@@ -1,0 +1,11 @@
+// @spec: Modules — Re-import failed module
+// @description: Two imports of the same failing module do not hide initialization failure
+// @expected: runtime-error E8005
+// @features: modules, initialization, runtime-errors
+
+import * as A from "./failing_once_lib"
+import * as B from "./failing_once_lib"
+
+export function test_double_failing_import(): int {
+  return A.value() + B.value();
+}

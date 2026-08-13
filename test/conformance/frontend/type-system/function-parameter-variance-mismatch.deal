@@ -1,0 +1,7 @@
+// @spec: Type system — Function variance
+// @description: Function parameter type mismatch is rejected by assignability
+// @expected: compile-error E3001
+// @features: type-system, functions, diagnostics
+
+function takesInt(x: int): int { return x; }
+let f: (x: number) => int = takesInt;

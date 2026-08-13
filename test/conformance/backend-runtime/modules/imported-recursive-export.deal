@@ -1,0 +1,12 @@
+// @spec: Modules — Exported recursive functions
+// @description: Imported exported recursive functions execute through the module export table
+// @expected: runtime-ok
+// @features: modules, exports, recursion
+
+import * as Lib from "./recursive_export_lib"
+
+export function test_imported_recursive_export(): int {
+  let result: int = Lib.fib(6);
+  if (result !== 8) { throw { code: "TEST_FAIL", message: "imported recursive export failed" }; }
+  return result;
+}

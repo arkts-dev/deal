@@ -1,0 +1,12 @@
+// @spec: Error handling — return through try/catch
+// @description: Return inside try exits the function without executing catch
+// @expected: runtime-ok
+// @features: try, return
+
+export function test_return_inside_try(): int {
+  try {
+    return 7;
+  } catch (e) {
+    return 99;
+  }
+}

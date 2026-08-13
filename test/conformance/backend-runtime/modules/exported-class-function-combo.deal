@@ -1,0 +1,13 @@
+// @spec: Modules — Exported class and function combinations
+// @description: Imported class value produced by one export can be consumed by another export
+// @expected: runtime-ok
+// @features: modules, classes, exports
+
+import * as Lib from "./export_class_function_lib"
+
+export function test_exported_class_function_combo(): int {
+  let t: Lib.Thing = Lib.makeThing(14);
+  let result: int = Lib.getValue(t);
+  if (result !== 14) { throw { code: "TEST_FAIL", message: "exported class/function combo failed" }; }
+  return result;
+}

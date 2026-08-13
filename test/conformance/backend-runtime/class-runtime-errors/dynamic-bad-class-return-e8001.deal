@@ -1,0 +1,13 @@
+// @spec: Runtime execution model — Class return checks
+// @description: Dynamic table with bad class field fails at class-typed return boundary
+// @expected: runtime-error E8001
+// @features: classes, type-system, runtime-errors
+
+import * as json from "std/json"
+
+class Box { value: int = 0; }
+
+export function test_dynamic_bad_class_return(): Box {
+  let holder: table = { item: json.parse("{\"value\":\"bad\"}") };
+  return holder.item;
+}

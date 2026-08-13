@@ -1,0 +1,13 @@
+// @spec: Error handling — propagation through catch
+// @description: A thrown error caught and rethrown preserves its explicit error code
+// @expected: runtime-error USER_RETHROW
+// @features: throw, catch, runtime-errors
+
+export function test_rethrow_preserves_code(): null {
+  try {
+    throw { code: "USER_RETHROW", message: "boom" };
+  } catch (e) {
+    throw e;
+  }
+  return null;
+}

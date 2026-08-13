@@ -1,0 +1,18 @@
+// @spec: Functions — Closures and captured variables
+// @description: Nested closures capture outer locals and observe mutation through the captured binding
+// @expected: runtime-ok
+// @features: closures, mutation
+
+export function test_nested_closure_mutation(): int {
+  let x: int = 1;
+  let make: () => () => int = function(): () => int {
+    return function(): int {
+      return x;
+    };
+  };
+  let f: () => int = make();
+  x = 9;
+  let result: int = f();
+  if (result !== 9) { throw { code: "TEST_FAIL", message: "closure mutation failed" }; }
+  return result;
+}

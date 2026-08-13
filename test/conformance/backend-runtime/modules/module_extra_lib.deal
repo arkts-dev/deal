@@ -1,0 +1,10 @@
+export class Point { x: int = 0; y: int = 0; }
+export function makePoint(x: int, y: int): Point { return { x: x, y: y }; }
+export function makePoints(): Point[] { return [makePoint(1, 2), makePoint(3, 4)]; }
+export function makeAdder(base: int): (x: int) => int {
+  return function(x: int): int { return base + x; };
+}
+export function recursiveCountdown(n: int): int {
+  if (n === 0) { return 0; }
+  return 1 + recursiveCountdown(n - 1);
+}

@@ -1,0 +1,14 @@
+// @spec: Runtime execution model — Class array checks
+// @description: Dynamic array with bad class element fails at class-array assignment boundary
+// @expected: runtime-error E8003
+// @features: classes, arrays, runtime-errors
+
+import * as json from "std/json"
+
+class Box { value: int = 0; }
+
+export function test_dynamic_bad_class_array_element(): int {
+  let holder: table = { items: json.parse("[{\"value\":1},{\"value\":\"bad\"}]") };
+  let xs: Box[] = holder.items;
+  return xs[0].value;
+}

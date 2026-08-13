@@ -1,0 +1,31 @@
+// @jsonable
+export class Child {
+  value: int = 0;
+}
+
+// @jsonable
+export class Parent {
+  children: Child[] = [];
+}
+
+// @jsonable
+export class MaybeChild {
+  child?: Child | null;
+}
+
+// @jsonable
+export class TableWrap {
+  data: table = {};
+}
+
+export function child(v: int): Child {
+  return { value: v };
+}
+
+export function makeParent(a: int, b: int): Parent {
+  return { children: [child(a), child(b)] };
+}
+
+export function makeTableWrap(): TableWrap {
+  return { data: { values: [[1, 2], [3, 4]] } };
+}

@@ -1,0 +1,17 @@
+// @spec: Functions — Closures mutating class fields
+// @description: A closure mutating a class field captures the shared instance binding
+// @expected: runtime-ok
+// @features: closures, classes, mutation
+
+class Box { value: int = 0; }
+
+export function test_closure_mutates_class_field(): int {
+  let b: Box = { value: 1 };
+  let bump: () => int = function(): int {
+    b.value = b.value + 4;
+    return b.value;
+  };
+  bump();
+  if (b.value !== 5) { throw { code: "TEST_FAIL", message: "closure class field mutation failed" }; }
+  return b.value;
+}

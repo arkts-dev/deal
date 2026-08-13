@@ -1,0 +1,1 @@
+export function declaredAdd(a: int, b: int): int;

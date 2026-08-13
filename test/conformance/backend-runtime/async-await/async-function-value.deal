@@ -1,0 +1,13 @@
+// @spec: Async/Await — async function values
+// @description: Async functions can be stored in typed function values and awaited when called
+// @expected: runtime-ok
+// @features: async, function-values
+
+async function value(): int { return 6; }
+
+export async function test_async_function_value(): int {
+  let f: async () => int = value;
+  let result: int = await f();
+  if (result !== 6) { throw { code: "TEST_FAIL", message: "async function value failed" }; }
+  return result;
+}

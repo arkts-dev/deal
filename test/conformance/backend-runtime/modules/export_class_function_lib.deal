@@ -1,0 +1,3 @@
+export class Thing { value: int = 0; }
+export function makeThing(v: int): Thing { return { value: v }; }
+export function getValue(t: Thing): int { return t.value; }

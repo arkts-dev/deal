@@ -1,0 +1,14 @@
+// @spec: Modules — Closures returned from modules
+// @description: A closure returned by an imported function retains its captured module-local state
+// @expected: runtime-ok
+// @features: closures, modules
+
+import * as Lib from "./closure_batch2_lib"
+
+export function test_closure_returned_from_module(): int {
+  let c: () => int = Lib.makeCounter(10);
+  let a: int = c();
+  let b: int = c();
+  if (a !== 11 || b !== 12) { throw { code: "TEST_FAIL", message: "module closure state failed" }; }
+  return b;
+}

@@ -1,0 +1,12 @@
+// @spec: Classes — @jsonable nested element validation
+// @description: Extra keys inside nested class arrays are rejected by fromJson
+// @expected: runtime-ok
+// @features: jsonable, arrays, diagnostics
+
+import * as Lib from "./jsonable_batch2_lib"
+
+export function test_jsonable_nested_array_extra_key_rejected(): null {
+  let p: Lib.Parent | null = Lib.Parent$fromJson("{\"children\":[{\"value\":1,\"extra\":2}]}");
+  if (p !== null) { throw { code: "TEST_FAIL", message: "nested extra key should be rejected" }; }
+  return null;
+}

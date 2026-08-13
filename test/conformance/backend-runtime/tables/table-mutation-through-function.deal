@@ -1,0 +1,17 @@
+// @spec: Tables — Function boundaries
+// @description: Table mutation in a function is visible to the caller
+// @expected: runtime-ok
+// @features: tables, functions, mutation
+
+function setValue(t: table, v: int): null {
+  t.value = v;
+  return null;
+}
+
+export function test_table_mutation_through_function(): int {
+  let t: table = {};
+  setValue(t, 12);
+  let result: int = t.value;
+  if (result !== 12) { throw { code: "TEST_FAIL", message: "table mutation through function failed" }; }
+  return result;
+}

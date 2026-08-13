@@ -1,0 +1,13 @@
+// @spec: Tables — Aliasing
+// @description: Table aliases observe mutation through shared table identity
+// @expected: runtime-ok
+// @features: tables, aliasing, mutation
+
+export function test_table_alias_mutation(): int {
+  let a: table = { value: 1 };
+  let b: table = a;
+  b.value = 9;
+  let result: int = a.value;
+  if (result !== 9) { throw { code: "TEST_FAIL", message: "table alias mutation failed" }; }
+  return result;
+}

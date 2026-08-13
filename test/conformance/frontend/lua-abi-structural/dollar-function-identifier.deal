@@ -1,0 +1,6 @@
+// @spec: Lua backend ABI — user identifier restrictions
+// @description: User names containing $ are rejected so generated $ export keys remain compiler-owned
+// @expected: compile-error E2008
+// @features: lua-abi, diagnostics, structural
+
+function bad$helper(): int { return 1; }

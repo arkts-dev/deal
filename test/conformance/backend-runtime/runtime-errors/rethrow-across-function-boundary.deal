@@ -1,0 +1,22 @@
+// @spec: Error handling — error propagation through function calls
+// @description: Rethrowing through a function boundary preserves explicit error code
+// @expected: runtime-error CROSS_FUNCTION_RETHROW
+// @features: throw, catch, functions, runtime-errors
+
+function inner(): null {
+  throw { code: "CROSS_FUNCTION_RETHROW", message: "boom" };
+}
+
+function outer(): null {
+  try {
+    inner();
+  } catch (e) {
+    throw e;
+  }
+  return null;
+}
+
+export function test_rethrow_across_function_boundary(): null {
+  outer();
+  return null;
+}

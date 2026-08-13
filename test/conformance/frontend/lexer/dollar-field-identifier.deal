@@ -1,0 +1,8 @@
+// @spec: Lexical elements — identifier restrictions
+// @description: Class field declarations containing $ are rejected
+// @expected: compile-error E2008
+// @features: diagnostics, lua-abi
+
+class BadField {
+  bad$field: int = 0;
+}

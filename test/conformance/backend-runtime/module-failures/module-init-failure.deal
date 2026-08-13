@@ -1,0 +1,10 @@
+// @spec: Modules — Runtime initialization failure
+// @description: Imported module initialization error propagates to importer
+// @expected: runtime-error E8005
+// @features: modules, initialization, runtime-errors
+
+import * as Lib from "./failing_init_lib"
+
+export function test_module_init_failure(): int {
+  return Lib.value();
+}

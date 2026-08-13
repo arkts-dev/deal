@@ -1,0 +1,10 @@
+// @spec: Standard library declarations — missing stdlib export
+// @description: Accessing a missing stdlib export is rejected statically
+// @expected: compile-error E2004
+// @features: stdlib, diagnostics
+
+import * as str from "std/string"
+
+export function test_missing_stdlib_export(): int {
+  return str.noSuchFunction("x");
+}

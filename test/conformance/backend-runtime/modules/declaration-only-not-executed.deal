@@ -1,0 +1,11 @@
+// @spec: Modules — Declaration-only runtime behavior
+// @description: Calling a declaration-only import without runtime implementation is not treated as a runtime-ok test
+// @expected: compile-ok
+// @features: modules, declarations
+
+import * as Decl from "./runtime_missing_decl"
+
+export function test_declaration_only_not_executed(): int {
+  let f: () => int = Decl.declaredOnly;
+  return 1;
+}

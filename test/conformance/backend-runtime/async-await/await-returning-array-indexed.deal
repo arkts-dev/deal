@@ -1,0 +1,13 @@
+// @spec: Async/Await — await returning arrays
+// @description: Array returned from await can be indexed after resumption
+// @expected: runtime-ok
+// @features: async, arrays, await
+
+import * as Lib from "./async_batch2_lib"
+
+export async function test_await_returning_array_indexed(): int {
+  let xs: int[] = await Lib.makeArray();
+  let result: int = xs[1];
+  if (result !== 9) { throw { code: "TEST_FAIL", message: "await array index failed" }; }
+  return result;
+}

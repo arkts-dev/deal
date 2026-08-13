@@ -1,0 +1,18 @@
+// @spec: Error handling — break after caught error
+// @description: A caught runtime error does not corrupt later break control flow
+// @expected: runtime-ok
+// @features: control-flow, try, break, runtime-errors
+
+export function test_break_after_caught_error(): int {
+  let total: int = 0;
+  while (true) {
+    try {
+      total = total + (1 / 0);
+    } catch (e) {
+      total = total + 5;
+      break;
+    }
+  }
+  if (total !== 5) { throw { code: "TEST_FAIL", message: "break after caught error failed" }; }
+  return total;
+}

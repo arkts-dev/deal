@@ -1,0 +1,15 @@
+// @spec: Classes — Chained field and array access
+// @description: Array access through an object field lowers the array index correctly
+// @expected: runtime-ok
+// @features: classes, arrays, chained-access
+
+class Holder {
+  values: int[] = [];
+}
+
+export function test_object_array_index(): int {
+  let h: Holder = { values: [3, 8, 5] };
+  let result: int = h.values[1];
+  if (result !== 8) { throw { code: "TEST_FAIL", message: "obj.arr[0] lowering failed" }; }
+  return result;
+}

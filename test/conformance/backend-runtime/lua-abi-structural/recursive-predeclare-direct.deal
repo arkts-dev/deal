@@ -1,0 +1,15 @@
+// @spec: Lua backend ABI — recursive function lowering
+// @description: Direct recursion exercises predeclared Lua function wrapper binding
+// @expected: runtime-ok
+// @features: lua-abi, recursion, structural
+
+function sumDown(n: int): int {
+  if (n === 0) { return 0; }
+  return n + sumDown(n - 1);
+}
+
+export function test_abi_direct_recursion_predeclare(): int {
+  let result: int = sumDown(4);
+  if (result !== 10) { throw { code: "TEST_FAIL", message: "direct recursion ABI failed" }; }
+  return result;
+}

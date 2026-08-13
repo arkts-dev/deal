@@ -1,0 +1,11 @@
+// @spec: Runtime execution model — Source locations for loop errors
+// @description: Runtime error inside loop reports the expected error code
+// @expected: runtime-error E8005
+// @features: source-location, control-flow, runtime-errors
+
+export function test_source_loop_error(): int {
+  for (let i: int = 0; i < 2; i = i + 1) {
+    if (i === 1) { return 1 / 0; }
+  }
+  return 0;
+}

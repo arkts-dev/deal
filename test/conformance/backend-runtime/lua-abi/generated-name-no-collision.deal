@@ -1,0 +1,13 @@
+// @spec: Lua backend ABI — generated identifiers and exports
+// @description: User identifiers near generated-name prefixes do not collide with generated locals when not shadowing runtime import names
+// @expected: runtime-ok
+// @features: lua-abi, naming
+
+export function test_generated_name_no_collision(): int {
+  let __deal_user_rt: int = 1;
+  let __deal_user_null: int = 2;
+  let __deal_user_missing: int = 3;
+  let result: int = __deal_user_rt + __deal_user_null + __deal_user_missing;
+  if (result !== 6) { throw { code: "TEST_FAIL", message: "generated name collision" }; }
+  return result;
+}

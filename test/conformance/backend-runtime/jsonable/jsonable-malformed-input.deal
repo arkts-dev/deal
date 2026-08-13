@@ -1,0 +1,12 @@
+// @spec: Classes — @jsonable malformed input
+// @description: @jsonable fromJson returns null for malformed JSON input
+// @expected: runtime-ok
+// @features: jsonable, runtime-errors, json
+
+import * as Lib from "./jsonable_complex_lib"
+
+export function test_jsonable_malformed_input(): null {
+  let u: Lib.User | null = Lib.User$fromJson("{bad json");
+  if (u !== null) { throw { code: "TEST_FAIL", message: "malformed input should return null" }; }
+  return null;
+}

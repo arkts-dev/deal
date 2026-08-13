@@ -1,0 +1,2 @@
+let bad: int = 1 / 0;
+export function value(): int { return bad; }

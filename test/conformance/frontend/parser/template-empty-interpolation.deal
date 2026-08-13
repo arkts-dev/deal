@@ -1,0 +1,6 @@
+// @spec: Syntactic grammar — template interpolation
+// @description: Malformed template interpolation is rejected by the parser
+// @expected: compile-error E1042
+// @features: parser, templates, diagnostics
+
+let s: string = `hello ${ }`;

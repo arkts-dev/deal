@@ -1,0 +1,12 @@
+// @spec: Type system — Array runtime checks
+// @description: Dynamic array with wrong element type fails when assigned to int[]
+// @expected: runtime-error E8003
+// @features: type-system, arrays, runtime-errors
+
+import * as json from "std/json"
+
+export function test_dynamic_array_element_runtime_error(): int {
+  let t: table = json.parse("{\"values\":[1,\"bad\"]}");
+  let xs: int[] = t.values;
+  return xs[0];
+}

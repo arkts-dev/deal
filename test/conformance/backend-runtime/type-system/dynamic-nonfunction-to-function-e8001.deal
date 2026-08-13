@@ -1,0 +1,10 @@
+// @spec: Type system — Function runtime checks
+// @description: Dynamic non-function value assigned to function type fails with E8001
+// @expected: runtime-error E8001
+// @features: type-system, functions, runtime-errors
+
+export function test_dynamic_nonfunction_to_function_runtime_error(): int {
+  let t: table = { f: 1 };
+  let f: (x: int) => int = t.f;
+  return f(1);
+}

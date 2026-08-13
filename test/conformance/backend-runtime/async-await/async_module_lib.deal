@@ -1,0 +1,7 @@
+export async function plusOne(x: int): int {
+  return x + 1;
+}
+
+export async function fail(): int {
+  throw { code: "ASYNC_FAIL", message: "async failure" };
+}

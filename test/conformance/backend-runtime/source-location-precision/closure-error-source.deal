@@ -1,0 +1,11 @@
+// @spec: Runtime execution model — Source locations for closure errors
+// @description: Runtime error inside closure reports the expected error code
+// @expected: runtime-error E8005
+// @features: source-location, closures, runtime-errors
+
+export function test_source_closure_error(): int {
+  let f: () => int = function(): int {
+    return 1 / 0;
+  };
+  return f();
+}

@@ -1,0 +1,3 @@
+let before: int = 1;
+let boom: int = 1 / 0;
+export function value(): int { return before + boom; }

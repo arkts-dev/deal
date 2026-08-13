@@ -1,0 +1,15 @@
+// @spec: Async/Await — state preservation
+// @description: Multiple awaits preserve local variable state across resumptions
+// @expected: runtime-ok
+// @features: async, await, state
+
+async function inc(x: int): int { return x + 1; }
+
+export async function test_multiple_await_state(): int {
+  let x: int = 0;
+  x = await inc(x);
+  x = await inc(x);
+  x = await inc(x);
+  if (x !== 3) { throw { code: "TEST_FAIL", message: "await state failed" }; }
+  return x;
+}

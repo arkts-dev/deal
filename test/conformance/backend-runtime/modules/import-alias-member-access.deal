@@ -1,0 +1,14 @@
+// @spec: Modules — Imported alias and member edge cases
+// @description: Imported member access and aliasing resolve to the correct runtime export
+// @expected: runtime-ok
+// @features: modules, alias, member-access
+
+import * as Lib from "./module_extra_lib"
+
+export function test_import_alias_member_access(): int {
+  let p: Lib.Point = Lib.makePoint(2, 3);
+  let x: int = p.x;
+  let y: int = p.y;
+  if (x !== 2 || y !== 3) { throw { code: "TEST_FAIL", message: "import alias member access failed" }; }
+  return x + y;
+}
