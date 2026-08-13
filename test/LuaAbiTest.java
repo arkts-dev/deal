@@ -16,6 +16,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * JUnit4 + Hamcrest unit tests for the {@link LuaAbi} emission layer.
@@ -45,6 +46,28 @@ public class LuaAbiTest {
         assertThat("namespace constant", LuaAbi.NAMESPACE, is("__deal"));
     }
 
+    /**
+     * The architecture contract states {@code RESERVED} is immutable — a
+     * caller mutating the shared constant would silently corrupt every
+     * key-form decision in the backend. {@code Set.of} rejects both adds
+     * and removals.
+     */
+    @Test
+    public void reservedSetIsImmutable() {
+        try {
+            LuaAbi.RESERVED.add("mutate");
+            fail("RESERVED must reject addition");
+        } catch (UnsupportedOperationException expected) {
+            // The immutability contract.
+        }
+        try {
+            LuaAbi.RESERVED.remove("end");
+            fail("RESERVED must reject removal");
+        } catch (UnsupportedOperationException expected) {
+            // The immutability contract.
+        }
+    }
+
     // =========================================================================
     // isReserved
     // =========================================================================
@@ -53,8 +76,19 @@ public class LuaAbiTest {
     public void isReservedUsesTheCallerSuppliedSet() {
         assertTrue(LuaAbi.isReserved(LuaAbi.RESERVED, "end"));
         assertTrue(LuaAbi.isReserved(LuaAbi.RESERVED, "goto"));
+        // Every one of the 24 mandated words.
+        for (String word : LuaAbi.RESERVED) {
+            assertTrue("reserved word: " + word,
+                LuaAbi.isReserved(LuaAbi.RESERVED, word));
+        }
+        // Safe names are not reserved.
         assertFalse(LuaAbi.isReserved(LuaAbi.RESERVED, "class"));
         assertFalse(LuaAbi.isReserved(LuaAbi.RESERVED, "identifier"));
+        assertFalse(LuaAbi.isReserved(LuaAbi.RESERVED, "_leading"));
+        // Bad shapes are not reserved either (membership is exact).
+        assertFalse(LuaAbi.isReserved(LuaAbi.RESERVED, "bad$field"));
+        assertFalse(LuaAbi.isReserved(LuaAbi.RESERVED, ""));
+        assertFalse(LuaAbi.isReserved(LuaAbi.RESERVED, "na\u00efve"));
         // Null name is not reserved (total function).
         assertFalse(LuaAbi.isReserved(LuaAbi.RESERVED, null));
         // A caller-supplied set fully determines the decision.
@@ -208,6 +242,9 @@ public class LuaAbiTest {
     public void hasCheckDotAndBracketForms() {
         assertThat(LuaAbi.hasCheck("u", "nick"), is("u.nick ~= nil"));
         assertThat(LuaAbi.hasCheck("c", "end"), is("c[\"end\"] ~= nil"));
+        // $-keys use the bracket form like every other unsafe key.
+        assertThat(LuaAbi.hasCheck("c", "User$fromJson"),
+            is("c[\"User$fromJson\"] ~= nil"));
     }
 
     @Test

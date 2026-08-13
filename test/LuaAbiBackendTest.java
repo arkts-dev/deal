@@ -189,6 +189,7 @@ public class LuaAbiBackendTest {
 
         assertThat(out.lua(), containsString("[\"end\"] = 4"));
         assertThat(out.lua(), containsString("[\"local\"] = 5"));
+        assertThat(out.lua(), containsString("{[\"end\"] = 4, [\"local\"] = 5}"));
         assertThat(out.lua(), containsString("t[\"end\"]"));
         assertThat(out.lua(), containsString("t[\"local\"]"));
         assertThat(out.lua(), not(containsString("t.end")));
@@ -225,10 +226,17 @@ public class LuaAbiBackendTest {
             "}\n";
         CompileResult out = compile(source);
 
-        assertThat(out.lua(), containsString("__deal[\"User$fromJson\"] = __rt.function_("));
+        assertThat(out.lua(), containsString("__deal[\"User$fromJson\"] = __rt.function_(\"(string)->User|null\""));
+        assertThat(out.lua(), containsString("__deal[\"User$toJson\"] = __rt.function_(\"(User)->string\""));
         assertThat(out.lua(), containsString("__deal[\"User$fromJson\"].f("));
         assertThat(out.lua(), containsString("exports[\"User$fromJson\"] = __deal[\"User$fromJson\"]"));
         assertThat(out.lua(), containsString("__deal[\"User_fields\"] = {"));
+        // The fromJson/toJson bodies reference the namespace artifacts
+        // (defaultsRefForTypeNode / fieldsRefForTypeNode module-level forms).
+        assertThat(out.lua(), containsString(
+            "__rt.json_from_json(\"User\", parsed, __deal[\"User_defaults\"], __deal[\"User_fields\"])"));
+        assertThat(out.lua(), containsString(
+            "__rt.json_to_json(\"User\", v, __deal[\"User_fields\"])"));
         assertThat(out.lua(), containsString("__deal[\"User_meta\"] = __rt.export_class(\"User\")"));
         // The retired underscore-form helper binding is gone; the helper is
         // assigned only into the namespace table. (The user's own
@@ -237,8 +245,17 @@ public class LuaAbiBackendTest {
         assertDollarOnlyInQuotedKeys(out.lua());
 
         assumeLuajit();
-        RunResult run = runLua(out.lua(), autoInvokeProbe());
+        // Auto-invoke the exported function (asserts the user local is not
+        // corrupted by the generated helper), then run a full
+        // fromJson -> toJson -> fromJson roundtrip and assert the value.
+        RunResult run = runLua(out.lua(),
+            autoInvokeProbe() +
+            "local u1 = __mod[\"User$fromJson\"].f(\"{\\\"name\\\":\\\"Ada\\\"}\")\n" +
+            "local s1 = __mod[\"User$toJson\"].f(u1)\n" +
+            "local u2 = __mod[\"User$fromJson\"].f(s1)\n" +
+            "print(u2.name)\n");
         assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("Ada"));
     }
 
     // =========================================================================
@@ -918,6 +935,10 @@ public class LuaAbiBackendTest {
         assertTrue("A_fields exists", aFieldsPos >= 0);
         assertTrue("B_fields emitted before A_fields (topological sort)",
             bFieldsPos < aFieldsPos);
+        // The A_fields descriptor references B artifacts in namespace form
+        // (the NamedType branch of defaultsRef/fieldsRef).
+        assertThat(out.lua(), containsString(
+            "defaults = __deal[\"B_defaults\"], fields = __deal[\"B_fields\"]"));
         assertDollarOnlyInQuotedKeys(out.lua());
     }
 
