@@ -75,8 +75,58 @@ public final class LuaBackend implements Visitor<Void> {
     // keep scope-local artifact locals (ISSUE-0074 D2.6).
     private boolean moduleScope = true;
 
+    // Nested-class declaration tracking (ISSUE-0077, lua-abi-emission-layer
+    // D2.6): counts how many non-module-level class declarations of each
+    // name are lexically visible in the generated Lua at the current
+    // emission point. The frames mirror the Lua scope boundaries emitted
+    // during statement walking (function bodies, if/while/for/do blocks,
+    // and the try pcall closure). Bare blocks emit no Lua scope of their
+    // own, so their declarations register in the enclosing frame — exactly
+    // the visibility of the emitted `local <C>_defaults`. When
+    // emitClassConstruction resolves a root ClassSymbol whose name has a
+    // visible nested declaration, it references the bare <C>_defaults local
+    // so Lua lexical scoping resolves to the scope-local artifact, exactly
+    // as the pre-namespace backend did.
+    private final Map<String, Integer> nestedClassDeclCount = new HashMap<>();
+    private final Deque<List<String>> nestedClassDeclFrames = new ArrayDeque<>();
+
     // Source map support
     private SourceMapGenerator sourceMapGenerator = null;
+
+    // =========================================================================
+    // Nested-class declaration scope tracking
+    // =========================================================================
+
+    /** Opens a nested-class declaration frame at a Lua scope boundary. */
+    private void pushNestedClassFrame() {
+        nestedClassDeclFrames.push(new ArrayList<>());
+    }
+
+    /** Closes the innermost nested-class declaration frame. */
+    private void popNestedClassFrame() {
+        for (String name : nestedClassDeclFrames.pop()) {
+            nestedClassDeclCount.merge(name, -1, Integer::sum);
+        }
+    }
+
+    /**
+     * Records a non-module-level class declaration. When a frame is active,
+     * the name registers in the innermost frame so the count is decremented
+     * when that Lua scope ends; otherwise (chunk-level bare block) the
+     * declaration stays visible for the rest of the chunk, matching the
+     * visibility of the emitted chunk-local artifact.
+     */
+    private void recordNestedClassDeclaration(String name) {
+        nestedClassDeclCount.merge(name, 1, Integer::sum);
+        if (!nestedClassDeclFrames.isEmpty()) {
+            nestedClassDeclFrames.peek().add(name);
+        }
+    }
+
+    /** True if a non-module-level class of this name is lexically visible. */
+    private boolean hasVisibleNestedClassDeclaration(String name) {
+        return nestedClassDeclCount.getOrDefault(name, 0) > 0;
+    }
 
     /**
      * Entry point: generate Lua source for a complete program.
@@ -261,6 +311,8 @@ public final class LuaBackend implements Visitor<Void> {
      */
     public String generateFromInstance(ProgramNode program) {
         moduleScope = true;
+        nestedClassDeclCount.clear();
+        nestedClassDeclFrames.clear();
         emitHeader();
         emitLine("");
         walkStatements(program.statements());
@@ -571,6 +623,8 @@ public final class LuaBackend implements Visitor<Void> {
     @Override
     public Void visit(ProgramNode node) {
         moduleScope = true;
+        nestedClassDeclCount.clear();
+        nestedClassDeclFrames.clear();
         emitHeader();
         walkStatements(node.statements());
         emitJsonableCode();
@@ -613,6 +667,11 @@ public final class LuaBackend implements Visitor<Void> {
                 + " = " + defaults.toString());
             emitLine("local " + LuaAbi.helperKey(name, LuaAbi.HelperKind.META)
                 + " = __rt.export_class(\"" + name + "\")");
+            // Track the declaration so construction sites that resolve to
+            // the root ClassSymbol of the same name reference the bare
+            // <C>_defaults local (Lua lexical scoping) instead of the
+            // __deal namespace entry (nested shadowing, D2.6).
+            recordNestedClassDeclaration(name);
         }
         emitLine();
         return null;
@@ -658,6 +717,7 @@ public final class LuaBackend implements Visitor<Void> {
         indent++;
         boolean savedModuleScope = moduleScope;
         moduleScope = false;
+        pushNestedClassFrame();
 
         // Emit rest parameter unpacking: local <name> = {...}
         if (hasRest) {
@@ -702,6 +762,7 @@ public final class LuaBackend implements Visitor<Void> {
         currentReturnType = savedReturn;
         indent--;
         functionDepth--;
+        popNestedClassFrame();
         moduleScope = savedModuleScope;
 
         emitLine("end)");  // close outer function
@@ -798,6 +859,7 @@ public final class LuaBackend implements Visitor<Void> {
     public Void visit(IfStatement node) {
         boolean savedModuleScope = moduleScope;
         moduleScope = false;
+        pushNestedClassFrame();
         String condLua = "__rt.check_boolean(" + emitExpression(node.condition())
             + ", " + spanArgs(node.condition().span()) + ")";
         emitLine("if " + condLua + " then");
@@ -828,6 +890,7 @@ public final class LuaBackend implements Visitor<Void> {
         } else {
             emitLine("end");
         }
+        popNestedClassFrame();
         moduleScope = savedModuleScope;
         return null;
     }
@@ -862,6 +925,7 @@ public final class LuaBackend implements Visitor<Void> {
     public Void visit(WhileStatement node) {
         boolean savedModuleScope = moduleScope;
         moduleScope = false;
+        pushNestedClassFrame();
         String condLua = "__rt.check_boolean(" + emitExpression(node.condition())
             + ", " + spanArgs(node.condition().span()) + ")";
 
@@ -877,6 +941,7 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("end");
 
         currentContinueLabel = savedLabel;
+        popNestedClassFrame();
         moduleScope = savedModuleScope;
         return null;
     }
@@ -885,6 +950,7 @@ public final class LuaBackend implements Visitor<Void> {
     public Void visit(ForStatement node) {
         boolean savedModuleScope = moduleScope;
         moduleScope = false;
+        pushNestedClassFrame();
         emitLine("-- DEAL for-loop (v0.6 lowering)");
         emitLine("do");
         indent++;
@@ -966,6 +1032,7 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("end");  // do
 
         currentContinueLabel = savedLabel;
+        popNestedClassFrame();
         moduleScope = savedModuleScope;
         return null;
     }
@@ -974,6 +1041,7 @@ public final class LuaBackend implements Visitor<Void> {
     public Void visit(ForOfStatement node) {
         boolean savedModuleScope = moduleScope;
         moduleScope = false;
+        pushNestedClassFrame();
         Type iterableType = typeOf(node.iterable());
 
         emitLine("do");
@@ -1007,6 +1075,7 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("end");  // do
 
         currentContinueLabel = savedLabel;
+        popNestedClassFrame();
         moduleScope = savedModuleScope;
         return null;
     }
@@ -1164,7 +1233,9 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("local __ok, __err = pcall(function()");
         indent++;
         insideTryDepth++;
+        pushNestedClassFrame();  // the pcall closure is a Lua scope boundary
         visit(node.tryBlock());
+        popNestedClassFrame();
         insideTryDepth--;
         indent--;
         emitLine("end)");
@@ -1582,8 +1653,16 @@ public final class LuaBackend implements Visitor<Void> {
         String defaultsRef;
         if (sym instanceof Symbol.ClassSymbol cs) {
             // Root ClassSymbol (module-level class, including the seeded
-            // Error): the artifact lives in the __deal namespace table.
-            defaultsRef = LuaAbi.helperRef(className, LuaAbi.HelperKind.DEFAULTS);
+            // Error): the artifact normally lives in the __deal namespace
+            // table. When a non-module-level declaration of the same name
+            // is lexically visible at the construction site (nested-class
+            // shadowing, lua-abi-emission-layer D2.6), reference the bare
+            // <C>_defaults local instead so Lua lexical scoping resolves to
+            // the scope-local artifact, exactly as the pre-namespace
+            // backend did.
+            defaultsRef = hasVisibleNestedClassDeclaration(className)
+                ? className + "_defaults"
+                : LuaAbi.helperRef(className, LuaAbi.HelperKind.DEFAULTS);
         } else if (cls.modulePath() != null && !cls.modulePath().isEmpty()) {
             // Imported class: find the import alias and use alias._defaults
             String alias = findImportAliasForClass(className, cls.modulePath());
@@ -1657,6 +1736,7 @@ public final class LuaBackend implements Visitor<Void> {
         String bodyStr = captureOutput(() -> {
             boolean savedModuleScope = moduleScope;
             moduleScope = false;
+            pushNestedClassFrame();
             indent = 1;
 
             // Emit rest parameter unpacking: local <name> = {...}
@@ -1694,6 +1774,7 @@ public final class LuaBackend implements Visitor<Void> {
             } else {
                 visit(fe.body());
             }
+            popNestedClassFrame();
             moduleScope = savedModuleScope;
         });
 

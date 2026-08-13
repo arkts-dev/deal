@@ -54,6 +54,16 @@ byte-for-byte (`$` preserved raw).
   classes are block-scoped (legal DEAL) — so only module-level declarations
   write namespace keys; nested classes keep scope-local artifact locals
   (`local <C>_defaults` / `local <C>_meta`) and never write namespace keys.
+- Class construction (`__rt.class_`) references the defaults artifact via
+  `__deal["<C>_defaults"]` for module-level classes — except when a
+  non-module-level declaration of the same name is lexically visible at
+  the construction site (nested shadowing, D2.6): then the bare `C_defaults`
+  local is referenced, and Lua lexical scoping resolves it to the
+  scope-local artifact exactly as the pre-namespace backend did ("keeps
+  today's behavior"). The backend tracks non-module-level declarations per
+  emitted Lua scope boundary (function bodies, if/while/for/do blocks, and
+  the try pcall closure); bare blocks emit no Lua scope of their own, so
+  their declarations register in the enclosing scope.
 - `@jsonable` deferred pass: `__deal["<C>_fields"]`,
   `__deal["<C>$fromJson"]`, `__deal["<C>$toJson"]`; the jsonable forward
   declarations are removed (table fields need no lexical capture).

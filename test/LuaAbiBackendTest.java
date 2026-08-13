@@ -319,6 +319,84 @@ public class LuaAbiBackendTest {
     }
 
     // =========================================================================
+    // Nested-class name shadowing (D2.6: construction keeps today's behavior)
+    // =========================================================================
+
+    /**
+     * A function-local class that shadows a module-level class name: the
+     * construction site inside the function must reference the bare
+     * {@code C_defaults} local (Lua lexical scoping resolves it to the
+     * scope-local artifact), not the module-level {@code __deal} entry.
+     * This preserves the pre-namespace backend's resolution behavior
+     * (lua-abi-emission-layer D2.6 "keeps today's behavior").
+     */
+    @Test
+    public void shadowedModuleClassNameConstructionKeepsScopeLocalDefaults() throws Exception {
+        String source =
+            "class C { x: int = 0; }\n" +
+            "export function test_shadow(): int {\n" +
+            "  class C { y: int = 0; }\n" +
+            "  let c: C = { y: 7 };\n" +
+            "  return c.y;\n" +
+            "}\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString("__deal[\"C_defaults\"] = {x = 0}"));
+        assertThat(out.lua(), containsString("local C_defaults = {y = 0}"));
+        // The construction references the scope-local artifact by bare name;
+        // the module-level namespace entry must not be used for it.
+        assertThat(out.lua(), containsString("__rt.class_(\"C\", C_defaults, {y = 7},"));
+        assertThat(out.lua(), not(containsString("__rt.class_(\"C\", __deal[\"C_defaults\"]")));
+
+        assumeLuajit();
+        RunResult run = runLua(out.lua(), "print(__mod.test_shadow.f())");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("7"));
+    }
+
+    /**
+     * A block-nested class that shadows a module-level class name: the
+     * construction inside the block keeps the scope-local reference, and a
+     * sibling function that constructs the module-level class still uses
+     * the {@code __deal} namespace entry (the block declaration registers
+     * in the enclosing function's Lua scope, which ends at the function).
+     */
+    @Test
+    public void blockNestedShadowingClassKeepsScopeLocalDefaultsAtTheConstructionSite()
+            throws Exception {
+        String source =
+            "class C { x: int = 0; }\n" +
+            "export function test_block_shadow(): int {\n" +
+            "  let out: int = 0;\n" +
+            "  {\n" +
+            "    class C { y: int = 0; }\n" +
+            "    let c: C = { y: 6 };\n" +
+            "    out = c.y;\n" +
+            "  }\n" +
+            "  return out;\n" +
+            "}\n" +
+            "export function after_block(): int {\n" +
+            "  let c: C = { x: 3 };\n" +
+            "  return c.x;\n" +
+            "}\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString("__deal[\"C_defaults\"] = {x = 0}"));
+        assertThat(out.lua(), containsString("local C_defaults = {y = 0}"));
+        assertThat(out.lua(), containsString("__rt.class_(\"C\", C_defaults, {y = 6},"));
+        // The sibling function constructs the module-level class: namespace.
+        assertThat(out.lua(), containsString(
+            "__rt.class_(\"C\", __deal[\"C_defaults\"], {x = 3},"));
+
+        assumeLuajit();
+        RunResult run = runLua(out.lua(),
+            "print(__mod.test_block_shadow.f())\nprint(__mod.after_block.f())");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("6"));
+        assertThat(run.output(), containsString("3"));
+    }
+
+    // =========================================================================
     // has() on a class field named with a Lua keyword
     // =========================================================================
 
