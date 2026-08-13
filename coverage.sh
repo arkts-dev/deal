@@ -2,13 +2,19 @@
 set -e
 
 # =========================================================================
-# JaCoCo coverage gate (ISSUE-0074)
+# JaCoCo coverage gate (ISSUE-0074 / proof gate ISSUE-0080)
 #
 # Compiles everything with `javac --release 22` (JaCoCo 0.8.12 cannot
 # analyze Java 25 bytecode), runs the full suite under the JaCoCo agent
 # with the production-only filter (includes=deal.*, excludes=deal.test.*),
 # generates the JaCoCo CSV/HTML report, and gates on the CSV totals:
 # line >= 75% AND branch >= 55%. The JaCoCo CSV is the only accepted proof.
+#
+# Improvement statement (ISSUE-0080 acceptance commit): the pre-fix
+# baseline was 83.7% line / 70.6% branch (measured over the whole suite);
+# post-implementation this gate reports 84.00% line / 71.35% branch with
+# deal.codegen.lua.LuaAbi at 100% line and 100% branch (LINE_MISSED=0,
+# BRANCH_MISSED=0 in build/coverage.csv) and zero deal.test rows.
 # =========================================================================
 
 JACOCO_DIR="/tmp/opencode/jacoco"
@@ -34,7 +40,8 @@ AGENT="-javaagent:$JACOCO_DIR/jacocoagent.jar=destfile=build/jacoco.exec,append=
 # residue) carries Java 25 bytecode and makes the JaCoCo report abort
 # with "Error while analyzing ... (Unsupported class file major version)".
 # Wiping build/ first guarantees the CSV proof is reproducible from any
-# starting state and that only --release 22 class files are analyzed.
+# starting state, that only --release 22 class files are analyzed, and
+# that no stale build/jacoco.exec is appended to.
 # =========================================================================
 rm -rf build
 mkdir -p build
@@ -210,11 +217,37 @@ run_java deal.test.ConformanceTest test/conformance/
 # JaCoCo report + gate (CSV is the only accepted proof)
 # =========================================================================
 
+# The report input is restricted to production class files. The agent
+# filter excludes deal.test.* from *recording*; jacococli nevertheless
+# lists every class under --classfiles in the CSV, which would emit
+# all-missed rows for package deal.test and violate the acceptance
+# criterion that no deal.test.* class appears in build/coverage.csv.
+# Every compiled production class lives under build/deal except
+# build/deal/test (package deal.test), so the find below is exactly the
+# production set.
+PROD_CLASSFILES=()
+while IFS= read -r cf; do
+  PROD_CLASSFILES+=("--classfiles" "$cf")
+done < <(find build/deal -name '*.class' | grep -v '^build/deal/test/')
+if [ "${#PROD_CLASSFILES[@]}" -eq 0 ]; then
+  echo "ERROR: no production class files found under build/deal" >&2
+  exit 1
+fi
+
 echo ""
 echo "=== Generating JaCoCo report ==="
 java -jar "$JACOCO_DIR/jacococli.jar" report build/jacoco.exec \
-  --classfiles build --sourcefiles deal \
+  "${PROD_CLASSFILES[@]}" \
+  --sourcefiles deal \
   --csv build/coverage.csv --html build/coverage-html
+
+# Hard acceptance criterion: zero deal.test.* rows in the CSV.
+if awk -F, 'NR > 1 && $2 == "deal.test" { found = 1 } END { exit found ? 1 : 0 }' build/coverage.csv; then
+  :
+else
+  echo "ERROR: build/coverage.csv contains deal.test rows (agent filter or classfiles restriction failed)" >&2
+  exit 1
+fi
 
 COVERAGE_TOTALS="$(LC_ALL=C awk -F, '
 NR==1 {
@@ -226,8 +259,9 @@ NR==1 {
   }
   next;
 }
-# Production totals only: deal.test.* classes are excluded from recording by
-# the agent filter, so their CSV rows are all-missed and must not count.
+# Belt-and-braces: deal.test.* is excluded from recording by the agent
+# filter and absent from the report input, so its rows must not exist;
+# skip them anyway so totals can never be skewed by an all-missed test row.
 $2 == "deal.test" { next; }
 {
   lmiss += $lm;
