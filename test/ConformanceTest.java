@@ -492,6 +492,20 @@ public class ConformanceTest {
     private static String executeLua(String luaSource,
             Map<String, CompanionModule> companionModules,
             boolean isXpcallWrapped) {
+        // ABI invariant (lua-abi-emission-layer): generated Lua contains '$'
+        // only inside quoted string keys — the frozen export-key surface
+        // (exports["C$fromJson"]) and META keys under the bare class name.
+        if (!dollarOnlyInQuotedKeys(luaSource)) {
+            System.err.println("    Generated Lua contains $ outside a quoted string key");
+            return null;
+        }
+        for (var entry : companionModules.entrySet()) {
+            if (!dollarOnlyInQuotedKeys(entry.getValue().luaSource())) {
+                System.err.println("    Companion " + entry.getKey()
+                    + " contains $ outside a quoted string key");
+                return null;
+            }
+        }
         String runner;
         if (isXpcallWrapped) {
             runner = buildXpcallRunner(luaSource);
@@ -555,6 +569,21 @@ public class ConformanceTest {
             System.err.println("    Lua execution exception: " + e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Returns true iff every '$' in the generated Lua sits inside a quoted
+     * string key (between the enclosing double quotes).
+     */
+    private static boolean dollarOnlyInQuotedKeys(String lua) {
+        for (int i = lua.indexOf('$'); i >= 0; i = lua.indexOf('$', i + 1)) {
+            int open = lua.lastIndexOf('"', i);
+            int close = lua.indexOf('"', i + 1);
+            if (open < 0 || close < 0 || open >= i || i >= close) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

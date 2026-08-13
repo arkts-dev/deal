@@ -8,6 +8,7 @@ mkdir -p build
 # =========================================================================
 echo "=== Compiling all DEAL sources and tests ==="
 javac --release 25 -d build \
+  -cp /usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar \
   deal/ast/*.java \
   deal/types/*.java \
   deal/diagnostics/*.java \
@@ -37,7 +38,10 @@ javac --release 25 -d build \
   test/RuntimeSourceLocationTest.java \
   test/StdlibContractTest.java \
   test/GenerateStdlibGoldenIr.java \
-  test/ConformanceTest.java
+  test/ConformanceTest.java \
+  test/LuaAbiTest.java \
+  test/LuaAbiBackendTest.java \
+  test/CrossModuleTypingTest.java
 
 # =========================================================================
 # Run all tests
@@ -86,6 +90,10 @@ java -ea -cp build deal.test.LuaBackendTest
 echo ""
 echo "=== Running Lua Backend Integration Tests ==="
 java -ea -cp build deal.test.LuaBackendIntegrationTest
+
+echo ""
+echo "=== Running Lua ABI Unit Tests (JUnit4 + Hamcrest) ==="
+java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.LuaAbiTest deal.test.LuaAbiBackendTest deal.test.CrossModuleTypingTest
 
 echo ""
 echo "=== Running Module System Tests ==="
