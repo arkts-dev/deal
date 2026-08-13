@@ -554,7 +554,8 @@ public class LuaBackendTest {
         );
         assertNoErrors(out, "class decl");
         assertContains(out.lua, "User_defaults", "defaults table");
-        assertContains(out.lua, "User_meta = __rt.export_class", "export class meta");
+        assertContains(out.lua, "__deal[\"User_meta\"] = __rt.export_class",
+            "export class meta");
         assertContains(out.lua, "name = \"\"", "required field in defaults");
         assertContains(out.lua, "nick = __MISSING", "optional field with __MISSING");
     }
@@ -1121,7 +1122,8 @@ public class LuaBackendTest {
             "export class User { name: string = \"\"; nick?: string; }"
         );
         assertNoErrors(out, "class export");
-        assertContains(out.lua, "exports.User = User_meta", "export uses _meta");
+        assertContains(out.lua, "exports.User = __deal[\"User_meta\"]",
+            "export uses _meta");
     }
 
     // =========================================================================
@@ -1291,7 +1293,8 @@ public class LuaBackendTest {
         System.out.println("-- Error Defaults Emitted (F1 round 3) --");
         CompileOutput out = compile("let x: int = 1;");
         assertNoErrors(out, "error defaults");
-        assertContains(out.lua, "local Error_defaults = { code = \"\", message = \"\" }",
+        assertContains(out.lua,
+            "__deal[\"Error_defaults\"] = { code = \"\", message = \"\" }",
             "Error_defaults emitted");
     }
 
@@ -1887,13 +1890,13 @@ public class LuaBackendTest {
             "// @jsonable\nexport class User {\n  name: string;\n  age: int;\n}\n");
         assertNoErrors(out, "@jsonable simple class");
         // Check C_fields table emitted
-        assertContains(out.lua, "User_fields = {", "User_fields table");
+        assertContains(out.lua, "__deal[\"User_fields\"] = {", "User_fields table");
         assertContains(out.lua, "\"name\"", "name field in descriptor");
         assertContains(out.lua, "jtype = \"string\"", "string jtype");
         assertContains(out.lua, "jtype = \"int\"", "int jtype");
         // Check defaults and meta still emitted
-        assertContains(out.lua, "local User_defaults = ", "User_defaults");
-        assertContains(out.lua, "local User_meta = ", "User_meta");
+        assertContains(out.lua, "__deal[\"User_defaults\"] = ", "User_defaults");
+        assertContains(out.lua, "__deal[\"User_meta\"] = ", "User_meta");
         // Structural check only: LuaJIT on this system lacks $ identifier support,
         // but the generated code is structurally valid.
         check(structuralLuaCheck(out.lua), "valid Lua (structural)");
@@ -1905,7 +1908,8 @@ public class LuaBackendTest {
             "// @jsonable\nexport class User {\n  name: string;\n}\n");
         assertNoErrors(out, "@jsonable fromJson");
         // Check C$fromJson function
-        assertContains(out.lua, "User_fromJson = __rt.function_(", "C$fromJson wrapper");
+        assertContains(out.lua, "__deal[\"User$fromJson\"] = __rt.function_(",
+            "C$fromJson wrapper");
         assertContains(out.lua, "\"(string)->User|null\"", "fromJson signature");
         assertContains(out.lua, "pcall(__json_parse, s)", "pcall wrapping json parse");
         assertContains(out.lua, "__rt.json_from_json(", "json_from_json call");
@@ -1920,7 +1924,8 @@ public class LuaBackendTest {
             "// @jsonable\nexport class User {\n  name: string;\n}\n");
         assertNoErrors(out, "@jsonable toJson");
         // Check C$toJson function
-        assertContains(out.lua, "User_toJson = __rt.function_(", "C$toJson wrapper");
+        assertContains(out.lua, "__deal[\"User$toJson\"] = __rt.function_(",
+            "C$toJson wrapper");
         assertContains(out.lua, "\"(User)->string\"", "toJson signature");
         assertContains(out.lua, "__rt.json_to_json(", "json_to_json call");
         assertContains(out.lua, "__json_stringify(", "json_stringify call");
@@ -1933,9 +1938,12 @@ public class LuaBackendTest {
             "// @jsonable\nexport class User {\n  name: string;\n}\n");
         assertNoErrors(out, "@jsonable exports");
         // Check exports table entries
-        assertContains(out.lua, "exports.User_fields = User_fields", "User_fields export");
-        assertContains(out.lua, "exports[\"User$fromJson\"] = User_fromJson", "User$fromJson export");
-        assertContains(out.lua, "exports[\"User$toJson\"] = User_toJson", "User$toJson export");
+        assertContains(out.lua, "exports.User_fields = __deal[\"User_fields\"]",
+            "User_fields export");
+        assertContains(out.lua, "exports[\"User$fromJson\"] = __deal[\"User$fromJson\"]",
+            "User$fromJson export");
+        assertContains(out.lua, "exports[\"User$toJson\"] = __deal[\"User$toJson\"]",
+            "User$toJson export");
         check(structuralLuaCheck(out.lua), "valid Lua (structural)");
     }
 
@@ -1963,8 +1971,8 @@ public class LuaBackendTest {
         assertNoErrors(out, "@jsonable topological sort");
         String lua = out.lua;
         // B_fields (dependency) must be emitted before A_fields (dependent)
-        int bFieldsPos = lua.indexOf("B_fields = {");
-        int aFieldsPos = lua.indexOf("A_fields = {");
+        int bFieldsPos = lua.indexOf("__deal[\"B_fields\"] = {");
+        int aFieldsPos = lua.indexOf("__deal[\"A_fields\"] = {");
         check(bFieldsPos >= 0, "B_fields exists");
         check(aFieldsPos >= 0, "A_fields exists");
         check(bFieldsPos < aFieldsPos, "B_fields emitted before A_fields (topological sort)");
@@ -1982,8 +1990,8 @@ public class LuaBackendTest {
             "// @jsonable\nexport class B {\n  name: string;\n}\n");
         assertNoErrors(out, "@jsonable topological sort wrapped");
         String lua = out.lua;
-        int bFieldsPos = lua.indexOf("B_fields = {");
-        int aFieldsPos = lua.indexOf("A_fields = {");
+        int bFieldsPos = lua.indexOf("__deal[\"B_fields\"] = {");
+        int aFieldsPos = lua.indexOf("__deal[\"A_fields\"] = {");
         check(bFieldsPos >= 0, "B_fields exists");
         check(aFieldsPos >= 0, "A_fields exists");
         check(bFieldsPos < aFieldsPos, "B_fields emitted before A_fields (wrapped type dep)");
@@ -2003,8 +2011,9 @@ public class LuaBackendTest {
         // Should NOT have std.json loading
         assertNotContains(out.lua, "require(\"std.json\")", "no std.json for non-jsonable");
         // Still has defaults and meta
-        assertContains(out.lua, "local Plain_defaults = ", "Plain_defaults still emitted");
-        assertContains(out.lua, "local Plain_meta = ", "Plain_meta still emitted");
+        assertContains(out.lua, "__deal[\"Plain_defaults\"] = ",
+            "Plain_defaults still emitted");
+        assertContains(out.lua, "__deal[\"Plain_meta\"] = ", "Plain_meta still emitted");
         check(isValidLua(out.lua), "valid Lua");  // non-jsonable: no $ identifiers
     }
 }

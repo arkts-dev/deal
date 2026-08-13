@@ -1130,8 +1130,17 @@ public final class TypeChecker {
             }
         }
 
-        // Class field access (including built-in Error class)
-        if (objType instanceof Type.Class cls) {
+        // Class field access (including built-in Error class).
+        // A member access through a nullable class reference (a: C | null)
+        // reads the declared field of the inner class: the runtime guard
+        // (e.g. `if (a.p !== null)`) protects the dereference, mirroring
+        // the field-type shapes the defining module generates.
+        Type classTarget = objType;
+        if (classTarget instanceof Type.Nullable nullable
+                && nullable.inner() instanceof Type.Class) {
+            classTarget = nullable.inner();
+        }
+        if (classTarget instanceof Type.Class cls) {
             Symbol sym = currentScope.resolve(cls.name());
             // If not found locally, try cross-module resolution
             if (!(sym instanceof Symbol.ClassSymbol)) {
@@ -1142,7 +1151,7 @@ public final class TypeChecker {
             if (sym instanceof Symbol.ClassSymbol cs) {
                 ClassField cf = IntrinsicResolvers.findField(cs.fields(), field);
                 if (cf != null) {
-                    Type fieldType = nameResolver.resolveTypeNode(cf.type());
+                    Type fieldType = resolveFieldTypeInClassModule(cs, cf.type());
                     if (cf.optional() && !cf.nullable()) {
                         try {
                             fieldType = Types.nullable(fieldType);
@@ -1255,6 +1264,32 @@ public final class TypeChecker {
         return Type.Table.INSTANCE;
     }
 
+    /**
+     * Resolves a class-field type annotation, preferring the owning module's
+     * scope when the class symbol belongs to a different module.
+     *
+     * <p>Cross-module field types (e.g. {@code addresses: Address[]} declared
+     * in a companion module) cannot resolve bare class names against the
+     * importing module's scope; they are resolved against the owning module
+     * first ({@link NameResolver#resolveTypeNodeInModule}). When the owning
+     * module's resolution is unsupported or returns {@code null}, this falls
+     * back to the plain importing-module resolution — byte-for-byte today's
+     * behavior for every case that does not need foreign resolution.</p>
+     */
+    private Type resolveFieldTypeInClassModule(Symbol.ClassSymbol cs,
+                                               TypeNode typeNode) {
+        String ownerModule = cs.modulePath();
+        if (ownerModule != null && !ownerModule.isEmpty()
+                && !ownerModule.equals(modulePath)) {
+            Type foreign = nameResolver.resolveTypeNodeInModule(
+                typeNode, ownerModule);
+            if (foreign != null) {
+                return foreign;
+            }
+        }
+        return nameResolver.resolveTypeNode(typeNode);
+    }
+
     private Type checkClassConstruction(ObjectLiteralExpr obj, Type.Class cls) {
         Symbol sym = currentScope.resolve(cls.name());
         // If not found locally, try cross-module resolution
@@ -1287,7 +1322,7 @@ public final class TypeChecker {
 
         for (ClassField cf : classFields) {
             Property prop = provided.get(cf.name());
-            Type fieldType = nameResolver.resolveTypeNode(cf.type());
+            Type fieldType = resolveFieldTypeInClassModule(cs, cf.type());
 
             if (prop != null) {
                 Type savedExpected = expectedType;

@@ -192,7 +192,7 @@ public class ConformanceTest {
     // =========================================================================
 
     private static void runCompileOk(TestFile test) throws Exception {
-        List<Diagnostic> diags = compileAndGetDiagnostics(test);
+        List<Diagnostic> diags = compileAndGetDiagnostics(test, null);
         boolean hasErrors = diags.stream().anyMatch(d -> "error".equals(d.severity()));
         if (hasErrors) {
             System.out.println("FAIL (unexpected compile errors)");
@@ -222,7 +222,8 @@ public class ConformanceTest {
             return;
         }
 
-        List<Diagnostic> diags = compileAndGetDiagnostics(test);
+        CompanionCatalog catalog = new CompanionCatalog();
+        List<Diagnostic> diags = compileAndGetDiagnostics(test, catalog);
         boolean hasErrors = diags.stream().anyMatch(d -> "error".equals(d.severity()));
         if (hasErrors) {
             System.out.println("FAIL (unexpected compile errors)");
@@ -237,7 +238,7 @@ public class ConformanceTest {
         }
 
         // Generate Lua for the main test file and any companion modules it imports
-        var generated = generateLuaWithCompanions(test.path());
+        var generated = generateLuaWithCompanions(test.path(), catalog);
         if (generated == null) {
             System.out.println("FAIL (codegen failed)");
             failed++;
@@ -262,7 +263,7 @@ public class ConformanceTest {
     // =========================================================================
 
     private static void runCompileError(TestFile test, String expectedCode) throws Exception {
-        List<Diagnostic> diags = compileAndGetDiagnostics(test);
+        List<Diagnostic> diags = compileAndGetDiagnostics(test, null);
         boolean found = diags.stream().anyMatch(
             d -> "error".equals(d.severity()) && expectedCode.equals(d.code()));
         if (found) {
@@ -293,7 +294,8 @@ public class ConformanceTest {
             return;
         }
 
-        List<Diagnostic> diags = compileAndGetDiagnostics(test);
+        CompanionCatalog catalog = new CompanionCatalog();
+        List<Diagnostic> diags = compileAndGetDiagnostics(test, catalog);
         boolean hasErrors = diags.stream().anyMatch(d -> "error".equals(d.severity()));
         if (hasErrors) {
             System.out.println("FAIL (unexpected compile errors for runtime-error test)");
@@ -308,7 +310,7 @@ public class ConformanceTest {
         }
 
         // Generate Lua for the main test file and any companion modules it imports
-        var generated = generateLuaWithCompanions(test.path());
+        var generated = generateLuaWithCompanions(test.path(), catalog);
         if (generated == null) {
             System.out.println("FAIL (codegen failed)");
             failed++;
@@ -342,7 +344,8 @@ public class ConformanceTest {
     // =========================================================================
 
     @SuppressWarnings("deprecation")
-    private static List<Diagnostic> compileAndGetDiagnostics(TestFile test) throws Exception {
+    private static List<Diagnostic> compileAndGetDiagnostics(TestFile test,
+            CompanionCatalog catalog) throws Exception {
         String source = Files.readString(test.path());
         String filename = test.path().toString();
 
@@ -359,7 +362,8 @@ public class ConformanceTest {
             return allDiags;
         }
 
-        ConformanceModuleResolver resolver = new ConformanceModuleResolver(test.path());
+        ConformanceModuleResolver resolver =
+            new ConformanceModuleResolver(test.path(), catalog);
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable;
         try {
@@ -388,122 +392,52 @@ public class ConformanceTest {
     /**
      * Generate Lua for a test file and any companion modules it imports.
      * <p>
-     * Companion modules are .deal files in the same directory that are imported
-     * by the test file via relative paths. They are compiled to Lua and made
-     * available for the Lua {@code require} system at runtime.
+     * Companion modules are .deal files reachable from the test file through
+     * relative ({@code ./} / {@code ../}) imports. The {@link CompanionCatalog}
+     * compiles each companion transitively (depth-first, with a cycle guard)
+     * and this method collects the full transitive closure so the Lua
+     * {@code require} system can resolve every module at runtime.
      * <p>
-     * Companion modules that are directly imported by the test file are
-     * compiled to Lua. Transitive imports (companion-of-companion) are not
-     * yet compiled; only their export signatures are extracted for
-     * type-checking. Cyclic imports between companions are not yet supported.
+     * A companion that fails to compile yields no entry (as before), which
+     * surfaces as a runtime require failure in the test — the unchanged
+     * failure mode.
      */
-    private static GeneratedLua generateLuaWithCompanions(Path file) throws Exception {
-        String source = Files.readString(file);
-        String filename = file.toString();
-
-        LexResult lex = new Lexer(source, filename).tokenize();
-        if (lex.hasErrors()) return null;
-
-        Parser parser = new Parser(lex.tokens(), filename);
-        ParseResult parseResult = parser.parse();
-        if (parseResult.hasErrors()) return null;
-
-        // Discover companion imports before name resolution, so we can
-        // compile them and make them available to the resolver.
-        Path testDir = file.toAbsolutePath().getParent();
-        Map<String, String> importResolutions = new LinkedHashMap<>();
-        Map<String, CompanionModule> companionModules = new LinkedHashMap<>();
-
-        for (StatementNode stmt : parseResult.program().statements()) {
-            if (stmt instanceof ImportDeclaration imp) {
-                String importPath = imp.modulePath();
-                Path resolvedPath = resolveCompanionPath(importPath, testDir);
-                if (resolvedPath != null && resolvedPath.getParent().equals(testDir)) {
-                    String moduleName = moduleNameFor(resolvedPath);
-                    importResolutions.put(importPath, moduleName);
-
-                    if (!companionModules.containsKey(moduleName)) {
-                        String companionLua = generateModuleLua(resolvedPath);
-                        if (companionLua != null) {
-                            companionModules.put(moduleName,
-                                new CompanionModule(companionLua, moduleName));
-                        }
-                    }
-                }
-            }
+    private static GeneratedLua generateLuaWithCompanions(Path file,
+            CompanionCatalog catalog) throws Exception {
+        CompanionCatalog.Artifact mainArtifact =
+            catalog.artifactFor(file.toAbsolutePath().normalize());
+        if (mainArtifact == null || mainArtifact.luaSource() == null) {
+            return null;
         }
 
-        // Name resolution and type checking for the main test file.
-        // The ConformanceModuleResolver will resolve companion imports
-        // by extracting their exports via ExportExtractor.
-        ConformanceModuleResolver resolver = new ConformanceModuleResolver(file);
-        NameResolver nr = new NameResolver(filename, resolver);
-        SymbolTable symTable = nr.resolve(parseResult.program());
-        if (nr.diagnostics().stream().anyMatch(d -> "error".equals(d.severity())))
-            return null;
-
-        CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
-        if (result.hasErrors()) return null;
-
-        // Generate main Lua with import resolutions so that `require` paths
-        // use the companion module names rather than the raw .deal paths.
-        String mainLua = LuaBackend.generateWithImports(
-            parseResult.program(), result, filename, importResolutions);
-
-        return new GeneratedLua(mainLua, companionModules);
+        Map<String, CompanionModule> companionModules = new LinkedHashMap<>();
+        Set<Path> seen = new HashSet<>();
+        collectCompanionModules(mainArtifact, catalog, companionModules, seen);
+        return new GeneratedLua(mainArtifact.luaSource(), companionModules);
     }
 
     /**
-     * Generate Lua for a companion module file (a .deal file that is imported
-     * by a test file but is not itself a test).
-     * <p>
-     * Companion modules may themselves import other modules. The import
-     * resolutions for these are extracted and passed to
-     * {@link LuaBackend#generateWithImports} so that {@code require} paths
-     * are correct in the generated Lua. However, transitive companion modules
-     * (companion-of-companion) are not themselves compiled to Lua files —
-     * only their export signatures are extracted for type-checking.
+     * Collects every transitively reachable companion module (depth-first)
+     * from an artifact's direct companion dependencies. Each companion is
+     * written once, keyed by its stem module name in the flat temp-dir
+     * namespace.
      */
-    private static String generateModuleLua(Path file) throws Exception {
-        String source = Files.readString(file);
-        String filename = file.toString();
-
-        LexResult lex = new Lexer(source, filename).tokenize();
-        if (lex.hasErrors()) return null;
-
-        Parser parser = new Parser(lex.tokens(), filename);
-        ParseResult parseResult = parser.parse();
-        if (parseResult.hasErrors()) return null;
-
-        // Build import resolutions for any imports the companion itself has
-        Path testDir = file.toAbsolutePath().getParent();
-        Map<String, String> importResolutions = new LinkedHashMap<>();
-
-        for (StatementNode stmt : parseResult.program().statements()) {
-            if (stmt instanceof ImportDeclaration imp) {
-                String importPath = imp.modulePath();
-                Path resolvedPath = resolveCompanionPath(importPath, testDir);
-                if (resolvedPath != null) {
-                    String moduleName = moduleNameFor(resolvedPath);
-                    importResolutions.put(importPath, moduleName);
-                }
+    private static void collectCompanionModules(CompanionCatalog.Artifact artifact,
+            CompanionCatalog catalog,
+            Map<String, CompanionModule> companionModules,
+            Set<Path> seen) {
+        for (Path dep : artifact.companionDependencies()) {
+            if (!seen.add(dep.toAbsolutePath().normalize())) continue;
+            CompanionCatalog.Artifact depArtifact =
+                catalog.artifactFor(dep.toAbsolutePath().normalize());
+            if (depArtifact == null || depArtifact.luaSource() == null) {
+                continue; // compile failure → runtime require failure (unchanged)
             }
+            String moduleName = moduleNameFor(dep);
+            companionModules.put(moduleName,
+                new CompanionModule(depArtifact.luaSource(), moduleName));
+            collectCompanionModules(depArtifact, catalog, companionModules, seen);
         }
-
-        ConformanceModuleResolver resolver = new ConformanceModuleResolver(file);
-        NameResolver nr = new NameResolver(filename, resolver);
-        SymbolTable symTable = nr.resolve(parseResult.program());
-        if (nr.diagnostics().stream().anyMatch(d -> "error".equals(d.severity())))
-            return null;
-
-        CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
-        if (result.hasErrors()) return null;
-
-        if (importResolutions.isEmpty()) {
-            return LuaBackend.generate(parseResult.program(), result, filename);
-        }
-        return LuaBackend.generateWithImports(
-            parseResult.program(), result, filename, importResolutions);
     }
 
     /**
@@ -747,6 +681,127 @@ public class ConformanceTest {
     // =========================================================================
 
     /**
+     * Compile-and-cache service for companion {@code .deal} files, shared by
+     * code generation ({@code generateLuaWithCompanions}) and type resolution
+     * ({@code ConformanceModuleResolver.resolveClassSymbol} /
+     * {@code resolveTypeNodeInModule}).
+     *
+     * <p>Per-file artifacts hold the generated Lua source, the import
+     * resolutions (import path → stem module name), the compiled symbol
+     * table and name resolver, and the set of direct companion
+     * dependencies. Companions are compiled transitively, depth-first,
+     * with a per-file cache keyed by absolute path and an in-progress set
+     * that guards cycles (an in-progress file is skipped — its module is
+     * already being emitted once).</p>
+     *
+     * <p>Module names are file stems in one flat temp-dir namespace; a
+     * companion closure must not contain two same-stem files (the gap-02
+     * fixture set satisfies this).</p>
+     */
+    private static final class CompanionCatalog {
+
+        /** Compilation artifact for a single .deal file. */
+        record Artifact(
+            String luaSource,
+            Map<String, String> importResolutions,
+            SymbolTable symbolTable,
+            NameResolver nameResolver,
+            Set<Path> companionDependencies
+        ) {}
+
+        private final Map<Path, Artifact> cache = new LinkedHashMap<>();
+        private final Set<Path> inProgress = new HashSet<>();
+
+        /**
+         * Returns the compiled artifact for a file, compiling it (and all
+         * of its transitive companion dependencies) on first use.
+         * Returns {@code null} when the file cannot be read, fails any
+         * compilation stage, or is currently in progress (cycle) — the
+         * same tolerant contract production resolution has.
+         */
+        Artifact artifactFor(Path file) {
+            Path key = file.toAbsolutePath().normalize();
+            Artifact cached = cache.get(key);
+            if (cached != null) return cached;
+            if (inProgress.contains(key)) return null;
+
+            inProgress.add(key);
+            try {
+                Artifact artifact = compile(key);
+                if (artifact != null) {
+                    cache.put(key, artifact);
+                }
+                return artifact;
+            } finally {
+                inProgress.remove(key);
+            }
+        }
+
+        private Artifact compile(Path file) {
+            try {
+                String source = Files.readString(file);
+                String filename = file.toString();
+
+                LexResult lex = new Lexer(source, filename).tokenize();
+                if (lex.hasErrors()) return null;
+
+                Parser parser = new Parser(lex.tokens(), filename);
+                ParseResult parseResult = parser.parse();
+                if (parseResult.hasErrors()) return null;
+
+                // Discover this file's own companion imports. Stdlib paths
+                // (non-./ and non-../) are not companions: resolveCompanionPath
+                // returns null and they pass through raw as slash-separated
+                // require names.
+                Path fileDir = file.toAbsolutePath().normalize().getParent();
+                Map<String, String> importResolutions = new LinkedHashMap<>();
+                Set<Path> companionDependencies = new LinkedHashSet<>();
+
+                for (StatementNode stmt : parseResult.program().statements()) {
+                    if (stmt instanceof ImportDeclaration imp) {
+                        String importPath = imp.modulePath();
+                        Path resolvedPath = resolveCompanionPath(importPath, fileDir);
+                        if (resolvedPath != null) {
+                            importResolutions.put(importPath,
+                                moduleNameFor(resolvedPath));
+                            companionDependencies.add(
+                                resolvedPath.toAbsolutePath().normalize());
+                        }
+                    }
+                }
+
+                // Compile each companion dependency transitively (depth-first).
+                for (Path dep : new ArrayList<>(companionDependencies)) {
+                    artifactFor(dep);
+                }
+
+                // Name resolution rooted at this file.
+                ConformanceModuleResolver resolver =
+                    new ConformanceModuleResolver(file, this);
+                NameResolver nr = new NameResolver(filename, resolver);
+                SymbolTable symTable = nr.resolve(parseResult.program());
+                if (nr.diagnostics().stream().anyMatch(
+                        d -> "error".equals(d.severity()))) {
+                    return null;
+                }
+
+                CheckResult result = TypeChecker.check(
+                    filename, symTable, nr, parseResult.program());
+                if (result.hasErrors()) return null;
+
+                String luaSource = LuaBackend.generateWithImports(
+                    parseResult.program(), result, filename, importResolutions);
+                return new Artifact(luaSource,
+                    Collections.unmodifiableMap(new LinkedHashMap<>(importResolutions)),
+                    symTable, nr,
+                    Collections.unmodifiableSet(new LinkedHashSet<>(companionDependencies)));
+            } catch (Exception e) {
+                return null; // mirrors today's null degradation paths
+            }
+        }
+    }
+
+    /**
      * A module resolver that resolves stdlib modules by parsing the actual
      * .d.deal files via {@link StdlibModuleResolver}, and resolves relative
      * file imports using {@link ExportExtractor}.
@@ -758,10 +813,12 @@ public class ConformanceTest {
     private static class ConformanceModuleResolver implements ModuleResolver {
 
         private final Path testFileDir;
+        private final CompanionCatalog catalog;
         private final Map<String, Map<String, Type>> stdlibExports;
 
-        ConformanceModuleResolver(Path testFile) {
+        ConformanceModuleResolver(Path testFile, CompanionCatalog catalog) {
             this.testFileDir = testFile.toAbsolutePath().getParent();
+            this.catalog = catalog;
             this.stdlibExports = StdlibModuleResolver.stdlibExports();
         }
 
@@ -795,7 +852,34 @@ public class ConformanceTest {
         public Symbol.ClassSymbol resolveClassSymbol(String className,
                 String modulePath, String importingModule)
                 throws ModuleNotFoundException {
-            return null; // Not needed for conformance tests currently
+            // Local classes (absent modulePath) resolve through the local
+            // scope in NameResolver; only foreign module paths reach here.
+            if (catalog == null || modulePath == null || modulePath.isEmpty()) {
+                return null;
+            }
+            CompanionCatalog.Artifact artifact = catalog.artifactFor(
+                Path.of(modulePath).toAbsolutePath().normalize());
+            if (artifact == null || artifact.symbolTable() == null) {
+                return null; // file missing / compile failure / in-progress cycle
+            }
+            Symbol sym = artifact.symbolTable().resolve(className);
+            if (sym instanceof Symbol.ClassSymbol cs) return cs;
+            return null;
+        }
+
+        @Override
+        public Type resolveTypeNodeInModule(TypeNode typeNode,
+                String modulePath, String importingModule)
+                throws ModuleNotFoundException {
+            if (catalog == null || modulePath == null || modulePath.isEmpty()) {
+                return null;
+            }
+            CompanionCatalog.Artifact artifact = catalog.artifactFor(
+                Path.of(modulePath).toAbsolutePath().normalize());
+            if (artifact == null || artifact.nameResolver() == null) {
+                return null;
+            }
+            return artifact.nameResolver().resolveTypeNode(typeNode);
         }
 
         // ---- relative file imports ----

@@ -848,6 +848,31 @@ public final class NameResolver {
     }
 
     /**
+     * Resolves a type node against the scope of another module.
+     *
+     * <p>Delegates to the module resolver; used by the type checker for
+     * cross-module class-field type annotations. Returns {@code null}
+     * when the target module cannot be found or does not support the
+     * resolution (callers fall back to local resolution).</p>
+     *
+     * @param typeNode the type annotation to resolve
+     * @param modulePath the module path of the declaring module
+     * @return the resolved type, or {@code null} when unsupported
+     */
+    public Type resolveTypeNodeInModule(TypeNode typeNode, String modulePath) {
+        if (modulePath == null || modulePath.isEmpty()
+                || modulePath.equals(this.modulePath)) {
+            return resolveTypeNode(typeNode);
+        }
+        try {
+            return moduleResolver.resolveTypeNodeInModule(
+                typeNode, modulePath, this.modulePath);
+        } catch (ModuleResolver.ModuleNotFoundException e) {
+            return null;
+        }
+    }
+
+    /**
      * Checks whether a function is exported from a given module.
      *
      * <p>For same-module queries ({@code modulePath} is null, empty, or

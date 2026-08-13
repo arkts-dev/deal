@@ -69,6 +69,12 @@ public final class LuaBackend implements Visitor<Void> {
     // and update expressions are remapped to "_name" (the outer counter).
     private String forLoopShadowVar = null;
 
+    // Module-scope flag: true while walking statements at Lua chunk scope.
+    // Module-level class artifacts are emitted into the __deal namespace
+    // table; classes declared inside functions or control-flow constructs
+    // keep scope-local artifact locals (ISSUE-0074 D2.6).
+    private boolean moduleScope = true;
+
     // Source map support
     private SourceMapGenerator sourceMapGenerator = null;
 
@@ -91,10 +97,8 @@ public final class LuaBackend implements Visitor<Void> {
         backend.sourceFilePath = sourcePath;
         backend.importResolutions = Map.copyOf(importResolutions);
         backend.emitHeader();
-        backend.emitLine("local Error_defaults = { code = \"\", message = \"\" }");
         backend.emitLine("");
 
-        backend.emitJsonableForwardDecls(program);
         backend.walkStatements(program.statements());
         backend.emitJsonableCode();
         backend.emitExports();
@@ -115,10 +119,8 @@ public final class LuaBackend implements Visitor<Void> {
         backend.importResolutions = Map.copyOf(importResolutions);
         backend.sourceMapGenerator = smg;
         backend.emitHeader();
-        backend.emitLine("local Error_defaults = { code = \"\", message = \"\" }");
         backend.emitLine("");
 
-        backend.emitJsonableForwardDecls(program);
         backend.walkStatements(program.statements());
         backend.emitJsonableCode();
         backend.emitExports();
@@ -258,8 +260,8 @@ public final class LuaBackend implements Visitor<Void> {
      * Generate Lua source using this instance (for tests that need diagnostics).
      */
     public String generateFromInstance(ProgramNode program) {
+        moduleScope = true;
         emitHeader();
-        emitLine("local Error_defaults = { code = \"\", message = \"\" }");
         emitLine("");
         walkStatements(program.statements());
         emitJsonableCode();
@@ -312,18 +314,19 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("local int = __rt.int_convert");
         emitLine("local number = __rt.number_convert");
         emitLine("");
+        // Generated-namespace table: owns all compiler-generated module-level
+        // artifacts (Error defaults, class defaults/meta, @jsonable helpers).
+        // User bindings cannot shadow table fields.
+        emitLine("local " + LuaAbi.NAMESPACE + " = {}");
+        emitLine(LuaAbi.namespaceAssignment("Error_defaults",
+            "{ code = \"\", message = \"\" }"));
+        emitLine("");
     }
 
     private void emitExports() {
         emitLine("local exports = {}");
         for (var entry : exportedValues.entrySet()) {
-            String key = entry.getKey();
-            String value = entry.getValue();
-            if (key.indexOf('$') >= 0) {
-                emitLine("exports[\"" + key + "\"] = " + value);
-            } else {
-                emitLine("exports." + key + " = " + value);
-            }
+            emitLine(LuaAbi.exportAssignment(entry.getKey(), entry.getValue()));
         }
         emitLine("return exports");
     }
@@ -567,6 +570,7 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(ProgramNode node) {
+        moduleScope = true;
         emitHeader();
         walkStatements(node.statements());
         emitJsonableCode();
@@ -582,22 +586,34 @@ public final class LuaBackend implements Visitor<Void> {
         for (ClassField field : node.fields()) {
             if (!first) defaults.append(", ");
             first = false;
-            defaults.append(field.name()).append(" = ");
+            String fieldDefault;
             if (field.optional() && field.defaultExpr().isEmpty()) {
-                defaults.append("__MISSING");
+                fieldDefault = "__MISSING";
             } else if (field.defaultExpr().isPresent()) {
-                defaults.append(emitExpression(field.defaultExpr().get()));
+                fieldDefault = emitExpression(field.defaultExpr().get());
             } else if (field.nullable()) {
-                defaults.append("__NULL");
+                fieldDefault = "__NULL";
             } else {
-                defaults.append(defaultValueForTypeNode(field.type()));
+                fieldDefault = defaultValueForTypeNode(field.type());
             }
+            defaults.append(LuaAbi.tableField(field.name(), fieldDefault));
         }
         defaults.append("}");
 
         emitLine("-- Class: " + name);
-        emitLine("local " + name + "_defaults = " + defaults.toString());
-        emitLine("local " + name + "_meta = __rt.export_class(\"" + name + "\")");
+        if (moduleScope) {
+            emitLine(LuaAbi.namespaceAssignment(
+                LuaAbi.helperKey(name, LuaAbi.HelperKind.DEFAULTS),
+                defaults.toString()));
+            emitLine(LuaAbi.namespaceAssignment(
+                LuaAbi.helperKey(name, LuaAbi.HelperKind.META),
+                "__rt.export_class(\"" + name + "\")"));
+        } else {
+            emitLine("local " + LuaAbi.helperKey(name, LuaAbi.HelperKind.DEFAULTS)
+                + " = " + defaults.toString());
+            emitLine("local " + LuaAbi.helperKey(name, LuaAbi.HelperKind.META)
+                + " = __rt.export_class(\"" + name + "\")");
+        }
         emitLine();
         return null;
     }
@@ -640,6 +656,8 @@ public final class LuaBackend implements Visitor<Void> {
 
         functionDepth++;
         indent++;
+        boolean savedModuleScope = moduleScope;
+        moduleScope = false;
 
         // Emit rest parameter unpacking: local <name> = {...}
         if (hasRest) {
@@ -684,6 +702,7 @@ public final class LuaBackend implements Visitor<Void> {
         currentReturnType = savedReturn;
         indent--;
         functionDepth--;
+        moduleScope = savedModuleScope;
 
         emitLine("end)");  // close outer function
         emitLine();
@@ -777,6 +796,8 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(IfStatement node) {
+        boolean savedModuleScope = moduleScope;
+        moduleScope = false;
         String condLua = "__rt.check_boolean(" + emitExpression(node.condition())
             + ", " + spanArgs(node.condition().span()) + ")";
         emitLine("if " + condLua + " then");
@@ -807,6 +828,7 @@ public final class LuaBackend implements Visitor<Void> {
         } else {
             emitLine("end");
         }
+        moduleScope = savedModuleScope;
         return null;
     }
 
@@ -838,6 +860,8 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(WhileStatement node) {
+        boolean savedModuleScope = moduleScope;
+        moduleScope = false;
         String condLua = "__rt.check_boolean(" + emitExpression(node.condition())
             + ", " + spanArgs(node.condition().span()) + ")";
 
@@ -853,11 +877,14 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("end");
 
         currentContinueLabel = savedLabel;
+        moduleScope = savedModuleScope;
         return null;
     }
 
     @Override
     public Void visit(ForStatement node) {
+        boolean savedModuleScope = moduleScope;
+        moduleScope = false;
         emitLine("-- DEAL for-loop (v0.6 lowering)");
         emitLine("do");
         indent++;
@@ -939,11 +966,14 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("end");  // do
 
         currentContinueLabel = savedLabel;
+        moduleScope = savedModuleScope;
         return null;
     }
 
     @Override
     public Void visit(ForOfStatement node) {
+        boolean savedModuleScope = moduleScope;
+        moduleScope = false;
         Type iterableType = typeOf(node.iterable());
 
         emitLine("do");
@@ -977,6 +1007,7 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("end");  // do
 
         currentContinueLabel = savedLabel;
+        moduleScope = savedModuleScope;
         return null;
     }
 
@@ -1034,11 +1065,13 @@ public final class LuaBackend implements Visitor<Void> {
                 visit(fd);
             }
             case ClassDeclaration cd -> {
-                exportedValues.putIfAbsent(cd.name(), cd.name() + "_meta");
+                exportedValues.putIfAbsent(cd.name(),
+                    LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.META));
                 // Also export the defaults table so importing modules
                 // can construct instances of this class.
-                exportedValues.putIfAbsent(cd.name() + "_defaults",
-                    cd.name() + "_defaults");
+                exportedValues.putIfAbsent(
+                    LuaAbi.helperKey(cd.name(), LuaAbi.HelperKind.DEFAULTS),
+                    LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.DEFAULTS));
                 visit(cd);
 
                 // ISSUE-0050: @jsonable deferred codegen
@@ -1047,12 +1080,15 @@ public final class LuaBackend implements Visitor<Void> {
                     deferredJsonables.add(new JsonableClassMeta(
                         cd.name(), cd.fields()));
                     // Register exports for generated jsonable artifacts
-                    exportedValues.putIfAbsent(cd.name() + "_fields",
-                        cd.name() + "_fields");
-                    exportedValues.putIfAbsent(cd.name() + "$fromJson",
-                        cd.name() + "_fromJson");
-                    exportedValues.putIfAbsent(cd.name() + "$toJson",
-                        cd.name() + "_toJson");
+                    exportedValues.putIfAbsent(
+                        LuaAbi.helperKey(cd.name(), LuaAbi.HelperKind.FIELDS),
+                        LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.FIELDS));
+                    exportedValues.putIfAbsent(
+                        LuaAbi.helperKey(cd.name(), LuaAbi.HelperKind.FROM_JSON),
+                        LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.FROM_JSON));
+                    exportedValues.putIfAbsent(
+                        LuaAbi.helperKey(cd.name(), LuaAbi.HelperKind.TO_JSON),
+                        LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.TO_JSON));
                 }
             }
             default -> {}
@@ -1087,6 +1123,8 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(TryStatement node) {
+        boolean savedModuleScope = moduleScope;
+        moduleScope = false;
         // ---- Save try-return flags ----
         String savedFlag = tryReturnFlag;
         String savedVal = tryReturnVal;
@@ -1202,6 +1240,7 @@ public final class LuaBackend implements Visitor<Void> {
         }
 
         emitLine("end");
+        moduleScope = savedModuleScope;
         return null;
     }
 
@@ -1313,7 +1352,7 @@ public final class LuaBackend implements Visitor<Void> {
             return "_" + name;
         }
         if (name.indexOf('$') >= 0) {
-            return name.replace('$', '_');
+            return LuaAbi.generatedRef(name);
         }
         return name;
     }
@@ -1456,10 +1495,7 @@ public final class LuaBackend implements Visitor<Void> {
         if (field.equals("length") && objType instanceof Type.Array) {
             return "#" + obj;
         }
-        if (field.indexOf('$') >= 0) {
-            return obj + "[\"" + field + "\"]";
-        }
-        return obj + "." + field;
+        return LuaAbi.memberAccess(obj, field);
     }
 
     @Override public Void visit(IndexExpr node) {
@@ -1514,8 +1550,8 @@ public final class LuaBackend implements Visitor<Void> {
         for (Property prop : obj.properties()) {
             if (!first) sb.append(", ");
             first = false;
-            sb.append(prop.name()).append(" = ")
-                .append(emitExpression(prop.value()));
+            sb.append(LuaAbi.tableField(prop.name(),
+                emitExpression(prop.value())));
         }
         sb.append("}");
         return sb.toString();
@@ -1530,20 +1566,22 @@ public final class LuaBackend implements Visitor<Void> {
         for (Property prop : obj.properties()) {
             if (!first) provided.append(", ");
             first = false;
-            provided.append(prop.name()).append(" = ")
-                .append(emitExpression(prop.value()));
+            provided.append(LuaAbi.tableField(prop.name(),
+                emitExpression(prop.value())));
         }
         provided.append("}");
 
         String defaultsRef;
         if (sym instanceof Symbol.ClassSymbol cs) {
-            // Local class: reference defaults table directly
-            defaultsRef = className + "_defaults";
+            // Root ClassSymbol (module-level class, including the seeded
+            // Error): the artifact lives in the __deal namespace table.
+            defaultsRef = LuaAbi.helperRef(className, LuaAbi.HelperKind.DEFAULTS);
         } else if (cls.modulePath() != null && !cls.modulePath().isEmpty()) {
             // Imported class: find the import alias and use alias._defaults
             String alias = findImportAliasForClass(className, cls.modulePath());
             if (alias != null) {
-                defaultsRef = alias + "." + className + "_defaults";
+                defaultsRef = LuaAbi.memberAccess(alias,
+                    LuaAbi.helperKey(className, LuaAbi.HelperKind.DEFAULTS));
             } else {
                 defaultsRef = "{}";
             }
@@ -1609,6 +1647,8 @@ public final class LuaBackend implements Visitor<Void> {
         functionDepth++;
 
         String bodyStr = captureOutput(() -> {
+            boolean savedModuleScope = moduleScope;
+            moduleScope = false;
             indent = 1;
 
             // Emit rest parameter unpacking: local <name> = {...}
@@ -1646,6 +1686,7 @@ public final class LuaBackend implements Visitor<Void> {
             } else {
                 visit(fe.body());
             }
+            moduleScope = savedModuleScope;
         });
 
         functionDepth--;
@@ -1662,7 +1703,7 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     private String emitHas(HasExpr has) {
-        return emitExpression(has.object()) + "." + has.field() + " ~= nil";
+        return LuaAbi.hasCheck(emitExpression(has.object()), has.field());
     }
 
     @Override public Void visit(AssignmentExpr node) {
@@ -1820,39 +1861,6 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     /**
-     * Emits forward {@code local} declarations for all @jsonable-generated
-     * artifacts before {@link #walkStatements} emits user functions that
-     * reference them.  Without these forward declarations, user-defined
-     * functions that call {@code C$fromJson} / {@code C$toJson} would
-     * reference those names as globals instead of capturing the module-level
-     * locals that {@link #emitJsonableCode} later assigns.
-     *
-     * <p>Pre-scans the program AST for {@code export class} declarations
-     * annotated with {@code // @jsonable} and emits a bare {@code local}
-     * for each generated function and field descriptor.  The actual
-     * definitions are assigned later in {@link #emitJsonableCode}.</p>
-     */
-    private void emitJsonableForwardDecls(ProgramNode program) {
-        List<String> names = new ArrayList<>();
-        for (StatementNode stmt : program.statements()) {
-            if (stmt instanceof ExportDeclaration exp
-                && exp.declaration() instanceof ClassDeclaration cd
-                && cd.isJsonable()) {
-                names.add(cd.name());
-            }
-        }
-        if (names.isEmpty()) return;
-
-        emitLine("-- @jsonable: forward declarations (captured by closures)");
-        for (String name : names) {
-            emitLine("local " + name + "_fields");
-            emitLine("local " + name + "_fromJson");
-            emitLine("local " + name + "_toJson");
-        }
-        emitLine();
-    }
-
-    /**
      * Emits all deferred @jsonable code after all statements have been walked.
      *
      * <p>Performs two sub-passes after topological sort by same-module
@@ -2001,7 +2009,8 @@ public final class LuaBackend implements Visitor<Void> {
      */
     private void emitFieldDescriptor(JsonableClassMeta meta) {
         String name = meta.className;
-        emitLine(name + "_fields = {");
+        emitLine(LuaAbi.namespaceAssignment(
+            LuaAbi.helperKey(name, LuaAbi.HelperKind.FIELDS), "{"));
         indent++;
         List<ClassField> fields = meta.fields;
         for (int i = 0; i < fields.size(); i++) {
@@ -2120,8 +2129,9 @@ public final class LuaBackend implements Visitor<Void> {
      */
     private String defaultsRefForTypeNode(TypeNode typeNode) {
         return switch (typeNode) {
-            case NamedType nt -> nt.name() + "_defaults";
-            case QualifiedType qt -> qt.moduleName() + "." + qt.typeName() + "_defaults";
+            case NamedType nt -> LuaAbi.helperRef(nt.name(), LuaAbi.HelperKind.DEFAULTS);
+            case QualifiedType qt -> LuaAbi.memberAccess(qt.moduleName(),
+                LuaAbi.helperKey(qt.typeName(), LuaAbi.HelperKind.DEFAULTS));
             default -> "{}";
         };
     }
@@ -2131,8 +2141,9 @@ public final class LuaBackend implements Visitor<Void> {
      */
     private String fieldsRefForTypeNode(TypeNode typeNode) {
         return switch (typeNode) {
-            case NamedType nt -> nt.name() + "_fields";
-            case QualifiedType qt -> qt.moduleName() + "." + qt.typeName() + "_fields";
+            case NamedType nt -> LuaAbi.helperRef(nt.name(), LuaAbi.HelperKind.FIELDS);
+            case QualifiedType qt -> LuaAbi.memberAccess(qt.moduleName(),
+                LuaAbi.helperKey(qt.typeName(), LuaAbi.HelperKind.FIELDS));
             default -> "{}";
         };
     }
@@ -2143,16 +2154,18 @@ public final class LuaBackend implements Visitor<Void> {
     private void emitFromJson(JsonableClassMeta meta) {
         String name = meta.className;
         String sig = "(string)->" + name + "|null";
-        String luaName = name + "_fromJson";
 
-        emitLine(luaName + " = __rt.function_(\"" + sig
-            + "\", function(s)");
+        emitLine(LuaAbi.namespaceAssignment(
+            LuaAbi.helperKey(name, LuaAbi.HelperKind.FROM_JSON),
+            "__rt.function_(\"" + sig + "\", function(s)"));
         indent++;
         emitLine("__rt.check_string(s)");
         emitLine("local ok, parsed = pcall(__json_parse, s)");
         emitLine("if not ok then return __NULL end");
         emitLine("local instance = __rt.json_from_json(\"" + name
-            + "\", parsed, " + name + "_defaults, " + name + "_fields)");
+            + "\", parsed, "
+            + LuaAbi.helperRef(name, LuaAbi.HelperKind.DEFAULTS) + ", "
+            + LuaAbi.helperRef(name, LuaAbi.HelperKind.FIELDS) + ")");
         emitLine("if instance == nil then return __NULL end");
         emitLine("return instance");
         indent--;
@@ -2166,14 +2179,14 @@ public final class LuaBackend implements Visitor<Void> {
     private void emitToJson(JsonableClassMeta meta) {
         String name = meta.className;
         String sig = "(" + name + ")->string";
-        String luaName = name + "_toJson";
 
-        emitLine(luaName + " = __rt.function_(\"" + sig
-            + "\", function(v)");
+        emitLine(LuaAbi.namespaceAssignment(
+            LuaAbi.helperKey(name, LuaAbi.HelperKind.TO_JSON),
+            "__rt.function_(\"" + sig + "\", function(v)"));
         indent++;
         emitLine("__rt.check_type(\"" + name + "\", v)");
         emitLine("local t = __rt.json_to_json(\"" + name
-            + "\", v, " + name + "_fields)");
+            + "\", v, " + LuaAbi.helperRef(name, LuaAbi.HelperKind.FIELDS) + ")");
         emitLine("return __json_stringify(t)");
         indent--;
         emitLine("end)");

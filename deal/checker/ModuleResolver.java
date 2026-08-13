@@ -2,6 +2,7 @@ package deal.checker;
 
 import java.util.Map;
 import java.util.Set;
+import deal.ast.TypeNode;
 import deal.types.Type;
 
 /**
@@ -44,6 +45,33 @@ public interface ModuleResolver {
     Symbol.ClassSymbol resolveClassSymbol(String className, String modulePath,
                                            String importingModule)
         throws ModuleNotFoundException;
+
+    /**
+     * Resolves a field {@link TypeNode} against the scope of the module
+     * identified by {@code modulePath} (the owning module of a class
+     * declaration).
+     *
+     * <p>Used by the type checker to resolve field type annotations of a
+     * cross-module {@link Symbol.ClassSymbol} against the declaring
+     * module's scope, so that bare class names inside the field type
+     * (e.g. {@code Address[]}) resolve against the owning module's
+     * declarations rather than the importing module's.</p>
+     *
+     * <p>The default implementation returns {@code null} (unsupported);
+     * callers must fall back to their local resolution when {@code null}
+     * is returned. Existing implementations stay source-compatible.</p>
+     *
+     * @param typeNode the field type annotation to resolve
+     * @param modulePath the module path where the owning class is declared
+     * @param importingModule the module path of the file requesting the type
+     * @return the resolved type, or {@code null} when unsupported or not found
+     * @throws ModuleNotFoundException if the module cannot be found
+     */
+    default Type resolveTypeNodeInModule(TypeNode typeNode, String modulePath,
+                                         String importingModule)
+            throws ModuleNotFoundException {
+        return null; // unsupported by default
+    }
 
     /** Exception thrown when a module cannot be found. */
     final class ModuleNotFoundException extends Exception {
