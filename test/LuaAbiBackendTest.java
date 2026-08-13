@@ -355,6 +355,244 @@ public class LuaAbiBackendTest {
     }
 
     /**
+     * Lua scope fidelity of the nested-class frame model: a class declared
+     * in the then-branch of an if chain is scoped to that branch only.
+     * The construction inside the declaring branch references the bare
+     * {@code C_defaults} local; the else-branch construction (where the
+     * then-branch local is lexically invisible) must reference the
+     * module-level {@code __deal} namespace entry — the pre-namespace
+     * backend resolved both correctly through Lua lexical scoping, and
+     * this must keep working (D2.6 "keeps today's behavior").
+     */
+    @Test
+    public void thenBranchClassShadowKeepsPerBranchScopeFidelity() throws Exception {
+        String source =
+            "class C { x: int = 0; }\n" +
+            "export function test_branches(): int {\n" +
+            "  let flag: boolean = false;\n" +
+            "  let out: int = 0;\n" +
+            "  if (flag) {\n" +
+            "    class C { y: int = 0; }\n" +
+            "    let c1: C = { y: 5 };\n" +
+            "    out = c1.y;\n" +
+            "  } else {\n" +
+            "    let c2: C = { x: 2 };\n" +
+            "    out = c2.x;\n" +
+            "  }\n" +
+            "  return out;\n" +
+            "}\n" +
+            "export function test_then(): int {\n" +
+            "  let flag: boolean = true;\n" +
+            "  let out: int = 0;\n" +
+            "  if (flag) {\n" +
+            "    class C { y: int = 0; }\n" +
+            "    let c1: C = { y: 5 };\n" +
+            "    out = c1.y;\n" +
+            "  }\n" +
+            "  return out;\n" +
+            "}\n";
+        CompileResult out = compile(source);
+
+        // Construction inside the declaring then-branch: bare scope-local ref.
+        assertThat(out.lua(), containsString("__rt.class_(\"C\", C_defaults, {y = 5},"));
+        // Construction in the else branch (then-branch local invisible):
+        // module-level namespace entry.
+        assertThat(out.lua(), containsString(
+            "__rt.class_(\"C\", __deal[\"C_defaults\"], {x = 2},"));
+        assertThat(out.lua(), not(containsString(
+            "__rt.class_(\"C\", C_defaults, {x = 2},")));
+
+        assumeLuajit();
+        RunResult run = runLua(out.lua(),
+            "print(__mod.test_branches.f())\nprint(__mod.test_then.f())");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("2"));
+        assertThat(run.output(), containsString("5"));
+    }
+
+    /**
+     * A class declared in a catch block is scoped to the emitted
+     * {@code if not __ok then ... end} catch scope: a construction after
+     * the try statement must reference the module-level namespace entry,
+     * not the catch-local artifact (function-level try variant).
+     */
+    @Test
+    public void catchBlockClassShadowDoesNotLeakPastTheTry() throws Exception {
+        String source =
+            "class C { x: int = 0; }\n" +
+            "export function f(): int {\n" +
+            "  try { throw { code: \"E1\", message: \"m\" }; } catch (e) { class C { y: int = 0; } }\n" +
+            "  let c2: C = { x: 2 };\n" +
+            "  return c2.x;\n" +
+            "}\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString("local C_defaults = {y = 0}"));
+        assertThat(out.lua(), containsString(
+            "__rt.class_(\"C\", __deal[\"C_defaults\"], {x = 2},"));
+
+        assumeLuajit();
+        RunResult run = runLua(out.lua(), "print(__mod.f.f())");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("2"));
+    }
+
+    /**
+     * Module-level try variant: the catch-block class must not stay visible
+     * for the rest of the chunk (the catch block is a Lua scope of its own);
+     * a function declared after the try constructs the module-level class
+     * via the namespace entry.
+     */
+    @Test
+    public void moduleLevelCatchBlockClassShadowDoesNotLeakPastTheTry() throws Exception {
+        String source =
+            "class C { x: int = 0; }\n" +
+            "try { throw { code: \"E1\", message: \"m\" }; } catch (e) { class C { y: int = 0; } }\n" +
+            "export function f(): int {\n" +
+            "  let c2: C = { x: 2 };\n" +
+            "  return c2.x;\n" +
+            "}\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString("local C_defaults = {y = 0}"));
+        assertThat(out.lua(), containsString(
+            "__rt.class_(\"C\", __deal[\"C_defaults\"], {x = 2},"));
+        assertThat(out.lua(), not(containsString(
+            "__rt.class_(\"C\", C_defaults, {x = 2},")));
+
+        assumeLuajit();
+        RunResult run = runLua(out.lua(), "print(__mod.f.f())");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("2"));
+    }
+
+    // =========================================================================
+    // Non-module-level export classes: scope-consistent export registration
+    // =========================================================================
+
+    /**
+     * A class exported from a bare top-level block is non-module-level: its
+     * artifacts are emitted as chunk-level locals, so the export values must
+     * reference those bare locals (as the pre-namespace backend did), never
+     * the {@code __deal} namespace entries — which are only written for
+     * module-level declarations (D2.6). Consumers importing this module read
+     * {@code M.C} / {@code M.C_defaults} off the exports table, so both
+     * must be non-nil at runtime.
+     */
+    @Test
+    public void blockNestedExportClassExportsTheScopeLocalArtifacts() throws Exception {
+        String source =
+            "{ export class C { x: int = 0; } }\n" +
+            "export function g(): int { return 1; }\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString("local C_defaults = {x = 0}"));
+        assertThat(out.lua(), containsString("local C_meta = __rt.export_class(\"C\")"));
+        assertThat(out.lua(), containsString("exports.C = C_meta"));
+        assertThat(out.lua(), containsString("exports.C_defaults = C_defaults"));
+        assertThat(out.lua(), not(containsString("exports.C = __deal[\"C_meta\"]")));
+        assertThat(out.lua(), not(containsString("exports.C_defaults = __deal[\"C_defaults\"]")));
+        assertThat(out.lua(), not(containsString("__deal[\"C_meta\"]")));
+        assertThat(out.lua(), not(containsString("__deal[\"C_defaults\"]")));
+
+        assumeLuajit();
+        // Imported-module construction: a consumer constructs C through the
+        // module's exports surface (M.C meta + M.C_defaults defaults).
+        RunResult run = runLua(out.lua(),
+            "local __rt = require(\"deal.runtime\")\n" +
+            "print(__mod.g.f())\n" +
+            "if __mod.C == nil then error(\"exports.C is nil\") end\n" +
+            "if __mod.C_defaults == nil then error(\"exports.C_defaults is nil\") end\n" +
+            "local c = __rt.class_(\"C\", __mod.C_defaults, {x = 3}, nil, nil, nil)\n" +
+            "print(c.x)");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("1"));
+        assertThat(run.output(), containsString("3"));
+    }
+
+    /**
+     * A block-nested {@code @jsonable} export class keeps its artifacts in
+     * the legacy {@code $}→{@code _} scope-local form ({@code local
+     * C_fields} / {@code local C_fromJson} / {@code local C_toJson}),
+     * never writes {@code __deal} namespace keys (D2.6 ownership invariant),
+     * and round-trips through the frozen export keys at runtime.
+     */
+    @Test
+    public void blockNestedJsonableClassRoundTripsViaScopeLocalArtifacts() throws Exception {
+        String source =
+            "{ // @jsonable\n" +
+            "export class C { x: int = 0; } }\n" +
+            "export function f(): int { return 1; }\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString("local C_fields = {"));
+        assertThat(out.lua(), containsString("local C_fromJson = __rt.function_(\"(string)->C|null\", function(s)"));
+        assertThat(out.lua(), containsString("local C_toJson = __rt.function_(\"(C)->string\", function(v)"));
+        assertThat(out.lua(), containsString("exports.C_fields = C_fields"));
+        assertThat(out.lua(), containsString("exports[\"C$fromJson\"] = C_fromJson"));
+        assertThat(out.lua(), containsString("exports[\"C$toJson\"] = C_toJson"));
+        // The deferred pass references the scope-local defaults/fields and
+        // never writes namespace keys for the non-module-level class.
+        assertThat(out.lua(), containsString(
+            "__rt.json_from_json(\"C\", parsed, C_defaults, C_fields)"));
+        assertThat(out.lua(), not(containsString("__deal[\"C_fields\"]")));
+        assertThat(out.lua(), not(containsString("__deal[\"C$fromJson\"]")));
+        assertThat(out.lua(), not(containsString("__deal[\"C$toJson\"]")));
+        assertThat(out.lua(), not(containsString("__deal[\"C_defaults\"]")));
+        assertThat(out.lua(), not(containsString("__deal[\"C_meta\"]")));
+        assertDollarOnlyInQuotedKeys(out.lua());
+
+        assumeLuajit();
+        RunResult run = runLua(out.lua(),
+            "local c = __mod[\"C$fromJson\"].f(\"{\\\"x\\\": 7}\")\n" +
+            "print(c.x)\n" +
+            "local s = __mod[\"C$toJson\"].f(c)\n" +
+            "local c2 = __mod[\"C$fromJson\"].f(s)\n" +
+            "print(c2.x)");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("7"));
+    }
+
+    /**
+     * A nested {@code @jsonable} export class that shadows a module-level
+     * {@code @jsonable} class name: the deferred pass is keyed by class
+     * name with last-declaration-wins (the pre-namespace backend's
+     * structure), so the export values must track the LAST declaration —
+     * the one whose artifacts the deferred pass actually emits — or they
+     * would reference artifacts that were never written (nil). Verified
+     * against the pre-namespace backend, whose single last-wins bare-local
+     * artifact kept every export non-nil.
+     */
+    @Test
+    public void nestedJsonableShadowingModuleLevelJsonableKeepsExportsNonNil()
+            throws Exception {
+        String source =
+            "// @jsonable\n" +
+            "export class C { x: int = 0; }\n" +
+            "{ // @jsonable\n" +
+            "export class C { y: int = 0; } }\n" +
+            "export function f(): int { return 1; }\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString("local C_fields = {"));
+        assertThat(out.lua(), containsString("exports.C_fields = C_fields"));
+        assertThat(out.lua(), containsString("exports[\"C$fromJson\"] = C_fromJson"));
+        assertThat(out.lua(), containsString("exports[\"C$toJson\"] = C_toJson"));
+        assertThat(out.lua(), not(containsString(
+            "exports[\"C$fromJson\"] = __deal[\"C$fromJson\"]")));
+        assertDollarOnlyInQuotedKeys(out.lua());
+
+        assumeLuajit();
+        RunResult run = runLua(out.lua(),
+            "local c = __mod[\"C$fromJson\"].f(\"{\\\"y\\\": 9}\")\n" +
+            "print(c == nil and \"BROKEN\" or c.y)\n" +
+            "if __mod.C_fields == nil then print(\"nil fields\") else print(\"fields ok\") end");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("9"));
+        assertThat(run.output(), containsString("fields ok"));
+    }
+
+    /**
      * A block-nested class that shadows a module-level class name: the
      * construction inside the block keeps the scope-local reference, and a
      * sibling function that constructs the module-level class still uses

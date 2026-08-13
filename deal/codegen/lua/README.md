@@ -61,13 +61,30 @@ byte-for-byte (`$` preserved raw).
   local is referenced, and Lua lexical scoping resolves it to the
   scope-local artifact exactly as the pre-namespace backend did ("keeps
   today's behavior"). The backend tracks non-module-level declarations per
-  emitted Lua scope boundary (function bodies, if/while/for/do blocks, and
-  the try pcall closure); bare blocks emit no Lua scope of their own, so
-  their declarations register in the enclosing scope.
-- `@jsonable` deferred pass: `__deal["<C>_fields"]`,
-  `__deal["<C>$fromJson"]`, `__deal["<C>$toJson"]`; the jsonable forward
-  declarations are removed (table fields need no lexical capture).
-- `$`-identifier references: `__deal["<name>"]`.
+  emitted Lua scope boundary — function bodies, each then/elseif/else
+  branch of an if chain, while/for/do loop blocks, the try pcall closure,
+  and the catch if-block — so declaration visibility mirrors Lua lexical
+  scope exactly (a then-branch class is invisible in the else branch; a
+  catch-block class is invisible after the try). Bare blocks emit no Lua
+  scope of their own, so their declarations register in the enclosing
+  scope.
+- `@jsonable` deferred pass: module-level classes emit
+  `__deal["<C>_fields"]`, `__deal["<C>$fromJson"]`, `__deal["<C>$toJson"]`;
+  the jsonable forward declarations are removed (table fields need no
+  lexical capture). Non-module-level `@jsonable` export classes keep the
+  legacy `$`→`_` scope-local form (`local C_fields` / `local C_fromJson` /
+  `local C_toJson`) and reference their scope-local `C_defaults` /
+  `C_fields` artifacts — they never write `__deal` namespace keys
+  (D2.6 ownership invariant).
+- Export registration is scope-consistent with declaration emission:
+  module-level classes export namespace references
+  (`exports.C = __deal["C_meta"]`); classes exported from non-module-level
+  positions export the bare scope-local artifacts
+  (`exports.C = C_meta`, `exports["C$fromJson"] = C_fromJson`), matching
+  the pre-namespace backend.
+- `$`-identifier references: `__deal["<name>"]` (only module-level
+  @jsonable classes register `$` symbols, so every reachable `$` reference
+  is a namespace field).
 - Field keys at member access, `has()`, table literals, class defaults,
   class construction, and export emission.
 

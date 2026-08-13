@@ -78,15 +78,19 @@ public final class LuaBackend implements Visitor<Void> {
     // Nested-class declaration tracking (ISSUE-0077, lua-abi-emission-layer
     // D2.6): counts how many non-module-level class declarations of each
     // name are lexically visible in the generated Lua at the current
-    // emission point. The frames mirror the Lua scope boundaries emitted
-    // during statement walking (function bodies, if/while/for/do blocks,
-    // and the try pcall closure). Bare blocks emit no Lua scope of their
-    // own, so their declarations register in the enclosing frame — exactly
-    // the visibility of the emitted `local <C>_defaults`. When
+    // emission point. The frames mirror exactly the Lua scope boundaries
+    // emitted during statement walking: function bodies, each then/
+    // elseif/else branch of an if chain, while/for/do loop blocks, the
+    // try pcall closure, and the catch if-block. Bare blocks emit no Lua
+    // scope of their own, so their declarations register in the enclosing
+    // frame (or stay visible for the rest of the chunk at chunk level) —
+    // exactly the visibility of the emitted `local <C>_defaults`. When
     // emitClassConstruction resolves a root ClassSymbol whose name has a
     // visible nested declaration, it references the bare <C>_defaults local
     // so Lua lexical scoping resolves to the scope-local artifact, exactly
-    // as the pre-namespace backend did.
+    // as the pre-namespace backend did. The same visibility decides the
+    // deferred @jsonable pass's artifact references and the export values
+    // for non-module-level class declarations.
     private final Map<String, Integer> nestedClassDeclCount = new HashMap<>();
     private final Deque<List<String>> nestedClassDeclFrames = new ArrayDeque<>();
 
@@ -859,12 +863,13 @@ public final class LuaBackend implements Visitor<Void> {
     public Void visit(IfStatement node) {
         boolean savedModuleScope = moduleScope;
         moduleScope = false;
-        pushNestedClassFrame();
         String condLua = "__rt.check_boolean(" + emitExpression(node.condition())
             + ", " + spanArgs(node.condition().span()) + ")";
         emitLine("if " + condLua + " then");
         indent++;
+        pushNestedClassFrame();
         visit(node.thenBlock());
+        popNestedClassFrame();
         indent--;
 
         if (node.elseBranch().isPresent()) {
@@ -875,14 +880,18 @@ public final class LuaBackend implements Visitor<Void> {
                         + emitExpression(elseIf.condition())
                         + ", " + spanArgs(elseIf.condition().span()) + ") then");
                     indent++;
+                    pushNestedClassFrame();
                     visit(elseIf.thenBlock());
+                    popNestedClassFrame();
                     indent--;
                     emitElseChain(elseIf);
                 }
                 case Either.Right<IfStatement, Block> right -> {
                     emitLine("else");
                     indent++;
+                    pushNestedClassFrame();
                     visit(right.value());
+                    popNestedClassFrame();
                     indent--;
                     emitLine("end");
                 }
@@ -890,7 +899,6 @@ public final class LuaBackend implements Visitor<Void> {
         } else {
             emitLine("end");
         }
-        popNestedClassFrame();
         moduleScope = savedModuleScope;
         return null;
     }
@@ -904,14 +912,18 @@ public final class LuaBackend implements Visitor<Void> {
                         + emitExpression(elseIf.condition())
                         + ", " + spanArgs(elseIf.condition().span()) + ") then");
                     indent++;
+                    pushNestedClassFrame();
                     visit(elseIf.thenBlock());
+                    popNestedClassFrame();
                     indent--;
                     emitElseChain(elseIf);
                 }
                 case Either.Right<IfStatement, Block> right -> {
                     emitLine("else");
                     indent++;
+                    pushNestedClassFrame();
                     visit(right.value());
+                    popNestedClassFrame();
                     indent--;
                     emitLine("end");
                 }
@@ -1134,30 +1146,56 @@ public final class LuaBackend implements Visitor<Void> {
                 visit(fd);
             }
             case ClassDeclaration cd -> {
+                // Capture the declaration scope BEFORE visit(cd): a class
+                // exported from a non-module-level position emits its
+                // artifacts as scope-local locals, so the export values
+                // must reference those bare locals (as the pre-namespace
+                // backend did) instead of the __deal namespace entries
+                // that are only written for module-level declarations
+                // (lua-abi-emission-layer D2.6).
+                boolean moduleLevel = moduleScope;
                 exportedValues.putIfAbsent(cd.name(),
-                    LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.META));
+                    moduleLevel
+                        ? LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.META)
+                        : cd.name() + "_meta");
                 // Also export the defaults table so importing modules
                 // can construct instances of this class.
                 exportedValues.putIfAbsent(
                     LuaAbi.helperKey(cd.name(), LuaAbi.HelperKind.DEFAULTS),
-                    LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.DEFAULTS));
+                    moduleLevel
+                        ? LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.DEFAULTS)
+                        : cd.name() + "_defaults");
                 visit(cd);
 
                 // ISSUE-0050: @jsonable deferred codegen
                 if (cd.isJsonable()) {
                     // Record metadata for deferred emission
                     deferredJsonables.add(new JsonableClassMeta(
-                        cd.name(), cd.fields()));
-                    // Register exports for generated jsonable artifacts
-                    exportedValues.putIfAbsent(
+                        cd.name(), cd.fields(), moduleLevel));
+                    // Register exports for generated jsonable artifacts.
+                    // put (not putIfAbsent): the deferred pass is keyed by
+                    // class name with last-declaration-wins (the
+                    // pre-namespace backend's structure), so when the same
+                    // name is exported from both a module-level and a
+                    // nested position, the export values must track the
+                    // LAST declaration — the one whose artifacts the
+                    // deferred pass actually emits — or the exports would
+                    // reference artifacts that were never written (nil).
+                    exportedValues.put(
                         LuaAbi.helperKey(cd.name(), LuaAbi.HelperKind.FIELDS),
-                        LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.FIELDS));
-                    exportedValues.putIfAbsent(
+                        moduleLevel
+                            ? LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.FIELDS)
+                            : cd.name() + "_fields");
+                    exportedValues.put(
                         LuaAbi.helperKey(cd.name(), LuaAbi.HelperKind.FROM_JSON),
-                        LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.FROM_JSON));
-                    exportedValues.putIfAbsent(
+                        moduleLevel
+                            ? LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.FROM_JSON)
+                            : cd.name() + "_fromJson");
+                    exportedValues.put(
                         LuaAbi.helperKey(cd.name(), LuaAbi.HelperKind.TO_JSON),
-                        LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.TO_JSON));
+                        moduleLevel
+                            ? LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.TO_JSON)
+                            : cd.name() + "_toJson");
                 }
             }
             default -> {}
@@ -1247,8 +1285,13 @@ public final class LuaBackend implements Visitor<Void> {
         tryContinueFlag = savedContinueFlag;
 
         // ---- Catch block ----
+        // The emitted `if not __ok then ... end` chain is a Lua scope of its
+        // own: push a nested-class frame so declarations in the catch block
+        // stop being visible when the catch scope ends, exactly mirroring
+        // the Lua lexical scope of the emitted local artifacts.
         emitLine("if not __ok then");
         indent++;
+        pushNestedClassFrame();
         emitLine("local " + node.catchVar());
         emitLine("if type(__err) == \"table\" and __err.code ~= nil then");
         indent++;
@@ -1261,6 +1304,7 @@ public final class LuaBackend implements Visitor<Void> {
         indent--;
         emitLine("end");
         visit(node.catchBlock());
+        popNestedClassFrame();
         indent--;
 
         // ---- Try-return flag check (after catch, continues elseif chain) ----
@@ -1943,9 +1987,21 @@ public final class LuaBackend implements Visitor<Void> {
         final String className;
         final List<ClassField> fields;
 
-        JsonableClassMeta(String className, List<ClassField> fields) {
+        /**
+         * True when the class declaration sits at Lua chunk scope
+         * (module-level). Non-module-level @jsonable export classes keep
+         * their artifacts as scope-local locals in the old backend's
+         * {@code $}→{@code _} local form ({@code local C_fields},
+         * {@code local C_fromJson}, {@code local C_toJson}) and never
+         * write {@code __deal} namespace keys (D2.6 ownership invariant).
+         */
+        final boolean moduleLevel;
+
+        JsonableClassMeta(String className, List<ClassField> fields,
+                          boolean moduleLevel) {
             this.className = className;
             this.fields = fields;
+            this.moduleLevel = moduleLevel;
         }
     }
 
@@ -2098,8 +2154,10 @@ public final class LuaBackend implements Visitor<Void> {
      */
     private void emitFieldDescriptor(JsonableClassMeta meta) {
         String name = meta.className;
-        emitLine(LuaAbi.namespaceAssignment(
-            LuaAbi.helperKey(name, LuaAbi.HelperKind.FIELDS), "{"));
+        emitLine(meta.moduleLevel
+            ? LuaAbi.namespaceAssignment(
+                LuaAbi.helperKey(name, LuaAbi.HelperKind.FIELDS), "{")
+            : "local " + LuaAbi.helperKey(name, LuaAbi.HelperKind.FIELDS) + " = {");
         indent++;
         List<ClassField> fields = meta.fields;
         for (int i = 0; i < fields.size(); i++) {
@@ -2218,7 +2276,8 @@ public final class LuaBackend implements Visitor<Void> {
      */
     private String defaultsRefForTypeNode(TypeNode typeNode) {
         return switch (typeNode) {
-            case NamedType nt -> LuaAbi.helperRef(nt.name(), LuaAbi.HelperKind.DEFAULTS);
+            case NamedType nt -> visibleNestedArtifactRef(nt.name(),
+                LuaAbi.HelperKind.DEFAULTS);
             case QualifiedType qt -> LuaAbi.memberAccess(qt.moduleName(),
                 LuaAbi.helperKey(qt.typeName(), LuaAbi.HelperKind.DEFAULTS));
             default -> "{}";
@@ -2230,11 +2289,38 @@ public final class LuaBackend implements Visitor<Void> {
      */
     private String fieldsRefForTypeNode(TypeNode typeNode) {
         return switch (typeNode) {
-            case NamedType nt -> LuaAbi.helperRef(nt.name(), LuaAbi.HelperKind.FIELDS);
+            case NamedType nt -> visibleNestedArtifactRef(nt.name(),
+                LuaAbi.HelperKind.FIELDS);
             case QualifiedType qt -> LuaAbi.memberAccess(qt.moduleName(),
                 LuaAbi.helperKey(qt.typeName(), LuaAbi.HelperKind.FIELDS));
             default -> "{}";
         };
+    }
+
+    /**
+     * Reference to a class artifact used by the deferred @jsonable pass.
+     * Module-level classes keep their artifacts in the {@code __deal}
+     * namespace table; a class declared at non-module level whose artifact
+     * local is still lexically visible at the deferred-pass emission point
+     * (a bare chunk-level block emits no Lua scope, so its locals stay
+     * visible for the rest of the chunk) is referenced by the bare local
+     * name, exactly as the pre-namespace backend resolved it.
+     */
+    private String visibleNestedArtifactRef(String className,
+                                            LuaAbi.HelperKind kind) {
+        if (hasVisibleNestedClassDeclaration(className)) {
+            // The legacy $→_ local form of the pre-namespace backend
+            // (jsonable-v1.1 D9): locals cannot contain '$'.
+            String suffix = switch (kind) {
+                case DEFAULTS -> "_defaults";
+                case META -> "_meta";
+                case FIELDS -> "_fields";
+                case FROM_JSON -> "_fromJson";
+                case TO_JSON -> "_toJson";
+            };
+            return className + suffix;
+        }
+        return LuaAbi.helperRef(className, kind);
     }
 
     /**
@@ -2244,17 +2330,29 @@ public final class LuaBackend implements Visitor<Void> {
         String name = meta.className;
         String sig = "(string)->" + name + "|null";
 
-        emitLine(LuaAbi.namespaceAssignment(
-            LuaAbi.helperKey(name, LuaAbi.HelperKind.FROM_JSON),
-            "__rt.function_(\"" + sig + "\", function(s)"));
+        // Non-module-level @jsonable classes keep the legacy $→_ scope-local
+        // binding (local C_fromJson) and reference their scope-local
+        // C_defaults/C_fields artifacts; only module-level classes write and
+        // read the __deal namespace table (lua-abi-emission-layer D2.6).
+        String defaultsRef = meta.moduleLevel
+            ? LuaAbi.helperRef(name, LuaAbi.HelperKind.DEFAULTS)
+            : name + "_defaults";
+        String fieldsRef = meta.moduleLevel
+            ? LuaAbi.helperRef(name, LuaAbi.HelperKind.FIELDS)
+            : name + "_fields";
+
+        emitLine(meta.moduleLevel
+            ? LuaAbi.namespaceAssignment(
+                LuaAbi.helperKey(name, LuaAbi.HelperKind.FROM_JSON),
+                "__rt.function_(\"" + sig + "\", function(s)")
+            : "local " + name + "_fromJson = __rt.function_(\"" + sig
+                + "\", function(s)");
         indent++;
         emitLine("__rt.check_string(s)");
         emitLine("local ok, parsed = pcall(__json_parse, s)");
         emitLine("if not ok then return __NULL end");
         emitLine("local instance = __rt.json_from_json(\"" + name
-            + "\", parsed, "
-            + LuaAbi.helperRef(name, LuaAbi.HelperKind.DEFAULTS) + ", "
-            + LuaAbi.helperRef(name, LuaAbi.HelperKind.FIELDS) + ")");
+            + "\", parsed, " + defaultsRef + ", " + fieldsRef + ")");
         emitLine("if instance == nil then return __NULL end");
         emitLine("return instance");
         indent--;
@@ -2269,13 +2367,20 @@ public final class LuaBackend implements Visitor<Void> {
         String name = meta.className;
         String sig = "(" + name + ")->string";
 
-        emitLine(LuaAbi.namespaceAssignment(
-            LuaAbi.helperKey(name, LuaAbi.HelperKind.TO_JSON),
-            "__rt.function_(\"" + sig + "\", function(v)"));
+        String fieldsRef = meta.moduleLevel
+            ? LuaAbi.helperRef(name, LuaAbi.HelperKind.FIELDS)
+            : name + "_fields";
+
+        emitLine(meta.moduleLevel
+            ? LuaAbi.namespaceAssignment(
+                LuaAbi.helperKey(name, LuaAbi.HelperKind.TO_JSON),
+                "__rt.function_(\"" + sig + "\", function(v)")
+            : "local " + name + "_toJson = __rt.function_(\"" + sig
+                + "\", function(v)");
         indent++;
         emitLine("__rt.check_type(\"" + name + "\", v)");
         emitLine("local t = __rt.json_to_json(\"" + name
-            + "\", v, " + LuaAbi.helperRef(name, LuaAbi.HelperKind.FIELDS) + ")");
+            + "\", v, " + fieldsRef + ")");
         emitLine("return __json_stringify(t)");
         indent--;
         emitLine("end)");
