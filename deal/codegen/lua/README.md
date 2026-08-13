@@ -49,9 +49,11 @@ byte-for-byte (`$` preserved raw).
 - Header: `local __deal = {}` + `__deal["Error_defaults"] = { code = "", message = "" }`
   (the legacy `local Error_defaults` statements are retired).
 - Module-level class declarations: `__deal["<C>_defaults"]` /
-  `__deal["<C>_meta"]` (a module-scope flag distinguishes module-level from
-  nested declarations; nested classes keep scope-local artifact locals and
-  never write namespace keys).
+  `__deal["<C>_meta"]`. A module-scope flag is saved, cleared, and restored
+  while walking every nesting container — including bare blocks, whose
+  classes are block-scoped (legal DEAL) — so only module-level declarations
+  write namespace keys; nested classes keep scope-local artifact locals
+  (`local <C>_defaults` / `local <C>_meta`) and never write namespace keys.
 - `@jsonable` deferred pass: `__deal["<C>_fields"]`,
   `__deal["<C>$fromJson"]`, `__deal["<C>$toJson"]`; the jsonable forward
   declarations are removed (table fields need no lexical capture).

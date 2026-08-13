@@ -1290,7 +1290,15 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(Block node) {
+        // A bare block is a lexical container like every other nesting
+        // container: a class declared inside it is block-scoped, not
+        // module-level, so its artifacts keep the scope-local form
+        // (local <C>_defaults / local <C>_meta) and never write
+        // __deal namespace keys (lua-abi-emission-layer D2.6).
+        boolean savedModuleScope = moduleScope;
+        moduleScope = false;
         walkStatements(node.statements());
+        moduleScope = savedModuleScope;
         return null;
     }
 

@@ -269,6 +269,56 @@ public class LuaAbiBackendTest {
     }
 
     // =========================================================================
+    // Block-nested class declarations keep scope-local artifacts (D2.6)
+    // =========================================================================
+
+    /**
+     * A class declared inside a bare top-level block is block-scoped DEAL
+     * (the parser accepts it; referencing it outside the block is E3004),
+     * so it is non-module-level: its artifacts keep the scope-local
+     * {@code local C_defaults} / {@code local C_meta} form and never write
+     * {@code __deal} namespace keys.
+     */
+    @Test
+    public void topLevelBareBlockClassKeepsScopeLocalArtifacts() {
+        String source =
+            "{ class C { x: int = 0; } let c: C = { x: 1 }; }\n" +
+            "export function get(): int { return 0; }\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString("local C_defaults = {x = 0}"));
+        assertThat(out.lua(), containsString("local C_meta = __rt.export_class(\"C\")"));
+        assertThat(out.lua(), not(containsString("__deal[\"C_defaults\"]")));
+        assertThat(out.lua(), not(containsString("__deal[\"C_meta\"]")));
+    }
+
+    /** Block-nested class inside a function body: same scope-local rule, executed. */
+    @Test
+    public void blockNestedClassInFunctionKeepsScopeLocalArtifacts() throws Exception {
+        String source =
+            "export function test_block_class(): int {\n" +
+            "  let out: int = 0;\n" +
+            "  {\n" +
+            "    class C { x: int = 0; }\n" +
+            "    let c: C = { x: 1 };\n" +
+            "    out = c.x;\n" +
+            "  }\n" +
+            "  return out;\n" +
+            "}\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString("local C_defaults = {x = 0}"));
+        assertThat(out.lua(), containsString("local C_meta = __rt.export_class(\"C\")"));
+        assertThat(out.lua(), not(containsString("__deal[\"C_defaults\"]")));
+        assertThat(out.lua(), not(containsString("__deal[\"C_meta\"]")));
+
+        assumeLuajit();
+        RunResult run = runLua(out.lua(), "print(__mod.test_block_class.f())");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("1"));
+    }
+
+    // =========================================================================
     // has() on a class field named with a Lua keyword
     // =========================================================================
 
