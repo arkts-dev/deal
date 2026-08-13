@@ -25,8 +25,19 @@ fi
 
 AGENT="-javaagent:$JACOCO_DIR/jacocoagent.jar=destfile=build/jacoco.exec,append=true,includes=deal.*,excludes=deal.test.*"
 
+# =========================================================================
+# Reset the build directory before the --release 22 compile below. The
+# natural run_tests.sh -> coverage.sh sequence shares one build/ between
+# a --release 25 and a --release 22 compile; any stale class file that is
+# not in this script's explicit compile list (a leftover from a removed
+# source, a file added to only one script's list, or any untracked
+# residue) carries Java 25 bytecode and makes the JaCoCo report abort
+# with "Error while analyzing ... (Unsupported class file major version)".
+# Wiping build/ first guarantees the CSV proof is reproducible from any
+# starting state and that only --release 22 class files are analyzed.
+# =========================================================================
+rm -rf build
 mkdir -p build
-rm -f build/jacoco.exec
 
 # =========================================================================
 # Single compilation step at --release 22 (same explicit file list as
