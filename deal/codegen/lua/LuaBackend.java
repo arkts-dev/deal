@@ -94,6 +94,38 @@ public final class LuaBackend implements Visitor<Void> {
     private final Map<String, Integer> nestedClassDeclCount = new HashMap<>();
     private final Deque<List<String>> nestedClassDeclFrames = new ArrayDeque<>();
 
+    /**
+     * Kind of the last chunk-visible declaration of a class name, tracked
+     * for the chunk-end export-value resolution (see {@link #emitExports}
+     * and {@link #resolveClassExportValue}). {@code MODULE_LEVEL}
+     * declarations own {@code __deal[...]} namespace artifacts;
+     * {@code NESTED} declarations in chunk-level bare blocks own
+     * chunk-level locals that stay visible for the rest of the chunk,
+     * exactly like the pre-namespace backend's chunk-level
+     * {@code local <C>_meta}/{@code local <C>_defaults}.
+     */
+    private enum ChunkVisibleClassDecl { MODULE_LEVEL, NESTED }
+
+    /**
+     * Per class name: the last chunk-visible declaration seen in source
+     * order. Updated by {@link #visit(ClassDeclaration)} for every
+     * chunk-level declaration (module-level, or nested in a bare
+     * chunk-level block). Declarations inside function/branch/loop/try
+     * scopes are invisible at the chunk-end export statements and never
+     * record here — exactly the visibility of their emitted locals.
+     */
+    private final Map<String, ChunkVisibleClassDecl> lastChunkVisibleClassDecl =
+        new HashMap<>();
+
+    /**
+     * Export keys whose slots were registered by an {@code export class}
+     * declaration, mapped to the class name (META under the bare class
+     * name, DEFAULTS under {@code <C>_defaults}). Their values are
+     * resolved at chunk end in {@link #emitExports} against the last
+     * chunk-visible declaration of the class name.
+     */
+    private final Map<String, String> classExportKeyOwners = new HashMap<>();
+
     // Source map support
     private SourceMapGenerator sourceMapGenerator = null;
 
@@ -317,6 +349,8 @@ public final class LuaBackend implements Visitor<Void> {
         moduleScope = true;
         nestedClassDeclCount.clear();
         nestedClassDeclFrames.clear();
+        lastChunkVisibleClassDecl.clear();
+        classExportKeyOwners.clear();
         emitHeader();
         emitLine("");
         walkStatements(program.statements());
@@ -382,9 +416,52 @@ public final class LuaBackend implements Visitor<Void> {
     private void emitExports() {
         emitLine("local exports = {}");
         for (var entry : exportedValues.entrySet()) {
-            emitLine(LuaAbi.exportAssignment(entry.getKey(), entry.getValue()));
+            String key = entry.getKey();
+            String value = entry.getValue();
+            String ownerClass = classExportKeyOwners.get(key);
+            if (ownerClass != null) {
+                // Class META/DEFAULTS export values resolve at chunk end
+                // to the LAST chunk-visible declaration of the class name,
+                // exactly like the pre-namespace backend's bare-name
+                // export statements (`exports.C = C_meta`), which Lua
+                // lexical scoping resolved at the chunk-end export
+                // statements to the last chunk-visible declaration's
+                // artifact. A same-name class exported from a chunk-level
+                // bare block after a module-level declaration (or vice
+                // versa) therefore resolves every export key to the same
+                // declaration instead of mixing class identities across
+                // the frozen export surface.
+                LuaAbi.HelperKind kind = key.equals(ownerClass)
+                    ? LuaAbi.HelperKind.META
+                    : LuaAbi.HelperKind.DEFAULTS;
+                value = resolveClassExportValue(ownerClass, kind);
+            }
+            emitLine(LuaAbi.exportAssignment(key, value));
         }
         emitLine("return exports");
+    }
+
+    /**
+     * The chunk-end export value for a class META/DEFAULTS artifact: the
+     * {@code __deal} namespace reference when the last chunk-visible
+     * declaration of the class name is module-level; otherwise the bare
+     * artifact name. The bare name reproduces the pre-namespace backend's
+     * export statements, which Lua lexical scoping resolved at chunk end
+     * to the last chunk-visible declaration's local (a chunk-level
+     * bare-block declaration) or to nil (only function/branch/loop/try
+     * scoped declarations).
+     */
+    private String resolveClassExportValue(String className,
+                                           LuaAbi.HelperKind kind) {
+        // META and DEFAULTS are the only kinds exported through the
+        // class-export keys (FIELDS/FROM_JSON/TO_JSON values follow the
+        // deferred pass's last-declared-wins registration instead).
+        String suffix = (kind == LuaAbi.HelperKind.META) ? "_meta" : "_defaults";
+        if (lastChunkVisibleClassDecl.get(className)
+                == ChunkVisibleClassDecl.MODULE_LEVEL) {
+            return LuaAbi.helperRef(className, kind);
+        }
+        return className + suffix;
     }
 
     // =========================================================================
@@ -629,6 +706,8 @@ public final class LuaBackend implements Visitor<Void> {
         moduleScope = true;
         nestedClassDeclCount.clear();
         nestedClassDeclFrames.clear();
+        lastChunkVisibleClassDecl.clear();
+        classExportKeyOwners.clear();
         emitHeader();
         walkStatements(node.statements());
         emitJsonableCode();
@@ -666,6 +745,13 @@ public final class LuaBackend implements Visitor<Void> {
             emitLine(LuaAbi.namespaceAssignment(
                 LuaAbi.helperKey(name, LuaAbi.HelperKind.META),
                 "__rt.export_class(\"" + name + "\")"));
+            // A module-level declaration is chunk-visible at the chunk-end
+            // export statements (its artifacts are __deal namespace
+            // fields, visible everywhere): record it as the last
+            // chunk-visible declaration of this name (D2.6 export-value
+            // parity, see emitExports).
+            lastChunkVisibleClassDecl.put(name,
+                ChunkVisibleClassDecl.MODULE_LEVEL);
         } else {
             emitLine("local " + LuaAbi.helperKey(name, LuaAbi.HelperKind.DEFAULTS)
                 + " = " + defaults.toString());
@@ -676,6 +762,18 @@ public final class LuaBackend implements Visitor<Void> {
             // <C>_defaults local (Lua lexical scoping) instead of the
             // __deal namespace entry (nested shadowing, D2.6).
             recordNestedClassDeclaration(name);
+            // A nested declaration in a chunk-level bare block emits
+            // chunk-level locals that stay visible for the rest of the
+            // chunk, including at the chunk-end export statements; it is
+            // therefore chunk-visible and records here. Declarations in
+            // function/branch/loop/try scopes have an active frame and
+            // are invisible at chunk end — they must not record (the
+            // pre-namespace backend's bare export names resolved to nil
+            // for them, never to an inner-scope local).
+            if (nestedClassDeclFrames.isEmpty()) {
+                lastChunkVisibleClassDecl.put(name,
+                    ChunkVisibleClassDecl.NESTED);
+            }
         }
         emitLine();
         return null;
@@ -1154,17 +1252,28 @@ public final class LuaBackend implements Visitor<Void> {
                 // that are only written for module-level declarations
                 // (lua-abi-emission-layer D2.6).
                 boolean moduleLevel = moduleScope;
-                exportedValues.putIfAbsent(cd.name(),
+                if (exportedValues.putIfAbsent(cd.name(),
                     moduleLevel
                         ? LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.META)
-                        : cd.name() + "_meta");
+                        : cd.name() + "_meta") == null) {
+                    // Only the registration that won the slot marks it for
+                    // chunk-end resolution: the final value is resolved in
+                    // emitExports() against the LAST chunk-visible
+                    // declaration of this class name (see
+                    // resolveClassExportValue). The registered value above
+                    // is a placeholder that emitExports() replaces.
+                    classExportKeyOwners.put(cd.name(), cd.name());
+                }
                 // Also export the defaults table so importing modules
                 // can construct instances of this class.
-                exportedValues.putIfAbsent(
-                    LuaAbi.helperKey(cd.name(), LuaAbi.HelperKind.DEFAULTS),
+                String defaultsKey = LuaAbi.helperKey(
+                    cd.name(), LuaAbi.HelperKind.DEFAULTS);
+                if (exportedValues.putIfAbsent(defaultsKey,
                     moduleLevel
                         ? LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.DEFAULTS)
-                        : cd.name() + "_defaults");
+                        : cd.name() + "_defaults") == null) {
+                    classExportKeyOwners.put(defaultsKey, cd.name());
+                }
                 visit(cd);
 
                 // ISSUE-0050: @jsonable deferred codegen

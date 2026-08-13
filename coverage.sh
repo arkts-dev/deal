@@ -249,9 +249,14 @@ echo "=== JaCoCo production coverage (deal.*, excluding deal.test.*) ==="
 echo "Line coverage:   ${LINE_PCT}%  (gate: >= 75%)"
 echo "Branch coverage: ${BRANCH_PCT}%  (gate: >= 55%)"
 
-LC_ALL=C awk -v line="$LINE_PCT" -v branch="$BRANCH_PCT" \
-  'BEGIN { exit (line >= 75.0 && branch >= 55.0) ? 0 : 1 }'
-if [ $? -ne 0 ]; then
+# The gate check runs under `set -e`: a failing awk would terminate the
+# script before the diagnostic below could run, so the awk exit status is
+# consumed by the `if` itself, keeping the error message reachable and the
+# failure loud instead of silent.
+if LC_ALL=C awk -v line="$LINE_PCT" -v branch="$BRANCH_PCT" \
+  'BEGIN { exit (line >= 75.0 && branch >= 55.0) ? 0 : 1 }'; then
+  :
+else
   echo "ERROR: coverage gate failed (line >= 75% AND branch >= 55%)" >&2
   exit 1
 fi

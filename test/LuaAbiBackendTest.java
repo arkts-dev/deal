@@ -580,16 +580,179 @@ public class LuaAbiBackendTest {
         assertThat(out.lua(), containsString("exports[\"C$toJson\"] = C_toJson"));
         assertThat(out.lua(), not(containsString(
             "exports[\"C$fromJson\"] = __deal[\"C$fromJson\"]")));
+        // META/DEFAULTS resolve at chunk end to the LAST chunk-visible
+        // declaration (the block class), not the first registration: all
+        // five export keys serve the same class identity (the
+        // pre-namespace backend's chunk-end bare-name resolution).
+        assertThat(out.lua(), containsString("exports.C = C_meta"));
+        assertThat(out.lua(), containsString("exports.C_defaults = C_defaults"));
+        assertThat(out.lua(), not(containsString("exports.C = __deal[\"C_meta\"]")));
+        assertThat(out.lua(), not(containsString(
+            "exports.C_defaults = __deal[\"C_defaults\"]")));
         assertDollarOnlyInQuotedKeys(out.lua());
 
         assumeLuajit();
         RunResult run = runLua(out.lua(),
             "local c = __mod[\"C$fromJson\"].f(\"{\\\"y\\\": 9}\")\n" +
             "print(c == nil and \"BROKEN\" or c.y)\n" +
-            "if __mod.C_fields == nil then print(\"nil fields\") else print(\"fields ok\") end");
+            "if __mod.C_fields == nil then print(\"nil fields\") else print(\"fields ok\") end\n" +
+            "if __mod.C_defaults == nil then error(\"C_defaults is nil\") end\n" +
+            "if __mod.C_defaults.y ~= 0 then error(\"block defaults lost\") end\n" +
+            "if __mod.C_defaults.x ~= nil then error(\"module defaults leaked\") end");
         assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
         assertThat(run.output(), containsString("9"));
         assertThat(run.output(), containsString("fields ok"));
+    }
+
+    /**
+     * The reverse declaration order — a chunk-level bare-block export of
+     * a class name first, then a module-level export of the same name —
+     * resolves all five export keys to the module-level declaration
+     * (namespace forms): at the chunk-end export statements the last
+     * chunk-visible declaration is the module-level one, exactly as the
+     * pre-namespace backend's bare-name export statements resolved.
+     */
+    @Test
+    public void sameNameBlockThenModuleExportResolvesAllKeysToTheModuleDeclaration()
+            throws Exception {
+        String source =
+            "{ // @jsonable\n" +
+            "export class C { y: int = 0; } }\n" +
+            "// @jsonable\n" +
+            "export class C { x: int = 0; }\n" +
+            "export function g(): int { return 1; }\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString("exports.C = __deal[\"C_meta\"]"));
+        assertThat(out.lua(), containsString("exports.C_defaults = __deal[\"C_defaults\"]"));
+        assertThat(out.lua(), containsString("exports.C_fields = __deal[\"C_fields\"]"));
+        assertThat(out.lua(), containsString("exports[\"C$fromJson\"] = __deal[\"C$fromJson\"]"));
+        assertThat(out.lua(), containsString("exports[\"C$toJson\"] = __deal[\"C$toJson\"]"));
+        assertThat(out.lua(), not(containsString("exports.C = C_meta")));
+        assertThat(out.lua(), not(containsString("exports.C_defaults = C_defaults")));
+        assertDollarOnlyInQuotedKeys(out.lua());
+
+        assumeLuajit();
+        RunResult run = runLua(out.lua(),
+            "local __rt = require(\"deal.runtime\")\n" +
+            "print(__mod.g.f())\n" +
+            "if __mod.C_defaults == nil then error(\"C_defaults is nil\") end\n" +
+            "if __mod.C_defaults.x ~= 0 then error(\"module defaults lost\") end\n" +
+            "if __mod.C_defaults.y ~= nil then error(\"block defaults leaked\") end\n" +
+            "local c = __rt.class_(\"C\", __mod.C_defaults, {x = 3}, nil, nil, nil)\n" +
+            "print(c.x)\n" +
+            "local d = __mod[\"C$fromJson\"].f(\"{\\\"x\\\":9}\")\n" +
+            "print(d.x)");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("1"));
+        assertThat(run.output(), containsString("3"));
+        assertThat(run.output(), containsString("9"));
+    }
+
+    /**
+     * A non-exported chunk-level bare-block class that shadows an
+     * exported module-level class name wins the chunk-end export
+     * resolution exactly like the pre-namespace backend: its artifact
+     * locals are chunk-level locals still visible at the chunk-end export
+     * statements, so the exports resolve to the block class (the
+     * resolution tracks every chunk-visible declaration, not only
+     * exported ones).
+     */
+    @Test
+    public void nonExportedChunkLevelShadowWinsTheExportResolution()
+            throws Exception {
+        String source =
+            "export class C { x: int = 0; }\n" +
+            "{ class C { y: int = 0; } }\n" +
+            "export function g(): int { return 1; }\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString("local C_defaults = {y = 0}"));
+        assertThat(out.lua(), containsString("exports.C = C_meta"));
+        assertThat(out.lua(), containsString("exports.C_defaults = C_defaults"));
+        assertThat(out.lua(), not(containsString("exports.C = __deal[\"C_meta\"]")));
+        assertThat(out.lua(), not(containsString(
+            "exports.C_defaults = __deal[\"C_defaults\"]")));
+
+        assumeLuajit();
+        RunResult run = runLua(out.lua(),
+            "local __rt = require(\"deal.runtime\")\n" +
+            "print(__mod.g.f())\n" +
+            "if __mod.C_defaults == nil then error(\"C_defaults is nil\") end\n" +
+            "if __mod.C_defaults.y ~= 0 then error(\"block defaults lost\") end\n" +
+            "if __mod.C_defaults.x ~= nil then error(\"module defaults leaked\") end\n" +
+            "local c = __rt.class_(\"C\", __mod.C_defaults, {y = 2}, nil, nil, nil)\n" +
+            "print(c.y)");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("1"));
+        assertThat(run.output(), containsString("2"));
+    }
+
+    /**
+     * A function-scoped export class must not overwrite the chunk-visible
+     * declaration of the same name: its artifact locals are out of scope
+     * at the chunk-end export statements, so the exports keep serving the
+     * module-level declaration (the pre-namespace backend's bare export
+     * names resolved to the module-level locals in this corner).
+     */
+    @Test
+    public void functionScopedExportDoesNotOverwriteTheChunkVisibleDeclaration()
+            throws Exception {
+        String source =
+            "export class C { x: int = 0; }\n" +
+            "export function f(): int {\n" +
+            "  { export class C { y: int = 0; } }\n" +
+            "  return 1;\n" +
+            "}\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString("exports.C = __deal[\"C_meta\"]"));
+        assertThat(out.lua(), containsString("exports.C_defaults = __deal[\"C_defaults\"]"));
+        assertThat(out.lua(), not(containsString("exports.C = C_meta")));
+        assertThat(out.lua(), not(containsString("exports.C_defaults = C_defaults")));
+
+        assumeLuajit();
+        RunResult run = runLua(out.lua(),
+            "local __rt = require(\"deal.runtime\")\n" +
+            "print(__mod.f.f())\n" +
+            "if __mod.C_defaults == nil then error(\"C_defaults is nil\") end\n" +
+            "if __mod.C_defaults.x ~= 0 then error(\"module defaults lost\") end\n" +
+            "if __mod.C_defaults.y ~= nil then error(\"function-local defaults leaked\") end\n" +
+            "local c = __rt.class_(\"C\", __mod.C_defaults, {x = 3}, nil, nil, nil)\n" +
+            "print(c.x)");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("1"));
+        assertThat(run.output(), containsString("3"));
+    }
+
+    /**
+     * With only function-scoped export declarations of a class name, the
+     * exports keep the bare artifact form, which is nil at runtime — the
+     * pre-namespace backend's behavior (its chunk-end bare export names
+     * had no visible local to resolve to).
+     */
+    @Test
+    public void functionScopedOnlyExportKeepsTheBareNilResolution()
+            throws Exception {
+        String source =
+            "export function f(): int {\n" +
+            "  { export class C { y: int = 0; } }\n" +
+            "  return 1;\n" +
+            "}\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString("exports.C = C_meta"));
+        assertThat(out.lua(), containsString("exports.C_defaults = C_defaults"));
+        assertThat(out.lua(), not(containsString("exports.C = __deal[\"C_meta\"]")));
+
+        assumeLuajit();
+        RunResult run = runLua(out.lua(),
+            "print(__mod.f.f())\n" +
+            "print(tostring(__mod.C))\n" +
+            "print(tostring(__mod.C_defaults))");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("1"));
+        assertThat(run.output(), containsString("nil"));
     }
 
     /**

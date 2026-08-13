@@ -80,8 +80,24 @@ byte-for-byte (`$` preserved raw).
   module-level classes export namespace references
   (`exports.C = __deal["C_meta"]`); classes exported from non-module-level
   positions export the bare scope-local artifacts
-  (`exports.C = C_meta`, `exports["C$fromJson"] = C_fromJson`), matching
-  the pre-namespace backend.
+  (`exports.C = C_meta`, `exports["C$fromJson"] = C_fromJson`). The
+  META/DEFAULTS values are resolved at chunk end against the LAST
+  chunk-visible declaration of the class name — the exact resolution the
+  pre-namespace backend's bare-name export statements
+  (`exports.C = C_meta`) got from Lua lexical scoping at the chunk-end
+  export statements — so a same-name class exported from both a
+  module-level position and a chunk-level bare block (in either order)
+  resolves all five export keys to the same declaration instead of mixing
+  class identities: a chunk-level bare-block declaration (exported or
+  not) makes the exports resolve to its block-local artifacts, and a
+  later module-level declaration switches them back to the namespace
+  forms. Declarations in function/branch/loop/try scopes are invisible
+  at the chunk-end export statements and never overwrite (their locals
+  are out of scope there; with only such declarations the exports keep
+  the bare form, which is nil at runtime — the pre-namespace behavior).
+  The FIELDS/FROM_JSON/TO_JSON values follow the deferred pass's
+  last-declared-wins structure (they always reference the artifacts the
+  deferred pass actually emits, so they are never nil).
 - `$`-identifier references: `__deal["<name>"]` (only module-level
   @jsonable classes register `$` symbols, so every reachable `$` reference
   is a namespace field).
