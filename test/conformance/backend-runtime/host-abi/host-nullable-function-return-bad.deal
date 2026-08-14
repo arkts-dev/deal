@@ -1,0 +1,11 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A raw Lua function value returned for a nullable-function declared return fails the function-typed return check (E8010) — function-typed return wrapping is excluded.
+// @expected: runtime-error E8010
+// @features: modules, host-abi, functions, runtime-errors
+
+import * as host from "host/nullable_fn_return"
+
+export function test_host_nullable_function_return_bad(): null {
+  let cb: ((x: int) => int) | null = host.getCallback("bad");
+  return null;
+}

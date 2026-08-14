@@ -1,0 +1,13 @@
+// @spec: Functions — Conversion intrinsics with arity extension
+// @description: The int conversion intrinsic is assignable to a two-parameter target via arity extension and converts the first argument.
+// @expected: runtime-ok
+// @features: functions, intrinsics
+
+export function test_intrinsic_arity_extension(): int {
+  let f: (x: number, y: number) => int = int;
+  let result: int = f(9.0, 1.0);
+  if (result !== 9) {
+    throw { code: "TEST_FAIL", message: "intrinsic arity-extension call failed" };
+  }
+  return result;
+}

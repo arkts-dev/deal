@@ -1,0 +1,25 @@
+// @spec: Arrays — Nullable function element values
+// @description: Arrays of nullable functions carry the bracketed element descriptor (E-2) and check each element — null or a matching-signature function — on write and read.
+// @expected: runtime-ok
+// @features: arrays, functions, nullable
+
+function add1(x: int): int { return x + 1; }
+
+export function test_nullable_function_array_values(): int {
+  let fs: (((x: int) => int) | null)[] = [];
+  fs[0] = add1;
+  fs[1] = null;
+  let f0: ((x: int) => int) | null = fs[0];
+  if (f0 !== null) {
+    let result: int = f0(3);
+    let f1: ((x: int) => int) | null = fs[1];
+    if (f1 !== null) {
+      throw { code: "TEST_FAIL", message: "second element was not null" };
+    }
+    if (result !== 4) {
+      throw { code: "TEST_FAIL", message: "nullable function array call failed" };
+    }
+    return result;
+  }
+  throw { code: "TEST_FAIL", message: "first element was not the function" };
+}

@@ -1,0 +1,37 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A declared host class exports its module-qualified identity and defaults; class literals construct through the synthesized class symbols with defaults passthrough, and the constructed instance crosses the host boundary through a declared function parameter.
+// @expected: runtime-ok
+// @features: modules, host-abi, classes
+
+import * as cfg from "host/cfg"
+
+export function test_host_class_export(): string {
+  let s: cfg.ServerConfig = {
+    port: 9090,
+    endpoint: { path: "/api" },
+    tags: ["dev"],
+    note: null,
+  };
+  if (s.port !== 9090) {
+    throw { code: "TEST_FAIL", message: "host class port field mismatch" };
+  }
+  if (s.endpoint.path !== "/api") {
+    throw { code: "TEST_FAIL", message: "host class endpoint field mismatch" };
+  }
+  let tags: string[] | null = s.tags;
+  if (tags !== null) {
+    if (tags[0] !== "dev") {
+      throw { code: "TEST_FAIL", message: "host class array field mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "host class array field was null" };
+  }
+  if (s.note !== null) {
+    throw { code: "TEST_FAIL", message: "host class nullable field mismatch" };
+  }
+  let described: string = cfg.describe(s);
+  if (described !== "/api:9090") {
+    throw { code: "TEST_FAIL", message: "host class instance failed the boundary roundtrip" };
+  }
+  return "host class export ok";
+}

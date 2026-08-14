@@ -1,0 +1,10 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A host function returning a value that violates its declared return type raises E8010 at the call site.
+// @expected: runtime-error E8010
+// @features: modules, host-abi, runtime-errors
+
+import * as host from "host/bad_return"
+
+export function test_host_bad_return(): int {
+  return host.getNumber();
+}

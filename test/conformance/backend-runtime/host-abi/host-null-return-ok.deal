@@ -1,0 +1,14 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A sync host function declared ->null returning the __rt.__NULL sentinel passes the wrapper's sync-null check on both the value and discard call paths.
+// @expected: runtime-ok
+// @features: modules, host-abi
+
+import * as host from "host/nullreturn_ok"
+
+export function test_host_null_return_ok(): null {
+  host.ping();
+  if (host.ping() !== null) {
+    throw { code: "TEST_FAIL", message: "sync null return was not the sentinel" };
+  }
+  return null;
+}

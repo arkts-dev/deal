@@ -1,0 +1,14 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A host async function returning a valid async operation whose completion value satisfies the declared async return type is awaited successfully.
+// @expected: runtime-ok
+// @features: modules, host-abi, async-await
+
+import * as host from "host/async_ok"
+
+export async function test_host_async_ok(): string {
+  let fetched: string = await host.fetchValue();
+  if (fetched !== "fetched") {
+    throw { code: "TEST_FAIL", message: "async completion value mismatch" };
+  }
+  return fetched;
+}

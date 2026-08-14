@@ -1,0 +1,11 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A host async operation completing with a value that violates the declared async return type is rejected at the await site (E8001).
+// @expected: runtime-error E8001
+// @features: modules, host-abi, async-await, runtime-errors
+
+import * as host from "host/async_bad"
+
+export async function test_host_async_bad(): string {
+  let fetched: string = await host.fetchValue();
+  return fetched;
+}

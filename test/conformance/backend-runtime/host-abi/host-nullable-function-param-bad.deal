@@ -1,0 +1,15 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A wrong-signature function value crossing a nullable-function parameter at runtime raises E8010 at the call boundary.
+// @expected: runtime-error E8010
+// @features: modules, host-abi, functions, runtime-errors
+
+import * as host from "host/nullable_fn"
+
+function badFn(s: string): int {
+  return 1;
+}
+
+export function test_host_nullable_function_param_bad(): int {
+  let holder: table = { cb: badFn };
+  return host.register(holder.cb);
+}

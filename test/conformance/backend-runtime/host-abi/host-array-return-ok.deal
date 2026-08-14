@@ -1,0 +1,17 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: An array declared return wraps at load time and the caller reads the elements back in DEAL.
+// @expected: runtime-ok
+// @features: modules, host-abi, arrays
+
+import * as host from "host/array_return"
+
+export function test_host_array_return_ok(): string {
+  let parts: string[] = host.split("ignored");
+  if (parts.length !== 3) {
+    throw { code: "TEST_FAIL", message: "array return length mismatch" };
+  }
+  if (parts[0] !== "a" || parts[1] !== "b" || parts[2] !== "c") {
+    throw { code: "TEST_FAIL", message: "array return element mismatch" };
+  }
+  return "host array return ok";
+}

@@ -1,0 +1,7 @@
+// Host fixture declaration for the host-nullable-return-ok/bad conformance
+// tests. A nullable declared return must wrap at load time (function-aware
+// descriptor parsing) and check every result at call time; the null result
+// is the __rt.__NULL sentinel — plain Lua nil is not a null representation
+// and raises E8010 under the presence rule.
+
+export function find(s: string): string | null;

@@ -1,0 +1,16 @@
+// @spec: Functions — Conversion intrinsics as callbacks
+// @description: The number conversion intrinsic works when passed into a function-typed parameter and invoked indirectly.
+// @expected: runtime-ok
+// @features: functions, intrinsics
+
+function apply(f: (x: int) => number, x: int): number {
+  return f(x);
+}
+
+export function test_intrinsic_as_callback(): number {
+  let result: number = apply(number, 7);
+  if (result !== 7.0) {
+    throw { code: "TEST_FAIL", message: "intrinsic callback conversion failed" };
+  }
+  return result;
+}

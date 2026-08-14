@@ -1,0 +1,10 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A declared host export missing from the raw implementation is a load-time error (E8011), raised while the module chunk executes — before any exported function auto-invocation.
+// @expected: runtime-error E8011
+// @features: modules, host-abi, runtime-errors
+
+import * as host from "host/missing_export"
+
+export function test_host_missing_export(): string {
+  return host.ping();
+}

@@ -1,0 +1,15 @@
+// @spec: Runtime execution model — Module-qualified class identity
+// @description: Same-module roundtrip control: an instance crossed through an untyped table still passes its own module's check (qualified identity is stable within a module).
+// @expected: runtime-ok
+// @features: modules, classes
+
+import * as LibA from "./modid_lib_a"
+
+export function test_same_module_class_identity_roundtrip(): int {
+  let holder: table = { item: LibA.make(7) };
+  let result: int = LibA.needBox(holder.item);
+  if (result !== 7) {
+    throw { code: "TEST_FAIL", message: "same-module identity roundtrip failed" };
+  }
+  return result;
+}

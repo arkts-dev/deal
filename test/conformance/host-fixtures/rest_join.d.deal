@@ -1,0 +1,6 @@
+// Host fixture declaration for the host-rest-ok/host-rest-bad conformance
+// tests. The declared map carries the full array rest arm (...string[]);
+// the wrapper checks rest args per element and never fails with the
+// internal E8001 (host-module-abi D3 cases 0, 5).
+
+export function join(sep: string, ...parts: string[]): string;

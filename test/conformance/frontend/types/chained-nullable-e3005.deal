@@ -1,0 +1,6 @@
+// @spec: Type system — Nullable constraints
+// @description: Chained nullables (T | null | null) are rejected by the Type.Nullable constructor invariant (E3005) — the constructibility guard that keeps the ?? form out of the descriptor dialect.
+// @expected: compile-error E3005
+// @features: type-system, diagnostics
+
+let x: int | null | null = 1;

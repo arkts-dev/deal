@@ -1,0 +1,12 @@
+// Companion module B for the modid-class-identity conformance tests. The
+// same-name class Point carries a different module-qualified identity;
+// instances of A's Point must fail B's check with E8001 (exact descriptor
+// compare — no bare-name conflation).
+
+export class Point {
+  x: int = 0;
+}
+
+export function needBox(p: Point): int {
+  return p.x;
+}

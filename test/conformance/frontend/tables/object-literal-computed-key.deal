@@ -1,0 +1,10 @@
+// @spec: Tables — Identifier-only property names
+// @description: Computed object literal property keys are rejected at parse time (E1038); property names must be identifiers.
+// @expected: compile-error E1038
+// @features: tables, diagnostics
+
+export function test_object_literal_computed_key(): table {
+  let key: string = "name";
+  let t: table = { [key]: 1 };
+  return t;
+}

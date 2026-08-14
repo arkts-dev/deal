@@ -1,0 +1,17 @@
+// Companion module A for the modid-class-identity conformance tests
+// (runtime-class-identity Verification §3). Exports a same-name class
+// Point whose runtime identity is this module's module-qualified
+// descriptor; the cross-module test crosses an instance of this Point
+// through an untyped table into companion B's check.
+
+export class Point {
+  x: int = 0;
+}
+
+export function make(x: int): Point {
+  return { x: x };
+}
+
+export function needBox(p: Point): int {
+  return p.x;
+}

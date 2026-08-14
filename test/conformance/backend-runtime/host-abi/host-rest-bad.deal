@@ -1,0 +1,11 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A wrong rest argument type crossing at runtime raises E8010 per element — never the internal E8001.
+// @expected: runtime-error E8010
+// @features: modules, host-abi, rest, runtime-errors
+
+import * as host from "host/rest_join"
+
+export function test_host_rest_bad(): string {
+  let holder: table = { item: 5 };
+  return host.join("-", "a", holder.item);
+}

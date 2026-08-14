@@ -1,0 +1,9 @@
+// Host fixture declaration for the host-missing-export conformance test
+// (host-module-abi D6, Verification §2). Not a conformance test: it carries
+// no @expected header and the discovery walk skips the host-fixtures
+// subtree. The declared surface intentionally contains an export the raw
+// implementation omits — the loader must raise E8011 at load time, before
+// any exported function auto-invocation (R3).
+
+export function ping(): string;
+export function missing(): int;

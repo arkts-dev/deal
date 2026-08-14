@@ -1,0 +1,7 @@
+// Host fixture declaration for the host-nullable-function-return-ok/bad
+// conformance tests. The declared return descriptor is ?(int)->int: the
+// __rt.__NULL sentinel is the null result (E-1/order-P wrapper), and a raw
+// Lua function value fails the function-typed return check (E8010) —
+// function-typed return wrapping is excluded (assumption c).
+
+export function getCallback(mode: string): ((x: int) => int) | null;

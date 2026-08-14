@@ -1,0 +1,10 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A nullable declared return returning a value with the wrong representation raises E8010 at the call site.
+// @expected: runtime-error E8010
+// @features: modules, host-abi, runtime-errors
+
+import * as host from "host/nullable_return"
+
+export function test_host_nullable_return_bad(): string | null {
+  return host.find("__BAD__");
+}

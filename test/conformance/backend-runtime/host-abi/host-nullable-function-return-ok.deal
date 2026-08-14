@@ -1,0 +1,14 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A nullable-function declared return delivers the __rt.__NULL sentinel as the null result and wraps at load time.
+// @expected: runtime-ok
+// @features: modules, host-abi, functions, nullable
+
+import * as host from "host/nullable_fn_return"
+
+export function test_host_nullable_function_return_ok(): null {
+  let cb: ((x: int) => int) | null = host.getCallback("good");
+  if (cb !== null) {
+    throw { code: "TEST_FAIL", message: "nullable-function null return was not the sentinel" };
+  }
+  return null;
+}

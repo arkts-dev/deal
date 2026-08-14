@@ -1,0 +1,5 @@
+// Host fixture declaration for the host-array-return-ok conformance test.
+// An array declared return must wrap at load time and check the returned
+// table element-wise; the caller reads elements back in DEAL.
+
+export function split(s: string): string[];

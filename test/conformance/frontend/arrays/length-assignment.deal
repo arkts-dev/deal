@@ -1,0 +1,10 @@
+// @spec: Arrays — read-only length
+// @description: Assignment to xs.length is a compile-time error (E3017); the append idiom xs[xs.length] stays legal.
+// @expected: compile-error E3017
+// @features: arrays, diagnostics
+
+export function test_length_assignment(): null {
+  let xs: int[] = [1, 2];
+  xs.length = 5;
+  return null;
+}

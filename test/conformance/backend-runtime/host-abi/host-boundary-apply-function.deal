@@ -1,0 +1,18 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A DEAL function value passed into a host function-typed parameter is adapted to a plain Lua function and callable by the host (DEAL→host adaptation).
+// @expected: runtime-ok
+// @features: modules, host-abi, functions
+
+import * as host from "host/boundary_apply"
+
+function add100(x: int): int {
+  return x + 100;
+}
+
+export function test_host_boundary_apply_function(): int {
+  let result: int = host.apply(add100, 41);
+  if (result !== 241) {
+    throw { code: "TEST_FAIL", message: "function-param adaptation failed" };
+  }
+  return result;
+}

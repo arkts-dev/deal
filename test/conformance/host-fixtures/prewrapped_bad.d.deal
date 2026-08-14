@@ -1,0 +1,6 @@
+// Host fixture declaration for the host-prewrapped-bad conformance test.
+// The pre-wrapped export carries a matching sig but its .f returns junk —
+// the re-wrapped function must still enforce the sync-null return check at
+// the call site, including the discard call path (E8010).
+
+export function ping(): null;

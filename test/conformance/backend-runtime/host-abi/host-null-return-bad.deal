@@ -1,0 +1,11 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A sync host function declared ->null returning a non-sentinel value raises E8010 — including on the discard call path.
+// @expected: runtime-error E8010
+// @features: modules, host-abi, runtime-errors
+
+import * as host from "host/nullreturn_bad"
+
+export function test_host_null_return_bad(): null {
+  host.ping();
+  return null;
+}

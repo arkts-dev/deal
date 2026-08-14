@@ -1,0 +1,13 @@
+// @spec: Functions — Conversion intrinsics as function values
+// @description: The int conversion intrinsic works as a first-class function value through a function-typed variable.
+// @expected: runtime-ok
+// @features: functions, intrinsics
+
+export function test_intrinsic_as_function_value(): int {
+  let f: (x: number) => int = int;
+  let result: int = f(3.0);
+  if (result !== 3) {
+    throw { code: "TEST_FAIL", message: "intrinsic function value conversion failed" };
+  }
+  return result;
+}

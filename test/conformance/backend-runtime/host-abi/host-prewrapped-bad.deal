@@ -1,0 +1,11 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A pre-wrapped host export with a matching sig but a junk .f is enforced through the re-wrap — E8010 on the discard call path.
+// @expected: runtime-error E8010
+// @features: modules, host-abi, runtime-errors
+
+import * as host from "host/prewrapped_bad"
+
+export function test_host_prewrapped_bad(): null {
+  host.ping();
+  return null;
+}

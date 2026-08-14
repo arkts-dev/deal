@@ -1,0 +1,15 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: Pre-wrapped host exports with byte-identical sig strings are re-wrapped and enforced identically to raw exports — including the sync ->null sentinel return.
+// @expected: runtime-ok
+// @features: modules, host-abi
+
+import * as host from "host/prewrapped_ok"
+
+export function test_host_prewrapped_ok(): null {
+  let greeting: string = host.greet("world");
+  if (greeting !== "hello world") {
+    throw { code: "TEST_FAIL", message: "pre-wrapped export call mismatch" };
+  }
+  host.ping();
+  return null;
+}

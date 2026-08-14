@@ -1,0 +1,6 @@
+// Host fixture declaration for the host-null-return-bad conformance test.
+// Same declared surface as nullreturn_ok, but the implementation returns a
+// non-sentinel value — the wrapper's sync-null check must raise E8010,
+// including on the discard call path (host.ping();).
+
+export function ping(): null;

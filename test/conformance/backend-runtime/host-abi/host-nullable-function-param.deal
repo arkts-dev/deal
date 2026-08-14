@@ -1,0 +1,22 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A nullable-function parameter accepts null (the sentinel, passed through unadapted) and matching-sig DEAL functions (adapted to plain Lua functions) — the host observes both.
+// @expected: runtime-ok
+// @features: modules, host-abi, functions, nullable
+
+import * as host from "host/nullable_fn"
+
+function add1(x: int): int {
+  return x + 1;
+}
+
+export function test_host_nullable_function_param(): int {
+  let withFn: int = host.register(add1);
+  if (withFn !== 42) {
+    throw { code: "TEST_FAIL", message: "nullable-function param adaptation failed" };
+  }
+  let withNull: int = host.register(null);
+  if (withNull !== 0) {
+    throw { code: "TEST_FAIL", message: "nullable-function null param mismatch" };
+  }
+  return withFn;
+}

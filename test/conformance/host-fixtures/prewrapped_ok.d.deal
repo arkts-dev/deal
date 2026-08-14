@@ -1,0 +1,8 @@
+// Host fixture declaration for the host-prewrapped-ok conformance test.
+// Pre-wrapped exports are {__kind="function", sig, f} tables whose sig
+// equals the declared descriptor byte-for-byte. The loader validates the
+// sig identity and re-wraps .f, so raw and pre-wrapped exports get
+// identical call-time enforcement (host-module-abi D2).
+
+export function greet(name: string): string;
+export function ping(): null;

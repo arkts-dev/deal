@@ -1,0 +1,6 @@
+// Host fixture declaration for the host-null-return-ok conformance test.
+// A sync function declared ->null must return the __rt.__NULL sentinel —
+// the wrapper's sync-null check (host-module-abi D3 case 3) accepts it and
+// rejects any non-sentinel value (incl. plain Lua nil).
+
+export function ping(): null;

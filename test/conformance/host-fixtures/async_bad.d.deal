@@ -1,0 +1,6 @@
+// Host fixture declaration for the host-async-bad conformance test. The
+// implementation returns a valid async operation whose completion value
+// does NOT satisfy the declared async return type — the await-site
+// completion check must raise E8001.
+
+export async function fetchValue(): string;

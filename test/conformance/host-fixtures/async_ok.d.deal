@@ -1,0 +1,6 @@
+// Host fixture declaration for the host-async-ok conformance test. A host
+// async function must return a backend async operation ({__kind="async"};
+// anything else raises E8010 at the call site), and the completion value
+// must satisfy the declared async return type at the await site.
+
+export async function fetchValue(): string;

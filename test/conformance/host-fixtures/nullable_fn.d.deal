@@ -1,0 +1,8 @@
+// Host fixture declaration for the host-nullable-function-param and
+// host-nullable-function-param-bad conformance tests. The declared
+// parameter descriptor is ?(int)->int (nullable function, emission
+// invariant E-1): the wrapper accepts the __rt.__NULL sentinel (passed
+// through unadapted) and matching-sig DEAL functions (adapted to plain Lua
+// functions), and raises E8010 for anything else.
+
+export function register(cb: ((x: int) => int) | null): int;

@@ -1,0 +1,22 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A nullable declared return wraps at load time and checks every result — the __rt.__NULL sentinel is the null result, never plain Lua nil.
+// @expected: runtime-ok
+// @features: modules, host-abi
+
+import * as host from "host/nullable_return"
+
+export function test_host_nullable_return_ok(): null {
+  let found: string | null = host.find("hello");
+  if (found !== null) {
+    if (found !== "hello") {
+      throw { code: "TEST_FAIL", message: "nullable string return mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "expected a string result" };
+  }
+  let missing: string | null = host.find("__NULL__");
+  if (missing !== null) {
+    throw { code: "TEST_FAIL", message: "nullable null return was not the sentinel" };
+  }
+  return null;
+}

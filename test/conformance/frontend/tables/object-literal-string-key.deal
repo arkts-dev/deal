@@ -1,0 +1,9 @@
+// @spec: Tables — Identifier-only property names
+// @description: String-keyed object literal properties are rejected at parse time (E1038); property names must be identifiers.
+// @expected: compile-error E1038
+// @features: tables, diagnostics
+
+export function test_object_literal_string_key(): table {
+  let t: table = { "name": "Ada" };
+  return t;
+}

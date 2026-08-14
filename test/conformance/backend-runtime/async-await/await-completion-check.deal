@@ -1,0 +1,17 @@
+// @spec: Async/Await — Completion values
+// @description: Await-site completion checks accept conforming values on both the value and discard paths (control for the host-async-bad E8001 case).
+// @expected: runtime-ok
+// @features: async-await
+
+async function answer(): int {
+  return 42;
+}
+
+export async function test_await_completion_check(): int {
+  let v: int = await answer();
+  if (v !== 42) {
+    throw { code: "TEST_FAIL", message: "completion value mismatch" };
+  }
+  await answer();
+  return v;
+}

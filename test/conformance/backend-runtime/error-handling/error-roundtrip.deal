@@ -1,0 +1,23 @@
+// @spec: Error handling — Error values
+// @description: Thrown and caught Error values are reified as tagged builtin-Error class instances and cross an Error-typed boundary with code and message intact.
+// @expected: runtime-ok
+// @features: error-handling, classes
+
+function produceError(): Error {
+  try {
+    throw { code: "E_ROUND", message: "roundtrip" };
+  } catch (e) {
+    return e;
+  }
+}
+
+export function test_error_roundtrip(): string {
+  let e: Error = produceError();
+  if (e.code !== "E_ROUND") {
+    throw { code: "TEST_FAIL", message: "error code lost" };
+  }
+  if (e.message !== "roundtrip") {
+    throw { code: "TEST_FAIL", message: "error message lost" };
+  }
+  return "error roundtrip ok";
+}

@@ -1,0 +1,6 @@
+// Host fixture declaration for the host-boundary-apply-function conformance
+// test. The declared parameter is a raw function type; the runtime wrapper
+// must adapt the DEAL function wrapper to a plain Lua function before the
+// raw call (host-module-abi D3 case 4).
+
+export function apply(f: (x: int) => int, v: int): int;

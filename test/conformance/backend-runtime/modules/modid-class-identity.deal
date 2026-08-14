@@ -1,0 +1,12 @@
+// @spec: Runtime execution model — Module-qualified class identity
+// @description: Two companion modules exporting same-name classes get distinct module-qualified identities; an instance crossed through an untyped table fails the foreign check with E8001 (exact descriptor compare).
+// @expected: runtime-error E8001
+// @features: modules, classes, runtime-errors
+
+import * as LibA from "./modid_lib_a"
+import * as LibB from "./modid_lib_b"
+
+export function test_cross_module_class_identity(): int {
+  let holder: table = { item: LibA.make(5) };
+  return LibB.needBox(holder.item);
+}
