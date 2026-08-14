@@ -10,6 +10,8 @@ import deal.codegen.lua.LuaBackend;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.parser.Parser;
+import deal.types.Type;
+import deal.types.Types;
 
 import org.junit.Assume;
 import org.junit.Test;
@@ -19,7 +21,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.not;
@@ -970,6 +974,132 @@ public class LuaAbiBackendTest {
         RunResult run = runLua(out.lua(), "print(__mod.loop_sum.f())");
         assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
         assertThat(run.output(), containsString("6"));
+    }
+
+    // =========================================================================
+    // ISSUE-0082 host loader declared-map emission (host-module-abi D4;
+    // lua-abi-emission-layer D3 key-form policy at the new table-constructor
+    // site)
+    // =========================================================================
+
+    /**
+     * Compiles a module importing host declarations through the hostModules
+     * map and pins the loader emission: the raw import specifier as the
+     * first argument (never the dotted importResolutions value), Lua-keyword
+     * export names and "$" synthetic exports as bracket-string declared-map
+     * keys, and the module-qualified class descriptor.
+     */
+    @Test
+    public void hostLoaderDeclaredMapRoutesKeysThroughTableField() {
+        Map<String, Type> hostExports = new LinkedHashMap<>();
+        hostExports.put("repeat", Types.func(List.of(), Type.Int.INSTANCE));
+        // Mirrors ExportExtractor's synthesized @jsonable helpers exactly:
+        // C$fromJson: (string) -> C | null;  C$toJson: (C) -> string.
+        hostExports.put("User$fromJson", Types.func(List.of(Type.String.INSTANCE),
+            Types.nullable(Types.classType("User", "host.cfg"))));
+        hostExports.put("User$toJson", Types.func(
+            List.of(Types.classType("User", "host.cfg")), Type.String.INSTANCE));
+        hostExports.put("User", Types.classType("User", "host.cfg"));
+
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("host/cfg", hostExports);
+
+        String source = "import * as cfg from \"host/cfg\"\n"
+            + "export function run(): int { return cfg.repeat(); }\n";
+        LexResult lex = new Lexer(source, "test.deal").tokenize();
+        if (lex.hasErrors()) fail("lex errors: " + lex.diagnostics());
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        if (parse.hasErrors()) fail("parse errors: " + parse.diagnostics());
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        if (nr.diagnostics().stream().anyMatch(
+                d -> "error".equals(d.severity()))) {
+            fail("name-resolution errors: " + nr.diagnostics());
+        }
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr,
+            parse.program());
+        if (result.hasErrors()) {
+            fail("type errors: " + result.diagnostics());
+        }
+
+        // The host branch must win over the importResolutions value for the
+        // same raw path: the dotted name is typing-only and never emitted.
+        String lua = LuaBackend.generateWithImports(parse.program(), result,
+            "test.deal", Map.of("host/cfg", "host.cfg"),
+            Map.of("host/cfg", hostExports));
+
+        assertThat(lua, containsString(
+            "local cfg = __rt.load_host(\"host/cfg\", {"));
+        assertThat(lua, not(containsString("load_host(\"host.cfg\"")));
+        assertThat(lua, not(containsString("require(\"host/cfg\")")));
+        assertThat(lua, containsString("[\"repeat\"] = \"()->int\""));
+        assertThat(lua, containsString(
+            "[\"User$fromJson\"] = \"(string)->@host.cfg/User|null\""));
+        assertThat(lua, containsString(
+            "[\"User$toJson\"] = \"(@host.cfg/User)->string\""));
+        assertThat(lua, containsString("User = \"@host.cfg/User\""));
+        assertDollarOnlyInQuotedKeys(lua);
+    }
+
+    /**
+     * Descriptor emission pins (host-module-abi Verification 3c): nullable-
+     * function parameters emit the "?F" form, rest parameters emit the full
+     * array arm, function-element rest arrays emit the "..." bracket form,
+     * and nullable class returns keep the legacy "T|null" spelling.
+     */
+    @Test
+    public void hostLoaderDescriptorEmissionPins() {
+        Map<String, Type> hostExports = new LinkedHashMap<>();
+        // export function register(cb: ((x: int) => int) | null): null;
+        hostExports.put("register", Types.func(
+            List.of(Types.nullable(
+                Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE))),
+            Type.Null.INSTANCE));
+        // export function log(level: string, ...parts: string[]): null;
+        hostExports.put("log", Types.func(List.of(Type.String.INSTANCE),
+            Types.array(Type.String.INSTANCE), Type.Null.INSTANCE));
+        // export function applyAll(prefix: string, ...fns: ((x: int) => int)[]): string;
+        hostExports.put("applyAll", Types.func(List.of(Type.String.INSTANCE),
+            Types.array(Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)),
+            Type.String.INSTANCE));
+        // export function find(s: string): User | null;
+        hostExports.put("find", Types.func(List.of(Type.String.INSTANCE),
+            Types.nullable(Types.classType("User", "host.cfg"))));
+
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("host/cfg", hostExports);
+
+        String source = "import * as cfg from \"host/cfg\"\n"
+            + "export function f(): int {\n"
+            + "  cfg.register(null);\n"
+            + "  cfg.log(\"a\", \"b\");\n"
+            + "  return 1;\n"
+            + "}\n";
+        LexResult lex = new Lexer(source, "test.deal").tokenize();
+        if (lex.hasErrors()) fail("lex errors: " + lex.diagnostics());
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        if (parse.hasErrors()) fail("parse errors: " + parse.diagnostics());
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        if (nr.diagnostics().stream().anyMatch(
+                d -> "error".equals(d.severity()))) {
+            fail("name-resolution errors: " + nr.diagnostics());
+        }
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr,
+            parse.program());
+        if (result.hasErrors()) {
+            fail("type errors: " + result.diagnostics());
+        }
+
+        String lua = LuaBackend.generateWithImports(parse.program(), result,
+            "test.deal", Map.of(), Map.of("host/cfg", hostExports));
+
+        assertThat(lua, containsString("register = \"(?(int)->int)->null\""));
+        assertThat(lua, containsString("log = \"(string,...string[])->null\""));
+        assertThat(lua, containsString(
+            "applyAll = \"(string,...[(int)->int])->string\""));
+        assertThat(lua, containsString(
+            "find = \"(string)->@host.cfg/User|null\""));
     }
 
     // =========================================================================

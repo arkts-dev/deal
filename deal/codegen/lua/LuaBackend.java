@@ -73,6 +73,14 @@ public final class LuaBackend implements Visitor<Void> {
     // Import resolution map: raw import path → Lua require path
     private Map<String, String> importResolutions = Map.of();
 
+    // Host module declarations (ISSUE-0082, host-module-abi D4):
+    // raw import path → (declared export name → Type).  When an import path
+    // has an entry here, the import emits `local <alias> = __rt.load_host(
+    // "<raw import path byte-for-byte>", { <name> = "<descriptor>", ... })`
+    // instead of the raw require — the first argument is never the dotted
+    // importResolutions value for that key.
+    private Map<String, Map<String, Type>> hostModules = Map.of();
+
     // ISSUE-0009: for-loop shadow-local lowering.
     // When non-null, all IdentifierExpr nodes with this name in condition
     // and update expressions are remapped to "_name" (the outer counter).
@@ -190,7 +198,7 @@ public final class LuaBackend implements Visitor<Void> {
                                               String sourcePath,
                                               Map<String, String> importResolutions) {
         return generateWithImports(program, result, sourcePath, sourcePath,
-            importResolutions);
+            importResolutions, Map.of());
     }
 
     /**
@@ -203,10 +211,48 @@ public final class LuaBackend implements Visitor<Void> {
     public static String generateWithImports(ProgramNode program, CheckResult result,
                                               String sourcePath, String modulePath,
                                               Map<String, String> importResolutions) {
+        return generateWithImports(program, result, sourcePath, modulePath,
+            importResolutions, Map.of());
+    }
+
+    /**
+     * Entry point with import resolution mapping and host module
+     * declarations (ISSUE-0082, host-module-abi D4); the module path
+     * defaults to the source path.
+     */
+    public static String generateWithImports(ProgramNode program, CheckResult result,
+                                              String sourcePath,
+                                              Map<String, String> importResolutions,
+                                              Map<String, Map<String, Type>> hostModules) {
+        return generateWithImports(program, result, sourcePath, sourcePath,
+            importResolutions, hostModules);
+    }
+
+    /**
+     * Entry point with import resolution mapping, an explicit module path,
+     * and host module declarations (ISSUE-0082, host-module-abi D4).
+     *
+     * @param importResolutions raw import path → Lua require path mapping
+     * @param modulePath        seeds the module-qualified class identity
+     *                          strings (runtime-class-identity D2(0));
+     *                          production passes the same value that seeds
+     *                          the NameResolver, so tags and checker
+     *                          descriptors stay byte-identical
+     * @param hostModules       raw import path → (declared export name → Type);
+     *                          imports whose raw path has an entry here emit
+     *                          the {@code __rt.load_host} loader instead of a
+     *                          raw require (the entry wins over the
+     *                          importResolutions value for that key)
+     */
+    public static String generateWithImports(ProgramNode program, CheckResult result,
+                                              String sourcePath, String modulePath,
+                                              Map<String, String> importResolutions,
+                                              Map<String, Map<String, Type>> hostModules) {
         LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable());
         backend.sourceFilePath = sourcePath;
         backend.modulePath = modulePath;
         backend.importResolutions = Map.copyOf(importResolutions);
+        backend.hostModules = Map.copyOf(hostModules);
         backend.emitHeader();
         backend.emitLine("");
 
@@ -226,22 +272,48 @@ public final class LuaBackend implements Visitor<Void> {
                                                 Map<String, String> importResolutions,
                                                 SourceMapGenerator smg) {
         return generateWithSourceMap(program, result, sourcePath, sourcePath,
-            importResolutions, smg);
+            importResolutions, Map.of(), smg);
     }
 
     /**
-     * Generate Lua source with source map tracking and an explicit module
-     * path (runtime-class-identity D2(0)); the module path defaults to the
-     * source path in the overload above.
+     * Source-map variant with an explicit module path
+     * (runtime-class-identity D2(0)).
      */
     public static String generateWithSourceMap(ProgramNode program, CheckResult result,
                                                 String sourcePath, String modulePath,
                                                 Map<String, String> importResolutions,
                                                 SourceMapGenerator smg) {
+        return generateWithSourceMap(program, result, sourcePath, modulePath,
+            importResolutions, Map.of(), smg);
+    }
+
+    /**
+     * Source-map variant with host module declarations (ISSUE-0082 D4).
+     */
+    public static String generateWithSourceMap(ProgramNode program, CheckResult result,
+                                                String sourcePath,
+                                                Map<String, String> importResolutions,
+                                                Map<String, Map<String, Type>> hostModules,
+                                                SourceMapGenerator smg) {
+        return generateWithSourceMap(program, result, sourcePath, sourcePath,
+            importResolutions, hostModules, smg);
+    }
+
+    /**
+     * Source-map variant with host module declarations (ISSUE-0082 D4) and
+     * an explicit module path (runtime-class-identity D2(0)); both default
+     * in the overload above.
+     */
+    public static String generateWithSourceMap(ProgramNode program, CheckResult result,
+                                                String sourcePath, String modulePath,
+                                                Map<String, String> importResolutions,
+                                                Map<String, Map<String, Type>> hostModules,
+                                                SourceMapGenerator smg) {
         LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable());
         backend.sourceFilePath = sourcePath;
         backend.modulePath = modulePath;
         backend.importResolutions = Map.copyOf(importResolutions);
+        backend.hostModules = Map.copyOf(hostModules);
         backend.sourceMapGenerator = smg;
         backend.emitHeader();
         backend.emitLine("");
@@ -296,12 +368,11 @@ public final class LuaBackend implements Visitor<Void> {
                                        Map<String, String> importResolutions)
                                        throws IOException {
         generateToFile(program, result, sourcePath, sourcePath, outputRoot,
-            outputPath, emitSourceMap, importResolutions);
+            outputPath, emitSourceMap, importResolutions, Map.of());
     }
 
     /**
-     * Generate Lua source and write it to the output path, optionally
-     * producing a source map sidecar file, with an explicit module path
+     * File-writing variant with an explicit module path
      * (runtime-class-identity D2(0)).
      */
     public static void generateToFile(ProgramNode program, CheckResult result,
@@ -310,15 +381,54 @@ public final class LuaBackend implements Visitor<Void> {
                                        boolean emitSourceMap,
                                        Map<String, String> importResolutions)
                                        throws IOException {
+        generateToFile(program, result, sourcePath, modulePath, outputRoot,
+            outputPath, emitSourceMap, importResolutions, Map.of());
+    }
+
+    /**
+     * File-writing variant with host module declarations (ISSUE-0082 D4);
+     * the module path defaults to the source path.
+     */
+    public static void generateToFile(ProgramNode program, CheckResult result,
+                                       String sourcePath, Path outputRoot,
+                                       Path outputPath, boolean emitSourceMap,
+                                       Map<String, String> importResolutions,
+                                       Map<String, Map<String, Type>> hostModules)
+                                       throws IOException {
+        generateToFile(program, result, sourcePath, sourcePath, outputRoot,
+            outputPath, emitSourceMap, importResolutions, hostModules);
+    }
+
+    /**
+     * File-writing variant with an explicit module path, host module
+     * declarations, and import resolution mapping.
+     *
+     * @param modulePath        seeds the module-qualified class identity
+     *                          strings (runtime-class-identity D2(0))
+     * @param importResolutions raw import path → Lua require path mapping
+     * @param hostModules       raw import path → (declared export name → Type)
+     *                          (ISSUE-0082, host-module-abi D4)
+     */
+    public static void generateToFile(ProgramNode program, CheckResult result,
+                                       String sourcePath, String modulePath,
+                                       Path outputRoot, Path outputPath,
+                                       boolean emitSourceMap,
+                                       Map<String, String> importResolutions,
+                                       Map<String, Map<String, Type>> hostModules)
+                                       throws IOException {
         SourceMapGenerator smg = emitSourceMap ? new SourceMapGenerator() : null;
         String luaSource;
         if (smg != null) {
             luaSource = generateWithSourceMap(program, result, sourcePath,
-                modulePath, importResolutions, smg);
+                modulePath, importResolutions, hostModules, smg);
         } else {
             luaSource = generateWithImports(program, result, sourcePath,
-                modulePath, importResolutions);
+                modulePath, importResolutions, hostModules);
         }
+
+        Files.createDirectories(outputPath.getParent());
+        Files.writeString(outputPath, luaSource);
+
 
         Files.createDirectories(outputPath.getParent());
         Files.writeString(outputPath, luaSource);
@@ -1328,6 +1438,28 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(ImportDeclaration node) {
+        // Host-module branch (ISSUE-0082, host-module-abi D4): the declared
+        // exports drive the runtime loader.  The first argument is the raw
+        // import specifier byte-for-byte — never the dotted importResolutions
+        // value for that key (the dotted module path is the typing/class-
+        // identity name only).  Declared-map keys route through the LuaAbi
+        // table-constructor key-form policy (Lua-keyword export names and
+        // "$" synthetic exports emit bracket-string keys).
+        Map<String, Type> declared = hostModules.get(node.modulePath());
+        if (declared != null) {
+            emitLine("local " + node.alias() + " = __rt.load_host(\""
+                + escapeLuaStringNoQuotes(node.modulePath()) + "\", {");
+            indent++;
+            for (Map.Entry<String, Type> entry : declared.entrySet()) {
+                String descriptor = typeDescriptor(entry.getValue());
+                emitLine(LuaAbi.tableField(entry.getKey(),
+                    "\"" + descriptor + "\"") + ",");
+            }
+            indent--;
+            emitLine("})");
+            return null;
+        }
+
         String requirePath = importResolutions.getOrDefault(
             node.modulePath(), node.modulePath());
         emitLine("local " + node.alias() + " = require(\""

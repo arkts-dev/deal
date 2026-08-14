@@ -47,6 +47,17 @@ public final class CompilationOrchestrator {
     private final List<Diagnostic> diagnostics = new ArrayList<>();
     private boolean hasErrors = false;
 
+    // Host externals (ISSUE-0082, host-module-abi D5):
+    // - externalsDeclarations: raw import path as written → absolute
+    //   declaration source path (manifest-relative resolution).  The
+    //   declaration is authoritative for that name — on-disk candidates are
+    //   not consulted.
+    // - externalsModulePaths: declaration source path → dotted module path
+    //   (the externals key with '/' → '.' — the typing/class-identity name,
+    //   e.g. "host.cfg"; the require path stays the raw key "host/cfg").
+    private final Map<String, String> externalsDeclarations;
+    private final Map<String, String> externalsModulePaths;
+
     private static final class ModuleInfo {
         final String sourcePath;
         final String modulePath;
@@ -89,6 +100,25 @@ public final class CompilationOrchestrator {
         this.sourceMap = sourceMap;
         this.moduleRoots = moduleRoots;
         this.stdlibDir = stdlibDir;
+
+        Map<String, String> declarations = new HashMap<>();
+        Map<String, String> modulePaths = new HashMap<>();
+        if (config != null) {
+            Path manifestDir = config.configFile() != null
+                ? config.configFile().toAbsolutePath().normalize().getParent()
+                : null;
+            for (Map.Entry<String, String> entry : config.externals().entrySet()) {
+                Path declaration = Path.of(entry.getValue());
+                if (manifestDir != null) {
+                    declaration = manifestDir.resolve(declaration);
+                }
+                String sourcePath = declaration.normalize().toString();
+                declarations.put(entry.getKey(), sourcePath);
+                modulePaths.put(sourcePath, entry.getKey().replace('/', '.'));
+            }
+        }
+        this.externalsDeclarations = Map.copyOf(declarations);
+        this.externalsModulePaths = Map.copyOf(modulePaths);
     }
 
     // =========================================================================
@@ -177,7 +207,12 @@ public final class CompilationOrchestrator {
                 hasErrors = true;
             }
 
-            String modulePath = computeModulePath(file);
+            // Externals-listed host declarations carry the dotted externals
+            // key as their typing/class-identity module path (e.g. "host.cfg"
+            // for the raw import path "host/cfg").
+            String externalsModulePath = externalsModulePaths.get(sourcePath);
+            String modulePath = externalsModulePath != null
+                ? externalsModulePath : computeModulePath(file);
             ModuleInfo info = new ModuleInfo(sourcePath, modulePath, isDecl);
             info.rawAst = parseResult.program();
             info.parseResult = parseResult;
@@ -199,6 +234,15 @@ public final class CompilationOrchestrator {
                         error(DiagnosticCode.E2003,
                             "Module not found: '" + importPath
                                 + "'. Searched in: " + describeSearchPaths(importPath, file),
+                            imp.span().file(), imp.span().startLine(),
+                            imp.span().startColumn());
+                    } else if (isUndeclaredExternalHostModule(importPath, resolved)) {
+                        // E2009: a bare import whose resolution lands on a
+                        // non-stdlib declaration file that is not listed in
+                        // deal.json externals (host-module-abi D5(3)).
+                        error(DiagnosticCode.E2009,
+                            "Import of external host module '" + importPath
+                                + "' is not declared in deal.json externals",
                             imp.span().file(), imp.span().startLine(),
                             imp.span().startColumn());
                     } else if (!modules.containsKey(resolved)) {
@@ -833,6 +877,7 @@ public final class CompilationOrchestrator {
             long modStart = System.currentTimeMillis();
 
             Map<String, String> importResolutions = new HashMap<>();
+            Map<String, Map<String, Type>> hostModules = new HashMap<>();
             for (StatementNode stmt : info.rawAst.statements()) {
                 if (stmt instanceof ImportDeclaration imp) {
                     String resolvedSource = resolveImportPath(imp.modulePath(),
@@ -842,6 +887,16 @@ public final class CompilationOrchestrator {
                         if (imported != null) {
                             importResolutions.put(imp.modulePath(),
                                 imported.modulePath);
+                            // Host modules (ISSUE-0082, host-module-abi D5):
+                            // declaration files that are not spec stdlib
+                            // modules load through __rt.load_host with the
+                            // raw import path verbatim as the require key.
+                            if (imported.isDeclarationFile
+                                    && !isSpecStdlibModuleInfo(imported)) {
+                                hostModules.put(imp.modulePath(),
+                                    imported.exports != null
+                                        ? imported.exports : Map.of());
+                            }
                         }
                     }
                 }
@@ -861,11 +916,11 @@ public final class CompilationOrchestrator {
                 // checker's descriptors (runtime-class-identity D2(0)).
                 LuaBackend.generateToFile(info.rawAst, info.checkResult,
                     info.sourcePath, info.modulePath, outputRoot, outputPath, true,
-                    importResolutions);
+                    importResolutions, hostModules);
             } else {
                 String luaSource = LuaBackend.generateWithImports(
                     info.rawAst, info.checkResult, info.sourcePath,
-                    info.modulePath, importResolutions);
+                    info.modulePath, importResolutions, hostModules);
                 Files.writeString(outputPath, luaSource);
             }
 
@@ -880,6 +935,20 @@ public final class CompilationOrchestrator {
         if (verbose) {
             System.out.println("  Phase 4 total: " + phaseElapsed + "ms");
         }
+    }
+
+    /**
+     * True when the module is a spec-listed stdlib declaration module
+     * (filesystem-discovered under the stdlib directory or registered as a
+     * classpath resource).  Stdlib imports stay on the trusted raw-require
+     * path (ISSUE-0082, host-module-abi D5(5)).
+     */
+    private boolean isSpecStdlibModuleInfo(ModuleInfo info) {
+        if (info.sourcePath.startsWith("classpath:")) {
+            return true;
+        }
+        return StdlibModuleResolver.isSpecStdlibModule(
+            info.modulePath.replace('.', '/'));
     }
 
     private void copyRuntimeLibrary() throws IOException {
@@ -999,6 +1068,18 @@ public final class CompilationOrchestrator {
      * rejected with {@code null}, resulting in an E2003 diagnostic.
      */
     private String tryResolveImportPath(String importPath, Path fromFile) {
+        // Externals-listed bare imports (ISSUE-0082, host-module-abi D5):
+        // the manifest declaration is authoritative for that name — on-disk
+        // candidates are not consulted.  A missing declaration file yields
+        // null (→ E2003 at the import site).
+        String externalsDeclaration = externalsDeclarations.get(importPath);
+        if (externalsDeclaration != null) {
+            if (Files.exists(Path.of(externalsDeclaration))) {
+                return externalsDeclaration;
+            }
+            return null;
+        }
+
         // Reject non-spec stdlib modules at the discovery/import-resolution level.
         // Bare imports that start with "std/" but are not in the spec list
         // should not resolve (they are not valid stdlib modules).
@@ -1031,6 +1112,29 @@ public final class CompilationOrchestrator {
         }
 
         return null;
+    }
+
+    /**
+     * True when a bare import resolved to a non-stdlib declaration file that
+     * is not listed in deal.json externals (ISSUE-0082, host-module-abi
+     * D5(3)-(4)): bare host modules must be declared in externals, while
+     * relative ({@code ./}, {@code ../}) declaration imports and the stdlib
+     * trusted path are unchanged.
+     */
+    private boolean isUndeclaredExternalHostModule(String importPath, String resolved) {
+        if (importPath.startsWith("./") || importPath.startsWith("../")) {
+            return false;
+        }
+        if (importPath.startsWith("std/")) {
+            return false;
+        }
+        if (resolved.startsWith("classpath:")) {
+            return false;
+        }
+        if (externalsDeclarations.containsKey(importPath)) {
+            return false;
+        }
+        return resolved.endsWith(".d.deal");
     }
 
     private List<String> buildCandidates(String importPath, Path fromFile) {

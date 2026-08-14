@@ -236,6 +236,7 @@ public class DiagnosticClassificationTest {
         coverage.put("E2006", "CheckerTest (import after declaration)");
         coverage.put("E2007", "CheckerTest (declaration after import)");
         coverage.put("E2008", "CheckerTest (dollar in identifier)");
+        coverage.put("E2009", "ModuleSystemTest (externals gating)");
 
         coverage.put("E3001", "CheckerTest (type mismatch)");
         coverage.put("E3002", "CheckerTest (empty literal inference)");

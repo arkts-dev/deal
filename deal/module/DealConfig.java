@@ -4,13 +4,18 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Parses and holds the contents of a {@code deal.json} project manifest.
  *
- * <p>Only {@code moduleRoots}, {@code output}, and {@code backend} are
- * actively used in v0.6; the remaining fields are parsed but not enforced.</p>
+ * <p>{@code moduleRoots}, {@code output}, and {@code backend} drive the
+ * CLI; {@code externals} (spec map form, import path → manifest-relative
+ * declaration) drives host-module resolution and E2009 gating
+ * (ISSUE-0082). The remaining fields are parsed but not enforced.</p>
  */
 public final class DealConfig {
 
@@ -19,13 +24,13 @@ public final class DealConfig {
     private final String backend;
     private final List<String> permissions;
     private final Limits limits;
-    private final List<String> externals;
+    private final Map<String, String> externals;
     private final Dependencies dependencies;
     private final Path configFile;
 
     private DealConfig(Path configFile, List<String> moduleRoots, String output,
                        String backend, List<String> permissions, Limits limits,
-                       List<String> externals, Dependencies dependencies) {
+                       Map<String, String> externals, Dependencies dependencies) {
         this.configFile = configFile;
         this.moduleRoots = moduleRoots;
         this.output = output;
@@ -57,7 +62,7 @@ public final class DealConfig {
         String backend = root.getString("backend");
         List<String> permissions = root.getStringList("permissions");
         Limits limits = Limits.fromJson(root.getObject("limits"));
-        List<String> externals = root.getStringList("externals");
+        Map<String, String> externals = parseExternals(root);
         Dependencies dependencies = Dependencies.fromJson(root.getObject("dependencies"));
 
         // Validate backend
@@ -75,9 +80,45 @@ public final class DealConfig {
     public String backend() { return backend; }
     public List<String> permissions() { return permissions; }
     public Limits limits() { return limits; }
-    public List<String> externals() { return externals; }
+    /**
+     * The spec map form of the {@code externals} manifest field: import path
+     * as written → declaration file path (relative to the manifest
+     * directory).  The legacy list form is retired: it yields an empty map.
+     */
+    public Map<String, String> externals() { return externals; }
     public Dependencies dependencies() { return dependencies; }
     public Path configFile() { return configFile; }
+
+    /**
+     * Parses the {@code externals} manifest field (spec map form):
+     * {@code "externals": { "host/cfg": { "declaration": "bindings/host-cfg.d.deal" } }}.
+     * The key is the import path as written; the declaration path is
+     * manifest-relative.  The legacy list form is retired (empty map).
+     */
+    private static Map<String, String> parseExternals(JsonObject root) {
+        Object v = root.get("externals");
+        if (v == null) return Map.of();
+        if (v instanceof java.util.Map<?, ?> m) {
+            Map<String, String> result = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> e : m.entrySet()) {
+                if (!(e.getKey() instanceof String key)) continue;
+                String declaration = null;
+                if (e.getValue() instanceof java.util.Map<?, ?> entry) {
+                    Object d = entry.get("declaration");
+                    if (d instanceof String ds) declaration = ds;
+                }
+                if (declaration == null) {
+                    throw new IllegalArgumentException(
+                        "deal.json: externals entry '" + key
+                            + "' must be an object with a 'declaration' string");
+                }
+                result.put(key, declaration);
+            }
+            return Collections.unmodifiableMap(result);
+        }
+        // Legacy list form — retired: no externals gating surface.
+        return Map.of();
+    }
 
     /** Reserved for future use. */
     public record Limits(Integer maxMemory, Integer maxCpuTime) {
@@ -114,6 +155,10 @@ public final class DealConfig {
                 return new JsonObject(cast);
             }
             return null;
+        }
+
+        Object get(String key) {
+            return map.get(key);
         }
 
         String getString(String key) {

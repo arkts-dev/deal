@@ -347,11 +347,44 @@ public class ModuleSystemTest {
             check(config.permissions().get(0).equals("net"), "permissions[0]");
             check(config.limits() != null, "limits not null");
             check(config.limits().maxMemory() == 128, "limits.maxMemory");
-            check(config.externals().size() == 1, "externals size");
+            check(config.externals().isEmpty(),
+                "externals empty (legacy list form retired)");
             check(config.dependencies() != null, "dependencies not null");
             check(config.dependencies().items().size() == 1, "dependencies.items size");
         } catch (Exception e) {
             fail("DealConfig parse: " + e.getMessage());
+        }
+
+        // Spec map form: externals entries carry a manifest-relative declaration.
+        String mapJson = """
+            {
+              "moduleRoots": ["src"],
+              "externals": {
+                "host/cfg": { "declaration": "bindings/host-cfg.d.deal" },
+                "host/log": { "declaration": "bindings/host-log.d.deal" }
+              }
+            }""";
+        try {
+            DealConfig mapConfig = DealConfig.parse(Path.of("deal.json"), mapJson);
+            check(mapConfig.externals().size() == 2, "externals map size");
+            check(mapConfig.externals().get("host/cfg")
+                    .equals("bindings/host-cfg.d.deal"),
+                "externals map declaration host/cfg");
+            check(mapConfig.externals().get("host/log")
+                    .equals("bindings/host-log.d.deal"),
+                "externals map declaration host/log");
+        } catch (Exception e) {
+            fail("DealConfig externals map parse: " + e.getMessage());
+        }
+
+        // Malformed externals entry: value must be an object with "declaration".
+        String badExternals = "{\"externals\": {\"host/cfg\": \"not-an-object\"}}";
+        try {
+            DealConfig.parse(Path.of("deal.json"), badExternals);
+            fail("Should have thrown for non-object externals entry");
+        } catch (IllegalArgumentException e) {
+            check(e.getMessage().contains("declaration"),
+                "Externals entry error message mentions 'declaration'");
         }
 
         // Invalid backend
@@ -1320,6 +1353,249 @@ public class ModuleSystemTest {
             "calc.lua should not be generated for .d.deal");
     }
 
+
+    // =========================================================================
+    // Host Externals (ISSUE-0082, host-module-abi D5)
+    // =========================================================================
+
+    /**
+     * Compiles an externals-listed bare host import and pins the emitted
+     * loader shape: {@code __rt.load_host} with the raw import specifier
+     * byte-for-byte ({@code "host/cfg"}, never the dotted typing name), the
+     * Lua-keyword declared-map key as a bracket string, the class descriptor
+     * carrying the dotted typing/class-identity module path, and the stdlib
+     * trusted path still emitting a raw require.
+     */
+    private static void testExternalsHostModuleCompiles() throws Exception {
+        System.out.println("-- Externals host module: compile + loader emission --");
+
+        writeFile("deal.json", """
+            {
+              "moduleRoots": ["src"],
+              "output": "build/lua",
+              "backend": "luajit",
+              "externals": {
+                "host/cfg": { "declaration": "bindings/host-cfg.d.deal" }
+              }
+            }""");
+        writeFile("bindings/host-cfg.d.deal", """
+            export function ping(): int;
+            export function repeat(): int;
+            // @jsonable
+            export class User {
+                name: string;
+            }
+            """);
+        writeFile("src/ext_main.deal", """
+            import * as cfg from "host/cfg"
+            import * as console from "std/console"
+            export function run(): int { console.log("x"); return cfg.ping(); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/ext_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/ext_host");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        DealConfig config = DealConfig.load(tmpDir);
+        check(config != null, "deal.json loaded");
+        check(config.externals().containsKey("host/cfg"), "externals map has host/cfg");
+        check(config.externals().get("host/cfg").equals("bindings/host-cfg.d.deal"),
+            "externals declaration path");
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, config, roots, null);
+
+        boolean success = orchestrator.compile();
+        check(success, "Externals host module: compilation should succeed");
+
+        String lua = Files.readString(outputDir.resolve("ext_main.lua"));
+        check(lua.contains("__rt.load_host(\"host/cfg\", {"),
+            "Loader first argument is the raw import specifier byte-for-byte");
+        check(!lua.contains("__rt.load_host(\"host.cfg\""),
+            "Loader never emits the dotted typing name as the require path");
+        check(!lua.contains("require(\"host/cfg\")"),
+            "Host imports never emit a raw require");
+        check(lua.contains("[\"repeat\"] = \"()->int\""),
+            "Lua-keyword export name emits a bracket-string declared-map key");
+        check(lua.contains("ping = \"()->int\""),
+            "Safe export name emits a dot-form declared-map key");
+        check(lua.contains("User = \"@host.cfg/User\""),
+            "Class descriptor uses the dotted typing/class-identity module path");
+        check(lua.contains("[\"User$fromJson\"] = \"(string)->@host.cfg/User|null\""),
+            "@jsonable synthetic export emits a bracket-string declared-map key");
+        check(lua.contains("[\"User$toJson\"] = \"(@host.cfg/User)->string\""),
+            "@jsonable synthetic toJson export emits a bracket-string key");
+        boolean dollarOnlyInQuotedKeys = true;
+        for (int i = lua.indexOf('$'); i >= 0; i = lua.indexOf('$', i + 1)) {
+            int open = lua.lastIndexOf('\"', i);
+            int close = lua.indexOf('\"', i + 1);
+            if (!(open >= 0 && close >= 0 && open < i && i < close)) {
+                dollarOnlyInQuotedKeys = false;
+            }
+        }
+        check(dollarOnlyInQuotedKeys, "loader $ keys stay inside quoted strings");
+        check(lua.contains("require(\"std.console\")"),
+            "Stdlib import keeps the trusted raw require");
+    }
+
+    /**
+     * A bare import whose resolution lands on a non-stdlib declaration file
+     * that is not listed in deal.json externals is rejected with E2009.
+     */
+    private static void testExternalsGatingE2009() throws Exception {
+        System.out.println("-- Externals gating: unlisted bare .d.deal → E2009 --");
+
+        writeFile("deal.json", """
+            {
+              "moduleRoots": ["src"],
+              "output": "build/lua",
+              "backend": "luajit",
+              "externals": {}
+            }""");
+        writeFile("src/undeclared/hostmod.d.deal", """
+            export function ping(): int;
+            """);
+        writeFile("src/gate_main.deal", """
+            import * as cfg from "undeclared/hostmod"
+            export function run(): int { return cfg.ping(); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/gate_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/gate");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        DealConfig config = DealConfig.load(tmpDir);
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, config, roots, null);
+
+        boolean success = orchestrator.compile();
+        check(!success, "Unlisted bare .d.deal import must fail compilation");
+        check(orchestrator.diagnostics().stream()
+                .anyMatch(d -> "E2009".equals(d.code())),
+            "E2009 reported for the unlisted host import");
+    }
+
+    /**
+     * An externals-listed declaration file missing on disk reports E2003
+     * (the existing module-not-found path), never a silent success.
+     */
+    private static void testExternalsMissingDeclarationE2003() throws Exception {
+        System.out.println("-- Externals declaration missing on disk → E2003 --");
+
+        writeFile("deal.json", """
+            {
+              "moduleRoots": ["src"],
+              "output": "build/lua",
+              "backend": "luajit",
+              "externals": {
+                "host/missing": { "declaration": "bindings/host-missing.d.deal" }
+              }
+            }""");
+        // bindings/host-missing.d.deal intentionally not written
+        writeFile("src/missing_main.deal", """
+            import * as cfg from "host/missing"
+            export function run(): int { return cfg.ping(); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/missing_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/missing");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        DealConfig config = DealConfig.load(tmpDir);
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, config, roots, null);
+
+        boolean success = orchestrator.compile();
+        check(!success, "Missing externals declaration must fail compilation");
+        check(orchestrator.diagnostics().stream()
+                .anyMatch(d -> "E2003".equals(d.code())),
+            "E2003 reported for the missing externals declaration");
+    }
+
+    /**
+     * Combined C2+C3 evidence: an externals-listed project compiles, the
+     * generated module executes under LuaJIT with a minimal host
+     * implementation on package.path, and the wrapped host call returns the
+     * runtime-checked value (the loader + from_lua_function pipeline).
+     */
+    private static void testHostModuleEndToEnd() throws Exception {
+        System.out.println("-- Host module E2E: externals-listed project runs under LuaJIT --");
+        if (!luajitAvailable()) {
+            System.out.println("  SKIP: LuaJIT not available");
+            return;
+        }
+
+        writeFile("deal.json", """
+            {
+              "moduleRoots": ["src"],
+              "output": "build/lua",
+              "backend": "luajit",
+              "externals": {
+                "host/cfg": { "declaration": "bindings/host-cfg.d.deal" }
+              }
+            }""");
+        writeFile("bindings/host-cfg.d.deal", """
+            export function ping(): int;
+            """);
+        writeFile("src/host_smoke.deal", """
+            import * as cfg from "host/cfg"
+            export function run(): int { return cfg.ping(); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/host_smoke.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/host_smoke");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        DealConfig config = DealConfig.load(tmpDir);
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, config, roots, null);
+
+        boolean success = orchestrator.compile();
+        check(success, "Host E2E: compilation should succeed");
+        if (!success) return;
+
+        String lua = Files.readString(outputDir.resolve("host_smoke.lua"));
+        check(lua.contains("__rt.load_host(\"host/cfg\", {"),
+            "Host E2E: loader emits the raw import specifier");
+
+        // Host implementation placed on package.path (host-environment policy,
+        // host-module-abi assumption b): outputDir/host/cfg.lua resolves as
+        // ./host/cfg.lua for the verbatim require("host/cfg").
+        Path hostImpl = outputDir.resolve("host/cfg.lua");
+        Files.createDirectories(hostImpl.getParent());
+        Files.writeString(hostImpl, """
+            local M = {}
+            function M.ping() return 7 end
+            return M
+            """);
+
+        // Copy the runtime if the classpath/CWD fallback did not (belt and braces).
+        Path runtimeDest = outputDir.resolve("deal/runtime.lua");
+        if (!Files.exists(runtimeDest)) {
+            Files.createDirectories(runtimeDest.getParent());
+            Files.copy(Path.of("deal/runtime.lua"), runtimeDest);
+        }
+
+        try {
+            String luaCode = "package.path = '" + outputDir.toRealPath()
+                + "/?.lua;' "
+                + "local m = require('host_smoke') "
+                + "local v = m.run.f() "
+                + "assert(v == 7, 'expected 7, got ' .. tostring(v)) "
+                + "print('OK: host ping -> ' .. tostring(v))";
+            ProcessBuilder pb = new ProcessBuilder("luajit", "-e", luaCode);
+            pb.redirectErrorStream(true);
+            Process proc = pb.start();
+            String output = new String(proc.getInputStream().readAllBytes());
+            int exitCode = proc.waitFor();
+            check(exitCode == 0,
+                "Host E2E: runtime verification (exit " + exitCode + "): "
+                    + output.trim());
+        } catch (Exception e) {
+            check(false, "Host E2E: runtime verification failed: " + e.getMessage());
+        }
+    }
+
     // =========================================================================
     // CLI Tests
     // =========================================================================
@@ -1683,6 +1959,10 @@ public class ModuleSystemTest {
             testQualifiedTypeAnnotation();
             testCrossModuleClassE2E();
             testDeclarationFile();
+            testExternalsHostModuleCompiles();
+            testExternalsGatingE2009();
+            testExternalsMissingDeclarationE2003();
+            testHostModuleEndToEnd();
             testCli();
             testEndToEndSingleModule();
             testEndToEndMultiModule();

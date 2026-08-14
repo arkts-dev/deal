@@ -135,6 +135,8 @@ public enum DiagnosticCode {
     E2007(Phase.FRONTEND, "Declaration shadowed by earlier import"),
     /** User-declared identifiers must not contain '$'. */
     E2008(Phase.FRONTEND, "User-declared identifiers must not contain '$'"),
+    /** Import of external host module not declared in deal.json externals. */
+    E2009(Phase.FRONTEND, "Import of external host module not declared in deal.json externals"),
 
     // =========================================================================
     // E3xxx — type checking (FRONTEND)
