@@ -799,6 +799,21 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     /**
+     * The quoted-Lua-string form of a runtime type descriptor: the
+     * descriptor text wrapped in double quotes and Lua-escaped.  Every
+     * emission site that embeds a descriptor inside a quoted Lua string
+     * must go through this (or escapeLuaStringNoQuotes): descriptor text
+     * carries user-authored characters — in particular the externals
+     * import key embedded in class descriptors ("@<dotted key>/<Name>")
+     * — and an unescaped backslash would make the generated chunk
+     * invalid Lua ("invalid escape sequence" at require time, with no
+     * compile-time diagnostic).
+     */
+    private String quotedTypeDescriptor(Type t) {
+        return "\"" + escapeLuaStringNoQuotes(typeDescriptor(t)) + "\"";
+    }
+
+    /**
      * Emits a runtime type check expression.
      */
     private String emitCheckExpr(String valueExpr, Type type) {
@@ -825,16 +840,16 @@ public final class LuaBackend implements Visitor<Void> {
             case Type.Table ignored ->
                 "__rt.check_table(" + valueExpr + ", " + spanParam + ")";
             case Type.Array arr ->
-                "__rt.check_array(\"" + typeDescriptor(type) + "\", "
+                "__rt.check_array(" + quotedTypeDescriptor(type) + ", "
                     + valueExpr + ", " + spanParam + ")";
             case Type.Nullable n ->
-                "__rt.check_nullable(\"" + typeDescriptor(n.inner()) + "\", "
+                "__rt.check_nullable(" + quotedTypeDescriptor(n.inner()) + ", "
                     + valueExpr + ", " + spanParam + ")";
             case Type.Class cls ->
-                "__rt.check_type(\"" + typeDescriptor(cls) + "\", "
+                "__rt.check_type(" + quotedTypeDescriptor(cls) + ", "
                     + valueExpr + ", " + spanParam + ")";
             case Type.Func f ->
-                "__rt.check_type(\"" + typeDescriptor(f) + "\", "
+                "__rt.check_type(" + quotedTypeDescriptor(f) + ", "
                     + valueExpr + ", " + spanParam + ")";
             default -> valueExpr;
         };
@@ -1020,9 +1035,9 @@ public final class LuaBackend implements Visitor<Void> {
             paramList.append("...");
         }
 
-        String sig = funcType != null ? typeDescriptor(funcType) : "()";
-        emitLine(name + " = __rt.function_(\"" + sig
-            + "\", function(" + paramList.toString() + ")");
+        String sig = funcType != null ? quotedTypeDescriptor(funcType) : "\"()\"";
+        emitLine(name + " = __rt.function_(" + sig
+            + ", function(" + paramList.toString() + ")");
 
         functionDepth++;
         indent++;
@@ -1036,8 +1051,8 @@ public final class LuaBackend implements Visitor<Void> {
             emitLine("local " + rest.name() + " = {...}");
             Type restType = resolveTypeNode(rest.type());
             if (restType instanceof Type.Array arr) {
-                emitLine("__rt.check_array(\"" + typeDescriptor(arr)
-                    + "\", " + rest.name() + ", "
+                emitLine("__rt.check_array(" + quotedTypeDescriptor(arr)
+                    + ", " + rest.name() + ", "
                     + spanArgs(rest.type().span()) + ")");
             }
         }
@@ -1459,9 +1474,8 @@ public final class LuaBackend implements Visitor<Void> {
             // export name.
             for (Map.Entry<String, Type> entry
                     : new TreeMap<>(declared).entrySet()) {
-                String descriptor = typeDescriptor(entry.getValue());
                 emitLine(LuaAbi.tableField(entry.getKey(),
-                    "\"" + descriptor + "\"") + ",");
+                    quotedTypeDescriptor(entry.getValue())) + ",");
             }
             indent--;
             emitLine("})");
@@ -2106,7 +2120,8 @@ public final class LuaBackend implements Visitor<Void> {
         }
 
         Type funcType = typeOf(fe);
-        String sig = funcType instanceof Type.Func f ? typeDescriptor(f) : "()";
+        String sig = funcType instanceof Type.Func f
+            ? quotedTypeDescriptor(f) : "\"()\"";
 
         Type savedReturn = currentReturnType;
         if (funcType instanceof Type.Func f) currentReturnType = f.returnType();
@@ -2127,8 +2142,8 @@ public final class LuaBackend implements Visitor<Void> {
                 emitLine("local " + rest.name() + " = {...}");
                 Type restType = resolveTypeNode(rest.type());
                 if (restType instanceof Type.Array arr) {
-                    emitLine("__rt.check_array(\"" + typeDescriptor(arr)
-                        + "\", " + rest.name() + ", "
+                    emitLine("__rt.check_array(" + quotedTypeDescriptor(arr)
+                        + ", " + rest.name() + ", "
                         + spanArgs(rest.type().span()) + ")");
                 }
             }
@@ -2164,7 +2179,7 @@ public final class LuaBackend implements Visitor<Void> {
         currentReturnType = savedReturn;
         indent = savedIndent;
 
-        return "__rt.function_(\"" + sig + "\", function("
+        return "__rt.function_(" + sig + ", function("
             + paramList.toString() + ")\n" + bodyStr
             + "  ".repeat(indent) + "end)";
     }
@@ -2268,8 +2283,8 @@ public final class LuaBackend implements Visitor<Void> {
     private String emitArityAdapter(Type.Func targetFunc, Type.Func valueFunc,
                                      String valueLua, Span span) {
         StringBuilder sb = new StringBuilder();
-        sb.append("__rt.function_(\"").append(typeDescriptor(targetFunc))
-            .append("\", function(");
+        sb.append("__rt.function_(").append(quotedTypeDescriptor(targetFunc))
+            .append(", function(");
         for (int i = 0; i < targetFunc.paramTypes().size(); i++) {
             if (i > 0) sb.append(", ");
             sb.append("__p").append(i);
@@ -2764,7 +2779,8 @@ public final class LuaBackend implements Visitor<Void> {
 
     /**
      * Like {@link #escapeLuaString} but without surrounding quotes.
-     * Used for embedding file paths in generated code.
+     * Used for embedding file paths and runtime type descriptors in
+     * generated code (see {@link #quotedTypeDescriptor}).
      */
     private String escapeLuaStringNoQuotes(String s) {
         StringBuilder sb = new StringBuilder();

@@ -233,7 +233,8 @@ public final class CompilationOrchestrator {
                         // accurate error location.
                         error(DiagnosticCode.E2003,
                             "Module not found: '" + importPath
-                                + "'. Searched in: " + describeSearchPaths(importPath, file),
+                                + "'. Searched in: " + describeSearchPaths(importPath, file)
+                                + externalsDeclarationNote(importPath),
                             imp.span().file(), imp.span().startLine(),
                             imp.span().startColumn());
                     } else if (isUndeclaredExternalHostModule(importPath, resolved)) {
@@ -1053,6 +1054,7 @@ public final class CompilationOrchestrator {
                 if (i > 0) msg.append(", ");
                 msg.append(candidates.get(i));
             }
+            msg.append(externalsDeclarationNote(importPath));
             error(DiagnosticCode.E2003, msg.toString(), errorFile, errorLine, errorCol);
         }
         return resolved;
@@ -1170,6 +1172,20 @@ public final class CompilationOrchestrator {
             sb.append(candidates.get(i));
         }
         return sb.toString();
+    }
+
+    /**
+     * Names the authoritative externals declaration path for an import
+     * listed in deal.json externals, for E2003 messages.  The manifest
+     * declaration is authoritative for that name and on-disk candidates
+     * are not consulted (host-module-abi D5(2)), so a missing declaration
+     * file must point the user at the configured path.  Returns an empty
+     * string for imports without an externals entry.
+     */
+    private String externalsDeclarationNote(String importPath) {
+        String declaration = externalsDeclarations.get(importPath);
+        return declaration != null
+            ? " (externals declaration: " + declaration + ")" : "";
     }
 
     private String registerResourceModule(String resourcePath, String importPath) {

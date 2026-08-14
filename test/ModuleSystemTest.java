@@ -1526,6 +1526,14 @@ public class ModuleSystemTest {
         check(orchestrator.diagnostics().stream()
                 .anyMatch(d -> "E2003".equals(d.code())),
             "E2003 reported for the missing externals declaration");
+        // The manifest declaration is authoritative for the name
+        // (host-module-abi D5(2)): the E2003 message must name the
+        // configured declaration path, not only on-disk candidates.
+        check(orchestrator.diagnostics().stream()
+                .anyMatch(d -> "E2003".equals(d.code())
+                    && d.message().contains("externals declaration: ")
+                    && d.message().contains("bindings/host-missing.d.deal")),
+            "E2003 message names the authoritative externals declaration path");
     }
 
     /**
@@ -1609,6 +1617,114 @@ public class ModuleSystemTest {
                     + output.trim());
         } catch (Exception e) {
             check(false, "Host E2E: runtime verification failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Regression (C3 review): an externals key containing a backslash must
+     * not leak unescaped into generated Lua.  The key reaches descriptor
+     * strings as the dotted typing/class-identity module path
+     * ("@host.x\y/User" — the externals key with "/" mapped to "."), and
+     * an unescaped backslash makes the generated chunk invalid Lua
+     * ("invalid escape sequence" at require time, with no compile-time
+     * diagnostic).  The generated module must load AND run under LuaJIT:
+     * the loader declared-map values, the loader path argument, and the
+     * wrapper signature descriptors all carry the escaped form.
+     */
+    private static void testHostModuleBackslashExternalsKeyE2E() throws Exception {
+        System.out.println("-- Host E2E: backslash externals key emits escaped descriptors --");
+        if (!luajitAvailable()) {
+            System.out.println("  SKIP: LuaJIT not available");
+            return;
+        }
+
+        // JSON needs the backslash escaped: "host/x\\y" is the key
+        // "host/x\y" (the raw import path as written).
+        writeFile("deal.json", """
+            {
+              "moduleRoots": ["src"],
+              "output": "build/lua",
+              "backend": "luajit",
+              "externals": {
+                "host/x\\\\y": { "declaration": "bindings/host-xy.d.deal" }
+              }
+            }""");
+        writeFile("bindings/host-xy.d.deal", """
+            export function ping(): int;
+            export class User {
+                port: int = 0;
+            }
+            """);
+        // The DEAL import path is taken verbatim from the source
+        // (parseImportDeclaration keeps the raw string between the
+        // quotes), so the raw "host/x\y" matches the JSON
+        // externals key byte-for-byte — the reviewer-probe scenario.
+        writeFile("src/backslash_smoke.deal", """
+            import * as cfg from "host/x\\y"
+            export function echo(u: cfg.User): int { return u.port; }
+            export function run(): int { return cfg.ping(); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/backslash_smoke.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/backslash_smoke");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        DealConfig config = DealConfig.load(tmpDir);
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, config, roots, null);
+
+        boolean success = orchestrator.compile();
+        check(success, "Backslash key: compilation should succeed");
+        if (!success) return;
+
+        String lua = Files.readString(outputDir.resolve("backslash_smoke.lua"));
+        // Generated Lua source must carry the escaped forms (each "\\"
+        // here is one backslash in the generated text).
+        check(lua.contains("__rt.load_host(\"host/x\\\\y\", {"),
+            "Backslash key: loader path argument is Lua-escaped");
+        check(lua.contains("User = \"@host.x\\\\y/User\""),
+            "Backslash key: loader class descriptor is Lua-escaped");
+        check(lua.contains("echo = __rt.function_(\"(@host.x\\\\y/User)->int\", function("),
+            "Backslash key: wrapper signature descriptor is Lua-escaped");
+        check(!lua.contains("host.x\\y/User\""),
+            "Backslash key: no raw (unescaped) descriptor text remains");
+
+        // Host implementation: the raw require path is "host/x\y", so the
+        // file lives at outputDir/host/x\y.lua (a literal backslash in the
+        // file name on POSIX filesystems).
+        Path hostImpl = outputDir.resolve("host").resolve("x\\y.lua");
+        Files.createDirectories(hostImpl.getParent());
+        Files.writeString(hostImpl, """
+            local M = {}
+            function M.ping() return 9 end
+            M.User = { __kind = "class", __classname = "@host.x\\\\y/User" }
+            M.User_defaults = { port = 0 }
+            return M
+            """);
+
+        Path runtimeDest = outputDir.resolve("deal/runtime.lua");
+        if (!Files.exists(runtimeDest)) {
+            Files.createDirectories(runtimeDest.getParent());
+            Files.copy(Path.of("deal/runtime.lua"), runtimeDest);
+        }
+
+        try {
+            String luaCode = "package.path = '" + outputDir.toRealPath()
+                + "/?.lua;' "
+                + "local m = require('backslash_smoke') "
+                + "local v = m.run.f() "
+                + "assert(v == 9, 'expected 9, got ' .. tostring(v)) "
+                + "print('OK: backslash host ping -> ' .. tostring(v))";
+            ProcessBuilder pb = new ProcessBuilder("luajit", "-e", luaCode);
+            pb.redirectErrorStream(true);
+            Process proc = pb.start();
+            String output = new String(proc.getInputStream().readAllBytes());
+            int exitCode = proc.waitFor();
+            check(exitCode == 0,
+                "Backslash key: runtime verification (exit " + exitCode + "): "
+                    + output.trim());
+        } catch (Exception e) {
+            check(false, "Backslash key: runtime verification failed: " + e.getMessage());
         }
     }
 
@@ -1979,6 +2095,7 @@ public class ModuleSystemTest {
             testExternalsGatingE2009();
             testExternalsMissingDeclarationE2003();
             testHostModuleEndToEnd();
+            testHostModuleBackslashExternalsKeyE2E();
             testCli();
             testEndToEndSingleModule();
             testEndToEndMultiModule();
