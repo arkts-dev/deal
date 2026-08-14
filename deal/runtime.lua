@@ -620,10 +620,8 @@ end
 ---   (number) => int      — converts number to int, validating range/integer-ness
 ---   (int | null) => int  — unwraps nullable int, rejecting null
 --- Delegates to check_int for range, NaN, Infinity, and non-integer validation.
---- KNOWN LIMIT (v1.0): When used indirectly (assigned to a variable or passed
---- as a callback), the codegen emits `.f()` which fails at runtime. This is
---- because int/number are emitted as plain Lua local aliases, not function
---- wrappers. Direct calls like int(3.0) work correctly.
+-- Emitted by the backend as a function-value wrapper (sig "(number)->int");
+-- direct calls forward the call-site span through the wrapper.
 function __rt.int_convert(v, file, line, column)
   if v == nil or v == __rt.__NULL then
     error(__rt._err("E8001", "cannot convert null to int", file, line, column, "int", "null"))
@@ -636,7 +634,8 @@ end
 ---   (int) => number           — converts int to number
 ---   (number | null) => number — unwraps nullable number, rejecting null
 --- Delegates to check_number for type validation.
---- KNOWN LIMIT (v1.0): Same indirect-use limitation as int_convert.
+-- Emitted by the backend as a function-value wrapper (sig "(int)->number");
+-- direct calls forward the call-site span through the wrapper.
 function __rt.number_convert(v, file, line, column)
   if v == nil or v == __rt.__NULL then
     error(__rt._err("E8001", "cannot convert null to number", file, line, column, "number", "null"))
