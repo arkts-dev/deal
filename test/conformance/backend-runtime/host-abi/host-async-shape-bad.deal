@@ -1,0 +1,11 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A host async export returning a non-operation value (not {__kind="async"}) is rejected at the call site with E8010 — the async-operation shape check, exercised before the await-site completion-value check (E8001) ever runs.
+// @expected: runtime-error E8010
+// @features: modules, host-abi, async-await, runtime-errors
+
+import * as host from "host/async_shape_bad"
+
+export async function test_host_async_shape_bad(): string {
+  let fetched: string = await host.fetchValue();
+  return fetched;
+}

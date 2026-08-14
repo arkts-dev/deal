@@ -1,0 +1,7 @@
+// Host fixture declaration for the host-async-shape-bad conformance test.
+// The declared export is an async function, so the host implementation must
+// return a backend async operation ({__kind="async"}); the implementation
+// below returns a plain number instead, which the load-time wrapper must
+// reject at the call site with E8010 (async-operation shape).
+
+export async function fetchValue(): string;
