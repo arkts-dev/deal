@@ -307,6 +307,7 @@ public class LuaBackendTest {
         testAsyncFunctionExprCodegen();
         testAsyncFunctionNullableReturn();
         testAwaitAsExpressionStatement();
+        testAwaitCompletionCheckCodegen();
         // ISSUE-0050: @jsonable codegen unit tests
         testJsonableSimpleClass();
         testJsonableFromJsonEmission();
@@ -1881,6 +1882,60 @@ public class LuaBackendTest {
         // await g() as a statement should still emit coroutine.yield
         assertContains(out.lua, "coroutine.yield(g.f())", "await statement emits coroutine.yield");
         check(isValidLua(out.lua), "valid Lua");
+    }
+
+    static void testAwaitCompletionCheckCodegen() {
+        System.out.println("-- Await Completion Check Codegen --");
+        // Typed R (int): the await emission wraps coroutine.yield in a runtime
+        // check carrying the await's source span.
+        CompileOutput out = compile(
+            "async function g(): int { return 42; }\n" +
+            "async function f(): int { return await g(); }");
+        assertNoErrors(out, "await completion check");
+        assertContains(out.lua,
+            "__rt.check_int(coroutine.yield(g.f()), \"test.deal\", 2, 34)",
+            "await completion wrapped in check_int at the await span");
+        check(isValidLua(out.lua), "valid Lua");
+
+        // Discard path: await as an expression statement is wrapped too.
+        CompileOutput discard = compile(
+            "async function g(): int { return 1; }\n" +
+            "async function f(): int { await g(); return 0; }");
+        assertNoErrors(discard, "await statement completion check");
+        assertContains(discard.lua,
+            "__rt.check_int(coroutine.yield(g.f()), \"test.deal\", 2, 27)",
+            "await statement wrapped in check_int at the await span");
+        check(isValidLua(discard.lua), "valid Lua");
+
+        // R = null: check_null over the completion value.
+        CompileOutput nullOut = compile(
+            "async function n(): null { return null; }\n" +
+            "async function f(): null { return await n(); }");
+        assertNoErrors(nullOut, "null-typed await completion check");
+        assertContains(nullOut.lua,
+            "__rt.check_null(coroutine.yield(n.f())",
+            "null completion wrapped in check_null");
+        check(isValidLua(nullOut.lua), "valid Lua");
+
+        // R = string | null: check_nullable over the completion value.
+        CompileOutput nullableOut = compile(
+            "async function m(): string | null { return null; }\n" +
+            "async function f(): string | null { return await m(); }");
+        assertNoErrors(nullableOut, "nullable-typed await completion check");
+        assertContains(nullableOut.lua,
+            "__rt.check_nullable(\"string\", coroutine.yield(m.f())",
+            "nullable completion wrapped in check_nullable");
+        check(isValidLua(nullableOut.lua), "valid Lua");
+
+        // R = int[]: check_array over the completion value.
+        CompileOutput arrayOut = compile(
+            "async function a(): int[] { return [1, 2]; }\n" +
+            "async function f(): int[] { return await a(); }");
+        assertNoErrors(arrayOut, "array-typed await completion check");
+        assertContains(arrayOut.lua,
+            "__rt.check_array(\"int[]\", coroutine.yield(a.f())",
+            "array completion wrapped in check_array");
+        check(isValidLua(arrayOut.lua), "valid Lua");
     }
 
     // =========================================================================
