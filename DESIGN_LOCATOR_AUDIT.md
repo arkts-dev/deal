@@ -50,7 +50,7 @@ Production:
 | `LuaBackend.java:348` (generateFromInstance) | `:514` | shifted |
 | `LuaBackend.java:366` (generateFromInstanceWithSourceMap) | `:532` | shifted |
 | `LuaBackend.java:183,204` (static entry points) | `:187-263` (generateWithImports overloads; modulePath plumbed :248-263) | shifted |
-| `LuaBackend.java:2107` (JsonableClassMeta.moduleLevel) | `:2335-2352` (moduleLevel field :2346) | shifted |
+| `LuaBackend.java:2107` (JsonableClassMeta.moduleLevel) | `:2335-2352` (moduleLevel field :2347) | shifted |
 | `LuaBackend.java:1254,1282-1283` (visit(ExportDeclaration) jsonable registration) | `:1489-1545` (deferredJsonables.add :1531) | shifted |
 | `LuaBackend.java:455-464` (resolveClassExportValue) | `:625-645` | shifted |
 | `LuaBackend.java:33` (symbols field) | `:33` | UNCHANGED |
@@ -150,7 +150,7 @@ Production:
 | `deal/types/Type.java:66-68` (Nullable invariant) | `:66-68` | UNCHANGED |
 | `deal/types/Types.java:190-192` (Types.nullable) | `:190` | UNCHANGED |
 | `deal/runtime.lua:12` (__NULL) | `:12` | UNCHANGED |
-| `deal/runtime.lua:13-24` (DEALRuntimeError shape) | `:12-19` | shifted |
+| `deal/runtime.lua:13-24` (DEALRuntimeError shape) | `:19-27` (`_err` signature :19; shape table :20-27) | shifted |
 | `deal/runtime.lua:33-38` (check_null) | `:50-56` | shifted |
 | `deal/runtime.lua:93-96` (check_nullable) | `:110-117` | shifted |
 | `deal/runtime.lua:97-110` (array_element_descriptor) | `:120-133` | shifted |
@@ -180,7 +180,7 @@ Harness/test evidence:
 | `test/ConformanceTest.java:855-905` (bare imports resolve stdlib) | `:1030-1085` | shifted |
 | `test/ConformanceTest.java:881-915` (resolveClassSymbol/resolveTypeNodeInModule) | `:1083-1135` (methods :1083, :1111) | shifted |
 | `test/DiagnosticClassificationTest.java:223-290` (coverage map) | `:223-290` (E2009 :239, E3017 :257, E8011 :287) | UNCHANGED |
-| `test/IrDumperTest.java:748-749` (rest `...[int]` pin) | `:513` | shifted |
+| `test/IrDumperTest.java:748-749` (rest `...[int]` pin) | `test/IrDumperTest.java:748-749` (pin byte-identical at :748) | UNCHANGED |
 | `test/TypeDescriptorTest.java:513-514` | `:513` | UNCHANGED |
 | `test/ModuleSystemTest.java:336-350` (DealConfig externals pins) | `:336-372` | shifted |
 | `test/StdlibContractTest.java:74-160` (stdlib contract test) | `:74-160` (testModule) | UNCHANGED |
@@ -282,7 +282,7 @@ Harness/test evidence:
 | `deal/module/StdlibModuleResolver.java:52` | `:52` | UNCHANGED |
 | `deal/module/ExportExtractor.java:145-156` | `:145-164` | UNCHANGED |
 | `test/CheckerTest.java:1359-1363` | `:1431-1436` | shifted |
-| `test/IrDumperTest.java:748-749` | `:513` | shifted |
+| `test/IrDumperTest.java:748-749` | `test/IrDumperTest.java:748-749` (pin at :748) | UNCHANGED |
 | `test/TypeDescriptorTest.java:513-514` | `:513` | UNCHANGED |
 | `test/ConformanceTest.java:606,630` | `:646,670` | shifted |
 | `test/ConformanceTest.java:851` | `:1039` | shifted |
@@ -311,14 +311,17 @@ the tables above:
    sites), the D3 try/catch/throw cites, the cycle-3 (attempt 2) six-locator
    revision (try/catch `:1590-1718`/`:1721-1750`, `resolveTypeNode`
    QualifiedType `:2827-2836`, instance-constructor tests `:104-105`/`:1538-1539`),
-   the cycle-8 re-verification statement, and the full D4 pin inventory (every
-   `LuaAbiBackendTest`/`LuaBackendTest`/`test_runtime.lua` pin line above).
+   the cycle-8 re-verification statement (incl. the
+   `JsonableClassMeta.moduleLevel` cite `:2107` → `:2347`), and the full D4
+   pin inventory (every `LuaAbiBackendTest`/`LuaBackendTest`/`test_runtime.lua`
+   pin line above).
 2. **host-module-abi**: re-anchor the Verified evidence bullet (import emission
    `:1451-1486`; `typeDescriptor` `:742-797` with `Type.Null` `:745`; call
    emission `:1934-1956`; `ExportExtractor` `:145-164`; `DealConfig` `:27`/
    `:65`/`:88`; runner locators `:470-490`, `:618-628`, `:635-692`, `:637,661`,
    `:646,670`, `:1030-1085`, `:1083-1135`), the runtime.lua locator list
-   (parse_descriptor `:168-296` with the `|null` scan at `:250`; packing
+   (DEALRuntimeError shape `:13-24` → `:19-27`; parse_descriptor `:168-296`
+   with the `|null` scan at `:250`; packing
    `:544-546`; dispatch `:548-588`; `array_element_descriptor` `:120-133`;
    `async_step` `:712-773`; `check_null` `:50-56`; `as_lua_function`
    `:402-408`; `from_lua_function` `:450-608`; `ipairs(fields)` `:894,907,996`),
@@ -339,10 +342,13 @@ the tables above:
    `:3183-3215` → `:3255-3295`, `Symbol.java:32` → `:30`.
 6. **type-descriptor-mapping-table**: re-anchor `LuaBackend.java:555-590` →
    `:742-797`, `NameResolver.java:747-756` → `:751-755`, `runtime.lua:97-110`
-   → `:120-133`, `:157` → `:250`, `:462` → `:548-588`, `IrDumperTest.java:748-749`
-   → `:513`, `CheckerTest.java:1359-1363` → `:1431-1436`, runner `$`-skip →
+   → `:120-133`, `:157` → `:250`, `:462` → `:548-588`,
+   `CheckerTest.java:1359-1363` → `:1431-1436`, runner `$`-skip →
    `:646,670`, stdlib call → `:1039`, `test_runtime.lua:819-823/:831-836` →
-   `:880-888/:894-902`.
+   `:880-888/:894-902`. (`IrDumperTest.java:748-749` needs no re-anchor — the
+   rest `...[int]` pin is UNCHANGED at `:748`; `:513` is
+   `TypeDescriptorTest.java`'s own identical pin, tracked in its own UNCHANGED
+   row.)
 
 Note: with the lone exception of the stale `LuaBackendTest.java:1604-1605`
 instance-constructor cite (site moved to `:1538-1539`), every claim's
