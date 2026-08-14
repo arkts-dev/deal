@@ -817,8 +817,10 @@ end)
 -- ==================== check_type descriptor edge cases ====================
 
 test("check_type with nested nullable array works", function()
+  -- The emitted legacy spelling of Array(Nullable(string)) is "string|null[]";
+  -- under parse order P the hand-written "?string[]" reads Nullable(Array(string)).
   local arr = {__rt.__NULL, "hello", __rt.__NULL}
-  local r = __rt.check_type("?string[]", arr)
+  local r = __rt.check_type("string|null[]", arr)
   assert(r == arr)
 end)
 
@@ -829,9 +831,10 @@ test("check_type with function descriptor validates wrapper", function()
 end)
 
 test("check_type with complex nullable descriptor works", function()
-  -- ?int[]  means  (int | null)[]
+  -- int|null[]  means  (int | null)[] — the emitted legacy spelling of
+  -- Array(Nullable(int)).
   local arr = {1, __rt.__NULL, 3}
-  local r = __rt.check_type("?int[]", arr)
+  local r = __rt.check_type("int|null[]", arr)
   assert(r == arr)
 end)
 
@@ -1003,20 +1006,28 @@ end)
 -- ==================== parse_descriptor async tests ====================
 -- parse_descriptor is local; tested indirectly through from_lua_function and check_type.
 
-test("parse_descriptor async direct: async(int)->string has isAsync and ret=null", function()
-  -- from_lua_function with async descriptor should not throw on return type mismatch
-  -- because ret="null" skips return-type checking.
+test("parse_descriptor async direct: async(int)->string wraps and preserves sig", function()
   local wrapper = __rt.from_lua_function("async(int)->string", function(x)
-    return x  -- returns int, but wrapper won't check because ret="null"
+    return __rt.async_start(function() return tostring(x) end)
   end)
-  -- The call should succeed without E8010
-  local ok, result = pcall(wrapper.f, 42)
-  assert(ok, "async wrapper call should not error: " .. tostring(result))
+  assert(wrapper.sig == "async(int)->string")
+  local h = wrapper.f(42)
+  assert(type(h) == "table" and h.__kind == "async")
+  assert(h.__result == "42")
+end)
+
+test("parse_descriptor async direct: non-operation result raises E8010", function()
+  -- The outer wrapper requires the host function to return an async operation;
+  -- a raw value fails the async-shape check.
+  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+    return x
+  end)
+  assert_error(function() wrapper.f(42) end, "E8010")
 end)
 
 test("parse_descriptor async direct: descriptor signature comparison works", function()
   local wrapper = __rt.from_lua_function("async(int)->string", function(x)
-    return tostring(x)
+    return __rt.async_start(function() return tostring(x) end)
   end)
   -- check_type with matching descriptor should pass
   assert_no_error(function()
@@ -1026,7 +1037,7 @@ end)
 
 test("parse_descriptor async direct: signature mismatch detected", function()
   local wrapper = __rt.from_lua_function("async(int)->string", function(x)
-    return tostring(x)
+    return __rt.async_start(function() return tostring(x) end)
   end)
   -- check_type with non-matching descriptor should fail
   assert_error(function()
@@ -1043,51 +1054,66 @@ test("parse_descriptor async direct: sync function descriptor works unchanged", 
   end)
 end)
 
-test("parse_descriptor async nullable: from_lua_function rejects nullable async descriptor", function()
-  -- from_lua_function expects a pure function descriptor, not nullable.
-  -- A nullable async descriptor like "async(int)->@src/User|null" is not
-  -- a valid function descriptor for from_lua_function. The nullable wrapping
-  -- is handled at the module/signature level, not by from_lua_function.
-  assert_error(function()
-    __rt.from_lua_function("async(int)->@src/User|null", function(x)
-      return { __kind = "class", __classname = "User" }
-    end)
-  end, "E8010")
+test("parse_descriptor async nullable: from_lua_function wraps nullable async descriptor", function()
+  -- Under parse order P the function branch reads the arrow before the "|null"
+  -- suffix, so "async(int)->@src/User|null" is an async function whose declared
+  -- nullable return is enforced at the await site.
+  local wrapper = __rt.from_lua_function("async(int)->@src/User|null", function(x)
+    return __rt.async_start(function() return { __kind = "class", __classname = "User" } end)
+  end)
+  assert(wrapper.sig == "async(int)->@src/User|null")
+  local h = wrapper.f(1)
+  assert(type(h) == "table" and h.__kind == "async")
+  -- a non-operation return still fails the async-shape check
+  local wrapper2 = __rt.from_lua_function("async(int)->@src/User|null", function(x)
+    return { __kind = "class", __classname = "User" }
+  end)
+  assert_error(function() wrapper2.f(1) end, "E8010")
 end)
 
 test("parse_descriptor async: wrapper sig preserves async prefix", function()
   local wrapper = __rt.from_lua_function("async(int)->string", function(x)
-    return tostring(x)
+    return __rt.async_start(function() return tostring(x) end)
   end)
   assert(wrapper.sig == "async(int)->string", "sig should include async prefix: " .. tostring(wrapper.sig))
 end)
 
-test("parse_descriptor sync nullable: from_lua_function rejects nullable function descriptor", function()
-  -- from_lua_function expects a pure function descriptor, not nullable.
-  -- A nullable descriptor like "(int)->string|null" is not valid here.
-  assert_error(function()
-    __rt.from_lua_function("(int)->string|null", function(x)
-      return tostring(x)
-    end)
-  end, "E8010")
+test("parse_descriptor sync nullable: from_lua_function wraps nullable-return descriptor", function()
+  -- Under parse order P "(int)->string|null" parses as a function returning a
+  -- nullable string (the arrow is read before the "|null" suffix).
+  local wrapper = __rt.from_lua_function("(int)->string|null", function(x)
+    if x == 0 then return __rt.__NULL end
+    return tostring(x)
+  end)
+  assert(wrapper.sig == "(int)->string|null")
+  assert(wrapper.f(0) == __rt.__NULL)
+  assert(wrapper.f(1) == "1")
+  -- wrong return type raises E8010
+  local wrapper2 = __rt.from_lua_function("(int)->string|null", function(x)
+    return x
+  end)
+  assert_error(function() wrapper2.f(1) end, "E8010")
 end)
 
 -- ==================== from_lua_function async tests ====================
 
-test("from_lua_function async: return-type check is skipped for async descriptor", function()
-  -- Create an async function that returns wrong type; no E8010 should fire
-  -- because parse_descriptor sets ret="null" for async functions.
+test("from_lua_function async: non-operation return raises E8010", function()
+  -- The outer wrapper requires the host async function to return an
+  -- async operation; the declared return type is enforced at the await site.
   local wrapper = __rt.from_lua_function("async()->int", function()
-    return "not an int"  -- wrong return type
+    return "not an async op"
   end)
-  -- This should NOT produce E8010 because ret="null" skips the check
-  local ok, result = pcall(wrapper.f)
-  assert(ok, "async wrapper should not validate return type: " .. tostring(result))
+  assert_error(function() wrapper.f() end, "E8010")
+end)
+
+test("from_lua_function async: zero results raise E8010", function()
+  local wrapper = __rt.from_lua_function("async()->int", function() end)
+  assert_error(function() wrapper.f() end, "E8010")
 end)
 
 test("from_lua_function async: param checking still works", function()
   local wrapper = __rt.from_lua_function("async(int)->string", function(x)
-    return tostring(x)
+    return __rt.async_start(function() return tostring(x) end)
   end)
   -- Wrong param type should produce error
   assert_error(function()
@@ -1097,15 +1123,16 @@ end)
 
 test("from_lua_function async: correct params pass through", function()
   local wrapper = __rt.from_lua_function("async(int)->string", function(x)
-    return "value: " .. tostring(x)
+    return __rt.async_start(function() return "value: " .. tostring(x) end)
   end)
-  local ok, result = pcall(wrapper.f, 42)
-  assert(ok, "async wrapper call should succeed: " .. tostring(result))
+  local h = wrapper.f(42)
+  assert(type(h) == "table" and h.__kind == "async")
+  assert(h.__result == "value: 42")
 end)
 
 test("from_lua_function async: outer wrapper sig contains async prefix", function()
   local wrapper = __rt.from_lua_function("async(int)->string", function(x)
-    return tostring(x)
+    return __rt.async_start(function() return tostring(x) end)
   end)
   assert(wrapper.sig == "async(int)->string", "sig should include async prefix")
 end)
@@ -1439,6 +1466,409 @@ test("async deep nesting: 50-level chain completes correctly", function()
     "deepest result should be 1, got: " .. tostring(handles[N].__result))
 end)
 
+
+-- ==================== parse order P tests ====================
+
+test("parse order P: ?(int)->int reads nullable function, distinct from (int)->int|null", function()
+  local w = __rt.function_("(int)->int", function(x) return x + 1 end)
+  -- ?(int)->int: nullable of function — __NULL and a matching-sig wrapper pass
+  assert(__rt.check_type("?(int)->int", __rt.__NULL) == __rt.__NULL)
+  assert(__rt.check_type("?(int)->int", w) == w)
+  -- (int)->int|null: function returning nullable — the same wrapper's sig does not match
+  assert_error(function() __rt.check_type("(int)->int|null", w) end, "E8010")
+  -- non-wrapper fails the inner function check
+  assert_error(function() __rt.check_type("?(int)->int", 42) end, "E8001")
+end)
+
+test("parse order P: wrong-sig wrapper on nullable function raises E8010", function()
+  local w = __rt.function_("(string)->string", function(x) return x end)
+  assert_error(function() __rt.check_type("?(int)->int", w) end, "E8010")
+end)
+
+test("parse order P: [(int)->int] reads array of functions, distinct from (int)->int[]", function()
+  local w1 = __rt.function_("(int)->int", function(x) return x + 1 end)
+  local w2 = __rt.function_("(int)->int", function(x) return x + 2 end)
+  local arr = { w1, w2 }
+  assert(__rt.check_type("[(int)->int]", arr) == arr)
+  -- (int)->int[] is a function returning an int array: w1's sig does not match
+  assert_error(function() __rt.check_type("(int)->int[]", w1) end, "E8010")
+  -- the matching function-returning-array wrapper passes
+  local w3 = __rt.function_("(int)->int[]", function(x) return { x } end)
+  assert(__rt.check_type("(int)->int[]", w3) == w3)
+end)
+
+test("parse order P: [?(int)->int] reads array of nullable functions", function()
+  local w1 = __rt.function_("(int)->int", function(x) return x + 1 end)
+  local arr = { w1, __rt.__NULL }
+  assert(__rt.check_type("[?(int)->int]", arr) == arr)
+  -- wrong element (non-wrapper) fails with E8003
+  assert_error(function()
+    __rt.check_array("[?(int)->int]", { 42 })
+  end, "E8003")
+  -- wrong-sig wrapper element fails with E8003
+  local wbad = __rt.function_("(string)->string", function(x) return x end)
+  assert_error(function()
+    __rt.check_array("[?(int)->int]", { wbad })
+  end, "E8003")
+end)
+
+test("parse order P: ?string[] reads Nullable(Array(string))", function()
+  assert(__rt.check_type("?string[]", __rt.__NULL) == __rt.__NULL)
+  assert(__rt.check_type("?string[]", { "a", "b" })[1] == "a")
+  -- a non-array fails the inner array check
+  assert_error(function() __rt.check_type("?string[]", "hello") end, "E8001")
+  -- a wrong element fails the inner array check
+  assert_error(function() __rt.check_type("?string[]", { "a", 42 }) end, "E8003")
+end)
+
+-- ==================== from_lua_function three-way return dispatch ====================
+
+test("from_lua_function sync null: __NULL passes", function()
+  local wrapper = __rt.from_lua_function("()->null", function() return __rt.__NULL end)
+  local r = wrapper.f()
+  assert(r == __rt.__NULL)
+end)
+
+test("from_lua_function sync null: number result raises E8010", function()
+  local wrapper = __rt.from_lua_function("()->null", function() return 42 end)
+  assert_error(function() wrapper.f() end, "E8010")
+end)
+
+test("from_lua_function sync null: string result raises E8010", function()
+  local wrapper = __rt.from_lua_function("()->null", function() return "x" end)
+  assert_error(function() wrapper.f() end, "E8010")
+end)
+
+test("from_lua_function sync null: table result raises E8010", function()
+  local wrapper = __rt.from_lua_function("()->null", function() return {} end)
+  assert_error(function() wrapper.f() end, "E8010")
+end)
+
+test("from_lua_function sync null: nil result raises E8010", function()
+  local wrapper = __rt.from_lua_function("()->null", function() return nil end)
+  assert_error(function() wrapper.f() end, "E8010")
+end)
+
+test("from_lua_function sync null: zero results raise E8010", function()
+  local wrapper = __rt.from_lua_function("()->null", function() end)
+  assert_error(function() wrapper.f() end, "E8010")
+end)
+
+test("from_lua_function non-null return: zero results raise E8010", function()
+  local wrapper = __rt.from_lua_function("()->int", function() end)
+  assert_error(function() wrapper.f() end, "E8010")
+end)
+
+test("from_lua_function non-null return: single nil raises E8010", function()
+  local wrapper = __rt.from_lua_function("()->string", function() return nil end)
+  assert_error(function() wrapper.f() end, "E8010")
+end)
+
+test("from_lua_function nullable return: zero results raise E8010", function()
+  local wrapper = __rt.from_lua_function("()->string|null", function() end)
+  assert_error(function() wrapper.f() end, "E8010")
+end)
+
+test("from_lua_function nullable return: __NULL passes", function()
+  local wrapper = __rt.from_lua_function("()->string|null", function() return __rt.__NULL end)
+  assert(wrapper.f() == __rt.__NULL)
+end)
+
+test("from_lua_function nullable return: wrong type raises E8010", function()
+  local wrapper = __rt.from_lua_function("(int)->string|null", function(x) return x end)
+  assert_error(function() wrapper.f(1) end, "E8010")
+end)
+
+test("from_lua_function array return: wrong type raises E8010", function()
+  local wrapper = __rt.from_lua_function("(int)->string[]", function(x) return x end)
+  assert_error(function() wrapper.f(1) end, "E8010")
+end)
+
+test("from_lua_function function return: raw Lua function fails the check with E8010", function()
+  -- Function-typed returns must arrive as DEAL wrapper tables (assumption c).
+  local wrapper = __rt.from_lua_function("()->(int)->int", function()
+    return function(x) return x end
+  end)
+  assert_error(function() wrapper.f() end, "E8010")
+end)
+
+test("from_lua_function nullable-function return: __NULL passes", function()
+  local wrapper = __rt.from_lua_function("()->?(int)->int", function()
+    return __rt.__NULL
+  end)
+  assert(wrapper.f() == __rt.__NULL)
+end)
+
+test("from_lua_function nullable-function return: raw Lua function fails with E8010", function()
+  local wrapper = __rt.from_lua_function("()->?(int)->int", function()
+    return function(x) return x end
+  end)
+  assert_error(function() wrapper.f() end, "E8010")
+end)
+
+test("from_lua_function nullable-function return: matching wrapper passes", function()
+  local inner = __rt.function_("(int)->int", function(x) return x + 1 end)
+  local wrapper = __rt.from_lua_function("()->?(int)->int", function()
+    return inner
+  end)
+  assert(wrapper.f() == inner)
+end)
+
+-- ==================== from_lua_function function-param adaptation ====================
+
+test("from_lua_function adapts function-typed params to plain Lua functions", function()
+  local received = nil
+  local inner = function(x) return x + 1 end
+  local wrapper = __rt.from_lua_function("((int)->int)->int", function(cb)
+    received = cb
+    return cb(41)
+  end)
+  local r = wrapper.f(__rt.function_("(int)->int", inner))
+  assert(r == 42)
+  assert(type(received) == "function")
+  assert(received == inner)
+end)
+
+test("from_lua_function nullable-function param accepts __NULL unadapted", function()
+  local received = nil
+  local wrapper = __rt.from_lua_function("(?(int)->int)->null", function(cb)
+    received = cb
+    return __rt.__NULL
+  end)
+  assert(wrapper.f(__rt.__NULL) == __rt.__NULL)
+  assert(received == __rt.__NULL)
+end)
+
+test("from_lua_function nullable-function param adapts matching-sig wrapper", function()
+  local received = nil
+  local inner = function(x) return x * 2 end
+  local wrapper = __rt.from_lua_function("(?(int)->int)->null", function(cb)
+    received = cb
+    return __rt.__NULL
+  end)
+  wrapper.f(__rt.function_("(int)->int", inner))
+  assert(type(received) == "function")
+  assert(received == inner)
+end)
+
+test("from_lua_function nullable-function param rejects raw function with E8010", function()
+  local wrapper = __rt.from_lua_function("(?(int)->int)->null", function(cb)
+    return __rt.__NULL
+  end)
+  assert_error(function() wrapper.f(function(x) return x end) end, "E8010")
+end)
+
+test("from_lua_function rest of function elements adapts and checks per argument", function()
+  local received = nil
+  local wrapper = __rt.from_lua_function("(string,...[(int)->int])->string", function(sep, ...)
+    received = { ... }
+    return sep
+  end)
+  local inner = function(x) return x + 1 end
+  local r = wrapper.f(",", __rt.function_("(int)->int", inner))
+  assert(r == ",")
+  assert(type(received[1]) == "function" and received[1] == inner)
+  -- a non-wrapper rest arg raises E8010 per argument, never the internal E8001
+  assert_error(function()
+    wrapper.f(",", function(x) return x end)
+  end, "E8010")
+end)
+
+-- ==================== load_host tests ====================
+-- test/fixtures/runtime-host-fixture.lua is the raw host module surface.
+
+local HOST_FIXTURE = "test/fixtures/runtime-host-fixture"
+
+test("load_host loads fixture and wraps raw functions", function()
+  local host = __rt.load_host(HOST_FIXTURE, {
+    answer = "()->int",
+    add = "(int,int)->int",
+  })
+  assert(type(host.answer) == "table" and host.answer.__kind == "function")
+  assert(host.answer.sig == "()->int")
+  assert(host.answer.f() == 42)
+  assert(host.add.f(2, 3) == 5)
+  -- param checks are enforced on the wrapped exports
+  assert_error(function() host.add.f("x", 3) end, "E8010")
+end)
+
+test("load_host drops extra host exports", function()
+  local host = __rt.load_host(HOST_FIXTURE, { answer = "()->int" })
+  assert(host.extra_export == nil)
+end)
+
+test("load_host missing declared export raises E8011", function()
+  assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { missing = "()->int" })
+  end, "E8011")
+end)
+
+test("load_host require failure raises E8011", function()
+  assert_error(function()
+    __rt.load_host("no/such/deal-runtime-host-module", { x = "()->int" })
+  end, "E8011")
+end)
+
+test("load_host non-table module result raises E8011", function()
+  package.loaded["deal-runtime-test-nontable"] = 42
+  assert_error(function()
+    __rt.load_host("deal-runtime-test-nontable", { x = "()->int" })
+  end, "E8011")
+  package.loaded["deal-runtime-test-nontable"] = nil
+end)
+
+test("load_host pre-wrapped export with matching sig is re-wrapped and enforced", function()
+  local host = __rt.load_host(HOST_FIXTURE, { prewrapped_good = "()->int" })
+  assert(host.prewrapped_good.__kind == "function")
+  assert(host.prewrapped_good.f() == 7)
+  -- junk return from the pre-wrapped .f is caught by the re-wrap
+  local host2 = __rt.load_host(HOST_FIXTURE, { prewrapped_bad = "()->int" })
+  assert_error(function() host2.prewrapped_bad.f() end, "E8010")
+end)
+
+test("load_host pre-wrapped sync null export: sentinel passes, junk raises E8010", function()
+  local host = __rt.load_host(HOST_FIXTURE, { prewrapped_null = "()->null" })
+  assert(host.prewrapped_null.f() == __rt.__NULL)
+  local host2 = __rt.load_host(HOST_FIXTURE, { prewrapped_null_bad = "()->null" })
+  assert_error(function() host2.prewrapped_null_bad.f() end, "E8010")
+end)
+
+test("load_host pre-wrapped sig mismatch raises E8011", function()
+  assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { prewrapped_good = "()->string" })
+  end, "E8011")
+end)
+
+test("load_host pre-wrapped missing sig raises E8011", function()
+  assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { prewrapped_nosig = "()->int" })
+  end, "E8011")
+end)
+
+test("load_host pre-wrapped non-function .f raises E8011", function()
+  assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { prewrapped_badf = "()->int" })
+  end, "E8011")
+end)
+
+test("load_host pre-wrapped bare ...T rest sig fails the identity check with E8011", function()
+  assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { bare_rest_sig = "(string,...string[])->string" })
+  end, "E8011")
+end)
+
+test("load_host non-function export for function descriptor raises E8011", function()
+  assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { not_a_function = "()->int" })
+  end, "E8011")
+end)
+
+test("load_host sync null export: sentinel passes, junk raises E8010", function()
+  local host = __rt.load_host(HOST_FIXTURE, { ping = "()->null" })
+  assert(host.ping.f() == __rt.__NULL)
+  local host2 = __rt.load_host(HOST_FIXTURE, { ping_bad = "()->null" })
+  assert_error(function() host2.ping_bad.f() end, "E8010")
+end)
+
+test("load_host nullable return wraps at load and checks at call", function()
+  local host = __rt.load_host(HOST_FIXTURE, { find = "(boolean)->string|null" })
+  assert(host.find.f(true) == __rt.__NULL)
+  assert(host.find.f(false) == "found")
+  local host2 = __rt.load_host(HOST_FIXTURE, { find_bad = "()->string|null" })
+  assert_error(function() host2.find_bad.f() end, "E8010")
+end)
+
+test("load_host array return wraps at load and checks at call", function()
+  local host = __rt.load_host(HOST_FIXTURE, { split = "()->string[]" })
+  local r = host.split.f()
+  assert(type(r) == "table" and r[1] == "a" and r[2] == "b")
+  local host2 = __rt.load_host(HOST_FIXTURE, { split_bad = "()->string[]" })
+  assert_error(function() host2.split_bad.f() end, "E8010")
+end)
+
+test("load_host async export: real handle passes, junk raises E8010", function()
+  local host = __rt.load_host(HOST_FIXTURE, { fetch = "async()->string" })
+  local h = host.fetch.f()
+  assert(type(h) == "table" and h.__kind == "async")
+  assert(h.__result == "data")
+  local host2 = __rt.load_host(HOST_FIXTURE, { fetch_bad = "async()->string" })
+  assert_error(function() host2.fetch_bad.f() end, "E8010")
+end)
+
+test("load_host rest export calls and checks per element", function()
+  local host = __rt.load_host(HOST_FIXTURE, { join = "(string,...string[])->string" })
+  assert(host.join.f(",", "a", "b") == "a,b")
+  assert_error(function() host.join.f(",", 1) end, "E8010")
+end)
+
+test("load_host rest-of-function-elements export adapts and checks per element", function()
+  local host = __rt.load_host(HOST_FIXTURE, { apply_rest = "(string,...[(int)->int])->int" })
+  local w1 = __rt.function_("(int)->int", function(x) return x + 1 end)
+  local w2 = __rt.function_("(int)->int", function(x) return x + 2 end)
+  assert(host.apply_rest.f(",", w1, w2) == 5)
+  assert_error(function() host.apply_rest.f(",", function(x) return x end) end, "E8010")
+end)
+
+test("load_host nullable-function param export accepts null and matching-sig function", function()
+  local host = __rt.load_host(HOST_FIXTURE, { register = "(?(int)->int)->null" })
+  assert(host.register.f(__rt.__NULL) == __rt.__NULL)
+  local inner = function(x) return x + 1 end
+  assert(host.register.f(__rt.function_("(int)->int", inner)) == __rt.__NULL)
+  -- a raw Lua function is rejected by the param check
+  assert_error(function() host.register.f(inner) end, "E8010")
+end)
+
+test("load_host class export validates identity and copies defaults", function()
+  local host = __rt.load_host(HOST_FIXTURE, {
+    ServerConfig = "@host.cfg/ServerConfig",
+  })
+  assert(type(host.ServerConfig) == "table" and host.ServerConfig.__kind == "class")
+  assert(host.ServerConfig.__classname == "@host.cfg/ServerConfig")
+  assert(type(host.ServerConfig_defaults) == "table")
+  assert(host.ServerConfig_defaults.port == 80)
+end)
+
+test("load_host class identity mismatch raises E8011", function()
+  assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { WrongName = "@host.cfg/WrongName" })
+  end, "E8011")
+end)
+
+test("load_host non-class export for class descriptor raises E8011", function()
+  assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { not_a_class = "@host.cfg/NotAClass" })
+  end, "E8011")
+end)
+
+test("load_host class missing defaults raises E8011", function()
+  assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { NoDefaults = "@host.cfg/NoDefaults" })
+  end, "E8011")
+end)
+
+test("load_host class non-table defaults raises E8011", function()
+  assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { BadDefaults = "@host.cfg/BadDefaults" })
+  end, "E8011")
+end)
+
+test("load_host class supplied _fields copied through", function()
+  local host = __rt.load_host(HOST_FIXTURE, { ServerConfig = "@host.cfg/ServerConfig" })
+  assert(type(host.ServerConfig_fields) == "table")
+  assert(host.ServerConfig_fields[1].name == "port")
+end)
+
+test("load_host class non-table _fields raises E8011", function()
+  assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { BadFields = "@host.cfg/BadFields" })
+  end, "E8011")
+end)
+
+test("load_host class absent _fields tolerated", function()
+  local host = __rt.load_host(HOST_FIXTURE, { NoFields = "@host.cfg/NoFields" })
+  assert(host.NoFields.__kind == "class")
+  assert(host.NoFields_fields == nil)
+end)
 
 -- ==================== Summary ====================
 

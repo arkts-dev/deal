@@ -248,7 +248,9 @@ public enum DiagnosticCode {
     /** Extra field in class instance. */
     E8007(Phase.RUNTIME, "Extra field in class instance"),
     /** Function signature mismatch at runtime. */
-    E8010(Phase.RUNTIME, "Function signature mismatch");
+    E8010(Phase.RUNTIME, "Function signature mismatch"),
+    /** Missing or invalid host export at module load. */
+    E8011(Phase.RUNTIME, "Missing or invalid host export");
 
     // =========================================================================
     // Enum definition

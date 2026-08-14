@@ -136,6 +136,18 @@ end
 --- Parse a type descriptor string and return a structured representation.
 -- Returns a table: { kind = "primitive"|"array"|"nullable"|"function"|"class", ... }
 -- For async functions, the returned function table has isAsync = true and ret = "null".
+--
+-- Parse order P (function-aware): (i) "?T" prefix → recurse; (ii) async strip +
+-- function branch (leading "(", depth-aware top-level "->" scan with ")"
+-- immediately before the arrow); (iii) "|null" end-anchored top-level suffix;
+-- (iv) "[]" suffix; (v) "[T]" prefix; (vi) "@path/Name" class; (vii) primitives;
+-- (viii) bare class name.
+--
+-- The function branch precedes every suffix rule, so "(int)->int|null" reads
+-- Func(ret=Nullable) and "(int)->int[]" reads Func(ret=Array); the "?T" prefix
+-- precedes the function branch, so "?(int)->int" reads Nullable(Func) and the
+-- hand-written "?T[]" family reads Nullable(Array(T)). Every descriptor
+-- typeDescriptor emits parses back to the type it denotes under this order.
 local function parse_descriptor(descriptor)
   if descriptor == nil or type(descriptor) ~= "string" then
     return nil
@@ -143,73 +155,41 @@ local function parse_descriptor(descriptor)
 
   local d = descriptor
 
-  -- Nullable: "T|null" format (check for "|null" suffix but NOT for function "->" which also contains "|" in different contexts)
-  -- The "|null" suffix marks nullable. We need to be careful: "(int)->int|null" has both.
-  -- Strategy: find "|null" suffix that is not inside brackets or parentheses.
-  local null_pos = nil
-  local depth = 0
-  for i = 1, #d do
-    local c = d:sub(i, i)
-    if c == "(" or c == "[" then
-      depth = depth + 1
-    elseif c == ")" or c == "]" then
-      depth = depth - 1
-    elseif depth == 0 and i + 4 <= #d and d:sub(i, i + 4) == "|null" then
-      -- Check that this is a suffix (followed by end of string or nothing relevant)
-      local rest = d:sub(i + 5)
-      if rest == "" then
-        null_pos = i
-        break
-      end
-    end
-  end
-  if null_pos then
-    return { kind = "nullable", inner = d:sub(1, null_pos - 1) }
-  end
-
-  -- Array: "T[]" format (suffix "[]")
-  if #d >= 2 and d:sub(#d - 1) == "[]" then
-    return { kind = "array", element = d:sub(1, #d - 2) }
-  end
-
-  -- Array: "[T]" format (prefix "[" suffix "]")
-  if #d >= 2 and d:sub(1, 1) == "[" and d:sub(#d, #d) == "]" then
-    return { kind = "array", element = d:sub(2, #d - 1) }
-  end
-
-  -- Nullable: "?T" format
+  -- (i) Nullable: "?T" prefix (spec form). Must bind before the function
+  -- branch and before every suffix rule.
   if d:sub(1, 1) == "?" then
     return { kind = "nullable", inner = d:sub(2) }
   end
 
-  -- Function: "(params)->ret" or "async(params)->ret" format
-  -- The "async" prefix is recognized inside the function branch, after
-  -- nullable/array wrappers have been peeled.
+  -- (ii) Function: "(params)->ret" or "async(params)->ret".
+  -- The "async" prefix is recognized inside the function branch, after the
+  -- "?T" prefix but before any suffix stripping.
   local is_async = false
-  if d:sub(1, 5) == "async" then
+  local d_fn = d
+  if d_fn:sub(1, 5) == "async" then
     is_async = true
-    d = d:sub(6)  -- strip "async" prefix, leaving "(params)->ret"
+    d_fn = d_fn:sub(6)  -- strip "async" prefix, leaving "(params)->ret"
   end
 
-  if d:sub(1, 1) == "(" then
+  if d_fn:sub(1, 1) == "(" then
     local arrow_pos = nil
-    depth = 0
-    for i = 1, #d do
-      local c = d:sub(i, i)
+    local depth = 0
+    for i = 1, #d_fn do
+      local c = d_fn:sub(i, i)
       if c == "(" or c == "[" then
         depth = depth + 1
       elseif c == ")" or c == "]" then
         depth = depth - 1
-      elseif depth == 0 and i + 1 <= #d and d:sub(i, i + 1) == "->" then
+      elseif depth == 0 and i + 1 <= #d_fn and d_fn:sub(i, i + 1) == "->" then
         arrow_pos = i
         break
       end
     end
     if arrow_pos then
-      local params_str = d:sub(2, arrow_pos - 2)  -- content between ( and )
+      local params_str = d_fn:sub(2, arrow_pos - 2)  -- content between ( and )
       -- Check if the ')' before -> is at arrow_pos-1
-      if d:sub(arrow_pos - 1, arrow_pos - 1) == ")" then
-        local ret_type = d:sub(arrow_pos + 2)
+      if d_fn:sub(arrow_pos - 1, arrow_pos - 1) == ")" then
+        local ret_type = d_fn:sub(arrow_pos + 2)
         -- Parse params: comma-separated, but need to respect nesting
         local params = {}
         if params_str ~= "" then
@@ -228,9 +208,9 @@ local function parse_descriptor(descriptor)
           end
           params[#params + 1] = params_str:sub(start)
         end
-        -- Async functions return "null" for ret so from_lua_function skips
-        -- return-type checking on the outer wrapper. The actual return-type
-        -- validation is done inside the coroutine body via codegen-emitted checks.
+        -- Async functions report ret="null" so from_lua_function routes to the
+        -- async-operation shape check; the declared return type R is enforced
+        -- at the await site, not by the wrapper.
         if is_async then
           return { kind = "function", params = params, ret = "null", isAsync = true }
         end
@@ -239,12 +219,45 @@ local function parse_descriptor(descriptor)
     end
   end
 
-  -- Class: "@path/ClassName" format
+  -- (iii) Nullable: "T|null" legacy suffix (end-anchored, top-level only).
+  -- Reached only when the string is not a function descriptor, so a "|null"
+  -- inside "(...)->..." can never win over the arrow.
+  local null_pos = nil
+  local depth = 0
+  for i = 1, #d do
+    local c = d:sub(i, i)
+    if c == "(" or c == "[" then
+      depth = depth + 1
+    elseif c == ")" or c == "]" then
+      depth = depth - 1
+    elseif depth == 0 and i + 4 <= #d and d:sub(i, i + 4) == "|null" then
+      local rest = d:sub(i + 5)
+      if rest == "" then
+        null_pos = i
+        break
+      end
+    end
+  end
+  if null_pos then
+    return { kind = "nullable", inner = d:sub(1, null_pos - 1) }
+  end
+
+  -- (iv) Array: "T[]" legacy suffix.
+  if #d >= 2 and d:sub(#d - 1) == "[]" then
+    return { kind = "array", element = d:sub(1, #d - 2) }
+  end
+
+  -- (v) Array: "[T]" prefix (spec form).
+  if #d >= 2 and d:sub(1, 1) == "[" and d:sub(#d, #d) == "]" then
+    return { kind = "array", element = d:sub(2, #d - 1) }
+  end
+
+  -- (vi) Class: "@path/ClassName" format.
   if d:sub(1, 1) == "@" then
     return { kind = "class", name = d }
   end
 
-  -- Primitive types
+  -- (vii) Primitive types.
   local primitives = {
     ["null"] = true,
     ["boolean"] = true,
@@ -257,8 +270,8 @@ local function parse_descriptor(descriptor)
     return { kind = "primitive", name = d }
   end
 
-  -- Assume it's a class name (simple identifier)
-  -- Could be "ClassName" without the "@" prefix for local classes
+  -- (viii) Assume it's a class name (simple identifier).
+  -- Could be "ClassName" without the "@" prefix for local classes.
   return { kind = "class", name = d }
 end
 
@@ -390,10 +403,47 @@ function __rt.as_lua_function(fn)
   return fn.f
 end
 
+--- Returns true when the descriptor denotes a function type or a
+-- nullable-of-function type (per parse order P). Used to decide which
+-- arguments must be adapted with as_lua_function before a host call.
+local function is_function_type(descriptor)
+  local parsed = parse_descriptor(descriptor)
+  if parsed == nil then
+    return false
+  end
+  if parsed.kind == "function" then
+    return true
+  end
+  if parsed.kind == "nullable" then
+    local inner = parse_descriptor(parsed.inner)
+    return inner ~= nil and inner.kind == "function"
+  end
+  return false
+end
+
 --- Wrap a plain Lua function with runtime parameter and return type checks.
--- Parses the signature descriptor to determine expected parameter types and return type.
--- For async functions (parsed.isAsync == true), return-type checking is skipped
--- because the outer wrapper returns an async handle, not the declared return type.
+-- Parses the signature descriptor (parse order P) to determine the expected
+-- parameter types and return type.
+--
+-- Three-way return dispatch:
+-- 1. Async descriptor (parsed.isAsync == true): the call must produce at
+--    least one result and every result must be an async operation table
+--    ({ __kind = "async" }); the declared return type R is enforced at the
+--    await site, not here.
+-- 2. Non-null return (ret_descriptor ~= "null"): the call must produce at
+--    least one result — zero results and a single explicit Lua nil both pack
+--    to an empty list — and every result is checked against the declared
+--    return descriptor, including T|null, T[], class, function, and the
+--    ?F/[...] forms.
+-- 3. Sync null return (ret_descriptor == "null" and not async): the call
+--    must produce at least one result and every result must be the
+--    __rt.__NULL sentinel (a plain Lua nil packs to an empty result list and
+--    is rejected by the presence rule).
+--
+-- Function-typed parameters are adapted with __rt.as_lua_function before the
+-- raw call, so hosts receive plain Lua functions; __NULL (and nil) arguments
+-- on nullable-function parameters pass through unadapted. Rest arguments with
+-- function element descriptors are adapted the same way.
 function __rt.from_lua_function(sig, raw_f)
   if type(raw_f) ~= "function" then
     error(__rt._err("E8001", "expected function, got " .. type(raw_f), nil, nil, nil, "function", type(raw_f)))
@@ -406,19 +456,21 @@ function __rt.from_lua_function(sig, raw_f)
 
   local param_descriptors = parsed.params
   local ret_descriptor = parsed.ret
+  local is_async = parsed.isAsync == true
 
   return __rt.function_(sig, function(...)
     local nargs = select("#", ...)
     local has_rest = false
     local rest_descriptor = nil
 
-    -- Check if last param is rest parameter ("...T[]" format)
+    -- Check if last param is a rest parameter ("...T[]" legacy or "...[T]"
+    -- spec form). array_element_descriptor accepts both dialects.
     local required_params = #param_descriptors
     if required_params > 0 then
       local last = param_descriptors[required_params]
       if last:sub(1, 3) == "..." then
         has_rest = true
-        rest_descriptor = __rt.array_element_descriptor(last:sub(4))  -- extract element type from "...T[]" rest param
+        rest_descriptor = __rt.array_element_descriptor(last:sub(4))  -- extract the element descriptor from the rest array descriptor
         required_params = required_params - 1
       end
     end
@@ -453,23 +505,176 @@ function __rt.from_lua_function(sig, raw_f)
       end
     end
 
+    -- Adapt function-typed arguments before the raw call so hosts receive
+    -- plain Lua functions. __NULL and nil arguments on nullable-function
+    -- parameters pass through unadapted.
+    local adapted = {}
+    local needs_adapt = false
+    for i = 1, required_params do
+      local arg = select(i, ...)
+      if is_function_type(param_descriptors[i]) then
+        needs_adapt = true
+        if arg ~= nil and arg ~= __rt.__NULL then
+          arg = __rt.as_lua_function(arg)
+        end
+      end
+      adapted[i] = arg
+    end
+    if has_rest and rest_descriptor and is_function_type(rest_descriptor) then
+      for i = required_params + 1, nargs do
+        local arg = select(i, ...)
+        if arg ~= nil and arg ~= __rt.__NULL then
+          arg = __rt.as_lua_function(arg)
+        end
+        adapted[i] = arg
+        needs_adapt = true
+      end
+    else
+      for i = required_params + 1, nargs do
+        adapted[i] = select(i, ...)
+      end
+    end
+
     -- Call the raw function
-    local results = { raw_f(...) }
+    local results
+    if needs_adapt then
+      results = { raw_f(unpack(adapted, 1, nargs)) }
+    else
+      results = { raw_f(...) }
+    end
     local nresults = #results
 
-    -- Check return type
-    -- Skip for async functions (ret_descriptor = "null") and void functions.
-    if ret_descriptor ~= "null" then
+    -- Return validation: three-way dispatch (see the doc comment above).
+    if is_async then
+      -- 1. Async: require an async operation result.
+      if nresults < 1 then
+        error(__rt._err("E8010", "host async function must return an async operation, got nothing", nil, nil, nil, "async operation", "nothing"))
+      end
+      for i = 1, nresults do
+        local r = results[i]
+        if type(r) ~= "table" or r.__kind ~= "async" then
+          error(__rt._err("E8010", "host async function must return an async operation, got " .. type(r), nil, nil, nil, "async operation", type(r)))
+        end
+      end
+    elseif ret_descriptor ~= "null" then
+      -- 2. Non-null declared return: require at least one result, then check
+      -- every result against the declared descriptor.
+      if nresults < 1 then
+        error(__rt._err("E8010", "return value 1 type mismatch: expected " .. ret_descriptor .. ", got nothing", nil, nil, nil, ret_descriptor, "nothing"))
+      end
       for i = 1, nresults do
         local ok, err = pcall(__rt.check_type, ret_descriptor, results[i])
         if not ok then
           error(__rt._err("E8010", "return value " .. i .. " type mismatch: " .. tostring(err), nil, nil, nil, ret_descriptor, type(results[i])))
         end
       end
+    else
+      -- 3. Sync null return: require at least one result and every result
+      -- must be the __rt.__NULL sentinel.
+      if nresults < 1 then
+        error(__rt._err("E8010", "return value 1 type mismatch: expected null, got nothing", nil, nil, nil, "null", "nothing"))
+      end
+      for i = 1, nresults do
+        local ok, err = pcall(__rt.check_null, results[i])
+        if not ok then
+          error(__rt._err("E8010", "return value " .. i .. " type mismatch: " .. tostring(err), nil, nil, nil, "null", type(results[i])))
+        end
+      end
     end
 
     return unpack(results, 1, nresults)
   end)
+end
+
+--- Load and validate a host module at import time.
+--
+-- @param module_path string  the raw import specifier as written (required
+--                            verbatim — never a dotted typing name)
+-- @param declared    table   declared export name → descriptor string
+--                            (function and class descriptors only)
+-- @return fresh exports table containing every declared name (wrapped or
+--         validated) plus <C>_defaults for each declared class and any
+--         <C>_fields the raw host table supplied. Extra host exports are
+--         structurally dropped; the raw host table is never mutated.
+--
+-- Errors: E8011 at load — require failure, non-table module result, missing
+-- declared export, invalid function/class export shape, pre-wrapped sig
+-- mismatch or non-function .f, class identity mismatch, missing/non-table
+-- defaults, present-but-non-table <C>_fields. E8010 never fires at load for
+-- legal declared maps (every emitted Type.Func descriptor parses as a
+-- function under parse order P); call-time violations raise E8010 inside the
+-- wrapped functions.
+function __rt.load_host(module_path, declared)
+  if type(declared) ~= "table" then
+    error(__rt._err("E8011", "host module declarations must be a table", nil, nil, nil, "table", type(declared)))
+  end
+
+  local ok, raw = pcall(require, module_path)
+  if not ok then
+    error(__rt._err("E8011", "failed to load host module '" .. tostring(module_path) .. "': " .. tostring(raw), nil, nil, nil, nil, nil))
+  end
+  if type(raw) ~= "table" then
+    error(__rt._err("E8011", "host module '" .. tostring(module_path) .. "' did not return a table", nil, nil, nil, "table", type(raw)))
+  end
+
+  local exports = {}
+  for name, descriptor in pairs(declared) do
+    local v = raw[name]
+    if v == nil then
+      error(__rt._err("E8011", "missing host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "'", nil, nil, nil, nil, nil))
+    end
+    local parsed = parse_descriptor(descriptor)
+    if parsed ~= nil and parsed.kind == "function" then
+      if type(v) == "function" then
+        -- Raw Lua function: wrap with parameter/return/async-shape checks.
+        exports[name] = __rt.from_lua_function(descriptor, v)
+      elseif type(v) == "table" and v.__kind == "function" then
+        -- Pre-wrapped export: the declared descriptor is the only trusted
+        -- metadata. Validate the identity, then re-wrap .f so raw and
+        -- pre-wrapped exports get identical call-time enforcement.
+        if v.sig ~= descriptor then
+          error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has signature mismatch: expected " .. descriptor .. ", got " .. tostring(v.sig), nil, nil, nil, descriptor, v.sig))
+        end
+        if type(v.f) ~= "function" then
+          error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has non-function .f", nil, nil, nil, "function", type(v.f)))
+        end
+        exports[name] = __rt.from_lua_function(descriptor, v.f)
+      else
+        error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' is not a function", nil, nil, nil, "function", type(v)))
+      end
+    elseif parsed ~= nil and parsed.kind == "class" then
+      -- Class meta: the identity must equal the declared descriptor exactly
+      -- (module-qualified nominal identity).
+      if type(v) ~= "table" or v.__kind ~= "class" then
+        error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' is not a class meta table", nil, nil, nil, "class", type(v)))
+      end
+      if v.__classname ~= descriptor then
+        error(__rt._err("E8011", "host class export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has identity mismatch: expected " .. descriptor .. ", got " .. tostring(v.__classname), nil, nil, nil, descriptor, v.__classname))
+      end
+      exports[name] = v
+      -- <C>_defaults is mandatory (construction depends on it).
+      local defaults_key = name .. "_defaults"
+      local defaults = raw[defaults_key]
+      if type(defaults) ~= "table" then
+        error(__rt._err("E8011", "host class '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' is missing its defaults table", nil, nil, nil, "table", type(defaults)))
+      end
+      exports[defaults_key] = defaults
+      -- <C>_fields is optional: copied through when the raw host table
+      -- supplies it (E8011 if present but not a table); absence is tolerated.
+      local fields_key = name .. "_fields"
+      local fields = raw[fields_key]
+      if fields ~= nil then
+        if type(fields) ~= "table" then
+          error(__rt._err("E8011", "host class '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' supplies a non-table _fields value", nil, nil, nil, "table", type(fields)))
+        end
+        exports[fields_key] = fields
+      end
+    else
+      error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has an unsupported declared descriptor: " .. tostring(descriptor), nil, nil, nil, nil, nil))
+    end
+  end
+
+  return exports
 end
 
 -- ===== Async infrastructure =====

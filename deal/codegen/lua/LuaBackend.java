@@ -567,8 +567,23 @@ public final class LuaBackend implements Visitor<Void> {
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
             case Type.Error ignored -> "Error";
-            case Type.Array arr -> typeDescriptor(arr.element()) + "[]";
-            case Type.Nullable n -> typeDescriptor(n.inner()) + "|null";
+            case Type.Array arr -> {
+                String elem = typeDescriptor(arr.element());
+                // E-2: function-involving elements emit the spec bracket form,
+                // so "[(int)->int]" (array of functions) cannot be misread as
+                // "(int)->int[]" (function returning an int array).
+                yield elem.contains("->") ? "[" + elem + "]" : elem + "[]";
+            }
+            case Type.Nullable n -> {
+                // E-1: nullable function types emit the spec "?F" form, so
+                // "?(int)->int" (nullable function) cannot be misread as
+                // "(int)->int|null" (function returning a nullable int).
+                // Every other nullable keeps the legacy "T|null" spelling.
+                if (n.inner() instanceof Type.Func) {
+                    yield "?" + typeDescriptor(n.inner());
+                }
+                yield typeDescriptor(n.inner()) + "|null";
+            }
             case Type.Class cls -> {
                 if (cls.modulePath() != null && !cls.modulePath().isEmpty()) {
                     yield "@" + cls.modulePath() + "/" + cls.name();
@@ -586,7 +601,10 @@ public final class LuaBackend implements Visitor<Void> {
                 }
                 if (f.restType().isPresent()) {
                     if (!f.paramTypes().isEmpty()) sb.append(",");
-                    sb.append("...").append(typeDescriptor(f.restType().get().element()));
+                    // Rest arm: the full array descriptor in typeDescriptor's dialect
+                    // ("...string[]", "...[(int)->int]" for function elements), per
+                    // ParamDescriptor := "..." ArrayDescriptor.
+                    sb.append("...").append(typeDescriptor(f.restType().get()));
                 }
                 sb.append(")->").append(typeDescriptor(f.returnType()));
                 yield sb.toString();
