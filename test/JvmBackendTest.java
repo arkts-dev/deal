@@ -25,17 +25,26 @@ import java.util.List;
 /**
  * Unit tests for the JVM backend skeleton (ISSUE-0091):
  * <ul>
- *   <li>identifier translation and class-name derivation,</li>
+ *   <li>identifier translation and collision-safe class-name derivation,</li>
  *   <li>Java emission for the supported skeleton surface
  *       (literals, arithmetic, locals, if/else, console output, intrinsics),</li>
  *   <li>E6000 rejection of out-of-scope constructs (classes, arrays, tables,
- *       loops, async, non-console imports),</li>
- *   <li>DEAL runtime error codes (E8004/E8005) surfaced by executing the
- *       emitted artifact with {@code javac} + {@code java} subprocesses,</li>
+ *       loops, async, non-console imports — at the import statement itself,
+ *       even when unused —, module-level returns, use-before-declaration,
+ *       runtime-helper name collisions),</li>
+ *   <li>observable-behavior preservation for null-typed side effects
+ *       (null-typed returns/initializers/assignments/arguments), module-level
+ *       load-time statements, and shadowed initializers — verified by
+ *       executing the emitted artifact with {@code javac} + {@code java}
+ *       subprocesses,</li>
+ *   <li>DEAL runtime error codes (E8004/E8005/E8006/E8001 incl. the
+ *       negative-exponent and extreme-power paths) surfaced by executing the
+ *       emitted artifact,</li>
  *   <li>the backend-selection seam: {@code CompilationOrchestrator} with
  *       {@code Backend.JVM} emits and compiles a real {@code .java} artifact,
- *       the default stays LuaJIT, {@code DealConfig} and the CLI accept
- *       {@code jvm}.</li>
+ *       rejects out-of-scope projects with E6000, detects class-name
+ *       collisions, the default stays LuaJIT, {@code DealConfig} and the CLI
+ *       accept {@code jvm}.</li>
  * </ul>
  *
  * <p>The end-to-end JVM conformance fixtures live in
@@ -57,10 +66,17 @@ public class JvmBackendTest {
             testClassNameDerivation();
             testEmissionSmoke();
             testUnsupportedConstructsRejected();
+            testNullReturnSideEffects();
+            testNullTypedInitializers();
+            testModuleLevelStatements();
+            testShadowedInitializer();
+            testUseBeforeDeclarationRejected();
             testRuntimeErrorCodes();
             testOrchestratorJvmBackend();
             testOrchestratorDefaultStaysLua();
             testOrchestratorJvmRejectsUnsupported();
+            testOrchestratorJvmImportRejected();
+            testOrchestratorJvmClassCollision();
             testDealConfigBackendField();
             testCliBackendFlag();
         } finally {
@@ -107,6 +123,10 @@ public class JvmBackendTest {
     private record Frontend(ProgramNode program, CheckResult checkResult,
                             List<Diagnostic> errors) {}
 
+    // E9999 is the project's test-only pseudo code for a NameResolver
+    // exception (the ConformanceTest precedent); the String-code overload is
+    // deprecated, and this suppression keeps the build warning-free.
+    @SuppressWarnings("deprecation")
     private static Frontend compileFrontend(String source, String filename) {
         List<Diagnostic> errors = new ArrayList<>();
 
@@ -253,10 +273,15 @@ public class JvmBackendTest {
 
         check(JvmBackend.classNameFor("main").equals("Main"),
             "simple module → Main");
-        check(JvmBackend.classNameFor("app.main").equals("Main"),
-            "dotted path → last segment");
-        check(JvmBackend.classNameFor("app/sub/main").equals("Main"),
-            "slashed path → last segment");
+        // ISSUE-0091 rework: names derive from the FULL module path so
+        // app/main and sub/main can never silently overwrite each other.
+        check(JvmBackend.classNameFor("app.main").equals("AppMain"),
+            "dotted path → every segment contributes");
+        check(JvmBackend.classNameFor("app/sub/main").equals("AppSubMain"),
+            "slashed path → every segment contributes");
+        check(!JvmBackend.classNameFor("app/main").equals(
+                JvmBackend.classNameFor("sub/main")),
+            "app/main and sub/main derive distinct class names");
         check(JvmBackend.classNameFor("jvm_main").equals("Jvm_main"),
             "underscore segment kept");
         check(JvmBackend.classNameFor("jvm-fixture").equals("Jvm_fixture"),
@@ -321,10 +346,11 @@ public class JvmBackendTest {
         check(java.contains("long x = add(1L, 2L);"), "local with int literals");
         check(java.contains("(\"lit\" + \"eral\")"), "string concatenation");
         check(java.contains("(!"), "boolean not");
-        check(java.contains("Void z = null;"), "null-typed local");
+        check(java.contains("Void z = null;"), "null-typed local from null literal");
         check(java.contains("public static long test()"), "exported function public");
         check(java.contains("static final class DealError"), "runtime error class");
         check(java.contains("static long intPow("), "pow helper emitted");
+        check(java.contains("static Void nullAnd("), "nullAnd helper emitted");
         check(!java.contains("__rt"), "no Lua runtime references");
     }
 
@@ -365,6 +391,10 @@ public class JvmBackendTest {
                 import * as s from "std/string"
                 export function test(): int { return s.length("ab"); }
                 """),
+            new Case("unused non-console module import", """
+                import * as m from "./other"
+                export function test(): int { return 1; }
+                """),
             new Case("nullable type", """
                 export function test(): null {
                   let n: int | null = null;
@@ -376,6 +406,32 @@ public class JvmBackendTest {
                   throw { code: "E_TEST", message: "x" };
                   return;
                 }
+                """),
+            new Case("module-level return", """
+                export function test(): int { return 1; }
+                return 1;
+                """),
+            new Case("self-referential initializer", """
+                export function test(): int {
+                  let x: int = x + 1;
+                  return x;
+                }
+                """),
+            new Case("use of local before its declaration", """
+                import * as console from "std/console"
+                export function test(): null {
+                  console.log(x);
+                  let x: string = "later";
+                }
+                """),
+            new Case("forward reference to module field", """
+                let b: int = c + 1;
+                let c: int = 2;
+                export function test(): int { return b; }
+                """),
+            new Case("function colliding with runtime helper", """
+                function intAdd(a: int, b: int): int { return a + b; }
+                export function test(): int { return intAdd(1, 2); }
                 """)
         );
 
@@ -392,6 +448,230 @@ public class JvmBackendTest {
             check(res.hasErrors(), "backend rejects " + c.what());
             check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
                 "E6000 diagnostic for " + c.what() + ": " + res.diagnostics());
+        }
+    }
+
+    /** Null-typed return expressions keep their side effects (ISSUE-0091
+     * rework: `return console.log("x")` must print "x", never be discarded). */
+    private static void testNullReturnSideEffects() throws Exception {
+        System.out.println("-- Null-typed return side effects (javac + java) --");
+
+        ExecResult direct = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null { return console.log("x"); }
+            """, "nullret");
+        check(direct.exitCode() == 0, "return console.log(...) exits 0");
+        check(direct.output().contains("x"),
+            "return console.log(...) prints 'x': " + direct.output());
+
+        ExecResult viaHelper = compileAndRunJvm("""
+            import * as console from "std/console"
+            function helper(): null { console.log("helper-ran"); }
+            export function test(): null { return helper(); }
+            """, "nullret2");
+        check(viaHelper.exitCode() == 0, "return helper() exits 0");
+        check(viaHelper.output().contains("helper-ran"),
+            "return helper() prints 'helper-ran': " + viaHelper.output());
+
+        // A parenthesized assignment is not a valid Java expression
+        // statement (JLS §14.8) — the emitted return must use the
+        // unparenthesized assignment core.
+        ExecResult assignReturn = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let z: null = null;
+              return z = console.log("assign-return");
+            }
+            """, "nullret3");
+        check(assignReturn.exitCode() == 0, "assignment-in-return exits 0");
+        check(assignReturn.output().contains("assign-return"),
+            "assignment-in-return prints: " + assignReturn.output());
+    }
+
+    /** Void-returning calls in null-typed initializers/assignments/arguments
+     * are lowered to stmt + null (via nullAnd), never to invalid Java. */
+    private static void testNullTypedInitializers() throws Exception {
+        System.out.println("-- Null-typed initializers/assignments/arguments (javac + java) --");
+
+        ExecResult inits = compileAndRunJvm("""
+            import * as console from "std/console"
+            function helper(): null { console.log("helper-ran"); }
+            export function test(): null {
+              let z: null = console.log("assign-log");
+              let w: null = helper();
+              return;
+            }
+            """, "nullinits");
+        check(inits.exitCode() == 0, "null-typed initializers exit 0");
+        check(inits.output().contains("assign-log"),
+            "console.log initializer prints: " + inits.output());
+        check(inits.output().contains("helper-ran"),
+            "helper() initializer prints: " + inits.output());
+
+        ExecResult assign = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let z: null = null;
+              z = console.log("assign-stmt");
+              return;
+            }
+            """, "nullassign");
+        check(assign.exitCode() == 0, "null-typed assignment exits 0");
+        check(assign.output().contains("assign-stmt"),
+            "null-typed assignment prints: " + assign.output());
+
+        ExecResult arg = compileAndRunJvm("""
+            import * as console from "std/console"
+            function pass(x: null): null { return x; }
+            export function test(): null {
+              let y: null = pass(console.log("arg-log"));
+              return;
+            }
+            """, "nullarg");
+        check(arg.exitCode() == 0, "null-typed call argument exits 0");
+        check(arg.output().contains("arg-log"),
+            "null-typed call argument prints: " + arg.output());
+    }
+
+    /** Module-level statements run at load time inside static initializers. */
+    private static void testModuleLevelStatements() throws Exception {
+        System.out.println("-- Module-level statements (static initializers) --");
+
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            let x: int = 1;
+            console.log("module-if-ran");
+            if (x === 1) { console.log("module-if-true"); }
+            x = 2;
+            export function test(): int { return x; }
+            """, "jvmtest-modstmts.deal");
+        check(f.errors().isEmpty(), "module-level statements frontend clean");
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-modstmts.deal", "main");
+            check(!res.hasErrors(), "module-level statements codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains("static {"), "static initializer emitted");
+                check(java.contains("    System.out.println(\"module-if-ran\");"),
+                    "module-level call inside the static block");
+                check(java.contains("    if ((x == 1L)) {"),
+                    "module-level if inside the static block");
+                check(java.contains("    x = 2L;"),
+                    "module-level assignment inside the static block");
+                check(java.contains("static long x = 1L;"),
+                    "module field declared as a class member");
+            }
+        }
+
+        ExecResult exec = compileAndRunJvm("""
+            import * as console from "std/console"
+            let x: int = 1;
+            console.log("module-if-ran");
+            if (x === 1) { console.log("module-if-true"); }
+            x = 2;
+            export function test(): int { return x; }
+            """, "modstmts");
+        check(exec.exitCode() == 0, "module-level statements exit 0");
+        check(exec.output().contains("module-if-ran"),
+            "module-level console.log ran at class init: " + exec.output());
+        check(exec.output().contains("module-if-true"),
+            "module-level if ran at class init: " + exec.output());
+        check(exec.output().contains("2"),
+            "module-level assignment visible to exported function: " + exec.output());
+
+        // Interleaved ordering: side-effecting field initializers and
+        // module-level statements must run in source order.
+        ExecResult order = compileAndRunJvm("""
+            import * as console from "std/console"
+            let a: int = f();
+            console.log("mid");
+            let b: int = g();
+            function f(): int { console.log("f-ran"); return 1; }
+            function g(): int { console.log("g-ran"); return 2; }
+            export function test(): int { return a + b; }
+            """, "modorder");
+        check(order.exitCode() == 0, "interleaved module order exits 0");
+        check(order.output().contains("f-ran"), "first field initializer ran");
+        check(order.output().contains("mid"), "module statement ran between fields");
+        check(order.output().contains("g-ran"), "second field initializer ran");
+        check(order.output().indexOf("f-ran") < order.output().indexOf("mid"),
+            "f-ran precedes mid: " + order.output());
+        check(order.output().indexOf("mid") < order.output().indexOf("g-ran"),
+            "mid precedes g-ran: " + order.output());
+    }
+
+    /** A shadowed let whose initializer references the outer binding uses the
+     * OUTER value (LuaJIT: `local x = x + 1` reads the outer x → 6). */
+    private static void testShadowedInitializer() throws Exception {
+        System.out.println("-- Shadowed initializer binds to the outer scope --");
+
+        ExecResult exec = compileAndRunJvm("""
+            export function test(): int {
+              let x: int = 5;
+              { let x: int = x + 1; return x; }
+            }
+            """, "shadowed");
+        check(exec.exitCode() == 0, "shadowed initializer exits 0");
+        check(exec.output().contains("6"),
+            "shadowed initializer computes 6 from the outer x: " + exec.output());
+
+        // Same pattern at module scope: a function-local shadow reads the
+        // module field.
+        ExecResult fieldShadow = compileAndRunJvm("""
+            let counter: int = 5;
+            export function test(): int {
+              let counter: int = counter + 1;
+              return counter;
+            }
+            """, "fieldshadow");
+        check(fieldShadow.exitCode() == 0, "field shadow exits 0");
+        check(fieldShadow.output().contains("6"),
+            "field shadow computes 6 from the module field: " + fieldShadow.output());
+    }
+
+    private static void testUseBeforeDeclarationRejected() {
+        System.out.println("-- Use-before-declaration → E6000 --");
+
+        // LuaJIT reads nil for these uses and fails at runtime; the backend
+        // must never emit a Java forward reference that javac would reject
+        // after the CLI reported success.
+        List<String> sources = List.of(
+            // self-reference in a local initializer
+            "export function test(): int { let x: int = x + 1; return x; }",
+            // self-reference at module scope
+            "let x: int = x + 1;\nexport function test(): int { return x; }",
+            // use of a local before its declaration
+            """
+            import * as console from "std/console"
+            export function test(): null {
+              console.log(x);
+              let x: string = "later";
+            }
+            """,
+            // forward reference to a later module field in a field initializer
+            "let b: int = c + 1;\nlet c: int = 2;\nexport function test(): int { return b; }",
+            // forward reference to a later module field in a module-level if
+            """
+            if (x === 1) { }
+            let x: int = 1;
+            export function test(): int { return x; }
+            """);
+
+        for (String source : sources) {
+            Frontend f = compileFrontend(source, "jvmtest-usebefore.deal");
+            if (!f.errors().isEmpty()) {
+                fail("checker must accept the use-before-declaration probe "
+                    + "(the backend rejects it): " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res =
+                JvmBackend.generate(f.program(), f.checkResult(),
+                    "jvmtest-usebefore.deal", "main");
+            check(res.hasErrors(), "backend rejects use-before-declaration");
+            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for use-before-declaration: " + res.diagnostics());
         }
     }
 
@@ -418,6 +698,23 @@ public class JvmBackendTest {
         check(intConvert.exitCode() == 1, "int(2.5) exits 1");
         check(intConvert.output().contains("DEAL_ERROR_CODE: E8001"),
             "E8001 reported: " + intConvert.output());
+
+        ExecResult negExp = compileAndRunJvm(
+            "export function test(): int { return 2 ** -1; }",
+            "negexp");
+        check(negExp.exitCode() == 1, "negative int exponent exits 1");
+        check(negExp.output().contains("DEAL_ERROR_CODE: E8006"),
+            "E8006 reported for negative exponent: " + negExp.output());
+
+        // Extreme power: Math.pow overflows to Infinity; LuaJIT's check_int
+        // reports E8001 ("expected int, got infinity"), not E8004.
+        ExecResult powInf = compileAndRunJvm(
+            "export function test(): int { return 10 ** 400; }",
+            "powinf");
+        check(powInf.exitCode() == 1, "extreme power exits 1");
+        check(powInf.output().contains("DEAL_ERROR_CODE: E8001"),
+            "E8001 reported for infinite power (LuaJIT check_int alignment): "
+                + powInf.output());
 
         ExecResult ok = compileAndRunJvm(
             "export function test(): int { return int(2.0) + 3; }",
@@ -543,6 +840,74 @@ public class JvmBackendTest {
             "orchestrator reports E6000: " + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("Unsupported_main.java")),
             "no artifact written when the backend reports errors");
+    }
+
+    /** A non-std/console import is rejected by the orchestrator's JVM path at
+     * the import statement itself — even when the import is never used — so
+     * the imported module's LuaJIT require-time side effects can never be
+     * silently dropped. */
+    private static void testOrchestratorJvmImportRejected() throws Exception {
+        System.out.println("-- Orchestrator: unused non-console import → E6000 --");
+
+        writeFile("src/other.deal", """
+            import * as console from "std/console"
+            console.log("other-module-ran");
+            export function unused(): int { return 1; }
+            """);
+        writeFile("src/entry.deal", """
+            import * as m from "./other"
+            export function run(): int { return 1; }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/import_rejected");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JVM,
+            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success = orchestrator.compile();
+        check(!success, "unused non-console import fails the JVM compile");
+        check(orchestrator.diagnostics().stream()
+                .anyMatch(d -> "E6000".equals(d.code())),
+            "orchestrator reports E6000 for the import: " + orchestrator.diagnostics());
+        check(!Files.exists(outputDir.resolve("Entry.java")),
+            "no artifact for the module with the rejected import");
+    }
+
+    /** Two modules whose paths differ only in case would derive the same
+     * class name; the orchestrator reports an E6000 instead of silently
+     * overwriting one module's artifact. */
+    private static void testOrchestratorJvmClassCollision() throws Exception {
+        System.out.println("-- Orchestrator: JVM class-name collision → E6000 --");
+
+        writeFile("src/App.deal", """
+            export function run(): int { return 1; }
+            """);
+        writeFile("src/app.deal", """
+            export function run(): int { return 2; }
+            """);
+        writeFile("src/entry.deal", """
+            import * as a from "./App"
+            import * as b from "./app"
+            export function main(): int { return 3; }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/collision");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JVM,
+            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success = orchestrator.compile();
+        check(!success, "class-name collision fails the JVM compile");
+        check(orchestrator.diagnostics().stream()
+                .anyMatch(d -> "E6000".equals(d.code())
+                    && d.message().contains("both derive")),
+            "orchestrator reports the class-name collision: " + orchestrator.diagnostics());
     }
 
     private static void testDealConfigBackendField() {

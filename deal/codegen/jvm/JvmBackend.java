@@ -37,10 +37,25 @@ import java.util.Set;
  * {@code if}/{@code else}, {@code return}, assignment, direct calls, the
  * {@code int()}/{@code number()} conversion intrinsics, and {@code std/console}
  * output ({@code console.log}/{@code console.error} → {@code System.out}/
- * {@code System.err}). Anything outside this scope — modules, classes, arrays,
- * tables, stdlib modules other than {@code std/console}, async, host ABI,
- * {@code @jsonable}, loops, try/throw — is rejected with a backend
- * {@code E6000} diagnostic, never silently miscompiled.
+ * {@code System.err}). Anything outside this scope — modules (any import
+ * other than {@code std/console}, rejected at the import statement itself
+ * even when unused), classes, arrays, tables, stdlib modules other than
+ * {@code std/console}, async, host ABI, {@code @jsonable}, loops, try/throw —
+ * is rejected with a backend {@code E6000} diagnostic, never silently
+ * miscompiled.
+ *
+ * <p>Load-time semantics are preserved: non-declaration module-level
+ * statements are emitted into {@code static} initializer blocks interleaved
+ * in source order with field initializers, exactly where LuaJIT executes
+ * them. Null-typed expressions with side effects (e.g.
+ * {@code let z: null = console.log("x")}, {@code return helper()},
+ * {@code x = console.log("y")} where {@code x: null}) are evaluated for
+ * their observable behavior — never discarded — via the emitted
+ * {@code nullAnd} helper ({@code stmt; Void v = null;} semantics). Uses of a
+ * variable before its own declaration with no enclosing binding (LuaJIT
+ * reads nil there and fails at runtime) and forward references to
+ * later-declared module fields (Java's illegal-forward-reference rule)
+ * are rejected with {@code E6000} so the artifact is always valid Java.
  *
  * <p>JVM value mapping follows the spec's JVM backend contract
  * ({@code docs/spec-v1.1.md} §JVM value mapping): {@code int → long},
@@ -90,7 +105,9 @@ public final class JvmBackend {
     private final StringBuilder out = new StringBuilder();
     private int indent = 0;
 
-    /** Import alias → raw module path (e.g. {@code console → std/console}). */
+    /** Import alias → raw module path (e.g. {@code console → std/console}).
+     * Only {@code std/console} aliases are recorded: every other import is
+     * rejected with E6000 at the import statement (ISSUE-0091 rework). */
     private final Map<String, String> importAliases = new LinkedHashMap<>();
 
     /**
@@ -110,6 +127,7 @@ public final class JvmBackend {
      */
     private final Deque<Map<String, String>> localScopes = new ArrayDeque<>();
 
+    /** True while emitting direct module-body statements (class members). */
     private boolean moduleLevel = false;
 
     private JvmBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
@@ -136,7 +154,9 @@ public final class JvmBackend {
 
     /**
      * Generates Java source for a checked module with an explicit module path.
-     * The module path's last segment names the generated class.
+     * The class name is derived from the full module path (collision-safe:
+     * {@code app/main} and {@code sub/main} derive {@code AppMain} and
+     * {@code SubMain}).
      */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath) {
@@ -146,14 +166,30 @@ public final class JvmBackend {
     }
 
     /**
-     * Derives the public Java class name for a module path: the last path
-     * segment, sanitized to a Java identifier and capitalized. Falls back to
-     * {@code "Main"} for empty or invalid segments.
+     * Derives the public Java class name for a module path. Every path
+     * segment contributes a capitalized, sanitized segment (ISSUE-0091
+     * rework): {@code main → Main}, {@code app/main → AppMain},
+     * {@code app.sub.main → AppSubMain}. This keeps distinct module paths
+     * collision-free instead of silently overwriting one another's
+     * artifacts (e.g. {@code app/main} and {@code sub/main} no longer both
+     * derive {@code Main}). Falls back to {@code "Main"} for empty input.
      */
     public static String classNameFor(String modulePath) {
-        String segment = modulePath == null ? "" : modulePath;
-        int lastSep = Math.max(segment.lastIndexOf('/'), segment.lastIndexOf('.'));
-        if (lastSep >= 0) segment = segment.substring(lastSep + 1);
+        String path = modulePath == null ? "" : modulePath;
+        StringBuilder sb = new StringBuilder();
+        for (String segment : path.split("[/.]")) {
+            String cleaned = sanitizeSegment(segment);
+            if (cleaned.isEmpty()) continue;
+            sb.append(Character.toUpperCase(cleaned.charAt(0)))
+                .append(cleaned.substring(1));
+        }
+        String result = sb.toString();
+        if (result.isEmpty()) result = "Main";
+        return JAVA_RESERVED.contains(result) ? result + "_" : result;
+    }
+
+    /** Sanitizes one module-path segment to a Java identifier. */
+    private static String sanitizeSegment(String segment) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < segment.length(); i++) {
             char c = segment.charAt(i);
@@ -161,12 +197,7 @@ public final class JvmBackend {
             if (i == 0) ok = ok && Character.isJavaIdentifierStart(c);
             sb.append(ok ? c : '_');
         }
-        String cleaned = sb.toString();
-        if (cleaned.isEmpty() || !Character.isJavaIdentifierStart(cleaned.charAt(0))) {
-            cleaned = "Main";
-        }
-        String result = Character.toUpperCase(cleaned.charAt(0)) + cleaned.substring(1);
-        return JAVA_RESERVED.contains(result) ? result + "_" : result;
+        return sb.toString();
     }
 
     // =========================================================================
@@ -187,6 +218,25 @@ public final class JvmBackend {
         "super", "switch", "synchronized", "this", "throw", "throws",
         "transient", "try", "void", "volatile", "while", "_",
         "true", "false", "null");
+
+    /**
+     * Emitted runtime-helper methods, by translated name → mapped Java
+     * parameter types. A DEAL function whose translated name and mapped
+     * parameter types match a helper exactly would emit a duplicate Java
+     * method; such declarations are rejected with E6000 instead.
+     */
+    private static final Map<String, List<String>> RUNTIME_HELPER_SIGNATURES = Map.ofEntries(
+        Map.entry("intAdd", List.of("long", "long")),
+        Map.entry("intSub", List.of("long", "long")),
+        Map.entry("intMul", List.of("long", "long")),
+        Map.entry("intDiv", List.of("long", "long")),
+        Map.entry("intMod", List.of("long", "long")),
+        Map.entry("intPow", List.of("long", "long")),
+        Map.entry("intNeg", List.of("long")),
+        Map.entry("numMod", List.of("double", "double")),
+        Map.entry("intFromNumber", List.of("double")),
+        Map.entry("numberFromInt", List.of("long")),
+        Map.entry("nullAnd", List.of("Runnable")));
 
     /**
      * Translates a DEAL identifier to a Java identifier. The encoding is
@@ -219,7 +269,19 @@ public final class JvmBackend {
     private JvmCodegenResult generateProgram(ProgramNode program) {
         for (StatementNode stmt : program.statements()) {
             if (stmt instanceof ImportDeclaration imp) {
-                importAliases.put(imp.alias(), imp.modulePath());
+                // ISSUE-0091 rework: any import other than std/console is
+                // out of scope and rejected AT THE IMPORT STATEMENT itself —
+                // even when unused — because the imported module's load-time
+                // side effects run under LuaJIT (require time) but could
+                // never run in a skeleton JVM build, and multi-module
+                // projects must fail loudly rather than silently dropping
+                // module code.
+                if ("std/console".equals(imp.modulePath())) {
+                    importAliases.put(imp.alias(), imp.modulePath());
+                } else {
+                    unsupported("module imports other than std/console ('"
+                        + imp.modulePath() + "')", imp.span());
+                }
             }
         }
 
@@ -231,15 +293,84 @@ public final class JvmBackend {
         emitLine("public final class " + className + " {");
         indent++;
         emitRuntimeSupport();
+
+        // Declarations (fields, functions, imports, exports) are emitted as
+        // class members; every run of non-declaration module-level statements
+        // is wrapped in a static initializer so it executes at class
+        // initialization in source order — LuaJIT executes module-level
+        // statements at load time. Interleaving members and static blocks
+        // preserves the relative order of side-effecting initializers.
+        List<StatementNode> statements = program.statements();
         moduleLevel = true;
-        for (StatementNode stmt : program.statements()) {
-            emitStatement(stmt);
+        for (int i = 0; i < statements.size(); i++) {
+            if (isModuleLevelDeclaration(statements.get(i))) {
+                emitStatement(statements.get(i));
+            } else {
+                emitLine("static {");
+                indent++;
+                moduleLevel = false;
+                while (i < statements.size()
+                        && !isModuleLevelDeclaration(statements.get(i))) {
+                    StatementNode stmt = statements.get(i);
+                    if (containsModuleReturn(stmt)) {
+                        unsupported("module-level return (Java initializers cannot return)",
+                            stmt.span());
+                    } else {
+                        emitStatement(stmt);
+                    }
+                    i++;
+                }
+                i--;
+                moduleLevel = true;
+                indent--;
+                emitLine("}");
+            }
         }
         moduleLevel = false;
+
         indent--;
         emitLine("}");
 
         return new JvmCodegenResult(className, out.toString(), diagnostics);
+    }
+
+    /** Class-body members at module level (vs. load-time statements). */
+    private static boolean isModuleLevelDeclaration(StatementNode stmt) {
+        return stmt instanceof VariableDeclaration
+            || stmt instanceof FunctionDeclaration
+            || stmt instanceof ExportDeclaration
+            || stmt instanceof ImportDeclaration
+            || stmt instanceof ClassDeclaration;
+    }
+
+    /** True when stmt — or a nested block/if (not a nested function body) —
+     * contains a return statement. Java initializers cannot contain return,
+     * so module-level returns are rejected instead of emitting invalid Java. */
+    private static boolean containsModuleReturn(StatementNode stmt) {
+        return switch (stmt) {
+            case ReturnStatement rs -> true;
+            case Block b -> {
+                boolean found = false;
+                for (StatementNode s : b.statements()) {
+                    if (containsModuleReturn(s)) { found = true; break; }
+                }
+                yield found;
+            }
+            case IfStatement is -> {
+                boolean found = containsModuleReturn(is.thenBlock());
+                if (!found && is.elseBranch().isPresent()) {
+                    Either<IfStatement, Block> branch = is.elseBranch().get();
+                    if (branch instanceof Either.Left<IfStatement, Block> left) {
+                        found = containsModuleReturn(left.value());
+                    } else {
+                        found = containsModuleReturn(
+                            ((Either.Right<IfStatement, Block>) branch).value());
+                    }
+                }
+                yield found;
+            }
+            default -> false;
+        };
     }
 
     // =========================================================================
@@ -262,13 +393,20 @@ public final class JvmBackend {
         emitLine("static long intMul(long a, long b) { try { return Math.multiplyExact(a, b); } catch (ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
         emitLine("static long intDiv(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); try { return a / b; } catch (ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
         emitLine("static long intMod(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); return a % b; }");
-        emitLine("static long intPow(long a, long b) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\"); double p = Math.pow((double) a, (double) b); if (p >= 9.223372036854776E18 || p < -9.223372036854776E18) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) p; }");
+        // NaN/Infinity first, matching __rt.check_int (LuaJIT reports E8001
+        // "expected int, got infinity" for e.g. `10 ** 400`); only finite
+        // out-of-range values report E8004.
+        emitLine("static long intPow(long a, long b) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\"); double p = Math.pow((double) a, (double) b); if (Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (p >= 9.223372036854776E18 || p < -9.223372036854776E18) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) p; }");
         emitLine("static long intNeg(long a) { try { return Math.negateExact(a); } catch (ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
         emitLine("// number %: Lua-style floored modulo (a - floor(a/b)*b), unlike Java's truncated %.");
         emitLine("static double numMod(double a, double b) { return a - Math.floor(a / b) * b; }");
         emitLine("// int(v) / number(v) conversion intrinsics (E8001 bad value, E8004 out of range).");
         emitLine("static long intFromNumber(double v) { if (Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v >= 9.223372036854776E18 || v < -9.223372036854776E18) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) v; }");
         emitLine("static double numberFromInt(long v) { return (double) v; }");
+        emitLine("// nullAnd: evaluates a side-effecting null-typed expression (a void");
+        emitLine("// call) in value position, preserving evaluation order and yielding");
+        emitLine("// the DEAL null value (Void).");
+        emitLine("static Void nullAnd(Runnable r) { r.run(); return null; }");
         emitLine();
     }
 
@@ -277,11 +415,26 @@ public final class JvmBackend {
     // =========================================================================
 
     private void emitStatement(StatementNode stmt) {
+        // Reject value uses of a variable before its own declaration (and
+        // forward references to later-declared module fields) — LuaJIT reads
+        // nil for such uses and fails at runtime; a Java forward reference
+        // would make javac reject an artifact the CLI reported as
+        // successful. Only the statement's own value positions are checked;
+        // nested statements are checked individually when emitted, so
+        // sequential declarations inside a block stay clean.
+        String undeclared = undeclaredVariableUse(stmt);
+        if (undeclared != null) {
+            unsupported("use of '" + undeclared + "' before its declaration "
+                + "with no enclosing binding (LuaJIT reads nil and fails at "
+                + "runtime; Java rejects the forward reference)", stmt.span());
+            return;
+        }
+
         switch (stmt) {
             case VariableDeclaration vd -> emitVariable(vd);
             case FunctionDeclaration fd -> emitFunction(fd, false);
             case ReturnStatement rs -> emitReturn(rs);
-            case IfStatement is -> emitIf(is, false);
+            case IfStatement is -> emitIf(is);
             case Block b -> emitBlock(b);
             case ExpressionStatement es -> emitExpressionStatement(es);
             case ImportDeclaration id -> { /* recorded in the pre-scan; nothing to emit */ }
@@ -316,10 +469,17 @@ public final class JvmBackend {
         String javaType = javaLocalType(declaredType, vd.span());
         if (javaType == null) return;
 
+        // ISSUE-0091 rework: emit the initializer BEFORE declaring the
+        // local. The checker binds a self-referencing RHS identifier
+        // (`let x: int = x + 1` in an inner scope) to the ENCLOSING binding
+        // — LuaJIT's `local x = x + 1` reads the outer x — so the RHS must
+        // be emitted in the pre-declaration scope; only then is the
+        // (disambiguated) name registered. A self-reference with no
+        // enclosing binding was already rejected by emitStatement (E6000).
+        String initializer = emitExpression(vd.initializer());
         String visibility = moduleLevel ? "static " : "";
         String javaVar = declareLocal(vd.name());
-        emitLine(visibility + javaType + " " + javaVar + " = "
-            + emitExpression(vd.initializer()) + ";");
+        emitLine(visibility + javaType + " " + javaVar + " = " + initializer + ";");
     }
 
     private void emitFunction(FunctionDeclaration fd, boolean exported) {
@@ -339,20 +499,36 @@ public final class JvmBackend {
         String javaReturn = javaReturnType(returnType, fd.returnType().span());
         if (javaReturn == null) return;
 
-        StringBuilder sig = new StringBuilder();
-        if (exported) sig.append("public ");
-        sig.append("static ").append(javaReturn).append(' ')
-            .append(javaName(fd.name())).append('(');
+        List<String> paramTypes = new ArrayList<>();
         boolean ok = true;
-        for (int i = 0; i < fd.params().size(); i++) {
-            Parameter p = fd.params().get(i);
+        for (Parameter p : fd.params()) {
             Type pt = resolveTypeNode(p.type());
             String jt = javaLocalType(pt, p.type().span());
             if (jt == null) { ok = false; break; }
-            if (i > 0) sig.append(", ");
-            sig.append(jt).append(' ').append(javaName(p.name()));
+            paramTypes.add(jt);
         }
         if (!ok) return;
+
+        // A DEAL function whose name and mapped signature collide with an
+        // emitted runtime helper would produce a duplicate Java method.
+        String javaFn = javaName(fd.name());
+        List<String> helperSignature = RUNTIME_HELPER_SIGNATURES.get(javaFn);
+        if (helperSignature != null && helperSignature.equals(paramTypes)) {
+            unsupported("function '" + fd.name() + "' whose signature "
+                + "collides with the emitted runtime helper '" + javaFn + "'",
+                fd.span());
+            return;
+        }
+
+        StringBuilder sig = new StringBuilder();
+        if (exported) sig.append("public ");
+        sig.append("static ").append(javaReturn).append(' ')
+            .append(javaFn).append('(');
+        for (int i = 0; i < fd.params().size(); i++) {
+            if (i > 0) sig.append(", ");
+            sig.append(paramTypes.get(i)).append(' ')
+                .append(javaName(fd.params().get(i).name()));
+        }
         sig.append(") {");
         emitLine(sig.toString());
         indent++;
@@ -381,15 +557,34 @@ public final class JvmBackend {
         }
         Type t = typeOf(rs.expr().get());
         if (t instanceof Type.Null) {
+            ExpressionNode e = rs.expr().get();
+            if (isBareNullLiteral(e) || e instanceof IdentifierExpr) {
+                // The null literal and a null-typed variable read have no
+                // observable side effects — and a bare identifier is not a
+                // valid Java expression statement.
+                emitLine("return;");
+                return;
+            }
+            // ISSUE-0091 rework: any other null-typed return expression is a
+            // side-effecting call or assignment (console.log/console.error, a
+            // null-returning function) — LuaJIT evaluates it before
+            // returning. Evaluate it as a statement first, then return;
+            // discarding it would silently drop its output. Assignments must
+            // be emitted without parentheses: a parenthesized assignment is
+            // not a valid Java expression statement (JLS §14.8).
+            if (e instanceof AssignmentExpr ae) {
+                emitLine(emitAssignmentCore(ae) + ";");
+            } else {
+                emitLine(emitExpression(e) + ";");
+            }
             emitLine("return;");
             return;
         }
         emitLine("return " + emitExpression(rs.expr().get()) + ";");
     }
 
-    private void emitIf(IfStatement is, boolean leadingElse) {
-        emitLine((leadingElse ? "else if (" : "if (")
-            + emitExpression(is.condition()) + ") {");
+    private void emitIf(IfStatement is) {
+        emitLine("if (" + emitExpression(is.condition()) + ") {");
         indent++;
         emitScopedBlock(is.thenBlock());
         indent--;
@@ -479,7 +674,16 @@ public final class JvmBackend {
             case IdentifierExpr id -> emitIdentifier(id);
             case BinaryExpr bin -> emitBinary(bin);
             case UnaryExpr u -> emitUnary(u);
-            case CallExpr call -> emitCall(call);
+            case CallExpr call -> {
+                String raw = emitCall(call);
+                // Null-typed calls (console.log/console.error, null-returning
+                // functions) are void Java expressions; wrap them so they can
+                // appear in value position (initializers, assignments, call
+                // arguments) while preserving evaluation order and yielding
+                // the null value.
+                yield typeOf(call) instanceof Type.Null
+                    ? "nullAnd(() -> " + raw + ")" : raw;
+            }
             case AssignmentExpr ae -> emitAssignment(ae);
             case MemberAccessExpr mae -> emitMemberAccessValue(mae);
             case IndexExpr idx -> {
@@ -786,6 +990,96 @@ public final class JvmBackend {
     }
 
     // =========================================================================
+    // Use-before-declaration detection
+    // =========================================================================
+
+    /**
+     * Returns the name of a value-position identifier use in {@code stmt}
+     * that binds to no enclosing variable and resolves to nothing usable at
+     * module scope — i.e. a use of a variable before its own declaration (or
+     * a self-reference in its initializer) with no outer binding to fall
+     * back to, or a forward reference to a later-declared module field.
+     * LuaJIT reads nil for such uses and fails at runtime; emitting a Java
+     * forward reference would make javac reject an artifact the CLI reported
+     * as successful. Returns {@code null} when the statement is clean.
+     *
+     * <p>Only the statement's own value positions are checked; nested
+     * statements are checked individually when they are emitted, so a block
+     * that declares a variable and then uses it stays clean.
+     */
+    private String undeclaredVariableUse(StatementNode stmt) {
+        return switch (stmt) {
+            case VariableDeclaration vd -> undeclaredUseIn(vd.initializer());
+            case IfStatement is -> undeclaredUseIn(is.condition());
+            case ReturnStatement rs -> rs.expr().map(this::undeclaredUseIn).orElse(null);
+            case ExpressionStatement es -> undeclaredUseIn(es.expr());
+            default -> null; // functions/imports/exports: separate scopes or no
+                              // value uses; unsupported kinds rejected elsewhere
+        };
+    }
+
+    private String undeclaredUseIn(ExpressionNode e) {
+        return switch (e) {
+            case IdentifierExpr id ->
+                isUndeclaredVariableUse(id.name()) ? id.name() : null;
+            case BinaryExpr bin ->
+                firstNonNull(undeclaredUseIn(bin.left()), undeclaredUseIn(bin.right()));
+            case UnaryExpr u -> undeclaredUseIn(u.expr());
+            case CallExpr call -> {
+                String r = null;
+                if (call.callee() instanceof IdentifierExpr id
+                        && isUndeclaredVariableUse(id.name())) {
+                    r = id.name();
+                }
+                for (ExpressionNode arg : call.args()) {
+                    if (r == null) r = undeclaredUseIn(arg);
+                }
+                yield r;
+            }
+            case AssignmentExpr ae -> undeclaredUseIn(ae.value());
+            case MemberAccessExpr mae -> undeclaredUseIn(mae.object());
+            case IndexExpr idx ->
+                firstNonNull(undeclaredUseIn(idx.array()), undeclaredUseIn(idx.index()));
+            case ArrayLiteralExpr al -> firstNonNullIn(al.elements());
+            case ObjectLiteralExpr ol ->
+                firstNonNullIn(ol.properties().stream().map(Property::value).toList());
+            case HasExpr he -> undeclaredUseIn(he.object());
+            case TemplateLiteralExpr tl -> firstNonNullIn(tl.parts());
+            case AwaitExpression aw -> undeclaredUseIn(aw.callee());
+            case FunctionExpr fe -> null; // nested scope of its own
+            case LiteralExpr lit -> null;
+        };
+    }
+
+    private String firstNonNullIn(List<ExpressionNode> exprs) {
+        for (ExpressionNode e : exprs) {
+            String r = undeclaredUseIn(e);
+            if (r != null) return r;
+        }
+        return null;
+    }
+
+    private static String firstNonNull(String a, String b) {
+        return a != null ? a : b;
+    }
+
+    /**
+     * True when a value-position use of {@code name} has no enclosing
+     * variable binding at emission time: either the name resolves to nothing
+     * at module scope (a later-declared function-local, or a use the checker
+     * only accepted because it binds to a variable declared later in an
+     * enclosing scope) or it resolves to a module variable that has not been
+     * emitted yet (a forward field reference or a module-level
+     * self-reference).
+     */
+    private boolean isUndeclaredVariableUse(String name) {
+        if (localJavaName(name) != null) return false;
+        Symbol sym = symbols.resolve(name);
+        if (sym == null) return true;
+        return sym instanceof Symbol.VariableSymbol;
+    }
+
+    // =========================================================================
     // Type mapping
     // =========================================================================
 
@@ -879,6 +1173,12 @@ public final class JvmBackend {
     // =========================================================================
     // Literal rendering
     // =========================================================================
+
+    /** True when e is exactly the null literal (no side effects, no evaluation). */
+    private static boolean isBareNullLiteral(ExpressionNode e) {
+        return e instanceof LiteralExpr lit
+            && lit.value() instanceof LiteralValue.NullLiteral;
+    }
 
     /** Renders a double as a Java double literal. */
     private static String javaDoubleLiteral(double v) {

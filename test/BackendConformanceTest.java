@@ -338,6 +338,10 @@ public class BackendConformanceTest {
      * {@code ConformanceTest.compileAndGetDiagnostics}. A bypassed parser or
      * checker yields no diagnostics — the compile-error fixtures fail.
      */
+    // E9999 is the project's test-only pseudo code for a NameResolver
+    // exception (the ConformanceTest precedent); the String-code overload is
+    // deprecated, and this suppression keeps the build warning-free.
+    @SuppressWarnings("deprecation")
     private static FrontendCompile compileFrontend(String source, String filename) {
         List<Diagnostic> errors = new ArrayList<>();
 

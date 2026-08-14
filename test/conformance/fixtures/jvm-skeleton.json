@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM backend skeleton conformance (ISSUE-0091). JVM-only fixtures: literals/output, int arithmetic, local variables, if/else, and a frontend compile-error rejected before the backend. The JVM adapter compiles the emitted Java artifact with javac and executes it with java in a subprocess; the generated runner auto-invokes zero-arity exported functions in declaration order and prints their non-null results, so expectedOutput observes real return values (console.log output is also captured).",
+  "description": "JVM backend skeleton conformance (ISSUE-0091). JVM-only fixtures: literals/output, int arithmetic, local variables, if/else, a frontend compile-error rejected before the backend, and (rework round) the observable-behavior regressions: null-typed returns/initializers with side effects, module-level load-time statements, and shadowed initializers. The JVM adapter compiles the emitted Java artifact with javac and executes it with java in a subprocess; the generated runner auto-invokes zero-arity exported functions in declaration order and prints their non-null results, so expectedOutput observes real return values (console.log output is also captured).",
   "tests": [
     {
       "name": "jvm-literals-output",
@@ -59,6 +59,78 @@
       "expectedExitCode": null,
       "expectedCompileError": "E3001",
       "irContains": [],
+      "irNotContains": [],
+      "backends": ["jvm"]
+    },
+    {
+      "name": "jvm-null-return-log",
+      "description": "A null-typed return expression that is a console.log call keeps its observable side effect (LuaJIT prints 'x' before returning; the expression must not be discarded)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null { return console.log(\"x\"); }",
+      "expectedOutput": "x",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": ["function test: null", "call : null"],
+      "irNotContains": [],
+      "backends": ["jvm"]
+    },
+    {
+      "name": "jvm-null-return-helper",
+      "description": "A null-typed return expression that is a direct null-returning call keeps its observable side effect (LuaJIT prints 'helper-ran' before returning)",
+      "source": "import * as console from \"std/console\"\nfunction helper(): null { console.log(\"helper-ran\"); }\nexport function test(): null { return helper(); }",
+      "expectedOutput": "helper-ran",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": ["function test: null", "function helper: null"],
+      "irNotContains": [],
+      "backends": ["jvm"]
+    },
+    {
+      "name": "jvm-null-var-init",
+      "description": "Initializing a null-typed local from a void-returning call evaluates the call and stores null (LuaJIT prints 'assign-log' at the let)",
+      "source": "import * as console from \"std/console\"\nfunction helper(): null { console.log(\"helper-ran\"); }\nexport function test(): null {\n  let z: null = console.log(\"assign-log\");\n  let w: null = helper();\n  return;\n}",
+      "expectedOutput": "assign-log",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": ["function test: null", "let z: null"],
+      "irNotContains": [],
+      "backends": ["jvm"]
+    },
+    {
+      "name": "jvm-module-level-statements",
+      "description": "Module-level statements (console.log and an if) run at load time, in source order relative to field initializers — LuaJIT executes them at require time",
+      "source": "import * as console from \"std/console\"\nlet x: int = 1;\nconsole.log(\"module-if-ran\");\nif (x === 1) { console.log(\"module-if-true\"); }\nexport function test(): null { console.log(\"fn-ran\"); }",
+      "expectedOutput": "module-if-ran",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": ["let x: int", "if @fixture-jvm-module-level-statements.deal"],
+      "irNotContains": [],
+      "backends": ["jvm"]
+    },
+    {
+      "name": "jvm-module-level-assignment",
+      "description": "A module-level assignment to a module field is visible to exported functions (LuaJIT executes it at load time)",
+      "source": "let x: int = 1;\nx = 2;\nexport function test(): int { return x; }",
+      "expectedOutput": "2",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": ["let x: int"],
+      "irNotContains": [],
+      "backends": ["jvm"]
+    },
+    {
+      "name": "jvm-shadowed-initializer",
+      "description": "A shadowed let whose initializer references its own name binds the RHS to the OUTER binding (LuaJIT's `local x = x + 1` reads the outer x, computing 6)",
+      "source": "export function test(): int {\n  let x: int = 5;\n  { let x: int = x + 1; return x; }\n}",
+      "expectedOutput": "6",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": ["function test: int", "binary + : int"],
       "irNotContains": [],
       "backends": ["jvm"]
     }

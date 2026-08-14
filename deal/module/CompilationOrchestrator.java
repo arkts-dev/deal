@@ -893,21 +893,17 @@ public final class CompilationOrchestrator {
         long phaseStart = System.currentTimeMillis();
         Files.createDirectories(outputRoot);
 
-        for (ModuleInfo info : modules.values()) {
-            if (info.isDeclarationFile) continue;
-
-            if (backend == Backend.JVM) {
-                // JVM use site (ISSUE-0091): emit one .java module class per
-                // module. Import resolution and the Lua runtime copies are
-                // LuaJIT-specific and skipped here.
-                codegenJvmModule(info);
-            } else {
-                // Lua use site: the existing LuaJIT emitter, unchanged.
+        if (backend == Backend.JVM) {
+            // JVM use site (ISSUE-0091): emit one .java module class per
+            // module. Import resolution and the Lua runtime copies are
+            // LuaJIT-specific and skipped here.
+            codegenAllJvm();
+        } else {
+            // Lua use site: the existing LuaJIT emitter, unchanged.
+            for (ModuleInfo info : modules.values()) {
+                if (info.isDeclarationFile) continue;
                 codegenLuaModule(info);
             }
-        }
-
-        if (backend == Backend.LUAJIT) {
             copyRuntimeLibrary();
             copyStdlibModules();
         }
@@ -976,28 +972,59 @@ public final class CompilationOrchestrator {
     }
 
     /**
-     * JVM use site (ISSUE-0091): emits the module class via
-     * {@link JvmBackend} and writes {@code <ClassName>.java} into the output
-     * root. Backend diagnostics (E6000 for out-of-skeleton constructs) fail
-     * the compilation with the standard diagnostic report; no artifact is
-     * written when the backend reports errors.
+     * JVM use site (ISSUE-0091): emits one {@code <ClassName>.java} module
+     * class per module. Backend diagnostics (E6000 for out-of-skeleton
+     * constructs — including any import other than {@code std/console}, at
+     * the import statement itself) fail the compilation with the standard
+     * diagnostic report; no artifact is written for a module the backend
+     * rejects. Class names are derived from the full module path
+     * ({@code app/main} → {@code AppMain}), and a collision between two
+     * modules mapping to the same class name (e.g. a case-only difference)
+     * is an E6000 error — never a silent artifact overwrite.
      */
-    private void codegenJvmModule(ModuleInfo info) throws IOException {
-        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-            info.rawAst, info.checkResult, info.sourcePath, info.modulePath);
-        for (Diagnostic d : res.diagnostics()) {
-            diagnostics.add(d);
-            hasErrors = true;
+    private void codegenAllJvm() throws IOException {
+        // Pass 1: generate every module and merge diagnostics. Rejected
+        // modules write no artifact.
+        List<ModuleInfo> cleanModules = new ArrayList<>();
+        Map<ModuleInfo, JvmBackend.JvmCodegenResult> results = new LinkedHashMap<>();
+        for (ModuleInfo info : modules.values()) {
+            if (info.isDeclarationFile) continue;
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                info.rawAst, info.checkResult, info.sourcePath, info.modulePath);
+            for (Diagnostic d : res.diagnostics()) {
+                diagnostics.add(d);
+                hasErrors = true;
+            }
+            if (res.hasErrors()) {
+                log("  JVM backend rejected " + info.modulePath + ": "
+                    + res.diagnostics());
+                continue;
+            }
+            cleanModules.add(info);
+            results.put(info, res);
         }
-        if (res.hasErrors()) {
-            log("  JVM backend rejected " + info.modulePath + ": "
-                + res.diagnostics());
-            return;
+
+        // Pass 2: write artifacts for clean modules, rejecting class-name
+        // collisions instead of silently overwriting an earlier module's
+        // artifact.
+        Map<String, String> classOwners = new LinkedHashMap<>();
+        for (ModuleInfo info : cleanModules) {
+            JvmBackend.JvmCodegenResult res = results.get(info);
+            String className = res.className();
+            String previousOwner = classOwners.putIfAbsent(className, info.modulePath);
+            if (previousOwner != null) {
+                error(DiagnosticCode.E6000,
+                    "JVM backend: modules '" + previousOwner + "' and '"
+                        + info.modulePath + "' both derive the class name '"
+                        + className + "' (rename one module)",
+                    info.sourcePath, 1, 1);
+                continue;
+            }
+            Path outputPath = outputRoot.resolve(className + ".java");
+            Files.createDirectories(outputPath.getParent());
+            Files.writeString(outputPath, res.source());
+            log("  Generated: " + outputPath);
         }
-        Path outputPath = outputRoot.resolve(res.className() + ".java");
-        Files.createDirectories(outputPath.getParent());
-        Files.writeString(outputPath, res.source());
-        log("  Generated: " + outputPath);
     }
 
     /**
