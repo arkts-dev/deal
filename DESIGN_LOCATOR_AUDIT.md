@@ -113,7 +113,7 @@ Harness/test evidence:
 | `test/LuaAbiBackendTest.java:965-986` (forLetShadowAndArrayIndexShapesUnchanged) | `:954-987` | shifted |
 | `test/LuaAbiBackendTest.java:988-990` (emissionIsDeterministic) | `:1110-1116` | shifted |
 | `test/LuaAbiBackendTest.java:219-221` (reserved-word tests) | `:183-214` (reservedWordTableFieldsEmitBracketKeys) | shifted |
-| `test_runtime.lua:498-510` / `:723-737` (identity tests, bare-descriptor passthrough) | `:498-512` / `:740-802` (qualified-identity block; passthrough tests unchanged) | shifted |
+| `test_runtime.lua:498-510` / `:723-737` (identity tests, bare-descriptor passthrough) | UNCHANGED — byte-identical at `:498-512` (class_ construction tests, bare `"User"` descriptors, tag passthrough) and `:723-739` (check_type class-descriptor block; header :723, tests :725-737). The new `module-qualified class identity tests` block (header :740, tests :742-761) and `error_value tests` block (:763-799) are additive NEW content, not shifts of these cites | UNCHANGED (new blocks added after) |
 
 ## 2. host-module-abi
 
@@ -314,7 +314,13 @@ the tables above:
    the cycle-8 re-verification statement (incl. the
    `JsonableClassMeta.moduleLevel` cite `:2107` → `:2347`), and the full D4
    pin inventory (every `LuaAbiBackendTest`/`LuaBackendTest`/`test_runtime.lua`
-   pin line above).
+   pin line above). **No re-anchor for the D4 identity-test cites**: the
+   `test_runtime.lua:498-510` and `:723-737` cites remain byte-identical in
+   the final tree (blocks at `:498-512` / `:723-739` — bare `"User"`
+   descriptors, tag passthrough); the `module-qualified class identity tests`
+   block (`:740-761`) and `error_value tests` block (`:763-799`) are additive
+   new content, not shifts, so a future wiki edit must NOT re-anchor those
+   two cites to the new blocks.
 2. **host-module-abi**: re-anchor the Verified evidence bullet (import emission
    `:1451-1486`; `typeDescriptor` `:742-797` with `Type.Null` `:745`; call
    emission `:1934-1956`; `ExportExtractor` `:145-164`; `DealConfig` `:27`/
