@@ -2,6 +2,7 @@ package deal.test;
 
 import deal.ast.*;
 import deal.checker.*;
+import deal.codegen.jvm.JvmBackend;
 import deal.codegen.lua.LuaBackend;
 import deal.ir.IrDumper;
 import deal.lexer.*;
@@ -16,9 +17,10 @@ import java.util.*;
 /**
  * Loads backend-neutral JSON fixture tests from
  * {@code test/conformance/fixtures/} and executes them against the
- * LuaJIT backend.
+ * LuaJIT backend and (ISSUE-0091) the JVM backend.
  *
- * <p>Fixture format (per {@code conformance-test-architecture} D3):
+ * <p>Fixture format (per {@code conformance-test-architecture} D3, extended
+ * by ISSUE-0091 with {@code expectedCompileError}):
  * <pre>
  * {
  *   "version": "1.0",
@@ -29,6 +31,7 @@ import java.util.*;
  *     "expectedOutput": "string that stdout must contain" | null,
  *     "expectedError": "E8001" | null,
  *     "expectedExitCode": 0 | 1,
+ *     "expectedCompileError": "E3001" | null,
  *     "irContains": ["substrings that the IR dump must contain"],
  *     "irNotContains": ["substrings that the IR dump must NOT contain"],
  *     "backends": ["luajit", "jvm"]
@@ -39,6 +42,36 @@ import java.util.*;
  * <p>For IR-only tests, the runtime fields are {@code null} and the
  * runner only validates the IR dump assertions ({@code irContains}
  * and {@code irNotContains}).
+ *
+ * <h2>Frontend compile-error fixtures (ISSUE-0091)</h2>
+ *
+ * <p>When {@code expectedCompileError} names an error code (e.g.
+ * {@code "E3001"}), the fixture is a frontend gate: the runner runs the
+ * real lexer → parser → name resolver → type checker, asserts the named
+ * error is produced by that pipeline (and that no backend-lowering E6xxx
+ * code is), and then stops — the fixture is rejected <em>before</em> any
+ * backend (codegen, {@code javac}, {@code java}) is invoked. A bypassed
+ * parser or checker produces no such diagnostic and the fixture fails.
+ *
+ * <h2>JVM adapter (ISSUE-0091)</h2>
+ *
+ * <p>For fixtures listing {@code "jvm"} in {@code backends}, the runner:
+ * <ol>
+ *   <li>generates Java source with the real {@link JvmBackend} (a bypassed
+ *       codegen produces no artifact);</li>
+ *   <li>compiles the module class together with a small runner class with
+ *       {@code javac} in a subprocess (a missing {@code .class} fails the
+ *       fixture);</li>
+ *   <li>executes the artifact with {@code java} in a subprocess; the runner
+ *       auto-invokes the zero-arity exported functions in declaration order
+ *       — mirroring the Lua harness's auto-invocation — and prints non-null
+ *       results to stdout, so {@code expectedOutput} observes real return
+ *       values;</li>
+ *   <li>asserts {@code expectedOutput}/{@code expectedError}/
+ *       {@code expectedExitCode} against the captured stdout and exit code,
+ *       with the same {@code DEAL_ERROR_CODE: <code>} error convention as
+ *       the LuaJIT runner.</li>
+ * </ol>
  */
 public class BackendConformanceTest {
 
@@ -46,6 +79,7 @@ public class BackendConformanceTest {
     private static int failed = 0;
     private static int skipped = 0;
     private static boolean luajitAvailable;
+    private static boolean jvmAvailable;
 
     // Sentinel for JSON null (distinct from Java null)
     private static final Object JSON_NULL = new Object() {
@@ -55,6 +89,13 @@ public class BackendConformanceTest {
     /** Holds the result of executing a Lua program. */
     private record ExecutionResult(String output, int exitCode) {}
 
+    /** Result of the backend-neutral frontend: real parser/checker output. */
+    private record FrontendCompile(ProgramNode program, CheckResult checkResult,
+                                   SymbolTable symbolTable,
+                                   List<Diagnostic> errors) {
+        boolean hasErrors() { return !errors.isEmpty(); }
+    }
+
     public static void main(String[] args) throws Exception {
         try {
             new ProcessBuilder("luajit", "-v").start().waitFor();
@@ -63,9 +104,13 @@ public class BackendConformanceTest {
             luajitAvailable = false;
         }
 
+        jvmAvailable = probeJvm();
+
         System.out.println("=== Backend Conformance Test ===");
         System.out.println("LuaJIT: " + (luajitAvailable ? "available" :
             "NOT available (runtime tests will be skipped)"));
+        System.out.println("JVM (javac + java): " + (jvmAvailable ? "available" :
+            "NOT available (JVM runtime tests will be skipped)"));
         System.out.println();
 
         Path fixturesDir = Path.of("test/conformance/fixtures/");
@@ -88,6 +133,19 @@ public class BackendConformanceTest {
 
         if (failed > 0) {
             System.exit(1);
+        }
+    }
+
+    /** Probes that both {@code javac} and {@code java} are invocable. */
+    private static boolean probeJvm() {
+        try {
+            new ProcessBuilder("javac", "-version")
+                .redirectErrorStream(true).start().waitFor();
+            new ProcessBuilder("java", "-version")
+                .redirectErrorStream(true).start().waitFor();
+            return true;
+        } catch (IOException | InterruptedException e) {
+            return false;
         }
     }
 
@@ -133,6 +191,7 @@ public class BackendConformanceTest {
         String name = jsonString(test, "name", "<unnamed>");
         String description = jsonString(test, "description", "");
         String source = jsonString(test, "source", null);
+        String expectedCompileError = jsonString(test, "expectedCompileError", null);
         List<String> backends = (List<String>) test.getOrDefault("backends", List.of());
 
         if (source == null) {
@@ -141,14 +200,52 @@ public class BackendConformanceTest {
             return;
         }
 
-        boolean appliesToLuajit = backends.contains("luajit");
-
         try {
-            // Compile and dump IR — always do this for IR assertions
-            var cr = compileForIR(source, "fixture-" + name + ".deal");
-            String ir = IrDumper.dump(cr.program(), cr.checkResult(), "fixture-" + name);
+            // Compile with the real frontend (lexer → parser → name resolver
+            // → type checker). Diagnostics are collected per phase, exactly
+            // like ConformanceTest.compileAndGetDiagnostics.
+            FrontendCompile fc = compileFrontend(source, "fixture-" + name + ".deal");
 
-            // Check IR assertions
+            // ---- Frontend compile-error gate (ISSUE-0091) ----
+            // Rejected before any backend: this path returns before codegen,
+            // javac, or java is touched.
+            if (expectedCompileError != null) {
+                boolean matched = fc.errors().stream()
+                    .anyMatch(d -> expectedCompileError.equals(d.code()));
+                boolean onlyFrontend = fc.errors().stream()
+                    .allMatch(d -> !d.code().startsWith("E6"));
+                if (!matched) {
+                    System.out.println("  [" + name + "] FAIL: expected frontend "
+                        + "compile-error " + expectedCompileError + " but got: "
+                        + (fc.errors().isEmpty() ? "<no errors>"
+                            : fc.errors().stream().map(Diagnostic::toString)
+                                .toList()));
+                    failed++;
+                    return;
+                }
+                if (!onlyFrontend) {
+                    System.out.println("  [" + name + "] FAIL: error codes came "
+                        + "from backend lowering, not the frontend: " + fc.errors());
+                    failed++;
+                    return;
+                }
+                System.out.println("  [" + name + "] OK — compile-error "
+                    + expectedCompileError + " rejected before backend"
+                    + " (parser/checker only; no codegen invoked)");
+                passed++;
+                return;
+            }
+
+            if (fc.hasErrors()) {
+                System.out.println("  [" + name + "] FAIL: frontend errors: "
+                    + fc.errors());
+                failed++;
+                return;
+            }
+
+            // Check IR assertions — always done for IR assertions
+            String ir = IrDumper.dump(fc.program(), fc.checkResult(), "fixture-" + name);
+
             List<String> irContains = (List<String>) test.getOrDefault("irContains", List.of());
             List<String> irNotContains = (List<String>) test.getOrDefault("irNotContains", List.of());
 
@@ -173,7 +270,7 @@ public class BackendConformanceTest {
                 return;
             }
 
-            // If runtime test + luajit available + applies to luajit
+            // If runtime test → dispatch to the backends listed in the fixture
             Object expectedOutput = test.get("expectedOutput");
             Object expectedError = test.get("expectedError");
             Object expectedExitCode = test.get("expectedExitCode");
@@ -182,66 +279,42 @@ public class BackendConformanceTest {
                 || (expectedError != null && expectedError != JSON_NULL)
                 || (expectedExitCode != null && expectedExitCode != JSON_NULL);
 
-            if (hasRuntimeAssertions) {
-                if (!appliesToLuajit) {
-                    System.out.println("  [" + name + "] SKIP (runtime test, not for luajit)");
-                    skipped++;
-                    return;
-                }
-                if (!luajitAvailable) {
-                    System.out.println("  [" + name + "] SKIP (LuaJIT not available)");
-                    skipped++;
-                    return;
-                }
+            if (!hasRuntimeAssertions) {
+                System.out.println("  [" + name + "] OK" +
+                    (description.isEmpty() ? "" : " — " + description));
+                passed++;
+                return;
+            }
 
-                String lua = generateLua(source, "fixture-" + name + ".deal");
-                if (lua == null) {
-                    System.out.println("  [" + name + "] FAIL: codegen failed");
-                    failed++;
-                    return;
-                }
+            boolean appliesToLuajit = backends.contains("luajit");
+            boolean appliesToJvm = backends.contains("jvm");
+            boolean ranAny = false;
 
-                boolean isErrorTest = (expectedError != null && expectedError != JSON_NULL);
-                ExecutionResult execResult = executeLua(lua, isErrorTest);
-                if (execResult == null) {
-                    System.out.println("  [" + name + "] FAIL: Lua execution returned null");
-                    failed++;
-                    return;
-                }
-                String output = execResult.output();
-                int actualExitCode = execResult.exitCode();
-
-                if (expectedOutput != null && expectedOutput != JSON_NULL) {
-                    String expStr = String.valueOf(expectedOutput);
-                    if (!output.contains(expStr)) {
-                        System.out.println("  [" + name + "] FAIL: expected output '" +
-                            expStr + "', got: " + output);
-                        failed++;
-                        return;
+            if (appliesToLuajit) {
+                if (luajitAvailable) {
+                    if (!runLuaAssertions(name, source, expectedOutput,
+                            expectedError, expectedExitCode)) {
+                        return; // failure already reported
                     }
+                    ranAny = true;
                 }
+            }
 
-                if (expectedError != null && expectedError != JSON_NULL) {
-                    String expErr = String.valueOf(expectedError);
-                    if (!output.contains("DEAL_ERROR_CODE: " + expErr)) {
-                        System.out.println("  [" + name + "] FAIL: expected error '" +
-                            expErr + "', got: " + output);
-                        failed++;
-                        return;
+            if (appliesToJvm) {
+                if (jvmAvailable) {
+                    if (!runJvmAssertions(name, fc, expectedOutput,
+                            expectedError, expectedExitCode)) {
+                        return; // failure already reported
                     }
+                    ranAny = true;
                 }
+            }
 
-                // Assert expected exit code
-                if (expectedExitCode != null && expectedExitCode != JSON_NULL) {
-                    int expCode = ((Number) expectedExitCode).intValue();
-                    if (actualExitCode != expCode) {
-                        System.out.println("  [" + name + "] FAIL: expected exit code " +
-                            expCode + ", got " + actualExitCode);
-                        System.out.println("    Output: " + output);
-                        failed++;
-                        return;
-                    }
-                }
+            if (!ranAny) {
+                System.out.println("  [" + name + "] SKIP (runtime test, "
+                    + "no applicable backend available)");
+                skipped++;
+                return;
             }
 
             System.out.println("  [" + name + "] OK" +
@@ -256,30 +329,113 @@ public class BackendConformanceTest {
     }
 
     // =========================================================================
-    // Compilation helpers
+    // Frontend compilation
     // =========================================================================
 
-    private record IRCompileResult(ProgramNode program, CheckResult checkResult,
-                                    SymbolTable symbolTable) {}
+    /**
+     * Runs the real frontend pipeline and collects every error diagnostic
+     * (lexer, parser, name resolver, type checker), mirroring
+     * {@code ConformanceTest.compileAndGetDiagnostics}. A bypassed parser or
+     * checker yields no diagnostics — the compile-error fixtures fail.
+     */
+    private static FrontendCompile compileFrontend(String source, String filename) {
+        List<Diagnostic> errors = new ArrayList<>();
 
-    private static IRCompileResult compileForIR(String source, String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
-        if (lex.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            throw new RuntimeException("Lex error: " + lex.diagnostics());
+        for (Diagnostic d : lex.diagnostics()) {
+            if ("error".equals(d.severity())) errors.add(d);
         }
+        if (lex.hasErrors()) {
+            return new FrontendCompile(null, null, null, errors);
+        }
+
         Parser parser = new Parser(lex.tokens(), filename);
         ParseResult parseResult = parser.parse();
-        if (parseResult.hasErrors()) {
-            throw new RuntimeException("Parse error: " + parseResult.diagnostics());
+        for (Diagnostic d : parseResult.diagnostics()) {
+            if ("error".equals(d.severity())) errors.add(d);
         }
-        ProgramNode program = parseResult.program();
+        if (parseResult.hasErrors()) {
+            return new FrontendCompile(null, null, null, errors);
+        }
 
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver(filename, resolver);
-        SymbolTable symTable = nr.resolve(program);
-        CheckResult result = TypeChecker.check(filename, symTable, nr, program);
+        SymbolTable symTable;
+        try {
+            symTable = nr.resolve(parseResult.program());
+        } catch (Exception e) {
+            errors.add(Diagnostic.error("E9999", e.getMessage(), filename, 1, 1));
+            return new FrontendCompile(null, null, null, errors);
+        }
+        for (Diagnostic d : nr.diagnostics()) {
+            if ("error".equals(d.severity())) errors.add(d);
+        }
 
-        return new IRCompileResult(program, result, symTable);
+        CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
+        for (Diagnostic d : result.diagnostics()) {
+            if ("error".equals(d.severity())) errors.add(d);
+        }
+
+        return new FrontendCompile(parseResult.program(), result, symTable, errors);
+    }
+
+    // =========================================================================
+    // LuaJIT adapter (unchanged behavior)
+    // =========================================================================
+
+    /** Runs the LuaJIT execution + assertions. Returns true when all pass. */
+    private static boolean runLuaAssertions(String name, String source,
+                                            Object expectedOutput, Object expectedError,
+                                            Object expectedExitCode) {
+        String lua = generateLua(source, "fixture-" + name + ".deal");
+        if (lua == null) {
+            System.out.println("  [" + name + "] FAIL: codegen failed");
+            failed++;
+            return false;
+        }
+
+        boolean isErrorTest = (expectedError != null && expectedError != JSON_NULL);
+        ExecutionResult execResult = executeLua(lua, isErrorTest);
+        if (execResult == null) {
+            System.out.println("  [" + name + "] FAIL: Lua execution returned null");
+            failed++;
+            return false;
+        }
+        String output = execResult.output();
+        int actualExitCode = execResult.exitCode();
+
+        if (expectedOutput != null && expectedOutput != JSON_NULL) {
+            String expStr = String.valueOf(expectedOutput);
+            if (!output.contains(expStr)) {
+                System.out.println("  [" + name + "] FAIL: expected output '" +
+                    expStr + "', got: " + output);
+                failed++;
+                return false;
+            }
+        }
+
+        if (expectedError != null && expectedError != JSON_NULL) {
+            String expErr = String.valueOf(expectedError);
+            if (!output.contains("DEAL_ERROR_CODE: " + expErr)) {
+                System.out.println("  [" + name + "] FAIL: expected error '" +
+                    expErr + "', got: " + output);
+                failed++;
+                return false;
+            }
+        }
+
+        // Assert expected exit code
+        if (expectedExitCode != null && expectedExitCode != JSON_NULL) {
+            int expCode = ((Number) expectedExitCode).intValue();
+            if (actualExitCode != expCode) {
+                System.out.println("  [" + name + "] FAIL: expected exit code " +
+                    expCode + ", got " + actualExitCode);
+                System.out.println("    Output: " + output);
+                failed++;
+                return false;
+            }
+        }
+        return true;
     }
 
     private static String generateLua(String source, String filename) {
@@ -301,6 +457,178 @@ public class BackendConformanceTest {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    // =========================================================================
+    // JVM adapter (ISSUE-0091)
+    // =========================================================================
+
+    /**
+     * The real JVM path: DEAL frontend (already done) → {@link JvmBackend}
+     * codegen → {@code javac} subprocess → {@code java} subprocess → assert.
+     * Every stage must genuinely run: a bypassed codegen leaves no artifact
+     * for {@code javac}, and a bypassed JVM execution produces no output.
+     */
+    private static boolean runJvmAssertions(String name, FrontendCompile fc,
+                                            Object expectedOutput, Object expectedError,
+                                            Object expectedExitCode) {
+        // 1. Codegen with the real JVM backend. Errors (E6000 for
+        //    out-of-skeleton constructs) fail the fixture.
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+            fc.program(), fc.checkResult(), "fixture-" + name + ".deal", "Main");
+        if (res.hasErrors()) {
+            System.out.println("  [" + name + "] FAIL: JVM codegen diagnostics: "
+                + res.diagnostics());
+            failed++;
+            return false;
+        }
+        if (!res.source().contains("class " + res.className())) {
+            System.out.println("  [" + name + "] FAIL: JVM codegen produced no '"
+                + res.className() + "' class declaration");
+            failed++;
+            return false;
+        }
+
+        Path tmpDir = null;
+        try {
+            tmpDir = Files.createTempDirectory("deal_backend_conf_jvm_");
+            Path moduleFile = tmpDir.resolve(res.className() + ".java");
+            Files.writeString(moduleFile, res.source());
+
+            Path runnerFile = tmpDir.resolve("JvmConformanceRunner.java");
+            Files.writeString(runnerFile, buildJvmRunner(fc.program(), res.className()));
+
+            // 2. Compile the artifact with javac.
+            ProcessBuilder pb = new ProcessBuilder("javac", "-encoding", "UTF-8",
+                moduleFile.toString(), runnerFile.toString());
+            pb.directory(tmpDir.toFile());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String javacOutput = new String(p.getInputStream().readAllBytes()).trim();
+            int javacExit = p.waitFor();
+            if (javacExit != 0) {
+                System.out.println("  [" + name + "] FAIL: javac failed (exit "
+                    + javacExit + "):\n" + javacOutput);
+                failed++;
+                return false;
+            }
+            if (!Files.exists(tmpDir.resolve(res.className() + ".class"))
+                    || !Files.exists(tmpDir.resolve("JvmConformanceRunner.class"))) {
+                System.out.println("  [" + name + "] FAIL: javac exited 0 but no "
+                    + ".class artifacts were produced (JVM compilation bypassed)");
+                failed++;
+                return false;
+            }
+
+            // 3. Execute the artifact with java.
+            ProcessBuilder pb2 = new ProcessBuilder("java", "-cp",
+                tmpDir.toString(), "JvmConformanceRunner");
+            pb2.directory(tmpDir.toFile());
+            pb2.redirectErrorStream(true);
+            Process p2 = pb2.start();
+            String output = new String(p2.getInputStream().readAllBytes()).trim();
+            int actualExitCode = p2.waitFor();
+
+            // 4. Assertions — same observable contract as the LuaJIT runner.
+            if (expectedOutput != null && expectedOutput != JSON_NULL) {
+                String expStr = String.valueOf(expectedOutput);
+                if (!output.contains(expStr)) {
+                    System.out.println("  [" + name + "] FAIL: expected output '"
+                        + expStr + "', got: " + output);
+                    failed++;
+                    return false;
+                }
+            }
+
+            if (expectedError != null && expectedError != JSON_NULL) {
+                String expErr = String.valueOf(expectedError);
+                if (!output.contains("DEAL_ERROR_CODE: " + expErr)) {
+                    System.out.println("  [" + name + "] FAIL: expected error '"
+                        + expErr + "', got: " + output);
+                    failed++;
+                    return false;
+                }
+            }
+
+            if (expectedExitCode != null && expectedExitCode != JSON_NULL) {
+                int expCode = ((Number) expectedExitCode).intValue();
+                if (actualExitCode != expCode) {
+                    System.out.println("  [" + name + "] FAIL: expected exit code "
+                        + expCode + ", got " + actualExitCode);
+                    System.out.println("    Output: " + output);
+                    failed++;
+                    return false;
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            System.out.println("  [" + name + "] FAIL: JVM execution exception: "
+                + e.getMessage());
+            e.printStackTrace(System.out);
+            failed++;
+            return false;
+        } finally {
+            if (tmpDir != null) {
+                try {
+                    Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+                        .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+                } catch (IOException ignored) {}
+            }
+        }
+    }
+
+    /**
+     * Builds the Java runner source for a fixture: auto-invokes the zero-arity
+     * exported functions in declaration order (mirroring the Lua harness) and
+     * prints non-null results; DEAL runtime errors print
+     * {@code DEAL_ERROR_CODE: <code>} and exit 1, matching the LuaJIT runner's
+     * xpcall handler.
+     */
+    static String buildJvmRunner(ProgramNode program, String className) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("// Generated by deal.test.BackendConformanceTest — JVM conformance runner.\n");
+        sb.append("// Auto-invokes zero-arity exported functions and prints non-null results.\n");
+        sb.append("public final class JvmConformanceRunner {\n");
+        sb.append("    public static void main(String[] args) {\n");
+        sb.append("        try {\n");
+        boolean any = false;
+        for (StatementNode stmt : program.statements()) {
+            if (stmt instanceof ExportDeclaration ed
+                    && ed.declaration() instanceof FunctionDeclaration fd) {
+                String fn = JvmBackend.javaName(fd.name());
+                if (fd.params().isEmpty() && fd.restParam().isEmpty()) {
+                    any = true;
+                    if (isNullReturnType(fd.returnType())) {
+                        sb.append("            ").append(className).append('.')
+                            .append(fn).append("();\n");
+                    } else {
+                        sb.append("            System.out.println(").append(className)
+                            .append('.').append(fn).append("());\n");
+                    }
+                } else {
+                    sb.append("            // ").append(fn)
+                        .append(" takes parameters; not auto-invoked\n");
+                }
+            }
+        }
+        if (!any) {
+            sb.append("            // no zero-arity exported functions\n");
+        }
+        sb.append("        } catch (").append(className).append(".DealError e) {\n");
+        sb.append("            System.out.println(\"DEAL_ERROR_CODE: \" + e.code"
+            + " + \" \" + e.getMessage());\n");
+        sb.append("            System.exit(1);\n");
+        sb.append("        } catch (RuntimeException e) {\n");
+        sb.append("            System.out.println(\"DEAL_ERROR_CODE: \" + e.getMessage());\n");
+        sb.append("            System.exit(1);\n");
+        sb.append("        }\n");
+        sb.append("    }\n");
+        sb.append("}\n");
+        return sb.toString();
+    }
+
+    private static boolean isNullReturnType(TypeNode t) {
+        return t instanceof NamedType nt && "null".equals(nt.name());
     }
 
     // =========================================================================

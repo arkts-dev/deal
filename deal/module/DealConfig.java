@@ -65,10 +65,12 @@ public final class DealConfig {
         Map<String, String> externals = parseExternals(root);
         Dependencies dependencies = Dependencies.fromJson(root.getObject("dependencies"));
 
-        // Validate backend
-        if (backend != null && !backend.equals("luajit")) {
+        // Validate backend (ISSUE-0091: the JVM skeleton backend is now
+        // selectable; LuaJIT remains the default when the field is absent).
+        if (backend != null && !backend.equals("luajit") && !backend.equals("jvm")) {
             throw new IllegalArgumentException(
-                "deal.json: unsupported backend '" + backend + "'. v0.6 only supports 'luajit'");
+                "deal.json: unsupported backend '" + backend
+                    + "'. Supported backends: 'luajit', 'jvm'");
         }
 
         return new DealConfig(configFile, moduleRoots, output, backend,

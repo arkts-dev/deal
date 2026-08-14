@@ -17,6 +17,7 @@ javac --release 25 -d build \
   deal/checker/*.java \
   deal/codegen/*.java \
   deal/codegen/lua/*.java \
+  deal/codegen/jvm/*.java \
   deal/ir/*.java \
   deal/module/*.java \
   deal/Main.java \
@@ -30,6 +31,7 @@ javac --release 25 -d build \
   test/IrGoldenTest.java \
   test/TypeDescriptorTest.java \
   test/BackendConformanceTest.java \
+  test/JvmBackendTest.java \
   test/LuaBackendTest.java \
   test/LuaBackendIntegrationTest.java \
   test/ModuleSystemTest.java \
@@ -82,6 +84,10 @@ java -ea -cp build deal.test.TypeDescriptorTest
 echo ""
 echo "=== Running Backend Conformance Tests ==="
 java -ea -cp build deal.test.BackendConformanceTest
+
+echo ""
+echo "=== Running JVM Backend Tests ==="
+java -ea -cp build deal.test.JvmBackendTest
 
 echo ""
 echo "=== Running Lua Backend Tests ==="

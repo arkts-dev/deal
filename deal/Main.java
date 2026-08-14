@@ -1,5 +1,6 @@
 package deal;
 
+import deal.codegen.Backend;
 import deal.module.CompilationOrchestrator;
 import deal.module.DealConfig;
 import deal.lexer.Diagnostic;
@@ -16,13 +17,17 @@ import java.util.List;
  *
  * <p>Usage:
  * <pre>{@code
- * deal compile <entry.deal> [--output <dir>] [--verbose] [--dump-ir] [--source-map]
+ * deal compile <entry.deal> [--output <dir>] [--backend <lua|jvm>] [--verbose] [--dump-ir] [--source-map]
  * }</pre>
  *
  * <p>Options:
  * <ul>
  *   <li>{@code compile <entry.deal>} — compile a DEAL project (required)</li>
- *   <li>{@code --output <dir>} / {@code -o <dir>} — output directory (default: ./build/lua)</li>
+ *   <li>{@code --output <dir>} / {@code -o <dir>} — output directory
+ *       (default: ./build/lua, or ./build/jvm with {@code --backend jvm})</li>
+ *   <li>{@code --backend <name>} — code-generation backend, {@code lua}/{@code luajit}
+ *       (default) or {@code jvm} (ISSUE-0091). A {@code deal.json}
+ *       {@code "backend"} field is used when the flag is absent.</li>
  *   <li>{@code --verbose} / {@code -v} — verbose output with per-module timing</li>
  *   <li>{@code --dump-ir} — produce IR dump files at {@code <outputDir>/<module-path>.ir.txt}</li>
  *   <li>{@code --source-map} — produce source map sidecar files ({@code .deal.map.json})</li>
@@ -60,6 +65,7 @@ public final class Main {
         String[] remaining = Arrays.copyOfRange(args, 1, args.length);
         String entryPath = null;
         Path outputDir = null;
+        String backendName = null;
         boolean verbose = false;
         boolean dumpIr = false;
         boolean sourceMap = false;
@@ -74,6 +80,13 @@ public final class Main {
                         return 1;
                     }
                     outputDir = Path.of(remaining[++i]).toAbsolutePath();
+                }
+                case "--backend" -> {
+                    if (i + 1 >= remaining.length) {
+                        System.err.println("deal: --backend requires a backend name (lua|jvm)");
+                        return 1;
+                    }
+                    backendName = remaining[++i];
                 }
                 case "--verbose", "-v" -> verbose = true;
                 case "--dump-ir" -> dumpIr = true;
@@ -115,12 +128,31 @@ public final class Main {
             return 1;
         }
 
+        // Resolve the backend: CLI flag wins, then deal.json, then LuaJIT
+        // (the default — the CLI and every pre-ISSUE-0091 path select it).
+        Backend backend;
+        if (backendName != null) {
+            backend = Backend.fromCliName(backendName).orElse(null);
+            if (backend == null) {
+                System.err.println("deal: unknown backend '" + backendName
+                    + "'. Supported backends: lua, luajit, jvm");
+                return 1;
+            }
+        } else if (config != null && config.backend() != null) {
+            // DealConfig already validated the manifest value.
+            backend = Backend.fromCliName(config.backend()).orElseThrow();
+        } else {
+            backend = Backend.LUAJIT;
+        }
+
         // Determine output directory
         if (outputDir == null) {
             if (config != null && config.output() != null) {
                 outputDir = projectDir.resolve(config.output()).normalize();
             } else {
-                outputDir = Path.of("build/lua").toAbsolutePath().normalize();
+                String defaultDir = backend == Backend.JVM
+                    ? "build/jvm" : "build/lua";
+                outputDir = Path.of(defaultDir).toAbsolutePath().normalize();
             }
         }
 
@@ -150,6 +182,7 @@ public final class Main {
 
         if (verbose) {
             System.out.println("Entry: " + entryFile);
+            System.out.println("Backend: " + backend.cliName());
             System.out.println("Output: " + outputDir);
             System.out.println("Module roots: " + moduleRoots);
             System.out.println("Stdlib dir: " + (stdlibDir != null ? stdlibDir : "none"));
@@ -166,7 +199,7 @@ public final class Main {
         // are part of IR hardening. When --source-map is explicitly passed,
         // enable source maps without enabling IR dumps.
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entryFile, outputDir, verbose, dumpIr, dumpIr || sourceMap,
+            entryFile, outputDir, verbose, dumpIr, dumpIr || sourceMap, backend,
             config, moduleRoots, stdlibDir);
 
         boolean success = orchestrator.compile();
@@ -179,10 +212,11 @@ public final class Main {
     }
 
     private static void printUsage() {
-        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--verbose] [--dump-ir] [--source-map]");
+        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--backend <lua|jvm>] [--verbose] [--dump-ir] [--source-map]");
         System.err.println();
         System.err.println("Options:");
-        System.err.println("  --output, -o <dir>   Output directory (default: ./build/lua)");
+        System.err.println("  --output, -o <dir>   Output directory (default: ./build/lua, or ./build/jvm with --backend jvm)");
+        System.err.println("  --backend <name>     Code-generation backend: lua/luajit (default) or jvm");
         System.err.println("  --verbose, -v        Verbose output with per-module timing");
         System.err.println("  --dump-ir            Produce IR dump files at <outputDir>/<module-path>.ir.txt");
         System.err.println("  --source-map         Produce source map sidecar files (.deal.map.json)");

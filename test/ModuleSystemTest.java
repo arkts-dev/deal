@@ -424,8 +424,17 @@ public class ModuleSystemTest {
             }
         }
 
-        // Invalid backend
-        String badJson = "{\"backend\": \"jvm\"}";
+        // ISSUE-0091: the JVM skeleton backend is now a valid manifest value.
+        try {
+            DealConfig config = DealConfig.parse(Path.of("deal.json"),
+                "{\"backend\": \"jvm\"}");
+            check("jvm".equals(config.backend()), "deal.json accepts 'jvm' backend");
+        } catch (IllegalArgumentException e) {
+            fail("deal.json 'jvm' backend must parse: " + e.getMessage());
+        }
+
+        // Unknown backends are still rejected, naming the supported values.
+        String badJson = "{\"backend\": \"wasm\"}";
         try {
             DealConfig.parse(Path.of("deal.json"), badJson);
             fail("Should have thrown for invalid backend");

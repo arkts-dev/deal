@@ -1,0 +1,66 @@
+{
+  "version": "1.0",
+  "description": "JVM backend skeleton conformance (ISSUE-0091). JVM-only fixtures: literals/output, int arithmetic, local variables, if/else, and a frontend compile-error rejected before the backend. The JVM adapter compiles the emitted Java artifact with javac and executes it with java in a subprocess; the generated runner auto-invokes zero-arity exported functions in declaration order and prints their non-null results, so expectedOutput observes real return values (console.log output is also captured).",
+  "tests": [
+    {
+      "name": "jvm-literals-output",
+      "description": "Literals of every primitive kind flow through functions and locals, and std/console output reaches stdout",
+      "source": "import * as console from \"std/console\"\nfunction intLit(): int { return 42; }\nfunction numLit(): number { return 3.5; }\nfunction strLit(): string { return \"jvm-literals\"; }\nfunction boolLit(): boolean { return true; }\nexport function test(): string {\n  let z: null = null;\n  let i: int = intLit();\n  let n: number = numLit();\n  let b: boolean = boolLit();\n  if (i === 42 && n === 3.5 && b) {\n    console.log(strLit());\n  } else {\n    console.log(\"literals-broken\");\n  }\n  return strLit();\n}",
+      "expectedOutput": "jvm-literals",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": ["function test: string", "literal 42 : int", "literal 3.5 : number"],
+      "irNotContains": [],
+      "backends": ["jvm"]
+    },
+    {
+      "name": "jvm-int-arithmetic",
+      "description": "Checked int arithmetic (+ - * / % **) computes 41 through a call chain",
+      "source": "function add(a: int, b: int): int { return a + b; }\nfunction sub(a: int, b: int): int { return a - b; }\nfunction mul(a: int, b: int): int { return a * b; }\nfunction div(a: int, b: int): int { return a / b; }\nfunction mod(a: int, b: int): int { return a % b; }\nfunction pow(a: int, b: int): int { return a ** b; }\nexport function test(): int {\n  let step1: int = add(mul(7, 6), div(25, 4));\n  let step2: int = sub(step1, mod(25, 4));\n  let step3: int = add(step2, pow(2, 3));\n  return sub(step3, 14);\n}",
+      "expectedOutput": "41",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": ["function test: int", "binary + : int", "binary / : int"],
+      "irNotContains": [],
+      "backends": ["jvm"]
+    },
+    {
+      "name": "jvm-local-variable",
+      "description": "Local variables, reassignment, and inner-block shadowing compute 111",
+      "source": "export function test(): int {\n  let x: int = 10;\n  x = x + 1;\n  let y: int = x * 2;\n  let z: int = y - 10;\n  {\n    let x: int = 99;\n    z = z + x;\n  }\n  return z;\n}",
+      "expectedOutput": "111",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": ["function test: int", "let x: int", "binary + : int"],
+      "irNotContains": [],
+      "backends": ["jvm"]
+    },
+    {
+      "name": "jvm-if-else",
+      "description": "if/else-if/else branches and unary negation classify negative, zero, and positive values",
+      "source": "function classify(n: int): int {\n  if (n < 0) {\n    return 0;\n  } else if (n === 0) {\n    return 1;\n  } else {\n    return 2;\n  }\n}\nexport function test(): int {\n  return classify(-5) * 100 + classify(0) * 10 + classify(7);\n}",
+      "expectedOutput": "12",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": ["function test: int", "if @fixture-jvm-if-else.deal", "binary < : boolean"],
+      "irNotContains": [],
+      "backends": ["jvm"]
+    },
+    {
+      "name": "jvm-frontend-error-rejected",
+      "description": "A type error is rejected by the frontend before any backend runs (codegen/javac/java never invoked)",
+      "source": "let a: int = 1.0;",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3001",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": ["jvm"]
+    }
+  ]
+}

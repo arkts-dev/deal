@@ -270,7 +270,8 @@ public class DiagnosticClassificationTest {
         coverage.put("E5003", "CheckerTest (return type mismatch)");
         coverage.put("E5004", "CheckerTest (reverse arity)");
 
-        coverage.put("E6000", "LuaBackendTest (unsupported stmt)");
+        coverage.put("E6000",
+            "LuaBackendTest (unsupported stmt) / JvmBackendTest (out-of-scope construct)");
         coverage.put("E6001", "LuaBackendTest (continue outside loop)");
         coverage.put("E6002", "Historical (ISSUE-0011, no longer emitted)");
 

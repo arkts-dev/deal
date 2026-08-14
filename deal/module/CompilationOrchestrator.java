@@ -2,6 +2,8 @@ package deal.module;
 
 import deal.ast.*;
 import deal.checker.*;
+import deal.codegen.Backend;
+import deal.codegen.jvm.JvmBackend;
 import deal.codegen.lua.LuaBackend;
 import deal.ir.IrDumper;
 import deal.lexer.*;
@@ -40,6 +42,7 @@ public final class CompilationOrchestrator {
     private final boolean verbose;
     private final boolean dumpIr;
     private final boolean sourceMap;
+    private final Backend backend;
     private final List<Path> moduleRoots;
     private final Path stdlibDir;
 
@@ -79,20 +82,38 @@ public final class CompilationOrchestrator {
     public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
                                     DealConfig config, List<Path> moduleRoots,
                                     Path stdlibDir) {
-        this(entryFile, outputRoot, verbose, false, false, config, moduleRoots, stdlibDir);
+        this(entryFile, outputRoot, verbose, false, false, Backend.LUAJIT,
+            config, moduleRoots, stdlibDir);
     }
 
     public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
                                     boolean dumpIr,
                                     DealConfig config, List<Path> moduleRoots,
                                     Path stdlibDir) {
-        this(entryFile, outputRoot, verbose, dumpIr, false, config, moduleRoots, stdlibDir);
+        this(entryFile, outputRoot, verbose, dumpIr, false, Backend.LUAJIT,
+            config, moduleRoots, stdlibDir);
     }
 
     public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
                                     boolean dumpIr, boolean sourceMap,
                                     DealConfig config, List<Path> moduleRoots,
                                     Path stdlibDir) {
+        this(entryFile, outputRoot, verbose, dumpIr, sourceMap, Backend.LUAJIT,
+            config, moduleRoots, stdlibDir);
+    }
+
+    /**
+     * Backend-selection entry point (ISSUE-0091). LuaJIT remains the default:
+     * all overloads above delegate with {@link Backend#LUAJIT}.
+     *
+     * @param backend the code-generation backend ({@code lua}/{@code luajit}
+     *                or {@code jvm}) selected by the CLI or {@code deal.json}
+     */
+    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
+                                    boolean dumpIr, boolean sourceMap, Backend backend,
+                                    DealConfig config, List<Path> moduleRoots,
+                                    Path stdlibDir) {
+        this.backend = backend;
         this.entryFile = entryFile.toAbsolutePath().normalize();
         this.outputRoot = outputRoot.toAbsolutePath().normalize();
         this.verbose = verbose;
@@ -875,67 +896,108 @@ public final class CompilationOrchestrator {
         for (ModuleInfo info : modules.values()) {
             if (info.isDeclarationFile) continue;
 
-            long modStart = System.currentTimeMillis();
-
-            Map<String, String> importResolutions = new HashMap<>();
-            Map<String, Map<String, Type>> hostModules = new HashMap<>();
-            for (StatementNode stmt : info.rawAst.statements()) {
-                if (stmt instanceof ImportDeclaration imp) {
-                    String resolvedSource = resolveImportPath(imp.modulePath(),
-                        Path.of(info.sourcePath));
-                    if (resolvedSource != null) {
-                        ModuleInfo imported = modules.get(resolvedSource);
-                        if (imported != null) {
-                            importResolutions.put(imp.modulePath(),
-                                imported.modulePath);
-                            // Host modules (ISSUE-0082, host-module-abi D5):
-                            // declaration files that are not spec stdlib
-                            // modules load through __rt.load_host with the
-                            // raw import path verbatim as the require key.
-                            if (imported.isDeclarationFile
-                                    && !isSpecStdlibModuleInfo(imported)) {
-                                hostModules.put(imp.modulePath(),
-                                    imported.exports != null
-                                        ? imported.exports : Map.of());
-                            }
-                        }
-                    }
-                }
-            }
-
-            String filePath = info.modulePath.replace('.', '/') + ".lua";
-            Path outputPath = outputRoot.resolve(filePath);
-            Files.createDirectories(outputPath.getParent());
-
-            if (sourceMap) {
-                // Use generateToFile with emitSourceMap=true and the resolved
-                // import map to produce both the .lua file and the .deal.map.json
-                // sidecar.  importResolutions are required so that multi-module
-                // projects compile correctly when --source-map is active.
-                // info.modulePath is the same value seeded into NameResolver,
-                // so emitted class identity tags stay byte-identical to the
-                // checker's descriptors (runtime-class-identity D2(0)).
-                LuaBackend.generateToFile(info.rawAst, info.checkResult,
-                    info.sourcePath, info.modulePath, outputRoot, outputPath, true,
-                    importResolutions, hostModules);
+            if (backend == Backend.JVM) {
+                // JVM use site (ISSUE-0091): emit one .java module class per
+                // module. Import resolution and the Lua runtime copies are
+                // LuaJIT-specific and skipped here.
+                codegenJvmModule(info);
             } else {
-                String luaSource = LuaBackend.generateWithImports(
-                    info.rawAst, info.checkResult, info.sourcePath,
-                    info.modulePath, importResolutions, hostModules);
-                Files.writeString(outputPath, luaSource);
+                // Lua use site: the existing LuaJIT emitter, unchanged.
+                codegenLuaModule(info);
             }
-
-            long modElapsed = System.currentTimeMillis() - modStart;
-            log("  Generated: " + outputPath + " (" + modElapsed + "ms)");
         }
 
-        copyRuntimeLibrary();
-        copyStdlibModules();
+        if (backend == Backend.LUAJIT) {
+            copyRuntimeLibrary();
+            copyStdlibModules();
+        }
 
         long phaseElapsed = System.currentTimeMillis() - phaseStart;
         if (verbose) {
             System.out.println("  Phase 4 total: " + phaseElapsed + "ms");
         }
+    }
+
+    /**
+     * Lua use site: emits the module via {@link LuaBackend}, with the
+     * resolved import map and host-module declarations (unchanged behavior;
+     * ISSUE-0091 moved the pre-existing body here verbatim).
+     */
+    private void codegenLuaModule(ModuleInfo info) throws IOException {
+        Map<String, String> importResolutions = new HashMap<>();
+        Map<String, Map<String, Type>> hostModules = new HashMap<>();
+        for (StatementNode stmt : info.rawAst.statements()) {
+            if (stmt instanceof ImportDeclaration imp) {
+                String resolvedSource = resolveImportPath(imp.modulePath(),
+                    Path.of(info.sourcePath));
+                if (resolvedSource != null) {
+                    ModuleInfo imported = modules.get(resolvedSource);
+                    if (imported != null) {
+                        importResolutions.put(imp.modulePath(),
+                            imported.modulePath);
+                        // Host modules (ISSUE-0082, host-module-abi D5):
+                        // declaration files that are not spec stdlib
+                        // modules load through __rt.load_host with the
+                        // raw import path verbatim as the require key.
+                        if (imported.isDeclarationFile
+                                && !isSpecStdlibModuleInfo(imported)) {
+                            hostModules.put(imp.modulePath(),
+                                imported.exports != null
+                                    ? imported.exports : Map.of());
+                        }
+                    }
+                }
+            }
+        }
+
+        String filePath = info.modulePath.replace('.', '/') + ".lua";
+        Path outputPath = outputRoot.resolve(filePath);
+        Files.createDirectories(outputPath.getParent());
+
+        if (sourceMap) {
+            // Use generateToFile with emitSourceMap=true and the resolved
+            // import map to produce both the .lua file and the .deal.map.json
+            // sidecar.  importResolutions are required so that multi-module
+            // projects compile correctly when --source-map is active.
+            // info.modulePath is the same value seeded into NameResolver,
+            // so emitted class identity tags stay byte-identical to the
+            // checker's descriptors (runtime-class-identity D2(0)).
+            LuaBackend.generateToFile(info.rawAst, info.checkResult,
+                info.sourcePath, info.modulePath, outputRoot, outputPath, true,
+                importResolutions, hostModules);
+        } else {
+            String luaSource = LuaBackend.generateWithImports(
+                info.rawAst, info.checkResult, info.sourcePath,
+                info.modulePath, importResolutions, hostModules);
+            Files.writeString(outputPath, luaSource);
+        }
+
+        log("  Generated: " + outputPath);
+    }
+
+    /**
+     * JVM use site (ISSUE-0091): emits the module class via
+     * {@link JvmBackend} and writes {@code <ClassName>.java} into the output
+     * root. Backend diagnostics (E6000 for out-of-skeleton constructs) fail
+     * the compilation with the standard diagnostic report; no artifact is
+     * written when the backend reports errors.
+     */
+    private void codegenJvmModule(ModuleInfo info) throws IOException {
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+            info.rawAst, info.checkResult, info.sourcePath, info.modulePath);
+        for (Diagnostic d : res.diagnostics()) {
+            diagnostics.add(d);
+            hasErrors = true;
+        }
+        if (res.hasErrors()) {
+            log("  JVM backend rejected " + info.modulePath + ": "
+                + res.diagnostics());
+            return;
+        }
+        Path outputPath = outputRoot.resolve(res.className() + ".java");
+        Files.createDirectories(outputPath.getParent());
+        Files.writeString(outputPath, res.source());
+        log("  Generated: " + outputPath);
     }
 
     /**
