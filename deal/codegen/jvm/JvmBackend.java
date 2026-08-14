@@ -28,11 +28,13 @@ import java.util.Set;
  *
  * <p>Walks the typed AST (the compiler's IR — see {@code deal-compiler-architecture-v1})
  * and emits a self-contained Java class whose static methods implement the
- * module's functions. The Java source is a real JVM artifact: it is compiled
- * by {@code javac} and executed by {@code java} in a subprocess by the
- * conformance adapter ({@code test/BackendConformanceTest.java}) and by
- * {@code CompilationOrchestrator} phase 4 when the selected backend is
- * {@link deal.codegen.Backend#JVM}.
+ * module's functions. The Java source is a real JVM artifact: the
+ * conformance adapter ({@code test/BackendConformanceTest.java}) compiles
+ * it with {@code javac} and executes it with {@code java} in subprocesses;
+ * {@code CompilationOrchestrator} phase 4 (backend {@link
+ * deal.codegen.Backend#JVM}) writes the {@code .java} source (it does not
+ * run {@code javac}/{@code java}, which is exactly why the backend
+ * guarantees every artifact it emits is valid Java).
  *
  * <p>Skeleton scope (per ISSUE-0091): functions, {@code let} locals, module
  * fields, literals, int/number/boolean/string arithmetic and comparisons,
@@ -65,11 +67,20 @@ import java.util.Set;
  * {@code helper()}. Uses of a variable before its own declaration with no
  * enclosing binding (LuaJIT reads nil there and fails at runtime), forward
  * references to later-declared module fields (Java's
- * illegal-forward-reference rule), and module-level calls to functions
- * whose bodies (transitively) read a module field declared later than the
- * call site (LuaJIT fails at load with a nil read; Java would silently
- * read the field's default value) are rejected with {@code E6000} so the
- * artifact is always valid Java and never silently miscompiled.
+ * illegal-forward-reference rule), writes to a later-declared
+ * function-local with no enclosing binding ({@code x = 5; let x: int = 1}
+ * inside a function — LuaJIT writes the enclosing scope; Java rejects the
+ * forward reference; module-level writes to later-declared fields and
+ * function-body writes to a module field stay allowed), module-level calls
+ * to functions whose bodies (transitively) read a module field declared
+ * later than the call site (LuaJIT fails at load with a nil read; Java
+ * would silently read the field's default value), and module-level calls
+ * that reach a function declared at or after the call site — directly,
+ * transitively, or from a field initializer (LuaJIT assigns each function
+ * value at its declaration point in source order and fails at load with a
+ * nil read; Java hoists methods and would silently run) — are rejected
+ * with {@code E6000} so the artifact is always valid Java and never
+ * silently miscompiled.
  * Standalone non-call/non-assignment expression statements (e.g.
  * {@code x + 1;}) are lowered to a dummy-local declaration so they are
  * evaluated exactly like LuaJIT evaluates them (an int overflow there is
@@ -201,6 +212,11 @@ public final class JvmBackend {
     private final Map<String, FunctionDeclaration> moduleFunctions =
         new LinkedHashMap<>();
 
+    /** Module-level function declaration indices by name (exports
+     * included) → statement index in the module body. */
+    private final Map<String, Integer> moduleFunctionIndices =
+        new LinkedHashMap<>();
+
     /** Module-level variable declarations by name → statement index in the
      * module body. */
     private final Map<String, Integer> moduleFieldIndices =
@@ -210,6 +226,12 @@ public final class JvmBackend {
      * calls to other module functions (use-before-declaration detection for
      * module-level calls). */
     private final Map<String, Set<String>> transitiveFieldReads =
+        new LinkedHashMap<>();
+
+    /** Function name → all module functions reachable from its body
+     * through calls, including the function itself (use-before-declaration
+     * detection for module-level calls). */
+    private final Map<String, Set<String>> transitiveFunctionCalls =
         new LinkedHashMap<>();
 
     /** Statement index of the module-level statement currently being
@@ -375,9 +397,11 @@ public final class JvmBackend {
                 moduleFieldIndices.putIfAbsent(vd.name(), i);
             } else if (stmt instanceof FunctionDeclaration fd) {
                 moduleFunctions.putIfAbsent(fd.name(), fd);
+                moduleFunctionIndices.putIfAbsent(fd.name(), i);
             } else if (stmt instanceof ExportDeclaration ed
                     && ed.declaration() instanceof FunctionDeclaration fd) {
                 moduleFunctions.putIfAbsent(fd.name(), fd);
+                moduleFunctionIndices.putIfAbsent(fd.name(), i);
             }
         }
         computeTransitiveFieldReads();
@@ -477,12 +501,15 @@ public final class JvmBackend {
     // =========================================================================
 
     /**
-     * Computes, for every module-level function, the set of module fields
-     * its body reads — transitively, through calls to other module-level
-     * functions. Used to reject module-level calls whose (transitive) body
-     * reads a field declared later than the call site: LuaJIT fails at load
-     * for such reads (the field is nil until its declaration runs) while
-     * Java would silently read the field's default value.
+     * Computes, for every module-level function, (a) the set of module
+     * fields its body reads and (b) the set of module functions its body
+     * reaches by calls — both transitively, through calls to other
+     * module-level functions. Used to reject module-level calls whose
+     * (transitive) body reads a field, or reaches a function, declared
+     * later than the call site: LuaJIT fails at load for such reads (a
+     * field is nil and a function value is unassigned until its
+     * declaration runs) while Java would silently read the field's
+     * default value or run the hoisted method.
      */
     private void computeTransitiveFieldReads() {
         Map<String, Set<String>> directReads = new LinkedHashMap<>();
@@ -497,7 +524,30 @@ public final class JvmBackend {
         for (String name : moduleFunctions.keySet()) {
             transitiveFieldReads.put(name, closureReads(name, directReads,
                 directCalls, new LinkedHashMap<>(), new HashSet<>()));
+            transitiveFunctionCalls.put(name, closureCalls(name, directCalls,
+                new LinkedHashMap<>(), new HashSet<>()));
         }
+    }
+
+    /** Transitive closure over the module-level call graph: the function
+     * itself plus every module function reachable through its body's
+     * calls (cycles handled by the in-progress guard). */
+    private static Set<String> closureCalls(String name,
+            Map<String, Set<String>> directCalls,
+            Map<String, Set<String>> memo, Set<String> inProgress) {
+        Set<String> cached = memo.get(name);
+        if (cached != null) return cached;
+        Set<String> result = new LinkedHashSet<>();
+        result.add(name);
+        if (inProgress.add(name)) {
+            for (String callee : directCalls.getOrDefault(name, Set.of())) {
+                result.addAll(closureCalls(callee, directCalls, memo,
+                    inProgress));
+            }
+            inProgress.remove(name);
+        }
+        memo.put(name, result);
+        return result;
     }
 
     /** Transitive closure over the module-level call graph (cycles handled
@@ -650,6 +700,21 @@ public final class JvmBackend {
                 Set.of())) {
             Integer idx = moduleFieldIndices.get(field);
             if (idx != null && idx >= callIndex) return field;
+        }
+        return null;
+    }
+
+    /** The name of a module function declared at or after {@code callIndex}
+     * that {@code functionName}'s body reaches transitively (the callee
+     * itself included), or {@code null}. LuaJIT assigns each function
+     * value at its declaration point in source order, so any module-level
+     * call that reaches a not-yet-declared function fails at load with a
+     * nil read; Java hoists methods and would silently run. */
+    private String laterFunctionCall(String functionName, int callIndex) {
+        for (String reached : transitiveFunctionCalls.getOrDefault(
+                functionName, Set.of(functionName))) {
+            Integer idx = moduleFunctionIndices.get(reached);
+            if (idx != null && idx >= callIndex) return reached;
         }
         return null;
     }
@@ -1381,6 +1446,18 @@ public final class JvmBackend {
                         call.span());
                     return "null";
                 }
+                String laterFn = laterFunctionCall(id.name(),
+                    currentModuleStatementIndex);
+                if (laterFn != null) {
+                    unsupported("module-level call of '" + id.name()
+                        + "' reaching function '" + laterFn
+                        + "' declared at or after the call site (LuaJIT "
+                        + "assigns function values at their declaration "
+                        + "point and fails at load with a nil read; Java "
+                        + "hoists methods and would silently run)",
+                        call.span());
+                    return "null";
+                }
             }
             StringBuilder sb = new StringBuilder(javaName(id.name())).append('(');
             for (int i = 0; i < call.args().size(); i++) {
@@ -1470,6 +1547,27 @@ public final class JvmBackend {
     private String emitAssignmentCore(AssignmentExpr ae) {
         if (ae.target() instanceof IdentifierExpr id) {
             String mapped = localJavaName(id.name());
+            if (mapped == null && !moduleFieldIndices.containsKey(id.name())) {
+                // A write with no visible local binding and no module field:
+                // the only checker-accepted such program is a write to a
+                // later-declared function-local (`x = 5; let x: int = 1` —
+                // the checker resolves the target contextually, so the
+                // module-scope symbol table reports null). LuaJIT writes
+                // the enclosing scope and then the later `local` shadows it
+                // (observable only through a same-named outer binding,
+                // which would be a visible local here); Java rejects the
+                // forward reference, so emit E6000 instead of an artifact
+                // javac would reject. Module-level writes to later-declared
+                // fields (legal in Java, JLS §8.3.3 forward-reference LHS
+                // exception, same final value as LuaJIT) and function-body
+                // writes to a module field (LuaJIT's upvalue write) are
+                // allowed and keep using the static field name.
+                unsupported("assignment to '" + id.name() + "' before its "
+                    + "declaration with no enclosing binding (LuaJIT writes "
+                    + "the enclosing scope; Java rejects the forward "
+                    + "reference)", ae.span());
+                return "null";
+            }
             String target = mapped != null ? mapped : javaName(id.name());
             return target + " = " + emitExpression(ae.value());
         }
@@ -1524,6 +1622,10 @@ public final class JvmBackend {
                 }
                 yield r;
             }
+            // Assignment target (write) positions get their own guard in
+            // emitAssignmentCore: a write to a later-declared local with
+            // no enclosing binding is E6000 there, so only the value side
+            // is walked here.
             case AssignmentExpr ae -> undeclaredUseIn(ae.value());
             case MemberAccessExpr mae -> undeclaredUseIn(mae.object());
             case IndexExpr idx ->

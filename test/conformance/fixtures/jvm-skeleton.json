@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM backend skeleton conformance (ISSUE-0091). Fixtures for the JVM backend (several also run under LuaJIT as the reference behavior): literals/output, int arithmetic, local variables, if/else, a frontend compile-error rejected before the backend, and the observable-behavior regressions: null-typed returns/initializers with side effects, null-typed captures of reassigned locals and parameters, floored % on negative operands, string equality/ordering (Unicode scalar-value order), console.error -> stderr, null equality, standalone expression statements, module-level load-time statements, a module-load-only fixture (runner initializes the module class when no function is auto-invoked), non-finite number literals (1e999 -> Double.POSITIVE_INFINITY), && / || short-circuit preservation for guarded null-typed calls, and a module-level error with a zero-arity export (the runner unwraps ExceptionInInitializerError into the DEAL_ERROR_CODE contract). The JVM adapter compiles the emitted Java artifact with javac and executes it with java in a subprocess; the generated runner auto-invokes zero-arity exported functions in declaration order and prints their non-null results, so expectedOutput observes real return values (console.log output is also captured). The Lua harness auto-invokes in pairs() (unspecified) order, so fixtures with multiple zero-arity exports must not depend on cross-backend invocation order (every fixture here has at most one zero-arity export).",
+  "description": "JVM backend skeleton conformance (ISSUE-0091). Fixtures for the JVM backend (several also run under LuaJIT as the reference behavior): literals/output, int arithmetic, local variables, if/else, a frontend compile-error rejected before the backend, and the observable-behavior regressions: null-typed returns/initializers with side effects, null-typed captures of reassigned locals and parameters, floored % on negative operands, string equality/ordering (Unicode scalar-value order), console.error -> stderr, null equality, standalone expression statements, module-level load-time statements, a module-load-only fixture (runner initializes the module class when no function is auto-invoked), non-finite number literals (1e999 -> Double.POSITIVE_INFINITY), && / || short-circuit preservation for guarded null-typed calls, a module-level error with a zero-arity export (the runner unwraps ExceptionInInitializerError into the DEAL_ERROR_CODE contract), the module-field shadow write (upvalue write parity), the module-level later-field write (JLS §8.3.3 forward-reference LHS exception parity), and the declaration-first interleaved load-time ordering (functions declared before their call sites; the declarations-after shape fails at load under LuaJIT and is E6000 under JVM). The JVM adapter compiles the emitted Java artifact with javac and executes it with java in a subprocess; the generated runner auto-invokes zero-arity exported functions in declaration order and prints their non-null results, so expectedOutput observes real return values (console.log output is also captured). The Lua harness auto-invokes in pairs() (unspecified) order, so fixtures with multiple zero-arity exports must not depend on cross-backend invocation order (every fixture here has at most one zero-arity export).",
   "tests": [
     {
       "name": "jvm-literals-output",
@@ -489,6 +489,61 @@
       "expectedCompileError": null,
       "irContains": [
         "binary / : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-module-field-shadow-write",
+      "description": "A function-body write to a module field resolves to the static field (LuaJIT's upvalue write): the pre-existing value is overwritten and observable. This shape must NOT be rejected by the assignment-before-declaration guard (it has a real binding). Runs under both backends; LuaJIT is the reference",
+      "source": "import * as console from \"std/console\"\nlet x: int = 1;\nexport function test(): null {\n  x = 5;\n  if (x === 5) { console.log(\"wrote-field\"); }\n}",
+      "expectedOutput": "wrote-field",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "assign = : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-module-level-later-field-write",
+      "description": "A module-level write to a later-declared module field is legal (JLS §8.3.3 forward-reference LHS exception) and the later field initializer wins, exactly like LuaJIT (probed: both observe the later value). Runs under both backends; LuaJIT is the reference",
+      "source": "import * as console from \"std/console\"\nx = 5;\nlet x: int = 1;\nexport function test(): null {\n  if (x === 1) { console.log(\"later-init-wins\"); }\n}",
+      "expectedOutput": "later-init-wins",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "assign = : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-module-interleaved-decls-first",
+      "description": "Module-level load-time ordering: functions declared BEFORE their call sites (LuaJIT assigns each function value at its declaration point, so declarations-first is the load-time-parity shape — the declarations-after shape fails at load under LuaJIT and is E6000 under JVM). Side-effecting field initializers and module-level statements must run in source order. Runs under both backends; LuaJIT is the reference",
+      "source": "import * as console from \"std/console\"\nfunction f(): int { console.log(\"f-ran\"); return 1; }\nfunction g(): int { console.log(\"g-ran\"); return 2; }\nlet a: int = f();\nconsole.log(\"mid\");\nlet b: int = g();\nexport function test(): null {\n  if (a + b === 3) { console.log(\"sum-ok\"); }\n}",
+      "expectedOutput": "sum-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "function f: int",
+        "function g: int"
       ],
       "irNotContains": [],
       "backends": [

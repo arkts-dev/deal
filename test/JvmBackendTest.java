@@ -82,11 +82,13 @@ public class JvmBackendTest {
             testModuleLevelStatements();
             testShadowedInitializer();
             testUseBeforeDeclarationRejected();
+            testAssignmentBeforeDeclarationRejected();
             testRuntimeErrorCodes();
             testNonFiniteNumberLiterals();
             testShortCircuitPreservation();
             testStringScalarOrdering();
             testModuleLevelCallReadingLaterField();
+            testModuleLevelCallBeforeFunctionDeclarationRejected();
             testRunnerModuleErrorCodeWithExport();
             testOrchestratorJvmBackend();
             testOrchestratorDefaultStaysLua();
@@ -991,14 +993,20 @@ public class JvmBackendTest {
             "module-level assignment visible to exported function: " + exec.output());
 
         // Interleaved ordering: side-effecting field initializers and
-        // module-level statements must run in source order.
+        // module-level statements must run in source order. f/g are
+        // declared BEFORE their call sites — LuaJIT assigns each function
+        // value at its declaration point, so the old shape (fields calling
+        // f/g before the declarations) fails at load under LuaJIT and is
+        // rejected with E6000 by the backend (see
+        // testModuleLevelCallBeforeFunctionDeclarationRejected); declaring
+        // them first makes this shape load-time-parity with LuaJIT.
         ExecResult order = compileAndRunJvm("""
             import * as console from "std/console"
+            function f(): int { console.log("f-ran"); return 1; }
+            function g(): int { console.log("g-ran"); return 2; }
             let a: int = f();
             console.log("mid");
             let b: int = g();
-            function f(): int { console.log("f-ran"); return 1; }
-            function g(): int { console.log("g-ran"); return 2; }
             export function test(): int { return a + b; }
             """, "modorder");
         check(order.exitCode() == 0, "interleaved module order exits 0");
@@ -1082,6 +1090,98 @@ public class JvmBackendTest {
             check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
                 "E6000 for use-before-declaration: " + res.diagnostics());
         }
+    }
+
+    /**
+     * A write to a later-declared function-local with no enclosing binding
+     * must be rejected, never emitted as a Java forward reference that
+     * javac rejects after the CLI reported success (`x = 5; let x = 1`
+     * inside a function: LuaJIT writes the enclosing scope and then the
+     * later `local` shadows it; Java has no forward-reference target).
+     * Module-level writes to later-declared fields and function-body writes
+     * to a module field stay allowed (JLS §8.3.3 forward-reference LHS
+     * exception / LuaJIT's upvalue write — same observable result).
+     */
+    private static void testAssignmentBeforeDeclarationRejected() throws Exception {
+        System.out.println("-- Assignment before declaration → E6000 --");
+
+        List<String> rejected = List.of(
+            // the reviewer's exact repro: assignment statement before the let
+            "export function test(): int { x = 5; let x: int = 1; return x; }",
+            // same write inside a block
+            """
+            export function test(): int {
+              let r: int = 0;
+              { x = 5; }
+              let x: int = 1;
+              return x;
+            }
+            """,
+            // same write inside an if body
+            """
+            export function test(): int {
+              if (true) { x = 5; }
+              let x: int = 1;
+              return x;
+            }
+            """,
+            // assignment in a return value position
+            """
+            export function test(): int {
+              if (true) { return x = 5; }
+              let x: int = 1;
+              return x;
+            }
+            """,
+            // assignment in a call-argument position
+            """
+            function f(y: int): int { return y; }
+            export function test(): int {
+              let r: int = f(x = 5);
+              let x: int = 1;
+              return x;
+            }
+            """);
+
+        for (String source : rejected) {
+            Frontend f = compileFrontend(source, "jvmtest-assignbefore.deal");
+            if (!f.errors().isEmpty()) {
+                fail("checker must accept the assignment-before-declaration "
+                    + "probe (the backend rejects it): " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res =
+                JvmBackend.generate(f.program(), f.checkResult(),
+                    "jvmtest-assignbefore.deal", "main");
+            check(res.hasErrors(), "backend rejects the assignment before "
+                + "declaration");
+            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for the assignment before declaration: "
+                    + res.diagnostics());
+        }
+
+        // Allowed: a function-body write to a module field resolves to the
+        // static field — LuaJIT's upvalue write; both observe 5.
+        ExecResult fieldShadow = compileAndRunJvm("""
+            let x: int = 1;
+            export function test(): int { x = 5; return x; }
+            """, "assignfieldshadow");
+        check(fieldShadow.exitCode() == 0, "module-field shadow write exits 0");
+        check(fieldShadow.output().contains("5"),
+            "module-field shadow write observes 5: " + fieldShadow.output());
+
+        // Allowed: a module-level write to a later-declared field is legal
+        // Java (JLS §8.3.3 LHS exception) and the later initializer wins,
+        // exactly like LuaJIT (probed: both observe 1).
+        ExecResult moduleLater = compileAndRunJvm("""
+            x = 5;
+            let x: int = 1;
+            export function test(): int { return x; }
+            """, "assignmodulelater");
+        check(moduleLater.exitCode() == 0, "module-level later-field write exits 0");
+        check(moduleLater.output().contains("1"),
+            "module-level later-field write observes 1: "
+                + moduleLater.output());
     }
 
     private static void testRuntimeErrorCodes() throws Exception {
@@ -1506,6 +1606,117 @@ public class JvmBackendTest {
         check(shadow.exitCode() == 0, "local-shadow call exits 0");
         check(shadow.output().contains("1"),
             "local shadow of a module field is not a field read: " + shadow.output());
+    }
+
+    /**
+     * LuaJIT assigns each function value at its declaration point in source
+     * order, so a module-level call that reaches a function declared at or
+     * after the call site fails at load with a nil read — directly
+     * (`f(); function f…`), transitively (`function f(): null { g(); } f();
+     * function g…`: the callee is declared before the call but its body
+     * reaches a later function), or from a field initializer (`let a: int =
+     * f()` before `function f`). Java hoists methods and would silently run
+     * them; the backend must reject these with E6000 instead. Calls whose
+     * callee and transitive callees are all declared before the call site
+     * stay allowed (LuaJIT parity, verified with real luajit runs).
+     */
+    private static void testModuleLevelCallBeforeFunctionDeclarationRejected()
+            throws Exception {
+        System.out.println("-- Module-level call before function declaration → E6000 --");
+
+        List<String> rejected = List.of(
+            // direct: call before the callee's own declaration
+            """
+            import * as console from "std/console"
+            f();
+            function f(): null { console.log("f-ran"); }
+            export function test(): int { return 1; }
+            """,
+            // the exact shape the module-level ordering test used before
+            // rework (field initializers calling later-declared functions)
+            """
+            import * as console from "std/console"
+            let a: int = f();
+            console.log("mid");
+            let b: int = g();
+            function f(): int { console.log("f-ran"); return 1; }
+            function g(): int { console.log("g-ran"); return 2; }
+            export function test(): int { return a + b; }
+            """,
+            // transitive: the callee is declared first, but its body calls
+            // a function declared later than the call site
+            """
+            import * as console from "std/console"
+            function f(): null { g(); }
+            f();
+            function g(): null { console.log("g-ran"); }
+            export function test(): int { return 1; }
+            """,
+            // deep transitive chain f → h → g with g declared later
+            """
+            import * as console from "std/console"
+            function f(): null { h(); }
+            function h(): null { g(); }
+            f();
+            function g(): null { console.log("g-ran"); }
+            export function test(): int { return 1; }
+            """,
+            // a field initializer calling a later-declared function
+            """
+            let a: int = f();
+            function f(): int { return 1; }
+            export function test(): int { return a; }
+            """,
+            // a module-level call of an export declared later
+            """
+            import * as console from "std/console"
+            test2();
+            export function test2(): null { console.log("later"); }
+            export function test(): int { return 1; }
+            """);
+
+        for (String source : rejected) {
+            Frontend f = compileFrontend(source, "jvmtest-modfndecl.deal");
+            if (!f.errors().isEmpty()) {
+                fail("checker must accept the module-level call-before-"
+                    + "declaration probe (the backend rejects it): "
+                    + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res =
+                JvmBackend.generate(f.program(), f.checkResult(),
+                    "jvmtest-modfndecl.deal", "main");
+            check(res.hasErrors(), "backend rejects the module-level call "
+                + "reaching a later-declared function");
+            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for the module-level call reaching a later-declared "
+                    + "function: " + res.diagnostics());
+        }
+
+        // Positive: all declarations before the call site run at load with
+        // the same observable order as LuaJIT (verified with luajit).
+        ExecResult direct = compileAndRunJvm("""
+            import * as console from "std/console"
+            function f(): int { console.log("f-ran"); return 1; }
+            f();
+            export function test(): int { return 1; }
+            """, "modfnorderok");
+        check(direct.exitCode() == 0, "post-declaration call exits 0");
+        check(direct.output().contains("f-ran"),
+            "post-declaration module call ran at load: " + direct.output());
+
+        // Transitive positive: the callee's body calls another function
+        // that is also declared before the call site.
+        ExecResult transitive = compileAndRunJvm("""
+            function f(): int { return g(); }
+            function g(): int { return 7; }
+            f();
+            export function test(): int { return 1; }
+            """, "modfntransok");
+        check(transitive.exitCode() == 0, "transitive post-declaration call exits 0");
+        check(transitive.output().contains("1"),
+            "transitive post-declaration call module still works: "
+                + transitive.output());
     }
 
     /** The DEAL_ERROR_CODE contract must hold for module-level errors

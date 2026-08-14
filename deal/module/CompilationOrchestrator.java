@@ -920,6 +920,8 @@ public final class CompilationOrchestrator {
      * ISSUE-0091 moved the pre-existing body here verbatim).
      */
     private void codegenLuaModule(ModuleInfo info) throws IOException {
+        long modStart = System.currentTimeMillis();
+
         Map<String, String> importResolutions = new HashMap<>();
         Map<String, Map<String, Type>> hostModules = new HashMap<>();
         for (StatementNode stmt : info.rawAst.statements()) {
@@ -968,7 +970,8 @@ public final class CompilationOrchestrator {
             Files.writeString(outputPath, luaSource);
         }
 
-        log("  Generated: " + outputPath);
+        long modElapsed = System.currentTimeMillis() - modStart;
+        log("  Generated: " + outputPath + " (" + modElapsed + "ms)");
     }
 
     /**

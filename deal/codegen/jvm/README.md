@@ -107,6 +107,26 @@ reports success for an artifact `javac` would reject.
   read the field's default value (verified: `f(); let x: int = 5; function
   f(): int { return x; }` fails at load under LuaJIT). Reads through function-local shadows
   of a module field are correctly not flagged.
+- **Assignment targets get the same guard.** A write to a
+  later-declared function-local with no enclosing binding
+  (`x = 5; let x: int = 1` inside a function — in statement, block, `if`,
+  `return x = 5;`, and `f(x = 5)` positions) is E6000, never a Java
+  forward-reference artifact javac rejects after the CLI reported success
+  (the checker resolves such targets contextually, so the module-scope
+  symbol table reports null). Module-level writes to later-declared
+  fields and function-body writes to a module field stay allowed and keep
+  using the static field name (LuaJIT parity, verified with real luajit
+  runs).
+- **Module-level calls never reach not-yet-declared functions.** LuaJIT
+  assigns each function value at its declaration point in source order,
+  so a module-level call that reaches a function declared at or after the
+  call site — the callee itself, a transitively-called module function,
+  or a field initializer calling a later function — fails at load with a
+  nil read, while Java's hoisted methods would silently run. These are
+  E6000 (detection is a fixpoint closure over the module-level call
+  graph); calls whose callee and transitive callees are all declared
+  before the call site run at load with LuaJIT parity (the declaration-
+  first interleaving shape is a cross-backend fixture).
 - **Imports are rejected at the import statement.** Any `import` other than
   `std/console` is an E6000 at the import itself — even when unused —
   because the imported module's require-time side effects cannot be
@@ -153,7 +173,7 @@ reports success for an artifact `javac` would reject.
     `test/LuaBackendIntegrationTest`, `test/ConformanceTest`,
     `test/conformance/fixtures/*.json` `backends: ["luajit"]`) stays green
     and unmodified.
-  - JVM: `test/conformance/fixtures/jvm-skeleton.json` — twenty-nine
+  - JVM: `test/conformance/fixtures/jvm-skeleton.json` — thirty-two
     fixtures (JVM-only, plus cross-backend parity fixtures that also run
     under LuaJIT as the reference behavior): literals/output, int arithmetic,
     local variables with
@@ -165,9 +185,11 @@ reports success for an artifact `javac` would reject.
     (scalar order incl. supplementary characters), `console.error` → stderr,
     null equality, standalone expression statements, module-load-only and
     module-load-error fixtures, non-finite literals ×2, `&&`/`||`
-    short-circuit preservation ×3, and a module-level error with a
-    zero-arity export) run end-to-end under
-    `test/BackendConformanceTest`.
+    short-circuit preservation ×3, a module-level error with a
+    zero-arity export, the module-field shadow write, the module-level
+    later-field write, and the declaration-first interleaved load-time
+    ordering (all three cross-backend parity with LuaJIT)) run end-to-end
+    under `test/BackendConformanceTest`.
   - Seam: `test/JvmBackendTest.java` — identifier translation, collision-safe
     class-name derivation, emission, E6000 rejection (including unused
     imports, module-level returns, use-before-declaration, helper-name
@@ -180,7 +202,13 @@ reports success for an artifact `javac` would reject.
     short-circuit preservation (function-local and module-level, with
     reachable and skipped operands), scalar string ordering, module-level
     calls reading later-declared fields (E6000, incl. the transitive
-    path), the runner's `DEAL_ERROR_CODE` contract for module-level errors
+    path), module-level calls reaching later-declared functions (E6000:
+    direct, transitive, deep-chain, field-initializer, and later-export
+    shapes — plus the declaration-first interleaving parity case),
+    assignment to later-declared locals (E6000 in statement/block/if/
+    return/argument positions, with the allowed module-field shadow write
+    and module-level later-field write), the runner's `DEAL_ERROR_CODE`
+    contract for module-level errors
     with and without a zero-arity export, the orchestrator JVM path (artifact
     exists, compiles, no `.lua`/runtime copied, import rejection,
     class-name collision detection, the `--source-map` warning), the
@@ -221,8 +249,21 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   illegal-forward-reference rule forbids `static { …x… }` /
   `static long b = c + 1L;` before `static long c;` is declared, and
   LuaJIT fails at runtime for the same programs (nil read), so these are
-  E6000. Module-level *functions* remain hoisted (Java methods are usable
-  in any order), matching the checker.
+  E6000. Module-level calls that reach a function declared at or after
+  the call site — directly (`f(); function f…`), transitively
+  (`function f(): null { g(); } f(); function g…`), or from a field
+  initializer (`let a: int = f()` before `function f`) — are also E6000:
+  LuaJIT assigns each function value at its declaration point in source
+  order and fails at load with a nil read, while Java hoists methods and
+  would silently run them. Calls whose callee and transitive callees are
+  all declared before the call site run at load with LuaJIT parity.
+  Assignments behave the same way: a write to a later-declared
+  function-local with no enclosing binding (`x = 5; let x: int = 1`
+  inside a function) is E6000 (LuaJIT writes the enclosing scope; Java
+  rejects the forward reference), while module-level writes to
+  later-declared fields (JLS §8.3.3 forward-reference LHS exception) and
+  function-body writes to a module field (LuaJIT's upvalue write) stay
+  allowed — both verified with real luajit runs.
 - The typed boundary checks LuaJIT performs on null-typed values
   (`check_null` rejects the raw nil that `console.log` returns) are proven
   redundant by the JVM's static types and skipped, as the spec's JVM
