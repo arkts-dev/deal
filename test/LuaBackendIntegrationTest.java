@@ -144,6 +144,7 @@ public class LuaBackendIntegrationTest {
         testNumberConvertValid();
         testNumberConvertNull();
         testIntConvertIntLiteral();
+        testIntrinsicFunctionValues();
 
         // ISSUE-0018: Template literal and for-of integration tests
         testTemplateLiteralRuntime();
@@ -1451,6 +1452,77 @@ public class LuaBackendIntegrationTest {
         boolean hasError = result.diagnostics().stream()
             .anyMatch(d -> "error".equals(d.severity()) && d.code().equals("E5001"));
         check(hasError, "int(3) should be rejected at compile time with E5001");
+    }
+
+    // =========================================================================
+    // Test: int/number intrinsics as first-class function values
+    // (direct calls route through the wrapper .f entry with span forwarding;
+    // indirect calls go through the wrapper unchanged)
+    // =========================================================================
+
+    static void testIntrinsicFunctionValues() throws Exception {
+        System.out.println("-- Intrinsics as Function Values --");
+        String dealSrc =
+            "let fn: ((x: number) => int) = int;\n" +
+            "let fn2: ((x: int) => number) = number;\n" +
+            "export function test_direct_int(): int { return int(3.0); }\n" +
+            "export function test_indirect_int(): int { return fn(4.0); }\n" +
+            "export function test_direct_number(): number { return number(42); }\n" +
+            "export function test_indirect_number(): number { return fn2(7); }\n" +
+            "export function test_direct_int_err(): int { return int(3.7); }\n";
+
+        LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+
+        if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
+            for (Diagnostic d : result.diagnostics()) {
+                if ("error".equals(d.severity())) System.err.println("  Error: " + d);
+            }
+            check(false, "intrinsic function values: compilation failed");
+            return;
+        }
+
+        String lua = LuaBackend.generate(parse.program(), result, "test.deal");
+
+        String runner =
+            "package.path = './?.lua;' .. package.path\n" +
+            "local mod = loadstring([[" + lua + "]])()\n" +
+            "print('direct_int:' .. mod.test_direct_int.f())\n" +
+            "print('indirect_int:' .. mod.test_indirect_int.f())\n" +
+            "print('direct_number:' .. mod.test_direct_number.f())\n" +
+            "print('indirect_number:' .. mod.test_indirect_number.f())\n" +
+            "local ok, err = pcall(mod.test_direct_int_err.f)\n" +
+            "if ok then print('err:NO_ERROR') else print('err:' .. err.code .. ':' .. tostring(err.file) .. ':' .. tostring(err.line) .. ':' .. tostring(err.column)) end\n";
+
+        Path tmpDir = Files.createTempDirectory("deal_int_");
+        Path runnerFile = tmpDir.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        Path runtimeDir = tmpDir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(tmpDir.toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+
+        try { Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+            .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        check(exit == 0, "intrinsic function values: luajit exit 0 (got: " + output + ")");
+        check(output.contains("direct_int:3"), "direct int(3.0) converts, got: " + output);
+        check(output.contains("indirect_int:4"), "indirect int via wrapper converts, got: " + output);
+        check(output.contains("direct_number:42"), "direct number(42) converts, got: " + output);
+        check(output.contains("indirect_number:7"), "indirect number via wrapper converts, got: " + output);
+        check(output.contains("err:E8001:test.deal:7:"),
+            "direct conversion error keeps call-site span, got: " + output);
     }
 
 

@@ -398,11 +398,16 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("");
         emitLine("local __NULL = __rt.__NULL");
         emitLine("local __MISSING = __rt.__MISSING");
-        // Intrinsic aliases: int() and number() are direct-call-only in v1.0.
-        // Indirect use (assigned to variables / passed as callbacks) fails at
-        // runtime because codegen emits .f() for captured function values.
-        emitLine("local int = __rt.int_convert");
-        emitLine("local number = __rt.number_convert");
+        // Intrinsic function-value wrappers: int and number are first-class
+        // function values whose sigs equal the seeded static types
+        // (number)=>int / (int)=>number. Direct calls route through the
+        // wrapper's .f entry with span forwarding; indirect uses (assignment,
+        // callback arguments, arity adapters) flow through the wrapper
+        // unchanged.
+        emitLine("local int = __rt.function_(\"(number)->int\", "
+            + "function(...) return __rt.int_convert(...) end)");
+        emitLine("local number = __rt.function_(\"(int)->number\", "
+            + "function(...) return __rt.number_convert(...) end)");
         emitLine("");
         // Generated-namespace table: owns all compiler-generated module-level
         // artifacts (Error defaults, class defaults/meta, @jsonable helpers).
@@ -1698,16 +1703,15 @@ public final class LuaBackend implements Visitor<Void> {
             if (i > 0) args.append(", ");
             args.append(emitExpression(call.args().get(i)));
         }
-        // Intrinsic calls (int, number) — emit direct call, not .f()
-        // KNOWN LIMIT (v1.0): only direct calls (callee is an IdentifierExpr
-        // resolving to an IntrinsicSymbol) are intercepted. Indirect use
-        // (assigned to variables / passed as callbacks) will still emit .f()
-        // and fail at runtime because the aliases are plain Lua functions,
-        // not function wrappers.
+        // Intrinsic calls (int, number) route through the wrapper's .f entry
+        // so the call-site span is forwarded on direct calls; indirect calls
+        // (callee not a bare intrinsic name) fall through to the generic
+        // Type.Func branch and reach the same wrapper without a span.
         if (call.callee() instanceof IdentifierExpr id) {
             Symbol sym = symbols.resolve(id.name());
             if (sym instanceof Symbol.IntrinsicSymbol) {
-                return emitExpression(call.callee()) + "(" + args.toString() + ", " + spanArgs(call.span()) + ")";
+                return emitExpression(call.callee()) + ".f(" + args.toString()
+                    + ", " + spanArgs(call.span()) + ")";
             }
         }
         if (calleeType instanceof Type.Func) {

@@ -649,9 +649,10 @@ public class LuaBackendTest {
             "export function test_int(): int { return int(3.0); }"
         );
         assertNoErrors(out, "intrinsic int call");
-        assertContains(out.lua, "int(3.0", "int(3.0) direct call");
-        assertNotContains(out.lua, "int.f(", "no int.f() pattern");
-        assertContains(out.lua, "local int = __rt.int_convert", "int alias defined");
+        assertContains(out.lua, "int.f(3.0", "int.f(3.0) direct call");
+        assertContains(out.lua, "int.f(3.0, \"", "span forwarded to direct intrinsic call");
+        assertContains(out.lua, "local int = __rt.function_(\"(number)->int\", function(...)", "int function-value wrapper defined");
+        check(isValidLua(out.lua), "intrinsic int call generates valid Lua");
     }
 
     // =========================================================================
@@ -664,23 +665,25 @@ public class LuaBackendTest {
             "export function test_number(): number { return number(42); }"
         );
         assertNoErrors(out, "intrinsic number call");
-        assertContains(out.lua, "number(42", "number(42) direct call");
-        assertNotContains(out.lua, "number.f(", "no number.f() pattern");
-        assertContains(out.lua, "local number = __rt.number_convert", "number alias defined");
+        assertContains(out.lua, "number.f(42", "number.f(42) direct call");
+        assertContains(out.lua, "number.f(42, \"", "span forwarded to direct number call");
+        assertContains(out.lua, "local number = __rt.function_(\"(int)->number\", function(...)", "number function-value wrapper defined");
+        check(isValidLua(out.lua), "intrinsic number call generates valid Lua");
     }
 
     // =========================================================================
-    // Test: intrinsic indirect use limitation (documented, not fixed)
+    // Test: intrinsic indirect use through the function-value wrapper
     // =========================================================================
 
     static void testIntrinsicIndirectUse() {
-        System.out.println("-- Intrinsic Indirect Use (documented limitation) --");
+        System.out.println("-- Intrinsic Indirect Use --");
         CompileOutput out = compile(
             "let fn: ((x: number) => int) = int;\n" +
             "let r: int = fn(3.0);"
         );
         assertNoErrors(out, "intrinsic indirect use compiles");
-        assertContains(out.lua, "fn.f(", "indirect call uses .f() pattern (known limitation)");
+        assertContains(out.lua, "fn.f(", "indirect call uses .f() pattern");
+        check(isValidLua(out.lua), "intrinsic indirect use generates valid Lua");
     }
 
     // Test: delete (optional field)
