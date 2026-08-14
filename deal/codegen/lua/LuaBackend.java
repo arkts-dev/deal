@@ -43,6 +43,15 @@ public final class LuaBackend implements Visitor<Void> {
     private Type currentReturnType = null;
     private String sourceFilePath = "unknown.deal";
 
+    // ISSUE-0082 (runtime-class-identity D2(0)): the module path of the
+    // module being generated. Seeded by the static entry points and the
+    // public instance constructor; {@link #qualifiedClassName} falls back to
+    // {@code sourceFilePath} when null. Every class emission site that has
+    // only the AST name (META export, @jsonable helpers) derives its
+    // qualified identity string from this path, byte-identical to the
+    // checker's module path (NameResolver is seeded with the same value).
+    private String modulePath = null;
+
     private String currentContinueLabel = null;
     private int labelCounter = 0;
 
@@ -175,12 +184,28 @@ public final class LuaBackend implements Visitor<Void> {
     /**
      * Entry point with import resolution mapping.
      * Maps raw import paths (e.g. "./lib") to Lua require paths (e.g. "lib").
+     * The module path defaults to the source path.
      */
     public static String generateWithImports(ProgramNode program, CheckResult result,
                                               String sourcePath,
                                               Map<String, String> importResolutions) {
+        return generateWithImports(program, result, sourcePath, sourcePath,
+            importResolutions);
+    }
+
+    /**
+     * Entry point with import resolution mapping and an explicit module path.
+     * The module path seeds the module-qualified class identity strings
+     * (runtime-class-identity D2(0)); production passes the same value that
+     * seeds the NameResolver, so tags and checker descriptors stay
+     * byte-identical.
+     */
+    public static String generateWithImports(ProgramNode program, CheckResult result,
+                                              String sourcePath, String modulePath,
+                                              Map<String, String> importResolutions) {
         LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable());
         backend.sourceFilePath = sourcePath;
+        backend.modulePath = modulePath;
         backend.importResolutions = Map.copyOf(importResolutions);
         backend.emitHeader();
         backend.emitLine("");
@@ -200,8 +225,22 @@ public final class LuaBackend implements Visitor<Void> {
                                                 String sourcePath,
                                                 Map<String, String> importResolutions,
                                                 SourceMapGenerator smg) {
+        return generateWithSourceMap(program, result, sourcePath, sourcePath,
+            importResolutions, smg);
+    }
+
+    /**
+     * Generate Lua source with source map tracking and an explicit module
+     * path (runtime-class-identity D2(0)); the module path defaults to the
+     * source path in the overload above.
+     */
+    public static String generateWithSourceMap(ProgramNode program, CheckResult result,
+                                                String sourcePath, String modulePath,
+                                                Map<String, String> importResolutions,
+                                                SourceMapGenerator smg) {
         LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable());
         backend.sourceFilePath = sourcePath;
+        backend.modulePath = modulePath;
         backend.importResolutions = Map.copyOf(importResolutions);
         backend.sourceMapGenerator = smg;
         backend.emitHeader();
@@ -256,13 +295,29 @@ public final class LuaBackend implements Visitor<Void> {
                                        Path outputPath, boolean emitSourceMap,
                                        Map<String, String> importResolutions)
                                        throws IOException {
+        generateToFile(program, result, sourcePath, sourcePath, outputRoot,
+            outputPath, emitSourceMap, importResolutions);
+    }
+
+    /**
+     * Generate Lua source and write it to the output path, optionally
+     * producing a source map sidecar file, with an explicit module path
+     * (runtime-class-identity D2(0)).
+     */
+    public static void generateToFile(ProgramNode program, CheckResult result,
+                                       String sourcePath, String modulePath,
+                                       Path outputRoot, Path outputPath,
+                                       boolean emitSourceMap,
+                                       Map<String, String> importResolutions)
+                                       throws IOException {
         SourceMapGenerator smg = emitSourceMap ? new SourceMapGenerator() : null;
         String luaSource;
         if (smg != null) {
             luaSource = generateWithSourceMap(program, result, sourcePath,
-                importResolutions, smg);
+                modulePath, importResolutions, smg);
         } else {
-            luaSource = generateWithImports(program, result, sourcePath, importResolutions);
+            luaSource = generateWithImports(program, result, sourcePath,
+                modulePath, importResolutions);
         }
 
         Files.createDirectories(outputPath.getParent());
@@ -335,11 +390,16 @@ public final class LuaBackend implements Visitor<Void> {
 
     /**
      * Public constructor for tests that need to capture codegen diagnostics.
+     * Seeds the module path from the source path so that
+     * {@link #generateFromInstance} emits module-qualified class identity
+     * strings byte-identical to the static entry points
+     * (runtime-class-identity D2(0)).
      */
     public LuaBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols, String sourcePath) {
         this.typeMap = new HashMap<>(typeMap);
         this.symbols = symbols;
         this.sourceFilePath = sourcePath;
+        this.modulePath = sourcePath;
     }
 
     /**
@@ -557,6 +617,22 @@ public final class LuaBackend implements Visitor<Void> {
     // Type descriptor generation
     // =========================================================================
 
+    /**
+     * The module-qualified runtime class identity for a class declared in
+     * this module: bare name when the module path is empty, else
+     * {@code @<modulePath>/<name>} — exactly the {@link #typeDescriptor}
+     * class string (runtime-class-identity D1/D2). Used at emission sites
+     * that hold only the AST class name (META export, @jsonable helpers);
+     * construction sites tag with {@code typeDescriptor(cls)} directly.
+     */
+    private String qualifiedClassName(String name) {
+        String mp = modulePath != null ? modulePath : sourceFilePath;
+        if (mp == null || mp.isEmpty()) {
+            return name;
+        }
+        return "@" + mp + "/" + name;
+    }
+
     private String typeDescriptor(Type t) {
         if (t == null) return "null";
         return switch (t) {
@@ -767,7 +843,7 @@ public final class LuaBackend implements Visitor<Void> {
                 defaults.toString()));
             emitLine(LuaAbi.namespaceAssignment(
                 LuaAbi.helperKey(name, LuaAbi.HelperKind.META),
-                "__rt.export_class(\"" + name + "\")"));
+                "__rt.export_class(\"" + qualifiedClassName(name) + "\")"));
             // A module-level declaration is chunk-visible at the chunk-end
             // export statements (its artifacts are __deal namespace
             // fields, visible everywhere): record it as the last
@@ -779,7 +855,7 @@ public final class LuaBackend implements Visitor<Void> {
             emitLine("local " + LuaAbi.helperKey(name, LuaAbi.HelperKind.DEFAULTS)
                 + " = " + defaults.toString());
             emitLine("local " + LuaAbi.helperKey(name, LuaAbi.HelperKind.META)
-                + " = __rt.export_class(\"" + name + "\")");
+                + " = __rt.export_class(\"" + qualifiedClassName(name) + "\")");
             // Track the declaration so construction sites that resolve to
             // the root ClassSymbol of the same name reference the bare
             // <C>_defaults local (Lua lexical scoping) instead of the
@@ -1427,12 +1503,12 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("local " + node.catchVar());
         emitLine("if type(__err) == \"table\" and __err.code ~= nil then");
         indent++;
-        emitLine(node.catchVar() + " = __err");
+        emitLine(node.catchVar() + " = __rt.error_value(__err.code, __err.message)");
         indent--;
         emitLine("else");
         indent++;
         emitLine(node.catchVar()
-            + " = { code = \"E8001\", message = tostring(__err) }");
+            + " = __rt.error_value(\"E8001\", tostring(__err))");
         indent--;
         emitLine("end");
         visit(node.catchBlock());
@@ -1495,39 +1571,28 @@ public final class LuaBackend implements Visitor<Void> {
     public Void visit(ThrowStatement node) {
         Span throwSpan = node.span();
         if (node.expr() instanceof ObjectLiteralExpr objLit) {
-            // Include default Error fields when not provided
-            Set<String> providedFields = new HashSet<>();
+            // Reify the thrown Error as a tagged builtin-Error class
+            // instance (runtime-class-identity D3): positional arguments to
+            // __rt.error_value(code, message, file, line, column). Provided
+            // code/message keep their values; absent ones default to "".
+            // The checker rejects extra fields in Error literals (E4002),
+            // so only code/message can appear.
+            String codeExpr = "\"\"";
+            String messageExpr = "\"\"";
             for (Property prop : objLit.properties()) {
-                providedFields.add(prop.name());
-            }
-
-            StringBuilder sb = new StringBuilder("error({");
-            boolean first = true;
-            for (Property prop : objLit.properties()) {
-                if (!first) sb.append(", ");
-                first = false;
-                sb.append(prop.name()).append(" = ")
-                    .append(emitExpression(prop.value()));
-            }
-            {
-                if (!providedFields.contains("code")) {
-                    if (!first) sb.append(", ");
-                    first = false;
-                    sb.append("code = \"\"");
-                }
-                if (!providedFields.contains("message")) {
-                    if (!first) sb.append(", ");
-                    first = false;
-                    sb.append("message = \"\"");
+                if (prop.name().equals("code")) {
+                    codeExpr = emitExpression(prop.value());
+                } else if (prop.name().equals("message")) {
+                    messageExpr = emitExpression(prop.value());
                 }
             }
-            // Add source location to the error object
-            sb.append(", file = \"")
+            StringBuilder sb = new StringBuilder("error(__rt.error_value(")
+                .append(codeExpr).append(", ").append(messageExpr)
+                .append(", \"")
                 .append(escapeLuaStringNoQuotes(throwSpan.file()))
-                .append("\"");
-            sb.append(", line = ").append(throwSpan.startLine());
-            sb.append(", column = ").append(throwSpan.startColumn());
-            sb.append("})");
+                .append("\", ").append(throwSpan.startLine())
+                .append(", ").append(throwSpan.startColumn())
+                .append("))");
             emitLine(sb.toString());
         } else {
             emitLine("error(" + emitExpression(node.expr()) + ")");
@@ -1854,7 +1919,7 @@ public final class LuaBackend implements Visitor<Void> {
         }
 
         Span cspan = obj.span();
-        return "__rt.class_(\"" + className + "\", " + defaultsRef
+        return "__rt.class_(\"" + typeDescriptor(cls) + "\", " + defaultsRef
             + ", " + provided.toString() + ", " + spanArgs(cspan) + ")";
     }
 
@@ -2394,9 +2459,18 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     /**
-     * Extracts the class name from a type node representing a class type.
+     * Extracts the class identity descriptor for a type node representing a
+     * class type. Resolved through {@link #resolveTypeNode} so cross-module
+     * {@code QualifiedType} fields carry the defining module's true module
+     * path (not the import alias), and same-module named classes carry the
+     * checker's module path — byte-identical to construction tags and
+     * {@code check_type} descriptors (runtime-class-identity D2(4)).
      */
     private String classNameFromTypeNode(TypeNode typeNode) {
+        Type resolved = resolveTypeNode(typeNode);
+        if (resolved instanceof Type.Class cls) {
+            return typeDescriptor(cls);
+        }
         return switch (typeNode) {
             case NamedType nt -> nt.name();
             case QualifiedType qt -> qt.typeName();
@@ -2461,7 +2535,8 @@ public final class LuaBackend implements Visitor<Void> {
      */
     private void emitFromJson(JsonableClassMeta meta) {
         String name = meta.className;
-        String sig = "(string)->" + name + "|null";
+        String identity = qualifiedClassName(name);
+        String sig = "(string)->" + identity + "|null";
 
         // Non-module-level @jsonable classes keep the legacy $→_ scope-local
         // binding (local C_fromJson) and reference their scope-local
@@ -2484,7 +2559,7 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("__rt.check_string(s)");
         emitLine("local ok, parsed = pcall(__json_parse, s)");
         emitLine("if not ok then return __NULL end");
-        emitLine("local instance = __rt.json_from_json(\"" + name
+        emitLine("local instance = __rt.json_from_json(\"" + identity
             + "\", parsed, " + defaultsRef + ", " + fieldsRef + ")");
         emitLine("if instance == nil then return __NULL end");
         emitLine("return instance");
@@ -2498,7 +2573,8 @@ public final class LuaBackend implements Visitor<Void> {
      */
     private void emitToJson(JsonableClassMeta meta) {
         String name = meta.className;
-        String sig = "(" + name + ")->string";
+        String identity = qualifiedClassName(name);
+        String sig = "(" + identity + ")->string";
 
         String fieldsRef = meta.moduleLevel
             ? LuaAbi.helperRef(name, LuaAbi.HelperKind.FIELDS)
@@ -2511,8 +2587,8 @@ public final class LuaBackend implements Visitor<Void> {
             : "local " + name + "_toJson = __rt.function_(\"" + sig
                 + "\", function(v)");
         indent++;
-        emitLine("__rt.check_type(\"" + name + "\", v)");
-        emitLine("local t = __rt.json_to_json(\"" + name
+        emitLine("__rt.check_type(\"" + identity + "\", v)");
+        emitLine("local t = __rt.json_to_json(\"" + identity
             + "\", v, " + fieldsRef + ")");
         emitLine("return __json_stringify(t)");
         indent--;

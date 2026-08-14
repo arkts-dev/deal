@@ -737,6 +737,66 @@ test("check_type on non-class for class descriptor errors", function()
   assert_error(function() __rt.check_type("User", 42) end, "E8001")
 end)
 
+-- ==================== module-qualified class identity tests ====================
+
+test("check_type qualified class instance passes on exact identity", function()
+  local u = __rt.class_("@mod/User", {name = ""}, {name = "Ada"})
+  local r = __rt.check_type("@mod/User", u)
+  assert(r == u)
+end)
+
+test("check_type qualified class rejects foreign-module identity", function()
+  local u = __rt.class_("@other/User", {name = ""}, {name = "Ada"})
+  assert_error(function() __rt.check_type("@mod/User", u) end, "E8001")
+end)
+
+test("check_type qualified class rejects bare-tagged instance", function()
+  local u = __rt.class_("User", {name = ""}, {name = "Ada"})
+  assert_error(function() __rt.check_type("@mod/User", u) end, "E8001")
+end)
+
+test("check_type bare class rejects qualified-tagged instance", function()
+  local u = __rt.class_("@mod/User", {name = ""}, {name = "Ada"})
+  assert_error(function() __rt.check_type("User", u) end, "E8001")
+end)
+
+-- ==================== error_value tests ====================
+
+test("error_value shape with span args", function()
+  local e = __rt.error_value("E_LIMIT", "fail", "test.deal", 3, 7)
+  assert(e.__kind == "class")
+  assert(e.__classname == "Error")
+  assert(e.code == "E_LIMIT")
+  assert(e.message == "fail")
+  assert(e.file == "test.deal")
+  assert(e.line == 3)
+  assert(e.column == 7)
+end)
+
+test("error_value shape without span args", function()
+  local e = __rt.error_value("", "m")
+  assert(e.__kind == "class")
+  assert(e.__classname == "Error")
+  assert(e.code == "")
+  assert(e.message == "m")
+  assert(e.file == nil)
+  assert(e.line == nil)
+  assert(e.column == nil)
+end)
+
+test("check_type Error passes against error_value outputs", function()
+  local e = __rt.error_value("E_LIMIT", "fail")
+  local r = __rt.check_type("Error", e)
+  assert(r == e)
+end)
+
+test("check_type Error rejects non-Error class instances", function()
+  local u = __rt.class_("Error", {code = "", message = ""}, {code = "X"})
+  assert_error(function() __rt.check_type("Error", {__kind = "class", __classname = "User"}) end, "E8001")
+  -- sanity: a genuine Error instance still passes
+  assert(u.__kind == "class" and u.__classname == "Error")
+end)
+
 -- ==================== _deep_copy edge cases ====================
 
 test("deep copy preserves function wrappers by identity", function()

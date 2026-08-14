@@ -38,7 +38,7 @@ and `Func(ret=Array)`-family.
 
 | DEAL Type Descriptor (spec format) | LuaJIT Representation | JVM Representation | Notes |
 |---|---|---|---|
-| `Error` | Lua table with `code` and `message` keys | `DealError` record class | Builtin nominal class; user must not declare |
+| `Error` | Class-tagged Lua table (`__kind="class"`, `__classname="Error"`) with `code` and `message` keys | `DealError` record class | Builtin nominal class; user must not declare. Values are reified by `__rt.error_value` (throw/catch) or `__rt.class_` (construction); the bare `Error` tag is the only bare class identity that reaches codegen |
 
 ## Array types
 
@@ -73,7 +73,7 @@ and `Func(ret=Array)`-family.
 
 | DEAL Type Descriptor (spec format) | LuaJIT Representation | JVM Representation | Notes |
 |---|---|---|---|
-| `@module/ClassName` | Lua table tagged with class symbol | Generated record class | Module path resolved from source root |
+| `@module/ClassName` | Lua table tagged with the module-qualified class identity — `__classname` equals the exact descriptor string (`@module/ClassName`) | Generated record class | Identity by exact descriptor-string equality: construction, META export, and @jsonable deserialization all tag with the same string; module path resolved from source root |
 
 ## Function types
 
@@ -112,7 +112,7 @@ and `Func(ret=Array)`-family.
 |---|---|---|---|
 | `?@src/models/User` | `__NULL` or tagged class table | `null` reference or generated record | Nullable class |
 | `[?@src/models/User]` | 1-based array of nullable class tables | `DealArray<nullable<User>>` | Array of nullable classes |
-| `@mod/User` | Tagged class table | Generated record class | Class descriptor with module path |
+| `@mod/User` | Lua table tagged with the descriptor-equal class identity (`__classname` = `@mod/User`) | Generated record class | Class descriptor with module path |
 
 ---
 

@@ -856,12 +856,16 @@ public final class CompilationOrchestrator {
                 // import map to produce both the .lua file and the .deal.map.json
                 // sidecar.  importResolutions are required so that multi-module
                 // projects compile correctly when --source-map is active.
+                // info.modulePath is the same value seeded into NameResolver,
+                // so emitted class identity tags stay byte-identical to the
+                // checker's descriptors (runtime-class-identity D2(0)).
                 LuaBackend.generateToFile(info.rawAst, info.checkResult,
-                    info.sourcePath, outputRoot, outputPath, true,
+                    info.sourcePath, info.modulePath, outputRoot, outputPath, true,
                     importResolutions);
             } else {
                 String luaSource = LuaBackend.generateWithImports(
-                    info.rawAst, info.checkResult, info.sourcePath, importResolutions);
+                    info.rawAst, info.checkResult, info.sourcePath,
+                    info.modulePath, importResolutions);
                 Files.writeString(outputPath, luaSource);
             }
 

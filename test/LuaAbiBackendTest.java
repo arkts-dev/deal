@@ -226,18 +226,18 @@ public class LuaAbiBackendTest {
             "}\n";
         CompileResult out = compile(source);
 
-        assertThat(out.lua(), containsString("__deal[\"User$fromJson\"] = __rt.function_(\"(string)->User|null\""));
-        assertThat(out.lua(), containsString("__deal[\"User$toJson\"] = __rt.function_(\"(User)->string\""));
+        assertThat(out.lua(), containsString("__deal[\"User$fromJson\"] = __rt.function_(\"(string)->@test.deal/User|null\""));
+        assertThat(out.lua(), containsString("__deal[\"User$toJson\"] = __rt.function_(\"(@test.deal/User)->string\""));
         assertThat(out.lua(), containsString("__deal[\"User$fromJson\"].f("));
         assertThat(out.lua(), containsString("exports[\"User$fromJson\"] = __deal[\"User$fromJson\"]"));
         assertThat(out.lua(), containsString("__deal[\"User_fields\"] = {"));
         // The fromJson/toJson bodies reference the namespace artifacts
         // (defaultsRefForTypeNode / fieldsRefForTypeNode module-level forms).
         assertThat(out.lua(), containsString(
-            "__rt.json_from_json(\"User\", parsed, __deal[\"User_defaults\"], __deal[\"User_fields\"])"));
+            "__rt.json_from_json(\"@test.deal/User\", parsed, __deal[\"User_defaults\"], __deal[\"User_fields\"])"));
         assertThat(out.lua(), containsString(
-            "__rt.json_to_json(\"User\", v, __deal[\"User_fields\"])"));
-        assertThat(out.lua(), containsString("__deal[\"User_meta\"] = __rt.export_class(\"User\")"));
+            "__rt.json_to_json(\"@test.deal/User\", v, __deal[\"User_fields\"])"));
+        assertThat(out.lua(), containsString("__deal[\"User_meta\"] = __rt.export_class(\"@test.deal/User\")"));
         // The retired underscore-form helper binding is gone; the helper is
         // assigned only into the namespace table. (The user's own
         // `let User_fromJson` binding legitimately keeps its local name.)
@@ -274,9 +274,9 @@ public class LuaAbiBackendTest {
         CompileResult out = compile(source);
 
         assertThat(out.lua(), containsString("__deal[\"C_defaults\"] = {[\"end\"] = 0}"));
-        assertThat(out.lua(), containsString("__deal[\"C_meta\"] = __rt.export_class(\"C\")"));
+        assertThat(out.lua(), containsString("__deal[\"C_meta\"] = __rt.export_class(\"@test.deal/C\")"));
         assertThat(out.lua(), containsString(
-            "__rt.class_(\"C\", __deal[\"C_defaults\"], {[\"end\"] = 1},"));
+            "__rt.class_(\"@test.deal/C\", __deal[\"C_defaults\"], {[\"end\"] = 1},"));
         assertThat(out.lua(), not(containsString("local C_defaults")));
 
         assumeLuajit();
@@ -304,7 +304,7 @@ public class LuaAbiBackendTest {
         CompileResult out = compile(source);
 
         assertThat(out.lua(), containsString("local C_defaults = {x = 0}"));
-        assertThat(out.lua(), containsString("local C_meta = __rt.export_class(\"C\")"));
+        assertThat(out.lua(), containsString("local C_meta = __rt.export_class(\"@test.deal/C\")"));
         assertThat(out.lua(), not(containsString("__deal[\"C_defaults\"]")));
         assertThat(out.lua(), not(containsString("__deal[\"C_meta\"]")));
     }
@@ -325,7 +325,7 @@ public class LuaAbiBackendTest {
         CompileResult out = compile(source);
 
         assertThat(out.lua(), containsString("local C_defaults = {x = 0}"));
-        assertThat(out.lua(), containsString("local C_meta = __rt.export_class(\"C\")"));
+        assertThat(out.lua(), containsString("local C_meta = __rt.export_class(\"@test.deal/C\")"));
         assertThat(out.lua(), not(containsString("__deal[\"C_defaults\"]")));
         assertThat(out.lua(), not(containsString("__deal[\"C_meta\"]")));
 
@@ -362,8 +362,8 @@ public class LuaAbiBackendTest {
         assertThat(out.lua(), containsString("local C_defaults = {y = 0}"));
         // The construction references the scope-local artifact by bare name;
         // the module-level namespace entry must not be used for it.
-        assertThat(out.lua(), containsString("__rt.class_(\"C\", C_defaults, {y = 7},"));
-        assertThat(out.lua(), not(containsString("__rt.class_(\"C\", __deal[\"C_defaults\"]")));
+        assertThat(out.lua(), containsString("__rt.class_(\"@test.deal/C\", C_defaults, {y = 7},"));
+        assertThat(out.lua(), not(containsString("__rt.class_(\"@test.deal/C\", __deal[\"C_defaults\"]")));
 
         assumeLuajit();
         RunResult run = runLua(out.lua(), "print(__mod.test_shadow.f())");
@@ -411,13 +411,13 @@ public class LuaAbiBackendTest {
         CompileResult out = compile(source);
 
         // Construction inside the declaring then-branch: bare scope-local ref.
-        assertThat(out.lua(), containsString("__rt.class_(\"C\", C_defaults, {y = 5},"));
+        assertThat(out.lua(), containsString("__rt.class_(\"@test.deal/C\", C_defaults, {y = 5},"));
         // Construction in the else branch (then-branch local invisible):
         // module-level namespace entry.
         assertThat(out.lua(), containsString(
-            "__rt.class_(\"C\", __deal[\"C_defaults\"], {x = 2},"));
+            "__rt.class_(\"@test.deal/C\", __deal[\"C_defaults\"], {x = 2},"));
         assertThat(out.lua(), not(containsString(
-            "__rt.class_(\"C\", C_defaults, {x = 2},")));
+            "__rt.class_(\"@test.deal/C\", C_defaults, {x = 2},")));
 
         assumeLuajit();
         RunResult run = runLua(out.lua(),
@@ -446,7 +446,7 @@ public class LuaAbiBackendTest {
 
         assertThat(out.lua(), containsString("local C_defaults = {y = 0}"));
         assertThat(out.lua(), containsString(
-            "__rt.class_(\"C\", __deal[\"C_defaults\"], {x = 2},"));
+            "__rt.class_(\"@test.deal/C\", __deal[\"C_defaults\"], {x = 2},"));
 
         assumeLuajit();
         RunResult run = runLua(out.lua(), "print(__mod.f.f())");
@@ -473,9 +473,9 @@ public class LuaAbiBackendTest {
 
         assertThat(out.lua(), containsString("local C_defaults = {y = 0}"));
         assertThat(out.lua(), containsString(
-            "__rt.class_(\"C\", __deal[\"C_defaults\"], {x = 2},"));
+            "__rt.class_(\"@test.deal/C\", __deal[\"C_defaults\"], {x = 2},"));
         assertThat(out.lua(), not(containsString(
-            "__rt.class_(\"C\", C_defaults, {x = 2},")));
+            "__rt.class_(\"@test.deal/C\", C_defaults, {x = 2},")));
 
         assumeLuajit();
         RunResult run = runLua(out.lua(), "print(__mod.f.f())");
@@ -504,7 +504,7 @@ public class LuaAbiBackendTest {
         CompileResult out = compile(source);
 
         assertThat(out.lua(), containsString("local C_defaults = {x = 0}"));
-        assertThat(out.lua(), containsString("local C_meta = __rt.export_class(\"C\")"));
+        assertThat(out.lua(), containsString("local C_meta = __rt.export_class(\"@test.deal/C\")"));
         assertThat(out.lua(), containsString("exports.C = C_meta"));
         assertThat(out.lua(), containsString("exports.C_defaults = C_defaults"));
         assertThat(out.lua(), not(containsString("exports.C = __deal[\"C_meta\"]")));
@@ -520,7 +520,7 @@ public class LuaAbiBackendTest {
             "print(__mod.g.f())\n" +
             "if __mod.C == nil then error(\"exports.C is nil\") end\n" +
             "if __mod.C_defaults == nil then error(\"exports.C_defaults is nil\") end\n" +
-            "local c = __rt.class_(\"C\", __mod.C_defaults, {x = 3}, nil, nil, nil)\n" +
+            "local c = __rt.class_(\"@test.deal/C\", __mod.C_defaults, {x = 3}, nil, nil, nil)\n" +
             "print(c.x)");
         assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
         assertThat(run.output(), containsString("1"));
@@ -543,15 +543,15 @@ public class LuaAbiBackendTest {
         CompileResult out = compile(source);
 
         assertThat(out.lua(), containsString("local C_fields = {"));
-        assertThat(out.lua(), containsString("local C_fromJson = __rt.function_(\"(string)->C|null\", function(s)"));
-        assertThat(out.lua(), containsString("local C_toJson = __rt.function_(\"(C)->string\", function(v)"));
+        assertThat(out.lua(), containsString("local C_fromJson = __rt.function_(\"(string)->@test.deal/C|null\", function(s)"));
+        assertThat(out.lua(), containsString("local C_toJson = __rt.function_(\"(@test.deal/C)->string\", function(v)"));
         assertThat(out.lua(), containsString("exports.C_fields = C_fields"));
         assertThat(out.lua(), containsString("exports[\"C$fromJson\"] = C_fromJson"));
         assertThat(out.lua(), containsString("exports[\"C$toJson\"] = C_toJson"));
         // The deferred pass references the scope-local defaults/fields and
         // never writes namespace keys for the non-module-level class.
         assertThat(out.lua(), containsString(
-            "__rt.json_from_json(\"C\", parsed, C_defaults, C_fields)"));
+            "__rt.json_from_json(\"@test.deal/C\", parsed, C_defaults, C_fields)"));
         assertThat(out.lua(), not(containsString("__deal[\"C_fields\"]")));
         assertThat(out.lua(), not(containsString("__deal[\"C$fromJson\"]")));
         assertThat(out.lua(), not(containsString("__deal[\"C$toJson\"]")));
@@ -656,7 +656,7 @@ public class LuaAbiBackendTest {
             "if __mod.C_defaults == nil then error(\"C_defaults is nil\") end\n" +
             "if __mod.C_defaults.x ~= 0 then error(\"module defaults lost\") end\n" +
             "if __mod.C_defaults.y ~= nil then error(\"block defaults leaked\") end\n" +
-            "local c = __rt.class_(\"C\", __mod.C_defaults, {x = 3}, nil, nil, nil)\n" +
+            "local c = __rt.class_(\"@test.deal/C\", __mod.C_defaults, {x = 3}, nil, nil, nil)\n" +
             "print(c.x)\n" +
             "local d = __mod[\"C$fromJson\"].f(\"{\\\"x\\\":9}\")\n" +
             "print(d.x)");
@@ -698,7 +698,7 @@ public class LuaAbiBackendTest {
             "if __mod.C_defaults == nil then error(\"C_defaults is nil\") end\n" +
             "if __mod.C_defaults.y ~= 0 then error(\"block defaults lost\") end\n" +
             "if __mod.C_defaults.x ~= nil then error(\"module defaults leaked\") end\n" +
-            "local c = __rt.class_(\"C\", __mod.C_defaults, {y = 2}, nil, nil, nil)\n" +
+            "local c = __rt.class_(\"@test.deal/C\", __mod.C_defaults, {y = 2}, nil, nil, nil)\n" +
             "print(c.y)");
         assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
         assertThat(run.output(), containsString("1"));
@@ -735,7 +735,7 @@ public class LuaAbiBackendTest {
             "if __mod.C_defaults == nil then error(\"C_defaults is nil\") end\n" +
             "if __mod.C_defaults.x ~= 0 then error(\"module defaults lost\") end\n" +
             "if __mod.C_defaults.y ~= nil then error(\"function-local defaults leaked\") end\n" +
-            "local c = __rt.class_(\"C\", __mod.C_defaults, {x = 3}, nil, nil, nil)\n" +
+            "local c = __rt.class_(\"@test.deal/C\", __mod.C_defaults, {x = 3}, nil, nil, nil)\n" +
             "print(c.x)");
         assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
         assertThat(run.output(), containsString("1"));
@@ -801,10 +801,10 @@ public class LuaAbiBackendTest {
 
         assertThat(out.lua(), containsString("__deal[\"C_defaults\"] = {x = 0}"));
         assertThat(out.lua(), containsString("local C_defaults = {y = 0}"));
-        assertThat(out.lua(), containsString("__rt.class_(\"C\", C_defaults, {y = 6},"));
+        assertThat(out.lua(), containsString("__rt.class_(\"@test.deal/C\", C_defaults, {y = 6},"));
         // The sibling function constructs the module-level class: namespace.
         assertThat(out.lua(), containsString(
-            "__rt.class_(\"C\", __deal[\"C_defaults\"], {x = 3},"));
+            "__rt.class_(\"@test.deal/C\", __deal[\"C_defaults\"], {x = 3},"));
 
         assumeLuajit();
         RunResult run = runLua(out.lua(),

@@ -28,6 +28,23 @@ function __rt._err(code, message, file, line, column, expected, actual)
   }
 end
 
+--- Reify a thrown/caught error value as a tagged builtin-Error class instance.
+-- The trailing file/line/column arguments are optional: omitted arguments
+-- leave the corresponding fields absent (nil), matching _err's convention.
+-- Output satisfies check_type("Error", v) via the class branch's exact
+-- __classname compare.
+function __rt.error_value(code, message, file, line, column)
+  return {
+    __kind = "class",
+    __classname = "Error",
+    code = code,
+    message = message,
+    file = file,
+    line = line,
+    column = column
+  }
+end
+
 -- ===== Primitive type checks =====
 
 function __rt.check_null(v, file, line, column)
@@ -323,27 +340,13 @@ function __rt.check_type(descriptor, v, file, line, column)
     if type(v) ~= "table" or v.__kind ~= "class" then
       error(__rt._err("E8001", "expected class instance", file, line, column, "class", type(v)))
     end
-    -- For class checking, we compare class names
-    -- The descriptor may be "@path/ClassName" or just "ClassName"
-    local expected_class = parsed.name
-    if expected_class:sub(1, 1) == "@" then
-      -- Extract just the class name from the path
-      local last_slash = nil
-      for i = #expected_class, 1, -1 do
-        if expected_class:sub(i, i) == "/" then
-          last_slash = i
-          break
-        end
-      end
-      if last_slash then
-        expected_class = expected_class:sub(last_slash + 1)
-      else
-        expected_class = expected_class:sub(2)  -- remove "@"
-      end
-    end
+    -- Module-qualified nominal identity: the runtime tag equals the
+    -- canonical class descriptor string, so identity is exact string
+    -- equality — "@mod/User" vs "@other/User" vs bare "User" are three
+    -- distinct identities (no module-path stripping).
     local actual_class = v.__classname
-    if actual_class ~= expected_class then
-      error(__rt._err("E8001", "expected instance of " .. expected_class .. ", got " .. (actual_class or "unknown"), file, line, column, expected_class, actual_class))
+    if actual_class ~= parsed.name then
+      error(__rt._err("E8001", "expected instance of " .. parsed.name .. ", got " .. (actual_class or "unknown"), file, line, column, parsed.name, actual_class))
     end
     return v
   else

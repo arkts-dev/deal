@@ -230,6 +230,7 @@ public class LuaBackendTest {
         testTableWrite();
         testClassDeclaration();
         testClassConstruction();
+        testInstanceConstructorPathQualifiedTags();
         testClassConstructionOptionalProvided();
         testClassFieldAccess();
         testClassOptionalFieldAccess();
@@ -573,9 +574,36 @@ public class LuaBackendTest {
         );
         assertNoErrors(out, "class construction");
         assertContains(out.lua, "__rt.class_(", "class_ call");
-        assertContains(out.lua, "\"User\"", "class name");
+        assertContains(out.lua, "\"@test.deal/User\"", "qualified class identity");
         assertContains(out.lua, "name = \"Ada\"", "provided field");
         assertContains(out.lua, "User_defaults", "references module-level defaults");
+    }
+
+    // =========================================================================
+    // Test: instance-constructor path emits the qualified identity (D2(0))
+    // =========================================================================
+
+    static void testInstanceConstructorPathQualifiedTags() {
+        System.out.println("-- Instance Constructor Path Qualified Tags (D2(0)) --");
+        String source =
+            "class User { name: string = \"\"; }\n" +
+            "let u: User = { name: \"Ada\" };";
+        CompileOutput staticOut = compile(source);
+        CompileOutputDiag instanceOut = compileWithDiag(source);
+        assertNoErrors(staticOut, "static entry-point path");
+        if (instanceOut.result != null) {
+            check(instanceOut.result.diagnostics().stream()
+                    .noneMatch(d -> "error".equals(d.severity())),
+                "instance-constructor path: expected no errors");
+        } else {
+            check(false, "instance-constructor path: expected no errors");
+        }
+        assertContains(instanceOut.lua, "__rt.class_(\"@test.deal/User\"",
+            "instance path emits qualified construction tag");
+        assertContains(instanceOut.lua, "__rt.export_class(\"@test.deal/User\")",
+            "instance path emits qualified META tag");
+        check(staticOut.lua.equals(instanceOut.lua),
+            "instance-constructor output byte-identical to the static entry points");
     }
 
     // =========================================================================
@@ -883,7 +911,7 @@ public class LuaBackendTest {
         );
         assertNoErrors(out, "try/catch preserve error");
         assertContains(out.lua, "if type(__err) == \"table\" and __err.code ~= nil then", "error table check");
-        assertContains(out.lua, "e = __err", "preserve original error");
+        assertContains(out.lua, "e = __rt.error_value(__err.code, __err.message)", "preserve original error");
     }
 
     // =========================================================================
@@ -900,7 +928,7 @@ public class LuaBackendTest {
             "}"
         );
         assertNoErrors(out, "try/catch wrap");
-        assertContains(out.lua, "code = \"E8001\"", "E8001 wrapping");
+        assertContains(out.lua, "e = __rt.error_value(\"E8001\", tostring(__err))", "E8001 wrapping");
         assertContains(out.lua, "tostring(__err)", "tostring fallback");
     }
 
@@ -914,9 +942,8 @@ public class LuaBackendTest {
             "throw { code: \"E_LIMIT\", message: \"fail\" };"
         );
         assertNoErrors(out, "throw");
-        assertContains(out.lua, "error({", "error() call");
-        assertContains(out.lua, "code = \"E_LIMIT\"", "code preserved");
-        assertContains(out.lua, "message = \"fail\"", "message preserved");
+        assertContains(out.lua, "error(__rt.error_value(", "error() call");
+        assertContains(out.lua, "__rt.error_value(\"E_LIMIT\", \"fail\"", "code and message preserved positionally");
     }
 
     // =========================================================================
@@ -927,20 +954,23 @@ public class LuaBackendTest {
         System.out.println("-- Throw Default Fields (F3 round 5) --");
         CompileOutput out = compile("throw { message: \"fail\" };");
         assertNoErrors(out, "throw default fields");
-        assertContains(out.lua, "code = \"\"", "default code field");
-        assertContains(out.lua, "message = \"fail\"", "explicit message field");
+        assertContains(out.lua, "__rt.error_value(\"\", \"fail\", \"test.deal\", 1, 1)",
+            "default code positional + explicit message positional");
 
         CompileOutput out2 = compile("throw { code: \"E_LIMIT\" };");
         assertNoErrors(out2, "throw default message");
-        assertContains(out2.lua, "code = \"E_LIMIT\"", "explicit code field");
-        assertContains(out2.lua, "message = \"\"", "default message field");
+        assertContains(out2.lua, "__rt.error_value(\"E_LIMIT\", \"\", \"test.deal\", 1, 1)",
+            "explicit code positional + default message positional");
 
         CompileOutput out3 = compile("throw { code: \"E_LIMIT\", message: \"fail\" };");
         assertNoErrors(out3, "throw both fields");
-        assertContains(out3.lua, "code = \"E_LIMIT\"", "code field");
-        assertContains(out3.lua, "message = \"fail\"", "message field");
+        assertContains(out3.lua, "__rt.error_value(\"E_LIMIT\", \"fail\", \"test.deal\", 1, 1)",
+            "both fields positional");
+        // The sole surviving "code = " occurrence is the header
+        // __deal["Error_defaults"] table — the throw emission itself carries
+        // no code-key syntax after the error_value migration.
         int codeCount = countOccurrences(out3.lua, "code = ");
-        check(codeCount <= 2, "at most 2 'code = ' occurrences, got: " + codeCount);
+        check(codeCount == 1, "exactly 1 'code = ' occurrence (header Error_defaults), got: " + codeCount);
     }
 
     // =========================================================================
@@ -1968,7 +1998,7 @@ public class LuaBackendTest {
         // Check C$fromJson function
         assertContains(out.lua, "__deal[\"User$fromJson\"] = __rt.function_(",
             "C$fromJson wrapper");
-        assertContains(out.lua, "\"(string)->User|null\"", "fromJson signature");
+        assertContains(out.lua, "\"(string)->@test.deal/User|null\"", "fromJson signature");
         assertContains(out.lua, "pcall(__json_parse, s)", "pcall wrapping json parse");
         assertContains(out.lua, "__rt.json_from_json(", "json_from_json call");
         assertContains(out.lua, "return __NULL", "return null on failure");
@@ -1984,7 +2014,11 @@ public class LuaBackendTest {
         // Check C$toJson function
         assertContains(out.lua, "__deal[\"User$toJson\"] = __rt.function_(",
             "C$toJson wrapper");
-        assertContains(out.lua, "\"(User)->string\"", "toJson signature");
+        assertContains(out.lua, "\"(@test.deal/User)->string\"", "toJson signature");
+        assertContains(out.lua, "__rt.check_type(\"@test.deal/User\", v)",
+            "toJson internal check uses the qualified identity");
+        assertContains(out.lua, "__rt.json_to_json(\"@test.deal/User\", v,",
+            "json_to_json descriptor is the qualified identity");
         assertContains(out.lua, "__rt.json_to_json(", "json_to_json call");
         assertContains(out.lua, "__json_stringify(", "json_stringify call");
         check(structuralLuaCheck(out.lua), "valid Lua (structural)");
