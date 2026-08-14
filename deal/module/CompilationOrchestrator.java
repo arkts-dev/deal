@@ -983,6 +983,14 @@ public final class CompilationOrchestrator {
      * is an E6000 error — never a silent artifact overwrite.
      */
     private void codegenAllJvm() throws IOException {
+        if (sourceMap) {
+            // Source-map sidecars (.deal.map.json) are produced only by the
+            // LuaJIT emitter; surface that to the CLI user instead of
+            // silently producing no sidecars (ISSUE-0091 rework round 3).
+            System.err.println("Warning: --source-map produces no source-map "
+                + "sidecars with the JVM backend (source maps are "
+                + "LuaJIT-only)");
+        }
         // Pass 1: generate every module and merge diagnostics. Rejected
         // modules write no artifact.
         List<ModuleInfo> cleanModules = new ArrayList<>();

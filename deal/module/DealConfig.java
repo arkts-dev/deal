@@ -67,10 +67,13 @@ public final class DealConfig {
 
         // Validate backend (ISSUE-0091: the JVM skeleton backend is now
         // selectable; LuaJIT remains the default when the field is absent).
-        if (backend != null && !backend.equals("luajit") && !backend.equals("jvm")) {
+        // "lua" is accepted for parity with the CLI alias (Backend.fromCliName
+        // accepts both "lua" and "luajit" for LuaJIT).
+        if (backend != null && !backend.equals("luajit")
+                && !backend.equals("lua") && !backend.equals("jvm")) {
             throw new IllegalArgumentException(
                 "deal.json: unsupported backend '" + backend
-                    + "'. Supported backends: 'luajit', 'jvm'");
+                    + "'. Supported backends: 'luajit' (or 'lua'), 'jvm'");
         }
 
         return new DealConfig(configFile, moduleRoots, output, backend,

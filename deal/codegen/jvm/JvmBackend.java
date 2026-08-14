@@ -50,15 +50,26 @@ import java.util.Set;
  * them. Null-typed expressions with side effects (e.g.
  * {@code let z: null = console.log("x")}, {@code return helper()},
  * {@code x = console.log("y")} where {@code x: null}) are evaluated for
- * their observable behavior — never discarded — via the emitted
- * {@code nullAnd} helper ({@code stmt; Void v = null;} semantics). Uses of a
- * variable before its own declaration with no enclosing binding (LuaJIT
- * reads nil there and fails at runtime) and forward references to
+ * their observable behavior — never discarded — by hoisting the void call
+ * into a pre-statement emitted right before the containing statement
+ * ({@code System.out.println("x"); Void z = null;} semantics). No lambdas
+ * are ever emitted, so the artifact stays valid Java even when the call
+ * captures locals or parameters that are reassigned later in their scope
+ * (a lambda capture of a non-effectively-final local is a javac error).
+ * Uses of a variable before its own declaration with no enclosing binding
+ * (LuaJIT reads nil there and fails at runtime) and forward references to
  * later-declared module fields (Java's illegal-forward-reference rule)
  * are rejected with {@code E6000} so the artifact is always valid Java.
+ * Standalone non-call/non-assignment expression statements (e.g.
+ * {@code x + 1;}) are lowered to a dummy-local declaration so they are
+ * evaluated exactly like LuaJIT evaluates them (an int overflow there is
+ * an observable E8004), and {@code null === null} / {@code z === null}
+ * compare with Java's {@code ==}/{@code !=} (all null-typed values are the
+ * DEAL null value; spec §Value equality defines {@code null === null} as
+ * true).
  *
  * <p>JVM value mapping follows the spec's JVM backend contract
- * ({@code docs/spec-v1.1.md} §JVM value mapping): {@code int → long},
+ * ({@code docs/spec-v1.2.md} §JVM value mapping): {@code int → long},
  * {@code number → double}, {@code boolean → boolean}, {@code string → String},
  * {@code null → void}/{@code Void}. The JVM's static type system proves typed
  * boundaries redundant, which the spec explicitly permits ("The JVM backend
@@ -129,6 +140,22 @@ public final class JvmBackend {
 
     /** True while emitting direct module-body statements (class members). */
     private boolean moduleLevel = false;
+
+    /**
+     * Statements hoisted out of value positions (null-typed void calls that
+     * must run for their observable side effects). They are emitted in
+     * evaluation order right before the containing statement, preserving
+     * DEAL's left-to-right evaluation order without ever emitting a lambda
+     * (a lambda capturing a later-reassigned local would make javac reject
+     * the artifact).
+     */
+    private final List<String> preStatements = new ArrayList<>();
+
+    /** Counter for dummy-locals that force evaluation of standalone
+     * expression statements ({@code __ignored}, {@code __ignored1}, …).
+     * The {@code __} prefix can never collide with a translation:
+     * {@link #javaName} maps every leading underscore to {@code $u}. */
+    private int ignoredCounter = 0;
 
     private JvmBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
                        String sourcePath, String modulePath) {
@@ -235,8 +262,7 @@ public final class JvmBackend {
         Map.entry("intNeg", List.of("long")),
         Map.entry("numMod", List.of("double", "double")),
         Map.entry("intFromNumber", List.of("double")),
-        Map.entry("numberFromInt", List.of("long")),
-        Map.entry("nullAnd", List.of("Runnable")));
+        Map.entry("numberFromInt", List.of("long")));
 
     /**
      * Translates a DEAL identifier to a Java identifier. The encoding is
@@ -403,10 +429,6 @@ public final class JvmBackend {
         emitLine("// int(v) / number(v) conversion intrinsics (E8001 bad value, E8004 out of range).");
         emitLine("static long intFromNumber(double v) { if (Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v >= 9.223372036854776E18 || v < -9.223372036854776E18) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) v; }");
         emitLine("static double numberFromInt(long v) { return (double) v; }");
-        emitLine("// nullAnd: evaluates a side-effecting null-typed expression (a void");
-        emitLine("// call) in value position, preserving evaluation order and yielding");
-        emitLine("// the DEAL null value (Void).");
-        emitLine("static Void nullAnd(Runnable r) { r.run(); return null; }");
         emitLine();
     }
 
@@ -479,6 +501,24 @@ public final class JvmBackend {
         String initializer = emitExpression(vd.initializer());
         String visibility = moduleLevel ? "static " : "";
         String javaVar = declareLocal(vd.name());
+        if (moduleLevel) {
+            // Hoisted side effects of a field initializer (e.g.
+            // `let z: null = console.log("x")`) cannot stand bare in the
+            // class body; wrap them in a static initializer emitted before
+            // the field declaration, preserving source order.
+            if (!preStatements.isEmpty()) {
+                emitLine("static {");
+                indent++;
+                flushPreStatements();
+                indent--;
+                emitLine("}");
+            }
+        } else {
+            // Emit the hoisted side effects before the declaration line so
+            // they still see the pre-declaration scope (a shadowed
+            // initializer's RHS binds to the enclosing variable).
+            flushPreStatements();
+        }
         emitLine(visibility + javaType + " " + javaVar + " = " + initializer + ";");
     }
 
@@ -555,9 +595,9 @@ public final class JvmBackend {
             emitLine("return;");
             return;
         }
-        Type t = typeOf(rs.expr().get());
+        ExpressionNode e = rs.expr().get();
+        Type t = typeOf(e);
         if (t instanceof Type.Null) {
-            ExpressionNode e = rs.expr().get();
             if (isBareNullLiteral(e) || e instanceof IdentifierExpr) {
                 // The null literal and a null-typed variable read have no
                 // observable side effects — and a bare identifier is not a
@@ -565,26 +605,34 @@ public final class JvmBackend {
                 emitLine("return;");
                 return;
             }
-            // ISSUE-0091 rework: any other null-typed return expression is a
-            // side-effecting call or assignment (console.log/console.error, a
+            // Any other null-typed return expression is a side-effecting
+            // call or assignment (console.log/console.error, a
             // null-returning function) — LuaJIT evaluates it before
-            // returning. Evaluate it as a statement first, then return;
-            // discarding it would silently drop its output. Assignments must
-            // be emitted without parentheses: a parenthesized assignment is
-            // not a valid Java expression statement (JLS §14.8).
+            // returning. Evaluate it first, then return; discarding it
+            // would silently drop its output. Assignments must be emitted
+            // without parentheses: a parenthesized assignment is not a
+            // valid Java expression statement (JLS §14.8). Calls are
+            // hoisted into pre-statements by emitExpression.
             if (e instanceof AssignmentExpr ae) {
-                emitLine(emitAssignmentCore(ae) + ";");
+                String core = emitAssignmentCore(ae);
+                flushPreStatements();
+                emitLine(core + ";");
             } else {
-                emitLine(emitExpression(e) + ";");
+                emitExpression(e);
+                flushPreStatements();
             }
             emitLine("return;");
             return;
         }
-        emitLine("return " + emitExpression(rs.expr().get()) + ";");
+        String value = emitExpression(e);
+        flushPreStatements();
+        emitLine("return " + value + ";");
     }
 
     private void emitIf(IfStatement is) {
-        emitLine("if (" + emitExpression(is.condition()) + ") {");
+        String condition = emitExpression(is.condition());
+        flushPreStatements();
+        emitLine("if (" + condition + ") {");
         indent++;
         emitScopedBlock(is.thenBlock());
         indent--;
@@ -592,11 +640,28 @@ public final class JvmBackend {
             switch (is.elseBranch().get()) {
                 case Either.Left<IfStatement, Block> left -> {
                     // Java requires the head block to be closed before "else".
-                    emitLine("} else if (" + emitExpression(left.value().condition()) + ") {");
-                    indent++;
-                    emitScopedBlock(left.value().thenBlock());
-                    indent--;
-                    emitIfContinuation(left.value());
+                    String elseCondition = emitExpression(left.value().condition());
+                    if (preStatements.isEmpty()) {
+                        emitLine("} else if (" + elseCondition + ") {");
+                        indent++;
+                        emitScopedBlock(left.value().thenBlock());
+                        indent--;
+                        emitIfContinuation(left.value());
+                    } else {
+                        // A condition with hoisted side effects cannot place
+                        // statements between `}` and `else`; nest the chain
+                        // in a plain else block instead.
+                        emitLine("} else {");
+                        indent++;
+                        flushPreStatements();
+                        emitLine("if (" + elseCondition + ") {");
+                        indent++;
+                        emitScopedBlock(left.value().thenBlock());
+                        indent--;
+                        emitIfContinuation(left.value());
+                        indent--;
+                        emitLine("}");
+                    }
                 }
                 case Either.Right<IfStatement, Block> right -> {
                     emitLine("} else {");
@@ -616,11 +681,27 @@ public final class JvmBackend {
         if (is.elseBranch().isPresent()) {
             switch (is.elseBranch().get()) {
                 case Either.Left<IfStatement, Block> left -> {
-                    emitLine("} else if (" + emitExpression(left.value().condition()) + ") {");
-                    indent++;
-                    emitScopedBlock(left.value().thenBlock());
-                    indent--;
-                    emitIfContinuation(left.value());
+                    String condition = emitExpression(left.value().condition());
+                    if (preStatements.isEmpty()) {
+                        emitLine("} else if (" + condition + ") {");
+                        indent++;
+                        emitScopedBlock(left.value().thenBlock());
+                        indent--;
+                        emitIfContinuation(left.value());
+                    } else {
+                        // Hoisted condition side effects: nest the chain
+                        // (no statements may sit between `}` and `else`).
+                        emitLine("} else {");
+                        indent++;
+                        flushPreStatements();
+                        emitLine("if (" + condition + ") {");
+                        indent++;
+                        emitScopedBlock(left.value().thenBlock());
+                        indent--;
+                        emitIfContinuation(left.value());
+                        indent--;
+                        emitLine("}");
+                    }
                 }
                 case Either.Right<IfStatement, Block> right -> {
                     emitLine("} else {");
@@ -653,15 +734,36 @@ public final class JvmBackend {
 
     private void emitExpressionStatement(ExpressionStatement es) {
         if (es.expr() instanceof CallExpr call) {
-            emitLine(emitCall(call) + ";");
+            if (typeOf(call) instanceof Type.Null) {
+                // A null-typed call (console.log/console.error, a
+                // null-returning function) is hoisted into a pre-statement
+                // by emitExpression; its void Java result is not a value.
+                emitExpression(call);
+                flushPreStatements();
+            } else {
+                String raw = emitCall(call);
+                flushPreStatements();
+                emitLine(raw + ";");
+            }
             return;
         }
         if (es.expr() instanceof AssignmentExpr ae) {
             // Parenthesized assignment is not a Java statement.
-            emitLine(emitAssignmentCore(ae) + ";");
+            String core = emitAssignmentCore(ae);
+            flushPreStatements();
+            emitLine(core + ";");
             return;
         }
-        unsupported("expression statements of this form", es.span());
+        // Any other standalone expression statement (e.g. `x + 1;`) is
+        // checker-accepted and LuaJIT evaluates it — an int overflow there
+        // is an observable E8004. Lower it to a dummy-local declaration so
+        // it is genuinely evaluated instead of being rejected or discarded.
+        String value = emitExpression(es.expr());
+        flushPreStatements();
+        Type t = typeOf(es.expr());
+        String javaType = javaLocalType(t, es.span());
+        if (javaType == null) return; // diagnostic already recorded
+        emitLine(javaType + " " + nextIgnoredName() + " = " + value + ";");
     }
 
     // =========================================================================
@@ -676,13 +778,19 @@ public final class JvmBackend {
             case UnaryExpr u -> emitUnary(u);
             case CallExpr call -> {
                 String raw = emitCall(call);
-                // Null-typed calls (console.log/console.error, null-returning
-                // functions) are void Java expressions; wrap them so they can
-                // appear in value position (initializers, assignments, call
-                // arguments) while preserving evaluation order and yielding
-                // the null value.
-                yield typeOf(call) instanceof Type.Null
-                    ? "nullAnd(() -> " + raw + ")" : raw;
+                if (typeOf(call) instanceof Type.Null) {
+                    // Null-typed calls (console.log/console.error,
+                    // null-returning functions) are void Java expressions.
+                    // Hoist the call into a pre-statement emitted before the
+                    // containing statement and yield the DEAL null value.
+                    // Never wrap it in a lambda: a lambda capturing a local
+                    // or parameter that is reassigned anywhere in its
+                    // enclosing scope is a javac error, and DEAL locals and
+                    // parameters are freely reassignable.
+                    preStatements.add(raw + ";");
+                    yield "null";
+                }
+                yield raw;
             }
             case AssignmentExpr ae -> emitAssignment(ae);
             case MemberAccessExpr mae -> emitMemberAccessValue(mae);
@@ -825,6 +933,21 @@ public final class JvmBackend {
                 case GTE -> "(" + left + " >= " + right + ")";
                 case AND -> "(" + left + " && " + right + ")";
                 case OR -> "(" + left + " || " + right + ")";
+            };
+        }
+
+        // Null equality: every null-typed value is the DEAL null value;
+        // `null === null` is true (spec §Value equality). Operand side
+        // effects were already hoisted into pre-statements by emitExpression,
+        // so the emitted operands are null here.
+        if (leftType instanceof Type.Null && rightType instanceof Type.Null) {
+            return switch (op) {
+                case EQ -> "(" + left + " == " + right + ")";
+                case NEQ -> "(" + left + " != " + right + ")";
+                default -> {
+                    unsupported("operator " + op + " on null values", bin.span());
+                    yield "null";
+                }
             };
         }
 
@@ -1217,6 +1340,28 @@ public final class JvmBackend {
 
     private void emitLine() {
         out.append('\n');
+    }
+
+    /** Emits every hoisted pre-statement (in evaluation order) and clears
+     * the buffer. Called at each statement boundary, after all expression
+     * emission for that statement is complete, so hoisted side effects run
+     * exactly where Java's left-to-right evaluation would run them. */
+    private void flushPreStatements() {
+        for (String stmt : preStatements) {
+            emitLine(stmt);
+        }
+        preStatements.clear();
+    }
+
+    /** A fresh dummy-local name for a forced evaluation ({@code __ignored},
+     * {@code __ignored1}, …). The {@code __} prefix is unreachable from
+     * {@link #javaName} (underscores escape to {@code $u}), so it can never
+     * collide with a translated user identifier. */
+    private String nextIgnoredName() {
+        String name = ignoredCounter == 0
+            ? "__ignored" : "__ignored" + ignoredCounter;
+        ignoredCounter++;
+        return name;
     }
 
     private void emitLine(String s) {

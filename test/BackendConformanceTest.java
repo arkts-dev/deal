@@ -136,14 +136,19 @@ public class BackendConformanceTest {
         }
     }
 
-    /** Probes that both {@code javac} and {@code java} are invocable. */
+    /**
+     * Probes that both {@code javac} and {@code java} are invocable and
+     * functional: a broken-but-present toolchain (e.g. a wrapper script that
+     * exits non-zero) must make the JVM runtime fixtures skip, not fail.
+     */
     private static boolean probeJvm() {
         try {
-            new ProcessBuilder("javac", "-version")
-                .redirectErrorStream(true).start().waitFor();
-            new ProcessBuilder("java", "-version")
-                .redirectErrorStream(true).start().waitFor();
-            return true;
+            Process javac = new ProcessBuilder("javac", "-version")
+                .redirectErrorStream(true).start();
+            if (javac.waitFor() != 0) return false;
+            Process java = new ProcessBuilder("java", "-version")
+                .redirectErrorStream(true).start();
+            return java.waitFor() == 0;
         } catch (IOException | InterruptedException e) {
             return false;
         }
@@ -586,7 +591,9 @@ public class BackendConformanceTest {
      * exported functions in declaration order (mirroring the Lua harness) and
      * prints non-null results; DEAL runtime errors print
      * {@code DEAL_ERROR_CODE: <code>} and exit 1, matching the LuaJIT runner's
-     * xpcall handler.
+     * xpcall handler. When no function is auto-invoked, the runner
+     * initializes the module class with {@code Class.forName} so a
+     * module-load-only fixture's static initializers still run.
      */
     static String buildJvmRunner(ProgramNode program, String className) {
         StringBuilder sb = new StringBuilder();
@@ -616,7 +623,19 @@ public class BackendConformanceTest {
             }
         }
         if (!any) {
-            sb.append("            // no zero-arity exported functions\n");
+            // No zero-arity exported function was auto-invoked, so the module
+            // class would never be initialized and module-level statements
+            // (its static initializers) would never run — a load-only fixture
+            // would produce no output. Initialize the class explicitly so
+            // module-level side effects are observable.
+            sb.append("            // no zero-arity exported functions; initialize the module class\n");
+            sb.append("            // so module-level statements (static initializers) run.\n");
+            sb.append("            try { Class.forName(\"").append(className).append("\"); }\n");
+            sb.append("                catch (ClassNotFoundException e) { throw new RuntimeException(e); }\n");
+            sb.append("                catch (ExceptionInInitializerError e) {\n");
+            sb.append("                    if (e.getCause() instanceof RuntimeException re) throw re;\n");
+            sb.append("                    throw e;\n");
+            sb.append("                }\n");
         }
         sb.append("        } catch (").append(className).append(".DealError e) {\n");
         sb.append("            System.out.println(\"DEAL_ERROR_CODE: \" + e.code"

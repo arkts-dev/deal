@@ -3,10 +3,16 @@
 A small but real end-to-end JVM backend for the DEAL compiler. It walks the
 typed AST (the compiler's IR — `deal-compiler-architecture-v1`) and emits a
 self-contained Java class whose static methods implement the module's
-functions. The Java source is a real JVM artifact: it is compiled by
-`javac` and executed by `java` in a subprocess, both in production
-(`CompilationOrchestrator` phase 4) and in the conformance harness
-(`test/BackendConformanceTest.java`).
+functions. The Java source is a real JVM artifact: `CompilationOrchestrator`
+phase 4 (backend `jvm`) writes the `<ClassName>.java` source, and the
+conformance harness (`test/BackendConformanceTest.java`) plus
+`test/JvmBackendTest.java` compile it with `javac` and execute it with
+`java` in subprocesses — every JVM fixture in the suite runs against a
+real compiled artifact. Production phase 4 itself only writes the source
+and does not run `javac`/`java`; therefore the CLI cannot observe a
+javac-rejected artifact, which is exactly why the backend guarantees that
+every artifact it emits is valid, compilable Java (see
+"Observable-behavior guarantees" below).
 
 ## Skeleton scope
 
@@ -18,10 +24,11 @@ Supported (real semantics, spec JVM value mapping):
 | `number` | primitive `double` (Lua-style floored `%` via `numMod`) |
 | `boolean` | primitive `boolean` |
 | `string` | `java.lang.String` (`===` via `equals`; ordering via `compareTo`) |
-| `null` | `void` returns / `Void` locals and params |
+| `null` | `void` returns / `Void` locals and params; `null === null` is `true`, `z === null`/`!==` emit Java `==`/`!=` (spec §Value equality) |
 | functions | `static` methods of the generated module class |
 | `let` locals / module fields | locals (shadowing disambiguated `$n`) / `static` fields |
 | `if`/`else if`/`else`, `return`, assignment, direct calls | plain Java control flow |
+| standalone expression statements (`x + 1;`) | lowered to a dummy-local declaration (`long __ignored = intAdd(x, 1L);`) so they are genuinely evaluated — an int overflow there is an observable E8004, as under LuaJIT |
 | `int()` / `number()` intrinsics | `intFromNumber` / `numberFromInt` helpers (E8001/E8004) |
 | `import * as c from "std/console"` | `c.log` → `System.out.println`, `c.error` → `System.err.println` |
 
@@ -31,7 +38,7 @@ tables, nullables, function types, stdlib modules, async/await, loops,
 try/throw, host ABI, `@jsonable`, template literals, for-of.
 
 The JVM's static type system proves typed boundaries redundant, which the
-spec explicitly permits (`docs/spec-v1.1.md` §JVM backend contract: "The JVM
+spec explicitly permits (`docs/spec-v1.2.md` §JVM backend contract: "The JVM
 backend may use JVM primitive types, final classes, verifier-checked
 bytecode, method signatures, and JIT optimization to prove typed-boundary
 checks redundant"). This is why `let z: null = console.log("x")` runs the
@@ -48,16 +55,27 @@ reports success for an artifact `javac` would reject.
 - **Null-typed side effects are never discarded.** `return console.log("x")`,
   `return helper()` (helper: `() => null`), `let z: null = console.log(...)`,
   `x = console.log(...)` (x: null), and null-typed call arguments evaluate
-  their expression for its observable behavior: the emitted `nullAnd`
-  helper runs the void call and yields `null`
-  (`Void z = nullAnd(() -> System.out.println("assign-log"));` —
-  the `stmt; Void z = null;` lowering). LuaJIT evaluates the same
-  expressions before returning/assigning.
+  their expression for its observable behavior: the void call is *hoisted*
+  into a pre-statement emitted right before the containing statement, and
+  the value position yields `null`
+  (`System.out.println("assign-log"); Void z = null;`). LuaJIT evaluates
+  the same expressions before returning/assigning, and the hoisting
+  preserves DEAL's left-to-right evaluation order.
+- **No lambdas are ever emitted.** The previous `nullAnd(() -> …)` lambda
+  lowering could make `javac` reject an artifact when the call captured a
+  local or parameter reassigned anywhere in its enclosing scope ("local
+  variables referenced from a lambda expression must be final or
+  effectively final") — `let z: null = console.log(a); a = "y";` is a
+  checker-accepted, in-scope program. The statement-hoisting lowering
+  contains no captures, so reassigned locals and parameters in
+  initializer/argument/assignment positions always compile.
 - **Module-level statements run at load time.** Non-declaration module-level
   statements (calls, assignments, `if`s, blocks) are emitted into
   `static { … }` initializer blocks interleaved in source order with field
   initializers, so `console.log("a"); let x = f();` runs `a`, then `f()`
   — exactly where LuaJIT executes module-level statements (require time).
+  Hoisted side effects of a module field initializer are wrapped in their
+  own `static { … }` block emitted before the field declaration.
   Module-level `return` is rejected with E6000 (Java initializers cannot
   return).
 - **Shadowed initializers bind to the enclosing scope.** The initializer is
@@ -92,9 +110,9 @@ reports success for an artifact `javac` would reject.
   `Backend.LUAJIT` (`deal/module/CompilationOrchestrator.java`). The CLI
   selects it via `--backend <lua|jvm>` (`deal/Main.java`); the project
   manifest selects it via `deal.json`'s `"backend"` field
-  (`deal/module/DealConfig.java` now accepts `"jvm"`). LuaJIT remains the
-  default everywhere: no flag, no manifest field, and no constructor
-  argument all select it.
+  (`deal/module/DealConfig.java` accepts `"jvm"` and — for parity with the
+  CLI alias — `"lua"`/`"luajit"`). LuaJIT remains the default everywhere:
+  no flag, no manifest field, and no constructor argument all select it.
 
 - **Lua use site** — `CompilationOrchestrator.codegenLuaModule()`: the
   pre-ISSUE-0091 `LuaBackend.generateToFile`/`generateWithImports` emission
@@ -104,8 +122,9 @@ reports success for an artifact `javac` would reject.
 - **JVM use site** — `CompilationOrchestrator.codegenAllJvm()`: calls
   `JvmBackend.generate(...)` for every module, merges E6000 diagnostics into
   the standard error report (no artifact for a rejected module), writes
-  `<ClassName>.java` with collision detection, and fails the compile on any
-  E6000. The conformance use site is
+  `<ClassName>.java` with collision detection, fails the compile on any
+  E6000, and prints a warning when `--source-map` is requested (the JVM
+  path produces no sidecars). The conformance use site is
   `test/BackendConformanceTest.runJvmAssertions()`: real `JvmBackend`
   codegen → `javac` subprocess (asserts `.class` artifacts exist) →
   `java` subprocess → asserts stdout/error/exit code.
@@ -115,23 +134,29 @@ reports success for an artifact `javac` would reject.
     `test/LuaBackendIntegrationTest`, `test/ConformanceTest`,
     `test/conformance/fixtures/*.json` `backends: ["luajit"]`) stays green
     and unmodified.
-  - JVM: `test/conformance/fixtures/jvm-skeleton.json` — eleven JVM-only
+  - JVM: `test/conformance/fixtures/jvm-skeleton.json` — twenty-two JVM-only
     fixtures (literals/output, int arithmetic, local variables with
     shadowing, if/else, a frontend compile-error rejected before the
     backend, null-typed return side effects ×2, null-typed initializers,
-    module-level load-time statements and assignment, and a shadowed
-    initializer computing 6) run end-to-end under
+    module-level load-time statements and assignment, a shadowed
+    initializer computing 6, null-typed captures of reassigned locals and
+    parameters, floored `%` on negative operands, string equality/ordering,
+    `console.error` → stderr, null equality, standalone expression
+    statements, and a module-load-only fixture) run end-to-end under
     `test/BackendConformanceTest`.
   - Seam: `test/JvmBackendTest.java` — identifier translation, collision-safe
     class-name derivation, emission, E6000 rejection (including unused
     imports, module-level returns, use-before-declaration, helper-name
     collisions), observable-behavior preservation for null-typed side
-    effects/module-level statements/shadowed initializers via
+    effects (incl. reassigned-local captures in initializer/argument/
+    assignment positions and via parameters, with a no-lambda emission
+    assertion), module-level statements/shadowed initializers via
     `javac`+`java` subprocesses, runtime error codes (E8004/E8005/E8006 and
     the E8001 infinity alignment), the orchestrator JVM path (artifact
     exists, compiles, no `.lua`/runtime copied, import rejection,
-    class-name collision detection), the orchestrator default staying
-    LuaJIT, `DealConfig` and CLI backend selection.
+    class-name collision detection, the `--source-map` warning), the
+    orchestrator default staying LuaJIT, `DealConfig` and CLI backend
+    selection.
 
 ## Tests
 
@@ -153,8 +178,8 @@ java -ea -cp build deal.test.BackendConformanceTest    # JVM + LuaJIT fixtures
 ```
 
 The JVM fixtures require `javac` and `java` on `PATH` (present in any JDK
-that builds this repository); when absent, the JVM runtime fixtures are
-skipped, mirroring the LuaJIT skip.
+that builds this repository); when absent or broken (non-zero `-version`
+probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
 
 ## Known skeleton limitations (documented, not silent)
 
@@ -175,8 +200,15 @@ skipped, mirroring the LuaJIT skip.
   backend contract permits — see "Observable-behavior guarantees" above.
 - String ordering uses UTF-16 code-unit order (`String.compareTo`); LuaJIT
   orders bytewise. Identical for ASCII.
-- `--source-map` sidecars are a LuaJIT feature; the JVM path ignores them.
-- The generated artifact is a module class without a `main`; the
+- `--source-map` sidecars are a LuaJIT feature; the JVM path prints a
+  warning when `--source-map` is requested instead of silently producing
+  no sidecars.
+- Production phase 4 (the `jvm` backend) writes the `.java` source but does
+  not run `javac`/`java` — only the test harness compiles and executes the
+  artifact. The generated artifact is a module class without a `main`; the
   conformance adapter compiles it together with a runner that auto-invokes
   the zero-arity exported functions in declaration order and prints
-  non-null results (mirroring the Lua harness's auto-invocation).
+  non-null results (mirroring the Lua harness's auto-invocation), and
+  initializes the module class via `Class.forName` when no function is
+  auto-invoked so module-load-only fixtures still observe their load-time
+  output.

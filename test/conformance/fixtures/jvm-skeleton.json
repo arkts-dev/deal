@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM backend skeleton conformance (ISSUE-0091). JVM-only fixtures: literals/output, int arithmetic, local variables, if/else, a frontend compile-error rejected before the backend, and (rework round) the observable-behavior regressions: null-typed returns/initializers with side effects, module-level load-time statements, and shadowed initializers. The JVM adapter compiles the emitted Java artifact with javac and executes it with java in a subprocess; the generated runner auto-invokes zero-arity exported functions in declaration order and prints their non-null results, so expectedOutput observes real return values (console.log output is also captured).",
+  "description": "JVM backend skeleton conformance (ISSUE-0091). JVM-only fixtures: literals/output, int arithmetic, local variables, if/else, a frontend compile-error rejected before the backend, and the observable-behavior regressions: null-typed returns/initializers with side effects, null-typed captures of reassigned locals and parameters, floored % on negative operands, string equality/ordering, console.error -> stderr, null equality, standalone expression statements, module-level load-time statements, and a module-load-only fixture (runner initializes the module class when no function is auto-invoked). The JVM adapter compiles the emitted Java artifact with javac and executes it with java in a subprocess; the generated runner auto-invokes zero-arity exported functions in declaration order and prints their non-null results, so expectedOutput observes real return values (console.log output is also captured).",
   "tests": [
     {
       "name": "jvm-literals-output",
@@ -10,9 +10,15 @@
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,
-      "irContains": ["function test: string", "literal 42 : int", "literal 3.5 : number"],
+      "irContains": [
+        "function test: string",
+        "literal 42 : int",
+        "literal 3.5 : number"
+      ],
       "irNotContains": [],
-      "backends": ["jvm"]
+      "backends": [
+        "jvm"
+      ]
     },
     {
       "name": "jvm-int-arithmetic",
@@ -22,9 +28,15 @@
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,
-      "irContains": ["function test: int", "binary + : int", "binary / : int"],
+      "irContains": [
+        "function test: int",
+        "binary + : int",
+        "binary / : int"
+      ],
       "irNotContains": [],
-      "backends": ["jvm"]
+      "backends": [
+        "jvm"
+      ]
     },
     {
       "name": "jvm-local-variable",
@@ -34,9 +46,15 @@
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,
-      "irContains": ["function test: int", "let x: int", "binary + : int"],
+      "irContains": [
+        "function test: int",
+        "let x: int",
+        "binary + : int"
+      ],
       "irNotContains": [],
-      "backends": ["jvm"]
+      "backends": [
+        "jvm"
+      ]
     },
     {
       "name": "jvm-if-else",
@@ -46,9 +64,15 @@
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,
-      "irContains": ["function test: int", "if @fixture-jvm-if-else.deal", "binary < : boolean"],
+      "irContains": [
+        "function test: int",
+        "if @fixture-jvm-if-else.deal",
+        "binary < : boolean"
+      ],
       "irNotContains": [],
-      "backends": ["jvm"]
+      "backends": [
+        "jvm"
+      ]
     },
     {
       "name": "jvm-frontend-error-rejected",
@@ -60,7 +84,9 @@
       "expectedCompileError": "E3001",
       "irContains": [],
       "irNotContains": [],
-      "backends": ["jvm"]
+      "backends": [
+        "jvm"
+      ]
     },
     {
       "name": "jvm-null-return-log",
@@ -70,9 +96,14 @@
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,
-      "irContains": ["function test: null", "call : null"],
+      "irContains": [
+        "function test: null",
+        "call : null"
+      ],
       "irNotContains": [],
-      "backends": ["jvm"]
+      "backends": [
+        "jvm"
+      ]
     },
     {
       "name": "jvm-null-return-helper",
@@ -82,9 +113,14 @@
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,
-      "irContains": ["function test: null", "function helper: null"],
+      "irContains": [
+        "function test: null",
+        "function helper: null"
+      ],
       "irNotContains": [],
-      "backends": ["jvm"]
+      "backends": [
+        "jvm"
+      ]
     },
     {
       "name": "jvm-null-var-init",
@@ -94,9 +130,14 @@
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,
-      "irContains": ["function test: null", "let z: null"],
+      "irContains": [
+        "function test: null",
+        "let z: null"
+      ],
       "irNotContains": [],
-      "backends": ["jvm"]
+      "backends": [
+        "jvm"
+      ]
     },
     {
       "name": "jvm-module-level-statements",
@@ -106,9 +147,14 @@
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,
-      "irContains": ["let x: int", "if @fixture-jvm-module-level-statements.deal"],
+      "irContains": [
+        "let x: int",
+        "if @fixture-jvm-module-level-statements.deal"
+      ],
       "irNotContains": [],
-      "backends": ["jvm"]
+      "backends": [
+        "jvm"
+      ]
     },
     {
       "name": "jvm-module-level-assignment",
@@ -118,9 +164,13 @@
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,
-      "irContains": ["let x: int"],
+      "irContains": [
+        "let x: int"
+      ],
       "irNotContains": [],
-      "backends": ["jvm"]
+      "backends": [
+        "jvm"
+      ]
     },
     {
       "name": "jvm-shadowed-initializer",
@@ -130,9 +180,199 @@
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,
-      "irContains": ["function test: int", "binary + : int"],
+      "irContains": [
+        "function test: int",
+        "binary + : int"
+      ],
       "irNotContains": [],
-      "backends": ["jvm"]
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-null-capture-reassigned",
+      "description": "A null-typed initializer that captures a local reassigned after the capture compiles and runs (a lambda lowering would make javac reject the artifact: local variables referenced from a lambda must be effectively final)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let a: string = \"x\";\n  let z: null = console.log(a);\n  a = \"y\";\n  return;\n}",
+      "expectedOutput": "x",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "call : null"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-null-capture-parameter",
+      "description": "A null-typed initializer that captures a parameter reassigned after the capture compiles and runs",
+      "source": "import * as console from \"std/console\"\nfunction helper(p: string): null {\n  let z: null = console.log(p);\n  p = \"changed\";\n}\nexport function test(): null { helper(\"param-captured\"); }",
+      "expectedOutput": "param-captured",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "function helper: null"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-null-arg-capture",
+      "description": "A null-typed call argument that captures a local reassigned after the capture compiles and runs",
+      "source": "import * as console from \"std/console\"\nfunction pass(x: null): null { return x; }\nexport function test(): null {\n  let a: string = \"x\";\n  let y: null = pass(console.log(a));\n  a = \"y\";\n  return;\n}",
+      "expectedOutput": "x",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "call : null"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nummod-negative",
+      "description": "number % is Lua-style floored modulo on negative operands: -7.0 % 3.0 == 2.0 (Java's truncated % would give -1.0)",
+      "source": "export function test(): number { return -7.0 % 3.0; }",
+      "expectedOutput": "2.0",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: number",
+        "binary % : number"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-string-eq-order",
+      "description": "String ===/!== and ordering compare by content end to end: classify returns 1 for equal, 2 for less-than, 3 otherwise",
+      "source": "function classify(s: string, t: string): int {\n  if (s === t) { return 1; }\n  if (s < t) { return 2; }\n  return 3;\n}\nexport function test(): int {\n  return classify(\"aaa\", \"aaa\") * 100\n       + classify(\"a\", \"b\") * 10\n       + classify(\"b\", \"a\");\n}",
+      "expectedOutput": "123",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary === : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-console-error",
+      "description": "console.error writes to stderr (captured by the runner's merged stream)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null { console.error(\"err-chan\"); }",
+      "expectedOutput": "err-chan",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "call : null"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-null-equality",
+      "description": "null === null is true and null !== null is false (spec §Value equality); z === null emits Java ==",
+      "source": "export function test(): int {\n  let z: null = null;\n  let same: boolean = z === null;\n  let litSame: boolean = null === null;\n  let neq: boolean = null !== null;\n  if (same && litSame && !neq) { return 1; }\n  return 0;\n}",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary === : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-standalone-expression",
+      "description": "A standalone non-call expression statement (x + 1;) is genuinely evaluated like LuaJIT evaluates it (lowered to a dummy local), not rejected or discarded",
+      "source": "export function test(): int {\n  let x: int = 1;\n  x + 1;\n  return x;\n}",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary + : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-standalone-expression-overflow",
+      "description": "A standalone expression statement that overflows reports E8004 — evaluation is real, matching LuaJIT",
+      "source": "export function test(): int {\n  9223372036854775807 + 1;\n  return 0;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary + : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-module-load-only",
+      "description": "A module with no zero-arity exported functions still runs its module-level statements: the runner initializes the module class so the static initializers execute",
+      "source": "import * as console from \"std/console\"\nconsole.log(\"load-only-ran\");\nexport function takesArg(x: int): int { return x; }",
+      "expectedOutput": "load-only-ran",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "call : null"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-module-load-error",
+      "description": "A module-level runtime error in a module with no zero-arity exported functions still reports the DEAL error code: the runner initializes the module class and unwraps the initialization error",
+      "source": "let x: int = 1 / 0;\nexport function takesArg(y: int): int { return y; }",
+      "expectedOutput": null,
+      "expectedError": "E8005",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "binary / : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
     }
   ]
 }
