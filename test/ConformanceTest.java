@@ -31,6 +31,15 @@ public class ConformanceTest {
     private static final Map<String, List<TestResult>> specGroups = new LinkedHashMap<>();
     private static boolean luajitAvailable;
 
+    /**
+     * Host fixture root (host-module-abi D6): declarations
+     * ({@code <name>.d.deal}) plus raw Lua implementations
+     * ({@code <name>.lua}) for bare {@code host/<name>} imports.
+     * Derived from the conformance root argument in {@code main}.
+     */
+    private static Path hostFixturesRoot =
+        Path.of("test/conformance/host-fixtures");
+
     // =========================================================================
     // Data types
     // =========================================================================
@@ -64,6 +73,7 @@ public class ConformanceTest {
         String conformanceRoot = "test/conformance/";
         if (args.length > 0) {
             conformanceRoot = args[0];
+            hostFixturesRoot = Path.of(conformanceRoot).resolve("host-fixtures");
         }
 
         try {
@@ -110,6 +120,16 @@ public class ConformanceTest {
         List<TestFile> result = new ArrayList<>();
         try (var stream = Files.walk(root)) {
             stream.filter(p -> p.toString().endsWith(".deal"))
+                  // Host fixture declarations (host-fixtures/*.d.deal)
+                  // carry no @expected header and are resolved on demand
+                  // by the host-fixture registry (host-module-abi D6) —
+                  // the discovery walk skips the subtree entirely.
+                  .filter(p -> {
+                      Path rel = root.relativize(p);
+                      return rel.getNameCount() == 0
+                          || !"host-fixtures".equals(
+                              rel.getName(0).toString());
+                  })
                   .sorted()
                   .forEach(p -> {
                       TestFile tf = parseMetadata(p, root);
@@ -528,6 +548,26 @@ public class ConformanceTest {
                 Files.writeString(companionFile, entry.getValue().luaSource());
             }
 
+            // Copy host fixture implementations (<name>.lua →
+            // <tmp>/host/<name>.lua) so bare host imports resolve through
+            // the raw slash-form require under the runner's package.path
+            // ("./?.lua" → "./host/<name>.lua"), host-module-abi D6. Host
+            // .lua files are never inspected by the $-gate — it applies
+            // to generated Lua only.
+            if (Files.isDirectory(hostFixturesRoot)) {
+                Path targetHostDir = tmpDir.resolve("host");
+                Files.createDirectories(targetHostDir);
+                try (var stream = Files.list(hostFixturesRoot)) {
+                    stream.filter(p -> p.toString().endsWith(".lua"))
+                          .forEach(p -> {
+                              try {
+                                  Files.copy(p,
+                                      targetHostDir.resolve(p.getFileName()));
+                              } catch (IOException ignored) {}
+                          });
+                }
+            }
+
             // Copy stdlib .lua files
             Path stdDir = Path.of("std");
             if (Files.isDirectory(stdDir)) {
@@ -740,6 +780,8 @@ public class ConformanceTest {
 
         private final Map<Path, Artifact> cache = new LinkedHashMap<>();
         private final Set<Path> inProgress = new HashSet<>();
+        /** Shared host-fixture registry (host-module-abi D6). */
+        private final HostRegistry hostRegistry = new HostRegistry();
 
         /**
          * Returns the compiled artifact for a file, compiling it (and all
@@ -785,10 +827,26 @@ public class ConformanceTest {
                 Path fileDir = file.toAbsolutePath().normalize().getParent();
                 Map<String, String> importResolutions = new LinkedHashMap<>();
                 Set<Path> companionDependencies = new LinkedHashSet<>();
+                Map<String, Map<String, Type>> hostModules = new LinkedHashMap<>();
 
                 for (StatementNode stmt : parseResult.program().statements()) {
                     if (stmt instanceof ImportDeclaration imp) {
                         String importPath = imp.modulePath();
+                        if (hostRegistry.isHostModule(importPath)) {
+                            // Host fixture import (host/<name>): the
+                            // declared exports drive the emitted
+                            // __rt.load_host loader with the raw
+                            // slash-form specifier verbatim; the import
+                            // is never a companion and never enters
+                            // importResolutions (host-module-abi D6).
+                            try {
+                                hostModules.put(importPath, hostRegistry
+                                    .forModule(importPath).exports());
+                            } catch (ModuleResolver.ModuleNotFoundException e) {
+                                return null;
+                            }
+                            continue;
+                        }
                         Path resolvedPath = resolveCompanionPath(importPath, fileDir);
                         if (resolvedPath != null) {
                             importResolutions.put(importPath,
@@ -819,7 +877,8 @@ public class ConformanceTest {
                 if (result.hasErrors()) return null;
 
                 String luaSource = LuaBackend.generateWithImports(
-                    parseResult.program(), result, filename, importResolutions);
+                    parseResult.program(), result, filename, importResolutions,
+                    hostModules);
                 return new Artifact(luaSource,
                     Collections.unmodifiableMap(new LinkedHashMap<>(importResolutions)),
                     symTable, nr,
@@ -827,6 +886,134 @@ public class ConformanceTest {
             } catch (Exception e) {
                 return null; // mirrors today's null degradation paths
             }
+        }
+    }
+
+    /**
+     * Shared registry of host fixture declarations (host-module-abi D6).
+     *
+     * <p>A bare import {@code host/<name>} resolves from
+     * {@code host-fixtures/<name>.d.deal}; the typing/class-identity module
+     * path is the dotted form {@code host.<name>} (class descriptors
+     * {@code @host.presence/Config}), while the require path stays the raw
+     * slash-form specifier verbatim. Every class declaration in the
+     * fixture program (including {@code ExportDeclaration}-wrapped ones)
+     * becomes a synthesized {@link Symbol.ClassSymbol} carrying name,
+     * fields, and the dotted module path.</p>
+     */
+    private static final class HostRegistry {
+
+        /** Declared exports plus the synthesized class symbols of one fixture. */
+        record HostDeclaration(
+            Map<String, Type> exports,
+            Map<String, Symbol.ClassSymbol> classSymbols
+        ) {}
+
+        private final Map<String, HostDeclaration> cache = new LinkedHashMap<>();
+
+        /**
+         * True when {@code modulePath} names a registered host fixture —
+         * the raw slash-form specifier ({@code host/<name>}) or its dotted
+         * typing form ({@code host.<name>}) — and the fixture declaration
+         * file exists on disk.
+         */
+        boolean isHostModule(String modulePath) {
+            if (modulePath == null || modulePath.isEmpty()) return false;
+            Path decl = declarationFileFor(toRawPath(modulePath));
+            return decl != null && Files.exists(decl);
+        }
+
+        /**
+         * Returns the declaration for a host fixture, parsing and caching
+         * it on first use.
+         *
+         * @throws ModuleResolver.ModuleNotFoundException when the fixture
+         *         declaration is missing or fails to lex/parse
+         */
+        HostDeclaration forModule(String modulePath)
+                throws ModuleResolver.ModuleNotFoundException {
+            String raw = toRawPath(modulePath);
+            HostDeclaration cached = cache.get(raw);
+            if (cached != null) return cached;
+
+            Path decl = declarationFileFor(raw);
+            if (decl == null || !Files.exists(decl)) {
+                throw new ModuleResolver.ModuleNotFoundException(
+                    "Module not found: " + modulePath);
+            }
+            try {
+                String source = Files.readString(decl);
+                String filename = decl.toString();
+
+                LexResult lex = new Lexer(source, filename).tokenize();
+                if (lex.hasErrors())
+                    throw new ModuleResolver.ModuleNotFoundException(
+                        "Lex errors in " + filename);
+
+                Parser parser = new Parser(lex.tokens(), filename);
+                ParseResult parseResult = parser.parse();
+                if (parseResult.hasErrors())
+                    throw new ModuleResolver.ModuleNotFoundException(
+                        "Parse errors in " + filename);
+
+                // The typing/class-identity module path is the dotted form
+                // (host-module-abi D6): class types and descriptors carry
+                // it; the require path stays the raw slash-form specifier.
+                String dotted = raw.replace('/', '.');
+                ExportExtractor extractor = new ExportExtractor(dotted, true);
+                Map<String, Type> exports =
+                    extractor.extract(parseResult.program());
+
+                // Class-symbol synthesis: every ClassDeclaration in the
+                // fixture program (incl. ExportDeclaration-wrapped ones)
+                // becomes a ClassSymbol carrying the dotted module path.
+                Map<String, Symbol.ClassSymbol> classSymbols = new LinkedHashMap<>();
+                for (StatementNode stmt : parseResult.program().statements()) {
+                    if (stmt instanceof ClassDeclaration cd) {
+                        classSymbols.put(cd.name(),
+                            new Symbol.ClassSymbol(cd.name(), cd.fields(), dotted));
+                    } else if (stmt instanceof ExportDeclaration exp
+                            && exp.declaration() instanceof ClassDeclaration cd) {
+                        classSymbols.put(cd.name(),
+                            new Symbol.ClassSymbol(cd.name(), cd.fields(), dotted));
+                    }
+                }
+
+                HostDeclaration result = new HostDeclaration(
+                    Collections.unmodifiableMap(new LinkedHashMap<>(exports)),
+                    Collections.unmodifiableMap(new LinkedHashMap<>(classSymbols)));
+                cache.put(raw, result);
+                return result;
+            } catch (IOException e) {
+                throw new ModuleResolver.ModuleNotFoundException(
+                    "Cannot read: " + decl);
+            }
+        }
+
+        /**
+         * Normalizes a host module path to the raw slash-form specifier:
+         * {@code host.presence} → {@code host/presence}; an already raw
+         * {@code host/presence} is unchanged.
+         */
+        private String toRawPath(String modulePath) {
+            return modulePath.replace('.', '/');
+        }
+
+        /**
+         * Maps a raw {@code host/<name>} specifier to its fixture
+         * declaration file, or {@code null} when the specifier is not a
+         * single-segment host path.
+         */
+        private Path declarationFileFor(String rawPath) {
+            String prefix = "host/";
+            if (!rawPath.startsWith(prefix) || rawPath.length() == prefix.length()) {
+                return null;
+            }
+            String name = rawPath.substring(prefix.length());
+            if (name.contains("/") || name.contains("\\")) {
+                return null;
+            }
+            return hostFixturesRoot.resolve(name + ".d.deal");
         }
     }
 
@@ -844,11 +1031,15 @@ public class ConformanceTest {
         private final Path testFileDir;
         private final CompanionCatalog catalog;
         private final Map<String, Map<String, Type>> stdlibExports;
+        private final HostRegistry hostRegistry;
 
         ConformanceModuleResolver(Path testFile, CompanionCatalog catalog) {
             this.testFileDir = testFile.toAbsolutePath().getParent();
             this.catalog = catalog;
             this.stdlibExports = StdlibModuleResolver.stdlibExports();
+            this.hostRegistry = catalog != null
+                ? catalog.hostRegistry
+                : new HostRegistry();
         }
 
         @Override
@@ -868,6 +1059,17 @@ public class ConformanceTest {
                     + "' is not a spec-listed stdlib module");
             }
 
+            // Host-fixture registry (host-module-abi D6): a bare
+            // host/<name> import resolves from
+            // host-fixtures/<name>.d.deal; the typing/class-identity
+            // module path is the dotted host.<name> form, while the
+            // require path stays the raw slash-form specifier. The
+            // dotted form also reaches here (isFunctionExportedFromModule
+            // passes a class's module path).
+            if (hostRegistry.isHostModule(modulePath)) {
+                return hostRegistry.forModule(modulePath).exports();
+            }
+
             // Try relative file import
             Path resolved = resolveRelativePath(modulePath);
             if (resolved != null && Files.exists(resolved)) {
@@ -881,6 +1083,15 @@ public class ConformanceTest {
         public Symbol.ClassSymbol resolveClassSymbol(String className,
                 String modulePath, String importingModule)
                 throws ModuleNotFoundException {
+            // Host-fixture branch (host-module-abi D6): classes of a
+            // host.<name> module resolve to the ClassSymbols synthesized
+            // from the fixture declaration; an absent class returns null,
+            // producing the usual E3004/E4002 diagnostics.
+            if (hostRegistry.isHostModule(modulePath)) {
+                HostRegistry.HostDeclaration decl =
+                    hostRegistry.forModule(modulePath);
+                return decl.classSymbols().get(className);
+            }
             // Local classes (absent modulePath) resolve through the local
             // scope in NameResolver; only foreign module paths reach here.
             if (catalog == null || modulePath == null || modulePath.isEmpty()) {
@@ -900,6 +1111,15 @@ public class ConformanceTest {
         public Type resolveTypeNodeInModule(TypeNode typeNode,
                 String modulePath, String importingModule)
                 throws ModuleNotFoundException {
+            // Host-fixture branch (host-module-abi D6): field annotations
+            // of a host.<name> class resolve against the fixture's own
+            // class registry (NamedType/ArrayType/NullableType shapes);
+            // any other shape degrades through the local fallback below.
+            if (hostRegistry.isHostModule(modulePath)) {
+                HostRegistry.HostDeclaration decl =
+                    hostRegistry.forModule(modulePath);
+                return resolveHostTypeNode(typeNode, modulePath, decl);
+            }
             if (catalog == null || modulePath == null || modulePath.isEmpty()) {
                 return null;
             }
@@ -909,6 +1129,40 @@ public class ConformanceTest {
                 return null;
             }
             return artifact.nameResolver().resolveTypeNode(typeNode);
+        }
+
+        /**
+         * Resolves a field type annotation of a host-fixture class against
+         * the fixture's own class registry (host-module-abi D6): NamedType
+         * nodes naming registered host classes resolve to
+         * {@code Types.classType(name, modulePath)}, and ArrayType/
+         * NullableType wrappers are rebuilt around resolved inners. Any
+         * other shape (primitives, qualified types, function types)
+         * returns null so the caller falls back to its local resolution.
+         */
+        private Type resolveHostTypeNode(TypeNode typeNode, String modulePath,
+                HostRegistry.HostDeclaration decl) {
+            if (typeNode instanceof NamedType nt) {
+                if (decl.classSymbols().containsKey(nt.name())) {
+                    return Types.classType(nt.name(), modulePath);
+                }
+                return null;
+            }
+            if (typeNode instanceof deal.ast.ArrayType at) {
+                Type elem = resolveHostTypeNode(at.elementType(), modulePath, decl);
+                return elem == null ? null : Types.array(elem);
+            }
+            if (typeNode instanceof deal.ast.NullableType nullable) {
+                Type inner = resolveHostTypeNode(
+                    nullable.innerType(), modulePath, decl);
+                if (inner == null) return null;
+                try {
+                    return Types.nullable(inner);
+                } catch (IllegalArgumentException e) {
+                    return null;
+                }
+            }
+            return null;
         }
 
         // ---- relative file imports ----

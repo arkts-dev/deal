@@ -1,0 +1,20 @@
+// Host fixture declaration for the host-export-presence conformance test
+// (host-module-abi D6). Not a conformance test: it carries no @expected
+// header and the discovery walk skips the host-fixtures subtree.
+//
+// The typing/class-identity module path is the dotted form host.presence
+// (class descriptor @host.presence/Config); the generated loader requires
+// the raw slash-form specifier host/presence verbatim.
+//
+// The optional field types exercise every synthesized-symbol resolution
+// shape: fallback (NamedType naming a same-module host class), peers
+// (ArrayType rebuilt around a host class), and both inside NullableType
+// wrappers.
+
+export class Config {
+  port: int;
+  fallback?: Config | null;
+  peers?: Config[];
+}
+
+export function ping(): string;

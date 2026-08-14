@@ -1,0 +1,20 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A host module's declared surface is exposed through the runtime loader — a wrapped call returns the declared value, and a declared host class constructs and reads fields through the synthesized class symbol (no E3004).
+// @expected: runtime-ok
+// @features: modules, host-abi, classes
+
+import * as host from "host/presence"
+
+export function main(): string {
+  let pong: string = host.ping();
+  if (pong !== "pong") {
+    throw { code: "TEST_FAIL", message: "host.ping returned unexpected value" };
+  }
+
+  let cfg: host.Config = { port: 9090 };
+  if (cfg.port !== 9090) {
+    throw { code: "TEST_FAIL", message: "host class field access failed" };
+  }
+
+  return "host export presence ok";
+}
