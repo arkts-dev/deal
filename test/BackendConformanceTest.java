@@ -64,14 +64,19 @@ import java.util.*;
  *       fixture);</li>
  *   <li>executes the artifact with {@code java} in a subprocess; the runner
  *       auto-invokes the zero-arity exported functions in declaration order
- *       — mirroring the Lua harness's auto-invocation — and prints non-null
- *       results to stdout, so {@code expectedOutput} observes real return
- *       values;</li>
+ *       and prints non-null results to stdout, so {@code expectedOutput}
+ *       observes real return values;</li>
  *   <li>asserts {@code expectedOutput}/{@code expectedError}/
  *       {@code expectedExitCode} against the captured stdout and exit code,
  *       with the same {@code DEAL_ERROR_CODE: <code>} error convention as
  *       the LuaJIT runner.</li>
  * </ol>
+ *
+ * <p>Auto-invocation ordering: the Lua harness iterates the exported
+ * functions with {@code pairs()} (an unspecified hash order) while the JVM
+ * runner invokes them in declaration order. Fixtures with multiple
+ * zero-arity exports therefore must not depend on invocation order across
+ * backends; every current fixture has at most one zero-arity export.
  */
 public class BackendConformanceTest {
 
@@ -588,12 +593,19 @@ public class BackendConformanceTest {
 
     /**
      * Builds the Java runner source for a fixture: auto-invokes the zero-arity
-     * exported functions in declaration order (mirroring the Lua harness) and
-     * prints non-null results; DEAL runtime errors print
+     * exported functions in declaration order (the Lua harness iterates
+     * {@code pairs()} — an unspecified order — so fixtures with multiple
+     * zero-arity exports must not depend on cross-backend invocation order)
+     * and prints non-null results; DEAL runtime errors print
      * {@code DEAL_ERROR_CODE: <code>} and exit 1, matching the LuaJIT runner's
      * xpcall handler. When no function is auto-invoked, the runner
      * initializes the module class with {@code Class.forName} so a
-     * module-load-only fixture's static initializers still run.
+     * module-load-only fixture's static initializers still run. A module-level
+     * error raised while a zero-arity export exists surfaces the same way:
+     * the first auto-invocation triggers class initialization, whose
+     * {@link ExceptionInInitializerError} (a {@code LinkageError}, not a
+     * {@code RuntimeException}) wraps the {@code DealError} — the runner
+     * unwraps it into the same {@code DEAL_ERROR_CODE} contract.
      */
     static String buildJvmRunner(ProgramNode program, String className) {
         StringBuilder sb = new StringBuilder();
@@ -627,21 +639,34 @@ public class BackendConformanceTest {
             // class would never be initialized and module-level statements
             // (its static initializers) would never run — a load-only fixture
             // would produce no output. Initialize the class explicitly so
-            // module-level side effects are observable.
+            // module-level side effects are observable. (A module-level DEAL
+            // error thrown here is wrapped in an ExceptionInInitializerError;
+            // the catch below unwraps it into the DEAL_ERROR_CODE contract.)
             sb.append("            // no zero-arity exported functions; initialize the module class\n");
             sb.append("            // so module-level statements (static initializers) run.\n");
             sb.append("            try { Class.forName(\"").append(className).append("\"); }\n");
             sb.append("                catch (ClassNotFoundException e) { throw new RuntimeException(e); }\n");
-            sb.append("                catch (ExceptionInInitializerError e) {\n");
-            sb.append("                    if (e.getCause() instanceof RuntimeException re) throw re;\n");
-            sb.append("                    throw e;\n");
-            sb.append("                }\n");
         }
         sb.append("        } catch (").append(className).append(".DealError e) {\n");
         sb.append("            System.out.println(\"DEAL_ERROR_CODE: \" + e.code"
             + " + \" \" + e.getMessage());\n");
         sb.append("            System.exit(1);\n");
-        sb.append("        } catch (RuntimeException e) {\n");
+        sb.append("        } catch (ExceptionInInitializerError e) {\n");
+        sb.append("            // Class initialization (module-level statements) threw a\n");
+        sb.append("            // DEAL error wrapped in a LinkageError — whether the class\n");
+        sb.append("            // was initialized by an auto-invocation or by the\n");
+        sb.append("            // Class.forName path. Unwrap it so the DEAL_ERROR_CODE\n");
+        sb.append("            // contract holds for module-load errors in every fixture.\n");
+        sb.append("            Throwable cause = e.getCause();\n");
+        sb.append("            if (cause instanceof ").append(className).append(".DealError de) {\n");
+        sb.append("                System.out.println(\"DEAL_ERROR_CODE: \" + de.code"
+            + " + \" \" + de.getMessage());\n");
+        sb.append("            } else {\n");
+        sb.append("                System.out.println(\"DEAL_ERROR_CODE: \""
+            + " + (cause == null ? e.toString() : cause.toString()));\n");
+        sb.append("            }\n");
+        sb.append("            System.exit(1);\n");
+        sb.append("        } catch (Throwable e) {\n");
         sb.append("            System.out.println(\"DEAL_ERROR_CODE: \" + e.getMessage());\n");
         sb.append("            System.exit(1);\n");
         sb.append("        }\n");

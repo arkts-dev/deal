@@ -14,7 +14,9 @@ import deal.types.Type;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -56,17 +58,30 @@ import java.util.Set;
  * are ever emitted, so the artifact stays valid Java even when the call
  * captures locals or parameters that are reassigned later in their scope
  * (a lambda capture of a non-effectively-final local is a javac error).
- * Uses of a variable before its own declaration with no enclosing binding
- * (LuaJIT reads nil there and fails at runtime) and forward references to
- * later-declared module fields (Java's illegal-forward-reference rule)
- * are rejected with {@code E6000} so the artifact is always valid Java.
+ * Hoisted side effects inside a non-leading {@code &&}/{@code ||} operand
+ * are guarded by the left operand (Java's short-circuit semantics — LuaJIT
+ * skips the right operand when the left already decides the result) with
+ * a boolean temporary, so {@code false && helper() === null} never calls
+ * {@code helper()}. Uses of a variable before its own declaration with no
+ * enclosing binding (LuaJIT reads nil there and fails at runtime), forward
+ * references to later-declared module fields (Java's
+ * illegal-forward-reference rule), and module-level calls to functions
+ * whose bodies (transitively) read a module field declared later than the
+ * call site (LuaJIT fails at load with a nil read; Java would silently
+ * read the field's default value) are rejected with {@code E6000} so the
+ * artifact is always valid Java and never silently miscompiled.
  * Standalone non-call/non-assignment expression statements (e.g.
  * {@code x + 1;}) are lowered to a dummy-local declaration so they are
  * evaluated exactly like LuaJIT evaluates them (an int overflow there is
- * an observable E8004), and {@code null === null} / {@code z === null}
+ * an observable E8004), {@code null === null} / {@code z === null}
  * compare with Java's {@code ==}/{@code !=} (all null-typed values are the
  * DEAL null value; spec §Value equality defines {@code null === null} as
- * true).
+ * true), number literals that overflow to ±Infinity render as
+ * {@code Double.POSITIVE_INFINITY}/{@code Double.NEGATIVE_INFINITY}
+ * (mirroring the Lua backend's {@code (1/0)} — Java has no literal
+ * spelling for Infinity), and string ordering compares Unicode scalar
+ * values (LuaJIT orders bytewise in UTF-8, which is scalar-value order),
+ * including supplementary characters.
  *
  * <p>JVM value mapping follows the spec's JVM backend contract
  * ({@code docs/spec-v1.2.md} §JVM value mapping): {@code int → long},
@@ -78,8 +93,10 @@ import java.util.Set;
  *
  * <p>The emitted class has no {@code main}: the artifact is a module class.
  * The conformance adapter compiles it together with a small runner class that
- * auto-invokes the zero-arity exported functions (mirroring the Lua harness's
- * auto-invocation of exported functions) and prints non-{@code null} results.
+ * auto-invokes the zero-arity exported functions in declaration order (the
+ * Lua harness iterates {@code pairs()} — an unspecified order — so fixtures
+ * must not depend on cross-backend invocation order) and prints
+ * non-{@code null} results.
  */
 public final class JvmBackend {
 
@@ -149,13 +166,56 @@ public final class JvmBackend {
      * (a lambda capturing a later-reassigned local would make javac reject
      * the artifact).
      */
-    private final List<String> preStatements = new ArrayList<>();
+    private final List<PreLine> preStatements = new ArrayList<>();
+
+    /**
+     * One hoisted pre-statement line. {@code extraIndent} is the relative
+     * indentation beyond the flush site's indent (0 for a plain statement;
+     * 1 for a line inside a guarded {@code if} block).
+     */
+    private record PreLine(String text, int extraIndent) {}
+
+    /**
+     * True while {@link #preStatements} contains a temporary declaration
+     * that the containing expression references (a guarded
+     * {@code &&}/{@code ||} lowering). A module-level field initializer
+     * cannot reference a local of a separate static block, so
+     * {@link #emitVariable} routes such initializers through a
+     * static-block assignment instead. Reset by
+     * {@link #flushPreStatements()}.
+     */
+    private boolean preStatementsDeclareTemps = false;
 
     /** Counter for dummy-locals that force evaluation of standalone
      * expression statements ({@code __ignored}, {@code __ignored1}, …).
      * The {@code __} prefix can never collide with a translation:
      * {@link #javaName} maps every leading underscore to {@code $u}. */
     private int ignoredCounter = 0;
+
+    /** Counter for short-circuit temporaries ({@code __sc0}, {@code __sc1},
+     * …). Unreachable from {@link #javaName} for the same reason. */
+    private int shortCircuitCounter = 0;
+
+    /** Module-level function declarations by name (exports included), in
+     * declaration order. */
+    private final Map<String, FunctionDeclaration> moduleFunctions =
+        new LinkedHashMap<>();
+
+    /** Module-level variable declarations by name → statement index in the
+     * module body. */
+    private final Map<String, Integer> moduleFieldIndices =
+        new LinkedHashMap<>();
+
+    /** Function name → module fields read by its body, transitively through
+     * calls to other module functions (use-before-declaration detection for
+     * module-level calls). */
+    private final Map<String, Set<String>> transitiveFieldReads =
+        new LinkedHashMap<>();
+
+    /** Statement index of the module-level statement currently being
+     * emitted ({@code -1} inside function bodies). Used to detect
+     * module-level calls that transitively read later-declared fields. */
+    private int currentModuleStatementIndex = -1;
 
     private JvmBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
                        String sourcePath, String modulePath) {
@@ -262,7 +322,8 @@ public final class JvmBackend {
         Map.entry("intNeg", List.of("long")),
         Map.entry("numMod", List.of("double", "double")),
         Map.entry("intFromNumber", List.of("double")),
-        Map.entry("numberFromInt", List.of("long")));
+        Map.entry("numberFromInt", List.of("long")),
+        Map.entry("scalarCompare", List.of("String", "String")));
 
     /**
      * Translates a DEAL identifier to a Java identifier. The encoding is
@@ -293,7 +354,9 @@ public final class JvmBackend {
     // =========================================================================
 
     private JvmCodegenResult generateProgram(ProgramNode program) {
-        for (StatementNode stmt : program.statements()) {
+        List<StatementNode> statements = program.statements();
+        for (int i = 0; i < statements.size(); i++) {
+            StatementNode stmt = statements.get(i);
             if (stmt instanceof ImportDeclaration imp) {
                 // ISSUE-0091 rework: any import other than std/console is
                 // out of scope and rejected AT THE IMPORT STATEMENT itself —
@@ -308,8 +371,16 @@ public final class JvmBackend {
                     unsupported("module imports other than std/console ('"
                         + imp.modulePath() + "')", imp.span());
                 }
+            } else if (stmt instanceof VariableDeclaration vd) {
+                moduleFieldIndices.putIfAbsent(vd.name(), i);
+            } else if (stmt instanceof FunctionDeclaration fd) {
+                moduleFunctions.putIfAbsent(fd.name(), fd);
+            } else if (stmt instanceof ExportDeclaration ed
+                    && ed.declaration() instanceof FunctionDeclaration fd) {
+                moduleFunctions.putIfAbsent(fd.name(), fd);
             }
         }
+        computeTransitiveFieldReads();
 
         String className = classNameFor(modulePath);
         emitLine("// Generated by DEAL compiler — JVM backend (skeleton). DO NOT EDIT.");
@@ -326,9 +397,9 @@ public final class JvmBackend {
         // initialization in source order — LuaJIT executes module-level
         // statements at load time. Interleaving members and static blocks
         // preserves the relative order of side-effecting initializers.
-        List<StatementNode> statements = program.statements();
         moduleLevel = true;
         for (int i = 0; i < statements.size(); i++) {
+            currentModuleStatementIndex = i;
             if (isModuleLevelDeclaration(statements.get(i))) {
                 emitStatement(statements.get(i));
             } else {
@@ -337,6 +408,7 @@ public final class JvmBackend {
                 moduleLevel = false;
                 while (i < statements.size()
                         && !isModuleLevelDeclaration(statements.get(i))) {
+                    currentModuleStatementIndex = i;
                     StatementNode stmt = statements.get(i);
                     if (containsModuleReturn(stmt)) {
                         unsupported("module-level return (Java initializers cannot return)",
@@ -352,6 +424,7 @@ public final class JvmBackend {
                 emitLine("}");
             }
         }
+        currentModuleStatementIndex = -1;
         moduleLevel = false;
 
         indent--;
@@ -400,6 +473,188 @@ public final class JvmBackend {
     }
 
     // =========================================================================
+    // Module-level call / later-field detection
+    // =========================================================================
+
+    /**
+     * Computes, for every module-level function, the set of module fields
+     * its body reads — transitively, through calls to other module-level
+     * functions. Used to reject module-level calls whose (transitive) body
+     * reads a field declared later than the call site: LuaJIT fails at load
+     * for such reads (the field is nil until its declaration runs) while
+     * Java would silently read the field's default value.
+     */
+    private void computeTransitiveFieldReads() {
+        Map<String, Set<String>> directReads = new LinkedHashMap<>();
+        Map<String, Set<String>> directCalls = new LinkedHashMap<>();
+        for (Map.Entry<String, FunctionDeclaration> e : moduleFunctions.entrySet()) {
+            Set<String> reads = new LinkedHashSet<>();
+            Set<String> calls = new LinkedHashSet<>();
+            collectBodyReferences(e.getValue(), reads, calls);
+            directReads.put(e.getKey(), reads);
+            directCalls.put(e.getKey(), calls);
+        }
+        for (String name : moduleFunctions.keySet()) {
+            transitiveFieldReads.put(name, closureReads(name, directReads,
+                directCalls, new LinkedHashMap<>(), new HashSet<>()));
+        }
+    }
+
+    /** Transitive closure over the module-level call graph (cycles handled
+     * by the in-progress guard). */
+    private static Set<String> closureReads(String name,
+            Map<String, Set<String>> directReads,
+            Map<String, Set<String>> directCalls,
+            Map<String, Set<String>> memo, Set<String> inProgress) {
+        Set<String> cached = memo.get(name);
+        if (cached != null) return cached;
+        Set<String> result = new LinkedHashSet<>(
+            directReads.getOrDefault(name, Set.of()));
+        if (inProgress.add(name)) {
+            for (String callee : directCalls.getOrDefault(name, Set.of())) {
+                result.addAll(closureReads(callee, directReads, directCalls,
+                    memo, inProgress));
+            }
+            inProgress.remove(name);
+        }
+        memo.put(name, result);
+        return result;
+    }
+
+    /**
+     * Walks a function body collecting (a) module-field names read in value
+     * positions, excluding identifiers shadowed by parameters or locals (a
+     * function-local shadow of a module field is not a field read), and
+     * (b) module-level functions called by name. Locals are tracked
+     * scope-by-scope; nested function declarations are separate scopes and
+     * unsupported by the backend (rejected later), so they are not walked.
+     */
+    private void collectBodyReferences(FunctionDeclaration fd,
+            Set<String> fieldReads, Set<String> calledFunctions) {
+        Deque<Set<String>> locals = new ArrayDeque<>();
+        Set<String> params = new LinkedHashSet<>();
+        for (Parameter p : fd.params()) params.add(p.name());
+        locals.push(params);
+        collectStatementListRefs(fd.body().statements(), locals,
+            fieldReads, calledFunctions);
+    }
+
+    private void collectStatementListRefs(List<StatementNode> stmts,
+            Deque<Set<String>> locals, Set<String> fieldReads,
+            Set<String> calledFunctions) {
+        for (StatementNode stmt : stmts) {
+            collectStatementRefs(stmt, locals, fieldReads, calledFunctions);
+        }
+    }
+
+    private void collectStatementRefs(StatementNode stmt,
+            Deque<Set<String>> locals, Set<String> fieldReads,
+            Set<String> calledFunctions) {
+        switch (stmt) {
+            case VariableDeclaration vd -> {
+                collectExprRefs(vd.initializer(), locals, fieldReads,
+                    calledFunctions);
+                locals.peek().add(vd.name());
+            }
+            case ReturnStatement rs -> rs.expr().ifPresent(
+                e -> collectExprRefs(e, locals, fieldReads, calledFunctions));
+            case ExpressionStatement es ->
+                collectExprRefs(es.expr(), locals, fieldReads, calledFunctions);
+            case IfStatement is -> {
+                collectExprRefs(is.condition(), locals, fieldReads,
+                    calledFunctions);
+                collectBlockRefs(is.thenBlock(), locals, fieldReads,
+                    calledFunctions);
+                if (is.elseBranch().isPresent()) {
+                    switch (is.elseBranch().get()) {
+                        case Either.Left<IfStatement, Block> left ->
+                            collectStatementRefs(left.value(), locals,
+                                fieldReads, calledFunctions);
+                        case Either.Right<IfStatement, Block> right ->
+                            collectBlockRefs(right.value(), locals,
+                                fieldReads, calledFunctions);
+                    }
+                }
+            }
+            case Block b -> collectBlockRefs(b, locals, fieldReads,
+                calledFunctions);
+            // Unsupported statement kinds (loops, try, nested functions,
+            // classes, …) are rejected with E6000 when emitted; nothing to
+            // walk here.
+            default -> { }
+        }
+    }
+
+    private void collectBlockRefs(Block b, Deque<Set<String>> locals,
+            Set<String> fieldReads, Set<String> calledFunctions) {
+        locals.push(new LinkedHashSet<>());
+        collectStatementListRefs(b.statements(), locals, fieldReads,
+            calledFunctions);
+        locals.pop();
+    }
+
+    private void collectExprRefs(ExpressionNode e, Deque<Set<String>> locals,
+            Set<String> fieldReads, Set<String> calledFunctions) {
+        switch (e) {
+            case IdentifierExpr id -> {
+                if (!isLocallyBound(locals, id.name())
+                        && symbols.resolve(id.name()) instanceof Symbol.VariableSymbol
+                        && moduleFieldIndices.containsKey(id.name())) {
+                    fieldReads.add(id.name());
+                }
+            }
+            case BinaryExpr bin -> {
+                collectExprRefs(bin.left(), locals, fieldReads, calledFunctions);
+                collectExprRefs(bin.right(), locals, fieldReads, calledFunctions);
+            }
+            case UnaryExpr u ->
+                collectExprRefs(u.expr(), locals, fieldReads, calledFunctions);
+            case CallExpr call -> {
+                if (call.callee() instanceof IdentifierExpr id
+                        && symbols.resolve(id.name()) instanceof Symbol.FunctionSymbol
+                        && moduleFunctions.containsKey(id.name())) {
+                    calledFunctions.add(id.name());
+                } else {
+                    collectExprRefs(call.callee(), locals, fieldReads,
+                        calledFunctions);
+                }
+                for (ExpressionNode arg : call.args()) {
+                    collectExprRefs(arg, locals, fieldReads, calledFunctions);
+                }
+            }
+            // Assignment targets are writes, not reads; LuaJIT and Java
+            // agree on write order (the write happens, then the later field
+            // initializer overwrites), so only the value side is walked.
+            case AssignmentExpr ae ->
+                collectExprRefs(ae.value(), locals, fieldReads, calledFunctions);
+            // Literals and unsupported forms (rejected later) are not walked.
+            default -> { }
+        }
+    }
+
+    private static boolean isLocallyBound(Deque<Set<String>> locals, String name) {
+        for (Set<String> scope : locals) {
+            if (scope.contains(name)) return true;
+        }
+        return false;
+    }
+
+    /** The name of a module field declared at or after {@code callIndex}
+     * that {@code functionName}'s body reads transitively, or
+     * {@code null}. {@code >=} also catches a field's own initializer
+     * calling a function that reads the field being initialized
+     * ({@code let x: int = f()} with {@code f} reading {@code x}: LuaJIT
+     * reads nil there and fails at load, Java would read the default). */
+    private String laterFieldRead(String functionName, int callIndex) {
+        for (String field : transitiveFieldReads.getOrDefault(functionName,
+                Set.of())) {
+            Integer idx = moduleFieldIndices.get(field);
+            if (idx != null && idx >= callIndex) return field;
+        }
+        return null;
+    }
+
+    // =========================================================================
     // Runtime support (emitted once per class)
     // =========================================================================
 
@@ -429,6 +684,10 @@ public final class JvmBackend {
         emitLine("// int(v) / number(v) conversion intrinsics (E8001 bad value, E8004 out of range).");
         emitLine("static long intFromNumber(double v) { if (Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v >= 9.223372036854776E18 || v < -9.223372036854776E18) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) v; }");
         emitLine("static double numberFromInt(long v) { return (double) v; }");
+        emitLine("// string ordering: Unicode scalar-value order. LuaJIT orders bytewise in");
+        emitLine("// UTF-8, which is scalar-value order — including supplementary characters");
+        emitLine("// (String.compareTo's UTF-16 code-unit order diverges there).");
+        emitLine("static int scalarCompare(String a, String b) { int i = 0; int j = 0; while (i < a.length() && j < b.length()) { int ca = a.codePointAt(i); int cb = b.codePointAt(j); if (ca != cb) { return Integer.compare(ca, cb); } i += Character.charCount(ca); j += Character.charCount(cb); } return Integer.compare(a.length() - i, b.length() - j); }");
         emitLine();
     }
 
@@ -502,6 +761,22 @@ public final class JvmBackend {
         String visibility = moduleLevel ? "static " : "";
         String javaVar = declareLocal(vd.name());
         if (moduleLevel) {
+            if (preStatementsDeclareTemps) {
+                // The initializer references a temporary declared by the
+                // hoisted pre-statements (a guarded && / || lowering); a
+                // class-body initializer cannot reference a local of a
+                // separate static block. Declare the field uninitialized
+                // and assign it inside the same static block, in source
+                // order.
+                emitLine(visibility + javaType + " " + javaVar + ";");
+                emitLine("static {");
+                indent++;
+                flushPreStatements();
+                emitLine(javaVar + " = " + initializer + ";");
+                indent--;
+                emitLine("}");
+                return;
+            }
             // Hoisted side effects of a field initializer (e.g.
             // `let z: null = console.log("x")`) cannot stand bare in the
             // class body; wrap them in a static initializer emitted before
@@ -579,10 +854,13 @@ public final class JvmBackend {
             declareLocal(p.name());
         }
         boolean savedModuleLevel = moduleLevel;
+        int savedModuleIndex = currentModuleStatementIndex;
+        currentModuleStatementIndex = -1;
         moduleLevel = false;
         for (StatementNode stmt : fd.body().statements()) {
             emitStatement(stmt);
         }
+        currentModuleStatementIndex = savedModuleIndex;
         moduleLevel = savedModuleLevel;
         localScopes.pop();
 
@@ -787,7 +1065,7 @@ public final class JvmBackend {
                     // or parameter that is reassigned anywhere in its
                     // enclosing scope is a javac error, and DEAL locals and
                     // parameters are freely reassignable.
-                    preStatements.add(raw + ";");
+                    preStatements.add(new PreLine(raw + ";", 0));
                     yield "null";
                 }
                 yield raw;
@@ -886,9 +1164,25 @@ public final class JvmBackend {
     private String emitBinary(BinaryExpr bin) {
         Type leftType = typeOf(bin.left());
         Type rightType = typeOf(bin.right());
+        BinaryOp op = bin.op();
+
+        // Boolean && / || short-circuit: the right operand is only
+        // evaluated when the left operand does not already decide the
+        // result (LuaJIT's `and`/`or` semantics). A null-typed
+        // side-effecting call inside the right operand is hoisted into
+        // pre-statements by emitExpression; flushing those statements
+        // unconditionally would run the call even when the operand is
+        // skipped (`false && helper() === null` must NOT call helper()).
+        // The hoisted statements are guarded by the left operand and the
+        // result is carried in a temporary instead.
+        if ((op == BinaryOp.AND || op == BinaryOp.OR)
+                && leftType instanceof Type.Boolean
+                && rightType instanceof Type.Boolean) {
+            return emitShortCircuit(bin, op == BinaryOp.AND);
+        }
+
         String left = emitExpression(bin.left());
         String right = emitExpression(bin.right());
-        BinaryOp op = bin.op();
 
         // String concatenation: both operands must be string (checker-enforced).
         if (op == BinaryOp.ADD && leftType instanceof Type.String
@@ -951,11 +1245,10 @@ public final class JvmBackend {
             };
         }
 
-        // Boolean logic and equality.
+        // Boolean equality (&& / || were handled by the short-circuit
+        // branch above, which guards hoisted right-operand side effects).
         if (leftType instanceof Type.Boolean && rightType instanceof Type.Boolean) {
             return switch (op) {
-                case AND -> "(" + left + " && " + right + ")";
-                case OR -> "(" + left + " || " + right + ")";
                 case EQ -> "(" + left + " == " + right + ")";
                 case NEQ -> "(" + left + " != " + right + ")";
                 default -> {
@@ -965,16 +1258,19 @@ public final class JvmBackend {
             };
         }
 
-        // String equality and ordering. Ordering is UTF-16 code-unit order;
-        // LuaJIT orders bytewise — identical for the ASCII subset.
+        // String equality and ordering. Ordering compares Unicode scalar
+        // values (via the emitted scalarCompare helper): LuaJIT orders
+        // bytewise in UTF-8, which is scalar-value order — including
+        // supplementary characters, where String.compareTo's UTF-16
+        // code-unit order diverges.
         if (leftType instanceof Type.String && rightType instanceof Type.String) {
             return switch (op) {
                 case EQ -> "(" + left + ".equals(" + right + "))";
                 case NEQ -> "(!" + left + ".equals(" + right + "))";
-                case LT -> "(" + left + ".compareTo(" + right + ") < 0)";
-                case LTE -> "(" + left + ".compareTo(" + right + ") <= 0)";
-                case GT -> "(" + left + ".compareTo(" + right + ") > 0)";
-                case GTE -> "(" + left + ".compareTo(" + right + ") >= 0)";
+                case LT -> "(scalarCompare(" + left + ", " + right + ") < 0)";
+                case LTE -> "(scalarCompare(" + left + ", " + right + ") <= 0)";
+                case GT -> "(scalarCompare(" + left + ", " + right + ") > 0)";
+                case GTE -> "(scalarCompare(" + left + ", " + right + ") >= 0)";
                 default -> {
                     unsupported("operator " + op + " on strings", bin.span());
                     yield "\"\"";
@@ -985,6 +1281,55 @@ public final class JvmBackend {
         unsupported("operator " + op + " on operand types "
             + typeName(leftType) + " and " + typeName(rightType), bin.span());
         return "null";
+    }
+
+    /**
+     * Emits a boolean {@code &&}/{@code ||} whose right operand may hoist
+     * side-effecting statements. When the right operand's emission hoisted
+     * statements, they are guarded by the left operand so Java's
+     * short-circuit semantics hold (the right operand must not be evaluated
+     * when the left operand already decides the result), and the result is
+     * carried in a fresh temporary:
+     * <pre>
+     *   boolean __sc0 = false;              // true for ||
+     *   if (LEFT) { helper(); __sc0 = RIGHT; }   // if (!(LEFT)) for ||
+     * </pre>
+     * When the right operand has no hoisted statements, the plain
+     * {@code (left && right)} form is emitted.
+     */
+    private String emitShortCircuit(BinaryExpr bin, boolean isAnd) {
+        String left = emitExpression(bin.left());
+        int mark = preStatements.size();
+        String right = emitExpression(bin.right());
+        if (preStatements.size() == mark) {
+            return isAnd ? "(" + left + " && " + right + ")"
+                         : "(" + left + " || " + right + ")";
+        }
+        // Extract the statements hoisted by the right operand and re-add
+        // them inside a guard over the left operand, preserving their
+        // relative order and evaluation order.
+        List<PreLine> guarded = new ArrayList<>(
+            preStatements.subList(mark, preStatements.size()));
+        preStatements.subList(mark, preStatements.size()).clear();
+        String temp = nextShortCircuitName();
+        preStatements.add(new PreLine(
+            "boolean " + temp + " = " + (isAnd ? "false" : "true") + ";", 0));
+        preStatements.add(new PreLine(
+            isAnd ? "if (" + left + ") {" : "if (!" + left + ") {", 0));
+        for (PreLine line : guarded) {
+            preStatements.add(new PreLine(line.text(), line.extraIndent() + 1));
+        }
+        preStatements.add(new PreLine(temp + " = " + right + ";", 1));
+        preStatements.add(new PreLine("}", 0));
+        preStatementsDeclareTemps = true;
+        return temp;
+    }
+
+    /** A fresh short-circuit temporary ({@code __sc0}, {@code __sc1}, …). */
+    private String nextShortCircuitName() {
+        String name = "__sc" + shortCircuitCounter;
+        shortCircuitCounter++;
+        return name;
     }
 
     private String emitUnary(UnaryExpr u) {
@@ -1016,6 +1361,26 @@ public final class JvmBackend {
             if (!(sym instanceof Symbol.FunctionSymbol)) {
                 unsupported("calls through non-function values", call.span());
                 return "null";
+            }
+            // Module-level call to a module function whose body
+            // (transitively) reads a module field declared later than the
+            // call site: LuaJIT fails at load for such reads (the field is
+            // nil until its declaration runs) while Java would silently
+            // read the field's default value — reject instead of
+            // miscompiling.
+            if (currentModuleStatementIndex >= 0
+                    && moduleFunctions.containsKey(id.name())) {
+                String later = laterFieldRead(id.name(),
+                    currentModuleStatementIndex);
+                if (later != null) {
+                    unsupported("module-level call of '" + id.name()
+                        + "' whose body (transitively) reads the module "
+                        + "field '" + later + "' declared at or after the "
+                        + "call site (LuaJIT fails at load with a nil read; "
+                        + "Java would silently read the default value)",
+                        call.span());
+                    return "null";
+                }
             }
             StringBuilder sb = new StringBuilder(javaName(id.name())).append('(');
             for (int i = 0; i < call.args().size(); i++) {
@@ -1303,9 +1668,19 @@ public final class JvmBackend {
             && lit.value() instanceof LiteralValue.NullLiteral;
     }
 
-    /** Renders a double as a Java double literal. */
+    /**
+     * Renders a double as a Java double literal. Non-finite values render
+     * as the {@code Double} constants: the parser accepts e.g.
+     * {@code 1e999} as Infinity ({@code Double.parseDouble} with no range
+     * check) and the Lua backend emits {@code (1/0)} for it — Java has no
+     * literal spelling for Infinity/NaN, so a bare {@code Infinity}
+     * identifier would make javac reject an artifact the CLI reported as
+     * successful.
+     */
     private static String javaDoubleLiteral(double v) {
-        // Lexer-produced numbers are finite; Java parses Double.toString output.
+        if (Double.isNaN(v)) return "Double.NaN";
+        if (v == Double.POSITIVE_INFINITY) return "Double.POSITIVE_INFINITY";
+        if (v == Double.NEGATIVE_INFINITY) return "Double.NEGATIVE_INFINITY";
         return Double.toString(v);
     }
 
@@ -1347,10 +1722,14 @@ public final class JvmBackend {
      * emission for that statement is complete, so hoisted side effects run
      * exactly where Java's left-to-right evaluation would run them. */
     private void flushPreStatements() {
-        for (String stmt : preStatements) {
-            emitLine(stmt);
+        for (PreLine line : preStatements) {
+            if (!line.text().isEmpty()) {
+                out.append("    ".repeat(indent + line.extraIndent()));
+            }
+            out.append(line.text()).append('\n');
         }
         preStatements.clear();
+        preStatementsDeclareTemps = false;
     }
 
     /** A fresh dummy-local name for a forced evaluation ({@code __ignored},

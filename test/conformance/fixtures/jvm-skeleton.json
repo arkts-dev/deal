@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM backend skeleton conformance (ISSUE-0091). JVM-only fixtures: literals/output, int arithmetic, local variables, if/else, a frontend compile-error rejected before the backend, and the observable-behavior regressions: null-typed returns/initializers with side effects, null-typed captures of reassigned locals and parameters, floored % on negative operands, string equality/ordering, console.error -> stderr, null equality, standalone expression statements, module-level load-time statements, and a module-load-only fixture (runner initializes the module class when no function is auto-invoked). The JVM adapter compiles the emitted Java artifact with javac and executes it with java in a subprocess; the generated runner auto-invokes zero-arity exported functions in declaration order and prints their non-null results, so expectedOutput observes real return values (console.log output is also captured).",
+  "description": "JVM backend skeleton conformance (ISSUE-0091). Fixtures for the JVM backend (several also run under LuaJIT as the reference behavior): literals/output, int arithmetic, local variables, if/else, a frontend compile-error rejected before the backend, and the observable-behavior regressions: null-typed returns/initializers with side effects, null-typed captures of reassigned locals and parameters, floored % on negative operands, string equality/ordering (Unicode scalar-value order), console.error -> stderr, null equality, standalone expression statements, module-level load-time statements, a module-load-only fixture (runner initializes the module class when no function is auto-invoked), non-finite number literals (1e999 -> Double.POSITIVE_INFINITY), && / || short-circuit preservation for guarded null-typed calls, and a module-level error with a zero-arity export (the runner unwraps ExceptionInInitializerError into the DEAL_ERROR_CODE contract). The JVM adapter compiles the emitted Java artifact with javac and executes it with java in a subprocess; the generated runner auto-invokes zero-arity exported functions in declaration order and prints their non-null results, so expectedOutput observes real return values (console.log output is also captured). The Lua harness auto-invokes in pairs() (unspecified) order, so fixtures with multiple zero-arity exports must not depend on cross-backend invocation order (every fixture here has at most one zero-arity export).",
   "tests": [
     {
       "name": "jvm-literals-output",
@@ -371,6 +371,128 @@
       ],
       "irNotContains": [],
       "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nonfinite-literal",
+      "description": "A number literal that overflows to infinity (1e999, checker-accepted: the parser stores Double.parseDouble with no range check) emits the Double constant instead of a bare Infinity identifier that javac rejects — the CLI must never report success for an artifact javac rejects; LuaJIT emits (1/0) for the same literal",
+      "source": "export function test(): number { let x: number = 1e999; return x; }",
+      "expectedOutput": "Infinity",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: number",
+        "literal Infinity : number"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nonfinite-negated",
+      "description": "Negating an overflowing number literal (-1e999) prints -Infinity; LuaJIT emits (-1/0) for the same literal",
+      "source": "export function test(): number { let x: number = -1e999; return x; }",
+      "expectedOutput": "-Infinity",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: number"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-shortcircuit-and",
+      "description": "The right operand of && is NOT evaluated when the left operand is false (LuaJIT's `and` short-circuit): a null-typed side-effecting call in the guarded operand must not run — if it ran, counter would become 1 and the program would print 'ran'. Runs under both backends; LuaJIT is the reference behavior",
+      "source": "import * as console from \"std/console\"\nlet counter: int = 0;\nfunction helper(): null { counter = 1; }\nexport function test(): null {\n  let b: boolean = false && helper() === null;\n  if (b) { console.log(\"b-true\"); return; }\n  if (counter === 0) { console.log(\"skipped\"); } else { console.log(\"ran\"); }\n}",
+      "expectedOutput": "skipped",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "binary && : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-shortcircuit-or",
+      "description": "The right operand of || is NOT evaluated when the left operand is true: the guarded null-typed call must not run (b stays true, counter stays 0, prints 'skipped'). Runs under both backends; LuaJIT is the reference behavior",
+      "source": "import * as console from \"std/console\"\nlet counter: int = 0;\nfunction helper(): null { counter = 1; }\nexport function test(): null {\n  let b: boolean = true || helper() === null;\n  if (b && counter === 0) { console.log(\"skipped\"); } else { console.log(\"ran\"); }\n}",
+      "expectedOutput": "skipped",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "binary || : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-shortcircuit-runs",
+      "description": "A guarded operand that IS reachable still evaluates: true && helper() === null runs helper() (the guard must not swallow reachable side effects)",
+      "source": "import * as console from \"std/console\"\nfunction helper(): null { console.log(\"helper-ran\"); }\nexport function test(): boolean { return true && helper() === null; }",
+      "expectedOutput": "helper-ran",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: boolean",
+        "binary && : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-string-scalar-order",
+      "description": "String ordering compares Unicode scalar values (LuaJIT orders bytewise in UTF-8, which is scalar order): U+1F600 < U+E000 is FALSE in scalar order, though UTF-16 code-unit order (String.compareTo) says true — a compareTo lowering would print 'utf16'. Runs under both backends; LuaJIT is the reference behavior",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  if (\"😀\" < \"\") { console.log(\"utf16\"); } else { console.log(\"scalar\"); }\n}",
+      "expectedOutput": "scalar",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "binary < : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-module-error-with-export",
+      "description": "A module-level runtime error in a module WITH a zero-arity exported function still reports the DEAL error code: the first auto-invocation triggers class initialization, whose ExceptionInInitializerError (a LinkageError, not a RuntimeException) wraps the DealError — the runner unwraps it into the DEAL_ERROR_CODE contract",
+      "source": "export function test(): int { return 1; }\nlet x: int = 1 / 0;",
+      "expectedOutput": null,
+      "expectedError": "E8005",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "binary / : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
         "jvm"
       ]
     }

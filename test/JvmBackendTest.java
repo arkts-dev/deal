@@ -83,6 +83,11 @@ public class JvmBackendTest {
             testShadowedInitializer();
             testUseBeforeDeclarationRejected();
             testRuntimeErrorCodes();
+            testNonFiniteNumberLiterals();
+            testShortCircuitPreservation();
+            testStringScalarOrdering();
+            testModuleLevelCallReadingLaterField();
+            testRunnerModuleErrorCodeWithExport();
             testOrchestratorJvmBackend();
             testOrchestratorDefaultStaysLua();
             testOrchestratorJvmRejectsUnsupported();
@@ -1125,6 +1130,409 @@ public class JvmBackendTest {
             "ok");
         check(ok.exitCode() == 0, "valid program exits 0");
         check(ok.output().contains("5"), "valid program prints 5: " + ok.output());
+    }
+
+    /**
+     * Number literals that overflow to Infinity (checker-accepted: the
+     * parser stores Double.parseDouble("1e999") with no range check) must
+     * render as the Double constants — a bare {@code Infinity} identifier
+     * makes javac reject an artifact the CLI reported as successful. The
+     * Lua backend emits {@code (1/0)} for the same literal.
+     */
+    private static void testNonFiniteNumberLiterals() throws Exception {
+        System.out.println("-- Non-finite number literals (javac + java) --");
+
+        ExecResult inf = compileAndRunJvm(
+            "export function test(): number { let x: number = 1e999; return x; }",
+            "inflit");
+        check(inf.exitCode() == 0, "1e999 exits 0");
+        check(inf.output().contains("Infinity"),
+            "1e999 prints Infinity: " + inf.output());
+
+        ExecResult negInf = compileAndRunJvm(
+            "export function test(): number { let x: number = -1e999; return x; }",
+            "neginflit");
+        check(negInf.exitCode() == 0, "-1e999 exits 0");
+        check(negInf.output().contains("-Infinity"),
+            "-1e999 prints -Infinity: " + negInf.output());
+
+        // Infinity compares equal to itself, like LuaJIT's (1/0) == (1/0).
+        ExecResult eq = compileAndRunJvm(
+            "export function test(): boolean { return 1e999 === 1e999; }",
+            "infeq");
+        check(eq.exitCode() == 0, "1e999 === 1e999 exits 0");
+        check(eq.output().contains("true"),
+            "1e999 === 1e999 is true: " + eq.output());
+
+        // int(1e999) reports E8001, matching LuaJIT's check_int on infinity.
+        ExecResult conv = compileAndRunJvm(
+            "export function test(): int { return int(1e999); }",
+            "infconv");
+        check(conv.exitCode() == 1, "int(1e999) exits 1");
+        check(conv.output().contains("DEAL_ERROR_CODE: E8001"),
+            "int(1e999) reports E8001: " + conv.output());
+
+        // Emission: the Double constant, never a bare Infinity identifier.
+        Frontend f = compileFrontend(
+            "export function test(): number { let x: number = 1e999; return x; }",
+            "jvmtest-inflit.deal");
+        check(f.errors().isEmpty(), "non-finite literal frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-inflit.deal", "main");
+            check(!res.hasErrors(), "non-finite literal codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains("= Double.POSITIVE_INFINITY;"),
+                    "1e999 renders as Double.POSITIVE_INFINITY");
+                check(!res.source().matches("(?s).*= Infinity;.*"),
+                    "no bare Infinity identifier is emitted");
+            }
+        }
+    }
+
+    /**
+     * {@code &&}/{@code ||} short-circuit: a null-typed side-effecting call
+     * in a non-leading operand must NOT run when the left operand already
+     * decides the result (LuaJIT's {@code and}/{@code or} semantics). The
+     * hoisted pre-statements are guarded by the left operand, never flushed
+     * unconditionally.
+     */
+    private static void testShortCircuitPreservation() throws Exception {
+        System.out.println("-- && / || short-circuit preservation (javac + java) --");
+
+        ExecResult andSkip = compileAndRunJvm("""
+            import * as console from "std/console"
+            function helper(): null { console.log("helper-ran"); }
+            export function test(): boolean { return false && helper() === null; }
+            """, "scandskip");
+        check(andSkip.exitCode() == 0, "false && ... exits 0");
+        check(andSkip.output().contains("false"),
+            "false && ... computes false: " + andSkip.output());
+        check(!andSkip.output().contains("helper-ran"),
+            "right operand of false && is NOT evaluated: " + andSkip.output());
+
+        ExecResult orSkip = compileAndRunJvm("""
+            import * as console from "std/console"
+            function helper(): null { console.log("helper-ran"); }
+            export function test(): boolean { return true || helper() === null; }
+            """, "scorskip");
+        check(orSkip.exitCode() == 0, "true || ... exits 0");
+        check(orSkip.output().contains("true"),
+            "true || ... computes true: " + orSkip.output());
+        check(!orSkip.output().contains("helper-ran"),
+            "right operand of true || is NOT evaluated: " + orSkip.output());
+
+        ExecResult andRuns = compileAndRunJvm("""
+            import * as console from "std/console"
+            function helper(): null { console.log("helper-ran"); }
+            export function test(): boolean { return true && helper() === null; }
+            """, "scandruns");
+        check(andRuns.exitCode() == 0, "true && ... exits 0");
+        check(andRuns.output().contains("helper-ran"),
+            "right operand of true && IS evaluated: " + andRuns.output());
+        check(andRuns.output().contains("true"),
+            "true && (null === null) computes true: " + andRuns.output());
+
+        ExecResult orRuns = compileAndRunJvm("""
+            import * as console from "std/console"
+            function helper(): null { console.log("helper-ran"); }
+            export function test(): boolean { return false || helper() === null; }
+            """, "scorruns");
+        check(orRuns.exitCode() == 0, "false || ... exits 0");
+        check(orRuns.output().contains("helper-ran"),
+            "right operand of false || IS evaluated: " + orRuns.output());
+        check(orRuns.output().contains("true"),
+            "false || (null === null) computes true: " + orRuns.output());
+
+        // Initializer position: the reviewer's `let b: boolean = ...` shape.
+        ExecResult initSkip = compileAndRunJvm("""
+            import * as console from "std/console"
+            function helper(): null { console.log("helper-ran"); }
+            export function test(): int {
+              let b: boolean = false && helper() === null;
+              if (b) { console.log("b-true"); return 1; }
+              console.log("b-false");
+              return 0;
+            }
+            """, "scinitskip");
+        check(initSkip.exitCode() == 0, "guarded initializer exits 0");
+        check(initSkip.output().contains("b-false"),
+            "initializer computes false: " + initSkip.output());
+        check(!initSkip.output().contains("helper-ran"),
+            "guarded initializer skips the call: " + initSkip.output());
+
+        // Nested short-circuit: the inner guard nests inside the outer one.
+        ExecResult nested = compileAndRunJvm("""
+            import * as console from "std/console"
+            function helper(): null { console.log("helper-ran"); }
+            export function test(): boolean {
+              return false && (true || helper() === null);
+            }
+            """, "scnested");
+        check(nested.exitCode() == 0, "nested short-circuit exits 0");
+        check(!nested.output().contains("helper-ran"),
+            "nested guarded operand is NOT evaluated: " + nested.output());
+        check(nested.output().contains("false"),
+            "nested short-circuit computes false: " + nested.output());
+
+        ExecResult nestedRuns = compileAndRunJvm("""
+            import * as console from "std/console"
+            function helper(): null { console.log("helper-ran"); }
+            export function test(): boolean {
+              return true && (false || helper() === null);
+            }
+            """, "scnestedruns");
+        check(nestedRuns.exitCode() == 0, "nested short-circuit (runs) exits 0");
+        check(nestedRuns.output().contains("helper-ran"),
+            "nested reachable operand IS evaluated: " + nestedRuns.output());
+
+        // Left-operand hoists stay unconditional; right-operand hoists are
+        // guarded — evaluation order preserved.
+        ExecResult both = compileAndRunJvm("""
+            import * as console from "std/console"
+            function first(): null { console.log("first-ran"); }
+            function helper(): null { console.log("helper-ran"); }
+            export function test(): boolean {
+              return first() === null && helper() === null;
+            }
+            """, "scboth");
+        check(both.exitCode() == 0, "left+right hoists exit 0");
+        check(both.output().contains("first-ran"),
+            "left-operand call runs: " + both.output());
+        check(both.output().contains("helper-ran"),
+            "guarded right-operand call runs (left was true): " + both.output());
+        check(both.output().indexOf("first-ran")
+                < both.output().indexOf("helper-ran"),
+            "evaluation order preserved: " + both.output());
+
+        // Module-level field initializer with a guarded operand: the
+        // temporary must stay in scope, so the field is declared
+        // uninitialized and assigned inside the same static block.
+        ExecResult modSkip = compileAndRunJvm("""
+            import * as console from "std/console"
+            function helper(): null { console.log("helper-ran"); }
+            let b: boolean = false && helper() === null;
+            export function test(): null { console.log("test-ran"); }
+            """, "scmodskip");
+        check(modSkip.exitCode() == 0, "module-level guarded initializer exits 0");
+        check(modSkip.output().contains("test-ran"),
+            "module still runs: " + modSkip.output());
+        check(!modSkip.output().contains("helper-ran"),
+            "module-level guarded operand is NOT evaluated: " + modSkip.output());
+
+        ExecResult modRuns = compileAndRunJvm("""
+            import * as console from "std/console"
+            function helper(): null { console.log("helper-ran"); }
+            let b: boolean = true && helper() === null;
+            export function test(): null { console.log("test-ran"); }
+            """, "scmodruns");
+        check(modRuns.exitCode() == 0, "module-level reachable initializer exits 0");
+        check(modRuns.output().contains("helper-ran"),
+            "module-level reachable operand IS evaluated: " + modRuns.output());
+        check(modRuns.output().indexOf("helper-ran")
+                < modRuns.output().indexOf("test-ran"),
+            "module-level initializer runs before the exported call: " + modRuns.output());
+
+        // Emission assertions: no lambdas, and the module-level case
+        // declares the field then assigns it in the static block.
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            function helper(): null { console.log("helper-ran"); }
+            let b: boolean = false && helper() === null;
+            export function test(): null { console.log("test-ran"); }
+            """, "jvmtest-sc.deal");
+        check(f.errors().isEmpty(), "short-circuit probe frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-sc.deal", "main");
+            check(!res.hasErrors(), "short-circuit probe codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(!res.source().contains("->"),
+                    "short-circuit lowering emits no lambda");
+                check(res.source().contains("static boolean b;"),
+                    "module-level guarded initializer declares the field uninitialized");
+                check(res.source().contains("b = __sc0;"),
+                    "module-level guarded initializer assigns inside the static block");
+            }
+        }
+    }
+
+    /** String ordering follows Unicode scalar values (LuaJIT's UTF-8
+     * bytewise order), not UTF-16 code-unit order — supplementary
+     * characters order after the whole BMP, exactly as under LuaJIT. */
+    private static void testStringScalarOrdering() throws Exception {
+        System.out.println("-- String scalar-value ordering (javac + java) --");
+
+        ExecResult sup = compileAndRunJvm(
+            "export function test(): int { if (\"\uD83D\uDE00\" < \"\uE000\") { return 1; } return 0; }",
+            "suporder");
+        check(sup.exitCode() == 0, "supplementary ordering exits 0");
+        check(sup.output().contains("0"),
+            "U+1F600 < U+E000 is false in scalar order (UTF-16 says true): "
+                + sup.output());
+
+        ExecResult supReverse = compileAndRunJvm(
+            "export function test(): int { if (\"\uE000\" < \"\uD83D\uDE00\") { return 1; } return 0; }",
+            "suporder2");
+        check(supReverse.exitCode() == 0, "reverse supplementary ordering exits 0");
+        check(supReverse.output().contains("1"),
+            "U+E000 < U+1F600 is true in scalar order: " + supReverse.output());
+
+        ExecResult supEq = compileAndRunJvm(
+            "export function test(): int { if (\"\uD83D\uDE00\" === \"\uD83D\uDE00\") { return 1; } return 0; }",
+            "supeq");
+        check(supEq.exitCode() == 0, "supplementary equality exits 0");
+        check(supEq.output().contains("1"),
+            "supplementary equality is exact: " + supEq.output());
+
+        ExecResult ascii = compileAndRunJvm(
+            "export function test(): int { if (\"a\" < \"b\") { return 1; } return 0; }",
+            "asciiorder");
+        check(ascii.exitCode() == 0, "ASCII ordering exits 0");
+        check(ascii.output().contains("1"),
+            "ASCII ordering still works: " + ascii.output());
+
+        Frontend f = compileFrontend(
+            "export function test(): boolean { return \"\uD83D\uDE00\" < \"\uE000\"; }",
+            "jvmtest-sup.deal");
+        check(f.errors().isEmpty(), "scalar-ordering probe frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-sup.deal", "main");
+            check(!res.hasErrors(), "scalar-ordering probe codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains("scalarCompare("),
+                    "string ordering goes through scalarCompare");
+                check(!res.source().contains(".compareTo("),
+                    "no UTF-16 compareTo for DEAL string ordering");
+            }
+        }
+    }
+
+    /** Module-level calls to functions whose bodies (transitively) read a
+     * module field declared later than the call site are rejected with
+     * E6000: LuaJIT fails at load with a nil read while Java would silently
+     * read the field's default value. */
+    private static void testModuleLevelCallReadingLaterField() throws Exception {
+        System.out.println("-- Module-level call reading a later field -> E6000 --");
+
+        List<String> rejected = List.of(
+            // call before the field the callee reads (callee declared first)
+            """
+            import * as console from "std/console"
+            function f(): int { return x; }
+            f();
+            let x: int = 5;
+            export function test(): null { console.log("test-ran"); }
+            """,
+            // the reviewer's shape: call before the callee's own declaration
+            """
+            import * as console from "std/console"
+            f();
+            let x: int = 5;
+            function f(): int { return x; }
+            export function test(): null { console.log("test-ran"); }
+            """,
+            // transitive: f calls g which reads the later field
+            """
+            function f(): int { return g(); }
+            function g(): int { return x; }
+            f();
+            let x: int = 5;
+            export function test(): int { return 1; }
+            """,
+            // call in a module-level field initializer
+            """
+            function f(): int { return x; }
+            let y: int = f();
+            let x: int = 5;
+            export function test(): int { return y; }
+            """,
+            // call in a module-level if condition
+            """
+            function f(): int { return x; }
+            if (f() === 1) { }
+            let x: int = 5;
+            export function test(): int { return 1; }
+            """,
+            // a field's own initializer calling a function that reads the
+            // field being initialized (LuaJIT reads nil, fails at load)
+            """
+            let x: int = f();
+            function f(): int { return x; }
+            export function test(): int { return x; }
+            """);
+
+        for (String source : rejected) {
+            Frontend f = compileFrontend(source, "jvmtest-modcall.deal");
+            if (!f.errors().isEmpty()) {
+                fail("checker must accept the module-level call probe "
+                    + "(the backend rejects it): " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-modcall.deal", "main");
+            check(res.hasErrors(), "backend rejects the module-level call "
+                + "reading a later field");
+            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for the module-level call reading a later field: "
+                    + res.diagnostics());
+        }
+
+        // Positive: a call reading a field declared BEFORE the call site is
+        // fine, and a function-local shadow of a module field is not a
+        // field read.
+        ExecResult ok = compileAndRunJvm("""
+            import * as console from "std/console"
+            let x: int = 5;
+            function f(): int { return x; }
+            f();
+            export function test(): int { return 1; }
+            """, "modcallok");
+        check(ok.exitCode() == 0, "earlier-field call exits 0");
+        check(ok.output().contains("1"),
+            "earlier-field call module still works: " + ok.output());
+
+        ExecResult shadow = compileAndRunJvm("""
+            import * as console from "std/console"
+            let x: int = 5;
+            function f(): int { let x: int = 9; return x; }
+            f();
+            export function test(): int { return 1; }
+            """, "modcallshadow");
+        check(shadow.exitCode() == 0, "local-shadow call exits 0");
+        check(shadow.output().contains("1"),
+            "local shadow of a module field is not a field read: " + shadow.output());
+    }
+
+    /** The DEAL_ERROR_CODE contract must hold for module-level errors
+     * whether or not the module has a zero-arity export: with one, the
+     * first auto-invocation triggers class initialization and the error
+     * arrives as an ExceptionInInitializerError (a LinkageError, not a
+     * RuntimeException) that the runner unwraps. */
+    private static void testRunnerModuleErrorCodeWithExport() throws Exception {
+        System.out.println("-- Module-level error + zero-arity export (DEAL_ERROR_CODE) --");
+
+        ExecResult withExport = compileAndRunJvm("""
+            export function test(): int { return 1; }
+            let x: int = 1 / 0;
+            """, "moderrwithexport");
+        check(withExport.exitCode() == 1, "module-level error with export exits 1");
+        check(withExport.output().contains("DEAL_ERROR_CODE: E8005"),
+            "DEAL_ERROR_CODE contract holds with a zero-arity export: "
+                + withExport.output());
+
+        ExecResult noExport = compileAndRunJvm("""
+            let x: int = 1 / 0;
+            export function takesArg(y: int): int { return y; }
+            """, "moderrnoexport");
+        check(noExport.exitCode() == 1, "module-level error without export exits 1");
+        check(noExport.output().contains("DEAL_ERROR_CODE: E8005"),
+            "DEAL_ERROR_CODE contract holds without a zero-arity export: "
+                + noExport.output());
     }
 
     private static void testOrchestratorJvmBackend() throws Exception {

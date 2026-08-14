@@ -21,9 +21,9 @@ Supported (real semantics, spec JVM value mapping):
 | DEAL | JVM representation |
 |---|---|
 | `int` | primitive `long` (checked arithmetic: E8004 overflow, E8005 div-by-zero, E8006 negative exponent; non-finite powers → E8001, matching LuaJIT's `check_int`) |
-| `number` | primitive `double` (Lua-style floored `%` via `numMod`) |
+| `number` | primitive `double` (Lua-style floored `%` via `numMod`; literals that overflow to ±Infinity — e.g. checker-accepted `1e999` — render as `Double.POSITIVE_INFINITY`/`Double.NEGATIVE_INFINITY`, mirroring the Lua backend's `(1/0)`, so the artifact stays valid Java) |
 | `boolean` | primitive `boolean` |
-| `string` | `java.lang.String` (`===` via `equals`; ordering via `compareTo`) |
+| `string` | `java.lang.String` (`===` via `equals`; ordering via the emitted `scalarCompare` helper — Unicode scalar-value order, matching LuaJIT's UTF-8 bytewise order including supplementary characters) |
 | `null` | `void` returns / `Void` locals and params; `null === null` is `true`, `z === null`/`!==` emit Java `==`/`!=` (spec §Value equality) |
 | functions | `static` methods of the generated module class |
 | `let` locals / module fields | locals (shadowing disambiguated `$n`) / `static` fields |
@@ -61,6 +61,17 @@ reports success for an artifact `javac` would reject.
   (`System.out.println("assign-log"); Void z = null;`). LuaJIT evaluates
   the same expressions before returning/assigning, and the hoisting
   preserves DEAL's left-to-right evaluation order.
+- **`&&` / `||` short-circuit is preserved.** A null-typed side-effecting
+  call in a *non-leading* operand (`false && helper() === null`,
+  `true || helper() === null`) is hoisted, but the hoisted statements are
+  guarded by the left operand and the result is carried in a fresh
+  `__sc<n>` temporary — `helper()` is never called when LuaJIT's `and`/`or`
+  would skip the operand. Reachable operands (`true && …`,
+  `false || …`) still run, and left-operand hoists stay unconditional, in
+  evaluation order. At module level, a field initializer that references
+  the temporary is emitted as a plain field declaration plus an assignment
+  inside the same static block, so the temporary stays in scope and the
+  artifact stays valid Java.
 - **No lambdas are ever emitted.** The previous `nullAnd(() -> …)` lambda
   lowering could make `javac` reject an artifact when the call captured a
   local or parameter reassigned anywhere in its enclosing scope ("local
@@ -87,7 +98,15 @@ reports success for an artifact `javac` would reject.
   self-referential initializer, `console.log(x); let x = …`, a forward
   reference to a later module field) reads nil under LuaJIT and fails at
   runtime; Java would reject the forward reference after the CLI reported
-  success. The backend emits E6000 for these instead.
+  success. The backend emits E6000 for these instead. The detection is
+  transitive through the module-level call graph: a module-level call of a
+  function whose body (directly or through other module functions) reads a
+  module field declared at or after the call site is E6000 (a field's own
+  initializer calling a function that reads the field being initialized is
+  included) — LuaJIT fails at load with a nil read, and Java would silently
+  read the field's default value (verified: `f(); let x: int = 5; function
+  f(): int { return x; }` fails at load under LuaJIT). Reads through function-local shadows
+  of a module field are correctly not flagged.
 - **Imports are rejected at the import statement.** Any `import` other than
   `std/console` is an E6000 at the import itself — even when unused —
   because the imported module's require-time side effects cannot be
@@ -134,15 +153,20 @@ reports success for an artifact `javac` would reject.
     `test/LuaBackendIntegrationTest`, `test/ConformanceTest`,
     `test/conformance/fixtures/*.json` `backends: ["luajit"]`) stays green
     and unmodified.
-  - JVM: `test/conformance/fixtures/jvm-skeleton.json` — twenty-two JVM-only
-    fixtures (literals/output, int arithmetic, local variables with
+  - JVM: `test/conformance/fixtures/jvm-skeleton.json` — twenty-nine
+    fixtures (JVM-only, plus cross-backend parity fixtures that also run
+    under LuaJIT as the reference behavior): literals/output, int arithmetic,
+    local variables with
     shadowing, if/else, a frontend compile-error rejected before the
     backend, null-typed return side effects ×2, null-typed initializers,
     module-level load-time statements and assignment, a shadowed
     initializer computing 6, null-typed captures of reassigned locals and
-    parameters, floored `%` on negative operands, string equality/ordering,
-    `console.error` → stderr, null equality, standalone expression
-    statements, and a module-load-only fixture) run end-to-end under
+    parameters, floored `%` on negative operands, string equality/ordering
+    (scalar order incl. supplementary characters), `console.error` → stderr,
+    null equality, standalone expression statements, module-load-only and
+    module-load-error fixtures, non-finite literals ×2, `&&`/`||`
+    short-circuit preservation ×3, and a module-level error with a
+    zero-arity export) run end-to-end under
     `test/BackendConformanceTest`.
   - Seam: `test/JvmBackendTest.java` — identifier translation, collision-safe
     class-name derivation, emission, E6000 rejection (including unused
@@ -152,7 +176,12 @@ reports success for an artifact `javac` would reject.
     assignment positions and via parameters, with a no-lambda emission
     assertion), module-level statements/shadowed initializers via
     `javac`+`java` subprocesses, runtime error codes (E8004/E8005/E8006 and
-    the E8001 infinity alignment), the orchestrator JVM path (artifact
+    the E8001 infinity alignment), non-finite number literals, `&&`/`||`
+    short-circuit preservation (function-local and module-level, with
+    reachable and skipped operands), scalar string ordering, module-level
+    calls reading later-declared fields (E6000, incl. the transitive
+    path), the runner's `DEAL_ERROR_CODE` contract for module-level errors
+    with and without a zero-arity export, the orchestrator JVM path (artifact
     exists, compiles, no `.lua`/runtime copied, import rejection,
     class-name collision detection, the `--source-map` warning), the
     orchestrator default staying LuaJIT, `DealConfig` and CLI backend
@@ -198,8 +227,10 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   (`check_null` rejects the raw nil that `console.log` returns) are proven
   redundant by the JVM's static types and skipped, as the spec's JVM
   backend contract permits — see "Observable-behavior guarantees" above.
-- String ordering uses UTF-16 code-unit order (`String.compareTo`); LuaJIT
-  orders bytewise. Identical for ASCII.
+- String ordering follows Unicode scalar values (LuaJIT's UTF-8 bytewise
+  order), implemented by the emitted `scalarCompare` code-point loop; the
+  old UTF-16 `String.compareTo` ordering diverged for supplementary
+  characters and was replaced.
 - `--source-map` sidecars are a LuaJIT feature; the JVM path prints a
   warning when `--source-map` is requested instead of silently producing
   no sidecars.
@@ -208,7 +239,13 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   artifact. The generated artifact is a module class without a `main`; the
   conformance adapter compiles it together with a runner that auto-invokes
   the zero-arity exported functions in declaration order and prints
-  non-null results (mirroring the Lua harness's auto-invocation), and
-  initializes the module class via `Class.forName` when no function is
-  auto-invoked so module-load-only fixtures still observe their load-time
-  output.
+  non-null results (the Lua harness iterates `pairs()` — an unspecified
+  order — so fixtures with multiple zero-arity exports must not depend on
+  cross-backend invocation order), and initializes the module class via
+  `Class.forName` when no function is auto-invoked so module-load-only
+  fixtures still observe their load-time output. Module-level DEAL errors
+  surface with the same `DEAL_ERROR_CODE: <code>` contract whether or not a
+  zero-arity export exists: the runner unwraps
+  `ExceptionInInitializerError` (a `LinkageError`, not a
+  `RuntimeException`, raised when the first auto-invocation triggers class
+  initialization) into the same handler.
