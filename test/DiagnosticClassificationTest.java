@@ -253,6 +253,7 @@ public class DiagnosticClassificationTest {
         coverage.put("E3014", "CheckerTest (async call without await)");
         coverage.put("E3015", "CheckerTest (for-of iterable type)");
         coverage.put("E3016", "CheckerTest (template literal interpolation)");
+        coverage.put("E3017", "CheckerTest (array length read-only)");
 
         coverage.put("E4001", "CheckerTest (missing required field)");
         coverage.put("E4002", "CheckerTest (extra field)");

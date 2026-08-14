@@ -172,6 +172,8 @@ public enum DiagnosticCode {
     E3015(Phase.FRONTEND, "Invalid for-of iterable type"),
     /** Template literal interpolation must be string. */
     E3016(Phase.FRONTEND, "Template literal interpolation type mismatch"),
+    /** Array length is read-only (assignment/delete to array .length). */
+    E3017(Phase.FRONTEND, "Array length is read-only"),
 
     // =========================================================================
     // E4xxx — class shape validation (FRONTEND)

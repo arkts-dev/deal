@@ -16,7 +16,7 @@ import deal.diagnostics.DiagnosticCode;
  * null narrowing, contextual typing for table reads, and class construction
  * checking.
  *
- * <p>Errors produced: E3001–E3016, E4001–E4008, E5001–E5004.</p>
+ * <p>Errors produced: E3001–E3017, E4001–E4008, E5001–E5004.</p>
  */
 public final class TypeChecker {
 
@@ -667,6 +667,14 @@ public final class TypeChecker {
 
         if (ds.target() instanceof MemberAccessExpr mae) {
             Type objType = typeOf(mae.object());
+            // D3 (typed-boundary-enforcement): array .length is read-only.
+            // Defensive rejection — codegen would otherwise emit invalid
+            // `#xs = nil` Lua for a program the checker had accepted.
+            if (objType instanceof Type.Array && mae.field().equals("length")) {
+                error(DiagnosticCode.E3017, "Array length is read-only",
+                    ds.target().span());
+                return;
+            }
             if (objType instanceof Type.Class cls) {
                 Symbol sym = currentScope.resolve(cls.name());
                 if (sym instanceof Symbol.ClassSymbol cs) {
@@ -1484,6 +1492,20 @@ public final class TypeChecker {
         Type targetType = checkExpression(assign.target());
         assignmentTargetMode = savedMode;
 
+        // D3 (typed-boundary-enforcement): array .length is read-only.
+        // The target is a MemberAccessExpr with field "length" on an
+        // Array-typed object. The append idiom xs[xs.length] = v has an
+        // IndexExpr target (the MemberAccessExpr is its index), so it never
+        // matches this shape and keeps emitting its append form.
+        boolean readOnlyArrayLength = false;
+        if (assign.target() instanceof MemberAccessExpr mae
+                && mae.field().equals("length")
+                && typeOf(mae.object()) instanceof Type.Array) {
+            error(DiagnosticCode.E3017, "Array length is read-only",
+                assign.target().span());
+            readOnlyArrayLength = true;
+        }
+
         // F3: Use the target type as contextual expected type for the value
         Type savedExpected = expectedType;
         if (targetType != null && targetType != Type.Error.INSTANCE
@@ -1519,6 +1541,12 @@ public final class TypeChecker {
         if (assign.target() instanceof IdentifierExpr id) {
             narrowing.onAssignment(id.name());
             if (insideTry) varsAssignedInTry.add(id.name());
+        }
+
+        // Normal target/value checking ran above (typeMap stays populated);
+        // the read-only rejection makes the whole assignment erroneous.
+        if (readOnlyArrayLength) {
+            return Type.Error.INSTANCE;
         }
 
         return valueType;

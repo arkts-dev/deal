@@ -203,6 +203,12 @@ public class CheckerTest {
         testEmptyArray();
         testArrayRead();
         testArrayLength();
+        // D3 (typed-boundary-enforcement): array .length is read-only
+        testArrayLengthAssignmentRejected();
+        testArrayLengthDeleteRejected();
+        testArrayAppendIdiomCompiles();
+        testTableLengthWriteUnaffected();
+        testClassFieldLengthWriteUnaffected();
 
         // -- Type Checking: Object/Table --
         testTableLiteral();
@@ -756,6 +762,72 @@ public class CheckerTest {
             "let len: int = a.length;"
         );
         assertNoErrors(out, "array length");
+    }
+
+    // D3 (typed-boundary-enforcement): array .length is read-only.
+    static void testArrayLengthAssignmentRejected() {
+        System.out.println("-- Array Length Assignment Rejected (E3017) --");
+        // A mismatching value pins that normal target/value checking
+        // continues after E3017 (typeMap stays populated): both E3017 and
+        // E3001 are reported.
+        CheckerOutput out = checkProgram(
+            "let xs: int[] = [1, 2, 3];\n" +
+            "xs.length = \"oops\";"
+        );
+        assertError(out, "E3017", "assignment to array .length");
+        assertError(out, "E3001", "value type checking continues after E3017");
+        // E3017 is reported at the target span (line 2, column 1 — the
+        // start of `xs.length`), not the value span.
+        boolean atTarget = out.result.diagnostics().stream()
+            .filter(d -> d.code().equals("E3017"))
+            .anyMatch(d -> d.line() == 2 && d.column() == 1);
+        check(atTarget, "E3017 must be reported at the target span");
+    }
+
+    static void testArrayLengthDeleteRejected() {
+        System.out.println("-- Array Length Delete Rejected (E3017) --");
+        CheckerOutput out = checkProgram(
+            "let xs: int[] = [1, 2, 3];\n" +
+            "delete xs.length;"
+        );
+        assertError(out, "E3017", "delete of array .length");
+        // E3017 is reported at the target span (line 2, column 8 — the
+        // start of `xs.length` after `delete `), not the statement span.
+        boolean atTarget = out.result.diagnostics().stream()
+            .filter(d -> d.code().equals("E3017"))
+            .anyMatch(d -> d.line() == 2 && d.column() == 8);
+        check(atTarget, "E3017 must be reported at the target span");
+    }
+
+    // The append idiom's target is an IndexExpr whose index is the
+    // MemberAccessExpr — E3017 must not fire.
+    static void testArrayAppendIdiomCompiles() {
+        System.out.println("-- Array Append Idiom xs[xs.length] = v Compiles --");
+        CheckerOutput out = checkProgram(
+            "let xs: int[] = [1, 2, 3];\n" +
+            "xs[xs.length] = 4;"
+        );
+        assertNoErrors(out, "append idiom xs[xs.length] = v");
+    }
+
+    // Table .length and class fields named length are untouched.
+    static void testTableLengthWriteUnaffected() {
+        System.out.println("-- Table .length Write Unaffected --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { length: 1 };\n" +
+            "t.length = 5;"
+        );
+        assertNoErrors(out, "table .length write is still allowed");
+    }
+
+    static void testClassFieldLengthWriteUnaffected() {
+        System.out.println("-- Class Field Named length Unaffected --");
+        CheckerOutput out = checkProgram(
+            "class C { length: int; }\n" +
+            "let c: C = { length: 1 };\n" +
+            "c.length = 5;"
+        );
+        assertNoErrors(out, "class field named length is still assignable");
     }
 
     // =========================================================================
