@@ -387,6 +387,22 @@ public class ModuleSystemTest {
                 "Externals entry error message mentions 'declaration'");
         }
 
+        // Non-map, non-list externals shapes are config errors, not silent
+        // empty maps: scalars and strings must be rejected loudly.
+        for (String badShape : new String[] {
+                "{\"externals\": 5}",
+                "{\"externals\": \"host/x\"}",
+                "{\"externals\": true}"}) {
+            try {
+                DealConfig.parse(Path.of("deal.json"), badShape);
+                fail("Should have thrown for malformed externals shape: "
+                    + badShape);
+            } catch (IllegalArgumentException e) {
+                check(e.getMessage().contains("externals"),
+                    "Externals shape error message mentions 'externals'");
+            }
+        }
+
         // Invalid backend
         String badJson = "{\"backend\": \"jvm\"}";
         try {

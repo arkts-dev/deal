@@ -1117,4 +1117,106 @@ public class LuaAbiBackendTest {
         assertEquals("same input, same output",
             compile(source).lua(), compile(source).lua());
     }
+
+    /**
+     * The host loader declared-map emission order is independent of the
+     * caller-supplied map implementation.  Immutable maps (Map.of /
+     * Map.copyOf) iterate in per-JVM-run randomized order, so iterating the
+     * caller's map directly would make generated Lua vary between identical
+     * builds.  The backend iterates declared entries sorted by export name:
+     * the same module compiled from maps with different implementations and
+     * insertion orders must produce byte-identical Lua.
+     */
+    @Test
+    public void hostLoaderEmissionIsIndependentOfCallerMapOrder() {
+        // The 7-key declared set from the host-loader pins, plus the
+        // orchestrator's typical shape (ping/repeat/User + @jsonable
+        // synthetics + nullable-class return).
+        Map<String, Type> insertionOrder = new LinkedHashMap<>();
+        insertionOrder.put("ping", Types.func(List.of(), Type.Int.INSTANCE));
+        insertionOrder.put("repeat", Types.func(List.of(), Type.Int.INSTANCE));
+        insertionOrder.put("User$fromJson", Types.func(List.of(Type.String.INSTANCE),
+            Types.nullable(Types.classType("User", "host.cfg"))));
+        insertionOrder.put("User$toJson", Types.func(
+            List.of(Types.classType("User", "host.cfg")), Type.String.INSTANCE));
+        insertionOrder.put("User", Types.classType("User", "host.cfg"));
+        insertionOrder.put("find", Types.func(List.of(Type.String.INSTANCE),
+            Types.nullable(Types.classType("User", "host.cfg"))));
+        insertionOrder.put("applyAll", Types.func(List.of(Type.String.INSTANCE),
+            Types.array(Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)),
+            Type.String.INSTANCE));
+
+        // Reverse insertion order.
+        Map<String, Type> reversedOrder = new LinkedHashMap<>();
+        List<String> keys = new ArrayList<>(insertionOrder.keySet());
+        java.util.Collections.reverse(keys);
+        for (String k : keys) {
+            reversedOrder.put(k, insertionOrder.get(k));
+        }
+
+        // Hash-based implementation (iteration order unrelated to content).
+        Map<String, Type> hashMap = new java.util.HashMap<>(insertionOrder);
+
+        // Immutable maps: Map.copyOf/Map.of iterate in per-JVM-run SALT-
+        // randomized order (the reviewer-observed nondeterminism source).
+        Map<String, Type> copied = Map.copyOf(insertionOrder);
+        Map<String, Type> immutable = Map.ofEntries(
+            Map.entry("find", insertionOrder.get("find")),
+            Map.entry("repeat", insertionOrder.get("repeat")),
+            Map.entry("User$toJson", insertionOrder.get("User$toJson")),
+            Map.entry("ping", insertionOrder.get("ping")),
+            Map.entry("User", insertionOrder.get("User")),
+            Map.entry("User$fromJson", insertionOrder.get("User$fromJson")),
+            Map.entry("applyAll", insertionOrder.get("applyAll")));
+
+        String source = "import * as cfg from \"host/cfg\"\n"
+            + "export function run(): int { return cfg.repeat(); }\n";
+        LexResult lex = new Lexer(source, "test.deal").tokenize();
+        if (lex.hasErrors()) fail("lex errors: " + lex.diagnostics());
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        if (parse.hasErrors()) fail("parse errors: " + parse.diagnostics());
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("host/cfg", insertionOrder);
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        if (nr.diagnostics().stream().anyMatch(
+                d -> "error".equals(d.severity()))) {
+            fail("name-resolution errors: " + nr.diagnostics());
+        }
+        CheckResult result = TypeChecker.check("test.deal", symTable, nr,
+            parse.program());
+        if (result.hasErrors()) {
+            fail("type errors: " + result.diagnostics());
+        }
+
+        String reference = LuaBackend.generateWithImports(parse.program(),
+            result, "test.deal", Map.of(), Map.of("host/cfg", insertionOrder));
+        assertThat(reference, containsString(
+            "local cfg = __rt.load_host(\"host/cfg\", {"));
+        assertEquals("reverse insertion order, same bytes", reference,
+            LuaBackend.generateWithImports(parse.program(), result,
+                "test.deal", Map.of(), Map.of("host/cfg", reversedOrder)));
+        assertEquals("hash map iteration order, same bytes", reference,
+            LuaBackend.generateWithImports(parse.program(), result,
+                "test.deal", Map.of(), Map.of("host/cfg", hashMap)));
+        assertEquals("Map.copyOf order, same bytes", reference,
+            LuaBackend.generateWithImports(parse.program(), result,
+                "test.deal", Map.of(), Map.of("host/cfg", copied)));
+        assertEquals("Map.ofEntries order, same bytes", reference,
+            LuaBackend.generateWithImports(parse.program(), result,
+                "test.deal", Map.of(), Map.of("host/cfg", immutable)));
+
+        // The sorted emission pins the canonical order explicitly so a
+        // future accidental order change fails loudly.  Sorted by export
+        // name: "User" is a prefix of "User$fromJson" and uppercase sorts
+        // before lowercase, so User < User$fromJson < ... < repeat.
+        int repeatPos = reference.indexOf("[\"repeat\"] = \"()->int\"");
+        int fromJsonPos = reference.indexOf(
+            "[\"User$fromJson\"] = \"(string)->@host.cfg/User|null\"");
+        int userPos = reference.indexOf("User = \"@host.cfg/User\"");
+        assertTrue("User before User$fromJson (sorted prefix rule)",
+            userPos >= 0 && fromJsonPos >= 0 && userPos < fromJsonPos);
+        assertTrue("User$fromJson before repeat (sorted)",
+            repeatPos >= 0 && fromJsonPos < repeatPos);
+    }
 }

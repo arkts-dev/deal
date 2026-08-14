@@ -94,6 +94,9 @@ public final class DealConfig {
      * {@code "externals": { "host/cfg": { "declaration": "bindings/host-cfg.d.deal" } }}.
      * The key is the import path as written; the declaration path is
      * manifest-relative.  The legacy list form is retired (empty map).
+     * Any other shape — scalars, strings, booleans — is a configuration
+     * error ({@link IllegalArgumentException}); malformed entries are never
+     * silently absorbed.
      */
     private static Map<String, String> parseExternals(JsonObject root) {
         Object v = root.get("externals");
@@ -117,7 +120,15 @@ public final class DealConfig {
             return Collections.unmodifiableMap(result);
         }
         // Legacy list form — retired: no externals gating surface.
-        return Map.of();
+        if (v instanceof List<?>) {
+            return Map.of();
+        }
+        // Anything else (scalars, strings, booleans) is a config error: only
+        // the spec map form and the retired legacy list form are legal.
+        throw new IllegalArgumentException(
+            "deal.json: 'externals' must be an object (import path → "
+                + "{ \"declaration\": ... }) or the legacy array form, got: "
+                + (v instanceof String s ? "\"" + s + "\"" : String.valueOf(v)));
     }
 
     /** Reserved for future use. */

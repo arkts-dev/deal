@@ -1450,7 +1450,15 @@ public final class LuaBackend implements Visitor<Void> {
             emitLine("local " + node.alias() + " = __rt.load_host(\""
                 + escapeLuaStringNoQuotes(node.modulePath()) + "\", {");
             indent++;
-            for (Map.Entry<String, Type> entry : declared.entrySet()) {
+            // Deterministic emission (host-module-abi Failure and
+            // operations): the declared-map order must be independent of the
+            // caller-supplied map implementation.  Immutable maps
+            // (Map.of/Map.copyOf) and hash maps iterate in per-JVM-run
+            // randomized order, which would make generated Lua vary between
+            // identical builds — iterate the declared entries sorted by
+            // export name.
+            for (Map.Entry<String, Type> entry
+                    : new TreeMap<>(declared).entrySet()) {
                 String descriptor = typeDescriptor(entry.getValue());
                 emitLine(LuaAbi.tableField(entry.getKey(),
                     "\"" + descriptor + "\"") + ",");
