@@ -20,6 +20,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -111,6 +112,29 @@ import java.util.Set;
  * spelling for Infinity), and string ordering compares Unicode scalar
  * values (LuaJIT orders bytewise in UTF-8, which is scalar-value order),
  * including supplementary characters.
+ * The DEAL int safe range ±(2^53-1) is enforced at every int-producing
+ * site — the emitted {@code checkInt} helper wraps the results of
+ * {@code intAdd}/{@code intSub}/{@code intMul}/{@code intDiv}/{@code intMod}/
+ * {@code intNeg}/{@code intPow}/{@code intFromNumber} exactly like
+ * {@code __rt.check_int} (deal/runtime.lua) wraps {@code __rt.int_add} etc.,
+ * and an int literal outside the safe range is checked at its point of use
+ * ({@code return 9223372036854775807;} raises E8004, matching the LuaJIT
+ * return-boundary check; LuaJIT would silently round such a literal to a
+ * double inside arithmetic like {@code 9223372036854775807 % 2}, which the
+ * JVM backend refuses to reproduce — it raises E8004 instead of silently
+ * computing with a value that is not a valid DEAL int). All {@code java.lang}
+ * references in generated code are fully qualified ({@code java.lang.System},
+ * {@code java.lang.Math}, {@code java.lang.Double}, {@code java.lang.String},
+ * {@code java.lang.Void}, …): DEAL identifiers may be named
+ * {@code System}/{@code Math}/{@code Double}/{@code String}/{@code Void}
+ * (non-reserved names pass {@link #javaName} unchanged), and an unqualified
+ * reference would bind to the user's field or local instead of
+ * {@code java.lang}, producing an artifact javac rejects. Use-before-
+ * declaration detection walks every condition of an {@code if}/{@code
+ * else if} chain (the follow-on conditions are emitted directly by
+ * {@code emitIfContinuation}, bypassing the per-statement guard), so a
+ * later-declared variable in an {@code else if} condition is rejected
+ * with E6000 instead of emitting an illegal forward reference.
  *
  * <p>JVM value mapping follows the spec's JVM backend contract
  * ({@code docs/spec-v1.2.md} §JVM value mapping): {@code int → long},
@@ -118,7 +142,9 @@ import java.util.Set;
  * {@code null → void}/{@code Void}. The JVM's static type system proves typed
  * boundaries redundant, which the spec explicitly permits ("The JVM backend
  * may use JVM primitive types, final classes, verifier-checked bytecode …
- * to prove typed-boundary checks redundant").
+ * to prove typed-boundary checks redundant"); the int safe range is still
+ * enforced at runtime because it is observable behavior (E8004) that the
+ * type system cannot prove.
  *
  * <p>The emitted class has no {@code main}: the artifact is a module class.
  * The conformance adapter compiles it together with a small runner class that
@@ -363,7 +389,8 @@ public final class JvmBackend {
         Map.entry("numMod", List.of("double", "double")),
         Map.entry("intFromNumber", List.of("double")),
         Map.entry("numberFromInt", List.of("long")),
-        Map.entry("scalarCompare", List.of("String", "String")));
+        Map.entry("scalarCompare", List.of("java.lang.String", "java.lang.String")),
+        Map.entry("checkInt", List.of("long")));
 
     /**
      * Translates a DEAL identifier to a Java identifier. The encoding is
@@ -758,34 +785,45 @@ public final class JvmBackend {
 
     private void emitRuntimeSupport() {
         emitLine("// ---- DEAL JVM skeleton runtime support ----");
+        // Every java.lang reference is fully qualified: DEAL identifiers may
+        // be named System, Math, Double, String, Void, Integer, Character,
+        // RuntimeException, ArithmeticException, … (javaName passes
+        // non-reserved names through unchanged), and an unqualified
+        // reference would bind to the user's field/local instead of
+        // java.lang, producing an artifact javac rejects.
         emitLine("/** DEAL runtime error: code per §Diagnostics (E8xxx). */");
-        emitLine("static final class DealError extends RuntimeException {");
-        emitLine("    final String code;");
-        emitLine("    DealError(String code, String message) {");
+        emitLine("static final class DealError extends java.lang.RuntimeException {");
+        emitLine("    final java.lang.String code;");
+        emitLine("    DealError(java.lang.String code, java.lang.String message) {");
         emitLine("        super(message);");
         emitLine("        this.code = code;");
         emitLine("    }");
         emitLine("}");
-        emitLine("// int arithmetic: E8004 overflow, E8005 division by zero, E8006 negative exponent.");
-        emitLine("static long intAdd(long a, long b) { try { return Math.addExact(a, b); } catch (ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-        emitLine("static long intSub(long a, long b) { try { return Math.subtractExact(a, b); } catch (ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-        emitLine("static long intMul(long a, long b) { try { return Math.multiplyExact(a, b); } catch (ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-        emitLine("static long intDiv(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); try { return a / b; } catch (ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-        emitLine("static long intMod(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); return a % b; }");
-        // NaN/Infinity first, matching __rt.check_int (LuaJIT reports E8001
+        emitLine("// DEAL int safe range: ±(2^53-1), mirroring deal/runtime.lua's");
+        emitLine("// check_int (v < -9007199254740991 or v > 9007199254740991 raises");
+        emitLine("// E8004). Every int-producing operation checks its result, exactly");
+        emitLine("// like LuaJIT's int_add = check_int(a + b) family.");
+        emitLine("static long checkInt(long v) { if (v > 9007199254740991L || v < -9007199254740991L) throw new DealError(\"E8004\", \"int out of safe range\"); return v; }");
+        emitLine("// int arithmetic: E8004 out of safe range, E8005 division by zero, E8006 negative exponent.");
+        emitLine("static long intAdd(long a, long b) { try { return checkInt(java.lang.Math.addExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+        emitLine("static long intSub(long a, long b) { try { return checkInt(java.lang.Math.subtractExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+        emitLine("static long intMul(long a, long b) { try { return checkInt(java.lang.Math.multiplyExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+        emitLine("static long intDiv(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); try { return checkInt(a / b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+        emitLine("static long intMod(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); try { return checkInt(a % b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+        // NaN/Infinity first, matching deal/runtime.lua's check_int (LuaJIT
         // "expected int, got infinity" for e.g. `10 ** 400`); only finite
-        // out-of-range values report E8004.
-        emitLine("static long intPow(long a, long b) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\"); double p = Math.pow((double) a, (double) b); if (Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (p >= 9.223372036854776E18 || p < -9.223372036854776E18) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) p; }");
-        emitLine("static long intNeg(long a) { try { return Math.negateExact(a); } catch (ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+        // values outside the int safe range report E8004.
+        emitLine("static long intPow(long a, long b) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\"); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (p > 9007199254740991.0 || p < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) p; }");
+        emitLine("static long intNeg(long a) { try { return checkInt(java.lang.Math.negateExact(a)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
         emitLine("// number %: Lua-style floored modulo (a - floor(a/b)*b), unlike Java's truncated %.");
-        emitLine("static double numMod(double a, double b) { return a - Math.floor(a / b) * b; }");
+        emitLine("static double numMod(double a, double b) { return a - java.lang.Math.floor(a / b) * b; }");
         emitLine("// int(v) / number(v) conversion intrinsics (E8001 bad value, E8004 out of range).");
-        emitLine("static long intFromNumber(double v) { if (Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v >= 9.223372036854776E18 || v < -9.223372036854776E18) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) v; }");
+        emitLine("static long intFromNumber(double v) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) v; }");
         emitLine("static double numberFromInt(long v) { return (double) v; }");
         emitLine("// string ordering: Unicode scalar-value order. LuaJIT orders bytewise in");
         emitLine("// UTF-8, which is scalar-value order — including supplementary characters");
         emitLine("// (String.compareTo's UTF-16 code-unit order diverges there).");
-        emitLine("static int scalarCompare(String a, String b) { int i = 0; int j = 0; while (i < a.length() && j < b.length()) { int ca = a.codePointAt(i); int cb = b.codePointAt(j); if (ca != cb) { return Integer.compare(ca, cb); } i += Character.charCount(ca); j += Character.charCount(cb); } return Integer.compare(a.length() - i, b.length() - j); }");
+        emitLine("static int scalarCompare(java.lang.String a, java.lang.String b) { int i = 0; int j = 0; while (i < a.length() && j < b.length()) { int ca = a.codePointAt(i); int cb = b.codePointAt(j); if (ca != cb) { return java.lang.Integer.compare(ca, cb); } i += java.lang.Character.charCount(ca); j += java.lang.Character.charCount(cb); } return java.lang.Integer.compare(a.length() - i, b.length() - j); }");
         emitLine();
     }
 
@@ -1263,7 +1301,19 @@ public final class JvmBackend {
         return switch (lit.value()) {
             case LiteralValue.NullLiteral() -> "null";
             case LiteralValue.BooleanLiteral b -> String.valueOf(b.value());
-            case LiteralValue.IntLiteral i -> i.value() + "L";
+            case LiteralValue.IntLiteral i -> {
+                long v = i.value();
+                if (v > 9007199254740991L || v < -9007199254740991L) {
+                    // Outside the DEAL int safe range ±(2^53-1): not a valid
+                    // DEAL int value. LuaJIT silently rounds such literals
+                    // to doubles before arithmetic and only fails when one
+                    // crosses a check_int boundary; Java would silently
+                    // compute with the exact long. Raise E8004 at the point
+                    // of use — rejecting, never silently miscomputing.
+                    yield "checkInt(" + v + "L)";
+                }
+                yield v + "L";
+            }
             case LiteralValue.NumberLiteral n -> javaDoubleLiteral(n.value());
             case LiteralValue.StringLiteral s -> quoteJavaString(s.value());
         };
@@ -1374,7 +1424,7 @@ public final class JvmBackend {
                 case MUL -> "(" + left + " * " + right + ")";
                 case DIV -> "(" + left + " / " + right + ")";
                 case MOD -> "numMod(" + left + ", " + right + ")";
-                case POW -> "Math.pow(" + left + ", " + right + ")";
+                case POW -> "java.lang.Math.pow(" + left + ", " + right + ")";
                 case EQ -> "(" + left + " == " + right + ")";
                 case NEQ -> "(" + left + " != " + right + ")";
                 case LT -> "(" + left + " < " + right + ")";
@@ -1578,8 +1628,8 @@ public final class JvmBackend {
             return "null";
         }
         String target = switch (mae.field()) {
-            case "log" -> "System.out";
-            case "error" -> "System.err";
+            case "log" -> "java.lang.System.out";
+            case "error" -> "java.lang.System.err";
             default -> {
                 unsupported("export '" + mae.field() + "' of std/console", mae.span());
                 yield null;
@@ -1694,12 +1744,33 @@ public final class JvmBackend {
     private String undeclaredVariableUse(StatementNode stmt) {
         return switch (stmt) {
             case VariableDeclaration vd -> undeclaredUseIn(vd.initializer());
-            case IfStatement is -> undeclaredUseIn(is.condition());
+            // Every condition of the if/else-if chain: emitIf and
+            // emitIfContinuation emit the follow-on conditions directly via
+            // emitExpression (no statement-level guard runs for them), so
+            // the head statement must walk the whole chain — a
+            // later-declared variable in an else-if condition would
+            // otherwise emit an illegal forward reference (module level)
+            // or a cannot-find-symbol reference (function body) that javac
+            // rejects after the CLI reported success.
+            case IfStatement is -> undeclaredUseInIfChain(is);
             case ReturnStatement rs -> rs.expr().map(this::undeclaredUseIn).orElse(null);
             case ExpressionStatement es -> undeclaredUseIn(es.expr());
             default -> null; // functions/imports/exports: separate scopes or no
                               // value uses; unsupported kinds rejected elsewhere
         };
+    }
+
+    /** Walks the conditions of an {@code if}/{@code else if} chain. */
+    private String undeclaredUseInIfChain(IfStatement is) {
+        String r = undeclaredUseIn(is.condition());
+        if (r != null) return r;
+        Optional<Either<IfStatement, Block>> branch = is.elseBranch();
+        if (branch.isPresent()
+                && branch.get() instanceof Either.Left<IfStatement, Block> left) {
+            return undeclaredUseInIfChain(left.value());
+        }
+        // then/else BLOCK statements are checked individually when emitted.
+        return null;
     }
 
     private String undeclaredUseIn(ExpressionNode e) {
@@ -1845,8 +1916,8 @@ public final class JvmBackend {
             case Type.Int ignored -> "long";
             case Type.Number ignored -> "double";
             case Type.Boolean ignored -> "boolean";
-            case Type.String ignored -> "String";
-            case Type.Null ignored -> "Void";
+            case Type.String ignored -> "java.lang.String";
+            case Type.Null ignored -> "java.lang.Void";
             case Type.Error ignored -> null;
             default -> {
                 unsupported("values of type " + typeName(t), span);
@@ -1898,9 +1969,9 @@ public final class JvmBackend {
      * successful.
      */
     private static String javaDoubleLiteral(double v) {
-        if (Double.isNaN(v)) return "Double.NaN";
-        if (v == Double.POSITIVE_INFINITY) return "Double.POSITIVE_INFINITY";
-        if (v == Double.NEGATIVE_INFINITY) return "Double.NEGATIVE_INFINITY";
+        if (Double.isNaN(v)) return "java.lang.Double.NaN";
+        if (v == Double.POSITIVE_INFINITY) return "java.lang.Double.POSITIVE_INFINITY";
+        if (v == Double.NEGATIVE_INFINITY) return "java.lang.Double.NEGATIVE_INFINITY";
         return Double.toString(v);
     }
 

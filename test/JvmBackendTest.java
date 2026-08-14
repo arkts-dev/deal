@@ -57,6 +57,24 @@ import java.util.Map;
  *   <li>DEAL runtime error codes (E8004/E8005/E8006/E8001 incl. the
  *       negative-exponent and extreme-power paths) surfaced by executing the
  *       emitted artifact,</li>
+ *   <li>the DEAL int safe range ±(2^53-1) = ±9007199254740991: boundary
+ *       success and E8004 pins for every int-producing operation
+ *       (add/sub/mul/neg/{@code **}/int() and out-of-range literals as
+ *       operands or at the return), with emission assertions that the
+ *       helpers route through the emitted {@code checkInt} bound — never
+ *       Java's long bound,</li>
+ *   <li>fully-qualified {@code java.lang} references: locals, parameters,
+ *       and module fields named {@code System}/{@code Math}/{@code Double}/
+ *       {@code String}/{@code Void}/{@code Integer}/{@code Character}/
+ *       {@code RuntimeException}/{@code ArithmeticException} coexist with
+ *       console output, int arithmetic, number {@code **}, non-finite
+ *       literals, string ordering, and runtime errors — all compiled and
+ *       executed, with qualified-name emission assertions,</li>
+ *   <li>use-before-declaration walking of every {@code if}/{@code else if}
+ *       chain condition: module-level, function-body, and deep-chain
+ *       forward references are E6000 (never an artifact javac rejects after
+ *       the CLI reported success), while chains over already-declared
+ *       variables stay clean,</li>
  *   <li>the backend-selection seam: {@code CompilationOrchestrator} with
  *       {@code Backend.JVM} emits and compiles a real {@code .java} artifact,
  *       rejects out-of-scope projects with E6000, detects class-name
@@ -96,6 +114,9 @@ public class JvmBackendTest {
             testAssignmentBeforeDeclarationRejected();
             testDeadCodeAfterNonCompletingStatements();
             testRuntimeErrorCodes();
+            testIntSafeRange();
+            testJavaLangNameCollisions();
+            testElseIfChainUseBeforeDeclaration();
             testNonFiniteNumberLiterals();
             testShortCircuitPreservation();
             testStringScalarOrdering();
@@ -372,7 +393,7 @@ public class JvmBackendTest {
             "function → static method with mapped types");
         check(java.contains("return intAdd(a, b);"), "checked int add");
         check(java.contains("else if ("), "else-if chain");
-        check(java.contains("System.out.println("), "console.log → System.out");
+        check(java.contains("java.lang.System.out.println("), "console.log → java.lang.System.out");
         check(java.contains("intFromNumber(3.0)"), "int() intrinsic");
         check(java.contains("numberFromInt(7L)"), "number() intrinsic");
         check(java.contains("long x = add(1L, 2L);"), "local with int literals");
@@ -724,7 +745,7 @@ public class JvmBackendTest {
                     "no-lambda probe emits no lambda");
                 check(!res.source().contains("nullAnd"),
                     "no-lambda probe emits no nullAnd helper");
-                int printIdx = res.source().indexOf("System.out.println(a);");
+                int printIdx = res.source().indexOf("java.lang.System.out.println(a);");
                 int reassignIdx = res.source().indexOf("a = \"y\";");
                 check(printIdx >= 0 && reassignIdx >= 0 && printIdx < reassignIdx,
                     "hoisted call runs before the later reassignment");
@@ -978,7 +999,7 @@ public class JvmBackendTest {
             if (!res.hasErrors()) {
                 String java = res.source();
                 check(java.contains("static {"), "static initializer emitted");
-                check(java.contains("    System.out.println(\"module-if-ran\");"),
+                check(java.contains("    java.lang.System.out.println(\"module-if-ran\");"),
                     "module-level call inside the static block");
                 check(java.contains("    if ((x == 1L)) {"),
                     "module-level if inside the static block");
@@ -1449,6 +1470,370 @@ public class JvmBackendTest {
     }
 
     /**
+     * DEAL int safe range ±(2^53-1) = ±9007199254740991 (deal/runtime.lua
+     * check_int; spec "int | checked ... [-(2^53-1), 2^53-1]"). Every
+     * int-producing operation must enforce the bound with E8004 — the
+     * helpers check only Java long bounds (±2^63) otherwise, silently
+     * computing values LuaJIT rejects (`9007199254740991 + 1` must raise
+     * E8004, not print 9007199254740992). Int literals outside the safe
+     * range are checked at their point of use (LuaJIT silently rounds such
+     * literals to doubles inside arithmetic — e.g. `9223372036854775807
+     * % 2` computes 0 there — which the JVM backend refuses to reproduce:
+     * it raises E8004 for the invalid int value instead of silently
+     * diverging).
+     */
+    private static void testIntSafeRange() throws Exception {
+        System.out.println("-- Int safe range ±(2^53-1) (javac + java) --");
+
+        // The boundary itself is in range (check_int's comparison is
+        // exclusive of values outside, inclusive of the boundary).
+        ExecResult maxOk = compileAndRunJvm(
+            "export function test(): int { return 9007199254740991; }",
+            "intmaxok");
+        check(maxOk.exitCode() == 0, "2^53-1 exits 0: " + maxOk.output());
+        check(maxOk.output().contains("9007199254740991"),
+            "2^53-1 prints the value: " + maxOk.output());
+
+        ExecResult minOk = compileAndRunJvm(
+            "export function test(): int { return -9007199254740991; }",
+            "intminok");
+        check(minOk.exitCode() == 0, "-(2^53-1) exits 0: " + minOk.output());
+        check(minOk.output().contains("-9007199254740991"),
+            "-(2^53-1) prints the value: " + minOk.output());
+
+        ExecResult boundaryAdd = compileAndRunJvm(
+            "export function test(): int { return 9007199254740990 + 1; }",
+            "intboundaryadd");
+        check(boundaryAdd.exitCode() == 0
+                && boundaryAdd.output().contains("9007199254740991"),
+            "in-range add stays in range: " + boundaryAdd.output());
+
+        // A module-level out-of-range literal throws during class init;
+        // the runner unwraps ExceptionInInitializerError into the
+        // DEAL_ERROR_CODE contract (LuaJIT fails at load the same way).
+        ExecResult modLit = compileAndRunJvm("""
+            let x: int = 9223372036854775807;
+            export function test(): int { return 1; }
+            """, "modintlit");
+        check(modLit.exitCode() == 1, "module-level out-of-range literal exits 1: "
+            + modLit.output());
+        check(modLit.output().contains("DEAL_ERROR_CODE: E8004"),
+            "module-level out-of-range literal reports E8004: " + modLit.output());
+
+        // intFromNumber boundary: int(9007199254740991.0) is in range.
+        ExecResult convOk = compileAndRunJvm(
+            "export function test(): int { return int(9007199254740991.0); }",
+            "intconvok");
+        check(convOk.exitCode() == 0
+                && convOk.output().contains("9007199254740991"),
+            "int(2^53-1) stays in range: " + convOk.output());
+
+        // Every int-producing operation enforces the bound with E8004.
+        String[][] overflowCases = {
+            {"9007199254740991 + 1", "intadd"},
+            {"9007199254740991 - (-1)", "intsub"},
+            {"9007199254740991 * 2", "intmul"},
+            {"-9007199254740991 - 1", "intsubneg"},
+            {"-9007199254740992", "intneglit"},
+            {"2 ** 53", "intpow53"},
+            {"2 ** 62", "intpow62"},
+            {"(-2) ** 63", "intpowneg63"},
+            {"int(9007199254740992.0)", "intfromnum"},
+            {"9223372036854775807", "intlit"},
+            {"9223372036854775807 % 2", "intmodlit"},
+            {"9223372036854775807 / 1", "intdivlit"},
+        };
+        for (String[] c : overflowCases) {
+            ExecResult r = compileAndRunJvm(
+                "export function test(): int { return " + c[0] + "; }", c[1]);
+            check(r.exitCode() == 1, c[1] + " exits 1: " + r.output());
+            check(r.output().contains("DEAL_ERROR_CODE: E8004"),
+                c[1] + " reports E8004: " + r.output());
+        }
+
+        // Emission shape: helpers check their results through checkInt with
+        // the safe-range bound, and out-of-range literals are wrapped at
+        // their point of use.
+        Frontend f = compileFrontend(
+            "export function test(): int { return 9223372036854775807; }",
+            "jvmtest-intrange.deal");
+        check(f.errors().isEmpty(), "int-range frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-intrange.deal", "main");
+            check(!res.hasErrors(), "int-range codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains("return checkInt(9223372036854775807L);"),
+                    "out-of-range literal wrapped in checkInt");
+                check(java.contains("static long checkInt(long v)"),
+                    "checkInt helper emitted");
+                check(java.contains("9007199254740991L"),
+                    "safe-range bound present");
+                check(java.contains("checkInt(java.lang.Math.addExact(a, b))"),
+                    "intAdd checks its result against the safe range");
+                check(java.contains("p > 9007199254740991.0"),
+                    "intPow enforces the safe range, not the long bound");
+                check(java.contains("v > 9007199254740991.0"),
+                    "intFromNumber enforces the safe range, not the long bound");
+            }
+        }
+    }
+
+    /**
+     * Unqualified java.lang references in generated code (System.out,
+     * Math.addExact, Double.isNaN, the String/Void type names, …) would
+     * bind to a user's field or local named System/Math/Double/String/Void
+     * instead of java.lang, producing an artifact javac rejects while the
+     * CLI reports success. Every generated reference must be fully
+     * qualified.
+     */
+    private static void testJavaLangNameCollisions() throws Exception {
+        System.out.println("-- java.lang name collisions (javac + java) --");
+
+        // Locals shadowing every java.lang name the generated code touches.
+        ExecResult locals = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): int {
+              let System: int = 1;
+              let Math: int = 2;
+              let Double: int = 3;
+              let String: int = 4;
+              let Void: int = 5;
+              let Integer: int = 6;
+              let Character: int = 7;
+              let RuntimeException: int = 8;
+              let ArithmeticException: int = 9;
+              console.log("names-ok");
+              return System + Math + Double + String + Void
+                   + Integer + Character + RuntimeException + ArithmeticException;
+            }
+            """, "namelocals");
+        check(locals.exitCode() == 0, "shadowing locals exit 0: " + locals.output());
+        check(locals.output().contains("45"),
+            "shadowing locals compute 45: " + locals.output());
+
+        // Module field named Math + int arithmetic (the always-emitted
+        // intAdd/intSub helpers reference Math.addExact).
+        ExecResult mathField = compileAndRunJvm("""
+            let Math: int = 1;
+            export function test(): int { return Math + 2; }
+            """, "mathfield");
+        check(mathField.exitCode() == 0 && mathField.output().contains("3"),
+            "module field Math + int arithmetic: " + mathField.output());
+
+        // Module field named Double (the always-emitted intFromNumber helper
+        // references Double.isNaN even when int() is never called).
+        ExecResult doubleField = compileAndRunJvm("""
+            let Double: int = 1;
+            export function test(): int { return Double + 1; }
+            """, "doublefield");
+        check(doubleField.exitCode() == 0 && doubleField.output().contains("2"),
+            "module field Double + int arithmetic: " + doubleField.output());
+
+        // Module field named System + module-level console.log (load-time
+        // static-initializer output goes through System.out).
+        ExecResult systemField = compileAndRunJvm("""
+            import * as console from "std/console"
+            let System: int = 1;
+            console.log("sys-field-ok");
+            export function test(): int { return System; }
+            """, "systemfield");
+        check(systemField.exitCode() == 0
+                && systemField.output().contains("sys-field-ok"),
+            "module field System + module-level console.log: " + systemField.output());
+        check(systemField.output().contains("1"),
+            "module field System read back: " + systemField.output());
+
+        // Local Double + a 1e999 literal (renders as
+        // Double.POSITIVE_INFINITY).
+        ExecResult doubleLocal = compileAndRunJvm("""
+            export function test(): number {
+              let Double: int = 1;
+              let n: number = 1e999;
+              return n + number(Double);
+            }
+            """, "doublelocal");
+        check(doubleLocal.exitCode() == 0
+                && doubleLocal.output().contains("Infinity"),
+            "local Double + 1e999 literal: " + doubleLocal.output());
+
+        // Local Math + number ** (inline Math.pow emission).
+        ExecResult mathPow = compileAndRunJvm("""
+            export function test(): number {
+              let Math: int = 0;
+              return 2.0 ** 3.0;
+            }
+            """, "mathpow");
+        check(mathPow.exitCode() == 0 && mathPow.output().contains("8.0"),
+            "local Math + number **: " + mathPow.output());
+
+        // String-typed parameter named String (the mapped type name).
+        ExecResult stringParam = compileAndRunJvm("""
+            function f(String: string): string { return String; }
+            export function test(): string { return f("param-ok"); }
+            """, "stringparam");
+        check(stringParam.exitCode() == 0
+                && stringParam.output().contains("param-ok"),
+            "parameter named String: " + stringParam.output());
+
+        // Null-typed local named Void (the mapped boxed-null type name).
+        ExecResult voidLocal = compileAndRunJvm("""
+            export function test(): int {
+              let Void: null = null;
+              return 1;
+            }
+            """, "voidlocal");
+        check(voidLocal.exitCode() == 0 && voidLocal.output().contains("1"),
+            "local named Void: " + voidLocal.output());
+
+        // Module field named Integer + string ordering (scalarCompare uses
+        // Integer.compare and Character.charCount).
+        ExecResult integerField = compileAndRunJvm("""
+            let Integer: int = 0;
+            let Character: int = 0;
+            export function test(): boolean {
+              return "a" < "b";
+            }
+            """, "integerfield");
+        check(integerField.exitCode() == 0
+                && integerField.output().contains("true"),
+            "fields Integer/Character + string ordering: " + integerField.output());
+
+        // Module field named RuntimeException + a runtime error (DealError
+        // extends java.lang.RuntimeException).
+        ExecResult runtimeField = compileAndRunJvm("""
+            let RuntimeException: int = 1;
+            export function test(): int { return RuntimeException / 0; }
+            """, "runtimefield");
+        check(runtimeField.exitCode() == 1
+                && runtimeField.output().contains("DEAL_ERROR_CODE: E8005"),
+            "field RuntimeException + E8005 still surfaces: " + runtimeField.output());
+
+        // Emission shape: no unqualified java.lang references remain.
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            let System: int = 1;
+            console.log("qualified");
+            export function test(): number { return 1e999; }
+            """, "jvmtest-qualified.deal");
+        check(f.errors().isEmpty(), "qualified-name frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-qualified.deal", "main");
+            check(!res.hasErrors(), "qualified-name codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains("java.lang.System.out.println"),
+                    "console.log targets java.lang.System.out");
+                check(java.contains("java.lang.Math.addExact"),
+                    "helpers use java.lang.Math.addExact");
+                check(java.contains("java.lang.Double.isNaN"),
+                    "helpers use java.lang.Double.isNaN");
+                check(java.contains("java.lang.Double.POSITIVE_INFINITY"),
+                    "non-finite literals use java.lang.Double constants");
+                check(java.contains("extends java.lang.RuntimeException"),
+                    "DealError extends java.lang.RuntimeException");
+            }
+        }
+    }
+
+    /**
+     * The use-before-declaration guard must walk every condition of an
+     * if/else-if chain: emitIf/emitIfContinuation emit the follow-on
+     * conditions directly (no per-statement guard runs for them), so a
+     * later-declared variable in an else-if condition previously emitted
+     * an illegal forward reference (module level) or a
+     * cannot-find-symbol reference (function body) that javac rejected
+     * after the CLI reported success.
+     */
+    private static void testElseIfChainUseBeforeDeclaration() throws Exception {
+        System.out.println("-- Else-if chain conditions: use-before-declaration → E6000 --");
+
+        // Module-level chain: `z` is declared after the chain (LuaJIT reads
+        // nil at load and the condition is false; Java would emit an
+        // illegal forward reference).
+        Frontend moduleCase = compileFrontend("""
+            if (true) { } else if (z === 2) { }
+            let z: int = 2;
+            export function test(): int { return 1; }
+            """, "jvmtest-elseif-module.deal");
+        check(moduleCase.errors().isEmpty(),
+            "module-level else-if chain frontend clean: " + moduleCase.errors());
+        if (moduleCase.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                moduleCase.program(), moduleCase.checkResult(),
+                "jvmtest-elseif-module.deal", "main");
+            check(res.hasErrors(),
+                "module-level else-if forward reference rejected");
+            check(res.diagnostics().stream()
+                    .anyMatch(d -> d.message().contains("'z'")),
+                "module-level diagnostic names z: " + res.diagnostics());
+        }
+
+        // Function-body chain: `x` is declared after the chain.
+        Frontend bodyCase = compileFrontend(
+            "export function test(): int { if (true) {} else if (x === 2) {} "
+                + "let x: int = 2; return 1; }",
+            "jvmtest-elseif-body.deal");
+        check(bodyCase.errors().isEmpty(),
+            "function-body else-if chain frontend clean: " + bodyCase.errors());
+        if (bodyCase.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                bodyCase.program(), bodyCase.checkResult(),
+                "jvmtest-elseif-body.deal", "main");
+            check(res.hasErrors(),
+                "function-body else-if forward reference rejected");
+            check(res.diagnostics().stream()
+                    .anyMatch(d -> d.message().contains("'x'")),
+                "function-body diagnostic names x: " + res.diagnostics());
+        }
+
+        // Deep chain: the guard must walk past several else-if links to the
+        // offending condition.
+        Frontend deepCase = compileFrontend(
+            "export function test(): int { let a: int = 1; "
+                + "if (a === 0) {} else if (a === 1) {} else if (b === 2) {} "
+                + "let b: int = 2; return 1; }",
+            "jvmtest-elseif-deep.deal");
+        check(deepCase.errors().isEmpty(),
+            "deep else-if chain frontend clean: " + deepCase.errors());
+        if (deepCase.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                deepCase.program(), deepCase.checkResult(),
+                "jvmtest-elseif-deep.deal", "main");
+            check(res.hasErrors(), "deep-chain forward reference rejected");
+            check(res.diagnostics().stream()
+                    .anyMatch(d -> d.message().contains("'b'")),
+                "deep-chain diagnostic names b: " + res.diagnostics());
+        }
+
+        // Positive: chain conditions reading already-declared variables
+        // stay clean and run (function body).
+        ExecResult ok = compileAndRunJvm("""
+            export function test(): int {
+              let x: int = 2;
+              if (x === 1) { return 0; } else if (x === 2) { return 7; }
+              return 3;
+            }
+            """, "elseifok");
+        check(ok.exitCode() == 0 && ok.output().contains("7"),
+            "clean else-if chain runs: " + ok.output());
+
+        // Positive: a module-level chain over already-declared fields.
+        ExecResult modOk = compileAndRunJvm("""
+            let z: int = 2;
+            let hit: boolean = false;
+            if (z === 1) { } else if (z === 2) { hit = true; }
+            export function test(): int { if (hit) { return 1; } return 0; }
+            """, "elseifmodok");
+        check(modOk.exitCode() == 0 && modOk.output().contains("1"),
+            "clean module-level else-if chain runs: " + modOk.output());
+    }
+
+    /**
      * Number literals that overflow to Infinity (checker-accepted: the
      * parser stores Double.parseDouble("1e999") with no range check) must
      * render as the Double constants — a bare {@code Infinity} identifier
@@ -1499,8 +1884,8 @@ public class JvmBackendTest {
             check(!res.hasErrors(), "non-finite literal codegen clean: "
                 + res.diagnostics());
             if (!res.hasErrors()) {
-                check(res.source().contains("= Double.POSITIVE_INFINITY;"),
-                    "1e999 renders as Double.POSITIVE_INFINITY");
+                check(res.source().contains("= java.lang.Double.POSITIVE_INFINITY;"),
+                    "1e999 renders as java.lang.Double.POSITIVE_INFINITY");
                 check(!res.source().matches("(?s).*= Infinity;.*"),
                     "no bare Infinity identifier is emitted");
             }
@@ -2008,8 +2393,8 @@ public class JvmBackendTest {
             String java = Files.readString(artifact);
             check(java.contains("public final class Jvm_main"),
                 "artifact declares its class");
-            check(java.contains("System.out.println(\"jvm-orchestrator\")"),
-                "console.log mapped to System.out");
+            check(java.contains("java.lang.System.out.println(\"jvm-orchestrator\")"),
+                "console.log mapped to java.lang.System.out");
             check(java.contains("return intAdd(a, b);"), "int arithmetic emitted");
 
             // The production artifact must be real: javac compiles it.

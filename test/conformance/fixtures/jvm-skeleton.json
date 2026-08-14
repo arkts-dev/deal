@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM backend skeleton conformance (ISSUE-0091). Fixtures for the JVM backend (several also run under LuaJIT as the reference behavior): literals/output, int arithmetic, local variables, if/else, a frontend compile-error rejected before the backend, and the observable-behavior regressions: null-typed returns/initializers with side effects, null-typed captures of reassigned locals and parameters, floored % on negative operands, string equality/ordering (Unicode scalar-value order), console.error -> stderr, null equality, standalone expression statements, module-level load-time statements, a module-load-only fixture (runner initializes the module class when no function is auto-invoked), non-finite number literals (1e999 -> Double.POSITIVE_INFINITY), && / || short-circuit preservation for guarded null-typed calls, a module-level error with a zero-arity export (the runner unwraps ExceptionInInitializerError into the DEAL_ERROR_CODE contract), the module-field shadow write (upvalue write parity), the module-level later-field write (JLS §8.3.3 forward-reference LHS exception parity), the declaration-first interleaved load-time ordering (function values assigned at their declaration point), dead-code skipping after non-completing statements (complete if/else chains, block-ending returns, dead lets/expression statements, a dead else-if chain with a hoisted null-typed condition — never an artifact javac rejects), and the function-body forward read of a later-declared module field (the pre-declaration write establishes the global; both backends observe 5 — the use-before-declaration guard must not over-reject this shape).",
+  "description": "JVM backend skeleton conformance (ISSUE-0091). Fixtures for the JVM backend (several also run under LuaJIT as the reference behavior): literals/output, int arithmetic, local variables, if/else, a frontend compile-error rejected before the backend, and the observable-behavior regressions: null-typed returns/initializers with side effects, null-typed captures of reassigned locals and parameters, floored % on negative operands, string equality/ordering (Unicode scalar-value order), console.error -> stderr, null equality, standalone expression statements, module-level load-time statements, a module-load-only fixture (runner initializes the module class when no function is auto-invoked), non-finite number literals (1e999 -> Double.POSITIVE_INFINITY), && / || short-circuit preservation for guarded null-typed calls, a module-level error with a zero-arity export (the runner unwraps ExceptionInInitializerError into the DEAL_ERROR_CODE contract), the module-field shadow write (upvalue write parity), the module-level later-field write (JLS §8.3.3 forward-reference LHS exception parity), the declaration-first interleaved load-time ordering (function values assigned at their declaration point), dead-code skipping after non-completing statements (complete if/else chains, block-ending returns, dead lets/expression statements, a dead else-if chain with a hoisted null-typed condition — never an artifact javac rejects), and the function-body forward read of a later-declared module field (the pre-declaration write establishes the global; both backends observe 5 — the use-before-declaration guard must not over-reject this shape), the DEAL int safe range ±(2^53-1) enforced with E8004 at the 2^53 boundary on every int-producing operation and at out-of-range int literals (cross-backend pins for add/sub/pow/int()/literal and the inclusive boundary), fully-qualified java.lang references in generated code (fields named System/Math/Double/String/Void/Integer/Character/RuntimeException/ArithmeticException coexisting with console.log, int arithmetic, string ordering, non-finite literals, and runtime errors), and positive module-level else-if chains over already-declared fields (the forward-reference chain shape is E6000, covered by JvmBackendTest).",
   "tests": [
     {
       "name": "jvm-literals-output",
@@ -617,6 +617,218 @@
       "irNotContains": [],
       "backends": [
         "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-int-safe-range-boundary",
+      "description": "The DEAL int safe range boundary ±(2^53-1) is inclusive: 9007199254740991 is a valid int on both backends (check_int's comparison rejects only values outside the boundary). Runs under both backends; LuaJIT is the reference",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  if (9007199254740991 === 9007199254740991) { console.log(\"boundary-in-range\"); }\n}",
+      "expectedOutput": "boundary-in-range",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "literal 9007199254740991 : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-int-safe-range-overflow",
+      "description": "Int addition crossing 2^53-1 raises E8004 on both backends (check_int on the result of int_add) — the JVM helpers must enforce the DEAL safe range, not Java's long range. Runs under both backends; LuaJIT is the reference",
+      "source": "export function test(): int { return 9007199254740991 + 1; }",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary + : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-int-safe-range-sub",
+      "description": "Int subtraction crossing -(2^53-1) raises E8004 on both backends. Runs under both backends; LuaJIT is the reference",
+      "source": "export function test(): int { return -9007199254740991 - 1; }",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary - : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-int-safe-range-pow",
+      "description": "Int exponentiation whose result crosses 2^53-1 (2 ** 62) raises E8004 on both backends — the JVM intPow helper must enforce the DEAL safe range, not Java's long range. Runs under both backends; LuaJIT is the reference",
+      "source": "export function test(): int { return 2 ** 62; }",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary ** : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-int-safe-range-negpow",
+      "description": "A negative base exponentiation crossing the safe range ((-2) ** 63 = Long.MIN_VALUE in Java) raises E8004 on both backends — an unreachable DEAL int must never be produced. Runs under both backends; LuaJIT is the reference",
+      "source": "export function test(): int { return (-2) ** 63; }",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary ** : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-int-safe-range-intrinsic",
+      "description": "int() of a number above 2^53-1 (int(9007199254740992.0)) raises E8004 on both backends — the JVM intFromNumber helper must enforce the DEAL safe range, not Java's long range. Runs under both backends; LuaJIT is the reference",
+      "source": "export function test(): int { return int(9007199254740992.0); }",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "literal 9.007199254740992E15 : number"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-int-safe-range-literal",
+      "description": "An int literal above the safe range (9223372036854775807) raises E8004 at the typed boundary on both backends (LuaJIT's check_int at the return; the JVM backend checks the literal at its point of use). Runs under both backends; LuaJIT is the reference",
+      "source": "export function test(): int { return 9223372036854775807; }",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "literal 9223372036854775807 : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-int-safe-range-max",
+      "description": "The maximum safe-range int prints its exact value on the JVM backend (long arithmetic; the Lua backend prints such values in Lua's float format, so this fixture pins the exact JVM value)",
+      "source": "export function test(): int { return 9007199254740991; }",
+      "expectedOutput": "9007199254740991",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "literal 9007199254740991 : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-int-safe-range-mod",
+      "description": "An out-of-range int literal used as an operand (9223372036854775807 % 2) raises E8004 on the JVM backend: the literal is not a valid DEAL int, and the JVM backend rejects it at the point of use instead of silently computing with the exact long (LuaJIT silently rounds the literal to a double and computes 0 — a LuaJIT number-representation artifact the JVM backend refuses to reproduce; documented in deal/codegen/jvm/README.md)",
+      "source": "export function test(): int { return 9223372036854775807 % 2; }",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary % : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-javalang-name-collisions",
+      "description": "DEAL identifiers may be named System/Math/Double/String/Void/Integer/Character/RuntimeException/ArithmeticException (javaName passes non-reserved names through unchanged); every java.lang reference in the generated code must be fully qualified, or these fields would shadow it and javac would reject an artifact the CLI reported as successful — module-level console.log (System.out), int arithmetic (Math.addExact), string ordering (Integer.compare/Character.charCount), a 1e999 literal (Double.POSITIVE_INFINITY), and a runtime error (DealError extends java.lang.RuntimeException) all run in one module with all of these names bound as fields",
+      "source": "import * as console from \"std/console\"\nlet System: int = 1;\nlet Math: int = 2;\nlet Double: int = 3;\nlet String: int = 4;\nlet Void: int = 5;\nlet Integer: int = 6;\nlet Character: int = 7;\nlet RuntimeException: int = 8;\nlet ArithmeticException: int = 9;\nconsole.log(\"collisions-ok\");\nexport function test(): int {\n  if (\"a\" < \"b\") { console.log(\"ordering-ok\"); }\n  return System + Math + Double + String + Void + Integer + Character + RuntimeException + ArithmeticException;\n}",
+      "expectedOutput": "collisions-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "let System: int",
+        "let ArithmeticException: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-javalang-nonfinite-field",
+      "description": "A module field named Double plus a 1e999 literal in the same module: the literal renders as java.lang.Double.POSITIVE_INFINITY, so the field cannot shadow the constant",
+      "source": "let Double: int = 1;\nexport function test(): number { let n: number = 1e999; return n; }",
+      "expectedOutput": "Infinity",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: number",
+        "literal Infinity : number"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-elseif-chain-declared-first",
+      "description": "A module-level else-if chain whose conditions read already-declared fields runs at load time in source order (positive shape for the chain-walking use-before-declaration guard; the forward-reference shape is E6000, covered by JvmBackendTest)",
+      "source": "let z: int = 2;\nlet hit: boolean = false;\nif (z === 1) { } else if (z === 2) { hit = true; }\nexport function test(): int { if (hit) { return 1; } return 0; }",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "if @fixture-jvm-elseif-chain-declared-first.deal"
+      ],
+      "irNotContains": [],
+      "backends": [
         "jvm"
       ]
     }

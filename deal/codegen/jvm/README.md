@@ -20,7 +20,7 @@ Supported (real semantics, spec JVM value mapping):
 
 | DEAL | JVM representation |
 |---|---|
-| `int` | primitive `long` (checked arithmetic: E8004 overflow, E8005 div-by-zero, E8006 negative exponent; non-finite powers → E8001, matching LuaJIT's `check_int`) |
+| `int` | primitive `long` (checked arithmetic over the DEAL safe range ±(2^53-1) = ±9007199254740991: every int-producing operation checks its result with the emitted `checkInt` helper — E8004 out of safe range, E8005 div-by-zero, E8006 negative exponent, non-finite powers → E8001, all matching LuaJIT's `check_int`; int literals outside the safe range are checked at their point of use) |
 | `number` | primitive `double` (Lua-style floored `%` via `numMod`; literals that overflow to ±Infinity — e.g. checker-accepted `1e999` — render as `Double.POSITIVE_INFINITY`/`Double.NEGATIVE_INFINITY`, mirroring the Lua backend's `(1/0)`, so the artifact stays valid Java) |
 | `boolean` | primitive `boolean` |
 | `string` | `java.lang.String` (`===` via `equals`; ordering via the emitted `scalarCompare` helper — Unicode scalar-value order, matching LuaJIT's UTF-8 bytewise order including supplementary characters) |
@@ -30,7 +30,7 @@ Supported (real semantics, spec JVM value mapping):
 | `if`/`else if`/`else`, `return`, assignment, direct calls | plain Java control flow |
 | standalone expression statements (`x + 1;`) | lowered to a dummy-local declaration (`long __ignored = intAdd(x, 1L);`) so they are genuinely evaluated — an int overflow there is an observable E8004, as under LuaJIT |
 | `int()` / `number()` intrinsics | `intFromNumber` / `numberFromInt` helpers (E8001/E8004) |
-| `import * as c from "std/console"` | `c.log` → `System.out.println`, `c.error` → `System.err.println` |
+| `import * as c from "std/console"` | `c.log` → `java.lang.System.out.println`, `c.error` → `java.lang.System.err.println` |
 
 Out of scope (rejected with a backend `E6000` diagnostic, never silently
 miscompiled): modules (any import other than `std/console`), classes, arrays,
@@ -176,6 +176,49 @@ reports success for an artifact `javac` would reject.
 - **Runtime-helper collisions are rejected.** A DEAL function whose name and
   mapped signature duplicate an emitted helper (`intAdd(a: int, b: int)`)
   is an E6000, not a duplicate-method javac error.
+- **The DEAL int safe range ±(2^53-1) is enforced everywhere.** Every
+  int-producing operation — `intAdd`/`intSub`/`intMul`/`intDiv`/
+  `intMod`/`intNeg`/`intPow`/`intFromNumber` — checks its result with the
+  emitted `checkInt` helper against ±9007199254740991, exactly like
+  LuaJIT's `__rt.check_int` wraps `__rt.int_add(a, b)` etc.
+  (`9007199254740991 + 1` raises E8004 on both backends; `2 ** 62` raises
+  E8004; `int(9007199254740992.0)` raises E8004; `return
+  9223372036854775807;` raises E8004 at the boundary on both). Int
+  literals outside the safe range are checked at their point of use
+  (wrapped in `checkInt`), so a checker-accepted program can never
+  silently compute with a value that is not a valid DEAL int. One
+  deliberate divergence is documented below: inside arithmetic LuaJIT
+  silently rounds an out-of-range literal to a double first
+  (`9223372036854775807 % 2` computes 0 there), which the JVM backend
+  refuses to reproduce — it raises E8004 for the invalid int value
+  instead of silently diverging.
+- **All `java.lang` references in generated code are fully qualified.**
+  DEAL identifiers may be named `System`, `Math`, `Double`, `String`,
+  `Void`, `Integer`, `Character`, `RuntimeException`, or
+  `ArithmeticException` (`javaName` passes non-reserved names through
+  unchanged), and an unqualified generated reference (`System.out`,
+  `Math.addExact`, `Double.isNaN`, the `String`/`Void` type names) would
+  bind to the user's field or local instead of `java.lang`, producing an
+  artifact javac rejects while the CLI reports success. The emitted code
+  uses `java.lang.System.out/err`, `java.lang.Math.*`,
+  `java.lang.Double.*`, `java.lang.String`, `java.lang.Void`,
+  `java.lang.Integer.compare`, `java.lang.Character.charCount`,
+  `java.lang.RuntimeException`, and `java.lang.ArithmeticException`
+  (pinned by the `jvm-javalang-name-collisions` fixture and
+  `JvmBackendTest.testJavaLangNameCollisions`, which bind all ten names
+  as module fields/locals/parameters alongside console output, int
+  arithmetic, string ordering, non-finite literals, and a runtime error).
+- **The use-before-declaration guard walks every condition of an
+  `if`/`else if` chain.** `emitIf`/`emitIfContinuation` emit the follow-on
+  conditions directly (no per-statement guard runs for them), so a
+  later-declared variable in an `else if` condition — module-level
+  (`if (true) { } else if (z === 2) { } let z: int = 2;` — Java's
+  illegal-forward-reference rule) or function-body (`if (true) {} else
+  if (x === 2) {} let x: int = 2;` — cannot-find-symbol) — previously
+  emitted an artifact javac rejected after the CLI reported success.
+  These are now E6000; chain conditions over already-declared variables
+  stay clean (pinned by `JvmBackendTest.testElseIfChainUseBeforeDeclaration`
+  and the `jvm-elseif-chain-declared-first` fixture).
 
 ## Review evidence: backend-selection seam
 
@@ -209,7 +252,7 @@ reports success for an artifact `javac` would reject.
     `test/LuaBackendIntegrationTest`, `test/ConformanceTest`,
     `test/conformance/fixtures/*.json` `backends: ["luajit"]`) stays green
     and unmodified.
-  - JVM: `test/conformance/fixtures/jvm-skeleton.json` — thirty-six
+  - JVM: `test/conformance/fixtures/jvm-skeleton.json` — forty-eight
     fixtures (JVM-only, plus cross-backend parity fixtures that also run
     under LuaJIT as the reference behavior): literals/output, int arithmetic,
     local variables with
@@ -226,9 +269,16 @@ reports success for an artifact `javac` would reject.
     later-field write, the declaration-first interleaved load-time
     ordering, dead-code skipping after non-completing statements ×3
     (complete if/else chain, block-ending return with dead let/expression,
-    dead else-if chain with a hoisted null-typed condition), and the
-    function-body forward read of a later-declared module field
-    (nine fixtures run under both backends as cross-backend parity))
+    dead else-if chain with a hoisted null-typed condition), the
+    function-body forward read of a later-declared module field, the
+    int safe range ±(2^53-1) pinned at the boundary (the inclusive
+    boundary itself, and cross-backend E8004 pins for add, sub, `**`
+    ×2, `int()`, and an out-of-range literal — plus the exact JVM value
+    fixture and the JVM-only out-of-range-operand rejection),
+    fully-qualified `java.lang` references (all ten colliding field names
+    in one module; a field named `Double` next to a `1e999` literal), and
+    a positive module-level else-if chain over already-declared fields
+    (sixteen fixtures run under both backends as cross-backend parity))
     run end-to-end under `test/BackendConformanceTest`.
   - Seam: `test/JvmBackendTest.java` — identifier translation, collision-safe
     class-name derivation, emission, E6000 rejection (including unused
@@ -254,7 +304,18 @@ reports success for an artifact `javac` would reject.
     dead-code skipping after non-completing statements (complete if/else,
     return-after-return, block-level dead let/expression, dead else-if
     chain with a hoisted null-typed condition, the no-over-skip open-if
-    shape, and emission-level skip assertions), fixture-schema validation
+    shape, and emission-level skip assertions), the int safe range
+    ±(2^53-1) (boundary success, E8004 pins for add/sub/mul/neg/`**`/`int()`/
+    literals/operand literals via `javac`+`java`, and emission assertions
+    that helpers route through `checkInt` with the safe-range bound),
+    `java.lang` name collisions (locals/parameters/fields named
+    System/Math/Double/String/Void/Integer/Character/RuntimeException/
+    ArithmeticException alongside console output, int arithmetic, number
+    `**`, non-finite literals, string ordering, and runtime errors —
+    all compiled and executed, with qualified-name emission assertions),
+    else-if chain use-before-declaration (module-level, function-body,
+    and deep-chain E6000s, plus clean-chain positives), fixture-schema
+    validation
     (expectedCompileError combined with runtime/IR assertions fails with a
     clear message per conformance-test-architecture D6), the runner's
     `DEAL_ERROR_CODE`
@@ -335,6 +396,15 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   (`check_null` rejects the raw nil that `console.log` returns) are proven
   redundant by the JVM's static types and skipped, as the spec's JVM
   backend contract permits — see "Observable-behavior guarantees" above.
+- An int literal outside the DEAL safe range raises E8004 at its point
+  of use on the JVM backend (the literal is not a valid DEAL int):
+  `9223372036854775807 % 2` raises E8004, while LuaJIT silently rounds
+  the literal to a double first and computes 0, and
+  `9007199254740992 === 9007199254740992` raises E8004 while LuaJIT
+  compares the rounded doubles — LuaJIT number-representation artifacts
+  the JVM backend refuses to reproduce rather than silently diverging.
+  The boundary E8004 shapes (add/sub/pow/int()/literal at the return)
+  match LuaJIT exactly and are pinned by cross-backend fixtures.
 - String ordering follows Unicode scalar values (LuaJIT's UTF-8 bytewise
   order), implemented by the emitted `scalarCompare` code-point loop; the
   old UTF-16 `String.compareTo` ordering diverged for supplementary
