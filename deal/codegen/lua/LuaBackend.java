@@ -429,10 +429,6 @@ public final class LuaBackend implements Visitor<Void> {
         Files.createDirectories(outputPath.getParent());
         Files.writeString(outputPath, luaSource);
 
-
-        Files.createDirectories(outputPath.getParent());
-        Files.writeString(outputPath, luaSource);
-
         // Write source map sidecar
         if (smg != null && smg.hasMappings()) {
             // Normalize both source and generated paths to be project-relative.
@@ -2073,7 +2069,7 @@ public final class LuaBackend implements Visitor<Void> {
         }
 
         Span cspan = obj.span();
-        return "__rt.class_(\"" + typeDescriptor(cls) + "\", " + defaultsRef
+        return "__rt.class_(" + quotedTypeDescriptor(cls) + ", " + defaultsRef
             + ", " + provided.toString() + ", " + spanArgs(cspan) + ")";
     }
 
@@ -2546,7 +2542,8 @@ public final class LuaBackend implements Visitor<Void> {
 
         if (jtype.equals("class")) {
             sb.append(", className = \"")
-                .append(classNameFromTypeNode(innerType)).append("\"");
+                .append(escapeLuaStringNoQuotes(classNameFromTypeNode(innerType)))
+                .append("\"");
             sb.append(", defaults = ").append(defaultsRefForTypeNode(innerType));
             sb.append(", fields = ").append(fieldsRefForTypeNode(innerType));
         } else if (jtype.equals("array")) {
@@ -2579,7 +2576,8 @@ public final class LuaBackend implements Visitor<Void> {
 
         if (jtype.equals("class")) {
             sb.append(", className = \"")
-                .append(classNameFromTypeNode(inner)).append("\"");
+                .append(escapeLuaStringNoQuotes(classNameFromTypeNode(inner)))
+                .append("\"");
             sb.append(", defaults = ").append(defaultsRefForTypeNode(inner));
             sb.append(", fields = ").append(fieldsRefForTypeNode(inner));
         } else if (jtype.equals("array")) {

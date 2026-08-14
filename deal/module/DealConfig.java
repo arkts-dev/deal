@@ -93,9 +93,11 @@ public final class DealConfig {
      * Parses the {@code externals} manifest field (spec map form):
      * {@code "externals": { "host/cfg": { "declaration": "bindings/host-cfg.d.deal" } }}.
      * The key is the import path as written; the declaration path is
-     * manifest-relative.  The legacy list form is retired (empty map).
-     * Any other shape — scalars, strings, booleans — is a configuration
-     * error ({@link IllegalArgumentException}); malformed entries are never
+     * manifest-relative and must name a host declaration file ({@code .d.deal}
+     * suffix).  The legacy list form is retired (empty map).
+     * Any other shape — scalars, strings, booleans — and malformed entries
+     * (missing, empty, or non-{@code .d.deal} declaration paths) are
+     * configuration errors ({@link IllegalArgumentException}); nothing is
      * silently absorbed.
      */
     private static Map<String, String> parseExternals(JsonObject root) {
@@ -114,6 +116,17 @@ public final class DealConfig {
                     throw new IllegalArgumentException(
                         "deal.json: externals entry '" + key
                             + "' must be an object with a 'declaration' string");
+                }
+                if (declaration.isEmpty()) {
+                    throw new IllegalArgumentException(
+                        "deal.json: externals entry '" + key
+                            + "' has an empty 'declaration' path");
+                }
+                if (!declaration.endsWith(".d.deal")) {
+                    throw new IllegalArgumentException(
+                        "deal.json: externals entry '" + key
+                            + "' declaration must be a host declaration file"
+                            + " (.d.deal), got: '" + declaration + "'");
                 }
                 result.put(key, declaration);
             }

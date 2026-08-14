@@ -387,6 +387,27 @@ public class ModuleSystemTest {
                 "Externals entry error message mentions 'declaration'");
         }
 
+        // Malformed externals declarations: a missing "declaration" string,
+        // an empty path, and a path that is not a host declaration file are
+        // config errors.  A non-.d.deal declaration would otherwise compile
+        // "successfully" and emit a broken runtime require path (the imported
+        // file is treated as a normal module, not a host declaration).
+        for (String badDecl : new String[] {
+                "{\"externals\": {\"host/cfg\": {}}}",
+                "{\"externals\": {\"host/cfg\": {\"declaration\": \"\"}}}",
+                "{\"externals\": {\"host/cfg\": {\"declaration\": \"cfg.deal\"}}}",
+                "{\"externals\": {\"host/cfg\": {\"declaration\": \"bindings/cfg.d\"}}}"}) {
+            try {
+                DealConfig.parse(Path.of("deal.json"), badDecl);
+                fail("Should have thrown for malformed externals declaration: "
+                    + badDecl);
+            } catch (IllegalArgumentException e) {
+                check(e.getMessage().contains("declaration"),
+                    "Externals declaration error message mentions 'declaration': "
+                        + e.getMessage());
+            }
+        }
+
         // Non-map, non-list externals shapes are config errors, not silent
         // empty maps: scalars and strings must be rejected loudly.
         for (String badShape : new String[] {
@@ -1728,6 +1749,137 @@ public class ModuleSystemTest {
         }
     }
 
+    /**
+     * Regression (C3 review round 3): descriptor text embedded in quoted Lua
+     * strings at the @jsonable field-descriptor sites must be Lua-escaped.
+     * A DEAL @jsonable class holding a host-class field (typed from an
+     * externals-listed declaration) emits the class identity descriptor as
+     * the field's {@code className} value; the descriptor carries the
+     * externals-derived dotted module path ("@host.x\y/User" — the
+     * externals key with "/" mapped to "."), so a backslash in the
+     * externals key made the generated chunk invalid Lua ("invalid escape
+     * sequence" at require time, with no compile-time diagnostic).  The
+     * generated module must carry the escaped
+     * {@code className = "@host.x\\y/User"} text and load AND run under
+     * LuaJIT.
+     */
+    private static void testHostModuleBackslashExternalsKeyJsonableE2E() throws Exception {
+        System.out.println("-- Host E2E: backslash externals key + @jsonable host-class field --");
+        if (!luajitAvailable()) {
+            System.out.println("  SKIP: LuaJIT not available");
+            return;
+        }
+
+        writeFile("deal.json", """
+            {
+              "moduleRoots": ["src"],
+              "output": "build/lua",
+              "backend": "luajit",
+              "externals": {
+                "host/x\\\\y": { "declaration": "bindings/host-xy.d.deal" }
+              }
+            }""");
+        writeFile("bindings/host-xy.d.deal", """
+            export function ping(): int;
+
+            // @jsonable
+            export class User {
+                port: int = 0;
+            }
+            """);
+        // The @jsonable Wrapper holds a host-class field: the emitted
+        // Wrapper_fields descriptor embeds the class identity
+        // "@host.x\y/User" as a quoted-string className value.  The null
+        // default avoids constructing the host class from DEAL (host-class
+        // literals stay latent in production — declaration files have no
+        // symbol table), while the field descriptor itself is emitted at
+        // module load.
+        writeFile("src/jsonable_host.deal", """
+            import * as cfg from "host/x\\y"
+
+            // @jsonable
+            export class Wrapper {
+                u: cfg.User | null = null;
+                name: string = "";
+            }
+
+            export function run(): int { return cfg.ping(); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/jsonable_host.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/jsonable_host");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        DealConfig config = DealConfig.load(tmpDir);
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, config, roots, null);
+
+        boolean success = orchestrator.compile();
+        check(success, "Jsonable backslash key: compilation should succeed");
+        if (!success) return;
+
+        String lua = Files.readString(outputDir.resolve("jsonable_host.lua"));
+        // The @jsonable field descriptor's className value must carry the
+        // Lua-escaped form (each "\\" here is one backslash in the
+        // generated text).
+        check(lua.contains("className = \"@host.x\\\\y/User\""),
+            "Jsonable backslash key: field-descriptor className is Lua-escaped");
+        check(!lua.contains("host.x\\y/User"),
+            "Jsonable backslash key: no raw (unescaped) descriptor text remains");
+
+        // Host implementation on the raw require path outputDir/host/x\y.lua
+        // (a literal backslash in the file name on POSIX filesystems),
+        // supplying the class META, defaults, and the optional <C>_fields
+        // descriptor table the loader copies through (host-module-abi D2).
+        Path hostImpl = outputDir.resolve("host").resolve("x\\y.lua");
+        Files.createDirectories(hostImpl.getParent());
+        Files.writeString(hostImpl, """
+            local M = {}
+            function M.ping() return 9 end
+            M.User = { __kind = "class", __classname = "@host.x\\\\y/User" }
+            M.User_defaults = { port = 0 }
+            M.User_fields = { { name = "port", jtype = "int", optional = false, nullable = false } }
+            -- The @jsonable declaration adds User$fromJson/User$toJson
+            -- synthetics to the declared surface; the loader requires them
+            -- (never called by this test).
+            M["User$fromJson"] = function(s) return nil end
+            M["User$toJson"] = function(u) return "" end
+            return M
+            """);
+
+        Path runtimeDest = outputDir.resolve("deal/runtime.lua");
+        if (!Files.exists(runtimeDest)) {
+            Files.createDirectories(runtimeDest.getParent());
+            Files.copy(Path.of("deal/runtime.lua"), runtimeDest);
+        }
+        // The @jsonable pass requires std.json at load; place it on
+        // package.path like the host environment would (host policy).
+        Path jsonDest = outputDir.resolve("std/json.lua");
+        if (!Files.exists(jsonDest)) {
+            Files.createDirectories(jsonDest.getParent());
+            Files.copy(Path.of("std/json.lua"), jsonDest);
+        }
+
+        try {
+            String luaCode = "package.path = '" + outputDir.toRealPath()
+                + "/?.lua;' "
+                + "local m = require('jsonable_host') "
+                + "local v = m.run.f() "
+                + "assert(v == 9, 'expected 9, got ' .. tostring(v)) "
+                + "print('OK: jsonable backslash host ping -> ' .. tostring(v))";
+            ProcessBuilder pb = new ProcessBuilder("luajit", "-e", luaCode);
+            pb.redirectErrorStream(true);
+            Process proc = pb.start();
+            String output = new String(proc.getInputStream().readAllBytes());
+            int exitCode = proc.waitFor();
+            check(exitCode == 0,
+                "Jsonable backslash key: runtime verification (exit " + exitCode + "): "
+                    + output.trim());
+        } catch (Exception e) {
+            check(false, "Jsonable backslash key: runtime verification failed: " + e.getMessage());
+        }
+    }
+
     // =========================================================================
     // CLI Tests
     // =========================================================================
@@ -2096,6 +2248,7 @@ public class ModuleSystemTest {
             testExternalsMissingDeclarationE2003();
             testHostModuleEndToEnd();
             testHostModuleBackslashExternalsKeyE2E();
+            testHostModuleBackslashExternalsKeyJsonableE2E();
             testCli();
             testEndToEndSingleModule();
             testEndToEndMultiModule();
