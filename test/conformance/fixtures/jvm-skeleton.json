@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM backend skeleton conformance (ISSUE-0091). Fixtures for the JVM backend (several also run under LuaJIT as the reference behavior): literals/output, int arithmetic, local variables, if/else, a frontend compile-error rejected before the backend, and the observable-behavior regressions: null-typed returns/initializers with side effects, null-typed captures of reassigned locals and parameters, floored % on negative operands, string equality/ordering (Unicode scalar-value order), console.error -> stderr, null equality, standalone expression statements, module-level load-time statements, a module-load-only fixture (runner initializes the module class when no function is auto-invoked), non-finite number literals (1e999 -> Double.POSITIVE_INFINITY), && / || short-circuit preservation for guarded null-typed calls, a module-level error with a zero-arity export (the runner unwraps ExceptionInInitializerError into the DEAL_ERROR_CODE contract), the module-field shadow write (upvalue write parity), the module-level later-field write (JLS §8.3.3 forward-reference LHS exception parity), and the declaration-first interleaved load-time ordering (functions declared before their call sites; the declarations-after shape fails at load under LuaJIT and is E6000 under JVM). The JVM adapter compiles the emitted Java artifact with javac and executes it with java in a subprocess; the generated runner auto-invokes zero-arity exported functions in declaration order and prints their non-null results, so expectedOutput observes real return values (console.log output is also captured). The Lua harness auto-invokes in pairs() (unspecified) order, so fixtures with multiple zero-arity exports must not depend on cross-backend invocation order (every fixture here has at most one zero-arity export).",
+  "description": "JVM backend skeleton conformance (ISSUE-0091). Fixtures for the JVM backend (several also run under LuaJIT as the reference behavior): literals/output, int arithmetic, local variables, if/else, a frontend compile-error rejected before the backend, and the observable-behavior regressions: null-typed returns/initializers with side effects, null-typed captures of reassigned locals and parameters, floored % on negative operands, string equality/ordering (Unicode scalar-value order), console.error -> stderr, null equality, standalone expression statements, module-level load-time statements, a module-load-only fixture (runner initializes the module class when no function is auto-invoked), non-finite number literals (1e999 -> Double.POSITIVE_INFINITY), && / || short-circuit preservation for guarded null-typed calls, a module-level error with a zero-arity export (the runner unwraps ExceptionInInitializerError into the DEAL_ERROR_CODE contract), the module-field shadow write (upvalue write parity), the module-level later-field write (JLS §8.3.3 forward-reference LHS exception parity), the declaration-first interleaved load-time ordering (function values assigned at their declaration point), dead-code skipping after non-completing statements (complete if/else chains, block-ending returns, dead lets/expression statements, a dead else-if chain with a hoisted null-typed condition — never an artifact javac rejects), and the function-body forward read of a later-declared module field (the pre-declaration write establishes the global; both backends observe 5 — the use-before-declaration guard must not over-reject this shape).",
   "tests": [
     {
       "name": "jvm-literals-output",
@@ -544,6 +544,75 @@
         "function test: null",
         "function f: int",
         "function g: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-dead-code-function",
+      "description": "Dead code after an all-returning if/else is skipped, never emitted: javac rejects unreachable statements (JLS §14.21) and the CLI must never report success for an artifact javac rejects. LuaJIT never executes the dead return either. Emitting `return 3` after the complete if/else used to produce exactly such a broken artifact",
+      "source": "export function test(): int { if (true) { return 1; } else { return 2; } return 3; }",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "if @fixture-jvm-dead-code-function.deal"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-dead-code-block",
+      "description": "Statements after a non-completing statement inside a block are skipped (a block ending in a return cannot fall through — JLS §14.21): the dead return, dead let, and dead standalone expression statement never emit, so the artifact compiles and only the live path runs",
+      "source": "export function test(): int { { return 1; } return 2; let x: int = 5; x + 1; return x; }",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-dead-code-elseif-hoisted",
+      "description": "A dead else-if chain whose condition hoists a null-typed side-effecting call (`helper() === null` in the skipped else branch) and a dead trailing return must still emit valid Java: the chain's branches all return, so everything after is unreachable (JLS §14.21) and skipped. helper() must never run",
+      "source": "import * as console from \"std/console\"\nfunction helper(): null { console.log(\"helper-ran\"); }\nexport function test(): int {\n  if (true) { return 1; }\n  else if (helper() === null) { return 2; }\n  else { return 3; }\n  return 4;\n}",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "if @fixture-jvm-dead-code-elseif-hoisted.deal"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-function-field-forward-read",
+      "description": "A function-body read of a module field declared later is legal Java (method bodies may reference later-declared static fields — JLS §8.3.3 covers only initializers) and matches LuaJIT's post-load semantics: the pre-declaration write establishes the global that the read observes (both backends observe 5), so this shape must NOT be rejected by the use-before-declaration guard. Runs under both backends; LuaJIT is the reference",
+      "source": "import * as console from \"std/console\"\nfunction f(): int { x = 5; return x; }\nlet x: int = 1;\nexport function test(): null {\n  if (f() === 5) { console.log(\"forward-read-ok\"); }\n}",
+      "expectedOutput": "forward-read-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "function f: int",
+        "assign = : int"
       ],
       "irNotContains": [],
       "backends": [

@@ -23,7 +23,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Unit tests for the JVM backend skeleton (ISSUE-0091):
@@ -44,6 +46,14 @@ import java.util.List;
  *       equality/ordering, and {@code console.error} → stderr — verified by
  *       executing the emitted artifact with {@code javac} + {@code java}
  *       subprocesses,</li>
+ *   <li>dead-code skipping after non-completing statements (a complete
+ *       all-returning if/else, return-after-return, block-level dead
+ *       lets/expression statements, dead else-if chains with hoisted
+ *       null-typed conditions — never an artifact javac rejects as
+ *       unreachable), function-body reads of later-declared module fields
+ *       (allowed; the load-time guard stays), and fixture-schema
+ *       validation ({@code expectedCompileError} combined with runtime/IR
+ *       assertions fails per conformance-test-architecture D6),</li>
  *   <li>DEAL runtime error codes (E8004/E8005/E8006/E8001 incl. the
  *       negative-exponent and extreme-power paths) surfaced by executing the
  *       emitted artifact,</li>
@@ -82,7 +92,9 @@ public class JvmBackendTest {
             testModuleLevelStatements();
             testShadowedInitializer();
             testUseBeforeDeclarationRejected();
+            testFunctionBodyModuleFieldReadAllowed();
             testAssignmentBeforeDeclarationRejected();
+            testDeadCodeAfterNonCompletingStatements();
             testRuntimeErrorCodes();
             testNonFiniteNumberLiterals();
             testShortCircuitPreservation();
@@ -98,6 +110,7 @@ public class JvmBackendTest {
             testOrchestratorJvmSourceMapWarning();
             testDealConfigBackendField();
             testCliBackendFlag();
+            testFixtureConfigValidation();
         } finally {
             cleanup();
         }
@@ -1102,6 +1115,104 @@ public class JvmBackendTest {
      * to a module field stay allowed (JLS §8.3.3 forward-reference LHS
      * exception / LuaJIT's upvalue write — same observable result).
      */
+    /**
+     * Function-body reads of a declared module field must NOT be rejected
+     * by the use-before-declaration guard, even when the field is declared
+     * later: Java method bodies may legally reference later-declared
+     * static fields (the illegal-forward-reference rule of JLS §8.3.3
+     * covers only initializers), and the post-load semantics match
+     * LuaJIT — a function declared after the field reads the module-local
+     * upvalue (the initialized value, exactly what the static field holds
+     * after class init), and a function declared before the field reads
+     * the global, which a prior write established in the canonical
+     * `x = 5; return x;` shape (verified with real luajit: test() = 5).
+     * The reviewer's round-4 repro must compile and run, never E6000.
+     */
+    private static void testFunctionBodyModuleFieldReadAllowed() throws Exception {
+        System.out.println("-- Function-body reads of declared module fields are allowed --");
+
+        // The reviewer's exact repro: a pre-declaration function writes the
+        // module field (allowed: the static field / LuaJIT's global), then
+        // reads it. Both backends observe 5 (cross-backend parity fixture
+        // jvm-function-field-forward-read).
+        ExecResult repro = compileAndRunJvm("""
+            function f(): int { x = 5; return x; }
+            let x: int = 1;
+            export function test(): int { return f(); }
+            """, "forwardread");
+        check(repro.exitCode() == 0, "forward read+write exits 0");
+        check(repro.output().contains("5"),
+            "pre-declaration write then read observes 5 (LuaJIT parity): "
+                + repro.output());
+
+        // Read in an initializer position: legal Java (method-body forward
+        // static-field reference); the emitted artifact must compile. The
+        // read observes the initialized field value (6). Divergence note:
+        // under LuaJIT this function (declared before the field, no prior
+        // write) reads the global nil at call time and fails — the
+        // write-first shape above is the parity case; this case pins the
+        // documented JVM-side post-load semantics.
+        ExecResult initializer = compileAndRunJvm("""
+            function f(): int { let y: int = x + 1; return y; }
+            let x: int = 5;
+            export function test(): int { return f(); }
+            """, "forwardreadinit");
+        check(initializer.exitCode() == 0, "initializer forward read exits 0");
+        check(initializer.output().contains("6"),
+            "initializer forward read observes the initialized field (6): "
+                + initializer.output());
+
+        // Write-first reads in if-condition and call-argument positions
+        // (LuaJIT parity: the global write establishes the read value).
+        ExecResult positions = compileAndRunJvm("""
+            function g(v: int): int { return v; }
+            function f(): int { x = 5; if (x === 5) { return g(x); } return 0; }
+            let x: int = 1;
+            export function test(): int { return f(); }
+            """, "forwardreadpositions");
+        check(positions.exitCode() == 0, "condition/argument forward read exits 0");
+        check(positions.output().contains("5"),
+            "condition and call-argument forward reads observe 5: "
+                + positions.output());
+
+        // The emission references the static field by its (later-declared)
+        // field name — a forward reference that is legal inside method
+        // bodies and must be present, not replaced or rejected.
+        Frontend f = compileFrontend(
+            "function f(): int { return x; }\n"
+                + "let x: int = 1;\n"
+                + "export function test(): int { return f(); }",
+            "jvmtest-forwardread-emit.deal");
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res =
+                JvmBackend.generate(f.program(), f.checkResult(),
+                    "jvmtest-forwardread-emit.deal", "main");
+            check(!res.hasErrors(), "plain function-body forward read is not rejected");
+            check(res.source().contains("return x;"),
+                "the read emits a static field reference: " + res.source());
+        } else {
+            fail("checker must accept the plain forward-read probe: " + f.errors());
+        }
+
+        // The load-time guards are untouched: a module-level initializer
+        // reading a later field is still E6000 (Java illegal forward
+        // reference; LuaJIT reads the not-yet-declared global at load).
+        Frontend moduleFwd = compileFrontend(
+            "let b: int = c + 1;\nlet c: int = 2;\n"
+                + "export function test(): int { return b; }",
+            "jvmtest-module-fwd.deal");
+        if (moduleFwd.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res =
+                JvmBackend.generate(moduleFwd.program(), moduleFwd.checkResult(),
+                    "jvmtest-module-fwd.deal", "main");
+            check(res.hasErrors(), "module-level later-field read is still rejected");
+            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for the module-level later-field read: " + res.diagnostics());
+        } else {
+            fail("checker must accept the module-level forward probe: " + moduleFwd.errors());
+        }
+    }
+
     private static void testAssignmentBeforeDeclarationRejected() throws Exception {
         System.out.println("-- Assignment before declaration → E6000 --");
 
@@ -1182,6 +1293,111 @@ public class JvmBackendTest {
         check(moduleLater.output().contains("1"),
             "module-level later-field write observes 1: "
                 + moduleLater.output());
+    }
+
+    /**
+     * Dead code after a statement that cannot complete normally must never
+     * be emitted: LuaJIT never executes it and javac rejects it as
+     * unreachable (JLS §14.21) — emitting it produced exactly the broken
+     * artifact the round-4 reviewer found (`return 3;` after a complete
+     * all-returning if/else, reported as success by the CLI). Completion
+     * tracking: a return cannot complete normally; an if/else whose
+     * branches all cannot complete normally cannot complete normally; a
+     * block ending in such a statement cannot complete normally. Skipping
+     * is semantics-preserving (dead code never runs under LuaJIT) and
+     * keeps every artifact valid Java.
+     */
+    private static void testDeadCodeAfterNonCompletingStatements() throws Exception {
+        System.out.println("-- Dead code after non-completing statements is skipped --");
+
+        // The reviewer's exact repro: a dead return after an all-returning
+        // if/else. javac must accept the artifact and test() must return 1.
+        ExecResult repro = compileAndRunJvm(
+            "export function test(): int { if (true) { return 1; } "
+                + "else { return 2; } return 3; }",
+            "deadcodeifelse");
+        check(repro.exitCode() == 0, "dead code after complete if/else exits 0");
+        check(repro.output().contains("1"),
+            "only the live path runs: " + repro.output());
+
+        // Dead return after return (function level).
+        ExecResult afterReturn = compileAndRunJvm(
+            "export function test(): int { return 1; return 2; }", "deadcodereturn");
+        check(afterReturn.exitCode() == 0, "dead return after return exits 0");
+        check(afterReturn.output().contains("1"),
+            "first return wins: " + afterReturn.output());
+
+        // Dead code at block level: a block ending in a return cannot fall
+        // through, so the following return, dead let, and dead standalone
+        // expression statement are all skipped.
+        ExecResult block = compileAndRunJvm(
+            "export function test(): int { { return 1; } return 2; "
+                + "let x: int = 5; x + 1; return x; }",
+            "deadcodeblock");
+        check(block.exitCode() == 0, "block-level dead code exits 0");
+        check(block.output().contains("1"),
+            "block-ending return wins: " + block.output());
+
+        // A dead else-if chain whose condition hoists a null-typed
+        // side-effecting call (the round-4 stress shape) plus a dead
+        // trailing return: valid Java, helper never called.
+        ExecResult chain = compileAndRunJvm("""
+            import * as console from "std/console"
+            function helper(): null { console.log("helper-ran"); }
+            export function test(): int {
+              if (true) { return 1; }
+              else if (helper() === null) { return 2; }
+              else { return 3; }
+              return 4;
+            }
+            """, "deadcodechain");
+        check(chain.exitCode() == 0, "dead else-if chain exits 0");
+        check(chain.output().contains("1"), "live branch runs: " + chain.output());
+        check(!chain.output().contains("helper-ran"),
+            "the dead branch's hoisted call never runs: " + chain.output());
+
+        // No over-skipping: an if WITHOUT else can complete normally, so
+        // the statement after it is live and must still be emitted.
+        ExecResult live = compileAndRunJvm(
+            "export function test(): int { let x: boolean = false; "
+                + "if (x) { return 1; } return 2; }",
+            "deadcodenoskip");
+        check(live.exitCode() == 0, "live code after open if exits 0");
+        check(live.output().contains("2"),
+            "statement after an open if is not skipped: " + live.output());
+
+        // Emission assertions: dead statements must not appear in the
+        // generated Java source at all.
+        Frontend f = compileFrontend(
+            "export function test(): int { return 1; return 2; }",
+            "jvmtest-deadcode-emit.deal");
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res =
+                JvmBackend.generate(f.program(), f.checkResult(),
+                    "jvmtest-deadcode-emit.deal", "main");
+            check(!res.hasErrors(), "dead-code program has no diagnostics");
+            check(res.source().contains("return 1L;"),
+                "the live return is emitted");
+            check(!res.source().contains("return 2L;"),
+                "the dead return is skipped: " + res.source());
+        } else {
+            fail("checker must accept the dead-code probe: " + f.errors());
+        }
+
+        Frontend f2 = compileFrontend(
+            "export function test(): int { if (true) { return 1; } "
+                + "else { return 2; } let x: int = 5; return x; }",
+            "jvmtest-deadcode-emit2.deal");
+        if (f2.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res =
+                JvmBackend.generate(f2.program(), f2.checkResult(),
+                    "jvmtest-deadcode-emit2.deal", "main");
+            check(!res.hasErrors(), "dead-let program has no diagnostics");
+            check(!res.source().contains("long x = 5L;"),
+                "the dead let declaration is skipped: " + res.source());
+        } else {
+            fail("checker must accept the dead-let probe: " + f2.errors());
+        }
     }
 
     private static void testRuntimeErrorCodes() throws Exception {
@@ -2068,5 +2284,62 @@ public class JvmBackendTest {
         } catch (IOException e) {
             fail("CLI backend test IO: " + e.getMessage());
         }
+    }
+
+    /**
+     * Fixture-schema validation (conformance-test-architecture D6): a
+     * fixture combining expectedCompileError with runtime or IR assertions
+     * would silently drop those assertions (the compile-error gate returns
+     * before runtime/IR dispatch), so the harness must fail the fixture
+     * with a clear message instead of passing without running its checks.
+     */
+    private static void testFixtureConfigValidation() {
+        System.out.println("-- Fixture config validation --");
+
+        Map<String, Object> base = new LinkedHashMap<>();
+        base.put("expectedCompileError", "E3001");
+
+        Map<String, Object> withOutput = new LinkedHashMap<>(base);
+        withOutput.put("expectedOutput", "x");
+        check(BackendConformanceTest.fixtureConfigViolation(withOutput) != null,
+            "expectedCompileError + expectedOutput is a violation");
+
+        Map<String, Object> withError = new LinkedHashMap<>(base);
+        withError.put("expectedError", "E8001");
+        check(BackendConformanceTest.fixtureConfigViolation(withError) != null,
+            "expectedCompileError + expectedError is a violation");
+
+        Map<String, Object> withExit = new LinkedHashMap<>(base);
+        withExit.put("expectedExitCode", 1);
+        check(BackendConformanceTest.fixtureConfigViolation(withExit) != null,
+            "expectedCompileError + expectedExitCode is a violation");
+
+        Map<String, Object> withIr = new LinkedHashMap<>(base);
+        withIr.put("irContains", List.of("function test"));
+        check(BackendConformanceTest.fixtureConfigViolation(withIr) != null,
+            "expectedCompileError + irContains is a violation");
+
+        Map<String, Object> withIrNot = new LinkedHashMap<>(base);
+        withIrNot.put("irNotContains", List.of("function test"));
+        check(BackendConformanceTest.fixtureConfigViolation(withIrNot) != null,
+            "expectedCompileError + irNotContains is a violation");
+
+        // The valid configuration (all other fields null/empty) is clean.
+        Map<String, Object> valid = new LinkedHashMap<>(base);
+        valid.put("expectedOutput", null);
+        valid.put("expectedError", null);
+        valid.put("expectedExitCode", null);
+        valid.put("irContains", List.of());
+        valid.put("irNotContains", List.of());
+        check(BackendConformanceTest.fixtureConfigViolation(valid) == null,
+            "compile-error fixture with null/empty assertions is valid");
+
+        // Runtime fixtures without expectedCompileError are valid whatever
+        // they assert.
+        Map<String, Object> runtime = new LinkedHashMap<>();
+        runtime.put("expectedOutput", "x");
+        runtime.put("expectedExitCode", 0);
+        check(BackendConformanceTest.fixtureConfigViolation(runtime) == null,
+            "runtime fixture without expectedCompileError is valid");
     }
 }

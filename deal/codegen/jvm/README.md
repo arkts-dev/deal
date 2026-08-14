@@ -93,20 +93,56 @@ reports success for an artifact `javac` would reject.
   emitted *before* the new local is registered, mirroring Lua's
   `local x = x + 1` (RHS reads the outer `x`): `let x: int = 5; { let x: int
   = x + 1; return x; }` computes 6.
+- **Dead code after a non-completing statement is skipped, never
+  emitted.** A `return` cannot complete normally; an `if`/`else` whose
+  branches all cannot complete normally cannot complete normally; a block
+  ending in such a statement cannot complete normally (JLS §14.21).
+  LuaJIT never executes statements after such a statement, and javac
+  rejects them as unreachable — emitting them produced exactly the broken
+  artifact class the guarantees above forbid (`return 3;` after a
+  complete all-returning if/else, reported as success by the CLI).
+  Completion tracking now skips every dead statement in the rest of the
+  same block/function (including dead `let`s, dead standalone expression
+  statements, and dead else-if chains with hoisted null-typed conditions),
+  so every checker-accepted program in scope emits valid Java:
+  `export function test(): int { if (true) { return 1; } else { return
+  2; } return 3; }` emits only the if/else and runs 1, exactly like
+  LuaJIT.
 - **Use-before-declaration is rejected, not miscompiled.** A value use of a
   variable before its own declaration with no enclosing binding (a
-  self-referential initializer, `console.log(x); let x = …`, a forward
-  reference to a later module field) reads nil under LuaJIT and fails at
-  runtime; Java would reject the forward reference after the CLI reported
-  success. The backend emits E6000 for these instead. The detection is
-  transitive through the module-level call graph: a module-level call of a
-  function whose body (directly or through other module functions) reads a
-  module field declared at or after the call site is E6000 (a field's own
-  initializer calling a function that reads the field being initialized is
-  included) — LuaJIT fails at load with a nil read, and Java would silently
-  read the field's default value (verified: `f(); let x: int = 5; function
-  f(): int { return x; }` fails at load under LuaJIT). Reads through function-local shadows
-  of a module field are correctly not flagged.
+  self-referential initializer, `console.log(x); let x = …` inside a
+  function) reads the not-yet-declared global value under LuaJIT (nil
+  unless a prior write established it) and Java would reject the forward
+  reference after the CLI reported success; a module-level (load-time)
+  forward reference to a later module field is the same shape plus
+  Java's illegal-forward-reference rule. The backend emits E6000 for
+  these instead. The detection is transitive through the module-level
+  call graph: a module-level call of a function whose body (directly or
+  through other module functions) reads a module field declared at or
+  after the call site is E6000 (a field's own initializer calling a
+  function that reads the field being initialized is included) — LuaJIT
+  fails at load with a nil read, and Java would silently read the
+  field's default value (verified: `f(); let x: int = 5; function
+  f(): int { return x; }` fails at load under LuaJIT). Reads through
+  function-local shadows of a module field are correctly not flagged.
+  **Function-body reads of *declared* module fields are allowed even when
+  the field is declared later** — the write/read asymmetry is
+  intentional and documented: Java method bodies may legally reference
+  later-declared static fields (JLS §8.3.3 covers only initializers),
+  and the post-load semantics match LuaJIT — a function declared after
+  the field reads the module-local upvalue (the initialized value,
+  exactly what the static field holds after class init), and a function
+  declared before the field reads the global, which a prior write
+  established in the canonical `x = 5; return x;` shape (`function
+  f(): int { x = 5; return x; } let x: int = 1;` — both backends
+  observe 5, pinned by the cross-backend fixture
+  `jvm-function-field-forward-read`; the write itself is the same
+  upvalue/static-field write in both). The residual call-time
+  divergence — a function declared before the field that reads it
+  *without* a prior write: LuaJIT fails reading the global nil at call
+  time while JVM reads the initialized field — is a documented
+  limitation, not a silent miscompile of the supported write/read
+  pattern.
 - **Assignment targets get the same guard.** A write to a
   later-declared function-local with no enclosing binding
   (`x = 5; let x: int = 1` inside a function — in statement, block, `if`,
@@ -173,7 +209,7 @@ reports success for an artifact `javac` would reject.
     `test/LuaBackendIntegrationTest`, `test/ConformanceTest`,
     `test/conformance/fixtures/*.json` `backends: ["luajit"]`) stays green
     and unmodified.
-  - JVM: `test/conformance/fixtures/jvm-skeleton.json` — thirty-two
+  - JVM: `test/conformance/fixtures/jvm-skeleton.json` — thirty-six
     fixtures (JVM-only, plus cross-backend parity fixtures that also run
     under LuaJIT as the reference behavior): literals/output, int arithmetic,
     local variables with
@@ -187,9 +223,13 @@ reports success for an artifact `javac` would reject.
     module-load-error fixtures, non-finite literals ×2, `&&`/`||`
     short-circuit preservation ×3, a module-level error with a
     zero-arity export, the module-field shadow write, the module-level
-    later-field write, and the declaration-first interleaved load-time
-    ordering (all three cross-backend parity with LuaJIT)) run end-to-end
-    under `test/BackendConformanceTest`.
+    later-field write, the declaration-first interleaved load-time
+    ordering, dead-code skipping after non-completing statements ×3
+    (complete if/else chain, block-ending return with dead let/expression,
+    dead else-if chain with a hoisted null-typed condition), and the
+    function-body forward read of a later-declared module field
+    (nine fixtures run under both backends as cross-backend parity))
+    run end-to-end under `test/BackendConformanceTest`.
   - Seam: `test/JvmBackendTest.java` — identifier translation, collision-safe
     class-name derivation, emission, E6000 rejection (including unused
     imports, module-level returns, use-before-declaration, helper-name
@@ -207,7 +247,17 @@ reports success for an artifact `javac` would reject.
     shapes — plus the declaration-first interleaving parity case),
     assignment to later-declared locals (E6000 in statement/block/if/
     return/argument positions, with the allowed module-field shadow write
-    and module-level later-field write), the runner's `DEAL_ERROR_CODE`
+    and module-level later-field write), function-body reads of
+    later-declared module fields (allowed and executed via `javac`+`java`,
+    incl. the reviewer's `x = 5; return x;` repro, initializer/condition/
+    argument positions, and the untouched module-level load-time guard),
+    dead-code skipping after non-completing statements (complete if/else,
+    return-after-return, block-level dead let/expression, dead else-if
+    chain with a hoisted null-typed condition, the no-over-skip open-if
+    shape, and emission-level skip assertions), fixture-schema validation
+    (expectedCompileError combined with runtime/IR assertions fails with a
+    clear message per conformance-test-architecture D6), the runner's
+    `DEAL_ERROR_CODE`
     contract for module-level errors
     with and without a zero-arity export, the orchestrator JVM path (artifact
     exists, compiles, no `.lua`/runtime copied, import rejection,
@@ -264,6 +314,23 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   later-declared fields (JLS §8.3.3 forward-reference LHS exception) and
   function-body writes to a module field (LuaJIT's upvalue write) stay
   allowed — both verified with real luajit runs.
+- Function-body reads of module fields declared later are allowed (legal
+  Java forward references from method bodies; post-load parity with
+  LuaJIT's upvalue read for functions declared after the field, and with
+  the global read for the canonical write-then-read shape — both pinned by
+  the cross-backend fixture `jvm-function-field-forward-read`). The
+  residual call-time divergence is documented: a function declared before
+  the field that reads it without a prior write reads the global nil under
+  LuaJIT (call-time failure) but the initialized static field under JVM.
+  Load-time (module-level) value uses of later-declared fields remain
+  E6000 — Java's illegal-forward-reference rule rejects them and LuaJIT
+  reads the not-yet-declared global value at load.
+- Dead code after a statement that cannot complete normally (a `return`,
+  or an `if`/`else` whose branches all cannot complete normally) is
+  skipped, never emitted: LuaJIT never executes it and javac rejects it
+  as unreachable (JLS §14.21), so skipping keeps the artifact valid Java
+  (fixtures `jvm-dead-code-function`, `jvm-dead-code-block`,
+  `jvm-dead-code-elseif-hoisted`).
 - The typed boundary checks LuaJIT performs on null-typed values
   (`check_null` rejects the raw nil that `console.log` returns) are proven
   redundant by the JVM's static types and skipped, as the spec's JVM

@@ -64,10 +64,11 @@ import java.util.Set;
  * are guarded by the left operand (Java's short-circuit semantics — LuaJIT
  * skips the right operand when the left already decides the result) with
  * a boolean temporary, so {@code false && helper() === null} never calls
- * {@code helper()}. Uses of a variable before its own declaration with no
- * enclosing binding (LuaJIT reads nil there and fails at runtime), forward
- * references to later-declared module fields (Java's
- * illegal-forward-reference rule), writes to a later-declared
+ * {@code helper()}. Module-level (load-time) value uses of a variable
+ * before its own declaration with no enclosing binding (LuaJIT reads the
+ * not-yet-declared global value there — nil unless a prior write
+ * established it), forward references to later-declared module fields
+ * (Java's illegal-forward-reference rule), writes to a later-declared
  * function-local with no enclosing binding ({@code x = 5; let x: int = 1}
  * inside a function — LuaJIT writes the enclosing scope; Java rejects the
  * forward reference; module-level writes to later-declared fields and
@@ -80,7 +81,24 @@ import java.util.Set;
  * value at its declaration point in source order and fails at load with a
  * nil read; Java hoists methods and would silently run) — are rejected
  * with {@code E6000} so the artifact is always valid Java and never
- * silently miscompiled.
+ * silently miscompiled. Function-body <em>reads</em> of declared module
+ * fields are allowed even when the field is declared later: Java method
+ * bodies may legally reference later-declared static fields (the
+ * illegal-forward-reference rule of JLS §8.3.3 covers only initializers),
+ * and the post-load semantics match LuaJIT — a function declared after
+ * the field reads the module-local upvalue (the initialized value, exactly
+ * what the static field holds after class init), and a function declared
+ * before the field reads the global, which a prior write established in
+ * the canonical {@code x = 5; return x;} shape (both backends observe 5,
+ * pinned by a cross-backend fixture); the residual call-time divergence
+ * (a pre-declaration function reading without a prior write: LuaJIT fails
+ * reading the global nil, JVM reads the initialized field) is documented
+ * in the README. Dead code after a statement that cannot complete
+ * normally — a {@code return}, or an {@code if}/{@code else} whose
+ * branches all cannot complete normally (mirroring JLS §14.21) — is never
+ * emitted: LuaJIT never executes it and javac rejects it as unreachable,
+ * so skipping keeps the artifact valid Java for every checker-accepted
+ * program.
  * Standalone non-call/non-assignment expression statements (e.g.
  * {@code x + 1;}) are lowered to a dummy-local declaration so they are
  * evaluated exactly like LuaJIT evaluates them (an int overflow there is
@@ -439,6 +457,21 @@ public final class JvmBackend {
                             stmt.span());
                     } else {
                         emitStatement(stmt);
+                        if (!statementCompletesNormally(stmt)) {
+                            // Dead code after a non-completing statement:
+                            // LuaJIT never executes it and javac rejects it
+                            // as unreachable (JLS §14.21) — skip the rest
+                            // of this static-block run. (Unreachable today:
+                            // module-level returns are rejected above, but
+                            // the guard keeps the invariant by
+                            // construction.)
+                            while (i < statements.size()
+                                    && !isModuleLevelDeclaration(statements.get(i))) {
+                                i++;
+                            }
+                            i--;
+                            break;
+                        }
                     }
                     i++;
                 }
@@ -771,8 +804,10 @@ public final class JvmBackend {
         String undeclared = undeclaredVariableUse(stmt);
         if (undeclared != null) {
             unsupported("use of '" + undeclared + "' before its declaration "
-                + "with no enclosing binding (LuaJIT reads nil and fails at "
-                + "runtime; Java rejects the forward reference)", stmt.span());
+                + "with no enclosing binding (Java rejects the forward "
+                + "reference; LuaJIT reads the not-yet-declared global value "
+                + "here, which is nil unless a prior write established it)",
+                stmt.span());
             return;
         }
 
@@ -924,6 +959,13 @@ public final class JvmBackend {
         moduleLevel = false;
         for (StatementNode stmt : fd.body().statements()) {
             emitStatement(stmt);
+            if (!statementCompletesNormally(stmt)) {
+                // Dead code after a non-completing statement: LuaJIT never
+                // executes it and javac rejects it as unreachable
+                // (JLS §14.21) — skip the rest of the body.
+                flushPreStatements(); // defensive: empty at a statement boundary
+                break;
+            }
         }
         currentModuleStatementIndex = savedModuleIndex;
         moduleLevel = savedModuleLevel;
@@ -970,6 +1012,47 @@ public final class JvmBackend {
         String value = emitExpression(e);
         flushPreStatements();
         emitLine("return " + value + ";");
+    }
+
+    /**
+     * True when {@code stmt} can complete normally — i.e. execution can
+     * fall through to the next statement. Mirrors JLS §14.21's
+     * reachability rule (and Lua's actual execution): a {@code return}
+     * cannot complete normally; an {@code if}/{@code else} whose branches
+     * all cannot complete normally cannot complete normally (an
+     * {@code if} without {@code else} always can); a block cannot
+     * complete normally when its last statement cannot. Statements after
+     * a non-completing statement are dead code — LuaJIT never executes
+     * them and javac rejects them as unreachable — so emitters skip them
+     * instead of producing an artifact the CLI would report as success.
+     */
+    private static boolean statementCompletesNormally(StatementNode stmt) {
+        return switch (stmt) {
+            case ReturnStatement rs -> false;
+            case Block b -> {
+                List<StatementNode> body = b.statements();
+                yield body.isEmpty()
+                    || statementCompletesNormally(body.get(body.size() - 1));
+            }
+            case IfStatement is -> {
+                if (statementCompletesNormally(is.thenBlock())) {
+                    yield true;
+                }
+                if (is.elseBranch().isEmpty()) {
+                    yield true;
+                }
+                yield switch (is.elseBranch().get()) {
+                    case Either.Left<IfStatement, Block> left ->
+                        statementCompletesNormally(left.value());
+                    case Either.Right<IfStatement, Block> right ->
+                        statementCompletesNormally(right.value());
+                };
+            }
+            // Every other statement kind the skeleton emits completes
+            // normally; unsupported kinds are rejected with E6000 when
+            // emission reaches them.
+            default -> true;
+        };
     }
 
     private void emitIf(IfStatement is) {
@@ -1069,8 +1152,16 @@ public final class JvmBackend {
 
     private void emitScopedBlock(Block b) {
         localScopes.push(new LinkedHashMap<>());
-        for (StatementNode stmt : b.statements()) {
-            emitStatement(stmt);
+        List<StatementNode> body = b.statements();
+        for (int i = 0; i < body.size(); i++) {
+            emitStatement(body.get(i));
+            if (!statementCompletesNormally(body.get(i))) {
+                // Dead code after a non-completing statement (a return,
+                // or an if/else whose branches all return): LuaJIT never
+                // executes it and javac rejects it as unreachable
+                // (JLS §14.21) — skip the rest of the block.
+                break;
+            }
         }
         localScopes.pop();
     }
@@ -1584,10 +1675,17 @@ public final class JvmBackend {
      * that binds to no enclosing variable and resolves to nothing usable at
      * module scope — i.e. a use of a variable before its own declaration (or
      * a self-reference in its initializer) with no outer binding to fall
-     * back to, or a forward reference to a later-declared module field.
-     * LuaJIT reads nil for such uses and fails at runtime; emitting a Java
-     * forward reference would make javac reject an artifact the CLI reported
-     * as successful. Returns {@code null} when the statement is clean.
+     * back to, or a module-level (load-time) forward reference to a
+     * later-declared module field. LuaJIT reads the not-yet-declared global
+     * value for such uses (nil unless a prior write established it), and
+     * emitting a Java forward reference would make javac reject an artifact
+     * the CLI reported as successful. Returns {@code null} when the
+     * statement is clean.
+     *
+     * <p>Function-body reads of <em>declared</em> module fields are NOT
+     * flagged even when the field is declared later: method bodies may
+     * legally reference later-declared static fields, and post-load reads
+     * match LuaJIT (see {@link #isUndeclaredVariableUse}).
      *
      * <p>Only the statement's own value positions are checked; nested
      * statements are checked individually when they are emitted, so a block
@@ -1666,7 +1764,27 @@ public final class JvmBackend {
         if (localJavaName(name) != null) return false;
         Symbol sym = symbols.resolve(name);
         if (sym == null) return true;
-        return sym instanceof Symbol.VariableSymbol;
+        if (sym instanceof Symbol.VariableSymbol) {
+            // A value-position read of a module field from inside a
+            // FUNCTION body is legal Java (method bodies may reference
+            // later-declared static fields; the illegal-forward-reference
+            // rule of JLS §8.3.3 covers only initializers) and matches
+            // LuaJIT's post-load semantics: a function declared after the
+            // field reads the module-local upvalue (the initialized
+            // value — exactly what the static field holds after class
+            // init), and a function declared before the field reads the
+            // global, which a prior write established in the canonical
+            // `x = 5; return x;` shape. At module level (load time) a
+            // later-declared field is genuinely not-yet-declared under
+            // LuaJIT (nil unless written) and an illegal forward
+            // reference in Java — keep rejecting there.
+            if (moduleFieldIndices.containsKey(name)
+                    && currentModuleStatementIndex < 0) {
+                return false;
+            }
+            return true;
+        }
+        return false;
     }
 
     // =========================================================================

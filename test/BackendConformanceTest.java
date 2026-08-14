@@ -53,6 +53,15 @@ import java.util.*;
  * backend (codegen, {@code javac}, {@code java}) is invoked. A bypassed
  * parser or checker produces no such diagnostic and the fixture fails.
  *
+ * <p>Schema validation (per {@code conformance-test-architecture} D6 —
+ * invalid configurations must fail with a clear message, never pass
+ * silently): a fixture that combines {@code expectedCompileError} with
+ * any runtime assertion ({@code expectedOutput}/{@code expectedError}/
+ * {@code expectedExitCode}) or IR assertion ({@code irContains}/
+ * {@code irNotContains}) is rejected up front, because the compile-error
+ * gate returns before runtime/IR dispatch and would silently drop those
+ * assertions (see {@link #fixtureConfigViolation}).
+ *
  * <h2>JVM adapter (ISSUE-0091)</h2>
  *
  * <p>For fixtures listing {@code "jvm"} in {@code backends}, the runner:
@@ -196,6 +205,41 @@ public class BackendConformanceTest {
         }
     }
 
+    /**
+     * Schema validation (per {@code conformance-test-architecture} D6):
+     * a fixture that sets {@code expectedCompileError} together with
+     * runtime assertions ({@code expectedOutput}/{@code expectedError}/
+     * {@code expectedExitCode}) or IR assertions ({@code irContains}/
+     * {@code irNotContains}) would silently drop those assertions — the
+     * compile-error gate returns before any runtime/IR dispatch, so a
+     * misconfigured fixture would pass without ever running its runtime
+     * checks. Returns a violation description, or {@code null} when the
+     * configuration is valid.
+     */
+    static String fixtureConfigViolation(Map<String, Object> test) {
+        Object expectedCompileError = test.get("expectedCompileError");
+        if (expectedCompileError == null || expectedCompileError == JSON_NULL) {
+            return null;
+        }
+        Object expectedOutput = test.get("expectedOutput");
+        Object expectedError = test.get("expectedError");
+        Object expectedExitCode = test.get("expectedExitCode");
+        List<?> irContains = (List<?>) test.getOrDefault("irContains", List.of());
+        List<?> irNotContains = (List<?>) test.getOrDefault("irNotContains", List.of());
+        boolean runtimeSet = (expectedOutput != null && expectedOutput != JSON_NULL)
+            || (expectedError != null && expectedError != JSON_NULL)
+            || (expectedExitCode != null && expectedExitCode != JSON_NULL);
+        if (runtimeSet || !irContains.isEmpty() || !irNotContains.isEmpty()) {
+            return "expectedCompileError is set together with runtime/IR "
+                + "assertions (expectedOutput/expectedError/expectedExitCode/"
+                + "irContains/irNotContains); the compile-error gate stops "
+                + "before codegen and would silently drop them "
+                + "(conformance-test-architecture D6: invalid fixture "
+                + "configurations must fail)";
+        }
+        return null;
+    }
+
     @SuppressWarnings("unchecked")
     private static void runTestCase(String fixtureName, Map<String, Object> test) {
         String name = jsonString(test, "name", "<unnamed>");
@@ -206,6 +250,14 @@ public class BackendConformanceTest {
 
         if (source == null) {
             System.out.println("  [" + name + "] FAIL: missing 'source' field");
+            failed++;
+            return;
+        }
+
+        String configViolation = fixtureConfigViolation(test);
+        if (configViolation != null) {
+            System.out.println("  [" + name + "] FAIL: invalid fixture "
+                + "configuration: " + configViolation);
             failed++;
             return;
         }
