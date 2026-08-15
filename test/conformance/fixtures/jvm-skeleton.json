@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM backend skeleton conformance (ISSUE-0091). Fixtures for the JVM backend (several also run under LuaJIT as the reference behavior): literals/output, int arithmetic, local variables, if/else, a frontend compile-error rejected before the backend, and the observable-behavior regressions: null-typed returns/initializers with side effects, null-typed captures of reassigned locals and parameters, floored % on negative operands, string equality/ordering (Unicode scalar-value order), console.error -> stderr, null equality, standalone expression statements, module-level load-time statements, a module-load-only fixture (runner initializes the module class when no function is auto-invoked), non-finite number literals (1e999 -> Double.POSITIVE_INFINITY), && / || short-circuit preservation for guarded null-typed calls, a module-level error with a zero-arity export (the runner unwraps ExceptionInInitializerError into the DEAL_ERROR_CODE contract), the module-field shadow write (upvalue write parity), the module-level later-field write (JLS §8.3.3 forward-reference LHS exception parity), the declaration-first interleaved load-time ordering (function values assigned at their declaration point), dead-code skipping after non-completing statements (complete if/else chains, block-ending returns, dead lets/expression statements, a dead else-if chain with a hoisted null-typed condition — never an artifact javac rejects), and the function-body forward read of a later-declared module field (the pre-declaration write establishes the global; both backends observe 5 — the use-before-declaration guard must not over-reject this shape), the DEAL int safe range ±(2^53-1) enforced with E8004 at the 2^53 boundary on every int-producing operation and at out-of-range int literals (cross-backend pins for add/sub/pow/int()/literal and the inclusive boundary), fully-qualified java.lang references in generated code (fields named System/Math/Double/String/Void/Integer/Character/RuntimeException/ArithmeticException coexisting with console.log, int arithmetic, string ordering, non-finite literals, and runtime errors), and positive module-level else-if chains over already-declared fields (the forward-reference chain shape is E6000, covered by JvmBackendTest).",
+  "description": "JVM backend skeleton conformance (ISSUE-0091). Fixtures for the JVM backend (several also run under LuaJIT as the reference behavior): literals/output, int arithmetic, local variables, if/else, a frontend compile-error rejected before the backend, and the observable-behavior regressions: null-typed returns/initializers with side effects, null-typed captures of reassigned locals and parameters, floored % on negative operands, string equality/ordering (Unicode scalar-value order), console.error -> stderr, null equality, standalone expression statements, module-level load-time statements, a module-load-only fixture (runner initializes the module class when no function is auto-invoked), non-finite number literals (1e999 -> Double.POSITIVE_INFINITY), && / || short-circuit preservation for guarded null-typed calls, a module-level error with a zero-arity export (the runner unwraps ExceptionInInitializerError into the DEAL_ERROR_CODE contract), the module-field shadow write (upvalue write parity), the module-level later-field write (JLS §8.3.3 forward-reference LHS exception parity), the declaration-first interleaved load-time ordering (function values assigned at their declaration point), dead-code skipping after non-completing statements (complete if/else chains, block-ending returns, dead lets/expression statements, a dead else-if chain with a hoisted null-typed condition — never an artifact javac rejects), and the function-body forward read of a later-declared module field (the pre-declaration write establishes the global; both backends observe 5 — the use-before-declaration guard must not over-reject this shape), the DEAL int safe range ±(2^53-1) enforced with E8004 at the 2^53 boundary on every int-producing operation and at out-of-range int literals (cross-backend pins for add/sub/pow/int()/literal and the inclusive boundary), fully-qualified java.lang references in generated code (fields named System/Math/Double/String/Void/Integer/Character/RuntimeException/ArithmeticException coexisting with console.log, int arithmetic, string ordering, non-finite literals, and runtime errors), and positive module-level else-if chains over already-declared fields (the forward-reference chain shape is E6000, covered by JvmBackendTest). Round-8 additions: left-to-right evaluation-order parity for hoisted null-typed side effects in call-argument, binary-operand, short-circuit, and module-level positions (the inline side-effecting operand is materialized before the hoisted statement). Nested-combination ordering (an operand that hoists and still carries an inline call) is pinned too.",
   "tests": [
     {
       "name": "jvm-literals-output",
@@ -829,6 +829,102 @@
       ],
       "irNotContains": [],
       "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-eval-order-call-args",
+      "description": "DEAL evaluates expressions strictly left to right: in f(g(), console.log(\"x\")) the inline side-effecting call g() must run BEFORE the hoisted null-typed console.log call (the hoist flushes before the containing statement, so the earlier operand is materialized into a temporary). Runs under both backends; LuaJIT is the reference",
+      "source": "import * as console from \"std/console\"\nfunction g(): int { console.log(\"g-ran\"); return 7; }\nfunction f(y: int, x: null): int { return y; }\nexport function test(): null {\n  let r: int = f(g(), console.log(\"x\"));\n  if (r === 7) { console.log(\"order-ok\"); }\n}",
+      "expectedOutput": "g-ran\nx\norder-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "function f: int",
+        "function g: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-eval-order-binary",
+      "description": "Binary-operand evaluation order: g() + f(console.log(\"x\")) must run g() before the hoisted console.log call (left-to-right, like LuaJIT). Runs under both backends; LuaJIT is the reference",
+      "source": "import * as console from \"std/console\"\nfunction g(): int { console.log(\"g-ran\"); return 3; }\nfunction f(x: null): int { return 4; }\nexport function test(): null {\n  let r: int = g() + f(console.log(\"x\"));\n  if (r === 7) { console.log(\"sum-ok\"); }\n}",
+      "expectedOutput": "g-ran\nx\nsum-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "function f: int",
+        "function g: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-eval-order-shortcircuit",
+      "description": "A non-leading && operand keeps left-to-right order inside the short-circuit guard: true && f(g(), console.log(\"x\")) === 7 must run g() before the hoisted console.log call. Runs under both backends; LuaJIT is the reference",
+      "source": "import * as console from \"std/console\"\nfunction g(): int { console.log(\"g-ran\"); return 7; }\nfunction f(y: int, x: null): int { return y; }\nexport function test(): null {\n  let b: boolean = true && f(g(), console.log(\"x\")) === 7;\n  if (b) { console.log(\"sc-ok\"); }\n}",
+      "expectedOutput": "g-ran\nx\nsc-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "function f: int",
+        "function g: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-eval-order-module-stmt",
+      "description": "Module-level (load-time) call statements keep left-to-right evaluation order too: f(g(), console.log(\"x\")) at module scope runs g() before the hoisted console.log call inside the static initializer. Runs under both backends; LuaJIT is the reference",
+      "source": "import * as console from \"std/console\"\nfunction g(): int { console.log(\"g-ran\"); return 5; }\nfunction f(y: int, x: null): int { return y; }\nf(g(), console.log(\"x\"));\nexport function test(): null {\n  console.log(\"loaded\");\n}",
+      "expectedOutput": "g-ran\nx\nloaded",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "function f: int",
+        "function g: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-eval-order-nested",
+      "description": "Nested combination order: the first operand of f(…) itself hoists (k's null-typed argument) AND still carries an inline call (k(…)) after its own hoisted statement — that inline call must run before the second operand's hoisted print (LuaJIT order: g-ran, y, k-ran, x). Runs under both backends; LuaJIT is the reference",
+      "source": "import * as console from \"std/console\"\nfunction g(): int { console.log(\"g-ran\"); return 1; }\nfunction k(x: null): int { console.log(\"k-ran\"); return 2; }\nfunction f(y: int, x: null): int { return y; }\nexport function test(): null {\n  let r: int = f(g() + k(console.log(\"y\")), console.log(\"x\"));\n  if (r === 3) { console.log(\"nested-ok\"); }\n}",
+      "expectedOutput": "g-ran\ny\nk-ran\nx\nnested-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: null",
+        "function f: int",
+        "function g: int",
+        "function k: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
         "jvm"
       ]
     }

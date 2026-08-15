@@ -38,10 +38,12 @@ tables, nullables, function types, stdlib modules, async/await, loops,
 try/throw, host ABI, `@jsonable`, template literals, for-of.
 
 The JVM's static type system proves typed boundaries redundant, which the
-spec explicitly permits (`docs/spec-v1.2.md` §JVM backend contract: "The JVM
-backend may use JVM primitive types, final classes, verifier-checked
-bytecode, method signatures, and JIT optimization to prove typed-boundary
-checks redundant"). This is why `let z: null = console.log("x")` runs the
+current normative spec explicitly permits (`docs/spec-v1.1.md` §JVM backend
+contract: "The JVM backend may use JVM primitive types, final classes,
+verifier-checked bytecode, method signatures, and JIT optimization to prove
+typed-boundary checks redundant"; `docs/spec-v1.2.md` is a future draft
+whose grammar is not normative for this backend — see "Known skeleton
+limitations"). This is why `let z: null = console.log("x")` runs the
 print and stores null under JVM while LuaJIT's `check_null` rejects the raw
 nil — the JVM backend proves the boundary statically, exactly as the spec
 allows.
@@ -60,7 +62,23 @@ reports success for an artifact `javac` would reject.
   the value position yields `null`
   (`System.out.println("assign-log"); Void z = null;`). LuaJIT evaluates
   the same expressions before returning/assigning, and the hoisting
-  preserves DEAL's left-to-right evaluation order.
+  preserves DEAL's left-to-right evaluation order: when a hoisted call
+  has an earlier inline side-effecting sibling in the same statement
+  (`f(g(), console.log("x"))` — LuaJIT runs g() first), that sibling is
+  materialized into a fresh `__t<n>` temporary assigned immediately
+  before the hoisted statement (`long __t0 = g();
+  java.lang.System.out.println("x"); return f(__t0, null);`). The
+  materialization also covers operands that can *raise*: an earlier
+  `a ** 400` reports its E8004 before the hoisted `console.log` ever
+  runs, exactly like LuaJIT's left-to-right evaluation that stops at the
+  first runtime error. This applies in every combination position —
+  call arguments (user calls and console calls), binary operands,
+  assignment values, return expressions, if conditions, and
+  short-circuit operands (where the guard keeps the order inside the
+  `if (LEFT) { … }` block). Materialized temporaries are declared inside
+  the same pre-statement sequence, so a module-level field initializer
+  referencing one is routed through a static-block assignment (a
+  class-body initializer cannot see a block-local declaration).
 - **`&&` / `||` short-circuit is preserved.** A null-typed side-effecting
   call in a *non-leading* operand (`false && helper() === null`,
   `true || helper() === null`) is hoisted, but the hoisted statements are
@@ -137,12 +155,19 @@ reports success for an artifact `javac` would reject.
   f(): int { x = 5; return x; } let x: int = 1;` — both backends
   observe 5, pinned by the cross-backend fixture
   `jvm-function-field-forward-read`; the write itself is the same
-  upvalue/static-field write in both). The residual call-time
-  divergence — a function declared before the field that reads it
-  *without* a prior write: LuaJIT fails reading the global nil at call
-  time while JVM reads the initialized field — is a documented
-  limitation, not a silent miscompile of the supported write/read
-  pattern.
+  upvalue/static-field write in both). **A pre-declaration function
+  reading a later-declared field *without* a dominating write is
+  rejected with E6000** by a write-dominance analysis: LuaJIT fails at
+  call time reading the global nil (E8001) while Java would silently
+  read the initialized static field, so the backend refuses the
+  no-prior-write shape instead of silently diverging. Dominance is
+  tracked along every execution path inside the function — a write in
+  *both* branches of an if/else dominates the read after it (allowed),
+  while a write in a taken-only branch (no else) and a write inside a
+  called function do not establish dominance (conservative rejection:
+  the callee's or branch's writes may never execute, in which case
+  LuaJIT would read the global nil). Function-local shadows of the
+  field are local uses, never flagged.
 - **Assignment targets get the same guard.** A write to a
   later-declared function-local with no enclosing binding
   (`x = 5; let x: int = 1` inside a function — in statement, block, `if`,
@@ -229,8 +254,10 @@ reports success for an artifact `javac` would reject.
   selects it via `--backend <lua|jvm>` (`deal/Main.java`); the project
   manifest selects it via `deal.json`'s `"backend"` field
   (`deal/module/DealConfig.java` accepts `"jvm"` and — for parity with the
-  CLI alias — `"lua"`/`"luajit"`). LuaJIT remains the default everywhere:
-  no flag, no manifest field, and no constructor argument all select it.
+  CLI alias — `"lua"`/`"luajit"`, case-insensitively exactly like
+  `Backend.fromCliName`, so `--backend JVM` and `"backend": "JVM"` are
+  the same spelling). LuaJIT remains the default everywhere: no flag, no
+  manifest field, and no constructor argument all select it.
 
 - **Lua use site** — `CompilationOrchestrator.codegenLuaModule()`: the
   pre-ISSUE-0091 `LuaBackend.generateToFile`/`generateWithImports` emission
@@ -252,7 +279,7 @@ reports success for an artifact `javac` would reject.
     `test/LuaBackendIntegrationTest`, `test/ConformanceTest`,
     `test/conformance/fixtures/*.json` `backends: ["luajit"]`) stays green
     and unmodified.
-  - JVM: `test/conformance/fixtures/jvm-skeleton.json` — forty-eight
+  - JVM: `test/conformance/fixtures/jvm-skeleton.json` — fifty-three
     fixtures (JVM-only, plus cross-backend parity fixtures that also run
     under LuaJIT as the reference behavior): literals/output, int arithmetic,
     local variables with
@@ -277,9 +304,12 @@ reports success for an artifact `javac` would reject.
     fixture and the JVM-only out-of-range-operand rejection),
     fully-qualified `java.lang` references (all ten colliding field names
     in one module; a field named `Double` next to a `1e999` literal), and
-    a positive module-level else-if chain over already-declared fields
-    (sixteen fixtures run under both backends as cross-backend parity))
-    run end-to-end under `test/BackendConformanceTest`.
+    a positive module-level else-if chain over already-declared fields, and
+    left-to-right evaluation-order parity for hoisted null-typed side
+    effects in call-argument, binary-operand, short-circuit, module-level,
+    and nested-combination positions ×5 (twenty-one fixtures run under
+    both backends as cross-backend parity)) run end-to-end under
+    `test/BackendConformanceTest`.
   - Seam: `test/JvmBackendTest.java` — identifier translation, collision-safe
     class-name derivation, emission, E6000 rejection (including unused
     imports, module-level returns, use-before-declaration, helper-name
@@ -298,9 +328,19 @@ reports success for an artifact `javac` would reject.
     assignment to later-declared locals (E6000 in statement/block/if/
     return/argument positions, with the allowed module-field shadow write
     and module-level later-field write), function-body reads of
-    later-declared module fields (allowed and executed via `javac`+`java`,
-    incl. the reviewer's `x = 5; return x;` repro, initializer/condition/
-    argument positions, and the untouched module-level load-time guard),
+    later-declared module fields governed by the write-dominance analysis
+    (the reviewer's `x = 5; return x;` repro, writes in both if/else
+    branches, condition/argument positions, and function-local shadows
+    allowed and executed via `javac`+`java`; the no-prior-write shape —
+    plain read, initializer position, taken-only branch write, and
+    write-via-callee — rejected with E6000; the untouched module-level
+    load-time guard), left-to-right evaluation-order preservation for
+    hoisted null-typed side effects (call-argument/initializer/
+    statement/if-condition/short-circuit/binary positions with order
+    assertions, the reverse shape, a three-operand hoisted-inline-hoisted
+    mix, an earlier raising operand that must run before the hoisted
+    call, and emission assertions pinning the materialized temporary
+    before the hoisted println — never a lambda),
     dead-code skipping after non-completing statements (complete if/else,
     return-after-return, block-level dead let/expression, dead else-if
     chain with a hoisted null-typed condition, the no-over-skip open-if
@@ -351,6 +391,12 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
 
 ## Known skeleton limitations (documented, not silent)
 
+- The normative spec for this backend is `docs/spec-v1.1.md` (§JVM value
+  mapping / §JVM backend contract); `docs/spec-v1.2.md` is a future draft
+  whose grammar is not normative here (e.g. its grammar forbids
+  module-level statements while the current checker accepts them and the
+  backend implements their load-time semantics). The backend cites
+  spec-v1.1 only.
 - Multi-module JVM projects are rejected at the backend: any import other
   than `std/console` is E6000 at the import statement (the imported
   module's require-time side effects have no skeleton JVM equivalent), and
@@ -375,17 +421,21 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   later-declared fields (JLS §8.3.3 forward-reference LHS exception) and
   function-body writes to a module field (LuaJIT's upvalue write) stay
   allowed — both verified with real luajit runs.
-- Function-body reads of module fields declared later are allowed (legal
-  Java forward references from method bodies; post-load parity with
-  LuaJIT's upvalue read for functions declared after the field, and with
-  the global read for the canonical write-then-read shape — both pinned by
-  the cross-backend fixture `jvm-function-field-forward-read`). The
-  residual call-time divergence is documented: a function declared before
-  the field that reads it without a prior write reads the global nil under
-  LuaJIT (call-time failure) but the initialized static field under JVM.
-  Load-time (module-level) value uses of later-declared fields remain
-  E6000 — Java's illegal-forward-reference rule rejects them and LuaJIT
-  reads the not-yet-declared global value at load.
+- Function-body reads of module fields declared later are allowed only
+  when a write inside the function dominates the read on every path
+  (legal Java forward references from method bodies; post-load parity
+  with LuaJIT's upvalue read for functions declared after the field, and
+  with the global read for the canonical write-then-read shape — both
+  pinned by the cross-backend fixture `jvm-function-field-forward-read`).
+  The no-prior-write shape — a function declared before the field that
+  reads it without a dominating write — is E6000: LuaJIT reads the
+  global nil at call time and fails (E8001) while JVM would silently
+  read the initialized static field. A write in both branches of an
+  if/else dominates; a write in a taken-only branch or inside a called
+  function does not (conservative). Load-time (module-level) value uses
+  of later-declared fields remain E6000 — Java's illegal-forward-reference
+  rule rejects them and LuaJIT reads the not-yet-declared global value at
+  load.
 - Dead code after a statement that cannot complete normally (a `return`,
   or an `if`/`else` whose branches all cannot complete normally) is
   skipped, never emitted: LuaJIT never executes it and javac rejects it
@@ -410,8 +460,10 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   old UTF-16 `String.compareTo` ordering diverged for supplementary
   characters and was replaced.
 - `--source-map` sidecars are a LuaJIT feature; the JVM path prints a
-  warning when `--source-map` is requested instead of silently producing
-  no sidecars.
+  warning when `--source-map` is explicitly requested instead of
+  silently producing no sidecars. A `--dump-ir`-derived source-map flag
+  (IR hardening enables source maps with dumps) does not print the
+  warning — only the explicit request does.
 - Production phase 4 (the `jvm` backend) writes the `.java` source but does
   not run `javac`/`java` — only the test harness compiles and executes the
   artifact. The generated artifact is a module class without a `main`; the

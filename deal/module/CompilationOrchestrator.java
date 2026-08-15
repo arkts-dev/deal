@@ -42,6 +42,15 @@ public final class CompilationOrchestrator {
     private final boolean verbose;
     private final boolean dumpIr;
     private final boolean sourceMap;
+
+    /**
+     * True when {@code --source-map} was explicitly requested, distinct
+     * from {@link #sourceMap} (which is also derived from {@code --dump-ir}
+     * because IR hardening enables source maps with it). The JVM
+     * source-map warning fires only on the explicit request, never on a
+     * {@code --dump-ir}-derived one (ISSUE-0091 rework).
+     */
+    private final boolean sourceMapExplicit;
     private final Backend backend;
     private final List<Path> moduleRoots;
     private final Path stdlibDir;
@@ -106,11 +115,33 @@ public final class CompilationOrchestrator {
      * Backend-selection entry point (ISSUE-0091). LuaJIT remains the default:
      * all overloads above delegate with {@link Backend#LUAJIT}.
      *
+     * <p>This overload treats {@code sourceMap} as the explicit request
+     * (pre-ISSUE-0091 callers pass the single source-map flag).
+     *
      * @param backend the code-generation backend ({@code lua}/{@code luajit}
      *                or {@code jvm}) selected by the CLI or {@code deal.json}
      */
     public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
                                     boolean dumpIr, boolean sourceMap, Backend backend,
+                                    DealConfig config, List<Path> moduleRoots,
+                                    Path stdlibDir) {
+        this(entryFile, outputRoot, verbose, dumpIr, sourceMap, sourceMap,
+            backend, config, moduleRoots, stdlibDir);
+    }
+
+    /**
+     * Backend-selection entry point (ISSUE-0091). LuaJIT remains the default:
+     * all overloads above delegate with {@link Backend#LUAJIT}.
+     *
+     * @param backend the code-generation backend ({@code lua}/{@code luajit}
+     *                or {@code jvm}) selected by the CLI or {@code deal.json}
+     * @param sourceMapExplicit true when {@code --source-map} was explicitly
+     *                requested; {@code sourceMap} is the effective flag
+     *                (also derived from {@code --dump-ir})
+     */
+    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
+                                    boolean dumpIr, boolean sourceMap,
+                                    boolean sourceMapExplicit, Backend backend,
                                     DealConfig config, List<Path> moduleRoots,
                                     Path stdlibDir) {
         this.backend = backend;
@@ -119,6 +150,7 @@ public final class CompilationOrchestrator {
         this.verbose = verbose;
         this.dumpIr = dumpIr;
         this.sourceMap = sourceMap;
+        this.sourceMapExplicit = sourceMapExplicit;
         this.moduleRoots = moduleRoots;
         this.stdlibDir = stdlibDir;
 
@@ -986,10 +1018,13 @@ public final class CompilationOrchestrator {
      * is an E6000 error — never a silent artifact overwrite.
      */
     private void codegenAllJvm() throws IOException {
-        if (sourceMap) {
+        if (sourceMapExplicit) {
             // Source-map sidecars (.deal.map.json) are produced only by the
             // LuaJIT emitter; surface that to the CLI user instead of
             // silently producing no sidecars (ISSUE-0091 rework round 3).
+            // Fired only when --source-map was explicitly requested: a
+            // --dump-ir-derived sourceMap flag (IR hardening enables source
+            // maps with dumps) must not print the warning.
             System.err.println("Warning: --source-map produces no source-map "
                 + "sidecars with the JVM backend (source maps are "
                 + "LuaJIT-only)");

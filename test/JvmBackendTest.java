@@ -46,14 +46,22 @@ import java.util.Map;
  *       equality/ordering, and {@code console.error} → stderr — verified by
  *       executing the emitted artifact with {@code javac} + {@code java}
  *       subprocesses,</li>
+ *   <li>left-to-right evaluation-order preservation for hoisted null-typed
+ *       side effects: an earlier inline side-effecting (or raising)
+ *       operand of the same statement is materialized into a temporary
+ *       before the hoisted pre-statement, in every combination position —
+ *       never an inverted output order and never a lambda,</li>
  *   <li>dead-code skipping after non-completing statements (a complete
  *       all-returning if/else, return-after-return, block-level dead
  *       lets/expression statements, dead else-if chains with hoisted
  *       null-typed conditions — never an artifact javac rejects as
  *       unreachable), function-body reads of later-declared module fields
- *       (allowed; the load-time guard stays), and fixture-schema
- *       validation ({@code expectedCompileError} combined with runtime/IR
- *       assertions fails per conformance-test-architecture D6),</li>
+ *       governed by a write-dominance analysis (write-then-read allowed;
+ *       the no-prior-write shape — LuaJIT fails at call time reading the
+ *       global nil — rejected with E6000; the load-time guard stays), and
+ *       fixture-schema validation ({@code expectedCompileError} combined
+ *       with runtime/IR assertions fails per conformance-test-architecture
+ *       D6),</li>
  *   <li>DEAL runtime error codes (E8004/E8005/E8006/E8001 incl. the
  *       negative-exponent and extreme-power paths) surfaced by executing the
  *       emitted artifact,</li>
@@ -119,6 +127,7 @@ public class JvmBackendTest {
             testElseIfChainUseBeforeDeclaration();
             testNonFiniteNumberLiterals();
             testShortCircuitPreservation();
+            testEvaluationOrderPreservation();
             testStringScalarOrdering();
             testModuleLevelCallReadingLaterField();
             testModuleLevelCallBeforeFunctionDeclarationRejected();
@@ -1150,7 +1159,7 @@ public class JvmBackendTest {
      * The reviewer's round-4 repro must compile and run, never E6000.
      */
     private static void testFunctionBodyModuleFieldReadAllowed() throws Exception {
-        System.out.println("-- Function-body reads of declared module fields are allowed --");
+        System.out.println("-- Function-body reads of later module fields: write-dominance --");
 
         // The reviewer's exact repro: a pre-declaration function writes the
         // module field (allowed: the static field / LuaJIT's global), then
@@ -1166,22 +1175,17 @@ public class JvmBackendTest {
             "pre-declaration write then read observes 5 (LuaJIT parity): "
                 + repro.output());
 
-        // Read in an initializer position: legal Java (method-body forward
-        // static-field reference); the emitted artifact must compile. The
-        // read observes the initialized field value (6). Divergence note:
-        // under LuaJIT this function (declared before the field, no prior
-        // write) reads the global nil at call time and fails — the
-        // write-first shape above is the parity case; this case pins the
-        // documented JVM-side post-load semantics.
-        ExecResult initializer = compileAndRunJvm("""
-            function f(): int { let y: int = x + 1; return y; }
-            let x: int = 5;
+        // A write in EVERY branch of an if/else dominates the read after
+        // it (the intersection of both branches) — allowed.
+        ExecResult bothBranches = compileAndRunJvm("""
+            function f(): int { if (true) { x = 5; } else { x = 5; } return x; }
+            let x: int = 1;
             export function test(): int { return f(); }
-            """, "forwardreadinit");
-        check(initializer.exitCode() == 0, "initializer forward read exits 0");
-        check(initializer.output().contains("6"),
-            "initializer forward read observes the initialized field (6): "
-                + initializer.output());
+            """, "forwardreadboth");
+        check(bothBranches.exitCode() == 0, "both-branches write exits 0");
+        check(bothBranches.output().contains("5"),
+            "write in both branches dominates the read (5): "
+                + bothBranches.output());
 
         // Write-first reads in if-condition and call-argument positions
         // (LuaJIT parity: the global write establishes the read value).
@@ -1196,23 +1200,66 @@ public class JvmBackendTest {
             "condition and call-argument forward reads observe 5: "
                 + positions.output());
 
-        // The emission references the static field by its (later-declared)
-        // field name — a forward reference that is legal inside method
-        // bodies and must be present, not replaced or rejected.
-        Frontend f = compileFrontend(
-            "function f(): int { return x; }\n"
-                + "let x: int = 1;\n"
-                + "export function test(): int { return f(); }",
-            "jvmtest-forwardread-emit.deal");
-        if (f.errors().isEmpty()) {
-            JvmBackend.JvmCodegenResult res =
-                JvmBackend.generate(f.program(), f.checkResult(),
-                    "jvmtest-forwardread-emit.deal", "main");
-            check(!res.hasErrors(), "plain function-body forward read is not rejected");
-            check(res.source().contains("return x;"),
-                "the read emits a static field reference: " + res.source());
-        } else {
-            fail("checker must accept the plain forward-read probe: " + f.errors());
+        // A function-local shadow of the module field is a local use, not a
+        // field read — allowed.
+        ExecResult shadowed = compileAndRunJvm("""
+            function f(): int { let x: int = 9; return x; }
+            let x: int = 5;
+            export function test(): int { return f(); }
+            """, "forwardreadshadow");
+        check(shadowed.exitCode() == 0, "function-local shadow exits 0");
+        check(shadowed.output().contains("9"),
+            "function-local shadow reads the local (9): " + shadowed.output());
+
+        // ---- No-prior-write shapes are rejected with E6000 ----
+        // LuaJIT fails at call time reading the global nil (E8001) while
+        // Java would silently read the initialized static field; the
+        // backend's write-dominance analysis rejects instead of silently
+        // diverging (writes inside called functions and writes in
+        // taken-only branches do not establish dominance — conservative).
+        List<String> rejected = List.of(
+            // the reviewer's exact repro: plain read, no prior write
+            """
+            function f(): int { return x; }
+            let x: int = 5;
+            export function test(): int { return f(); }
+            """,
+            // read in an initializer position, no prior write
+            """
+            function f(): int { let y: int = x + 1; return y; }
+            let x: int = 5;
+            export function test(): int { return f(); }
+            """,
+            // a write in a taken-only branch does not dominate the read
+            // after it (LuaJIT reads the global nil when the branch is not
+            // taken) — conservative rejection
+            """
+            function f(): int { if (true) { x = 5; } return x; }
+            let x: int = 1;
+            export function test(): int { return f(); }
+            """,
+            // a write inside a called function does not establish
+            // dominance (the callee's writes may be conditional) —
+            // conservative rejection
+            """
+            function setx(): null { x = 5; }
+            function f(): int { setx(); return x; }
+            let x: int = 1;
+            export function test(): int { return f(); }
+            """);
+        for (String source : rejected) {
+            Frontend f = compileFrontend(source, "jvmtest-forwardread-rej.deal");
+            if (!f.errors().isEmpty()) {
+                fail("checker must accept the no-prior-write forward-read probe: "
+                    + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-forwardread-rej.deal", "main");
+            check(res.hasErrors(),
+                "no-prior-write forward read is rejected with E6000");
+            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for the no-prior-write forward read: " + res.diagnostics());
         }
 
         // The load-time guards are untouched: a module-level initializer
@@ -2063,6 +2110,226 @@ public class JvmBackendTest {
     /** String ordering follows Unicode scalar values (LuaJIT's UTF-8
      * bytewise order), not UTF-16 code-unit order — supplementary
      * characters order after the whole BMP, exactly as under LuaJIT. */
+    /**
+     * DEAL/LuaJIT evaluate expressions strictly left to right and stop at
+     * the first runtime error; a null-typed side-effecting call in a value
+     * position is hoisted into a pre-statement flushed before the
+     * containing statement, which used to make an EARLIER inline
+     * side-effecting operand of the same statement run after it
+     * ({@code f(g(), console.log("x"))} printed "x" before g() ran).
+     * {@code emitOperandsInOrder} materializes such operands into
+     * temporaries in evaluation order; this test pins the observable
+     * order in every combination position via javac+java subprocesses.
+     */
+    private static void testEvaluationOrderPreservation() throws Exception {
+        System.out.println("-- Evaluation-order preservation (javac + java) --");
+
+        // The reviewer's exact repro: call-argument position, return.
+        ExecResult ret = compileAndRunJvm("""
+            import * as console from "std/console"
+            function g(): int { console.log("g-ran"); return 7; }
+            function f(y: int, x: null): int { return y; }
+            export function test(): int { return f(g(), console.log("x")); }
+            """, "evalorder-return");
+        check(ret.exitCode() == 0, "call-args eval order exits 0");
+        check(ret.output().indexOf("g-ran") >= 0
+                && ret.output().indexOf("g-ran") < ret.output().indexOf("x"),
+            "g() runs before the hoisted console.log (left to right): "
+                + ret.output());
+
+        // The same shape in a let-initializer position.
+        ExecResult init = compileAndRunJvm("""
+            import * as console from "std/console"
+            function g(): int { console.log("g-ran"); return 7; }
+            function f(y: int, x: null): int { return y; }
+            export function test(): int {
+              let r: int = f(g(), console.log("x"));
+              return r;
+            }
+            """, "evalorder-init");
+        check(init.exitCode() == 0, "initializer eval order exits 0");
+        check(init.output().indexOf("g-ran") >= 0
+                && init.output().indexOf("g-ran") < init.output().indexOf("x"),
+            "initializer position: g() before console.log: " + init.output());
+
+        // Standalone call-statement position.
+        ExecResult stmt = compileAndRunJvm("""
+            import * as console from "std/console"
+            function g(): int { console.log("g-ran"); return 7; }
+            function f(y: int, x: null): int { return y; }
+            export function test(): null {
+              f(g(), console.log("x"));
+            }
+            """, "evalorder-stmt");
+        check(stmt.exitCode() == 0, "call-statement eval order exits 0");
+        check(stmt.output().indexOf("g-ran") >= 0
+                && stmt.output().indexOf("g-ran") < stmt.output().indexOf("x"),
+            "call-statement position: g() before console.log: " + stmt.output());
+
+        // If-condition position.
+        ExecResult cond = compileAndRunJvm("""
+            import * as console from "std/console"
+            function g(): int { console.log("g-ran"); return 7; }
+            function f(y: int, x: null): int { return y; }
+            export function test(): null {
+              if (f(g(), console.log("x")) === 7) { console.log("cond-ok"); }
+            }
+            """, "evalorder-cond");
+        check(cond.exitCode() == 0, "if-condition eval order exits 0");
+        check(cond.output().indexOf("g-ran") >= 0
+                && cond.output().indexOf("g-ran") < cond.output().indexOf("x"),
+            "if-condition position: g() before console.log: " + cond.output());
+
+        // Module-level field-initializer position: the materialized
+        // temporary is declared inside the static block that also holds
+        // the hoisted statement and the field assignment (a class-body
+        // initializer cannot see a block-local declaration).
+        ExecResult fieldInit = compileAndRunJvm("""
+            import * as console from "std/console"
+            function g(): int { console.log("g-ran"); return 7; }
+            function f(y: int, x: null): int { return y; }
+            let a: int = f(g(), console.log("x"));
+            export function test(): int { return a; }
+            """, "evalorder-fieldinit");
+        check(fieldInit.exitCode() == 0, "field-initializer eval order exits 0");
+        check(fieldInit.output().indexOf("g-ran") >= 0
+                && fieldInit.output().indexOf("g-ran")
+                    < fieldInit.output().indexOf("x"),
+            "field-initializer position: g() before console.log: "
+                + fieldInit.output());
+        check(fieldInit.output().contains("7"),
+            "field-initializer position computes 7: " + fieldInit.output());
+
+        // Non-leading && operand: the short-circuit guard keeps the order.
+        ExecResult sc = compileAndRunJvm("""
+            import * as console from "std/console"
+            function g(): int { console.log("g-ran"); return 7; }
+            function f(y: int, x: null): int { return y; }
+            export function test(): boolean {
+              return true && f(g(), console.log("x")) === 7;
+            }
+            """, "evalorder-sc");
+        check(sc.exitCode() == 0, "short-circuit operand eval order exits 0");
+        check(sc.output().indexOf("g-ran") >= 0
+                && sc.output().indexOf("g-ran") < sc.output().indexOf("x"),
+            "guarded && operand: g() before console.log: " + sc.output());
+
+        // Reverse shape: hoisted operand first, inline call after — the
+        // hoisted statement legitimately precedes the later inline call.
+        ExecResult reverse = compileAndRunJvm("""
+            import * as console from "std/console"
+            function g(): int { console.log("g-ran"); return 7; }
+            function f(x: null, y: int): int { return y; }
+            export function test(): int { return f(console.log("x"), g()); }
+            """, "evalorder-reverse");
+        check(reverse.exitCode() == 0, "reverse shape exits 0");
+        check(reverse.output().indexOf("x") >= 0
+                && reverse.output().indexOf("x") < reverse.output().indexOf("g-ran"),
+            "reverse shape: hoisted console.log before later g(): " + reverse.output());
+
+        // Three mixed operands: hoisted, inline, hoisted.
+        ExecResult mixed = compileAndRunJvm("""
+            import * as console from "std/console"
+            function g(): int { console.log("g-ran"); return 7; }
+            function h(v: null, w: int, u: null): int { return w; }
+            export function test(): int {
+              return h(console.log("a"), g(), console.log("b"));
+            }
+            """, "evalorder-mixed");
+        check(mixed.exitCode() == 0, "mixed three-operand shape exits 0");
+        check(mixed.output().indexOf("a") >= 0
+                && mixed.output().indexOf("a") < mixed.output().indexOf("g-ran")
+                && mixed.output().indexOf("g-ran") < mixed.output().indexOf("b"),
+            "a, then g(), then b (left to right): " + mixed.output());
+
+        // Nested combination: the first operand itself hoists (k's
+        // null-typed argument) AND still carries an inline call (k(…))
+        // after its own hoisted statement; that inline call must run
+        // before the second operand's hoisted print. LuaJIT order:
+        // g-ran, y, k-ran, x.
+        ExecResult nested = compileAndRunJvm("""
+            import * as console from "std/console"
+            function g(): int { console.log("g-ran"); return 1; }
+            function k(x: null): int { console.log("k-ran"); return 2; }
+            function f(y: int, x: null): int { return y; }
+            export function test(): int {
+              return f(g() + k(console.log("y")), console.log("x"));
+            }
+            """, "evalorder-nested");
+        check(nested.exitCode() == 0, "nested combination exits 0");
+        check(nested.output().indexOf("g-ran") >= 0
+                && nested.output().indexOf("g-ran") < nested.output().indexOf("y")
+                && nested.output().indexOf("y") < nested.output().indexOf("k-ran")
+                && nested.output().indexOf("k-ran") < nested.output().indexOf("x"),
+            "g-ran, y, k-ran, x (left to right through the nested "
+                + "combination): " + nested.output());
+
+        // Binary operands, both directions.
+        ExecResult bin = compileAndRunJvm("""
+            import * as console from "std/console"
+            function g(): int { console.log("g-ran"); return 3; }
+            function f(x: null): int { return 4; }
+            export function test(): int { return g() + f(console.log("x")); }
+            """, "evalorder-bin");
+        check(bin.exitCode() == 0, "binary operands exit 0");
+        check(bin.output().indexOf("g-ran") >= 0
+                && bin.output().indexOf("g-ran") < bin.output().indexOf("x"),
+            "left binary operand g() runs before the hoisted call: " + bin.output());
+
+        ExecResult binRev = compileAndRunJvm("""
+            import * as console from "std/console"
+            function g(): int { console.log("g-ran"); return 3; }
+            function f(x: null): int { return 4; }
+            export function test(): int { return f(console.log("x")) + g(); }
+            """, "evalorder-binrev");
+        check(binRev.exitCode() == 0, "reversed binary operands exit 0");
+        check(binRev.output().indexOf("x") >= 0
+                && binRev.output().indexOf("x") < binRev.output().indexOf("g-ran"),
+            "left hoisted operand precedes the later g(): " + binRev.output());
+
+        // An earlier operand that RAISES must raise before the hoisted
+        // call runs (LuaJIT stops at the first runtime error): a ** 400
+        // raises E8004 and the console.log must never print.
+        ExecResult raising = compileAndRunJvm("""
+            import * as console from "std/console"
+            function f(y: int, x: null): int { return y; }
+            export function test(): int {
+              let a: int = 2;
+              return f(a ** 400, console.log("x"));
+            }
+            """, "evalorder-raise");
+        check(raising.exitCode() != 0, "raising operand exits non-zero");
+        check(!raising.output().contains("x"),
+            "the hoisted console.log never runs when the earlier operand "
+                + "raises: " + raising.output());
+        check(raising.output().contains("E8004"),
+            "the raising operand reports E8004: " + raising.output());
+
+        // Emission shape: the earlier inline call is materialized into a
+        // temporary BEFORE the hoisted statement, and no lambda is emitted.
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            function g(): int { console.log("g-ran"); return 7; }
+            function f(y: int, x: null): int { return y; }
+            export function test(): int { return f(g(), console.log("x")); }
+            """, "jvmtest-evalorder-emit.deal");
+        check(f.errors().isEmpty(), "eval-order probe frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-evalorder-emit.deal", "main");
+            check(!res.hasErrors(), "eval-order source emits without diagnostics");
+            if (!res.hasErrors()) {
+                String src = res.source();
+                int tempIdx = src.indexOf("__t0 = g();");
+                int logIdx = src.indexOf("java.lang.System.out.println(\"x\");");
+                check(tempIdx >= 0 && logIdx >= 0 && tempIdx < logIdx,
+                    "the earlier inline call is materialized before the "
+                        + "hoisted println: " + src);
+                check(!src.contains("->"), "no lambda is emitted");
+            }
+        }
+    }
+
     private static void testStringScalarOrdering() throws Exception {
         System.out.println("-- String scalar-value ordering (javac + java) --");
 
@@ -2575,6 +2842,47 @@ public class JvmBackendTest {
             check(stream.noneMatch(p -> p.toString().endsWith(".deal.map.json")),
                 "no source-map sidecars under the JVM backend");
         }
+
+        // --dump-ir derives the sourceMap flag internally (IR hardening
+        // enables source maps with dumps) but is NOT an explicit
+        // --source-map request: the warning must not fire.
+        Path dumpIrOut = tmpDir.resolve("build/sm_dumpir");
+        CompilationOrchestrator dumpIrOnly = new CompilationOrchestrator(
+            entryFile, dumpIrOut, false, true, true, false, Backend.JVM,
+            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+        ByteArrayOutputStream capturedDumpIr = new ByteArrayOutputStream();
+        boolean dumpIrSuccess;
+        try {
+            System.setErr(new PrintStream(capturedDumpIr, true, StandardCharsets.UTF_8));
+            dumpIrSuccess = dumpIrOnly.compile();
+        } finally {
+            System.err.flush();
+            System.setErr(originalErr);
+        }
+        check(dumpIrSuccess, "JVM compile with --dump-ir (no --source-map) succeeds");
+        check(!capturedDumpIr.toString(StandardCharsets.UTF_8).contains("source-map"),
+            "no source-map warning for a --dump-ir-derived sourceMap flag: "
+                + capturedDumpIr.toString(StandardCharsets.UTF_8));
+        check(Files.exists(dumpIrOut.resolve("Sm_main.java")),
+            "the --dump-ir compile still writes the .java artifact");
+
+        // Explicit --source-map together with --dump-ir still warns.
+        CompilationOrchestrator both = new CompilationOrchestrator(
+            entryFile, outputDir, false, true, true, true, Backend.JVM,
+            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+        ByteArrayOutputStream capturedBoth = new ByteArrayOutputStream();
+        boolean bothSuccess;
+        try {
+            System.setErr(new PrintStream(capturedBoth, true, StandardCharsets.UTF_8));
+            bothSuccess = both.compile();
+        } finally {
+            System.err.flush();
+            System.setErr(originalErr);
+        }
+        check(bothSuccess, "JVM compile with --dump-ir --source-map succeeds");
+        check(capturedBoth.toString(StandardCharsets.UTF_8).contains("source-map"),
+            "--dump-ir --source-map still prints the warning: "
+                + capturedBoth.toString(StandardCharsets.UTF_8));
     }
 
     private static void testDealConfigBackendField() {
@@ -2592,6 +2900,16 @@ public class JvmBackendTest {
             DealConfig alias = DealConfig.parse(Path.of("deal.json"),
                 "{\"backend\": \"lua\"}");
             check("lua".equals(alias.backend()), "deal.json accepts 'lua' alias");
+            // Case-insensitive spellings, mirroring Backend.fromCliName: the
+            // CLI accepts --backend JVM / Lua, so the manifest must accept
+            // the same spellings (round-8 review flaw).
+            DealConfig upper = DealConfig.parse(Path.of("deal.json"),
+                "{\"backend\": \"JVM\"}");
+            check("JVM".equals(upper.backend()), "deal.json accepts 'JVM'");
+            DealConfig mixed = DealConfig.parse(Path.of("deal.json"),
+                "{\"backend\": \"  Lua \"}");
+            check("  Lua ".equals(mixed.backend()),
+                "deal.json accepts ' Lua ' with surrounding whitespace");
         } catch (Exception e) {
             fail("DealConfig jvm parse: " + e.getMessage());
         }
@@ -2606,9 +2924,10 @@ public class JvmBackendTest {
         }
 
         // End to end: a deal.json "backend": "lua" selects LuaJIT through the
-        // CLI exactly like the --backend lua flag.
+        // CLI exactly like the --backend lua flag. (The manifest lives in
+        // the entry file's directory — that is where Main.load looks.)
         try {
-            writeFile("lua_proj/deal.json", "{\"backend\": \"lua\"}");
+            writeFile("lua_proj/src/deal.json", "{\"backend\": \"lua\"}");
             writeFile("lua_proj/src/lua_alias_main.deal",
                 "export function run(): null {}");
             Path luaEntry = tmpDir.resolve("lua_proj/src/lua_alias_main.deal")
@@ -2624,6 +2943,29 @@ public class JvmBackendTest {
                 "deal.json 'lua' emits no .java artifact");
         } catch (IOException e) {
             fail("CLI 'lua' alias test IO: " + e.getMessage());
+        }
+
+        // End to end: a deal.json "backend": "JVM" (uppercase — the
+        // case-insensitive manifest spelling) selects the JVM backend
+        // through the CLI exactly like --backend jvm. (The manifest lives
+        // in the entry file's directory — that is where Main.load looks.)
+        try {
+            writeFile("jvm_proj/src/deal.json", "{\"backend\": \"JVM\"}");
+            writeFile("jvm_proj/src/jvm_alias_main.deal",
+                "export function run(): int { return 6 * 7; }");
+            Path jvmEntry = tmpDir.resolve("jvm_proj/src/jvm_alias_main.deal")
+                .toAbsolutePath();
+            Path jvmOut = tmpDir.resolve("build/jvm_alias");
+            int rc = deal.Main.run(new String[] {
+                "compile", jvmEntry.toString(),
+                "--output", jvmOut.toString()});
+            check(rc == 0, "deal.json backend 'JVM' compiles");
+            check(Files.exists(jvmOut.resolve("Jvm_alias_main.java")),
+                "deal.json 'JVM' emits the .java artifact");
+            check(!Files.exists(jvmOut.resolve("jvm_alias_main.lua")),
+                "deal.json 'JVM' emits no .lua artifact");
+        } catch (IOException e) {
+            fail("CLI 'JVM' alias test IO: " + e.getMessage());
         }
     }
 
@@ -2666,6 +3008,42 @@ public class JvmBackendTest {
             check(rcDefault == 0, "CLI default backend compiles");
             check(Files.exists(outLua.resolve("cli_main.lua")),
                 "CLI default backend emits .lua");
+
+            // --dump-ir derives the sourceMap flag internally (IR hardening
+            // enables source maps with dumps); the JVM source-map warning
+            // must fire only for an explicit --source-map request.
+            PrintStream originalErr = System.err;
+            ByteArrayOutputStream capturedDump = new ByteArrayOutputStream();
+            try {
+                System.setErr(new PrintStream(capturedDump, true, StandardCharsets.UTF_8));
+                int rcDump = deal.Main.run(new String[] {
+                    "compile", entry.toString(),
+                    "--output", outDir.toString(),
+                    "--backend", "jvm", "--dump-ir"});
+                check(rcDump == 0, "CLI --backend jvm --dump-ir exits 0");
+            } finally {
+                System.err.flush();
+                System.setErr(originalErr);
+            }
+            check(!capturedDump.toString(StandardCharsets.UTF_8).contains("source-map"),
+                "--dump-ir alone prints no JVM source-map warning: "
+                    + capturedDump.toString(StandardCharsets.UTF_8));
+
+            ByteArrayOutputStream capturedBoth = new ByteArrayOutputStream();
+            try {
+                System.setErr(new PrintStream(capturedBoth, true, StandardCharsets.UTF_8));
+                int rcBoth = deal.Main.run(new String[] {
+                    "compile", entry.toString(),
+                    "--output", outDir.toString(),
+                    "--backend", "jvm", "--dump-ir", "--source-map"});
+                check(rcBoth == 0, "CLI --backend jvm --dump-ir --source-map exits 0");
+            } finally {
+                System.err.flush();
+                System.setErr(originalErr);
+            }
+            check(capturedBoth.toString(StandardCharsets.UTF_8).contains("source-map"),
+                "--dump-ir --source-map prints the JVM source-map warning: "
+                    + capturedBoth.toString(StandardCharsets.UTF_8));
         } catch (IOException e) {
             fail("CLI backend test IO: " + e.getMessage());
         }

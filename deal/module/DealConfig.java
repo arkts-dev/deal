@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -67,10 +68,15 @@ public final class DealConfig {
 
         // Validate backend (ISSUE-0091: the JVM skeleton backend is now
         // selectable; LuaJIT remains the default when the field is absent).
-        // "lua" is accepted for parity with the CLI alias (Backend.fromCliName
-        // accepts both "lua" and "luajit" for LuaJIT).
-        if (backend != null && !backend.equals("luajit")
-                && !backend.equals("lua") && !backend.equals("jvm")) {
+        // The check is case-insensitive (trim + lowercase), mirroring
+        // Backend.fromCliName — the CLI accepts --backend JVM / Lua, so the
+        // manifest accepts the same spellings; "lua" is accepted for parity
+        // with the CLI alias.
+        String normalizedBackend = backend == null ? null
+            : backend.trim().toLowerCase(Locale.ROOT);
+        if (normalizedBackend != null && !normalizedBackend.equals("luajit")
+                && !normalizedBackend.equals("lua")
+                && !normalizedBackend.equals("jvm")) {
             throw new IllegalArgumentException(
                 "deal.json: unsupported backend '" + backend
                     + "'. Supported backends: 'luajit' (or 'lua'), 'jvm'");

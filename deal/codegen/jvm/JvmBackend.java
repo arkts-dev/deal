@@ -57,10 +57,17 @@ import java.util.Set;
  * {@code x = console.log("y")} where {@code x: null}) are evaluated for
  * their observable behavior — never discarded — by hoisting the void call
  * into a pre-statement emitted right before the containing statement
- * ({@code System.out.println("x"); Void z = null;} semantics). No lambdas
- * are ever emitted, so the artifact stays valid Java even when the call
- * captures locals or parameters that are reassigned later in their scope
- * (a lambda capture of a non-effectively-final local is a javac error).
+ * ({@code System.out.println("x"); Void z = null;} semantics). When a
+ * hoisted call has an earlier inline side-effecting sibling in the same
+ * statement, that sibling is materialized into a fresh {@code __t<n>}
+ * temporary assigned immediately before the hoisted statement, so
+ * DEAL/LuaJIT's left-to-right evaluation order holds in every
+ * combination position ({@code f(g(), console.log("x"))} runs
+ * {@code g()} before the print — including operands that can raise,
+ * which must raise before the hoisted call runs). No lambdas are ever
+ * emitted, so the artifact stays valid Java even when the call captures
+ * locals or parameters that are reassigned later in their scope (a
+ * lambda capture of a non-effectively-final local is a javac error).
  * Hoisted side effects inside a non-leading {@code &&}/{@code ||} operand
  * are guarded by the left operand (Java's short-circuit semantics — LuaJIT
  * skips the right operand when the left already decides the result) with
@@ -91,10 +98,15 @@ import java.util.Set;
  * what the static field holds after class init), and a function declared
  * before the field reads the global, which a prior write established in
  * the canonical {@code x = 5; return x;} shape (both backends observe 5,
- * pinned by a cross-backend fixture); the residual call-time divergence
- * (a pre-declaration function reading without a prior write: LuaJIT fails
- * reading the global nil, JVM reads the initialized field) is documented
- * in the README. Dead code after a statement that cannot complete
+ * pinned by a cross-backend fixture). A pre-declaration function reading
+ * a later-declared field WITHOUT such a dominating write is rejected with
+ * E6000: LuaJIT fails at call time reading the global nil (E8001) while
+ * Java would silently read the initialized static field. Dominance is
+ * tracked along every execution path inside the function (a write inside
+ * a called function does not establish dominance — conservative), so the
+ * write-then-read parity shape stays allowed while the no-prior-write
+ * shape is never silently miscompiled. Dead code after a statement that
+ * cannot complete
  * normally — a {@code return}, or an {@code if}/{@code else} whose
  * branches all cannot complete normally (mirroring JLS §14.21) — is never
  * emitted: LuaJIT never executes it and javac rejects it as unreachable,
@@ -137,7 +149,10 @@ import java.util.Set;
  * with E6000 instead of emitting an illegal forward reference.
  *
  * <p>JVM value mapping follows the spec's JVM backend contract
- * ({@code docs/spec-v1.2.md} §JVM value mapping): {@code int → long},
+ * ({@code docs/spec-v1.1.md} §JVM value mapping / §JVM backend contract —
+ * the current normative spec; {@code docs/spec-v1.2.md} is a future
+ * draft whose grammar is not normative for this backend):
+ * {@code int → long},
  * {@code number → double}, {@code boolean → boolean}, {@code string → String},
  * {@code null → void}/{@code Void}. The JVM's static type system proves typed
  * boundaries redundant, which the spec explicitly permits ("The JVM backend
@@ -251,6 +266,12 @@ public final class JvmBackend {
      * …). Unreachable from {@link #javaName} for the same reason. */
     private int shortCircuitCounter = 0;
 
+    /** Counter for evaluation-order temporaries ({@code __t0}, {@code __t1},
+     * …): inline operands materialized before a later hoisted
+     * pre-statement so DEAL's left-to-right evaluation order holds.
+     * Unreachable from {@link #javaName} for the same reason. */
+    private int evalTempCounter = 0;
+
     /** Module-level function declarations by name (exports included), in
      * declaration order. */
     private final Map<String, FunctionDeclaration> moduleFunctions =
@@ -276,6 +297,15 @@ public final class JvmBackend {
      * through calls, including the function itself (use-before-declaration
      * detection for module-level calls). */
     private final Map<String, Set<String>> transitiveFunctionCalls =
+        new LinkedHashMap<>();
+
+    /** Function name → a module field declared after the function that its
+     * body reads without a dominating write inside the function
+     * (write-dominance analysis; see
+     * {@link #computeForwardReadViolations}). Emitting such a function is
+     * an E6000: LuaJIT fails at call time reading the global nil while
+     * Java would silently read the initialized static field. */
+    private final Map<String, String> forwardReadViolations =
         new LinkedHashMap<>();
 
     /** Statement index of the module-level statement currently being
@@ -450,6 +480,7 @@ public final class JvmBackend {
             }
         }
         computeTransitiveFieldReads();
+        computeForwardReadViolations();
 
         String className = classNameFor(modulePath);
         emitLine("// Generated by DEAL compiler — JVM backend (skeleton). DO NOT EDIT.");
@@ -780,6 +811,174 @@ public final class JvmBackend {
     }
 
     // =========================================================================
+    // Function-body forward reads of later-declared module fields
+    // (write-dominance analysis)
+    // =========================================================================
+
+    /**
+     * Computes, for every module-level function, whether its body reads a
+     * module field declared AFTER the function without a dominating write
+     * inside the function, recording the first such field in
+     * {@link #forwardReadViolations}. LuaJIT: a function declared before a
+     * field reads the GLOBAL of the same name at call time (the
+     * module-local does not exist when the function value is created),
+     * which is nil unless a prior write established it — the
+     * no-prior-write read fails at call time (E8001) while Java silently
+     * reads the initialized static field. The canonical write-then-read
+     * shape ({@code function f(): int { x = 5; return x; } let x: int = 1;})
+     * stays allowed: the write dominates the read on every path, so both
+     * backends observe 5. Writes inside called functions do not establish
+     * dominance (conservative: a callee's writes may be conditional), and
+     * a write inside a taken-only branch does not dominate reads after the
+     * branch (LuaJIT would read the global nil when the branch is not
+     * taken) — both shapes are rejected rather than silently diverging.
+     */
+    private void computeForwardReadViolations() {
+        for (Map.Entry<String, FunctionDeclaration> e : moduleFunctions.entrySet()) {
+            Integer declIdx = moduleFunctionIndices.get(e.getKey());
+            if (declIdx == null) continue;
+            Set<String> violations = new LinkedHashSet<>();
+            Deque<Set<String>> locals = new ArrayDeque<>();
+            Set<String> params = new LinkedHashSet<>();
+            for (Parameter p : e.getValue().params()) params.add(p.name());
+            locals.push(params);
+            walkDominanceList(e.getValue().body().statements(), locals,
+                new LinkedHashSet<>(), declIdx, violations);
+            if (!violations.isEmpty()) {
+                forwardReadViolations.put(e.getKey(), violations.iterator().next());
+            }
+        }
+    }
+
+    /** Straight-line dominance walk: writes persist across blocks, so a
+     * write inside a block stays visible to following statements (LuaJIT
+     * agreement: a global write inside a block persists after it). */
+    private void walkDominanceList(List<StatementNode> stmts,
+            Deque<Set<String>> locals, Set<String> written, int fnDeclIdx,
+            Set<String> violations) {
+        for (StatementNode stmt : stmts) {
+            walkDominanceStmt(stmt, locals, written, fnDeclIdx, violations);
+        }
+    }
+
+    private void walkDominanceStmt(StatementNode stmt, Deque<Set<String>> locals,
+            Set<String> written, int fnDeclIdx, Set<String> violations) {
+        switch (stmt) {
+            case VariableDeclaration vd -> {
+                walkDominanceExpr(vd.initializer(), locals, written,
+                    fnDeclIdx, violations);
+                locals.peek().add(vd.name());
+            }
+            case ReturnStatement rs -> rs.expr().ifPresent(
+                e -> walkDominanceExpr(e, locals, written, fnDeclIdx, violations));
+            case ExpressionStatement es ->
+                walkDominanceExpr(es.expr(), locals, written, fnDeclIdx, violations);
+            case IfStatement is -> {
+                walkDominanceExpr(is.condition(), locals, written,
+                    fnDeclIdx, violations);
+                Set<String> thenWritten = new LinkedHashSet<>(written);
+                locals.push(new LinkedHashSet<>());
+                walkDominanceList(is.thenBlock().statements(), locals,
+                    thenWritten, fnDeclIdx, violations);
+                locals.pop();
+                if (is.elseBranch().isPresent()) {
+                    Set<String> elseWritten = new LinkedHashSet<>(written);
+                    switch (is.elseBranch().get()) {
+                        case Either.Left<IfStatement, Block> left -> {
+                            locals.push(new LinkedHashSet<>());
+                            walkDominanceStmt(left.value(), locals, elseWritten,
+                                fnDeclIdx, violations);
+                            locals.pop();
+                        }
+                        case Either.Right<IfStatement, Block> right -> {
+                            locals.push(new LinkedHashSet<>());
+                            walkDominanceList(right.value().statements(), locals,
+                                elseWritten, fnDeclIdx, violations);
+                            locals.pop();
+                        }
+                    }
+                    // Definitely written after the if/else: written before
+                    // the branch plus the intersection of both branches.
+                    Set<String> merged = new LinkedHashSet<>(written);
+                    for (String f : thenWritten) {
+                        if (elseWritten.contains(f)) merged.add(f);
+                    }
+                    written.clear();
+                    written.addAll(merged);
+                }
+                // else: an if without an else branch writes nothing
+                // definitely — the then-writes stay unmerged (conservative:
+                // LuaJIT takes the branch at runtime, but the not-taken
+                // path reads the global nil, so no dominance is claimed).
+            }
+            case Block b -> {
+                locals.push(new LinkedHashSet<>());
+                walkDominanceList(b.statements(), locals, written,
+                    fnDeclIdx, violations);
+                locals.pop();
+            }
+            // Unsupported statement kinds (loops, try, nested functions,
+            // classes, …) are rejected with E6000 when emitted; nothing to
+            // walk here.
+            default -> { }
+        }
+    }
+
+    /**
+     * Walks an expression collecting reads of later-declared module fields
+     * not dominated by a write (violations) and adding field writes to
+     * {@code written}. Identifiers shadowed by locals/parameters are local
+     * uses, not field uses (mirrors {@code collectExprRefs}); call
+     * arguments are walked left to right, so a write in an earlier
+     * argument is visible to a read in a later one (LuaJIT agreement).
+     */
+    private void walkDominanceExpr(ExpressionNode e, Deque<Set<String>> locals,
+            Set<String> written, int fnDeclIdx, Set<String> violations) {
+        switch (e) {
+            case IdentifierExpr id -> {
+                String name = id.name();
+                if (!isLocallyBound(locals, name)
+                        && symbols.resolve(name) instanceof Symbol.VariableSymbol
+                        && moduleFieldIndices.containsKey(name)) {
+                    Integer idx = moduleFieldIndices.get(name);
+                    if (idx != null && idx > fnDeclIdx && !written.contains(name)) {
+                        violations.add(name);
+                    }
+                }
+            }
+            case BinaryExpr bin -> {
+                walkDominanceExpr(bin.left(), locals, written, fnDeclIdx, violations);
+                walkDominanceExpr(bin.right(), locals, written, fnDeclIdx, violations);
+            }
+            case UnaryExpr u ->
+                walkDominanceExpr(u.expr(), locals, written, fnDeclIdx, violations);
+            case CallExpr call -> {
+                // Callee identifiers are hoisted function names (a field
+                // callee would be a function-valued field — unsupported);
+                // walk the arguments only.
+                for (ExpressionNode arg : call.args()) {
+                    walkDominanceExpr(arg, locals, written, fnDeclIdx, violations);
+                }
+            }
+            case AssignmentExpr ae -> {
+                walkDominanceExpr(ae.value(), locals, written, fnDeclIdx, violations);
+                if (ae.target() instanceof IdentifierExpr id) {
+                    String name = id.name();
+                    if (!isLocallyBound(locals, name)
+                            && symbols.resolve(name) instanceof Symbol.VariableSymbol
+                            && moduleFieldIndices.containsKey(name)) {
+                        written.add(name);
+                    }
+                }
+            }
+            case MemberAccessExpr mae ->
+                walkDominanceExpr(mae.object(), locals, written, fnDeclIdx, violations);
+            // Literals and unsupported forms (rejected later) are not walked.
+            default -> { }
+        }
+    }
+
+    // =========================================================================
     // Runtime support (emitted once per class)
     // =========================================================================
 
@@ -970,6 +1169,24 @@ public final class JvmBackend {
             unsupported("function '" + fd.name() + "' whose signature "
                 + "collides with the emitted runtime helper '" + javaFn + "'",
                 fd.span());
+            return;
+        }
+
+        // A pre-declaration function reading a later-declared module field
+        // without a dominating write inside the function: LuaJIT reads the
+        // global nil at call time and fails (E8001) while Java would
+        // silently read the initialized static field — reject instead of
+        // silently diverging (write-dominance analysis, conservative:
+        // writes via called functions do not establish dominance).
+        String forwardViolation = forwardReadViolations.get(fd.name());
+        if (forwardViolation != null) {
+            unsupported("function '" + fd.name() + "' reading the module "
+                + "field '" + forwardViolation + "' declared after the "
+                + "function without a dominating write inside the function "
+                + "(LuaJIT reads the global nil at call time and fails with "
+                + "E8001; Java would silently read the initialized static "
+                + "field — a write via a called function does not establish "
+                + "dominance, conservatively)", fd.span());
             return;
         }
 
@@ -1387,8 +1604,10 @@ public final class JvmBackend {
             return emitShortCircuit(bin, op == BinaryOp.AND);
         }
 
-        String left = emitExpression(bin.left());
-        String right = emitExpression(bin.right());
+        List<String> operands = emitOperandsInOrder(
+            List.of(bin.left(), bin.right()));
+        String left = operands.get(0);
+        String right = operands.get(1);
 
         // String concatenation: both operands must be string (checker-enforced).
         if (op == BinaryOp.ADD && leftType instanceof Type.String
@@ -1538,6 +1757,117 @@ public final class JvmBackend {
         return name;
     }
 
+    /** A fresh evaluation-order temporary ({@code __t0}, {@code __t1}, …). */
+    private String nextEvalTempName() {
+        return "__t" + evalTempCounter++;
+    }
+
+    /**
+     * True when the code emitted for {@code e} can no longer have an
+     * observable effect at evaluation time (all of it is either inert or
+     * already sequenced into {@link #preStatements}): literals and
+     * identifier reads are inert; a null-typed call is always hoisted into
+     * a pre-statement, so its emitted code is the inert {@code null}; a
+     * non-null call, an assignment (its inline target write), checked int
+     * arithmetic (E8004/E8005/E8006 can raise at evaluation time), and any
+     * combination containing such a sub-expression stay effectful. When a
+     * later sibling hoists, every earlier operand that is NOT pure after
+     * emission must be materialized into a temporary before the hoisted
+     * statements — otherwise its inline effects would run after them,
+     * inverting LuaJIT's strict left-to-right evaluation (including the
+     * nested case {@code f(g() + k(console.log("y")), console.log("x"))},
+     * where the inline {@code k(…)} call inside the first operand must
+     * still run before the second operand's hoisted print).
+     */
+    private boolean isPureAfterEmission(ExpressionNode e) {
+        return switch (e) {
+            case LiteralExpr lit -> true;
+            case IdentifierExpr id -> true;
+            case CallExpr call -> typeOf(call) instanceof Type.Null;
+            case AssignmentExpr ae -> false;
+            case BinaryExpr bin -> {
+                if (typeOf(bin) instanceof Type.Int
+                        && (bin.op() == BinaryOp.ADD || bin.op() == BinaryOp.SUB
+                            || bin.op() == BinaryOp.MUL || bin.op() == BinaryOp.DIV
+                            || bin.op() == BinaryOp.MOD || bin.op() == BinaryOp.POW)) {
+                    yield false;
+                }
+                yield isPureAfterEmission(bin.left())
+                    && isPureAfterEmission(bin.right());
+            }
+            case UnaryExpr u -> {
+                if (u.op() == UnaryOp.NEG && typeOf(u) instanceof Type.Int) {
+                    yield false;
+                }
+                yield isPureAfterEmission(u.expr());
+            }
+            // Unsupported forms record an E6000 and emit no side effects,
+            // but their emitted code is a placeholder — treat as effectful
+            // so ordering never depends on them.
+            default -> false;
+        };
+    }
+
+    /**
+     * Emits {@code nodes} (in evaluation order) and returns their inline
+     * code strings, preserving DEAL's left-to-right evaluation order when
+     * any operand hoists a side-effecting pre-statement. Hoisted
+     * statements are flushed before the containing statement, so an
+     * earlier <em>inline</em> side-effecting operand would otherwise run
+     * after them — {@code f(g(), console.log("x"))} printed "x" before
+     * {@code g()} ran, while LuaJIT evaluates arguments left to right
+     * ("g-ran" first). When operand j hoists, every earlier operand whose
+     * emitted code is not pure after emission (an inline call, an inline
+     * assignment, checked int arithmetic — even inside a nested
+     * combination that hoisted other parts of itself) is materialized
+     * into a fresh temporary assigned immediately before j's hoisted
+     * statements; operands after a hoist stay inline (the flush already
+     * precedes them), and operands whose emitted code is inert (literals,
+     * reads, fully hoisted calls) are left alone. The declarations
+     * reference no user-controlled names ({@code __t<n>} is unreachable from
+     * {@link #javaName}), and {@link #preStatementsDeclareTemps} is set so
+     * a module-level field initializer referencing a materialized
+     * temporary is routed through a static-block assignment (a class-body
+     * initializer cannot see a block-local declaration).
+     */
+    private List<String> emitOperandsInOrder(List<ExpressionNode> nodes) {
+        List<String> codes = new ArrayList<>(nodes.size());
+        List<Integer> hoistStarts = new ArrayList<>(nodes.size());
+        for (int i = 0; i < nodes.size(); i++) {
+            int before = preStatements.size();
+            codes.add(emitExpression(nodes.get(i)));
+            hoistStarts.add(preStatements.size() > before ? before : -1);
+        }
+        // Process hoisting operands right to left: insertions for operand j
+        // land at the start of j's hoisted statements, so later operands
+        // are rewritten first and earlier insertions (smaller indices) only
+        // shift them rightward — never reorder them. Every earlier operand
+        // whose emitted code is not pure after emission is materialized —
+        // including an operand that hoisted itself but still carries an
+        // inline call after its own hoisted statements (a nested
+        // combination), whose inline effects would otherwise run after
+        // operand j's hoisted statements.
+        boolean[] materialized = new boolean[nodes.size()];
+        for (int j = nodes.size() - 1; j >= 0; j--) {
+            if (hoistStarts.get(j) < 0) continue;
+            int insertAt = hoistStarts.get(j);
+            for (int i = 0; i < j; i++) {
+                if (materialized[i]) continue;
+                if (isPureAfterEmission(nodes.get(i))) continue;
+                Type t = typeOf(nodes.get(i));
+                String javaType = javaLocalType(t, nodes.get(i).span());
+                if (javaType == null) continue; // diagnostic already recorded
+                String temp = nextEvalTempName();
+                preStatements.add(insertAt++, new PreLine(
+                    javaType + " " + temp + " = " + codes.get(i) + ";", 0));
+                codes.set(i, temp);
+                materialized[i] = true;
+                preStatementsDeclareTemps = true;
+            }
+        }
+        return codes;
+    }
+
     private String emitUnary(UnaryExpr u) {
         return switch (u.op()) {
             case NOT -> "(!" + emitExpression(u.expr()) + ")";
@@ -1600,10 +1930,11 @@ public final class JvmBackend {
                     return "null";
                 }
             }
+            List<String> argCodes = emitOperandsInOrder(call.args());
             StringBuilder sb = new StringBuilder(javaName(id.name())).append('(');
-            for (int i = 0; i < call.args().size(); i++) {
+            for (int i = 0; i < argCodes.size(); i++) {
                 if (i > 0) sb.append(", ");
-                sb.append(emitExpression(call.args().get(i)));
+                sb.append(argCodes.get(i));
             }
             return sb.append(')').toString();
         }
@@ -1636,10 +1967,11 @@ public final class JvmBackend {
             }
         };
         if (target == null) return "null";
+        List<String> argCodes = emitOperandsInOrder(call.args());
         StringBuilder sb = new StringBuilder(target).append(".println(");
-        for (int i = 0; i < call.args().size(); i++) {
+        for (int i = 0; i < argCodes.size(); i++) {
             if (i > 0) sb.append(", ");
-            sb.append(emitExpression(call.args().get(i)));
+            sb.append(argCodes.get(i));
         }
         return sb.append(')').toString();
     }
