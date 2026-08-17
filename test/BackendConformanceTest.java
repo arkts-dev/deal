@@ -38,8 +38,11 @@ import java.util.*;
  * string[]/boolean[] literals, index reads, element writes — in-place
  * and the {@code i === length} append — {@code .length} reads, runtime
  * bounds checks (negative read → E8002, read past the end → E8001 at
- * typed read sites, {@code ===}/{@code !==} operand positions computing
- * the nil comparison instead, negative/gap writes → E8002,
+ * typed read sites, boundary-less positions computing Lua's nil
+ * semantics instead — discarded standalone reads, {@code ===}/
+ * {@code !==} operands, {@code !} operands, and {@code &&}/{@code ||}
+ * operands, with the result nil failing a typed boolean boundary with
+ * E8001 on both backends — negative/gap writes → E8002,
  * out-of-safe-range int element writes → E8004), spec §Operational
  * semantics evaluation order for reads, writes, and array literals
  * including hoisted side effects and side-effecting receivers/first

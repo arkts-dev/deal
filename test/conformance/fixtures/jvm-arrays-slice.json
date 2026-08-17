@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM primitive arrays slice (ISSUE-0094). JVM-only fixtures (plus ten cross-backend parity fixtures that also run under LuaJIT as the reference) that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: int[]/number[]/string[]/boolean[] array literals (including the empty literal under a contextual type), index reads, element writes (in-place writes, the i === length append — via the xs[xs.length] idiom and via a plain index-equals-length write — with the wrapped storage growing in place so aliases observe every write), .length reads, arrays through function parameters and returns, runtime bounds checks (negative read → E8002, read past the end → E8001 \"expected int, got null\" mirroring LuaJIT's nil-at-the-boundary, negative write → E8002, gap write → E8002, out-of-safe-range int element write → E8004 via the element value check), spec §Operational semantics evaluation order for reads (receiver before index) and writes (receiver, index, RHS before the LHS write check — including hoisted null-typed side effects materialized into temporaries in order, and the side-effecting receiver + hoisting index + hoisting RHS shape anchored at the earliest hoist start after each operand), array-literal element evaluation order with a side-effecting first element and hoisting later elements, === / !== operand positions for past-end reads in all four element types (nil comparison semantics per the spec read-site contract, never E8001), negative indexes in comparison positions (E8002 on both backends), the both-reads comparison evaluation position — the left read's E8002 raises before any right-operand hoisted side effect (\"h\"/\"made\" never print, pinned with expectedNotOutput negative stdout assertions) and in-bounds both-reads comparisons keep strict left-to-right order with hoisted right-side effects, and two frontend compile-error gates rejected before any backend (E3007 non-int index, E3017 read-only .length assignment).",
+  "description": "JVM primitive arrays slice (ISSUE-0094). JVM-only fixtures (plus fourteen cross-backend parity fixtures that also run under LuaJIT as the reference) that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: int[]/number[]/string[]/boolean[] array literals (including the empty literal under a contextual type), index reads, element writes (in-place writes, the i === length append — via the xs[xs.length] idiom and via a plain index-equals-length write — with the wrapped storage growing in place so aliases observe every write), .length reads, arrays through function parameters and returns, runtime bounds checks (negative read → E8002, read past the end → E8001 \"expected int, got null\" mirroring LuaJIT's nil-at-the-boundary, negative write → E8002, gap write → E8002, out-of-safe-range int element write → E8004 via the element value check), spec §Operational semantics evaluation order for reads (receiver before index) and writes (receiver, index, RHS before the LHS write check — including hoisted null-typed side effects materialized into temporaries in order, and the side-effecting receiver + hoisting index + hoisting RHS shape anchored at the earliest hoist start after each operand), array-literal element evaluation order with a side-effecting first element and hoisting later elements, === / !== operand positions for past-end reads in all four element types (nil comparison semantics per the spec read-site contract, never E8001), negative indexes in comparison positions (E8002 on both backends), the both-reads comparison evaluation position — the left read's E8002 raises before any right-operand hoisted side effect (\"h\"/\"made\" never print, pinned with expectedNotOutput negative stdout assertions) and in-bounds both-reads comparisons keep strict left-to-right order with hoisted right-side effects, boundary-less read positions computing with Lua's nil semantics instead of raising (a discarded standalone read drops the boxed value — no E8001; `!read` coerces the nil to true; `&&`/`||` operands coerce the nil to falsy with the nil-aware result following Lua's and/or — and the result nil failing at a typed boolean boundary with E8001 on both backends), and two frontend compile-error gates rejected before any backend (E3007 non-int index, E3017 read-only .length assignment).",
   "tests": [
     {
       "name": "jvm-arr-literal-read-length",
@@ -424,6 +424,82 @@
       "expectedCompileError": null,
       "irContains": [
         "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-discard-past-end-parity",
+      "description": "Cross-backend parity: a standalone array read whose value is discarded applies no typed boundary (spec §Bounds and nil behavior — the read result is checked at the read site, and a discarded value has no read-site consumer), so LuaJIT drops the nil past the end without error and the JVM discards the boxed read the same way (no E8001) for all four element types — both backends print discard-ok and exit 0. A negative index in the same position still raises E8002 on both (pinned by jvm-arr-negative-read-parity)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let xs: int[] = [1];\n  let ns: number[] = [1.5];\n  let ss: string[] = [\"a\"];\n  let bs: boolean[] = [true];\n  xs[99];\n  ns[99];\n  ss[99];\n  bs[99];\n  console.log(\"discard-ok\");\n}",
+      "expectedOutput": "discard-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-not-read-parity",
+      "description": "Cross-backend parity: LuaJIT's `not` coerces the operand's nil (a past-end boolean[] read, or a nil-aware && / || result) to true (`not nil` is true), so `!bs[99]` computes true instead of raising E8001 — the JVM emits the same coercion (x == null || !x.booleanValue()) over a boxed read temporary. Both backends print not-coerced-true (declaration boundary over the coerced value), not-taken (if-condition), and not-niland (the nil-aware && result under !); the in-bounds negative control `!bs[0]` (true) never prints bad",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let bs: boolean[] = [true];\n  let b: boolean = !bs[99];\n  if (b) { console.log(\"not-coerced-true\"); }\n  if (!bs[99]) { console.log(\"not-taken\"); }\n  let d: boolean = !(bs[99] && true);\n  if (d) { console.log(\"not-niland\"); }\n  if (!bs[0]) { console.log(\"bad\"); }\n}",
+      "expectedOutput": "not-coerced-true\nnot-taken\nnot-niland",
+      "expectedNotOutput": [
+        "bad"
+      ],
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-shortcircuit-read-parity",
+      "description": "Cross-backend parity: LuaJIT's and/or coerce a past-end boolean[] read operand's nil to falsy, so `bs[99] || true` computes true instead of raising E8001, `true || read` and `false && read` skip the right operand entirely (its hoisted print and pick label never run — pinned with expectedNotOutput), and the nil-aware result value follows Lua (nil or true → true) — the JVM lowers the operands to boxed temporaries (null = the Lua nil) with the same truthiness guards. Both backends print or-coerced, true-or-skip, false-and-skip and never h/xx/yy",
+      "source": "import * as console from \"std/console\"\nfunction pick(label: string, z: null): int { console.log(label); return 0; }\nexport function test(): null {\n  let bs: boolean[] = [true];\n  let c: boolean = bs[99] || true;\n  if (c) { console.log(\"or-coerced\"); }\n  let g: boolean = true || bs[pick(\"xx\", console.log(\"h\"))];\n  if (g) { console.log(\"true-or-skip\"); }\n  let f: boolean = false && bs[pick(\"yy\", console.log(\"h2\"))];\n  if (!f) { console.log(\"false-and-skip\"); }\n}",
+      "expectedOutput": "or-coerced\ntrue-or-skip\nfalse-and-skip",
+      "expectedNotOutput": [
+        "h",
+        "xx",
+        "yy"
+      ],
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-and-boundary-parity",
+      "description": "Cross-backend parity: a past-end boolean[] read in an && left operand makes the Lua result nil (`nil and true` → nil), and the declaration's typed boolean boundary then fails exactly where LuaJIT's check_boolean(nil) fails — E8001, exit 1 on both backends (the JVM boxed result converts with booleanNotNull: E8001 “expected boolean, got null”). The `false || read` shape fails the same way (result nil), while `true || read`/`false && read` compute without error (pinned by jvm-arr-shortcircuit-read-parity)",
+      "source": "export function test(): boolean {\n  let bs: boolean[] = [true];\n  let b: boolean = bs[99] && true;\n  return b;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : boolean"
       ],
       "irNotContains": [],
       "backends": [

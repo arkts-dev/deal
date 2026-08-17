@@ -169,6 +169,7 @@ public class JvmBackendTest {
             testArrayReadComparisonNilSemantics();
             testArrayEvalOrderSideEffectingReceiver();
             testArrayReadComparisonBothReadsOrder();
+            testArrayBoundaryLessReadPositions();
             testArrayUnsupportedElementTypesRejected();
             testArrayUseBeforeDeclarationGuards();
             testNullReturnSideEffects();
@@ -1116,6 +1117,19 @@ public class JvmBackendTest {
             }
         }
 
+        // The boolean element spelling ("expected boolean, got null") is
+        // pinned explicitly: the past-end boolean[] read raises the
+        // boundary failure with the element-type message, not a generic
+        // one.
+        ExecResult boolSpelling = compileAndRunJvm(
+            "export function test(): boolean { "
+            + "let bs: boolean[] = [true]; return bs[1]; }", "arrerrbool");
+        check(boolSpelling.exitCode() == 1
+                && boolSpelling.output().contains("DEAL_ERROR_CODE: E8001")
+                && boolSpelling.output().contains("expected boolean, got null"),
+            "the boolean oob read spells 'expected boolean, got null': "
+                + boolSpelling.output());
+
         // The write check runs AFTER the receiver/index/RHS expressions
         // evaluate (spec §Operational semantics rule 3): the RHS's E8004
         // fires before the E8002 bounds check for a gap write with an
@@ -1546,6 +1560,159 @@ public class JvmBackendTest {
         }
     }
 
+    /** Boundary-less array-read positions (ISSUE-0094 rework): the spec
+     * read-site contract (§Bounds and nil behavior) applies no typed
+     * boundary to a discarded read, a {@code !} operand, or a
+     * {@code &&}/{@code ||} operand, so LuaJIT computes on the nil a
+     * past-end read yields instead of raising E8001 — a discarded read
+     * drops it (no error), {@code not nil} is {@code true}, and
+     * {@code nil or true} is {@code true} (nil is falsy). The JVM routes
+     * those positions through the boxed read helpers (null past the end,
+     * still E8002 for a negative index) and Lua's nil semantics: the
+     * discard drops the boxed value, {@code !} coerces with
+     * {@code (x == null || !x.booleanValue())}, and {@code &&}/{@code ||}
+     * lower to boxed {@code java.lang.Boolean} temporaries with
+     * truthiness guards — while the result nil (e.g. {@code bs[99] && true})
+     * still fails at a typed boolean boundary exactly where LuaJIT's
+     * check_boolean(nil) fails (E8001 "expected boolean, got null"). */
+    private static void testArrayBoundaryLessReadPositions() throws Exception {
+        System.out.println("-- Boundary-less read positions (javac + java) --");
+
+        // The three reviewer shapes in one artifact: discard, !read, and
+        // || / && operands — matching the LuaJIT reference exactly.
+        ExecResult run = compileAndRunJvm("""
+            import * as console from "std/console"
+            function pick(label: string, z: null): int { console.log(label); return 0; }
+            export function test(): null {
+              let xs: int[] = [1];
+              let ns: number[] = [1.5];
+              let ss: string[] = ["a"];
+              let bs: boolean[] = [true];
+              xs[99];
+              ns[99];
+              ss[99];
+              bs[99];
+              console.log("discard-ok");
+              let b: boolean = !bs[99];
+              if (b) { console.log("not-coerced-true"); }
+              if (!bs[99]) { console.log("not-taken"); }
+              let d: boolean = !(bs[99] && true);
+              if (d) { console.log("not-niland"); }
+              let c: boolean = bs[99] || true;
+              if (c) { console.log("or-coerced"); }
+              let g: boolean = true || bs[pick("xx", console.log("h"))];
+              if (g) { console.log("true-or-skip"); }
+              let f: boolean = false && bs[pick("yy", console.log("h2"))];
+              if (!f) { console.log("false-and-skip"); }
+            }
+            """, "arrboundaryless");
+        check(run.exitCode() == 0, "boundary-less shapes exit 0: "
+            + run.output());
+        check(run.output().contains("discard-ok\nnot-coerced-true\nnot-taken\nnot-niland\nor-coerced\ntrue-or-skip\nfalse-and-skip"),
+            "discard / ! / && || shapes match the LuaJIT reference "
+            + "(discard-ok, not-coerced-true, not-taken, not-niland, "
+            + "or-coerced, true-or-skip, false-and-skip): " + run.output());
+        check(!run.output().contains("h\n") && !run.output().contains("xx")
+                && !run.output().contains("yy"),
+            "the skipped && / || right operands never evaluate (no "
+            + "hoisted h print, no pick labels): " + run.output());
+
+        // The result nil of `bs[99] && true` fails at the declaration's
+        // typed boolean boundary (LuaJIT: check_boolean(nil) → E8001
+        // "expected boolean"); the JVM converts with booleanNotNull and
+        // must spell the message with the established null convention.
+        ExecResult boundary = compileAndRunJvm("""
+            export function test(): boolean {
+              let bs: boolean[] = [true];
+              let b: boolean = bs[99] && true;
+              return b;
+            }
+            """, "arrandboundary");
+        check(boundary.exitCode() == 1, "nil && result at a boolean "
+            + "boundary exits 1: " + boundary.output());
+        check(boundary.output().contains("DEAL_ERROR_CODE: E8001")
+                && boundary.output().contains("expected boolean, got null"),
+            "the && nil result fails the boolean boundary with E8001 "
+            + "'expected boolean, got null': " + boundary.output());
+
+        // The if-condition boundary raises the same way.
+        ExecResult cond = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let bs: boolean[] = [true];
+              if (bs[99] && true) { console.log("bad"); }
+              console.log("unreachable");
+            }
+            """, "arrandcondboundary");
+        check(cond.exitCode() == 1 && cond.output().contains(
+                "DEAL_ERROR_CODE: E8001")
+                && !cond.output().contains("bad")
+                && !cond.output().contains("unreachable"),
+            "the && nil result fails the if-condition boundary with E8001 "
+            + "(no 'bad'/'unreachable'): " + cond.output());
+
+        // A negative index in a discarded read still raises E8002
+        // (LuaJIT raises that unconditionally at the read).
+        ExecResult neg = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let xs: int[] = [1];
+              xs[-1];
+              console.log("unreachable");
+            }
+            """, "arrdiscardneg");
+        check(neg.exitCode() == 1
+                && neg.output().contains("DEAL_ERROR_CODE: E8002")
+                && !neg.output().contains("unreachable"),
+            "a discarded negative-index read still raises E8002: "
+                + neg.output());
+
+        // Emission shapes: boxed discard, the ! coercion, the boxed
+        // short-circuit temp with truthiness guards, the booleanNotNull
+        // boundary conversion — and never a lambda.
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            function pick(label: string, z: null): int { console.log(label); return 0; }
+            export function test(): null {
+              let xs: int[] = [1];
+              let bs: boolean[] = [true];
+              xs[99];
+              let b: boolean = !bs[99];
+              let c: boolean = bs[99] || true;
+              let d: boolean = bs[99] && true;
+              if (!(bs[99] && true)) { console.log("x"); }
+            }
+            """, "jvmtest-arrboundaryless-emission.deal");
+        check(f.errors().isEmpty(), "boundary-less emission frontend clean: "
+            + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-arrboundaryless-emission.deal", "main");
+            check(!res.hasErrors(), "boundary-less emission codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains("__intArrayReadBoxed(xs, 99L)")
+                        && java.contains("java.lang.Long __ignored"),
+                    "the discarded read emits the boxed helper call and a "
+                    + "boxed dummy-local discard: " + java);
+                check(java.contains(" == null || !")
+                        && java.contains(".booleanValue())"),
+                    "the ! operand emits Lua's not coercion "
+                    + "(x == null || !x.booleanValue()): " + java);
+                check(java.contains("java.lang.Boolean __sc")
+                        && java.contains(" != null && ")
+                        && java.contains("booleanNotNull("),
+                    "&& / || operands lower to boxed short-circuit "
+                    + "temporaries with truthiness guards and the typed "
+                    + "boundary converts with booleanNotNull: " + java);
+                check(!java.contains("->"),
+                    "no lambda emitted for the boundary-less shapes: " + java);
+            }
+        }
+    }
+
     /** Out-of-slice array shapes are rejected with E6000, never silently
      * miscompiled: nested (multi-dimensional) arrays, arrays of nullable
      * elements, nullable arrays, class arrays, function arrays, table
@@ -1577,6 +1744,15 @@ public class JvmBackendTest {
                 export function test(): int {
                   let fs: ((x: int) => int)[] = [add1];
                   return fs[0](3);
+                }
+                """),
+            new Case("class array", """
+                class Point {
+                  x: int = 0;
+                }
+                export function test(): int {
+                  let ps: Point[] = [];
+                  return ps.length;
                 }
                 """),
             new Case("table index read", """
