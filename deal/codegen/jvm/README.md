@@ -143,31 +143,41 @@ reports success for an artifact `javac` would reject.
   field's default value (verified: `f(); let x: int = 5; function
   f(): int { return x; }` fails at load under LuaJIT). Reads through
   function-local shadows of a module field are correctly not flagged.
-  **Function-body reads of *declared* module fields are allowed even when
-  the field is declared later** — the write/read asymmetry is
-  intentional and documented: Java method bodies may legally reference
-  later-declared static fields (JLS §8.3.3 covers only initializers),
-  and the post-load semantics match LuaJIT — a function declared after
-  the field reads the module-local upvalue (the initialized value,
-  exactly what the static field holds after class init), and a function
-  declared before the field reads the global, which a prior write
-  established in the canonical `x = 5; return x;` shape (`function
-  f(): int { x = 5; return x; } let x: int = 1;` — both backends
-  observe 5, pinned by the cross-backend fixture
-  `jvm-function-field-forward-read`; the write itself is the same
-  upvalue/static-field write in both). **A pre-declaration function
-  reading a later-declared field *without* a dominating write is
-  rejected with E6000** by a write-dominance analysis: LuaJIT fails at
-  call time reading the global nil (E8001) while Java would silently
-  read the initialized static field, so the backend refuses the
-  no-prior-write shape instead of silently diverging. Dominance is
-  tracked along every execution path inside the function — a write in
-  *both* branches of an if/else dominates the read after it (allowed),
-  while a write in a taken-only branch (no else) and a write inside a
-  called function do not establish dominance (conservative rejection:
-  the callee's or branch's writes may never execute, in which case
-  LuaJIT would read the global nil). Function-local shadows of the
-  field are local uses, never flagged.
+  **Function-body access to a module field is governed by the field's
+  declaration order relative to the function.** A function declared
+  AFTER the field reads/writes the module-local upvalue — emitted as a
+  plain static-field access, full parity (`let x: int = 1; function
+  f(): int { x = 5; return x; } export function test(): null { if
+  (f() === 5 && x === 5) { console.log("field-write-parity"); } }`
+  prints on both backends, pinned by the cross-backend fixture
+  `jvm-function-field-write-parity`). A function declared BEFORE the
+  field does not capture the module-local under LuaJIT (the local does
+  not exist when the function value is created), so every access in its
+  body binds to the GLOBAL of the same name at call time — and both
+  shapes are E6000 rather than silently diverging:
+  - **a WRITE is rejected in every position** (statement, block,
+    if/else branch, return value, call argument) — LuaJIT writes the
+    global, leaving the module-local untouched, so later readers
+    (functions declared after the field, exported functions) observe
+    the initializer value, while Java would write the static field and
+    pollute every later reader. The write-then-read shape
+    (`x = 5; return x;`) is included: the function's own read observes
+    the global write under LuaJIT, but the polluted Java field remains
+    observable by later readers (the reviewer's probe
+    `function f(): int { x = 5; return x; } let x: int = 1; export
+    function g(): int { return x; }` prints "parity" under real luajit
+    — f() == 5, g() == 1 — while the JVM static field would make
+    g() == 5);
+  - **a READ without a dominating write inside the function is
+    rejected** — LuaJIT reads the global nil at call time and fails
+    (E8001) while Java would silently read the initialized static
+    field. Dominance is tracked along every execution path: a write in
+    *both* branches of an if/else dominates the read after it, while a
+    write in a taken-only branch (no else) and a write inside a called
+    function do not establish dominance (conservative rejection: the
+    callee's or branch's writes may never execute, in which case
+    LuaJIT would read the global nil).
+  Function-local shadows of the field are local uses, never flagged.
 - **Assignment targets get the same guard.** A write to a
   later-declared function-local with no enclosing binding
   (`x = 5; let x: int = 1` inside a function — in statement, block, `if`,
@@ -175,8 +185,12 @@ reports success for an artifact `javac` would reject.
   forward-reference artifact javac rejects after the CLI reported success
   (the checker resolves such targets contextually, so the module-scope
   symbol table reports null). Module-level writes to later-declared
-  fields and function-body writes to a module field stay allowed and keep
-  using the static field name (LuaJIT parity, verified with real luajit
+  fields stay allowed and keep using the static field name: LuaJIT's
+  global write is overwritten by the later initializer, Java's
+  static-field write is overwritten by the field initializer, and every
+  observer of the intermediate value (module-level pre-declaration
+  reads, pre-declaration function accesses) is already E6000, so the
+  final value is identical on both backends (verified with real luajit
   runs).
 - **Module-level calls never reach not-yet-declared functions.** LuaJIT
   assigns each function value at its declaration point in source order,
@@ -297,7 +311,9 @@ reports success for an artifact `javac` would reject.
     ordering, dead-code skipping after non-completing statements ×3
     (complete if/else chain, block-ending return with dead let/expression,
     dead else-if chain with a hoisted null-typed condition), the
-    function-body forward read of a later-declared module field, the
+    function-body module-field write parity shape (field declared before
+    the function: `x = 5; return x;` plus a later reader observing the
+    written local on both backends), the
     int safe range ±(2^53-1) pinned at the boundary (the inclusive
     boundary itself, and cross-backend E8004 pins for add, sub, `**`
     ×2, `int()`, and an out-of-range literal — plus the exact JVM value
@@ -327,13 +343,20 @@ reports success for an artifact `javac` would reject.
     shapes — plus the declaration-first interleaving parity case),
     assignment to later-declared locals (E6000 in statement/block/if/
     return/argument positions, with the allowed module-field shadow write
-    and module-level later-field write), function-body reads of
-    later-declared module fields governed by the write-dominance analysis
-    (the reviewer's `x = 5; return x;` repro, writes in both if/else
-    branches, condition/argument positions, and function-local shadows
-    allowed and executed via `javac`+`java`; the no-prior-write shape —
-    plain read, initializer position, taken-only branch write, and
-    write-via-callee — rejected with E6000; the untouched module-level
+    and module-level later-field write), function-body module-field
+    access governed by the field's declaration order — a field declared
+    BEFORE the function is the upvalue/static-field write with full
+    parity (the canonical write-then-read shape, writes in both if/else
+    branches, and condition/argument positions allowed and executed via
+    `javac`+`java`, pinned by the cross-backend fixture
+    `jvm-function-field-write-parity`), while a field declared AFTER the
+    function is E6000 in every shape — the reviewer's round-8
+    write-then-read-plus-later-reader probe (real luajit prints "parity"
+    with f() == 5, g() == 1; the JVM static field would make g() == 5),
+    the write-then-read without a later reader, the write-only shape,
+    block/both-branch/return-value/call-argument-position writes, the
+    no-prior-write read (plain read, initializer position, taken-only
+    branch write, write-via-callee), and the untouched module-level
     load-time guard), left-to-right evaluation-order preservation for
     hoisted null-typed side effects (call-argument/initializer/
     statement/if-condition/short-circuit/binary positions with order
@@ -418,21 +441,31 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   function-local with no enclosing binding (`x = 5; let x: int = 1`
   inside a function) is E6000 (LuaJIT writes the enclosing scope; Java
   rejects the forward reference), while module-level writes to
-  later-declared fields (JLS §8.3.3 forward-reference LHS exception) and
-  function-body writes to a module field (LuaJIT's upvalue write) stay
-  allowed — both verified with real luajit runs.
-- Function-body reads of module fields declared later are allowed only
-  when a write inside the function dominates the read on every path
-  (legal Java forward references from method bodies; post-load parity
-  with LuaJIT's upvalue read for functions declared after the field, and
-  with the global read for the canonical write-then-read shape — both
-  pinned by the cross-backend fixture `jvm-function-field-forward-read`).
-  The no-prior-write shape — a function declared before the field that
-  reads it without a dominating write — is E6000: LuaJIT reads the
-  global nil at call time and fails (E8001) while JVM would silently
-  read the initialized static field. A write in both branches of an
-  if/else dominates; a write in a taken-only branch or inside a called
-  function does not (conservative). Load-time (module-level) value uses
+  later-declared fields (JLS §8.3.3 forward-reference LHS exception) stay
+  allowed — verified with real luajit runs. Function-body WRITES to a
+  module field declared later than the function are also E6000 (in every
+  position: statement, block, if/else branch, return value, call
+  argument), not emitted as a static-field write: LuaJIT binds the
+  pre-declaration write to the GLOBAL of the same name (the module-local
+  does not exist when the function value is created), leaving the
+  module-local untouched so later readers observe the initializer value,
+  while a Java static-field write would pollute every later reader. The
+  write-then-read shape is included — the function's own read observes
+  the global write under LuaJIT, but the polluted Java field remains
+  observable by later readers.
+- Function-body access to a module field declared later is therefore
+  rejected in every shape: a READ without a dominating write inside the
+  function is E6000 (LuaJIT reads the global nil at call time and fails
+  with E8001 while JVM would silently read the initialized static
+  field), and a WRITE is E6000 outright (the divergence above). A
+  function declared AFTER the field reads/writes the module-local
+  upvalue with full parity — pinned by the cross-backend fixture
+  `jvm-function-field-write-parity` (`let x: int = 1;` first, then
+  `function f(): int { x = 5; return x; }` — both backends observe
+  f() == 5 and x == 5). Dominance for reads is tracked along every
+  execution path: a write in both branches of an if/else dominates; a
+  write in a taken-only branch or inside a called function does not
+  (conservative). Load-time (module-level) value uses
   of later-declared fields remain E6000 — Java's illegal-forward-reference
   rule rejects them and LuaJIT reads the not-yet-declared global value at
   load.
@@ -469,9 +502,7 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   artifact. The generated artifact is a module class without a `main`; the
   conformance adapter compiles it together with a runner that auto-invokes
   the zero-arity exported functions in declaration order and prints
-  non-null results (the Lua harness iterates `pairs()` — an unspecified
-  order — so fixtures with multiple zero-arity exports must not depend on
-  cross-backend invocation order), and initializes the module class via
+  non-null results, and initializes the module class via
   `Class.forName` when no function is auto-invoked so module-load-only
   fixtures still observe their load-time output. Module-level DEAL errors
   surface with the same `DEAL_ERROR_CODE: <code>` contract whether or not a
@@ -479,3 +510,16 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   `ExceptionInInitializerError` (a `LinkageError`, not a
   `RuntimeException`, raised when the first auto-invocation triggers class
   initialization) into the same handler.
+  The cross-backend invocation contract is deliberately ASYMMETRIC: the
+  JVM runner invokes zero-arity exports in declaration order and PRINTS
+  each non-null result with Java's default formatting
+  (`System.out.println(double)` prints `1.0`/`1.0E300`, not LuaJIT's
+  `tostring` `1`/`1e+300`), while the Lua harness iterates `pairs()`
+  (an unspecified order) and DISCARDS the results. Therefore fixtures
+  with multiple zero-arity exports must not depend on cross-backend
+  invocation order, result-value assertions (`expectedOutput` equal to
+  an export's printed return value) are JVM-only, and cross-backend
+  fixtures must route every observable output through `std/console` —
+  never through an export's return value. Every current fixture has at
+  most one zero-arity export, and every cross-backend observable output
+  goes through `console.log`/`console.error`.

@@ -118,7 +118,7 @@ public class JvmBackendTest {
             testModuleLevelStatements();
             testShadowedInitializer();
             testUseBeforeDeclarationRejected();
-            testFunctionBodyModuleFieldReadAllowed();
+            testFunctionBodyModuleFieldAccessGuards();
             testAssignmentBeforeDeclarationRejected();
             testDeadCodeAfterNonCompletingStatements();
             testRuntimeErrorCodes();
@@ -1141,84 +1141,151 @@ public class JvmBackendTest {
      * javac rejects after the CLI reported success (`x = 5; let x = 1`
      * inside a function: LuaJIT writes the enclosing scope and then the
      * later `local` shadows it; Java has no forward-reference target).
-     * Module-level writes to later-declared fields and function-body writes
-     * to a module field stay allowed (JLS §8.3.3 forward-reference LHS
-     * exception / LuaJIT's upvalue write — same observable result).
+     * Module-level writes to later-declared fields stay allowed
+     * (JLS §8.3.3 forward-reference LHS exception; the later initializer
+     * wins, exactly like LuaJIT), and so do function-body writes to a
+     * module field declared BEFORE the function (LuaJIT's upvalue write —
+     * full parity). Function-body writes to a field declared AFTER the
+     * function are E6000 (LuaJIT binds them to the GLOBAL, leaving the
+     * module-local untouched; a Java static-field write would pollute
+     * later readers) — covered by
+     * {@link #testFunctionBodyModuleFieldAccessGuards()}.
      */
     /**
-     * Function-body reads of a declared module field must NOT be rejected
-     * by the use-before-declaration guard, even when the field is declared
-     * later: Java method bodies may legally reference later-declared
-     * static fields (the illegal-forward-reference rule of JLS §8.3.3
-     * covers only initializers), and the post-load semantics match
-     * LuaJIT — a function declared after the field reads the module-local
-     * upvalue (the initialized value, exactly what the static field holds
-     * after class init), and a function declared before the field reads
-     * the global, which a prior write established in the canonical
-     * `x = 5; return x;` shape (verified with real luajit: test() = 5).
-     * The reviewer's round-4 repro must compile and run, never E6000.
+     * Function-body access to a module field is governed by the field's
+     * declaration order relative to the function:
+     * <ul>
+     * <li>a function declared AFTER the field reads/writes the
+     * module-local upvalue — emitted as a plain static-field access,
+     * full parity (the canonical write-then-read shape is allowed and
+     * runs identically on both backends, pinned by the cross-backend
+     * fixture {@code jvm-function-field-write-parity});</li>
+     * <li>a function declared BEFORE the field does not capture the
+     * module-local under LuaJIT (the local does not exist when the
+     * function value is created): every access in its body binds to the
+     * GLOBAL of the same name. A no-prior-write read reads the global
+     * nil at call time and fails (E8001) while Java would silently read
+     * the initialized static field; a write targets the global — the
+     * module-local is untouched, so later readers observe the
+     * initializer value — while Java would write the static field and
+     * pollute every later reader. Both shapes are E6000 (the
+     * write-then-read shape included: the function's own read observes
+     * the global write under LuaJIT, but the polluted Java field remains
+     * observable by later readers).</li>
+     * </ul>
      */
-    private static void testFunctionBodyModuleFieldReadAllowed() throws Exception {
-        System.out.println("-- Function-body reads of later module fields: write-dominance --");
+    private static void testFunctionBodyModuleFieldAccessGuards() throws Exception {
+        System.out.println("-- Function-body module-field access guards (declaration order) --");
 
-        // The reviewer's exact repro: a pre-declaration function writes the
-        // module field (allowed: the static field / LuaJIT's global), then
-        // reads it. Both backends observe 5 (cross-backend parity fixture
-        // jvm-function-field-forward-read).
-        ExecResult repro = compileAndRunJvm("""
+        // ---- Allowed: the field is declared BEFORE the function ----
+        // (LuaJIT's upvalue write/read = Java's static-field write/read).
+        ExecResult parity = compileAndRunJvm("""
+            let x: int = 1;
             function f(): int { x = 5; return x; }
-            let x: int = 1;
-            export function test(): int { return f(); }
-            """, "forwardread");
-        check(repro.exitCode() == 0, "forward read+write exits 0");
-        check(repro.output().contains("5"),
-            "pre-declaration write then read observes 5 (LuaJIT parity): "
-                + repro.output());
+            export function test(): int { return f() + x; }
+            """, "fieldwriteparity");
+        check(parity.exitCode() == 0, "post-declaration write+read exits 0");
+        check(parity.output().contains("10"),
+            "post-declaration write+read: f()=5 and x=5 (upvalue parity): "
+                + parity.output());
 
-        // A write in EVERY branch of an if/else dominates the read after
-        // it (the intersection of both branches) — allowed.
+        // A write in EVERY branch of an if/else then a read — allowed.
         ExecResult bothBranches = compileAndRunJvm("""
-            function f(): int { if (true) { x = 5; } else { x = 5; } return x; }
             let x: int = 1;
+            function f(): int { if (true) { x = 5; } else { x = 5; } return x; }
             export function test(): int { return f(); }
-            """, "forwardreadboth");
+            """, "fieldwriteboth");
         check(bothBranches.exitCode() == 0, "both-branches write exits 0");
         check(bothBranches.output().contains("5"),
-            "write in both branches dominates the read (5): "
+            "post-declaration write in both branches reads 5: "
                 + bothBranches.output());
 
-        // Write-first reads in if-condition and call-argument positions
-        // (LuaJIT parity: the global write establishes the read value).
+        // Writes in if-condition and call-argument positions — allowed.
         ExecResult positions = compileAndRunJvm("""
+            let x: int = 1;
             function g(v: int): int { return v; }
             function f(): int { x = 5; if (x === 5) { return g(x); } return 0; }
-            let x: int = 1;
             export function test(): int { return f(); }
-            """, "forwardreadpositions");
-        check(positions.exitCode() == 0, "condition/argument forward read exits 0");
+            """, "fieldwritepositions");
+        check(positions.exitCode() == 0, "condition/argument write exits 0");
         check(positions.output().contains("5"),
-            "condition and call-argument forward reads observe 5: "
+            "condition and call-argument reads observe the upvalue write (5): "
                 + positions.output());
 
         // A function-local shadow of the module field is a local use, not a
-        // field read — allowed.
+        // field access — allowed.
         ExecResult shadowed = compileAndRunJvm("""
             function f(): int { let x: int = 9; return x; }
             let x: int = 5;
             export function test(): int { return f(); }
-            """, "forwardreadshadow");
+            """, "fieldshadow");
         check(shadowed.exitCode() == 0, "function-local shadow exits 0");
         check(shadowed.output().contains("9"),
             "function-local shadow reads the local (9): " + shadowed.output());
 
-        // ---- No-prior-write shapes are rejected with E6000 ----
-        // LuaJIT fails at call time reading the global nil (E8001) while
-        // Java would silently read the initialized static field; the
-        // backend's write-dominance analysis rejects instead of silently
-        // diverging (writes inside called functions and writes in
-        // taken-only branches do not establish dominance — conservative).
+        // ---- Rejected: the field is declared AFTER the function ----
+        // LuaJIT binds every access in a pre-declaration function to the
+        // GLOBAL: a no-prior-write read fails at call time (E8001) while
+        // Java would silently read the initialized static field; a write
+        // leaves the module-local untouched under LuaJIT (later readers
+        // observe the initializer value) while Java would pollute the
+        // static field. Both shapes — and every position a write can
+        // appear in — are E6000.
         List<String> rejected = List.of(
-            // the reviewer's exact repro: plain read, no prior write
+            // the reviewer's round-8 critical: write-then-read in a
+            // pre-declaration function plus a LATER reader — real luajit
+            // prints "parity" (f()==5, g()==1); the JVM static field
+            // would make g()==5
+            """
+            import * as console from "std/console"
+            function f(): int { x = 5; return x; }
+            let x: int = 1;
+            export function g(): int { return x; }
+            export function test(): null {
+              if (f() === 5 && g() === 1) { console.log("parity"); }
+            }
+            """,
+            // write-then-read without a later reader: the function's own
+            // read observes the global write under LuaJIT, but the write
+            // still pollutes the Java static field — rejected
+            """
+            function f(): int { x = 5; return x; }
+            let x: int = 1;
+            export function test(): int { return f(); }
+            """,
+            // write-only shape
+            """
+            function f(): null { if (true) { x = 5; } }
+            let x: int = 1;
+            export function test(): null { f(); }
+            """,
+            // write inside a block
+            """
+            function f(): null { { x = 5; } }
+            let x: int = 1;
+            export function test(): null { f(); }
+            """,
+            // write in both if/else branches then read — the write itself
+            // is rejected regardless of branch coverage
+            """
+            function f(): int { if (true) { x = 5; } else { x = 5; } return x; }
+            let x: int = 1;
+            export function test(): int { return f(); }
+            """,
+            // write in a return value position
+            """
+            function f(): int { return x = 5; }
+            let x: int = 1;
+            export function test(): int { return f(); }
+            """,
+            // write in a call-argument position
+            """
+            function g(v: int): null { }
+            function f(): int { g(x = 5); return 0; }
+            let x: int = 1;
+            export function test(): int { return f(); }
+            """,
+            // the reviewer's exact round-8 repro: plain read, no prior write
             """
             function f(): int { return x; }
             let x: int = 5;
@@ -1248,18 +1315,18 @@ public class JvmBackendTest {
             export function test(): int { return f(); }
             """);
         for (String source : rejected) {
-            Frontend f = compileFrontend(source, "jvmtest-forwardread-rej.deal");
+            Frontend f = compileFrontend(source, "jvmtest-forwardaccess-rej.deal");
             if (!f.errors().isEmpty()) {
-                fail("checker must accept the no-prior-write forward-read probe: "
+                fail("checker must accept the pre-declaration access probe: "
                     + f.errors());
                 continue;
             }
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                f.program(), f.checkResult(), "jvmtest-forwardread-rej.deal", "main");
+                f.program(), f.checkResult(), "jvmtest-forwardaccess-rej.deal", "main");
             check(res.hasErrors(),
-                "no-prior-write forward read is rejected with E6000");
+                "pre-declaration module-field access is rejected with E6000");
             check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 for the no-prior-write forward read: " + res.diagnostics());
+                "E6000 for the pre-declaration access: " + res.diagnostics());
         }
 
         // The load-time guards are untouched: a module-level initializer
@@ -1339,8 +1406,9 @@ public class JvmBackendTest {
                     + res.diagnostics());
         }
 
-        // Allowed: a function-body write to a module field resolves to the
-        // static field — LuaJIT's upvalue write; both observe 5.
+        // Allowed: a function-body write to a module field declared BEFORE
+        // the function resolves to the static field — LuaJIT's upvalue
+        // write; both observe 5.
         ExecResult fieldShadow = compileAndRunJvm("""
             let x: int = 1;
             export function test(): int { x = 5; return x; }

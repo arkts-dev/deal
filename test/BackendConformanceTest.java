@@ -81,11 +81,20 @@ import java.util.*;
  *       the LuaJIT runner.</li>
  * </ol>
  *
- * <p>Auto-invocation ordering: the Lua harness iterates the exported
- * functions with {@code pairs()} (an unspecified hash order) while the JVM
- * runner invokes them in declaration order. Fixtures with multiple
- * zero-arity exports therefore must not depend on invocation order across
- * backends; every current fixture has at most one zero-arity export.
+ * <p>Auto-invocation asymmetry (fixture-authoring contract): the Lua
+ * harness iterates the exported functions with {@code pairs()} (an
+ * unspecified hash order) and <em>discards</em> their results, while the
+ * JVM runner invokes them in declaration order and <em>prints</em>
+ * non-null results with Java's default formatting
+ * ({@code System.out.println(double)} prints {@code 1.0}/{@code 1.0E300},
+ * not LuaJIT's {@code tostring} {@code 1}/{@code 1e+300}). Therefore:
+ * fixtures with multiple zero-arity exports must not depend on
+ * invocation order across backends, result-value assertions
+ * ({@code expectedOutput} equal to an export's printed return value) are
+ * JVM-only, and cross-backend fixtures must route every observable
+ * output through {@code std/console}. Every current fixture has at most
+ * one zero-arity export, and every cross-backend observable output goes
+ * through {@code console.log}/{@code console.error}.
  */
 public class BackendConformanceTest {
 
@@ -645,19 +654,44 @@ public class BackendConformanceTest {
 
     /**
      * Builds the Java runner source for a fixture: auto-invokes the zero-arity
-     * exported functions in declaration order (the Lua harness iterates
-     * {@code pairs()} — an unspecified order — so fixtures with multiple
-     * zero-arity exports must not depend on cross-backend invocation order)
-     * and prints non-null results; DEAL runtime errors print
-     * {@code DEAL_ERROR_CODE: <code>} and exit 1, matching the LuaJIT runner's
-     * xpcall handler. When no function is auto-invoked, the runner
-     * initializes the module class with {@code Class.forName} so a
-     * module-load-only fixture's static initializers still run. A module-level
-     * error raised while a zero-arity export exists surfaces the same way:
-     * the first auto-invocation triggers class initialization, whose
+     * exported functions in declaration order and prints non-null results;
+     * DEAL runtime errors print {@code DEAL_ERROR_CODE: <code>} and exit 1,
+     * matching the LuaJIT runner's xpcall handler. When no function is
+     * auto-invoked, the runner initializes the module class with
+     * {@code Class.forName} so a module-load-only fixture's static
+     * initializers still run. A module-level error raised while a
+     * zero-arity export exists surfaces the same way: the first
+     * auto-invocation triggers class initialization, whose
      * {@link ExceptionInInitializerError} (a {@code LinkageError}, not a
      * {@code RuntimeException}) wraps the {@code DealError} — the runner
      * unwraps it into the same {@code DEAL_ERROR_CODE} contract.
+     *
+     * <p>Cross-backend invocation contract — result handling is
+     * deliberately ASYMMETRIC and fixture authors must not rely on export
+     * return values across backends:
+     * <ul>
+     * <li>the JVM runner invokes zero-arity exports in <em>declaration
+     * order</em> and <em>prints</em> each non-null result with Java's
+     * default formatting ({@code System.out.println(long)} prints
+     * {@code 5}; {@code System.out.println(double)} prints {@code 1.0}/
+     * {@code 1.0E300} — not LuaJIT's {@code tostring} {@code 1}/
+     * {@code 1e+300});</li>
+     * <li>the LuaJIT harness ({@link #buildRuntimeOkRunner} /
+     * {@link #buildXpcallRunner}) invokes zero-arity exports in
+     * {@code pairs()} order (unspecified) and <em>discards</em> their
+     * results.</li>
+     * </ul>
+     * Consequence: a printed return value is asserted only against the JVM
+     * runner (result-value assertions are JVM-only), a printed
+     * {@code double} is backend-dependent in formatting, fixtures with
+     * multiple zero-arity exports must not depend on cross-backend
+     * invocation order, and cross-backend fixtures must route every
+     * observable output through {@code std/console} — never through an
+     * export's return value. The LuaJIT runner keeps {@code pairs()} +
+     * discard because the pre-ISSUE-0091 harness contract must not change;
+     * the JVM runner prints results so a single-export fixture can assert
+     * its computed value end-to-end without an extra {@code console.log}
+     * round-trip.
      */
     static String buildJvmRunner(ProgramNode program, String className) {
         StringBuilder sb = new StringBuilder();

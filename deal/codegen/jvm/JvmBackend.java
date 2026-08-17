@@ -79,8 +79,8 @@ import java.util.Set;
  * (Java's illegal-forward-reference rule), writes to a later-declared
  * function-local with no enclosing binding ({@code x = 5; let x: int = 1}
  * inside a function — LuaJIT writes the enclosing scope; Java rejects the
- * forward reference; module-level writes to later-declared fields and
- * function-body writes to a module field stay allowed), module-level calls
+ * forward reference; module-level writes to later-declared fields stay
+ * allowed, see below), module-level calls
  * to functions whose bodies (transitively) read a module field declared
  * later than the call site (LuaJIT fails at load with a nil read; Java
  * would silently read the field's default value), and module-level calls
@@ -89,23 +89,31 @@ import java.util.Set;
  * value at its declaration point in source order and fails at load with a
  * nil read; Java hoists methods and would silently run) — are rejected
  * with {@code E6000} so the artifact is always valid Java and never
- * silently miscompiled. Function-body <em>reads</em> of declared module
- * fields are allowed even when the field is declared later: Java method
- * bodies may legally reference later-declared static fields (the
- * illegal-forward-reference rule of JLS §8.3.3 covers only initializers),
- * and the post-load semantics match LuaJIT — a function declared after
- * the field reads the module-local upvalue (the initialized value, exactly
- * what the static field holds after class init), and a function declared
- * before the field reads the global, which a prior write established in
- * the canonical {@code x = 5; return x;} shape (both backends observe 5,
- * pinned by a cross-backend fixture). A pre-declaration function reading
- * a later-declared field WITHOUT such a dominating write is rejected with
- * E6000: LuaJIT fails at call time reading the global nil (E8001) while
- * Java would silently read the initialized static field. Dominance is
- * tracked along every execution path inside the function (a write inside
- * a called function does not establish dominance — conservative), so the
- * write-then-read parity shape stays allowed while the no-prior-write
- * shape is never silently miscompiled. Dead code after a statement that
+ * silently miscompiled. Function-body access to a module field declared
+ * AFTER the function — read or write — is rejected with E6000 by the
+ * write-dominance analysis (see {@link #computeForwardFieldViolations}):
+ * LuaJIT does not capture the module-local in a pre-declaration function
+ * (the local does not exist when the function value is created), so
+ * <em>every</em> access binds to the GLOBAL of the same name at call
+ * time. A read without a dominating write inside the function reads the
+ * global nil and fails (E8001) while Java would silently read the
+ * initialized static field; a write targets LuaJIT's global — the
+ * module-local is untouched, so later readers observe the initializer
+ * value — while Java would write the static field and pollute every later
+ * reader. The write-then-read shape ({@code x = 5; return x;}) is
+ * included: the function's own read observes the global write under
+ * LuaJIT, but the polluted Java field remains observable by later
+ * readers. Reads are governed by dominance along every execution path
+ * (a write inside a called function or a taken-only branch does not
+ * establish dominance — conservative). Writes to module fields declared
+ * BEFORE the function remain the upvalue/static-field write with full
+ * parity (pinned by a cross-backend fixture), and module-level writes to
+ * later-declared fields stay allowed: LuaJIT's global write is
+ * overwritten by the initializer, Java's static-field write is
+ * overwritten by the field initializer, and every observer of the
+ * intermediate value (module-level pre-declaration reads, pre-declaration
+ * function accesses) is already E6000, so the final value is identical on
+ * both backends. Dead code after a statement that
  * cannot complete
  * normally — a {@code return}, or an {@code if}/{@code else} whose
  * branches all cannot complete normally (mirroring JLS §14.21) — is never
@@ -300,12 +308,27 @@ public final class JvmBackend {
         new LinkedHashMap<>();
 
     /** Function name → a module field declared after the function that its
-     * body reads without a dominating write inside the function
+     * body READS without a dominating write inside the function
      * (write-dominance analysis; see
-     * {@link #computeForwardReadViolations}). Emitting such a function is
-     * an E6000: LuaJIT fails at call time reading the global nil while
-     * Java would silently read the initialized static field. */
+     * {@link #computeForwardFieldViolations}). Emitting such a function is
+     * an E6000: LuaJIT fails at call time reading the global nil (E8001)
+     * while Java would silently read the initialized static field. */
     private final Map<String, String> forwardReadViolations =
+        new LinkedHashMap<>();
+
+    /** Function name → a module field declared after the function that its
+     * body WRITES (write-dominance analysis; see
+     * {@link #computeForwardFieldViolations}). Emitting such a function is
+     * an E6000: LuaJIT binds the pre-declaration write to the GLOBAL of
+     * the same name — the module-local does not exist when the function
+     * value is created — leaving the module-local untouched, so later
+     * readers (functions declared after the field, exported functions)
+     * observe the initializer value; Java would write the static field
+     * and pollute every later reader. The write-then-read shape
+     * ({@code x = 5; return x;}) is included: the function's own read
+     * observes the global write under LuaJIT, but the polluted Java field
+     * remains observable by later readers. */
+    private final Map<String, String> forwardWriteViolations =
         new LinkedHashMap<>();
 
     /** Statement index of the module-level statement currently being
@@ -480,7 +503,7 @@ public final class JvmBackend {
             }
         }
         computeTransitiveFieldReads();
-        computeForwardReadViolations();
+        computeForwardFieldViolations();
 
         String className = classNameFor(modulePath);
         emitLine("// Generated by DEAL compiler — JVM backend (skeleton). DO NOT EDIT.");
@@ -811,41 +834,61 @@ public final class JvmBackend {
     }
 
     // =========================================================================
-    // Function-body forward reads of later-declared module fields
-    // (write-dominance analysis)
+    // Function-body access to later-declared module fields (reads and
+    // writes — write-dominance analysis)
     // =========================================================================
 
     /**
-     * Computes, for every module-level function, whether its body reads a
-     * module field declared AFTER the function without a dominating write
-     * inside the function, recording the first such field in
-     * {@link #forwardReadViolations}. LuaJIT: a function declared before a
-     * field reads the GLOBAL of the same name at call time (the
-     * module-local does not exist when the function value is created),
-     * which is nil unless a prior write established it — the
-     * no-prior-write read fails at call time (E8001) while Java silently
-     * reads the initialized static field. The canonical write-then-read
-     * shape ({@code function f(): int { x = 5; return x; } let x: int = 1;})
-     * stays allowed: the write dominates the read on every path, so both
-     * backends observe 5. Writes inside called functions do not establish
-     * dominance (conservative: a callee's writes may be conditional), and
-     * a write inside a taken-only branch does not dominate reads after the
-     * branch (LuaJIT would read the global nil when the branch is not
-     * taken) — both shapes are rejected rather than silently diverging.
+     * Computes, for every module-level function, the first module field
+     * declared AFTER the function that its body accesses without full
+     * parity, recording reads without a dominating write in
+     * {@link #forwardReadViolations} and writes in
+     * {@link #forwardWriteViolations}. LuaJIT: a function declared before
+     * a field does not capture the module-local — the local does not
+     * exist when the function value is created — so every access in its
+     * body binds to the GLOBAL of the same name at call time.
+     * <ul>
+     * <li>A READ of a later-declared field without a dominating write
+     * inside the function reads the global nil at call time and fails
+     * (E8001) unless a prior write established it, while Java silently
+     * reads the initialized static field — rejected rather than silently
+     * diverging. Writes inside called functions do not establish
+     * dominance (conservative: a callee's writes may be conditional),
+     * and a write inside a taken-only branch does not dominate reads
+     * after the branch (LuaJIT would read the global nil when the
+     * branch is not taken) — both shapes are rejected.</li>
+     * <li>A WRITE to a later-declared field is rejected outright (every
+     * position: statement, block, if/else branch, return value, call
+     * argument): LuaJIT writes the GLOBAL, leaving the module-local
+     * untouched so later readers observe the initializer value, while
+     * Java would write the static field and pollute every later reader.
+     * The write-then-read shape ({@code x = 5; return x;}) is included —
+     * the function's own read observes the global write under LuaJIT,
+     * but the polluted Java field remains observable by later readers.
+     * Writes to fields declared BEFORE the function stay allowed (the
+     * upvalue/static-field write — full parity, pinned by a
+     * cross-backend fixture).</li>
+     * </ul>
      */
-    private void computeForwardReadViolations() {
+    private void computeForwardFieldViolations() {
         for (Map.Entry<String, FunctionDeclaration> e : moduleFunctions.entrySet()) {
             Integer declIdx = moduleFunctionIndices.get(e.getKey());
             if (declIdx == null) continue;
-            Set<String> violations = new LinkedHashSet<>();
+            Set<String> readViolations = new LinkedHashSet<>();
+            Set<String> writeViolations = new LinkedHashSet<>();
             Deque<Set<String>> locals = new ArrayDeque<>();
             Set<String> params = new LinkedHashSet<>();
             for (Parameter p : e.getValue().params()) params.add(p.name());
             locals.push(params);
             walkDominanceList(e.getValue().body().statements(), locals,
-                new LinkedHashSet<>(), declIdx, violations);
-            if (!violations.isEmpty()) {
-                forwardReadViolations.put(e.getKey(), violations.iterator().next());
+                new LinkedHashSet<>(), declIdx, readViolations, writeViolations);
+            if (!readViolations.isEmpty()) {
+                forwardReadViolations.put(e.getKey(),
+                    readViolations.iterator().next());
+            }
+            if (!writeViolations.isEmpty()) {
+                forwardWriteViolations.put(e.getKey(),
+                    writeViolations.iterator().next());
             }
         }
     }
@@ -855,31 +898,35 @@ public final class JvmBackend {
      * agreement: a global write inside a block persists after it). */
     private void walkDominanceList(List<StatementNode> stmts,
             Deque<Set<String>> locals, Set<String> written, int fnDeclIdx,
-            Set<String> violations) {
+            Set<String> readViolations, Set<String> writeViolations) {
         for (StatementNode stmt : stmts) {
-            walkDominanceStmt(stmt, locals, written, fnDeclIdx, violations);
+            walkDominanceStmt(stmt, locals, written, fnDeclIdx,
+                readViolations, writeViolations);
         }
     }
 
     private void walkDominanceStmt(StatementNode stmt, Deque<Set<String>> locals,
-            Set<String> written, int fnDeclIdx, Set<String> violations) {
+            Set<String> written, int fnDeclIdx, Set<String> readViolations,
+            Set<String> writeViolations) {
         switch (stmt) {
             case VariableDeclaration vd -> {
                 walkDominanceExpr(vd.initializer(), locals, written,
-                    fnDeclIdx, violations);
+                    fnDeclIdx, readViolations, writeViolations);
                 locals.peek().add(vd.name());
             }
             case ReturnStatement rs -> rs.expr().ifPresent(
-                e -> walkDominanceExpr(e, locals, written, fnDeclIdx, violations));
+                e -> walkDominanceExpr(e, locals, written, fnDeclIdx,
+                    readViolations, writeViolations));
             case ExpressionStatement es ->
-                walkDominanceExpr(es.expr(), locals, written, fnDeclIdx, violations);
+                walkDominanceExpr(es.expr(), locals, written, fnDeclIdx,
+                    readViolations, writeViolations);
             case IfStatement is -> {
                 walkDominanceExpr(is.condition(), locals, written,
-                    fnDeclIdx, violations);
+                    fnDeclIdx, readViolations, writeViolations);
                 Set<String> thenWritten = new LinkedHashSet<>(written);
                 locals.push(new LinkedHashSet<>());
                 walkDominanceList(is.thenBlock().statements(), locals,
-                    thenWritten, fnDeclIdx, violations);
+                    thenWritten, fnDeclIdx, readViolations, writeViolations);
                 locals.pop();
                 if (is.elseBranch().isPresent()) {
                     Set<String> elseWritten = new LinkedHashSet<>(written);
@@ -887,13 +934,14 @@ public final class JvmBackend {
                         case Either.Left<IfStatement, Block> left -> {
                             locals.push(new LinkedHashSet<>());
                             walkDominanceStmt(left.value(), locals, elseWritten,
-                                fnDeclIdx, violations);
+                                fnDeclIdx, readViolations, writeViolations);
                             locals.pop();
                         }
                         case Either.Right<IfStatement, Block> right -> {
                             locals.push(new LinkedHashSet<>());
                             walkDominanceList(right.value().statements(), locals,
-                                elseWritten, fnDeclIdx, violations);
+                                elseWritten, fnDeclIdx, readViolations,
+                                writeViolations);
                             locals.pop();
                         }
                     }
@@ -914,7 +962,7 @@ public final class JvmBackend {
             case Block b -> {
                 locals.push(new LinkedHashSet<>());
                 walkDominanceList(b.statements(), locals, written,
-                    fnDeclIdx, violations);
+                    fnDeclIdx, readViolations, writeViolations);
                 locals.pop();
             }
             // Unsupported statement kinds (loops, try, nested functions,
@@ -933,7 +981,8 @@ public final class JvmBackend {
      * argument is visible to a read in a later one (LuaJIT agreement).
      */
     private void walkDominanceExpr(ExpressionNode e, Deque<Set<String>> locals,
-            Set<String> written, int fnDeclIdx, Set<String> violations) {
+            Set<String> written, int fnDeclIdx, Set<String> readViolations,
+            Set<String> writeViolations) {
         switch (e) {
             case IdentifierExpr id -> {
                 String name = id.name();
@@ -942,37 +991,52 @@ public final class JvmBackend {
                         && moduleFieldIndices.containsKey(name)) {
                     Integer idx = moduleFieldIndices.get(name);
                     if (idx != null && idx > fnDeclIdx && !written.contains(name)) {
-                        violations.add(name);
+                        readViolations.add(name);
                     }
                 }
             }
             case BinaryExpr bin -> {
-                walkDominanceExpr(bin.left(), locals, written, fnDeclIdx, violations);
-                walkDominanceExpr(bin.right(), locals, written, fnDeclIdx, violations);
+                walkDominanceExpr(bin.left(), locals, written, fnDeclIdx,
+                    readViolations, writeViolations);
+                walkDominanceExpr(bin.right(), locals, written, fnDeclIdx,
+                    readViolations, writeViolations);
             }
             case UnaryExpr u ->
-                walkDominanceExpr(u.expr(), locals, written, fnDeclIdx, violations);
+                walkDominanceExpr(u.expr(), locals, written, fnDeclIdx,
+                    readViolations, writeViolations);
             case CallExpr call -> {
                 // Callee identifiers are hoisted function names (a field
                 // callee would be a function-valued field — unsupported);
                 // walk the arguments only.
                 for (ExpressionNode arg : call.args()) {
-                    walkDominanceExpr(arg, locals, written, fnDeclIdx, violations);
+                    walkDominanceExpr(arg, locals, written, fnDeclIdx,
+                        readViolations, writeViolations);
                 }
             }
             case AssignmentExpr ae -> {
-                walkDominanceExpr(ae.value(), locals, written, fnDeclIdx, violations);
+                walkDominanceExpr(ae.value(), locals, written, fnDeclIdx,
+                    readViolations, writeViolations);
                 if (ae.target() instanceof IdentifierExpr id) {
                     String name = id.name();
                     if (!isLocallyBound(locals, name)
                             && symbols.resolve(name) instanceof Symbol.VariableSymbol
                             && moduleFieldIndices.containsKey(name)) {
+                        Integer idx = moduleFieldIndices.get(name);
+                        // A write to a field declared after the function is
+                        // rejected outright (global-vs-static-field
+                        // divergence), in every position the assignment can
+                        // appear: statement, block, if/else branch, return
+                        // value, call argument.
+                        if (idx != null && idx > fnDeclIdx) {
+                            writeViolations.add(name);
+                        }
                         written.add(name);
                     }
                 }
             }
             case MemberAccessExpr mae ->
-                walkDominanceExpr(mae.object(), locals, written, fnDeclIdx, violations);
+                walkDominanceExpr(mae.object(), locals, written, fnDeclIdx,
+                    readViolations, writeViolations);
             // Literals and unsupported forms (rejected later) are not walked.
             default -> { }
         }
@@ -1172,16 +1236,39 @@ public final class JvmBackend {
             return;
         }
 
-        // A pre-declaration function reading a later-declared module field
-        // without a dominating write inside the function: LuaJIT reads the
-        // global nil at call time and fails (E8001) while Java would
-        // silently read the initialized static field — reject instead of
-        // silently diverging (write-dominance analysis, conservative:
-        // writes via called functions do not establish dominance).
-        String forwardViolation = forwardReadViolations.get(fd.name());
-        if (forwardViolation != null) {
+        // A pre-declaration function accessing a later-declared module
+        // field is rejected (write-dominance analysis):
+        //  - a WRITE binds to LuaJIT's GLOBAL of the same name (the
+        //    module-local does not exist when the function value is
+        //    created), leaving the module-local untouched so later readers
+        //    observe the initializer value, while Java would write the
+        //    static field and pollute every later reader — the
+        //    write-then-read shape (`x = 5; return x;`) is included: the
+        //    function's own read observes the global write under LuaJIT,
+        //    but the polluted Java field remains observable by later
+        //    readers;
+        //  - a READ without a dominating write inside the function reads
+        //    the global nil at call time and fails (E8001) while Java
+        //    would silently read the initialized static field (writes via
+        //    called functions and taken-only branches do not establish
+        //    dominance — conservative).
+        String forwardWriteViolation = forwardWriteViolations.get(fd.name());
+        if (forwardWriteViolation != null) {
+            unsupported("function '" + fd.name() + "' writing the module "
+                + "field '" + forwardWriteViolation + "' declared after the "
+                + "function (LuaJIT binds the pre-declaration write to the "
+                + "GLOBAL of the same name — the module-local does not exist "
+                + "when the function value is created — leaving the "
+                + "module-local untouched so later readers observe the "
+                + "initializer value; Java would write the static field and "
+                + "pollute every later reader; the write-then-read shape is "
+                + "included)", fd.span());
+            return;
+        }
+        String forwardReadViolation = forwardReadViolations.get(fd.name());
+        if (forwardReadViolation != null) {
             unsupported("function '" + fd.name() + "' reading the module "
-                + "field '" + forwardViolation + "' declared after the "
+                + "field '" + forwardReadViolation + "' declared after the "
                 + "function without a dominating write inside the function "
                 + "(LuaJIT reads the global nil at call time and fails with "
                 + "E8001; Java would silently read the initialized static "
@@ -2033,8 +2120,13 @@ public final class JvmBackend {
                 // javac would reject. Module-level writes to later-declared
                 // fields (legal in Java, JLS §8.3.3 forward-reference LHS
                 // exception, same final value as LuaJIT) and function-body
-                // writes to a module field (LuaJIT's upvalue write) are
-                // allowed and keep using the static field name.
+                // writes to a module field declared BEFORE the function
+                // (LuaJIT's upvalue write — full parity) are allowed and
+                // keep using the static field name. Function-body writes
+                // to a field declared AFTER the function were already
+                // rejected in emitFunction (forwardWriteViolations:
+                // LuaJIT binds them to the GLOBAL, the Java static field
+                // would pollute later readers).
                 unsupported("assignment to '" + id.name() + "' before its "
                     + "declaration with no enclosing binding (LuaJIT writes "
                     + "the enclosing scope; Java rejects the forward "
@@ -2171,16 +2263,17 @@ public final class JvmBackend {
             // A value-position read of a module field from inside a
             // FUNCTION body is legal Java (method bodies may reference
             // later-declared static fields; the illegal-forward-reference
-            // rule of JLS §8.3.3 covers only initializers) and matches
-            // LuaJIT's post-load semantics: a function declared after the
-            // field reads the module-local upvalue (the initialized
-            // value — exactly what the static field holds after class
-            // init), and a function declared before the field reads the
-            // global, which a prior write established in the canonical
-            // `x = 5; return x;` shape. At module level (load time) a
-            // later-declared field is genuinely not-yet-declared under
-            // LuaJIT (nil unless written) and an illegal forward
-            // reference in Java — keep rejecting there.
+            // rule of JLS §8.3.3 covers only initializers). Reads of a
+            // field declared BEFORE the function are the module-local
+            // upvalue read — full parity. Reads of a field declared
+            // AFTER the function never reach this point: they are
+            // rejected by the write-dominance analysis in emitFunction
+            // (LuaJIT binds them to the GLOBAL at call time — nil unless
+            // a prior write established it — while Java would silently
+            // read the initialized static field). At module level (load
+            // time) a later-declared field is genuinely
+            // not-yet-declared under LuaJIT (nil unless written) and an
+            // illegal forward reference in Java — keep rejecting there.
             if (moduleFieldIndices.containsKey(name)
                     && currentModuleStatementIndex < 0) {
                 return false;
