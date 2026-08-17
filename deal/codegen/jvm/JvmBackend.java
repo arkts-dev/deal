@@ -258,6 +258,14 @@ public final class JvmBackend {
      * …): DEAL allows lexical shadowing, but Java rejects redeclaring a
      * visible local. The {@code $n} suffix can never collide with a
      * translation ({@link #javaName} escapes every {@code $} as {@code $d}).
+     * The disambiguation compares EMITTED Java names across every visible
+     * scope (ISSUE-0093 fix): a parameter shadowing a module field is
+     * declared as {@code x$1} in BOTH the method signature and the body
+     * (the signature previously emitted the raw translation while the body
+     * read the disambiguated name — an artifact javac rejected), and a
+     * shadowing declaration never reuses an enclosing binding's emitted
+     * name, so {@code let x: int = x + 1} over a parameter reads the
+     * parameter, exactly like LuaJIT's {@code local x = x + 1}.
      */
     private final Deque<Map<String, String>> localScopes = new ArrayDeque<>();
 
@@ -1345,6 +1353,23 @@ public final class JvmBackend {
             return;
         }
 
+        // Declare the parameters in a fresh scope BEFORE building the
+        // signature: the signature must use each parameter's DECLARED
+        // (possibly disambiguated) Java name, not the raw {@link #javaName}
+        // translation. A parameter that shadows a module field (or another
+        // visible binding) gets a {@code $n} suffix from
+        // {@link #declareLocal}; emitting the raw name in the signature
+        // while the body reads the suffixed name produced an artifact javac
+        // rejected after the CLI reported success ({@code static long
+        // f(long x) { return intAdd(x$1, 1L); }} — cannot find symbol
+        // x$1).
+        Map<String, String> paramScope = new LinkedHashMap<>();
+        localScopes.push(paramScope);
+        List<String> paramNames = new ArrayList<>();
+        for (Parameter p : fd.params()) {
+            paramNames.add(declareLocal(p.name()));
+        }
+
         StringBuilder sig = new StringBuilder();
         if (exported) sig.append("public ");
         sig.append("static ").append(javaReturn).append(' ')
@@ -1352,17 +1377,11 @@ public final class JvmBackend {
         for (int i = 0; i < fd.params().size(); i++) {
             if (i > 0) sig.append(", ");
             sig.append(paramTypes.get(i)).append(' ')
-                .append(javaName(fd.params().get(i).name()));
+                .append(paramNames.get(i));
         }
         sig.append(") {");
         emitLine(sig.toString());
         indent++;
-
-        Map<String, String> paramScope = new LinkedHashMap<>();
-        localScopes.push(paramScope);
-        for (Parameter p : fd.params()) {
-            declareLocal(p.name());
-        }
         boolean savedModuleLevel = moduleLevel;
         int savedModuleIndex = currentModuleStatementIndex;
         currentModuleStatementIndex = -1;
@@ -1768,19 +1787,42 @@ public final class JvmBackend {
 
     /**
      * Declares {@code name} in the current scope and returns the emitted Java
-     * name. Shadowing declarations (a name already visible in an enclosing
-     * scope) get a collision-free {@code $n} suffix, because Java rejects
-     * redeclaring a visible local.
+     * name. Shadowing declarations (an emitted name already visible in an
+     * enclosing scope) get a collision-free {@code $n} suffix, because Java
+     * rejects redeclaring a visible local. The collision test compares
+     * EMITTED Java names (the scope values) across every visible scope, not
+     * DEAL names (the scope keys): a parameter or local already mapped to
+     * {@code g$1} makes the emitted name {@code g$1} unavailable for a new
+     * shadowing {@code g} (the old key-based test missed this — it asked
+     * whether {@code g$1} was a KEY, but it is a VALUE, so the new binding
+     * silently reused the taken name and its initializer's enclosing read
+     * then referred to the uninitialized new binding instead of the outer
+     * one). Module fields participate: their emitted static-field names are
+     * visible to the whole module, and disambiguating against them keeps
+     * the shadowed-initializer lowering (`long x$1 = x + 1;` — the RHS `x`
+     * resolves to the field, since a Java local's scope starts at its own
+     * initializer) legal.
      */
     private String declareLocal(String name) {
         String base = javaName(name);
         String mapped = base;
         int n = 1;
-        while (localJavaName(mapped) != null) {
+        while (emittedNameVisible(mapped)) {
             mapped = base + "$" + (n++);
         }
         localScopes.peek().put(name, mapped);
         return mapped;
+    }
+
+    /** True when {@code emittedName} is already used as the emitted Java
+     * name of any binding in a visible scope (module fields, enclosing
+     * locals, parameters). Java forbids two visible locals with the same
+     * name, so the new binding must take a fresh one. */
+    private boolean emittedNameVisible(String emittedName) {
+        for (Map<String, String> scope : localScopes) {
+            if (scope.containsValue(emittedName)) return true;
+        }
+        return false;
     }
 
     private String emitIdentifier(IdentifierExpr id) {

@@ -1,0 +1,217 @@
+{
+  "version": "1.0",
+  "description": "JVM functions and direct calls slice (ISSUE-0093). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: direct function calls, multiple parameters (mixed types), return values, nested calls, direct self-recursion (factorial and the double-self-call fibonacci, plus a side-effecting void recursion), left-to-right argument evaluation order with side effects (all-inline and hoisted/inline-mixed argument positions), parameter shadowing (a parameter shadowing a module field, and a let shadowing a parameter that itself shadows a module field), and two frontend compile-error gates rejected before any backend runs (E3009 arity mismatch, E5001 argument-type mismatch).",
+  "tests": [
+    {
+      "name": "jvm-fn-direct-call",
+      "description": "A direct call to a module function passes the argument into the callee and observes its computed result",
+      "source": "function greet(name: string): string { return \"hi-\" + name; }\nexport function test(): string { return greet(\"jvm-fn\"); }",
+      "expectedOutput": "hi-jvm-fn",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function greet: string",
+        "call : string"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fn-multiple-params",
+      "description": "Functions with multiple parameters of mixed types (int triple, boolean + string pair) are called with exact argument counts",
+      "source": "function classify(a: int, b: int, c: int): int { return a * 100 + b * 10 + c; }\nfunction pick(flag: boolean, yes: string, no: string): string { if (flag) { return yes; } return no; }\nexport function test(): int {\n  let i: int = classify(3, 2, 1);\n  let s: string = pick(true, \"jvm\", \"lua\");\n  if (s === \"jvm\") { return i; }\n  return 0;\n}",
+      "expectedOutput": "321",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function classify: int",
+        "function pick: string"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fn-return-values",
+      "description": "Return values flow through a call chain: each callee's returned value feeds the next computation (LuaJIT reference: double(21) * 2 = 84)",
+      "source": "function double(x: int): int { return x * 2; }\nfunction add(a: int, b: int): int { return a + b; }\nexport function test(): int {\n  let a: int = double(21);\n  let b: int = add(a, a);\n  return b;\n}",
+      "expectedOutput": "84",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function double: int",
+        "function add: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fn-nested-calls",
+      "description": "Calls nested inside call arguments (callee of a callee, including argument sub-expressions of nested callees) evaluate innermost-first to 8",
+      "source": "function inc(x: int): int { return x + 1; }\nfunction add(a: int, b: int): int { return a + b; }\nexport function test(): int { return add(inc(inc(1)), inc(inc(inc(2)))); }",
+      "expectedOutput": "8",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function inc: int",
+        "call : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fn-self-recursion-factorial",
+      "description": "Direct self-recursion: factorial calls itself until the base case, computing fact(6) = 720",
+      "source": "function fact(n: int): int {\n  if (n <= 1) { return 1; }\n  return n * fact(n - 1);\n}\nexport function test(): int { return fact(6); }",
+      "expectedOutput": "720",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function fact: int",
+        "call : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fn-self-recursion-fibonacci",
+      "description": "Direct self-recursion with two self-calls in one expression: fibonacci computes fib(10) = 55",
+      "source": "function fib(n: int): int {\n  if (n <= 1) { return n; }\n  return fib(n - 1) + fib(n - 2);\n}\nexport function test(): int { return fib(10); }",
+      "expectedOutput": "55",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function fib: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fn-void-recursion",
+      "description": "A null-returning function recurses directly on itself: the hoisted recursive call runs per level, printing 'step' once per activation (walk(2) → 3 steps)",
+      "source": "import * as console from \"std/console\"\nfunction walk(n: int): null {\n  console.log(\"step\");\n  if (n > 0) { walk(n - 1); }\n}\nexport function test(): null { walk(2); }",
+      "expectedOutput": "step\nstep\nstep",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function walk: null"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fn-arg-eval-order",
+      "description": "Arguments evaluate strictly left to right: each argument's observable side effect (a console.log before returning) runs before the next argument is evaluated, then the callee sees both results (12)",
+      "source": "import * as console from \"std/console\"\nfunction mark(label: string, value: int): int { console.log(label); return value; }\nfunction pair(a: int, b: int): int { return a * 10 + b; }\nexport function test(): int { return pair(mark(\"first\", 1), mark(\"second\", 2)); }",
+      "expectedOutput": "first\nsecond\n12",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function mark: int",
+        "function pair: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fn-arg-eval-order-hoisted",
+      "description": "Left-to-right order holds when an inline side-effecting argument precedes a hoisted null-typed argument: 'arg-ran' prints before the hoisted 'hoisted-ran' (the inline call is materialized into a temporary ahead of the hoisted pre-statement), and the callee receives 7",
+      "source": "import * as console from \"std/console\"\nfunction mark(label: string, value: int): int { console.log(label); return value; }\nfunction take(i: int, z: null): int { return i; }\nexport function test(): int { return take(mark(\"arg-ran\", 7), console.log(\"hoisted-ran\")); }",
+      "expectedOutput": "arg-ran\nhoisted-ran\n7",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function take: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fn-param-shadow-module-field",
+      "description": "A parameter shadowing a module field: the body reads the parameter (5 → 6), the signature and the body use the same disambiguated Java name, and the module field keeps its own value",
+      "source": "let x: int = 1;\nfunction f(x: int): int { return x + 1; }\nexport function test(): int { return f(5); }",
+      "expectedOutput": "6",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function f: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fn-param-shadow-let",
+      "description": "A let shadowing a parameter that itself shadows a module field: the let's initializer binds to the parameter (LuaJIT's `local g = g + 10` reads the outer binding → 15), and the module field stays 1 → f(5) + g = 16",
+      "source": "let g: int = 1;\nfunction f(g: int): int {\n  let g: int = g + 10;\n  return g;\n}\nexport function test(): int { return f(5) + g; }",
+      "expectedOutput": "16",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function f: int",
+        "let g: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fn-frontend-arity-rejected",
+      "description": "A direct call with the wrong argument count is rejected by the frontend type checker (E3009) before any backend runs — codegen/javac/java never invoked",
+      "source": "function f(a: int): int { return a; }\nexport function test(): int { return f(1, 2); }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3009",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fn-frontend-argtype-rejected",
+      "description": "A direct call with a wrong argument type is rejected by the frontend type checker (E5001) before any backend runs — codegen/javac/java never invoked",
+      "source": "function f(a: int): int { return a; }\nexport function test(): int { return f(1.5); }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E5001",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    }
+  ]
+}

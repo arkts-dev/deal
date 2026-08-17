@@ -28,9 +28,19 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Unit tests for the JVM backend skeleton (ISSUE-0091) plus the first
- * semantic slice (ISSUE-0092 — while loops and template literals):
+ * Unit tests for the JVM backend skeleton (ISSUE-0091), the first
+ * semantic slice (ISSUE-0092 — while loops and template literals), and
+ * the functions/direct-calls slice (ISSUE-0093 — parameter shadowing
+ * against module fields and other visible bindings):
  * <ul>
+ *   <li>parameter shadowing (ISSUE-0093): a parameter shadowing a
+ *       module field emits ONE disambiguated Java name in both the
+ *       method signature and the body, a {@code let} shadowing a
+ *       disambiguated parameter never reuses the parameter's emitted
+ *       name (its initializer's enclosing read binds to the parameter),
+ *       and double-nested local shadowing reads the nearest enclosing
+ *       binding — all compiled and executed with {@code javac} +
+ *       {@code java},</li>
  *   <li>while loops: counting/nested/shadowed loops, {@code while (false)}
  *       bodies that never run, per-iteration re-evaluation of conditions
  *       with hoisted null-typed side effects, function-body module-field
@@ -137,6 +147,7 @@ public class JvmBackendTest {
             testNumberModStringAndStderrRuntime();
             testModuleLevelStatements();
             testShadowedInitializer();
+            testParameterShadowing();
             testUseBeforeDeclarationRejected();
             testFunctionBodyModuleFieldAccessGuards();
             testAssignmentBeforeDeclarationRejected();
@@ -1486,6 +1497,88 @@ public class JvmBackendTest {
         check(fieldShadow.exitCode() == 0, "field shadow exits 0");
         check(fieldShadow.output().contains("6"),
             "field shadow computes 6 from the module field: " + fieldShadow.output());
+    }
+
+    /**
+     * ISSUE-0093 regression: a parameter or local that shadows a module
+     * field (or any other visible binding) must emit ONE Java name for
+     * the binding everywhere — the signature and the body. The old
+     * backend declared the parameter through {@code declareLocal} (which
+     * disambiguated against the visible module field, {@code x → x$1})
+     * but wrote the signature with the raw {@link JvmBackend#javaName}
+     * translation ({@code long x}), so the body read {@code x$1} and
+     * javac rejected the artifact after the CLI reported success
+     * ("cannot find symbol x$1"). The shadowed-{@code let} initializer
+     * case was also broken: {@code declareLocal} compared DEAL names
+     * (scope keys), not emitted names (scope values), so a local
+     * shadowing a disambiguated parameter silently reused the
+     * parameter's emitted name and its initializer's enclosing read then
+     * referred to the uninitialized new binding
+     * ({@code long g$1 = intAdd(g$1, 10L);} — "might not have been
+     * initialized"). Both shapes now emit valid Java and compute the
+     * LuaJIT values (Lua's {@code local x = x + 1} reads the enclosing
+     * binding).
+     */
+    private static void testParameterShadowing() throws Exception {
+        System.out.println("-- Parameter shadowing (ISSUE-0093) --");
+
+        // A parameter shadowing a module field: the body must read the
+        // parameter, not the field, and the signature/body names must match.
+        Frontend f = compileFrontend("""
+            let x: int = 1;
+            function f(x: int): int { return x + 1; }
+            export function test(): int { return f(5); }
+            """, "jvmtest-paramshadow.deal");
+        if (!f.errors().isEmpty()) {
+            fail("checker must accept the parameter-shadow probe: " + f.errors());
+            return;
+        }
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-paramshadow.deal", "main");
+        check(!res.hasErrors(), "parameter shadow emits without E6000");
+        check(res.source().contains("static long f(long x$1)"),
+            "signature uses the declared (disambiguated) parameter name: "
+                + res.source());
+        check(res.source().contains("intAdd(x$1, 1L)"),
+            "body reads the same declared parameter name");
+
+        ExecResult exec = compileAndRunJvm("""
+            let x: int = 1;
+            function f(x: int): int { return x + 1; }
+            export function test(): int { return f(5); }
+            """, "paramshadow");
+        check(exec.exitCode() == 0, "parameter shadow exits 0");
+        check(exec.output().contains("6"),
+            "parameter shadow computes 6 from the parameter: " + exec.output());
+
+        // A let shadowing a parameter that itself shadows a module field:
+        // the let's initializer binds to the parameter (LuaJIT's
+        // `local g = g + 10` reads the outer binding → 15), and the module
+        // field keeps its own value (1) → 16.
+        ExecResult triple = compileAndRunJvm("""
+            let g: int = 1;
+            function f(g: int): int {
+              let g: int = g + 10;
+              return g;
+            }
+            export function test(): int { return f(5) + g; }
+            """, "tripleshadow");
+        check(triple.exitCode() == 0, "triple shadow exits 0");
+        check(triple.output().contains("16"),
+            "let-shadow-parameter-shadow-field computes 15 + field 1 = 16: "
+                + triple.output());
+
+        // Double-nested local shadowing: each level reads the nearest
+        // enclosing binding ({@code x$2 = x$1 + 1} = 3).
+        ExecResult nested = compileAndRunJvm("""
+            let x: int = 1;
+            export function test(): int {
+              { let x: int = 2; { let x: int = x + 1; return x; } }
+            }
+            """, "nestedshadow");
+        check(nested.exitCode() == 0, "nested shadow exits 0");
+        check(nested.output().contains("3"),
+            "double-nested shadow computes 3: " + nested.output());
     }
 
     private static void testUseBeforeDeclarationRejected() {

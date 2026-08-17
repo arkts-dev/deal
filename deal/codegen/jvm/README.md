@@ -1,4 +1,4 @@
-# deal.codegen.jvm — JVM Backend Skeleton (ISSUE-0091)
+# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice)
 
 A small but real end-to-end JVM backend for the DEAL compiler. It walks the
 typed AST (the compiler's IR — `deal-compiler-architecture-v1`) and emits a
@@ -26,7 +26,7 @@ Supported (real semantics, spec JVM value mapping):
 | `string` | `java.lang.String` (`===` via `equals`; ordering via the emitted `scalarCompare` helper — Unicode scalar-value order, matching LuaJIT's UTF-8 bytewise order including supplementary characters) |
 | template literals | plain Java string concatenation in source order (`("a" + expr + "b")`) — checker-typed `string` interpolations, empty literal parts elided, an empty interpolation kept, a template with no interpolations emitted as its literal |
 | `null` | `void` returns / `Void` locals and params; `null === null` is `true`, `z === null`/`!==` emit Java `==`/`!=` (spec §Value equality) |
-| functions | `static` methods of the generated module class |
+| functions | `static` methods of the generated module class: parameters, return values, direct calls, nested calls, and direct self-recursion (a function body calling itself — the module-level use-before-declaration guard applies only to load-time call sites, never to function-body call sites) |
 | `let` locals / module fields | locals (shadowing disambiguated `$n`) / `static` fields |
 | `if`/`else if`/`else`, `return`, assignment, direct calls | plain Java control flow |
 | `while` loops | plain Java `while` with the condition routed through the emitted `loopCond` identity helper (javac never sees a constant-expression condition — JLS §14.21 keeps `while (false)` bodies and statements after `while (true)` reachable); the condition re-evaluates on every iteration, with hoisted null-typed side effects running inside the loop before each condition test; module-level while loops run in the load-time `static` initializer in source order and reject any `return` in their body with E6000 |
@@ -113,6 +113,27 @@ reports success for an artifact `javac` would reject.
   emitted *before* the new local is registered, mirroring Lua's
   `local x = x + 1` (RHS reads the outer `x`): `let x: int = 5; { let x: int
   = x + 1; return x; }` computes 6.
+- **Parameter shadowing emits one Java name per binding.** A parameter
+  (or local) that shadows a module field — or any other visible
+  binding — gets a collision-free `$n` suffix used in BOTH the method
+  signature and the body (ISSUE-0093 fix). The previous backend
+  declared the parameter through the disambiguating `declareLocal`
+  (`x → x$1` when a module field `x` exists) but wrote the signature
+  with the raw `javaName` translation (`static long f(long x)`), so
+  the body read `x$1` and javac rejected the artifact after the CLI
+  reported success ("cannot find symbol x$1"). The shadowed-`let`
+  initializer case was broken by the same machinery: `declareLocal`
+  compared DEAL names (scope keys), not emitted names (scope values),
+  so `let g: int = g + 10` over a disambiguated parameter silently
+  reused the parameter's emitted name and its initializer's enclosing
+  read referred to the uninitialized new binding (`long g$1 =
+  intAdd(g$1, 10L);` — "might not have been initialized"). Both
+  shapes now emit valid Java and compute the LuaJIT values: `let g:
+  int = 1; function f(g: int): int { let g: int = g + 10; return g; }
+  export function test(): int { return f(5) + g; }` returns 16 (the
+  let's RHS reads the parameter → 15; the module field keeps 1),
+  pinned by the fixtures `jvm-fn-param-shadow-module-field` /
+  `jvm-fn-param-shadow-let` and `JvmBackendTest.testParameterShadowing`.
 - **While conditions are never constant expressions to javac.** Every
   emitted loop routes its condition through the `loopCond` identity
   helper: `while (loopCond(cond)) { … }`. Per JLS §14.21 javac then
@@ -241,7 +262,14 @@ reports success for an artifact `javac` would reject.
   E6000 (detection is a fixpoint closure over the module-level call
   graph); calls whose callee and transitive callees are all declared
   before the call site run at load with LuaJIT parity (the declaration-
-  first interleaving shape is a cross-backend fixture).
+  first interleaving shape is a cross-backend fixture). The guard covers
+  only LOAD-TIME (module-level) call sites: calls inside function bodies
+  happen at call time, when every module function value is already
+  assigned under LuaJIT and every static method is hoisted under Java,
+  so direct self-recursion (`function fact(n: int): int { … return n *
+  fact(n - 1); }` — fixtures `jvm-fn-self-recursion-factorial` /
+  `jvm-fn-self-recursion-fibonacci` / `jvm-fn-void-recursion`) and
+  forward calls between functions run with full parity.
 - **Imports are rejected at the import statement.** Any `import` other than
   `std/console` is an E6000 at the import itself — even when unused —
   because the imported module's require-time side effects cannot be
@@ -333,6 +361,22 @@ reports success for an artifact `javac` would reject.
     `test/LuaBackendIntegrationTest`, `test/ConformanceTest`,
     `test/conformance/fixtures/*.json` `backends: ["luajit"]`) stays green
     and unmodified.
+  - JVM: `test/conformance/fixtures/jvm-functions-slice.json` — thirteen
+    ISSUE-0093 fixtures, all JVM-only, every runtime fixture passing
+    through the real frontend → real `JvmBackend` codegen → `javac`
+    subprocess → `java` subprocess executing the emitted artifact:
+    direct function calls, multiple parameters of mixed types,
+    return values flowing through a call chain, nested calls
+    (callee-of-callee argument sub-expressions), direct self-recursion
+    (factorial, the double-self-call fibonacci, and a side-effecting
+    void recursion whose hoisted recursive call runs per activation),
+    left-to-right argument evaluation order with side effects
+    (all-inline argument positions, and an inline argument materialized
+    into a temporary ahead of a hoisted null-typed argument), parameter
+    shadowing (a parameter shadowing a module field; a `let` shadowing
+    a parameter that itself shadows a module field), and two frontend
+    compile-error gates rejected before any backend (E3009 arity
+    mismatch, E5001 argument-type mismatch).
   - JVM: `test/conformance/fixtures/jvm-semantic-slice.json` — fourteen
     ISSUE-0092 fixtures, all JVM-only, every runtime fixture passing
     through the real frontend → real `JvmBackend` codegen → `javac`
