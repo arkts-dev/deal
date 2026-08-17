@@ -17,7 +17,12 @@ import java.util.*;
 /**
  * Loads backend-neutral JSON fixture tests from
  * {@code test/conformance/fixtures/} and executes them against the
- * LuaJIT backend and (ISSUE-0091) the JVM backend.
+ * LuaJIT backend and (ISSUE-0091, ISSUE-0092) the JVM backend. The
+ * ISSUE-0092 semantic-slice fixtures live in
+ * {@code test/conformance/fixtures/jvm-semantic-slice.json} (while loops,
+ * template literals, and the surrounding primitive surface — JVM-only,
+ * each runtime fixture compiled with {@code javac} and executed with
+ * {@code java} against the emitted artifact).
  *
  * <p>Fixture format (per {@code conformance-test-architecture} D3, extended
  * by ISSUE-0091 with {@code expectedCompileError}):

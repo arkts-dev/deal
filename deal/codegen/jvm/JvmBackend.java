@@ -24,8 +24,9 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * JVM code generator (ISSUE-0091): a small but real end-to-end JVM backend
- * skeleton.
+ * JVM code generator (ISSUE-0091 skeleton, ISSUE-0092 first semantic
+ * slice — while loops and template literals): a small but real
+ * end-to-end JVM backend.
  *
  * <p>Walks the typed AST (the compiler's IR — see {@code deal-compiler-architecture-v1})
  * and emits a self-contained Java class whose static methods implement the
@@ -37,17 +38,44 @@ import java.util.Set;
  * run {@code javac}/{@code java}, which is exactly why the backend
  * guarantees every artifact it emits is valid Java).
  *
- * <p>Skeleton scope (per ISSUE-0091): functions, {@code let} locals, module
- * fields, literals, int/number/boolean/string arithmetic and comparisons,
- * {@code if}/{@code else}, {@code return}, assignment, direct calls, the
+ * <p>Semantic slice scope (ISSUE-0091 skeleton + ISSUE-0092 slice):
+ * functions, {@code let} locals, module fields, literals,
+ * int/number/boolean/string arithmetic and comparisons, {@code if}/
+ * {@code else}, {@code while} loops, {@code return}, assignment, direct
+ * calls, template literals (lowered to string concatenation), the
  * {@code int()}/{@code number()} conversion intrinsics, and {@code std/console}
  * output ({@code console.log}/{@code console.error} → {@code System.out}/
  * {@code System.err}). Anything outside this scope — modules (any import
  * other than {@code std/console}, rejected at the import statement itself
  * even when unused), classes, arrays, tables, stdlib modules other than
- * {@code std/console}, async, host ABI, {@code @jsonable}, loops, try/throw —
- * is rejected with a backend {@code E6000} diagnostic, never silently
- * miscompiled.
+ * {@code std/console}, async, host ABI, {@code @jsonable}, for/for-of
+ * loops, break/continue, try/throw — is rejected with a backend
+ * {@code E6000} diagnostic, never silently miscompiled.
+ *
+ * <p>While loops (ISSUE-0092) emit plain Java {@code while} loops. The
+ * condition routes through the emitted {@code loopCond} identity helper so
+ * javac never sees a constant-expression condition: per JLS §14.21 a
+ * constant-true condition would make statements after the loop
+ * unreachable (a javac error after the CLI reported success) and a
+ * constant-false condition would make the loop body unreachable. A
+ * condition whose evaluation hoisted side-effecting pre-statements (a
+ * null-typed call) is emitted as {@code while (true) { pre; if
+ * (!loopCond(cond)) break; body }} so the pre-statements — and therefore
+ * the whole condition — re-evaluate on every iteration, exactly where
+ * LuaJIT re-evaluates the condition each time. The while body is its own
+ * scope (block-local {@code let}s match LuaJIT's per-body scope), and
+ * {@code while (false)} bodies are emitted (reachable to javac because of
+ * {@code loopCond}) and simply never run, matching LuaJIT. Module-level
+ * while loops run inside the load-time {@code static} initializer, and a
+ * {@code return} nested anywhere inside a module-level while body is
+ * rejected with E6000 (Java initializers cannot return).
+ *
+ * <p>Template literals (ISSUE-0092) emit Java string concatenation over
+ * the literal and interpolated parts; interpolated expressions are
+ * string-typed by the checker (E3016 otherwise), so no runtime conversion
+ * exists — the emitted form is {@code ("a" + expr + "b")}, with empty
+ * literal parts elided and single-part templates emitted as the literal
+ * itself.
  *
  * <p>Load-time semantics are preserved: non-declaration module-level
  * statements are emitted into {@code static} initializer blocks interleaved
@@ -443,7 +471,8 @@ public final class JvmBackend {
         Map.entry("intFromNumber", List.of("double")),
         Map.entry("numberFromInt", List.of("long")),
         Map.entry("scalarCompare", List.of("java.lang.String", "java.lang.String")),
-        Map.entry("checkInt", List.of("long")));
+        Map.entry("checkInt", List.of("long")),
+        Map.entry("loopCond", List.of("boolean")));
 
     /**
      * Translates a DEAL identifier to a Java identifier. The encoding is
@@ -606,6 +635,7 @@ public final class JvmBackend {
                 }
                 yield found;
             }
+            case WhileStatement ws -> containsModuleReturn(ws.body());
             default -> false;
         };
     }
@@ -740,11 +770,17 @@ public final class JvmBackend {
                     }
                 }
             }
+            case WhileStatement ws -> {
+                collectExprRefs(ws.condition(), locals, fieldReads,
+                    calledFunctions);
+                collectBlockRefs(ws.body(), locals, fieldReads,
+                    calledFunctions);
+            }
             case Block b -> collectBlockRefs(b, locals, fieldReads,
                 calledFunctions);
-            // Unsupported statement kinds (loops, try, nested functions,
-            // classes, …) are rejected with E6000 when emitted; nothing to
-            // walk here.
+            // Unsupported statement kinds (for/for-of, try, nested
+            // functions, classes, …) are rejected with E6000 when emitted;
+            // nothing to walk here.
             default -> { }
         }
     }
@@ -791,6 +827,13 @@ public final class JvmBackend {
             // initializer overwrites), so only the value side is walked.
             case AssignmentExpr ae ->
                 collectExprRefs(ae.value(), locals, fieldReads, calledFunctions);
+            // Template interpolations are value positions; the literal
+            // parts carry no references.
+            case TemplateLiteralExpr tl -> {
+                for (ExpressionNode part : tl.parts()) {
+                    collectExprRefs(part, locals, fieldReads, calledFunctions);
+                }
+            }
             // Literals and unsupported forms (rejected later) are not walked.
             default -> { }
         }
@@ -965,9 +1008,23 @@ public final class JvmBackend {
                     fnDeclIdx, readViolations, writeViolations);
                 locals.pop();
             }
-            // Unsupported statement kinds (loops, try, nested functions,
-            // classes, …) are rejected with E6000 when emitted; nothing to
-            // walk here.
+            case WhileStatement ws -> {
+                walkDominanceExpr(ws.condition(), locals, written,
+                    fnDeclIdx, readViolations, writeViolations);
+                Set<String> bodyWritten = new LinkedHashSet<>(written);
+                locals.push(new LinkedHashSet<>());
+                walkDominanceList(ws.body().statements(), locals, bodyWritten,
+                    fnDeclIdx, readViolations, writeViolations);
+                locals.pop();
+                // Writes inside the loop body do not dominate anything
+                // after the loop: the body may execute zero times, so a
+                // later read would still hit LuaJIT's global nil on the
+                // not-taken path. bodyWritten is deliberately discarded
+                // (conservative, like the taken-only-branch rule).
+            }
+            // Unsupported statement kinds (for/for-of, try, nested
+            // functions, classes, …) are rejected with E6000 when emitted;
+            // nothing to walk here.
             default -> { }
         }
     }
@@ -1037,6 +1094,12 @@ public final class JvmBackend {
             case MemberAccessExpr mae ->
                 walkDominanceExpr(mae.object(), locals, written, fnDeclIdx,
                     readViolations, writeViolations);
+            case TemplateLiteralExpr tl -> {
+                for (ExpressionNode part : tl.parts()) {
+                    walkDominanceExpr(part, locals, written, fnDeclIdx,
+                        readViolations, writeViolations);
+                }
+            }
             // Literals and unsupported forms (rejected later) are not walked.
             default -> { }
         }
@@ -1087,6 +1150,11 @@ public final class JvmBackend {
         emitLine("// UTF-8, which is scalar-value order — including supplementary characters");
         emitLine("// (String.compareTo's UTF-16 code-unit order diverges there).");
         emitLine("static int scalarCompare(java.lang.String a, java.lang.String b) { int i = 0; int j = 0; while (i < a.length() && j < b.length()) { int ca = a.codePointAt(i); int cb = b.codePointAt(j); if (ca != cb) { return java.lang.Integer.compare(ca, cb); } i += java.lang.Character.charCount(ca); j += java.lang.Character.charCount(cb); } return java.lang.Integer.compare(a.length() - i, b.length() - j); }");
+        emitLine("// while conditions route through this identity helper so javac never sees a");
+        emitLine("// constant-expression condition (JLS §14.21): a constant-true condition");
+        emitLine("// would make statements after the loop unreachable and a constant-false");
+        emitLine("// condition would make the loop body unreachable — both javac errors.");
+        emitLine("static boolean loopCond(boolean v) { return v; }");
         emitLine();
     }
 
@@ -1123,7 +1191,7 @@ public final class JvmBackend {
             case ExportDeclaration ed -> emitExport(ed);
             case ClassDeclaration cd ->
                 unsupported("class declarations", cd.span());
-            case WhileStatement ws -> unsupported("while loops", ws.span());
+            case WhileStatement ws -> emitWhile(ws);
             case ForStatement fs -> unsupported("for loops", fs.span());
             case ForOfStatement fos -> unsupported("for-of loops", fos.span());
             case BreakStatement bs -> unsupported("break", bs.span());
@@ -1390,6 +1458,12 @@ public final class JvmBackend {
                         statementCompletesNormally(right.value());
                 };
             }
+            // The emitted loop routes its condition through the loopCond
+            // helper, so javac never sees a constant-expression condition:
+            // per JLS §14.21 the statement can complete normally (and
+            // statements after it stay reachable) unless the condition is
+            // constant-true — which the helper wrapper makes impossible.
+            case WhileStatement ws -> true;
             // Every other statement kind the skeleton emits completes
             // normally; unsupported kinds are rejected with E6000 when
             // emission reaches them.
@@ -1482,6 +1556,39 @@ public final class JvmBackend {
         } else {
             emitLine("}");
         }
+    }
+
+    private void emitWhile(WhileStatement ws) {
+        String condition = emitExpression(ws.condition());
+        if (preStatements.isEmpty()) {
+            // Plain form. The condition routes through the emitted loopCond
+            // identity helper so javac never sees a constant-expression
+            // condition (JLS §14.21): `while (true)` would make statements
+            // after the loop unreachable (LuaJIT never executes them, but
+            // javac rejects them), and `while (false)` would make the body
+            // unreachable (LuaJIT accepts it and skips the body).
+            emitLine("while (loopCond(" + condition + ")) {");
+            indent++;
+            emitScopedBlock(ws.body());
+            indent--;
+            emitLine("}");
+            return;
+        }
+        // A condition whose evaluation hoisted side-effecting statements
+        // (a null-typed call): LuaJIT re-evaluates the condition on every
+        // iteration, so the hoisted statements must run inside the loop
+        // before the condition test — never once before the loop. The
+        // `while (true)` head plus the reachable non-constant `if
+        // (!loopCond(...)) break;` keeps the statement completing normally
+        // per JLS §14.21 (the break is reachable because loopCond(...) is
+        // not a constant expression).
+        emitLine("while (true) {");
+        indent++;
+        flushPreStatements();
+        emitLine("if (!loopCond(" + condition + ")) { break; }");
+        emitScopedBlock(ws.body());
+        indent--;
+        emitLine("}");
     }
 
     private void emitBlock(Block b) {
@@ -1590,10 +1697,7 @@ public final class JvmBackend {
                 unsupported("has()", he.span());
                 yield "false";
             }
-            case TemplateLiteralExpr tl -> {
-                unsupported("template literals", tl.span());
-                yield "\"\"";
-            }
+            case TemplateLiteralExpr tl -> emitTemplateLiteral(tl);
             case AwaitExpression aw -> {
                 unsupported("await", aw.span());
                 yield "null";
@@ -1621,6 +1725,35 @@ public final class JvmBackend {
             case LiteralValue.NumberLiteral n -> javaDoubleLiteral(n.value());
             case LiteralValue.StringLiteral s -> quoteJavaString(s.value());
         };
+    }
+
+    /**
+     * Lowers a template literal to Java string concatenation. The parser
+     * alternates string-literal parts (even indices) with interpolated
+     * expressions (odd indices); the checker types every interpolation as
+     * {@code string} (E3016 otherwise) and the whole template as
+     * {@code string}, so no runtime conversion is involved. Empty literal
+     * parts are elided (Lua's {@code .. ""} concatenations contribute
+     * nothing), and a template with no interpolations is just its literal.
+     */
+    private String emitTemplateLiteral(TemplateLiteralExpr tl) {
+        List<ExpressionNode> parts = tl.parts();
+        if (parts.size() == 1) {
+            return emitExpression(parts.get(0));
+        }
+        StringBuilder sb = new StringBuilder("(");
+        boolean first = true;
+        for (int i = 0; i < parts.size(); i++) {
+            String emitted = emitExpression(parts.get(i));
+            if (i % 2 == 0 && emitted.equals("\"\"")) {
+                continue; // empty literal part contributes nothing
+            }
+            if (!first) sb.append(" + ");
+            sb.append(emitted);
+            first = false;
+        }
+        sb.append(")");
+        return sb.toString();
     }
 
     /** The emitted Java name bound to {@code name} in the nearest visible
@@ -2177,6 +2310,12 @@ public final class JvmBackend {
             // or a cannot-find-symbol reference (function body) that javac
             // rejects after the CLI reported success.
             case IfStatement is -> undeclaredUseInIfChain(is);
+            // The while condition is emitted directly by emitWhile (no
+            // per-statement guard runs for it) — a later-declared variable
+            // there would emit an illegal forward reference (module level)
+            // or a cannot-find-symbol reference (function body). Body
+            // statements are checked individually when emitted.
+            case WhileStatement ws -> undeclaredUseIn(ws.condition());
             case ReturnStatement rs -> rs.expr().map(this::undeclaredUseIn).orElse(null);
             case ExpressionStatement es -> undeclaredUseIn(es.expr());
             default -> null; // functions/imports/exports: separate scopes or no

@@ -28,8 +28,20 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Unit tests for the JVM backend skeleton (ISSUE-0091):
+ * Unit tests for the JVM backend skeleton (ISSUE-0091) plus the first
+ * semantic slice (ISSUE-0092 — while loops and template literals):
  * <ul>
+ *   <li>while loops: counting/nested/shadowed loops, {@code while (false)}
+ *       bodies that never run, per-iteration re-evaluation of conditions
+ *       with hoisted null-typed side effects, function-body module-field
+ *       dominance guards through loop bodies (a write inside a loop body
+ *       dominates nothing after the loop), module-level returns inside
+ *       while bodies, use-before-declaration in while conditions, and the
+ *       emitted {@code loopCond} identity helper (constant-expression
+ *       conditions are never visible to javac; a DEAL function colliding
+ *       with the helper signature is E6000),</li>
+ *   <li>template literals lowered to string concatenation (interpolated
+ *       and plain parts, empty parts elided, single-part templates),</li>
  *   <li>identifier translation and collision-safe class-name derivation,</li>
  *   <li>Java emission for the supported skeleton surface
  *       (literals, arithmetic, locals, if/else, console output, intrinsics),</li>
@@ -109,6 +121,14 @@ public class JvmBackendTest {
             testClassNameDerivation();
             testEmissionSmoke();
             testUnsupportedConstructsRejected();
+            testWhileLoops();
+            testWhileFalseBodySkipped();
+            testWhileHoistedConditionPerIteration();
+            testWhileLoopModuleFieldDominanceGuards();
+            testWhileModuleLevelReturnRejected();
+            testWhileUseBeforeDeclarationRejected();
+            testLoopCondHelperCollision();
+            testTemplateLiterals();
             testNullReturnSideEffects();
             testNullTypedInitializers();
             testNullTypedCapturesWithReassignment();
@@ -430,13 +450,6 @@ public class JvmBackendTest {
                 }
                 export function test(): int { return 1; }
                 """),
-            new Case("while loop", """
-                export function test(): int {
-                  let i: int = 0;
-                  while (i < 3) { i = i + 1; }
-                  return i;
-                }
-                """),
             new Case("array literal and indexing", """
                 export function test(): int {
                   let xs: int[] = [1, 2];
@@ -513,6 +526,390 @@ public class JvmBackendTest {
             check(res.hasErrors(), "backend rejects " + c.what());
             check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
                 "E6000 diagnostic for " + c.what() + ": " + res.diagnostics());
+        }
+    }
+
+
+    // =========================================================================
+    // ISSUE-0092 semantic slice: while loops and template literals
+    // =========================================================================
+
+    private static int occurrences(String haystack, String needle) {
+        int n = 0;
+        for (int i = 0; (i = haystack.indexOf(needle, i)) >= 0; i += needle.length()) {
+            n++;
+        }
+        return n;
+    }
+
+    /** While loops compute through local mutation (the ISSA-0092 slice
+     * surface: condition, body block scope, reassignment, return). */
+    private static void testWhileLoops() throws Exception {
+        System.out.println("-- While loops (javac + java) --");
+
+        ExecResult count = compileAndRunJvm("""
+            export function test(): int {
+              let i: int = 0;
+              let sum: int = 0;
+              while (i < 5) {
+                i = i + 1;
+                sum = sum + i;
+              }
+              return sum;
+            }
+            """, "whilecount");
+        check(count.exitCode() == 0, "counting while exits 0");
+        check(count.output().contains("15"),
+            "counting while sums 1..5 → 15: " + count.output());
+
+        ExecResult nested = compileAndRunJvm("""
+            export function test(): int {
+              let total: int = 0;
+              let i: int = 1;
+              while (i <= 3) {
+                let j: int = 1;
+                let inner: int = 0;
+                while (j <= i) {
+                  inner = inner + j;
+                  j = j + 1;
+                }
+                total = total + inner;
+                i = i + 1;
+              }
+              return total;
+            }
+            """, "whilenested");
+        check(nested.exitCode() == 0, "nested while exits 0");
+        check(nested.output().contains("10"),
+            "nested while sums triangular numbers → 10: " + nested.output());
+
+        // A while-true loop that returns from inside the body: the emitted
+        // condition is routed through loopCond so javac never sees a
+        // constant-true condition and the trailing return stays reachable.
+        ExecResult until = compileAndRunJvm("""
+            export function test(): int {
+              let i: int = 0;
+              while (true) {
+                if (i > 2) {
+                  return i;
+                }
+                i = i + 1;
+              }
+              return -1;
+            }
+            """, "whileuntil");
+        check(until.exitCode() == 0, "while-true loop exits 0");
+        check(until.output().contains("3"),
+            "while-true loop returns from inside the body → 3: " + until.output());
+
+        // A module-level while runs at load time: the field starts at 0,
+        // the loop ticks twice, and the export observes 2.
+        ExecResult moduleWhile = compileAndRunJvm("""
+            import * as console from "std/console"
+            function tick(): null { console.log("tick"); }
+            let i: int = 0;
+            while (i < 2 && tick() === null) {
+              i = i + 1;
+            }
+            export function test(): int { return i; }
+            """, "whilemodule");
+        check(moduleWhile.exitCode() == 0, "module-level while exits 0");
+        check(occurrences(moduleWhile.output(), "tick") == 2,
+            "module-level while condition re-evaluates per iteration → tick ×2: "
+                + moduleWhile.output());
+        check(moduleWhile.output().contains("2"),
+            "module-level while leaves the field at 2: " + moduleWhile.output());
+
+        // Emission shape: the plain form routes the condition through the
+        // loopCond identity helper (never a constant expression) and keeps
+        // the body as a Java block.
+        Frontend f = compileFrontend("""
+            export function test(): int {
+              let i: int = 0;
+              while (i < 3) {
+                i = i + 1;
+              }
+              return i;
+            }
+            """, "jvmtest-while-emission.deal");
+        check(f.errors().isEmpty(), "while emission probe frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-while-emission.deal", "main");
+            check(!res.hasErrors(), "while emission probe codegen clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains("while (loopCond((i < 3L)))"),
+                    "condition routed through loopCond: " + res.source().substring(
+                        res.source().indexOf("while"), res.source().indexOf("while") + 60));
+                check(res.source().contains("static boolean loopCond(boolean v) { return v; }"),
+                    "loopCond identity helper emitted");
+                check(!res.source().contains("->"),
+                    "while emission contains no lambda");
+            }
+        }
+    }
+
+    /** {@code while (false)} never runs its body — emitted as a loop whose
+     * non-constant condition keeps the body reachable to javac (JLS
+     * §14.21) and never taken at runtime, matching LuaJIT. */
+    private static void testWhileFalseBodySkipped() throws Exception {
+        System.out.println("-- while (false) body never runs (javac + java) --");
+
+        ExecResult skipped = compileAndRunJvm("""
+            export function test(): int {
+              let x: int = 1;
+              while (false) {
+                x = x + 1;
+              }
+              return x;
+            }
+            """, "whilefalse");
+        check(skipped.exitCode() == 0, "while-false exits 0");
+        check(skipped.output().contains("1"),
+            "while-false body skipped → 1: " + skipped.output());
+
+        // Emission: the condition is wrapped in loopCond so javac does not
+        // see a constant-false condition (whose body would be unreachable).
+        Frontend f = compileFrontend("""
+            export function test(): int {
+              let x: int = 1;
+              while (false) {
+                x = x + 1;
+              }
+              return x;
+            }
+            """, "jvmtest-whilefalse-emission.deal");
+        check(f.errors().isEmpty(), "while-false probe frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-whilefalse-emission.deal", "main");
+            check(!res.hasErrors(), "while-false probe codegen clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains("while (loopCond(false))"),
+                    "constant-false condition wrapped in loopCond");
+            }
+        }
+    }
+
+    /** A condition whose evaluation hoists a side-effecting null-typed call
+     * must re-run that call on EVERY iteration (LuaJIT re-evaluates the
+     * condition each time), not once before the loop. */
+    private static void testWhileHoistedConditionPerIteration() throws Exception {
+        System.out.println("-- While condition hoisted side effects per iteration (javac + java) --");
+
+        ExecResult perIter = compileAndRunJvm("""
+            import * as console from "std/console"
+            function tick(): null { console.log("tick"); }
+            export function test(): int {
+              let i: int = 0;
+              while (i < 3 && tick() === null) {
+                i = i + 1;
+              }
+              return i;
+            }
+            """, "whilehoisted");
+        check(perIter.exitCode() == 0, "hoisted-condition while exits 0");
+        check(occurrences(perIter.output(), "tick") == 3,
+            "condition re-evaluates per iteration → tick ×3: " + perIter.output());
+        check(perIter.output().contains("3"),
+            "loop counts to 3: " + perIter.output());
+    }
+
+    /** Function-body module-field dominance guards walk through while
+     * bodies: writes inside a loop body dominate nothing after the loop
+     * (the body may run zero times), reads/writes of later-declared
+     * fields in a condition or body stay E6000, and the field-declared-
+     * first shape stays full parity. */
+    private static void testWhileLoopModuleFieldDominanceGuards() throws Exception {
+        System.out.println("-- While loops in the module-field dominance guards --");
+
+        Frontend writeInBody = compileFrontend("""
+            function f(): int {
+              let i: int = 0;
+              while (i < 2) {
+                x = x + 1;
+                i = i + 1;
+              }
+              return x;
+            }
+            let x: int = 1;
+            export function test(): int { return f(); }
+            """, "jvmtest-while-dominance-write.deal");
+        check(writeInBody.errors().isEmpty(),
+            "while-body write shape frontend clean: " + writeInBody.errors());
+        if (writeInBody.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                writeInBody.program(), writeInBody.checkResult(),
+                "jvmtest-while-dominance-write.deal", "main");
+            check(res.hasErrors() && res.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())),
+                "while-body write to a later field is E6000: " + res.diagnostics());
+        }
+
+        Frontend readInCond = compileFrontend("""
+            function g(): int {
+              let i: int = 0;
+              while (i < x) {
+                i = i + 1;
+              }
+              return i;
+            }
+            let x: int = 5;
+            export function test(): int { return g(); }
+            """, "jvmtest-while-dominance-read.deal");
+        check(readInCond.errors().isEmpty(),
+            "while-condition read shape frontend clean: " + readInCond.errors());
+        if (readInCond.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                readInCond.program(), readInCond.checkResult(),
+                "jvmtest-while-dominance-read.deal", "main");
+            check(res.hasErrors() && res.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())),
+                "while-condition read of a later field is E6000: " + res.diagnostics());
+        }
+
+        // The positive shape: field declared BEFORE the function — the
+        // module-local upvalue read with full parity, exercised through a
+        // real while loop.
+        ExecResult parity = compileAndRunJvm("""
+            let x: int = 2;
+            function h(): int {
+              let i: int = 0;
+              while (i < x) {
+                i = i + 1;
+              }
+              return i;
+            }
+            export function test(): int { return h(); }
+            """, "whiledomparity");
+        check(parity.exitCode() == 0, "declared-first while parity exits 0");
+        check(parity.output().contains("2"),
+            "declared-first field read in a while condition → 2: " + parity.output());
+    }
+
+    /** Module-level while bodies cannot contain return (Java initializers
+     * cannot return) — E6000, never an artifact javac rejects. */
+    private static void testWhileModuleLevelReturnRejected() {
+        System.out.println("-- Module-level return inside a while body → E6000 --");
+
+        Frontend f = compileFrontend("""
+            export function test(): int { return 1; }
+            while (true) {
+              if (false) {
+                return;
+              }
+            }
+            """, "jvmtest-while-module-return.deal");
+        check(f.errors().isEmpty(), "module-while-return frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-while-module-return.deal", "main");
+            check(res.hasErrors() && res.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())),
+                "module-level return inside a while body is E6000: " + res.diagnostics());
+        }
+    }
+
+    /** Use-before-declaration detection walks while conditions: a
+     * later-declared variable there is E6000, never an artifact javac
+     * rejects after the CLI reported success. */
+    private static void testWhileUseBeforeDeclarationRejected() {
+        System.out.println("-- Use-before-declaration in a while condition → E6000 --");
+
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            export function test(): null {
+              while (x === 0) {
+                console.log("looped");
+              }
+              let x: int = 0;
+            }
+            """, "jvmtest-while-undeclared.deal");
+        check(f.errors().isEmpty(), "while-undeclared frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-while-undeclared.deal", "main");
+            check(res.hasErrors() && res.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())),
+                "while condition use-before-declaration is E6000: " + res.diagnostics());
+        }
+    }
+
+    /** A DEAL function whose mapped signature duplicates the emitted
+     * loopCond helper would emit a duplicate Java method — E6000. */
+    private static void testLoopCondHelperCollision() {
+        System.out.println("-- loopCond helper signature collision → E6000 --");
+
+        Frontend f = compileFrontend("""
+            function loopCond(v: boolean): boolean { return v; }
+            export function test(): boolean { return loopCond(true); }
+            """, "jvmtest-loopcond-collision.deal");
+        check(f.errors().isEmpty(), "loopCond collision frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-loopcond-collision.deal", "main");
+            check(res.hasErrors() && res.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())),
+                "loopCond helper collision is E6000: " + res.diagnostics());
+        }
+    }
+
+    /** Template literals lower to string concatenation: interpolated and
+     * plain parts, empty parts elided, single-part templates emitted as the
+     * literal itself — all string-typed by the checker (E3016 otherwise). */
+    private static void testTemplateLiterals() throws Exception {
+        System.out.println("-- Template literals (javac + java) --");
+
+        ExecResult run = compileAndRunJvm("""
+            export function test(): string {
+              let a: string = "alpha";
+              let b: string = "beta";
+              let t1: string = `x${a}y${b}z`;
+              let t2: string = `plain`;
+              let t3: string = `${a}b`;
+              let t4: string = `x${""}y`;
+              return t1 + t2 + t3 + t4;
+            }
+            """, "templates");
+        check(run.exitCode() == 0, "template run exits 0");
+        check(run.output().contains("xalphaybetazplainalphabxy"),
+            "template interpolations concatenate: " + run.output());
+
+        Frontend f = compileFrontend("""
+            export function test(): string {
+              let a: string = "alpha";
+              let b: string = "beta";
+              let t1: string = `x${a}y${b}z`;
+              let t2: string = `plain`;
+              let t3: string = `${a}b`;
+              let t4: string = `x${""}y`;
+              return t1 + t2 + t3 + t4;
+            }
+            """, "jvmtest-template-emission.deal");
+        check(f.errors().isEmpty(), "template probe frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-template-emission.deal", "main");
+            check(!res.hasErrors(), "template probe codegen clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains(
+                        "java.lang.String t1 = (\"x\" + a + \"y\" + b + \"z\");"),
+                    "interpolated template lowers to concatenation: "
+                        + (res.source().contains("t1 =") ? res.source().substring(
+                            res.source().indexOf("t1 ="), res.source().indexOf("t1 =") + 50)
+                            : "<missing>"));
+                check(res.source().contains("java.lang.String t2 = \"plain\";"),
+                    "single-part template emits its literal");
+                check(res.source().contains("java.lang.String t3 = (a + \"b\");"),
+                    "empty leading literal part elided");
+                check(res.source().contains("java.lang.String t4 = (\"x\" + \"\" + \"y\");"),
+                    "empty INTERPOLATION part kept (it is an expression, like LuaJIT)");
+                check(!res.source().contains("unsupported(\"template literals\""),
+                    "no template-literal E6000 fallback in the artifact");
+            }
         }
     }
 

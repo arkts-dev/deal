@@ -111,6 +111,44 @@ reports success for an artifact `javac` would reject.
   emitted *before* the new local is registered, mirroring Lua's
   `local x = x + 1` (RHS reads the outer `x`): `let x: int = 5; { let x: int
   = x + 1; return x; }` computes 6.
+- **While conditions are never constant expressions to javac.** Every
+  emitted loop routes its condition through the `loopCond` identity
+  helper: `while (loopCond(cond)) { … }`. Per JLS §14.21 javac then
+  treats the body as reachable (`while (false)` compiles and simply never
+  runs, exactly like LuaJIT) and statements after the loop as reachable
+  (`while (true)` followed by code compiles; LuaJIT never executes that
+  code, and neither does the artifact). Without the wrapper, `while
+  (false)` bodies and statements after `while (true)`/`while (1 === 1)`/
+  `while (null === null)` would be javac-unreachable — artifacts the CLI
+  would have reported as successful. A DEAL function whose mapped
+  signature duplicates `loopCond(boolean)` is E6000 (the
+  helper-collision rule).
+- **While conditions re-evaluate on every iteration, hoisted side
+  effects included.** A condition whose evaluation hoists a side-effecting
+  null-typed call (e.g. `i < 3 && tick() === null`) emits
+  `while (true) { …pre-statements…; if (!loopCond(cond)) break; …body… }`:
+  the hoisted statements run inside the loop before the condition test,
+  so `tick()` runs once per iteration — never once before the loop, and
+  never in an order that would diverge from LuaJIT's per-iteration
+  condition evaluation. The `if (!loopCond(cond)) break;` break is
+  reachable (a non-constant condition), so the statement completes
+  normally per JLS §14.21 and statements after it stay reachable.
+- **Module-level while loops run at load time and cannot contain
+  `return`.** A module-level while is emitted into the load-time
+  `static` initializer in source order; a `return` anywhere inside its
+  body (including nested blocks/ifs) is E6000 — Java initializers cannot
+  return, and the guard walks the whole body. While-condition
+  use-before-declaration follows the same guard as if conditions: a
+  later-declared variable in a while condition (module level or function
+  body) is E6000, never an artifact javac rejects.
+- **Template literals concatenate their parts in source order.** The
+  checker types every interpolation as `string` (E3016 otherwise) and
+  the whole template as `string`, so the emitted Java is plain
+  `("a" + expr + "b")` concatenation with no runtime conversion; empty
+  literal parts are elided (they contribute nothing under LuaJIT's
+  `"" .. x` lowering either), an empty *interpolation* is kept (it is an
+  expression), and a template with no interpolations emits its literal.
+
 - **Dead code after a non-completing statement is skipped, never
   emitted.** A `return` cannot complete normally; an `if`/`else` whose
   branches all cannot complete normally cannot complete normally; a block
@@ -293,6 +331,25 @@ reports success for an artifact `javac` would reject.
     `test/LuaBackendIntegrationTest`, `test/ConformanceTest`,
     `test/conformance/fixtures/*.json` `backends: ["luajit"]`) stays green
     and unmodified.
+  - JVM: `test/conformance/fixtures/jvm-semantic-slice.json` — fourteen
+    ISSUE-0092 fixtures, all JVM-only, every runtime fixture passing
+    through the real frontend → real `JvmBackend` codegen → `javac`
+    subprocess → `java` subprocess executing the emitted artifact (the
+    harness fails a fixture whose codegen or JVM execution is bypassed):
+    int arithmetic (+ - * / % ** chained through locals), number
+    arithmetic with mixed int/number widening and floored `%`
+    (-7.0 % 3.0 = 2.0), string concatenation, template literals
+    (string-typed interpolations; plain templates; empty literal parts
+    elided; empty interpolation parts kept), boolean comparisons
+    (< <= > >= === !== ! && || over int/string/boolean), local mutation
+    with inner-block shadowing, if/else-if/else, a counting while loop
+    (1..10 = 55), nested while loops with body-scoped shadowing
+    (triangular sums 1+3+6+10 = 20), `while (false)` whose body never
+    runs, a while condition with a side-effecting null-typed call
+    re-evaluated per iteration (tick prints, the loop counts to 3), and
+    two frontend compile-error gates rejected before any backend
+    (E3007 non-boolean while condition, E3016 non-string template
+    interpolation).
   - JVM: `test/conformance/fixtures/jvm-skeleton.json` — fifty-three
     fixtures (JVM-only, plus cross-backend parity fixtures that also run
     under LuaJIT as the reference behavior): literals/output, int arithmetic,
@@ -326,7 +383,17 @@ reports success for an artifact `javac` would reject.
     and nested-combination positions ×5 (twenty-one fixtures run under
     both backends as cross-backend parity)) run end-to-end under
     `test/BackendConformanceTest`.
-  - Seam: `test/JvmBackendTest.java` — identifier translation, collision-safe
+  - Seam: `test/JvmBackendTest.java` — ISSUE-0092 while/template coverage
+    (counting/nested/shadowed loops, `while (false)` bodies skipped,
+    per-iteration condition re-evaluation with a hoisted null-typed call
+    pinned at tick ×3, function-body module-field dominance guards
+    through while bodies — a body write dominates nothing after the loop,
+    a condition read of a later field is E6000, and the declared-first
+    shape runs with parity — module-level returns inside while bodies
+    E6000, while-condition use-before-declaration E6000, the `loopCond`
+    helper-signature collision E6000, template lowering with emission
+    assertions for interpolated/plain/empty-part shapes), plus the
+    pre-existing identifier translation, collision-safe
     class-name derivation, emission, E6000 rejection (including unused
     imports, module-level returns, use-before-declaration, helper-name
     collisions), observable-behavior preservation for null-typed side

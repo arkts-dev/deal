@@ -1,0 +1,245 @@
+{
+  "version": "1.0",
+  "description": "JVM semantic slice conformance (ISSUE-0092). JVM-only fixtures for the first semantic slice after the ISSUE-0091 skeleton: int/number arithmetic, string concatenation and template literals (checker-typed string interpolations), boolean comparisons, local mutation, if/else, while loops (counting, nested, body-scoped shadowing, while-false bodies that never run, per-iteration re-evaluation of conditions with hoisted null-typed side effects), and frontend compile-error gates (E3007 non-boolean while condition, E3016 non-string interpolation) rejected before any backend runs. Every runtime fixture passes through the real DEAL frontend, real JvmBackend codegen, a javac subprocess, and a java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed).",
+  "tests": [
+    {
+      "name": "jvm-slice-int-arithmetic",
+      "description": "Checked int arithmetic (+ - * / % **) chains through locals to 41",
+      "source": "export function test(): int {\n  let a: int = 7 * 6;\n  let b: int = a + 25 / 4;\n  let c: int = b - 25 % 4;\n  let d: int = c + 2 ** 3;\n  return d - 14;\n}\n",
+      "expectedOutput": "41",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary + : int",
+        "binary * : int",
+        "binary ** : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-slice-number-arithmetic",
+      "description": "Number arithmetic with mixed int/number widening and floored % (-7.0 % 3.0 = 2.0) computes 5.0",
+      "source": "export function test(): number {\n  let x: number = 2.5 * 2.0;\n  let y: number = 7.0 / 2.0;\n  let m: number = -7.0 % 3.0;\n  return x + y + m - 2.5 - 3.0;\n}\n",
+      "expectedOutput": "5.0",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: number",
+        "binary * : number",
+        "binary % : number"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-slice-string-concat",
+      "description": "String concatenation builds 'jvm-deal' from two locals",
+      "source": "export function test(): string {\n  let a: string = \"deal\";\n  let b: string = \"jvm\";\n  return b + \"-\" + a;\n}\n",
+      "expectedOutput": "jvm-deal",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: string",
+        "binary + : string"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-slice-template-basic",
+      "description": "A template literal with string-typed interpolations lowers to concatenation",
+      "source": "export function test(): string {\n  let name: string = \"deal\";\n  let kind: string = \"slice\";\n  return `jvm-${name}-${kind}`;\n}\n",
+      "expectedOutput": "jvm-deal-slice",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: string",
+        "template-literal : string @fixture-jvm-slice-template-basic.deal"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-slice-template-plain-and-parts",
+      "description": "Plain templates, empty literal parts (elided), and empty interpolation parts (kept, they are expressions)",
+      "source": "export function test(): string {\n  let a: string = \"alpha\";\n  let t1: string = `plain`;\n  let t2: string = `${a}b`;\n  let t3: string = `x${\"\"}y`;\n  return t1 + t2 + t3;\n}\n",
+      "expectedOutput": "plainalphabxy",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: string",
+        "template-literal : string @fixture-jvm-slice-template-plain-and-parts.deal"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-slice-boolean-comparisons",
+      "description": "int/string comparisons, equality, negation, and &&/|| compose to true",
+      "source": "export function test(): boolean {\n  let a: boolean = 3 < 5 && 5 <= 5 && 7 > 2 && 2 >= 2;\n  let b: boolean = !(3 === 4) && 3 !== 4;\n  let c: boolean = \"alpha\" < \"beta\" && \"beta\" !== \"gamma\";\n  let d: boolean = false || true;\n  return a && b && c && d;\n}\n",
+      "expectedOutput": "true",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: boolean",
+        "binary < : boolean",
+        "binary && : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-slice-local-mutation",
+      "description": "Local reassignment plus inner-block shadowing compute 111",
+      "source": "export function test(): int {\n  let x: int = 10;\n  x = x + 1;\n  let y: int = x * 2;\n  y = y - 10;\n  let z: int = y;\n  {\n    let x: int = 99;\n    z = z + x;\n  }\n  return z;\n}\n",
+      "expectedOutput": "111",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "let x: int",
+        "assignment"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-slice-if-else",
+      "description": "if/else-if/else branches classify three values and gate the result",
+      "source": "function classify(n: int): int {\n  if (n < 0) {\n    return 0;\n  } else if (n === 0) {\n    return 1;\n  } else {\n    return 2;\n  }\n}\nexport function test(): int {\n  let a: int = classify(-5);\n  let b: int = classify(0);\n  let c: int = classify(7);\n  if (a === 0 && b === 1 && c === 2) { return 100; }\n  return 0;\n}\n",
+      "expectedOutput": "100",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "if @fixture-jvm-slice-if-else.deal"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-slice-while-sum",
+      "description": "A while loop with local mutation accumulates 1..10 = 55",
+      "source": "export function test(): int {\n  let i: int = 0;\n  let sum: int = 0;\n  while (i < 10) {\n    i = i + 1;\n    sum = sum + i;\n  }\n  return sum;\n}\n",
+      "expectedOutput": "55",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "while @fixture-jvm-slice-while-sum.deal",
+        "binary < : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-slice-while-nested-shadow",
+      "description": "Nested while loops with body-scoped locals and shadowing compute the triangular sums 1+3+6+10 = 20",
+      "source": "export function test(): int {\n  let total: int = 0;\n  let i: int = 1;\n  while (i <= 4) {\n    let acc: int = 0;\n    let j: int = 1;\n    while (j <= i) {\n      acc = acc + j;\n      j = j + 1;\n    }\n    total = total + acc;\n    i = i + 1;\n  }\n  return total;\n}\n",
+      "expectedOutput": "20",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "while @fixture-jvm-slice-while-nested-shadow.deal"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-slice-while-false-skipped",
+      "description": "while (false) never runs its body — the result stays 1",
+      "source": "export function test(): int {\n  let x: int = 1;\n  while (false) {\n    x = x + 1;\n  }\n  return x;\n}\n",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "while @fixture-jvm-slice-while-false-skipped.deal",
+        "literal false : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-slice-while-hoisted-condition",
+      "description": "A while condition with a side-effecting null-typed call re-evaluates per iteration (tick prints; the loop counts to 3)",
+      "source": "import * as console from \"std/console\"\nfunction tick(): null { console.log(\"tick\"); }\nexport function test(): int {\n  let i: int = 0;\n  while (i < 3 && tick() === null) {\n    i = i + 1;\n  }\n  return i;\n}\n",
+      "expectedOutput": "tick",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "while @fixture-jvm-slice-while-hoisted-condition.deal"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-slice-frontend-reject-while-cond",
+      "description": "A non-boolean while condition is rejected by the frontend (E3007) before any backend runs",
+      "source": "export function test(): int {\n  while (1) { return 0; }\n  return 1;\n}\n",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3007",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-slice-frontend-reject-template-type",
+      "description": "A non-string template interpolation is rejected by the frontend (E3016) before any backend runs",
+      "source": "export function test(): string {\n  let s: string = `x${1}y`;\n  return s;\n}\n",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3016",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    }
+  ]
+}
