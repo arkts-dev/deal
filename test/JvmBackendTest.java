@@ -38,9 +38,13 @@ import java.util.Map;
  *       method signature and the body, a {@code let} shadowing a
  *       disambiguated parameter never reuses the parameter's emitted
  *       name (its initializer's enclosing read binds to the parameter),
- *       and double-nested local shadowing reads the nearest enclosing
- *       binding — all compiled and executed with {@code javac} +
- *       {@code java},</li>
+ *       double-nested local shadowing reads the nearest enclosing
+ *       binding, and the triple-deep shadow chain (field → parameter →
+ *       body-top let → inner-block let, with and without the module
+ *       field) emits one distinct Java name per binding — never
+ *       re-using a shadowed parameter's still-in-Java-scope name, which
+ *       javac would reject after the CLI reported success — all compiled
+ *       and executed with {@code javac} + {@code java},</li>
  *   <li>while loops: counting/nested/shadowed loops, {@code while (false)}
  *       bodies that never run, per-iteration re-evaluation of conditions
  *       with hoisted null-typed side effects, function-body module-field
@@ -1518,6 +1522,19 @@ public class JvmBackendTest {
      * initialized"). Both shapes now emit valid Java and compute the
      * LuaJIT values (Lua's {@code local x = x + 1} reads the enclosing
      * binding).
+     *
+     * <p>ISSUE-0093 rework: the triple-deep shadow chain (field →
+     * parameter → body-top let → inner-block let) exposed the remaining
+     * overwrite defect — the body-top {@code let} and the parameters
+     * share ONE scope map, so {@code declareLocal}'s {@code put}
+     * overwrites the parameter's key and its still-in-Java-scope emitted
+     * name (JLS §6.4 forbids an inner block from redeclaring a method
+     * parameter) vanished from the value scan; the inner-block let then
+     * reused it and javac rejected the artifact after the CLI reported
+     * success. The backend now reserves every per-function emitted name
+     * (parameters + locals) in a set that outlives the map overwrite, and
+     * both chain shapes (with and without a module field) emit distinct
+     * names and run to the LuaJIT values.
      */
     private static void testParameterShadowing() throws Exception {
         System.out.println("-- Parameter shadowing (ISSUE-0093) --");
@@ -1579,6 +1596,105 @@ public class JvmBackendTest {
         check(nested.exitCode() == 0, "nested shadow exits 0");
         check(nested.output().contains("3"),
             "double-nested shadow computes 3: " + nested.output());
+
+        // ISSUE-0093 rework regression: the triple-deep shadow chain
+        // (field → parameter → body-top let → inner-block let). The
+        // body-top let OVERWRITES the parameter's scope-map key (they
+        // share the function scope), so the parameter's emitted name —
+        // still in Java scope per JLS §6.4 (an inner block may not
+        // redeclare a method parameter) — must stay reserved for
+        // collision purposes. It used to be lost with the overwrite: the
+        // inner block then re-emitted `long g$1` over the parameter's
+        // `long g$1` and javac rejected the artifact after the CLI
+        // reported success ("variable g$1 is already defined in method
+        // f(long)"). The backend now keeps a per-function set of every
+        // emitted binding name (parameters + locals), so every binding in
+        // the chain gets a distinct name.
+        Frontend chain = compileFrontend("""
+            let g: int = 1;
+            function f(g: int): int {
+              let g: int = g + 10;
+              { let g: int = g + 1; }
+              return g;
+            }
+            export function test(): int { return f(5) + g; }
+            """, "jvmtest-shadowchain.deal");
+        if (!chain.errors().isEmpty()) {
+            fail("checker must accept the triple-shadow chain probe: "
+                + chain.errors());
+            return;
+        }
+        JvmBackend.JvmCodegenResult chainRes = JvmBackend.generate(
+            chain.program(), chain.checkResult(), "jvmtest-shadowchain.deal",
+            "main");
+        check(!chainRes.hasErrors(), "triple-shadow chain emits without E6000");
+        check(chainRes.source().contains("static long f(long g$1)"),
+            "chain: signature keeps the parameter's disambiguated name");
+        check(chainRes.source().contains("long g$2 = intAdd(g$1, 10L);"),
+            "chain: body-top let takes the next free name and reads the parameter");
+        check(chainRes.source().contains("long g$3 = intAdd(g$2, 1L);"),
+            "chain: inner-block let never reuses the parameter's name "
+                + "(g$3, not g$1)");
+        check(chainRes.source().contains("return g$2;"),
+            "chain: trailing read resolves to the body-top let");
+
+        ExecResult chainRun = compileAndRunJvm("""
+            let g: int = 1;
+            function f(g: int): int {
+              let g: int = g + 10;
+              { let g: int = g + 1; }
+              return g;
+            }
+            export function test(): int { return f(5) + g; }
+            """, "shadowchain");
+        check(chainRun.exitCode() == 0, "triple-shadow chain exits 0");
+        check(chainRun.output().contains("16"),
+            "triple-shadow chain computes 15 + field 1 = 16: "
+                + chainRun.output());
+
+        // The no-field variant pins the same defect class without any
+        // module field: the body-top let overwrites the parameter's key
+        // again, and the inner block used to emit `long g` over the
+        // parameter's `long g` — the same javac rejection. Every binding
+        // now gets a distinct name and the artifact compiles.
+        Frontend noField = compileFrontend("""
+            function f(g: int): int {
+              let g: int = g + 10;
+              { let g: int = g + 1; }
+              return g;
+            }
+            export function test(): int { return f(5); }
+            """, "jvmtest-shadowchain-nofield.deal");
+        if (!noField.errors().isEmpty()) {
+            fail("checker must accept the no-field chain probe: "
+                + noField.errors());
+            return;
+        }
+        JvmBackend.JvmCodegenResult noFieldRes = JvmBackend.generate(
+            noField.program(), noField.checkResult(),
+            "jvmtest-shadowchain-nofield.deal", "main");
+        check(!noFieldRes.hasErrors(), "no-field chain emits without E6000");
+        check(noFieldRes.source().contains("static long f(long g)"),
+            "no-field chain: parameter keeps its plain name");
+        check(noFieldRes.source().contains("long g$1 = intAdd(g, 10L);"),
+            "no-field chain: body-top let takes g$1 and reads the parameter");
+        check(noFieldRes.source().contains("long g$2 = intAdd(g$1, 1L);"),
+            "no-field chain: inner-block let never reuses the parameter's "
+                + "name (g$2, not g)");
+        check(noFieldRes.source().contains("return g$1;"),
+            "no-field chain: trailing read resolves to the body-top let");
+
+        ExecResult noFieldRun = compileAndRunJvm("""
+            function f(g: int): int {
+              let g: int = g + 10;
+              { let g: int = g + 1; }
+              return g;
+            }
+            export function test(): int { return f(5); }
+            """, "shadowchainnofield");
+        check(noFieldRun.exitCode() == 0, "no-field chain exits 0");
+        check(noFieldRun.output().contains("15"),
+            "no-field chain computes 15: " + noFieldRun.output());
     }
 
     private static void testUseBeforeDeclarationRejected() {

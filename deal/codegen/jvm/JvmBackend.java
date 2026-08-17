@@ -269,6 +269,33 @@ public final class JvmBackend {
      */
     private final Deque<Map<String, String>> localScopes = new ArrayDeque<>();
 
+    /**
+     * Every emitted Java binding name declared inside the current function
+     * (parameters + function locals, in declaration order): one set per
+     * function, pushed together with the function's parameter scope and
+     * popped together with it. {@link #declareLocal} OVERWRITES a scope-map
+     * key when a function-body top-level {@code let} shadows a parameter of
+     * the same DEAL name (parameters and body-top lets share the function's
+     * scope map), and the overwritten value — the parameter's emitted name,
+     * still in Java scope for the rest of the method (JLS §6.4: an inner
+     * block may not redeclare a method parameter) — must remain reserved
+     * for collision purposes even though no scope map holds it any more.
+     * {@link #emittedNameVisible} consults these sets in addition to the
+     * current scope values, so a deeper shadow never reuses it: in the
+     * triple-deep chain <pre>let g: int = 1;
+     * function f(g: int): int {
+     *   let g: int = g + 10;
+     *   { let g: int = g + 1; }
+     *   return g;
+     * }</pre> the inner block used to emit {@code g$1} over the
+     * parameter's {@code g$1} — an artifact javac rejected ("variable g$1
+     * is already defined in method f(long)") after the CLI reported
+     * success (ISSUE-0093 rework). Nested function declarations are
+     * rejected before this machinery runs, so at most one set is ever on
+     * the deque.
+     */
+    private final Deque<Set<String>> functionBindingNames = new ArrayDeque<>();
+
     /** True while emitting direct module-body statements (class members). */
     private boolean moduleLevel = false;
 
@@ -1365,6 +1392,7 @@ public final class JvmBackend {
         // x$1).
         Map<String, String> paramScope = new LinkedHashMap<>();
         localScopes.push(paramScope);
+        functionBindingNames.push(new LinkedHashSet<>());
         List<String> paramNames = new ArrayList<>();
         for (Parameter p : fd.params()) {
             paramNames.add(declareLocal(p.name()));
@@ -1399,6 +1427,7 @@ public final class JvmBackend {
         currentModuleStatementIndex = savedModuleIndex;
         moduleLevel = savedModuleLevel;
         localScopes.pop();
+        functionBindingNames.pop();
 
         indent--;
         emitLine("}");
@@ -1811,14 +1840,30 @@ public final class JvmBackend {
             mapped = base + "$" + (n++);
         }
         localScopes.peek().put(name, mapped);
+        // Parameters and function-body top-level lets share ONE scope map,
+        // so this put() can overwrite an earlier mapping of the same DEAL
+        // name (the parameter's). The overwritten emitted name is still in
+        // Java scope for the rest of the method (JLS §6.4) and must stay
+        // reserved for collision purposes: record it in the current
+        // function's emitted-name set, which outlives the map overwrite.
+        if (!functionBindingNames.isEmpty()) {
+            functionBindingNames.peek().add(mapped);
+        }
         return mapped;
     }
 
     /** True when {@code emittedName} is already used as the emitted Java
      * name of any binding in a visible scope (module fields, enclosing
-     * locals, parameters). Java forbids two visible locals with the same
-     * name, so the new binding must take a fresh one. */
+     * locals, parameters) or of any binding still in Java scope inside the
+     * current function (the per-function {@link #functionBindingNames}
+     * sets — including names whose scope-map key was overwritten by a
+     * shadowing {@code let}, e.g. a shadowed parameter). Java forbids two
+     * visible locals with the same name, so the new binding must take a
+     * fresh one. */
     private boolean emittedNameVisible(String emittedName) {
+        for (Set<String> names : functionBindingNames) {
+            if (names.contains(emittedName)) return true;
+        }
         for (Map<String, String> scope : localScopes) {
             if (scope.containsValue(emittedName)) return true;
         }

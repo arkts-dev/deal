@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM functions and direct calls slice (ISSUE-0093). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: direct function calls, multiple parameters (mixed types), return values, nested calls, direct self-recursion (factorial and the double-self-call fibonacci, plus a side-effecting void recursion), left-to-right argument evaluation order with side effects (all-inline and hoisted/inline-mixed argument positions), parameter shadowing (a parameter shadowing a module field, and a let shadowing a parameter that itself shadows a module field), and two frontend compile-error gates rejected before any backend runs (E3009 arity mismatch, E5001 argument-type mismatch).",
+  "description": "JVM functions and direct calls slice (ISSUE-0093). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: direct function calls, multiple parameters (mixed types), return values, nested calls, direct self-recursion (factorial and the double-self-call fibonacci, plus a side-effecting void recursion), left-to-right argument evaluation order with side effects (all-inline and hoisted/inline-mixed argument positions), parameter shadowing (a parameter shadowing a module field, a let shadowing a parameter that itself shadows a module field, and the triple-deep shadow chain field → parameter → body-top let → inner-block let — with and without the module field — where every binding gets a distinct emitted Java name so the artifact compiles under javac), and two frontend compile-error gates rejected before any backend runs (E3009 arity mismatch, E5001 argument-type mismatch).",
   "tests": [
     {
       "name": "jvm-fn-direct-call",
@@ -173,6 +173,40 @@
       "description": "A let shadowing a parameter that itself shadows a module field: the let's initializer binds to the parameter (LuaJIT's `local g = g + 10` reads the outer binding → 15), and the module field stays 1 → f(5) + g = 16",
       "source": "let g: int = 1;\nfunction f(g: int): int {\n  let g: int = g + 10;\n  return g;\n}\nexport function test(): int { return f(5) + g; }",
       "expectedOutput": "16",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function f: int",
+        "let g: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fn-param-shadow-let-block",
+      "description": "Triple-deep shadow chain (module field → parameter → body-top let → inner-block let): every binding gets a distinct emitted Java name — the inner-block let never reuses the shadowed parameter's still-in-Java-scope name (JLS §6.4 forbids an inner block from redeclaring a method parameter), which javac used to reject after the CLI reported success — and the artifact compiles and runs to the LuaJIT value: f(5) = 15, + field g = 16",
+      "source": "let g: int = 1;\nfunction f(g: int): int {\n  let g: int = g + 10;\n  { let g: int = g + 1; }\n  return g;\n}\nexport function test(): int { return f(5) + g; }",
+      "expectedOutput": "16",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function f: int",
+        "let g: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fn-param-shadow-let-block-nofield",
+      "description": "Triple-deep shadow chain without any module field (parameter → body-top let → inner-block let): the inner-block let never reuses the parameter's plain emitted name (the same JLS §6.4 defect class — javac rejected `long g` in the inner block over the parameter `long g` after the CLI reported success); each binding gets a distinct name and the artifact computes f(5) = 15",
+      "source": "function f(g: int): int {\n  let g: int = g + 10;\n  { let g: int = g + 1; }\n  return g;\n}\nexport function test(): int { return f(5); }",
+      "expectedOutput": "15",
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,

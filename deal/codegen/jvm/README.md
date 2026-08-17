@@ -134,6 +134,29 @@ reports success for an artifact `javac` would reject.
   let's RHS reads the parameter → 15; the module field keeps 1),
   pinned by the fixtures `jvm-fn-param-shadow-module-field` /
   `jvm-fn-param-shadow-let` and `JvmBackendTest.testParameterShadowing`.
+- **Shadow chains keep every still-visible emitted name reserved.**
+  Parameters and function-body top-level `let`s share ONE scope map,
+  so `declareLocal`'s `put` for a body-top `let` overwrites the
+  parameter's key of the same DEAL name. The parameter's emitted name
+  is still in Java scope for the rest of the method (JLS §6.4: an
+  inner block may not redeclare a method parameter), so it must stay
+  reserved for collision purposes even though no scope map holds it
+  any more — the backend keeps a per-function set of every emitted
+  binding name (parameters + locals, pushed with the parameter scope
+  and popped with it) that `emittedNameVisible` consults in addition
+  to the current scope values (ISSUE-0093 rework). Before the fix the
+  triple-deep chain `let g: int = 1; function f(g: int): int { let g:
+  int = g + 10; { let g: int = g + 1; } return g; }` emitted
+  `long g$1 = intAdd(g$2, 1L);` in the inner block — over the
+  parameter's `long g$1` — and javac rejected the artifact after the
+  CLI reported success ("variable g$1 is already defined in method
+  f(long)"); the no-field variant reused the parameter's plain `g`
+  the same way. Both chains now emit one distinct name per binding
+  (`g$1`/`g$2`/`g$3` with the field, `g`/`g$1`/`g$2` without) and run
+  to the LuaJIT values, pinned by the fixtures
+  `jvm-fn-param-shadow-let-block` /
+  `jvm-fn-param-shadow-let-block-nofield` and
+  `JvmBackendTest.testParameterShadowing`.
 - **While conditions are never constant expressions to javac.** Every
   emitted loop routes its condition through the `loopCond` identity
   helper: `while (loopCond(cond)) { … }`. Per JLS §14.21 javac then
@@ -361,7 +384,7 @@ reports success for an artifact `javac` would reject.
     `test/LuaBackendIntegrationTest`, `test/ConformanceTest`,
     `test/conformance/fixtures/*.json` `backends: ["luajit"]`) stays green
     and unmodified.
-  - JVM: `test/conformance/fixtures/jvm-functions-slice.json` — thirteen
+  - JVM: `test/conformance/fixtures/jvm-functions-slice.json` — fifteen
     ISSUE-0093 fixtures, all JVM-only, every runtime fixture passing
     through the real frontend → real `JvmBackend` codegen → `javac`
     subprocess → `java` subprocess executing the emitted artifact:
@@ -374,9 +397,14 @@ reports success for an artifact `javac` would reject.
     (all-inline argument positions, and an inline argument materialized
     into a temporary ahead of a hoisted null-typed argument), parameter
     shadowing (a parameter shadowing a module field; a `let` shadowing
-    a parameter that itself shadows a module field), and two frontend
-    compile-error gates rejected before any backend (E3009 arity
-    mismatch, E5001 argument-type mismatch).
+    a parameter that itself shadows a module field; the triple-deep
+    shadow chains — field → parameter → body-top let → inner-block
+    let, with and without the module field — where every binding gets
+    a distinct emitted Java name, pinning the JLS §6.4
+    inner-block-redeclares-a-parameter regression that used to make
+    javac reject the artifact after the CLI reported success), and two
+    frontend compile-error gates rejected before any backend (E3009
+    arity mismatch, E5001 argument-type mismatch).
   - JVM: `test/conformance/fixtures/jvm-semantic-slice.json` — fourteen
     ISSUE-0092 fixtures, all JVM-only, every runtime fixture passing
     through the real frontend → real `JvmBackend` codegen → `javac`

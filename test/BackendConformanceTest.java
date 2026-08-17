@@ -28,7 +28,10 @@ import java.util.*;
  * {@code test/conformance/fixtures/jvm-functions-slice.json} (direct
  * calls, multiple parameters, return values, nested calls, direct
  * self-recursion, argument evaluation order with side effects,
- * parameter shadowing, and two frontend arity/type compile-error gates
+ * parameter shadowing — including the triple-deep shadow chains
+ * field → parameter → body-top let → inner-block let, with and
+ * without the module field, where every binding gets a distinct
+ * emitted Java name — and two frontend arity/type compile-error gates
  * rejected before any backend).
  *
  * <p>Fixture format (per {@code conformance-test-architecture} D3, extended
