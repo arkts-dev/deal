@@ -32,7 +32,17 @@ import java.util.*;
  * field → parameter → body-top let → inner-block let, with and
  * without the module field, where every binding gets a distinct
  * emitted Java name — and two frontend arity/type compile-error gates
- * rejected before any backend).
+ * rejected before any backend), and the ISSUE-0094 primitive-array
+ * fixtures live in
+ * {@code test/conformance/fixtures/jvm-arrays-slice.json} (int[]/number[]/
+ * string[]/boolean[] literals, index reads, element writes — in-place
+ * and the {@code i === length} append — {@code .length} reads, runtime
+ * bounds checks (negative read → E8002, read past the end → E8001,
+ * negative/gap writes → E8002, out-of-safe-range int element writes →
+ * E8004), spec §Operational semantics evaluation order for reads and
+ * writes including hoisted side effects, cross-backend parity against
+ * LuaJIT, and frontend E3007/E3017 compile-error gates rejected before
+ * any backend).
  *
  * <p>Fixture format (per {@code conformance-test-architecture} D3, extended
  * by ISSUE-0091 with {@code expectedCompileError}):

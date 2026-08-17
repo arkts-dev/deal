@@ -1,0 +1,304 @@
+{
+  "version": "1.0",
+  "description": "JVM primitive arrays slice (ISSUE-0094). JVM-only fixtures (plus three cross-backend parity fixtures that also run under LuaJIT as the reference) that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: int[]/number[]/string[]/boolean[] array literals (including the empty literal under a contextual type), index reads, element writes (in-place writes, the i === length append — via the xs[xs.length] idiom and via a plain index-equals-length write — with the wrapped storage growing in place so aliases observe every write), .length reads, arrays through function parameters and returns, runtime bounds checks (negative read → E8002, read past the end → E8001 \"expected int, got null\" mirroring LuaJIT's nil-at-the-boundary, negative write → E8002, gap write → E8002, out-of-safe-range int element write → E8004 via the element value check), spec §Operational semantics evaluation order for reads (receiver before index) and writes (receiver, index, RHS before the LHS write check — including hoisted null-typed side effects materialized into temporaries in order), and two frontend compile-error gates rejected before any backend (E3007 non-int index, E3017 read-only .length assignment).",
+  "tests": [
+    {
+      "name": "jvm-arr-literal-read-length",
+      "description": "An int[] literal, index reads, and .length: xs[0]+xs[1]+xs[2]+xs.length computes 63 (10+20+30+3) through the real frontend → JvmBackend codegen → javac → java artifact execution",
+      "source": "export function test(): int {\n  let xs: int[] = [10, 20, 30];\n  return xs[0] + xs[1] + xs[2] + xs.length;\n}",
+      "expectedOutput": "63",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [int]",
+        "index [] : int",
+        "member .length : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-write-readback",
+      "description": "Element writes into existing indexes mutate the array in place: xs[1] = 99, then xs[2] = xs[0] + xs[1] (=100), and the sum reads back 200",
+      "source": "export function test(): int {\n  let xs: int[] = [1, 2, 3];\n  xs[1] = 99;\n  xs[2] = xs[0] + xs[1];\n  return xs[0] + xs[1] + xs[2];\n}",
+      "expectedOutput": "200",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write",
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-append-at-length",
+      "description": "Writing at i === length appends (spec §Array writes): an empty literal grows via the xs[xs.length] = v append idiom (0→1→2) and a plain index-equals-length write appends the third element; the final sum + length is 10",
+      "source": "export function test(): int {\n  let xs: int[] = [];\n  xs[xs.length] = 1;\n  xs[xs.length] = 2;\n  xs[2] = 4;\n  return xs[0] + xs[1] + xs[2] + xs.length;\n}",
+      "expectedOutput": "10",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [int]",
+        "array-write",
+        "member .length : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-four-element-types",
+      "description": "number[], string[], and boolean[] literals, writes, reads, and length all run end-to-end: ns[1] recomputed to 2.5, ss[0] set to ss[1] + \"x\" = \"bx\", bs[1] set to bs[0] = true, every length reads 2",
+      "source": "export function test(): string {\n  let ns: number[] = [1.5, 2.5];\n  ns[1] = ns[0] + 1.0;\n  let ss: string[] = [\"a\", \"b\"];\n  ss[0] = ss[1] + \"x\";\n  let bs: boolean[] = [true, false];\n  bs[1] = bs[0];\n  if (ns[0] === 1.5 && ns[1] === 2.5 && ss[0] === \"bx\" && ss[1] === \"b\" && bs[0] && bs[1] && ns.length === 2 && ss.length === 2 && bs.length === 2) {\n    return \"ok\";\n  }\n  return \"bad\";\n}",
+      "expectedOutput": "ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [number]",
+        "array : [string]",
+        "array : [boolean]",
+        "index [] : number",
+        "index [] : string"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-function-param-return",
+      "description": "Arrays flow through function parameters and returns: fill(xs, 10) writes xs[0]=10 and xs[1]=11 into the caller's array and returns it, total(ys) sums 21, + xs.length = 23",
+      "source": "function fill(xs: int[], v: int): int[] {\n  xs[0] = v;\n  xs[1] = v + 1;\n  return xs;\n}\nfunction total(xs: int[]): int { return xs[0] + xs[1]; }\nexport function test(): int {\n  let xs: int[] = [0, 0];\n  let ys: int[] = fill(xs, 10);\n  return total(ys) + xs.length;\n}",
+      "expectedOutput": "23",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-alias-mutation-append",
+      "description": "Array aliases share one mutable wrapper: b = a, then b[1] = 9 and the b[3] = 4 append are both observed through a (a[1] + a[3] + a.length = 9 + 4 + 4 = 17) — append grows the wrapped storage in place, so the alias identity is stable",
+      "source": "export function test(): int {\n  let a: int[] = [1, 2, 3];\n  let b: int[] = a;\n  b[1] = 9;\n  b[3] = 4;\n  return a[1] + a[3] + a.length;\n}",
+      "expectedOutput": "17",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-negative-read-e8002",
+      "description": "A negative index read is a runtime E8002 (LuaJIT's emitted negative-array-index check), exit 1 — the read helper performs the bounds check before touching the storage",
+      "source": "export function test(): int {\n  let xs: int[] = [1, 2, 3];\n  return xs[-1];\n}",
+      "expectedOutput": null,
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-oob-read-e8001",
+      "description": "A read past the end is a runtime E8001 \"expected int, got null\" (spec §Bounds and nil behavior: LuaJIT reads nil there and the read site's typed boundary fails with that shape) — the JVM read raises the boundary failure directly, exit 1",
+      "source": "export function test(): int {\n  let xs: int[] = [1, 2, 3];\n  return xs[99];\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-negative-write-e8002",
+      "description": "A negative index write is a runtime E8002 (spec §Array writes rule 5: i < 0 is a runtime error), exit 1",
+      "source": "export function test(): int {\n  let xs: int[] = [1, 2, 3];\n  xs[-1] = 9;\n  return xs[0];\n}",
+      "expectedOutput": null,
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-gap-write-e8002",
+      "description": "Writing past the end with a gap (i > length) is a runtime E8002 (spec §Array writes rule 5) — only i === length appends, exit 1",
+      "source": "export function test(): int {\n  let xs: int[] = [1, 2, 3];\n  xs[4] = 99;\n  return xs[4];\n}",
+      "expectedOutput": null,
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-eval-order-read",
+      "description": "Read evaluation order (spec §Operational semantics rule 1): the receiver expression runs before the index expression — get prints 'arr', mark prints 'idx', then the read returns xs[2] = 300",
+      "source": "import * as console from \"std/console\"\nfunction mark(label: string, value: int): int { console.log(label); return value; }\nfunction get(label: string, xs: int[]): int[] { console.log(label); return xs; }\nexport function test(): int {\n  let xs: int[] = [100, 200, 300];\n  return get(\"arr\", xs)[mark(\"idx\", 2)];\n}",
+      "expectedOutput": "arr\nidx\n300",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-eval-order-write",
+      "description": "Write evaluation order (spec §Operational semantics rule 3: the assignment RHS evaluates before the LHS write check): receiver 'arr', index 'idx', RHS 'rhs' run strictly left to right, then the bounds check + store write xs[0] = 42",
+      "source": "import * as console from \"std/console\"\nfunction mark(label: string, value: int): int { console.log(label); return value; }\nfunction get(label: string, xs: int[]): int[] { console.log(label); return xs; }\nexport function test(): int {\n  let xs: int[] = [1, 2, 3];\n  get(\"arr\", xs)[mark(\"idx\", 0)] = mark(\"rhs\", 42);\n  return xs[0];\n}",
+      "expectedOutput": "arr\nidx\nrhs\n42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-eval-order-hoisted",
+      "description": "Left-to-right order survives hoisted null-typed side effects in the index and RHS: the index operand's hoisted 'index-side' print runs before its inline pick('index') call, which is materialized into a temporary ahead of the RHS's hoisted 'value-side' print — output index-side, index, value-side, value, then the written xs[0] = 0",
+      "source": "import * as console from \"std/console\"\nfunction pick(label: string, z: null): int { console.log(label); return 0; }\nexport function test(): int {\n  let xs: int[] = [5, 6];\n  xs[pick(\"index\", console.log(\"index-side\"))] = pick(\"value\", console.log(\"value-side\"));\n  return xs[0];\n}",
+      "expectedOutput": "index-side\nindex\nvalue-side\nvalue\n0",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-frontend-reject-index-type",
+      "description": "A non-int array index is rejected by the frontend type checker (E3007 Array index must be int) before any backend runs — codegen/javac/java never invoked",
+      "source": "export function test(): int {\n  let xs: int[] = [1, 2];\n  return xs[\"bad\"];\n}",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3007",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-frontend-reject-length-write",
+      "description": "Assignment to the read-only array .length intrinsic is rejected by the frontend type checker (E3017 Array length is read-only) before any backend runs — codegen/javac/java never invoked",
+      "source": "export function test(): null {\n  let xs: int[] = [1, 2];\n  xs.length = 5;\n}",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3017",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-literal-read-write-length-parity",
+      "description": "Cross-backend parity: int[] literal, element writes, the xs[xs.length] append idiom, .length, and alias mutation produce identical observable results under LuaJIT (the reference) and the emitted JVM artifact — every assertion routed through console output",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let xs: int[] = [10, 20, 30];\n  xs[1] = 99;\n  xs[xs.length] = 40;\n  if (xs[0] === 10 && xs[1] === 99 && xs[2] === 30 && xs[3] === 40 && xs.length === 4) {\n    console.log(\"array-parity\");\n  }\n  let ys: int[] = [];\n  ys[0] = 7;\n  let zs: int[] = ys;\n  zs[1] = 8;\n  if (ys[0] === 7 && ys[1] === 8 && ys.length === 2) {\n    console.log(\"alias-parity\");\n  }\n}",
+      "expectedOutput": "array-parity\nalias-parity",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-multi-type-parity",
+      "description": "Cross-backend parity: number[]/string[]/boolean[] literals, writes, and reads produce identical observable results under LuaJIT and the emitted JVM artifact",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let ns: number[] = [1.5, 2.5];\n  ns[0] = ns[0] + 1.0;\n  let ss: string[] = [\"a\", \"b\"];\n  ss[0] = \"z\";\n  let bs: boolean[] = [true, false];\n  bs[1] = bs[0];\n  if (ns[0] === 2.5 && ns[1] === 2.5 && ss[0] === \"z\" && ss[1] === \"b\" && bs[0] === true && bs[1] === true) {\n    console.log(\"multi-parity\");\n  }\n}",
+      "expectedOutput": "multi-parity",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [number]",
+        "array : [string]",
+        "array : [boolean]"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-negative-read-parity",
+      "description": "Cross-backend parity: the negative index read raises E8002 on both LuaJIT (its emitted negative-index check) and the emitted JVM artifact, exit 1 on both",
+      "source": "export function test(): int {\n  let xs: int[] = [1, 2, 3];\n  return xs[-1];\n}",
+      "expectedOutput": null,
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    }
+  ]
+}

@@ -24,9 +24,12 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * JVM code generator (ISSUE-0091 skeleton, ISSUE-0092 first semantic
- * slice — while loops and template literals): a small but real
- * end-to-end JVM backend.
+ * JVM code generator (ISSUE-0091 skeleton, ISSUE-0092 semantic slice —
+ * while loops and template literals, ISSUE-0093 functions and direct
+ * calls slice, ISSUE-0094 primitive-array slice — array literals,
+ * indexing, element assignment, and {@code .length} reads for
+ * {@code int[]}, {@code number[]}, {@code string[]}, and
+ * {@code boolean[]}): a small but real end-to-end JVM backend.
  *
  * <p>Walks the typed AST (the compiler's IR — see {@code deal-compiler-architecture-v1})
  * and emits a self-contained Java class whose static methods implement the
@@ -38,19 +41,51 @@ import java.util.Set;
  * run {@code javac}/{@code java}, which is exactly why the backend
  * guarantees every artifact it emits is valid Java).
  *
- * <p>Semantic slice scope (ISSUE-0091 skeleton + ISSUE-0092 slice):
+ * <p>Semantic slice scope (ISSUE-0091 skeleton + ISSUE-0092 slice +
+ * ISSUE-0093 slice + ISSUE-0094 slice):
  * functions, {@code let} locals, module fields, literals,
  * int/number/boolean/string arithmetic and comparisons, {@code if}/
  * {@code else}, {@code while} loops, {@code return}, assignment, direct
  * calls, template literals (lowered to string concatenation), the
- * {@code int()}/{@code number()} conversion intrinsics, and {@code std/console}
+ * {@code int()}/{@code number()} conversion intrinsics, {@code std/console}
  * output ({@code console.log}/{@code console.error} → {@code System.out}/
- * {@code System.err}). Anything outside this scope — modules (any import
- * other than {@code std/console}, rejected at the import statement itself
- * even when unused), classes, arrays, tables, stdlib modules other than
+ * {@code System.err}), and primitive arrays — {@code int[]},
+ * {@code number[]}, {@code string[]}, {@code boolean[]} — as literals,
+ * index reads, element writes, and {@code .length} reads. Anything
+ * outside this scope — modules (any import other than
+ * {@code std/console}, rejected at the import statement itself
+ * even when unused), classes, tables, nullables, nullable arrays,
+ * arrays of nullable elements, nested (multi-dimensional) arrays, class
+ * arrays, function arrays, stdlib modules other than
  * {@code std/console}, async, host ABI, {@code @jsonable}, for/for-of
  * loops, break/continue, try/throw — is rejected with a backend
  * {@code E6000} diagnostic, never silently miscompiled.
+ *
+ * <p>Primitive arrays (ISSUE-0094) map to emitted mutable wrapper
+ * classes ({@code __IntArray}/{@code __NumberArray}/{@code __StringArray}/
+ * {@code __BooleanArray} holding a primitive Java array), the spec's
+ * "specialized primitive array wrapper" JVM representation. The wrapper
+ * identity is stable across appends — writing at {@code i == length}
+ * grows the wrapped storage in place — so aliases observe every write
+ * exactly like LuaJIT's shared 1-based table ({@code let b: int[] = a;}
+ * then {@code b[0] = 9;} is visible through {@code a}). Array reads
+ * check the index: negative → {@code E8002} (LuaJIT's emitted
+ * negative-index check), past the end → {@code E8001} "expected
+ * &lt;T&gt;, got null" (LuaJIT reads nil there, and the read site's
+ * typed boundary raises {@code E8001} — the JVM read reproduces the
+ * boundary failure directly, since a primitive Java array cannot yield
+ * nil). Array writes check {@code 0 &lt;= i &lt;= length}
+ * ({@code E8002} otherwise), append at {@code i == length}, and
+ * runtime-check the stored value against the element type — int
+ * elements route through {@code checkInt} ({@code E8004}); the JVM
+ * static type system proves the number/string/boolean element checks
+ * redundant, which spec-v1.1 §JVM backend contract permits. Evaluation
+ * order follows spec-v1.1 §Operational semantics: the receiver, the
+ * index, and the assignment RHS all evaluate (left to right) before the
+ * LHS write check — the emitted write is a helper call whose Java
+ * arguments evaluate left to right before the helper performs the
+ * bounds check, element check, and store, and {@code emitOperandsInOrder}
+ * keeps that order when an operand hoists side-effecting pre-statements.
  *
  * <p>While loops (ISSUE-0092) emit plain Java {@code while} loops. The
  * condition routes through the emitted {@code loopCond} identity helper so
@@ -860,8 +895,35 @@ public final class JvmBackend {
             // Assignment targets are writes, not reads; LuaJIT and Java
             // agree on write order (the write happens, then the later field
             // initializer overwrites), so only the value side is walked.
-            case AssignmentExpr ae ->
+            // An INDEX target's array and index expressions are value
+            // positions (reads) — a later-declared field read there is a
+            // load-time nil read under LuaJIT (attempt to index nil) and a
+            // forward static-field reference under Java — so they are
+            // walked like any other read.
+            case AssignmentExpr ae -> {
                 collectExprRefs(ae.value(), locals, fieldReads, calledFunctions);
+                if (ae.target() instanceof IndexExpr idx) {
+                    collectExprRefs(idx.array(), locals, fieldReads, calledFunctions);
+                    collectExprRefs(idx.index(), locals, fieldReads, calledFunctions);
+                }
+            }
+            // Array reads/literals/length are value positions (ISSUE-0094):
+            // the array, the index, and every element are reads. Without
+            // these walks a module-level call whose transitive body reads a
+            // later-declared field through an index or an array literal
+            // would slip past the load-time guard and emit a Java forward
+            // reference (LuaJIT fails at load with a nil read).
+            case IndexExpr idx -> {
+                collectExprRefs(idx.array(), locals, fieldReads, calledFunctions);
+                collectExprRefs(idx.index(), locals, fieldReads, calledFunctions);
+            }
+            case ArrayLiteralExpr al -> {
+                for (ExpressionNode elem : al.elements()) {
+                    collectExprRefs(elem, locals, fieldReads, calledFunctions);
+                }
+            }
+            case MemberAccessExpr mae ->
+                collectExprRefs(mae.object(), locals, fieldReads, calledFunctions);
             // Template interpolations are value positions; the literal
             // parts carry no references.
             case TemplateLiteralExpr tl -> {
@@ -1124,11 +1186,34 @@ public final class JvmBackend {
                         }
                         written.add(name);
                     }
+                } else if (ae.target() instanceof IndexExpr idx) {
+                    // An INDEX target's array and index expressions are
+                    // value positions (ISSUE-0094): a later-declared field
+                    // read there binds to LuaJIT's global nil at call time
+                    // (attempt to index nil) while Java would read the
+                    // initialized static field — a read violation unless a
+                    // write inside the function dominates it.
+                    walkDominanceExpr(idx.array(), locals, written, fnDeclIdx,
+                        readViolations, writeViolations);
+                    walkDominanceExpr(idx.index(), locals, written, fnDeclIdx,
+                        readViolations, writeViolations);
                 }
             }
             case MemberAccessExpr mae ->
                 walkDominanceExpr(mae.object(), locals, written, fnDeclIdx,
                     readViolations, writeViolations);
+            case IndexExpr idx -> {
+                walkDominanceExpr(idx.array(), locals, written, fnDeclIdx,
+                    readViolations, writeViolations);
+                walkDominanceExpr(idx.index(), locals, written, fnDeclIdx,
+                    readViolations, writeViolations);
+            }
+            case ArrayLiteralExpr al -> {
+                for (ExpressionNode elem : al.elements()) {
+                    walkDominanceExpr(elem, locals, written, fnDeclIdx,
+                        readViolations, writeViolations);
+                }
+            }
             case TemplateLiteralExpr tl -> {
                 for (ExpressionNode part : tl.parts()) {
                     walkDominanceExpr(part, locals, written, fnDeclIdx,
@@ -1190,6 +1275,41 @@ public final class JvmBackend {
         emitLine("// would make statements after the loop unreachable and a constant-false");
         emitLine("// condition would make the loop body unreachable — both javac errors.");
         emitLine("static boolean loopCond(boolean v) { return v; }");
+        emitLine();
+        emitLine("// ---- DEAL primitive array runtime support (ISSUE-0094) ----");
+        emitLine("// int[]/number[]/string[]/boolean[] map to mutable wrapper classes — the");
+        emitLine("// spec's specialized primitive array wrapper (spec-v1.1 §JVM value mapping).");
+        emitLine("// The wrapper identity is stable across appends (writing at i == length grows");
+        emitLine("// the wrapped storage in place), so aliases observe every write exactly like");
+        emitLine("// LuaJIT's shared 1-based table. Every name here uses the __ prefix, which is");
+        emitLine("// unreachable from javaName's translation (each DEAL underscore escapes to");
+        emitLine("// $u), so no user binding, method, or field can collide with it.");
+        emitLine("static final class __IntArray { long[] data; __IntArray(long[] data) { this.data = data; } }");
+        emitLine("static final class __NumberArray { double[] data; __NumberArray(double[] data) { this.data = data; } }");
+        emitLine("static final class __StringArray { java.lang.String[] data; __StringArray(java.lang.String[] data) { this.data = data; } }");
+        emitLine("static final class __BooleanArray { boolean[] data; __BooleanArray(boolean[] data) { this.data = data; } }");
+        emitLine("// array reads: a negative index is E8002 (LuaJIT's emitted negative-index");
+        emitLine("// check); an index past the end is E8001 \"expected <T>, got null\" — LuaJIT");
+        emitLine("// reads nil there and the read site's typed boundary fails with exactly that");
+        emitLine("// shape (spec §Bounds and nil behavior: `let x: int = xs[99]` → nil is not");
+        emitLine("// int). A primitive Java array cannot yield nil, so the JVM read raises the");
+        emitLine("// boundary failure directly.");
+        emitLine("static long __intArrayRead(__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int, got null\"); return a.data[(int) i]; }");
+        emitLine("static double __numberArrayRead(__NumberArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected number, got null\"); return a.data[(int) i]; }");
+        emitLine("static java.lang.String __stringArrayRead(__StringArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected string, got null\"); return a.data[(int) i]; }");
+        emitLine("static boolean __booleanArrayRead(__BooleanArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected boolean, got null\"); return a.data[(int) i]; }");
+        emitLine("// array writes: 0 <= i <= length (E8002 otherwise); i == length appends one");
+        emitLine("// element (spec §Array writes); the stored value is runtime-checked against the");
+        emitLine("// element type — int elements route through checkInt (E8004, like LuaJIT's");
+        emitLine("// check_int at the write), while the JVM static type system proves the");
+        emitLine("// number/string/boolean element checks redundant (spec-v1.1 §JVM backend");
+        emitLine("// contract). The write check runs after the value expression has been");
+        emitLine("// evaluated — the helper call's Java arguments evaluate left to right before");
+        emitLine("// the bounds check, per spec-v1.1 §Operational semantics rule 3.");
+        emitLine("static long __intArrayWrite(__IntArray a, long i, long v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); v = checkInt(v); if (i == (long) a.data.length) { long[] nd = new long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static double __numberArrayWrite(__NumberArray a, long i, double v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { double[] nd = new double[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static java.lang.String __stringArrayWrite(__StringArray a, long i, java.lang.String v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static boolean __booleanArrayWrite(__BooleanArray a, long i, boolean v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { boolean[] nd = new boolean[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine();
     }
 
@@ -1725,14 +1845,8 @@ public final class JvmBackend {
             }
             case AssignmentExpr ae -> emitAssignment(ae);
             case MemberAccessExpr mae -> emitMemberAccessValue(mae);
-            case IndexExpr idx -> {
-                unsupported("array indexing", idx.span());
-                yield "null";
-            }
-            case ArrayLiteralExpr al -> {
-                unsupported("array literals", al.span());
-                yield "null";
-            }
+            case IndexExpr idx -> emitIndexRead(idx);
+            case ArrayLiteralExpr al -> emitArrayLiteral(al);
             case ObjectLiteralExpr ol -> {
                 unsupported("object literals", ol.span());
                 yield "null";
@@ -2108,6 +2222,20 @@ public final class JvmBackend {
                 }
                 yield isPureAfterEmission(u.expr());
             }
+            // An array read can raise at evaluation time (E8002 negative
+            // index / E8001 past the end), so it is never pure after
+            // emission — a later hoisting operand must not run first.
+            case IndexExpr idx -> false;
+            // An array literal is inert apart from its elements: the
+            // allocation has no observable effect in scope (array
+            // equality is out of scope), so purity follows the elements.
+            case ArrayLiteralExpr al -> {
+                boolean pure = true;
+                for (ExpressionNode elem : al.elements()) {
+                    pure &= isPureAfterEmission(elem);
+                }
+                yield pure;
+            }
             // Unsupported forms record an E6000 and emit no side effects,
             // but their emitted code is a placeholder — treat as effectful
             // so ordering never depends on them.
@@ -2283,10 +2411,84 @@ public final class JvmBackend {
         return sb.append(')').toString();
     }
 
-    /** A member access used as a value (not a call) — unsupported in the skeleton. */
+    /** A member access used as a value (not a call). Only the array
+     * {@code .length} intrinsic is supported (ISSUE-0094): for
+     * {@code xs.length} with {@code xs: T[]} the checker types the
+     * expression as {@code int} (spec §Length and iteration), and the
+     * backend emits a read of the wrapper's storage length. Every other
+     * member access as a value stays out of scope (E6000). */
     private String emitMemberAccessValue(MemberAccessExpr mae) {
+        Type objType = typeOf(mae.object());
+        if (objType instanceof Type.Array && "length".equals(mae.field())) {
+            String obj = emitExpression(mae.object());
+            return "((long) " + obj + ".data.length)";
+        }
         unsupported("member access as a value", mae.span());
         return "null";
+    }
+
+    // =========================================================================
+    // Primitive arrays (ISSUE-0094): literals, index reads, element writes
+    // =========================================================================
+
+    /**
+     * Emits a read of {@code array[index]} where {@code array: T[]} and
+     * {@code T} is one of the four primitive element types. The receiver
+     * and the index are emitted with {@link #emitOperandsInOrder} (the
+     * spec's strict left-to-right evaluation order holds even when one of
+     * them hoists side-effecting pre-statements), and the emitted helper
+     * call performs the read-site checks: negative index → E8002 (LuaJIT's
+     * emitted negative-index check), index past the end → E8001
+     * "expected &lt;T&gt;, got null" (LuaJIT reads nil there and the read
+     * site's typed boundary fails with that shape — spec §Bounds and nil
+     * behavior). Tables and other indexable forms stay out of scope.
+     */
+    private String emitIndexRead(IndexExpr idx) {
+        Type arrayType = typeOf(idx.array());
+        if (!(arrayType instanceof Type.Array arr)) {
+            unsupported("indexing of " + typeName(arrayType), idx.span());
+            return "null";
+        }
+        String readHelper = arrayReadHelper(arr.element());
+        if (readHelper == null) {
+            // Unsupported element type (nested/class/function/… arrays):
+            // record the E6000 and emit the inert placeholder.
+            javaArrayElementType(arr.element(), idx.span());
+            return "null";
+        }
+        List<String> codes = emitOperandsInOrder(List.of(idx.array(), idx.index()));
+        return readHelper + "(" + codes.get(0) + ", " + codes.get(1) + ")";
+    }
+
+    /**
+     * Emits an array literal {@code [e1, …, eN]} for one of the four
+     * primitive element types as {@code new __IntArray(new long[]{…})}
+     * (and the empty form {@code new long[]{} — an empty literal is
+     * only checker-accepted with a contextual array type, which
+     * {@link #typeOf} carries}). Elements are emitted with
+     * {@link #emitOperandsInOrder}, so left-to-right element evaluation
+     * holds even when an element hoists side-effecting pre-statements
+     * (an earlier inline element is materialized into a temporary before
+     * the hoisted statements, exactly like LuaJIT's per-element
+     * evaluation order).
+     */
+    private String emitArrayLiteral(ArrayLiteralExpr al) {
+        Type arrayType = typeOf(al);
+        if (!(arrayType instanceof Type.Array arr)) {
+            unsupported("array literals without an array type", al.span());
+            return "null";
+        }
+        String wrapper = arrayWrapperName(arr.element());
+        String elemJava = javaArrayElementType(arr.element(), al.span());
+        if (wrapper == null || elemJava == null) return "null";
+        List<String> codes = emitOperandsInOrder(al.elements());
+        StringBuilder sb = new StringBuilder("new ").append(wrapper)
+            .append("(new ").append(elemJava).append("[]{");
+        for (int i = 0; i < codes.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(codes.get(i));
+        }
+        return sb.append("})").toString();
     }
 
     private String emitIntrinsicCall(String name, CallExpr call) {
@@ -2355,6 +2557,41 @@ public final class JvmBackend {
             }
             String target = mapped != null ? mapped : javaName(id.name());
             return target + " = " + emitExpression(ae.value());
+        }
+        if (ae.target() instanceof IndexExpr idx) {
+            // Array element write `xs[i] = v` (ISSUE-0094). The checker
+            // enforces int indexes and element-type assignability
+            // (E3007/E3001), so only the four primitive element arrays
+            // reach this branch.
+            Type indexType = typeOf(idx);
+            if (indexType instanceof Type.Table) {
+                unsupported("table indexing", idx.span());
+                return "null";
+            }
+            if (indexType instanceof Type.Error) {
+                unsupported("array element assignment to an errored type",
+                    ae.span());
+                return "null";
+            }
+            String writeHelper = arrayWriteHelper(indexType);
+            if (writeHelper == null) {
+                javaArrayElementType(indexType, ae.span());
+                return "null";
+            }
+            // Spec §Operational semantics rule 3: the receiver, the index,
+            // and the assignment RHS all evaluate (left to right) BEFORE
+            // the LHS write check. emitOperandsInOrder keeps that order
+            // when any operand hoists side-effecting pre-statements, and
+            // the emitted helper call's Java arguments evaluate left to
+            // right before the helper performs the bounds check, the
+            // element value check, and the store. The helper returns the
+            // stored value, so the assignment expression keeps its DEAL
+            // value in value positions (`return xs[0] = 5;`,
+            // `f(xs[0] = 5)`).
+            List<String> codes = emitOperandsInOrder(
+                List.of(idx.array(), idx.index(), ae.value()));
+            return writeHelper + "(" + codes.get(0) + ", " + codes.get(1)
+                + ", " + codes.get(2) + ")";
         }
         unsupported("assignment to non-variable targets", ae.span());
         return "null";
@@ -2444,8 +2681,20 @@ public final class JvmBackend {
             // Assignment target (write) positions get their own guard in
             // emitAssignmentCore: a write to a later-declared local with
             // no enclosing binding is E6000 there, so only the value side
-            // is walked here.
-            case AssignmentExpr ae -> undeclaredUseIn(ae.value());
+            // is walked here. An INDEX target's array and index
+            // expressions are value positions (reads): a later-declared
+            // identifier there is a forward reference the emitted Java
+            // would reject (or — at module level — an illegal static-field
+            // forward reference), so they are walked like any other read.
+            case AssignmentExpr ae -> {
+                String r = undeclaredUseIn(ae.value());
+                if (r != null) yield r;
+                if (ae.target() instanceof IndexExpr idx) {
+                    r = undeclaredUseIn(idx.array());
+                    if (r == null) r = undeclaredUseIn(idx.index());
+                }
+                yield r;
+            }
             case MemberAccessExpr mae -> undeclaredUseIn(mae.object());
             case IndexExpr idx ->
                 firstNonNull(undeclaredUseIn(idx.array()), undeclaredUseIn(idx.index()));
@@ -2547,8 +2796,17 @@ public final class JvmBackend {
                 yield Type.Error.INSTANCE;
             }
             case ArrayType at -> {
-                unsupported("array types", at.span());
-                yield Type.Error.INSTANCE;
+                Type elem = resolveTypeNode(at.elementType());
+                if (elem == Type.Error.INSTANCE) {
+                    // Inner resolution already recorded its E6000 (e.g. a
+                    // nullable element or a nested array); do not
+                    // double-report.
+                    yield Type.Error.INSTANCE;
+                }
+                if (javaArrayElementType(elem, at.span()) == null) {
+                    yield Type.Error.INSTANCE;
+                }
+                yield new Type.Array(elem);
             }
             case NullableType nt -> {
                 unsupported("nullable types", nt.span());
@@ -2569,11 +2827,86 @@ public final class JvmBackend {
             case Type.Boolean ignored -> "boolean";
             case Type.String ignored -> "java.lang.String";
             case Type.Null ignored -> "java.lang.Void";
+            case Type.Array a -> {
+                if (javaArrayElementType(a.element(), span) == null) {
+                    yield null;
+                }
+                yield arrayWrapperName(a.element());
+            }
             case Type.Error ignored -> null;
             default -> {
                 unsupported("values of type " + typeName(t), span);
                 yield null;
             }
+        };
+    }
+
+    // =========================================================================
+    // Primitive array type mapping (ISSUE-0094)
+    // =========================================================================
+
+    /**
+     * Java storage element type for a supported primitive array element
+     * type, or {@code null} (with an E6000 diagnostic recorded) for any
+     * other element type: only {@code int[]}, {@code number[]},
+     * {@code string[]}, and {@code boolean[]} are in scope — nullable
+     * elements, nullable arrays, nested arrays, class arrays, and
+     * function arrays are rejected, never silently miscompiled.
+     */
+    private String javaArrayElementType(Type element, Span span) {
+        return switch (element) {
+            case Type.Int ignored -> "long";
+            case Type.Number ignored -> "double";
+            case Type.String ignored -> "java.lang.String";
+            case Type.Boolean ignored -> "boolean";
+            default -> {
+                unsupported("arrays with element type " + typeName(element)
+                    + " (only int[], number[], string[], boolean[] are "
+                    + "supported)", span);
+                yield null;
+            }
+        };
+    }
+
+    /** Emitted wrapper class name for a supported primitive element type.
+     * Callers gate on {@link #javaArrayElementType} first, so a
+     * {@code null} here only ever accompanies an already-recorded E6000.
+     * The {@code __} prefix is unreachable from {@link #javaName} (every
+     * DEAL underscore escapes to {@code $u}), so no user binding can
+     * collide with the emitted class. */
+    private String arrayWrapperName(Type element) {
+        return switch (element) {
+            case Type.Int ignored -> "__IntArray";
+            case Type.Number ignored -> "__NumberArray";
+            case Type.String ignored -> "__StringArray";
+            case Type.Boolean ignored -> "__BooleanArray";
+            default -> null;
+        };
+    }
+
+    /** Emitted read-helper method name for a supported primitive element
+     * type (same {@code null}-on-unsupported contract as
+     * {@link #arrayWrapperName}). */
+    private String arrayReadHelper(Type element) {
+        return switch (element) {
+            case Type.Int ignored -> "__intArrayRead";
+            case Type.Number ignored -> "__numberArrayRead";
+            case Type.String ignored -> "__stringArrayRead";
+            case Type.Boolean ignored -> "__booleanArrayRead";
+            default -> null;
+        };
+    }
+
+    /** Emitted write-helper method name for a supported primitive element
+     * type (same {@code null}-on-unsupported contract as
+     * {@link #arrayWrapperName}). */
+    private String arrayWriteHelper(Type element) {
+        return switch (element) {
+            case Type.Int ignored -> "__intArrayWrite";
+            case Type.Number ignored -> "__numberArrayWrite";
+            case Type.String ignored -> "__stringArrayWrite";
+            case Type.Boolean ignored -> "__booleanArrayWrite";
+            default -> null;
         };
     }
 

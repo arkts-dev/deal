@@ -1,4 +1,4 @@
-# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice)
+# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice)
 
 A small but real end-to-end JVM backend for the DEAL compiler. It walks the
 typed AST (the compiler's IR — `deal-compiler-architecture-v1`) and emits a
@@ -33,11 +33,14 @@ Supported (real semantics, spec JVM value mapping):
 | standalone expression statements (`x + 1;`) | lowered to a dummy-local declaration (`long __ignored = intAdd(x, 1L);`) so they are genuinely evaluated — an int overflow there is an observable E8004, as under LuaJIT |
 | `int()` / `number()` intrinsics | `intFromNumber` / `numberFromInt` helpers (E8001/E8004) |
 | `import * as c from "std/console"` | `c.log` → `java.lang.System.out.println`, `c.error` → `java.lang.System.err.println` |
+| `int[]` / `number[]` / `string[]` / `boolean[]` | mutable wrapper classes `__IntArray` / `__NumberArray` / `__StringArray` / `__BooleanArray` holding a primitive Java array (the spec's "specialized primitive array wrapper") — literals `new __IntArray(new long[]{…})`, index reads via the emitted `__intArrayRead`-family helpers, element writes via the `__intArrayWrite`-family helpers, `.length` via `((long) xs.data.length)`. The wrapper identity is stable across appends (a write at `i == length` grows the wrapped storage in place), so aliases observe every write exactly like LuaJIT's shared 1-based table |
 
 Out of scope (rejected with a backend `E6000` diagnostic, never silently
-miscompiled): modules (any import other than `std/console`), classes, arrays,
-tables, nullables, function types, stdlib modules, async/await, for/for-of loops,
-try/throw, host ABI, `@jsonable`.
+miscompiled): modules (any import other than `std/console`), classes, tables,
+nullables, nullable arrays, arrays of nullable elements, nested
+(multi-dimensional) arrays, class arrays, function arrays, function types,
+stdlib modules, async/await, for/for-of loops, try/throw, host ABI,
+`@jsonable`.
 
 The JVM's static type system proves typed boundaries redundant, which the
 current normative spec explicitly permits (`docs/spec-v1.1.md` §JVM backend
@@ -350,6 +353,107 @@ reports success for an artifact `javac` would reject.
   stay clean (pinned by `JvmBackendTest.testElseIfChainUseBeforeDeclaration`
   and the `jvm-elseif-chain-declared-first` fixture).
 
+## Review evidence: primitive arrays (ISSUE-0094)
+
+Every supported primitive-array form and runtime check, with the test
+covering it. All fixture evidence below runs through the real frontend →
+real `JvmBackend` codegen → `javac` subprocess → `java` subprocess
+executing the emitted artifact (`test/conformance/fixtures/jvm-arrays-slice.json`,
+18 fixtures: 15 JVM-only + 3 cross-backend parity fixtures that also run
+under LuaJIT as the reference; `test/BackendConformanceTest` fails a
+fixture whose codegen or JVM execution is bypassed):
+
+- **`int[]` array literal + index read + `.length`** —
+  `jvm-arr-literal-read-length` (xs[0]+xs[1]+xs[2]+xs.length = 63),
+  IR-pinned (`array : [int]`, `index [] : int`, `member .length : int`);
+  unit emission assertions in `JvmBackendTest.testPrimitiveArrays`
+  (`new __IntArray(new long[]{10L, 20L})`, `__intArrayRead(xs, 0L)`,
+  `((long) xs.data.length)`).
+- **`number[]` / `string[]` / `boolean[]` literals + reads + writes +
+  length** — `jvm-arr-four-element-types` (all three element types in
+  one module: number arithmetic on elements, string concatenation into
+  an element, boolean copy, length reads).
+- **Element write into an existing index** — `jvm-arr-write-readback`
+  (xs[1] = 99; xs[2] = xs[0] + xs[1]); `JvmBackendTest.testPrimitiveArrays`
+  asserts the `__intArrayWrite(xs, 1L, 99L);` emission.
+- **Append at `i === length`** (spec §Array writes rule 4) —
+  `jvm-arr-append-at-length` (empty literal grown via the
+  `xs[xs.length] = v` idiom twice and a plain index-equals-length write);
+  `JvmBackendTest.testPrimitiveArrays` pins the `i == (long) a.data.length`
+  growth emission.
+- **Alias mutation with stable wrapper identity across appends** —
+  `jvm-arr-alias-mutation-append` (b = a; b[1] = 9; b[3] = 4 observed
+  through a).
+- **Arrays through function parameters and returns** —
+  `jvm-arr-function-param-return` (fill(xs, v) mutates the caller's
+  array and returns it; total(xs) sums it).
+- **Module-level array fields** — `JvmBackendTest.testPrimitiveArrays`
+  (load-time initialization and mutation, `g[0] = 5` at module level).
+- **Negative index read → E8002** (LuaJIT's emitted negative-index
+  check) — `jvm-arr-negative-read-e8002` (JVM-only) and
+  `jvm-arr-negative-read-parity` (cross-backend: the same E8002 under
+  real luajit); `JvmBackendTest.testArrayRuntimeErrorCodes`.
+- **Read past the end → E8001 "expected int, got null"** (spec
+  §Bounds and nil behavior: LuaJIT reads nil there and the read site's
+  typed boundary fails with that shape — a primitive Java array cannot
+  yield nil, so the JVM read raises the boundary failure directly) —
+  `jvm-arr-oob-read-e8001`; `JvmBackendTest.testArrayRuntimeErrorCodes`
+  also pins the boolean element spelling ("expected boolean, got null").
+- **Negative index write → E8002** (spec §Array writes rule 5) —
+  `jvm-arr-negative-write-e8002`; `JvmBackendTest.testArrayRuntimeErrorCodes`.
+- **Gap write `i > length` → E8002** (spec §Array writes rule 5) —
+  `jvm-arr-gap-write-e8002` (int), plus number[] and int[] gap-write
+  pins in `JvmBackendTest.testArrayRuntimeErrorCodes`.
+- **Element value check (assignment value check)** — int elements route
+  through the emitted `checkInt` (`v = checkInt(v);` emission assertion),
+  so an out-of-safe-range int element write raises E8004 exactly like
+  LuaJIT's `check_int` at the write site:
+  `JvmBackendTest.testArrayRuntimeErrorCodes` (literal and the
+  write-check-after-RHS-evaluation shape `xs[4] = 9223372036854775807` —
+  the RHS value check fires before the bounds check, per spec
+  §Operational semantics rule 3: "Evaluate assignment RHS before LHS
+  write check"). The number/string/boolean element checks are proven
+  redundant by the JVM static type system (spec-v1.1 §JVM backend
+  contract permits proving typed-boundary checks redundant).
+- **Read evaluation order** (spec §Operational semantics rule 1:
+  receiver before index) — `jvm-arr-eval-order-read` (get prints "arr",
+  mark prints "idx", the read returns 300).
+- **Write evaluation order** (spec §Operational semantics rule 3:
+  receiver, index, RHS before the LHS write check) —
+  `jvm-arr-eval-order-write` ("arr", "idx", "rhs", then the written
+  value), and `jvm-arr-eval-order-hoisted` + 
+  `JvmBackendTest.testArrayEvaluationOrderHoisted` for hoisted
+  null-typed side effects: the index operand's hoisted print runs
+  before its inline call, which is materialized into `__t0` ahead of
+  the RHS's hoisted print — never a lambda, never an inverted print
+  order (emission assertion: `__intArrayWrite(xs, __t0, pick("value",
+  null));`).
+- **Cross-backend parity against LuaJIT** —
+  `jvm-arr-literal-read-write-length-parity` (int[] literal, writes,
+  the append idiom, .length, alias mutation — identical observable
+  output under real luajit and the emitted JVM artifact),
+  `jvm-arr-multi-type-parity` (number[]/string[]/boolean[]),
+  `jvm-arr-negative-read-parity` (E8002 on both).
+- **Frontend compile-error gates rejected before any backend** —
+  `jvm-arr-frontend-reject-index-type` (E3007 non-int index) and
+  `jvm-arr-frontend-reject-length-write` (E3017 read-only `.length`
+  assignment); codegen/javac/java never invoked for either.
+- **Out-of-slice array shapes → E6000, never silently miscompiled** —
+  `JvmBackendTest.testUnsupportedConstructsRejected` +
+  `testArrayUnsupportedElementTypesRejected`: nested arrays (`int[][]`),
+  arrays of nullable elements (`(int | null)[]`), nullable arrays
+  (`int[] | null`), function arrays, class arrays, table indexing.
+- **Use-before-declaration guards walk array value positions** —
+  `JvmBackendTest.testArrayUseBeforeDeclarationGuards`: a module-level
+  call whose (transitive) body reads a later-declared field through an
+  index, an array literal, or a `.length` read is E6000 (LuaJIT reads
+  the global nil at load; Java would read the default wrapper); a
+  function declared before a field reading/writing it through an index
+  or an append is E6000 (write-dominance analysis); an assignment whose
+  index expression references a later-declared local is E6000; an index
+  write whose array identifier is a later-declared local is E6000 — and
+  the declared-first shape stays clean with full parity.
+
 ## Review evidence: backend-selection seam
 
 - **Selection seam** — `deal/codegen/Backend.java` (`LUAJIT`, `JVM`,
@@ -554,6 +658,35 @@ that builds this repository); when absent or broken (non-zero `-version`
 probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
 
 ## Known skeleton limitations (documented, not silent)
+
+- **Array reads past the end raise E8001 with the element-type name.**
+  LuaJIT reads nil there and the *read site's* typed boundary raises
+  the error ("expected int, got nil"); the JVM read helper raises
+  "expected <elementType>, got null" directly because a primitive Java
+  array cannot yield nil. The code (E8001) matches the boundary
+  failure the spec's negative test documents (`let x: int = xs[99]; //
+  runtime: nil is not int`); the message spelling ("got null" vs
+  LuaJIT's "got nil") differs by design and is pinned JVM-side. For an
+  in-scope checker-accepted program the read result always lands in an
+  element-typed position (array invariance), so the element-type
+  spelling is the boundary the LuaJIT program actually crosses.
+- **The element value check runs after the RHS evaluates.** Spec
+  §Operational semantics rule 3 ("Evaluate assignment RHS before LHS
+  write check") governs: the JVM emits the write as a helper call whose
+  Java arguments (receiver, index, RHS) evaluate left to right before
+  the helper performs the bounds check, the int element check
+  (`checkInt`), and the store. LuaJIT's emission performs the bounds
+  check before evaluating the RHS — an error-code divergence in the
+  corner where the RHS itself raises (`xs[4] = 9223372036854775807`:
+  JVM reports the RHS's E8004, LuaJIT reports the E8002 bounds error
+  first). The JVM follows the normative spec order and pins it
+  (`JvmBackendTest.testArrayRuntimeErrorCodes`,
+  `jvm-arr-eval-order-write`, `jvm-arr-eval-order-hoisted`).
+- **Array equality stays out of scope.** `xs === ys` on two arrays is
+  reference identity under LuaJIT and would be `==` on the wrappers
+  under JVM, but the slice scope lists only literals, indexing,
+  assignment, and length — array comparisons are E6000 rather than a
+  silent unlisted feature.
 
 - The normative spec for this backend is `docs/spec-v1.1.md` (§JVM value
   mapping / §JVM backend contract); `docs/spec-v1.2.md` is a future draft

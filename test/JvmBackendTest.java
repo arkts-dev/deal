@@ -29,9 +29,12 @@ import java.util.Map;
 
 /**
  * Unit tests for the JVM backend skeleton (ISSUE-0091), the first
- * semantic slice (ISSUE-0092 — while loops and template literals), and
- * the functions/direct-calls slice (ISSUE-0093 — parameter shadowing
- * against module fields and other visible bindings):
+ * semantic slice (ISSUE-0092 — while loops and template literals), the
+ * functions/direct-calls slice (ISSUE-0093 — parameter shadowing
+ * against module fields and other visible bindings), and the
+ * primitive-array slice (ISSUE-0094 — {@code int[]}/{@code number[]}/
+ * {@code string[]}/{@code boolean[]} literals, index reads, element
+ * writes, and {@code .length} reads with the spec's runtime checks):
  * <ul>
  *   <li>parameter shadowing (ISSUE-0093): a parameter shadowing a
  *       module field emits ONE disambiguated Java name in both the
@@ -59,9 +62,10 @@ import java.util.Map;
  *   <li>identifier translation and collision-safe class-name derivation,</li>
  *   <li>Java emission for the supported skeleton surface
  *       (literals, arithmetic, locals, if/else, console output, intrinsics),</li>
- *   <li>E6000 rejection of out-of-scope constructs (classes, arrays, tables,
- *       loops, async, non-console imports — at the import statement itself,
- *       even when unused —, module-level returns, use-before-declaration,
+ *   <li>E6000 rejection of out-of-scope constructs (classes, tables,
+ *       nested/nullable/class/function arrays, for/for-of loops, async,
+ *       non-console imports — at the import statement itself, even when
+ *       unused —, module-level returns, use-before-declaration,
  *       runtime-helper name collisions),</li>
  *   <li>observable-behavior preservation for null-typed side effects
  *       (null-typed returns/initializers/assignments/arguments — including
@@ -109,6 +113,22 @@ import java.util.Map;
  *       forward references are E6000 (never an artifact javac rejects after
  *       the CLI reported success), while chains over already-declared
  *       variables stay clean,</li>
+ *   <li>primitive arrays (ISSUE-0094): the emitted {@code __IntArray}/
+ *       {@code __NumberArray}/{@code __StringArray}/{@code __BooleanArray}
+ *       wrapper classes and read/write helpers (bounds checks: negative
+ *       read/write and gap write → E8002, read past the end → E8001
+ *       "expected &lt;T&gt;, got null"; element value checks: int elements
+ *       route through {@code checkInt} → E8004; the write check runs after
+ *       the receiver/index/RHS expressions evaluate, per spec-v1.1
+ *       §Operational semantics rule 3), appends at {@code i == length} with
+ *       the wrapper identity stable across growth (alias parity),
+ *       evaluation order with hoisted null-typed side effects materialized
+ *       into temporaries, arrays through function parameters/returns and
+ *       module fields, E6000 rejection of nested arrays, nullable arrays,
+ *       arrays of nullable/class/function elements, and
+ *       use-before-declaration guards walking index/array-literal/length
+ *       positions — all compiled and executed with {@code javac} +
+ *       {@code java},</li>
  *   <li>the backend-selection seam: {@code CompilationOrchestrator} with
  *       {@code Backend.JVM} emits and compiles a real {@code .java} artifact,
  *       rejects out-of-scope projects with E6000, detects class-name
@@ -143,6 +163,11 @@ public class JvmBackendTest {
             testWhileUseBeforeDeclarationRejected();
             testLoopCondHelperCollision();
             testTemplateLiterals();
+            testPrimitiveArrays();
+            testArrayRuntimeErrorCodes();
+            testArrayEvaluationOrderHoisted();
+            testArrayUnsupportedElementTypesRejected();
+            testArrayUseBeforeDeclarationGuards();
             testNullReturnSideEffects();
             testNullTypedInitializers();
             testNullTypedCapturesWithReassignment();
@@ -465,10 +490,27 @@ public class JvmBackendTest {
                 }
                 export function test(): int { return 1; }
                 """),
-            new Case("array literal and indexing", """
+            new Case("nested array type", """
                 export function test(): int {
-                  let xs: int[] = [1, 2];
-                  return xs[0];
+                  let rows: int[][] = [[1, 2], [3, 4]];
+                  return rows[0][1];
+                }
+                """),
+            new Case("array of nullable elements", """
+                export function test(): null {
+                  let xs: (int | null)[] = [];
+                }
+                """),
+            new Case("nullable array", """
+                export function test(): null {
+                  let xs: int[] | null = null;
+                }
+                """),
+            new Case("array of function elements", """
+                function add1(x: int): int { return x + 1; }
+                export function test(): int {
+                  let fs: ((x: int) => int)[] = [add1];
+                  return fs[0](3);
                 }
                 """),
             new Case("table-typed value", """
@@ -925,6 +967,382 @@ public class JvmBackendTest {
                 check(!res.source().contains("unsupported(\"template literals\""),
                     "no template-literal E6000 fallback in the artifact");
             }
+        }
+    }
+
+    // =========================================================================
+    // ISSUE-0094 semantic slice: primitive arrays (literals, indexing,
+    // element assignment, .length) with the spec's runtime checks
+    // =========================================================================
+
+    /** Primitive arrays compile and run end-to-end (javac + java): int[]/
+     * number[]/string[]/boolean[] literals, index reads, element writes,
+     * the i == length append (the xs[xs.length] idiom and a plain
+     * index-equals-length write), .length reads, aliases sharing one
+     * mutable wrapper (stable across append growth), arrays through
+     * function parameters/returns, and module-level array fields — with
+     * emission assertions for the wrapper/helper lowering. */
+    private static void testPrimitiveArrays() throws Exception {
+        System.out.println("-- Primitive arrays (javac + java) --");
+
+        ExecResult run = compileAndRunJvm("""
+            export function test(): int {
+              let xs: int[] = [10, 20, 30];
+              xs[1] = 99;
+              xs[xs.length] = 40;
+              let b: int[] = xs;
+              b[0] = 7;
+              let ns: number[] = [1.5, 2.5];
+              ns[1] = ns[0] + 1.0;
+              let ss: string[] = ["a", "b"];
+              ss[0] = ss[1] + "x";
+              let bs: boolean[] = [true, false];
+              bs[1] = bs[0];
+              let total: int = xs[0] + xs[1] + xs[2] + xs[3] + xs.length + b.length;
+              if (ns[0] === 1.5 && ns[1] === 2.5 && ss[0] === "bx" && bs[0] && bs[1]) {
+                return total;
+              }
+              return 0;
+            }
+            """, "arrays");
+        check(run.exitCode() == 0, "array run exits 0: " + run.output());
+        check(run.output().contains("184"),
+            "literal/read/write/append/length compute 184 (7+99+30+40 = 176, "
+            + "+ xs.length(4) + b.length(4)): " + run.output());
+
+        // Append + alias + param/return shapes.
+        ExecResult append = compileAndRunJvm("""
+            function fill(xs: int[], v: int): int[] {
+              xs[0] = v;
+              return xs;
+            }
+            export function test(): int {
+              let xs: int[] = [];
+              xs[xs.length] = 1;
+              xs[xs.length] = 2;
+              xs[2] = 4;
+              let ys: int[] = fill(xs, 9);
+              return ys[0] + ys[1] + ys[2] + ys.length;
+            }
+            """, "append");
+        check(append.exitCode() == 0, "append run exits 0: " + append.output());
+        check(append.output().contains("18"),
+            "append + param write computes 18 (9+2+4+3): " + append.output());
+
+        // Module-level array fields initialize and mutate at load time.
+        ExecResult module = compileAndRunJvm("""
+            let g: int[] = [1, 2];
+            g[0] = 5;
+            export function test(): int { return g[0] + g[1] + g.length; }
+            """, "modarr");
+        check(module.exitCode() == 0, "module array exits 0: " + module.output());
+        check(module.output().contains("9"),
+            "module-level array field computes 9 (5+2+2): " + module.output());
+
+        // Emission shape: wrapper classes, read/write helper calls, length
+        // lowering, and checkInt on int element stores.
+        Frontend f = compileFrontend("""
+            export function test(): int {
+              let xs: int[] = [10, 20];
+              xs[1] = 99;
+              return xs[0] + xs.length;
+            }
+            """, "jvmtest-arrays-emission.deal");
+        check(f.errors().isEmpty(), "array emission frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-arrays-emission.deal", "main");
+            check(!res.hasErrors(), "array emission codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains("static final class __IntArray"),
+                    "__IntArray wrapper class emitted");
+                check(java.contains("new __IntArray(new long[]{10L, 20L})"),
+                    "int[] literal lowers to new __IntArray(new long[]{…})");
+                check(java.contains("__intArrayWrite(xs, 1L, 99L);"),
+                    "element write lowers to the __intArrayWrite helper call");
+                check(java.contains("__intArrayRead(xs, 0L)"),
+                    "element read lowers to the __intArrayRead helper call");
+                check(java.contains("((long) xs.data.length)"),
+                    ".length lowers to a wrapped storage-length read");
+                check(java.contains("v = checkInt(v);"),
+                    "int element stores route through checkInt (E8004)");
+                check(java.contains("i == (long) a.data.length"),
+                    "append growth at i == length is present");
+                check(java.contains("static boolean __booleanArrayWrite"),
+                    "boolean write helper emitted");
+                check(java.contains("static java.lang.String __stringArrayRead"),
+                    "string read helper emitted");
+                check(java.contains("static double __numberArrayRead"),
+                    "number read helper emitted");
+                check(!res.source().contains("unsupported(\"array"),
+                    "no array E6000 fallback in the artifact");
+            }
+        }
+    }
+
+    /** Array runtime checks surface with DEAL error codes: negative read
+     * E8002, read past the end E8001 "expected int, got null", negative
+     * write E8002, gap write E8002, out-of-safe-range int element write
+     * E8004 (the element value check). */
+    private static void testArrayRuntimeErrorCodes() throws Exception {
+        System.out.println("-- Array runtime error codes (javac + java) --");
+
+        String[][] errorCases = {
+            {"int", "let xs: int[] = [1, 2, 3]; return xs[-1];", "E8002", "negative read"},
+            {"int", "let xs: int[] = [1, 2, 3]; return xs[99];", "E8001", "oob read"},
+            {"int", "let xs: int[] = [1, 2, 3]; xs[-1] = 9; return xs[0];", "E8002", "negative write"},
+            {"int", "let xs: int[] = [1, 2, 3]; xs[4] = 9; return xs[0];", "E8002", "gap write"},
+            {"int", "let xs: int[] = [1]; xs[0] = 9223372036854775807; return xs[0];", "E8004", "int element check"},
+            {"int", "let xs: int[] = []; xs[xs.length] = 9007199254740991; return 0;", null, "append boundary ok"},
+            {"int", "let xs: number[] = [1.5]; xs[99] = 2.5; return 0;", "E8002", "number gap write"},
+            {"string", "let ss: string[] = [\"a\"]; return ss[-2];", "E8002", "string negative read"},
+            {"boolean", "let bs: boolean[] = [true]; return bs[1];", "E8001", "boolean oob read"},
+        };
+        for (String[] c : errorCases) {
+            ExecResult r = compileAndRunJvm(
+                "export function test(): " + c[0] + " { " + c[1] + " }", "arrerr");
+            if (c[2] == null) {
+                check(r.exitCode() == 0, c[3] + " exits 0: " + r.output());
+            } else {
+                check(r.exitCode() == 1, c[3] + " exits 1: " + r.output());
+                check(r.output().contains("DEAL_ERROR_CODE: " + c[2]),
+                    c[3] + " reports " + c[2] + ": " + r.output());
+            }
+        }
+
+        // The write check runs AFTER the receiver/index/RHS expressions
+        // evaluate (spec §Operational semantics rule 3): the RHS's E8004
+        // fires before the E8002 bounds check for a gap write with an
+        // out-of-range RHS — the JVM evaluates the helper-call arguments
+        // left to right, then the helper performs its checks.
+        ExecResult order = compileAndRunJvm("""
+            export function test(): int {
+              let xs: int[] = [1];
+              xs[4] = 9223372036854775807;
+              return 0;
+            }
+            """, "arrordercheck");
+        check(order.exitCode() == 1, "gap write with out-of-range RHS exits 1: "
+            + order.output());
+        check(order.output().contains("DEAL_ERROR_CODE: E8004"),
+            "the RHS value check (E8004) runs before the bounds check per "
+            + "spec rule 3: " + order.output());
+    }
+
+    /** Array evaluation order with hoisted null-typed side effects: the
+     * index operand's hoisted print runs before its inline call, which is
+     * materialized into a temporary ahead of the RHS's hoisted print —
+     * output index-side, index, value-side, value, then the written
+     * element. Never a lambda, never an inverted print order. */
+    private static void testArrayEvaluationOrderHoisted() throws Exception {
+        System.out.println("-- Array evaluation order with hoisted side effects --");
+
+        ExecResult run = compileAndRunJvm("""
+            import * as console from "std/console"
+            function pick(label: string, z: null): int { console.log(label); return 0; }
+            export function test(): int {
+              let xs: int[] = [5, 6];
+              xs[pick("index", console.log("index-side"))] = pick("value", console.log("value-side"));
+              return xs[0];
+            }
+            """, "arrord");
+        check(run.exitCode() == 0, "hoisted array order exits 0: " + run.output());
+        check(run.output().contains("index-side\nindex\nvalue-side\nvalue\n0"),
+            "hoisted side effects keep left-to-right order: " + run.output());
+
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            function pick(label: string, z: null): int { console.log(label); return 0; }
+            export function test(): int {
+              let xs: int[] = [5, 6];
+              xs[pick("index", console.log("index-side"))] = pick("value", console.log("value-side"));
+              return xs[0];
+            }
+            """, "jvmtest-arrord-emission.deal");
+        check(f.errors().isEmpty(), "hoisted array order frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-arrord-emission.deal", "main");
+            check(!res.hasErrors(), "hoisted array order codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(!java.contains("->"),
+                    "no lambda emitted for array order: " + java);
+                int sideIdx = java.indexOf("\"index-side\"");
+                int tempIdx = java.indexOf("__t0 = pick(");
+                int valueIdx = java.indexOf("\"value-side\"");
+                check(sideIdx >= 0 && tempIdx >= 0 && valueIdx >= 0
+                        && sideIdx < tempIdx && tempIdx < valueIdx,
+                    "the inline index call is materialized into __t0 between "
+                    + "the index-side and value-side hoisted prints");
+                check(java.contains("__intArrayWrite(xs, __t0, pick(\"value\", null));"),
+                    "the write helper call carries the materialized index");
+            }
+        }
+    }
+
+    /** Out-of-slice array shapes are rejected with E6000, never silently
+     * miscompiled: nested (multi-dimensional) arrays, arrays of nullable
+     * elements, nullable arrays, class arrays, function arrays, table
+     * indexing (read and write), and array element types coming from
+     * inferred literals of unsupported element types. */
+    private static void testArrayUnsupportedElementTypesRejected() {
+        System.out.println("-- Unsupported array shapes → E6000 --");
+
+        record Case(String what, String source) {}
+        List<Case> cases = List.of(
+            new Case("nested array literal", """
+                export function test(): int {
+                  let rows: int[][] = [[1, 2], [3, 4]];
+                  return rows[0][1];
+                }
+                """),
+            new Case("array of nullable elements", """
+                export function test(): null {
+                  let xs: (int | null)[] = [];
+                }
+                """),
+            new Case("nullable array", """
+                export function test(): null {
+                  let xs: int[] | null = null;
+                }
+                """),
+            new Case("array of function elements", """
+                function add1(x: int): int { return x + 1; }
+                export function test(): int {
+                  let fs: ((x: int) => int)[] = [add1];
+                  return fs[0](3);
+                }
+                """),
+            new Case("table index read", """
+                export function test(): int {
+                  let t: table = {};
+                  return t.x;
+                }
+                """),
+            new Case("table index write", """
+                export function test(): null {
+                  let t: table = {};
+                  t.x = 1;
+                }
+                """)
+        );
+
+        for (Case c : cases) {
+            Frontend f = compileFrontend(c.source, "jvmtest-unsupported-arr.deal");
+            if (!f.errors().isEmpty()) {
+                fail("frontend must accept unsupported array case '" + c.what()
+                    + "' (the backend rejects it): " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-unsupported-arr.deal", "main");
+            check(res.hasErrors(), "backend rejects " + c.what());
+            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 diagnostic for " + c.what() + ": " + res.diagnostics());
+        }
+    }
+
+    /** Use-before-declaration guards walk array value positions: a
+     * module-level call whose (transitive) body reads a later-declared
+     * field through an index, an array literal, or a .length read is
+     * E6000 (LuaJIT reads the global nil at load; Java would read the
+     * default wrapper); a function reading a field declared after the
+     * function through an index is E6000 (write-dominance analysis); an
+     * assignment whose index expression references a later-declared local
+     * is E6000 (Java cannot-find-symbol); an index write whose array
+     * identifier is a later-declared local is E6000. */
+    private static void testArrayUseBeforeDeclarationGuards() {
+        System.out.println("-- Array use-before-declaration guards → E6000 --");
+
+        record Case(String what, String source) {}
+        List<Case> cases = List.of(
+            new Case("module-level call reading later field via index", """
+                let xs: int[] = [1, 2];
+                f();
+                function f(): int { return xs[0]; }
+                export function test(): int { return 1; }
+                """),
+            new Case("module-level call reading later field via length", """
+                f();
+                let xs: int[] = [1, 2];
+                function f(): int { return xs.length; }
+                export function test(): int { return 1; }
+                """),
+            new Case("module-level call reading later field via array literal", """
+                f();
+                let a: int = 1;
+                function f(): int[] { return [a, 2]; }
+                export function test(): int { return 1; }
+                """),
+            new Case("function reading later field via index", """
+                function f(): int { return xs[0]; }
+                let xs: int[] = [1, 2];
+                export function test(): int { return f(); }
+                """),
+            new Case("function writing later field via index", """
+                function f(): int { xs[0] = 9; return 0; }
+                let xs: int[] = [1, 2];
+                export function test(): int { return f(); }
+                """),
+            new Case("function writing later field via append", """
+                function f(): int { xs[xs.length] = 9; return 0; }
+                let xs: int[] = [1, 2];
+                export function test(): int { return f(); }
+                """),
+            new Case("index expression referencing later local", """
+                export function test(): int {
+                  let xs: int[] = [1, 2];
+                  xs[z] = 9;
+                  let z: int = 0;
+                  return xs[0];
+                }
+                """),
+            new Case("array identifier referencing later local in write", """
+                export function test(): int {
+                  x[0] = 9;
+                  let x: int[] = [1, 2];
+                  return 0;
+                }
+                """)
+        );
+
+        for (Case c : cases) {
+            Frontend f = compileFrontend(c.source, "jvmtest-arr-undeclared.deal");
+            if (!f.errors().isEmpty()) {
+                fail("frontend must accept unsupported array guard case '"
+                    + c.what() + "' (the backend rejects it): " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-arr-undeclared.deal", "main");
+            check(res.hasErrors(), "backend rejects " + c.what());
+            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 diagnostic for " + c.what() + ": " + res.diagnostics());
+        }
+
+        // The declared-first shape stays clean: a function declared AFTER
+        // the field reads/writes the module-local array with full parity.
+        Frontend ok = compileFrontend("""
+            let xs: int[] = [1, 2];
+            function bump(): int { xs[0] = 9; return xs[0]; }
+            export function test(): int { return bump() + xs.length; }
+            """, "jvmtest-arr-field-parity.deal");
+        check(ok.errors().isEmpty(), "declared-first array access frontend clean: "
+            + ok.errors());
+        if (ok.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                ok.program(), ok.checkResult(),
+                "jvmtest-arr-field-parity.deal", "main");
+            check(!res.hasErrors(),
+                "declared-first array field access stays clean: " + res.diagnostics());
         }
     }
 
