@@ -414,6 +414,29 @@ fixture whose codegen or JVM execution is bypassed):
   types, value-operand evaluation in both directions, read-vs-read nil
   semantics, the E8002 pin, and `__intArrayReadBoxed` emission
   assertions).
+- **Both-reads comparison evaluation position** (spec §Operational
+  semantics rules 1+3: the left read evaluates completely — receiver,
+  index, and its boxed helper call — before the right operand's first
+  evaluation; a left read's E8002 always raises before any
+  right-operand hoisted side effect, and in-bounds both-reads
+  comparisons keep strict left-to-right order with hoisted
+  right-side effects) — the left read's boxed helper pre-statement is
+  anchored immediately after the left receiver/index hoisted
+  statements and before the right operands are even emitted (appending
+  both helper pre-statements after one four-operand
+  `emitOperandsInOrder` call placed the right operand's hoisted
+  println first: `ys[-1] === makeArr("made", console.log("h"))[0]`
+  printed "h" before the E8002 while LuaJIT raises with no output):
+  `jvm-arr-cmp-both-reads-neg-order-parity` (cross-backend: only
+  `DEAL_ERROR_CODE: E8002`, no "h"/"made", exit 1),
+  `jvm-arr-cmp-both-reads-index-hoist-parity` (same with the right
+  read's index operand hoisting),
+  `jvm-arr-cmp-both-reads-inbounds-order-parity` (cross-backend
+  positive control: h, made, h2, made2, eq-ok), all pinned with
+  `expectedNotOutput` negative stdout assertions +
+  `JvmBackendTest.testArrayReadComparisonBothReadsOrder`
+  (runtime and emission assertions: the left read's helper call lands
+  before the right operand's hoisted println).
 - **Negative index write → E8002** (spec §Array writes rule 5) —
   `jvm-arr-negative-write-e8002`; `JvmBackendTest.testArrayRuntimeErrorCodes`.
 - **Gap write `i > length` → E8002** (spec §Array writes rule 5) —
@@ -471,7 +494,10 @@ fixture whose codegen or JVM execution is bypassed):
   side-effecting receiver/first element plus hoisting operands),
   `jvm-arr-cmp-past-end-parity` (nil comparison semantics in all four
   element types), `jvm-arr-cmp-negative-index-parity` (E8002 in a
-  comparison operand on both).
+  comparison operand on both), and the three both-reads comparison
+  fixtures listed above (`jvm-arr-cmp-both-reads-neg-order-parity`,
+  `jvm-arr-cmp-both-reads-index-hoist-parity`,
+  `jvm-arr-cmp-both-reads-inbounds-order-parity`).
 - **Frontend compile-error gates rejected before any backend** —
   `jvm-arr-frontend-reject-index-type` (E3007 non-int index) and
   `jvm-arr-frontend-reject-length-write` (E3017 read-only `.length`

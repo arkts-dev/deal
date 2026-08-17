@@ -168,6 +168,7 @@ public class JvmBackendTest {
             testArrayEvaluationOrderHoisted();
             testArrayReadComparisonNilSemantics();
             testArrayEvalOrderSideEffectingReceiver();
+            testArrayReadComparisonBothReadsOrder();
             testArrayUnsupportedElementTypesRejected();
             testArrayUseBeforeDeclarationGuards();
             testNullReturnSideEffects();
@@ -1427,6 +1428,120 @@ public class JvmBackendTest {
                     + "materialized inline call: " + java);
                 check(!java.contains("->"),
                     "no lambda emitted for the receiver shape: " + java);
+            }
+        }
+    }
+
+    /** Both === / !== operands are array reads: the LEFT read evaluates
+     * completely — receiver, index, and the boxed helper call — before
+     * the right operand's first evaluation. When the left read raises
+     * E8002 (negative index) and the right read's receiver/index hoists
+     * a null-typed side effect, the JVM must raise before that hoisted
+     * print runs (LuaJIT evaluates the left read and raises before the
+     * right operand is evaluated): the reviewer's repro
+     * {@code ys[-1] === makeArr("made", console.log("h"))[0]} printed
+     * "h" before the E8002 when the boxed read pre-statements were
+     * appended after the right operand's hoisted println — anchoring
+     * the left read's helper call at the left operand's evaluation
+     * position (immediately after the left receiver/index hoisted
+     * statements, before the right operand is even emitted) fixes it. */
+    private static void testArrayReadComparisonBothReadsOrder() throws Exception {
+        System.out.println("-- Both-reads === / !== left-read evaluation position --");
+
+        // Shape 1: left read raises E8002; the right read's RECEIVER
+        // hoists a null-typed side effect. Only the E8002 may print.
+        ExecResult recv = compileAndRunJvm("""
+            import * as console from "std/console"
+            function makeArr(label: string, z: null): int[] { console.log(label); return [1]; }
+            export function test(): null {
+              let ys: int[] = [1];
+              if (ys[-1] === makeArr("made", console.log("h"))[0]) { console.log("bad"); }
+            }
+            """, "arrbothnegrecv");
+        check(recv.exitCode() == 1, "left-negative/right-hoisting-receiver "
+            + "shape exits 1: " + recv.output());
+        check(recv.output().contains("DEAL_ERROR_CODE: E8002")
+                && !recv.output().contains("h")
+                && !recv.output().contains("made")
+                && !recv.output().contains("bad"),
+            "the left read's E8002 raises before the right receiver's "
+            + "hoisted println (no 'h'/'made' before it): " + recv.output());
+
+        // Shape 2: left read raises E8002; the right read's INDEX
+        // operand hoists a null-typed side effect. Same contract.
+        ExecResult idx = compileAndRunJvm("""
+            import * as console from "std/console"
+            function pick(label: string, z: null): int { console.log(label); return 0; }
+            export function test(): null {
+              let ys: int[] = [1];
+              let zs: int[] = [1];
+              if (ys[-1] === zs[pick("i", console.log("h"))]) { console.log("bad"); }
+            }
+            """, "arrbothnegidx");
+        check(idx.exitCode() == 1, "left-negative/right-hoisting-index "
+            + "shape exits 1: " + idx.output());
+        check(idx.output().contains("DEAL_ERROR_CODE: E8002")
+                && !idx.output().contains("h")
+                && !idx.output().contains("bad"),
+            "the left read's E8002 raises before the right index's "
+            + "hoisted println (no 'h' before it; 'h' always precedes "
+            + "pick's 'i' label, and the bare 'i' cannot be pinned "
+            + "because the E8002 message 'negative array index' "
+            + "contains the letter i): " + idx.output());
+
+        // Positive control: both reads in bounds — the left read still
+        // evaluates completely before the right operand's hoisted print
+        // and receiver call (h, made, h2, made2, eq-ok).
+        ExecResult ok = compileAndRunJvm("""
+            import * as console from "std/console"
+            function makeArr(label: string, z: null): int[] { console.log(label); return [1]; }
+            export function test(): null {
+              let ys: int[] = [1];
+              if (ys[0] !== makeArr("made", console.log("h"))[0]) { console.log("bad-neq"); }
+              if (ys[0] === makeArr("made2", console.log("h2"))[0]) { console.log("eq-ok"); }
+            }
+            """, "arrbothinbounds");
+        check(ok.exitCode() == 0, "in-bounds both-reads shape exits 0: "
+            + ok.output());
+        check(ok.output().contains("h\nmade\nh2\nmade2\neq-ok")
+                && !ok.output().contains("bad"),
+            "in-bounds both-reads order is h, made, h2, made2, eq-ok: "
+                + ok.output());
+
+        // Emission shape: the left read's boxed helper pre-statement is
+        // anchored BEFORE the right operand's hoisted println, and the
+        // right read's helper call follows its own operand's hoisted
+        // statements.
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            function makeArr(label: string, z: null): int[] { console.log(label); return [1]; }
+            export function test(): null {
+              let ys: int[] = [1];
+              if (ys[-1] === makeArr("made", console.log("h"))[0]) { console.log("bad"); }
+            }
+            """, "jvmtest-arrboth-order-emission.deal");
+        check(f.errors().isEmpty(), "both-reads order emission frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-arrboth-order-emission.deal", "main");
+            check(!res.hasErrors(), "both-reads order emission codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                int leftReadIdx = java.indexOf(
+                    "__intArrayReadBoxed(ys, intNeg(1L));");
+                int hoistIdx = java.indexOf(
+                    "java.lang.System.out.println(\"h\");");
+                int rightReadIdx = java.indexOf(
+                    "__intArrayReadBoxed(makeArr(\"made\", null), 0L);");
+                check(leftReadIdx >= 0 && hoistIdx >= 0 && rightReadIdx >= 0
+                        && leftReadIdx < hoistIdx && hoistIdx < rightReadIdx,
+                    "the left read's boxed helper call lands before the "
+                    + "right operand's hoisted println, which lands before "
+                    + "the right read's helper call: " + java);
+                check(!java.contains("->"),
+                    "no lambda emitted for the both-reads shape: " + java);
             }
         }
     }

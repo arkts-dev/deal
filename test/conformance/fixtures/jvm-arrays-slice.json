@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM primitive arrays slice (ISSUE-0094). JVM-only fixtures (plus seven cross-backend parity fixtures that also run under LuaJIT as the reference) that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: int[]/number[]/string[]/boolean[] array literals (including the empty literal under a contextual type), index reads, element writes (in-place writes, the i === length append — via the xs[xs.length] idiom and via a plain index-equals-length write — with the wrapped storage growing in place so aliases observe every write), .length reads, arrays through function parameters and returns, runtime bounds checks (negative read → E8002, read past the end → E8001 \"expected int, got null\" mirroring LuaJIT's nil-at-the-boundary, negative write → E8002, gap write → E8002, out-of-safe-range int element write → E8004 via the element value check), spec §Operational semantics evaluation order for reads (receiver before index) and writes (receiver, index, RHS before the LHS write check — including hoisted null-typed side effects materialized into temporaries in order, and the side-effecting receiver + hoisting index + hoisting RHS shape anchored at the earliest hoist start after each operand), array-literal element evaluation order with a side-effecting first element and hoisting later elements, === / !== operand positions for past-end reads in all four element types (nil comparison semantics per the spec read-site contract, never E8001), negative indexes in comparison positions (E8002 on both backends), and two frontend compile-error gates rejected before any backend (E3007 non-int index, E3017 read-only .length assignment).",
+  "description": "JVM primitive arrays slice (ISSUE-0094). JVM-only fixtures (plus ten cross-backend parity fixtures that also run under LuaJIT as the reference) that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: int[]/number[]/string[]/boolean[] array literals (including the empty literal under a contextual type), index reads, element writes (in-place writes, the i === length append — via the xs[xs.length] idiom and via a plain index-equals-length write — with the wrapped storage growing in place so aliases observe every write), .length reads, arrays through function parameters and returns, runtime bounds checks (negative read → E8002, read past the end → E8001 \"expected int, got null\" mirroring LuaJIT's nil-at-the-boundary, negative write → E8002, gap write → E8002, out-of-safe-range int element write → E8004 via the element value check), spec §Operational semantics evaluation order for reads (receiver before index) and writes (receiver, index, RHS before the LHS write check — including hoisted null-typed side effects materialized into temporaries in order, and the side-effecting receiver + hoisting index + hoisting RHS shape anchored at the earliest hoist start after each operand), array-literal element evaluation order with a side-effecting first element and hoisting later elements, === / !== operand positions for past-end reads in all four element types (nil comparison semantics per the spec read-site contract, never E8001), negative indexes in comparison positions (E8002 on both backends), the both-reads comparison evaluation position — the left read's E8002 raises before any right-operand hoisted side effect (\"h\"/\"made\" never print, pinned with expectedNotOutput negative stdout assertions) and in-bounds both-reads comparisons keep strict left-to-right order with hoisted right-side effects, and two frontend compile-error gates rejected before any backend (E3007 non-int index, E3017 read-only .length assignment).",
   "tests": [
     {
       "name": "jvm-arr-literal-read-length",
@@ -277,6 +277,69 @@
       "expectedOutput": null,
       "expectedError": "E8002",
       "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-both-reads-neg-order-parity",
+      "description": "Cross-backend parity: both === operands are array reads, the left read raises E8002 (negative index), and the right read's receiver hoists a null-typed side effect — LuaJIT evaluates the left read completely (raising E8002) before the right operand's first evaluation, so 'h'/'made' never print; the JVM anchors the left read's boxed helper call at the left operand's evaluation position (before the right operand's hoisted println). Both backends print only DEAL_ERROR_CODE: E8002 and exit 1",
+      "source": "import * as console from \"std/console\"\nfunction makeArr(label: string, z: null): int[] { console.log(label); return [1]; }\nexport function test(): null {\n  let ys: int[] = [1];\n  if (ys[-1] === makeArr(\"made\", console.log(\"h\"))[0]) { console.log(\"bad\"); }\n}",
+      "expectedOutput": null,
+      "expectedNotOutput": [
+        "h",
+        "made",
+        "bad"
+      ],
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-both-reads-index-hoist-parity",
+      "description": "Cross-backend parity: both === operands are array reads, the left read raises E8002 (negative index), and the right read's index operand hoists a null-typed side effect — LuaJIT evaluates the left read (raising E8002) before the right operand's first evaluation, so 'h'/'i' never print; the JVM anchors the left read's boxed helper call before the right operand's hoisted println. Both backends print only DEAL_ERROR_CODE: E8002 and exit 1. The pin forbids 'h' (the hoisted print, which always precedes pick's 'i' label in any misordered evaluation) and 'bad'; the bare 'i' label cannot be pinned because the JVM E8002 message text 'negative array index' contains the letter i",
+      "source": "import * as console from \"std/console\"\nfunction pick(label: string, z: null): int { console.log(label); return 0; }\nexport function test(): null {\n  let ys: int[] = [1];\n  let zs: int[] = [1];\n  if (ys[-1] === zs[pick(\"i\", console.log(\"h\"))]) { console.log(\"bad\"); }\n}",
+      "expectedOutput": null,
+      "expectedNotOutput": [
+        "h",
+        "bad"
+      ],
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-both-reads-inbounds-order-parity",
+      "description": "Cross-backend parity for the positive control: both === / !== operands are in-bounds array reads and the right read's receiver hoists a null-typed side effect — the left read fully evaluates first, then the right read's hoisted print and receiver call run before its own read (h, made, h2, made2, eq-ok: 1 !== 1 is false, 1 === 1 is true) on both backends",
+      "source": "import * as console from \"std/console\"\nfunction makeArr(label: string, z: null): int[] { console.log(label); return [1]; }\nexport function test(): null {\n  let ys: int[] = [1];\n  if (ys[0] !== makeArr(\"made\", console.log(\"h\"))[0]) { console.log(\"bad-neq\"); }\n  if (ys[0] === makeArr(\"made2\", console.log(\"h2\"))[0]) { console.log(\"eq-ok\"); }\n}",
+      "expectedOutput": "h\nmade\nh2\nmade2\neq-ok",
+      "expectedNotOutput": [
+        "bad-neq"
+      ],
+      "expectedError": null,
+      "expectedExitCode": 0,
       "expectedCompileError": null,
       "irContains": [
         "index [] : int"

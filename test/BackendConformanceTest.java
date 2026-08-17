@@ -43,11 +43,16 @@ import java.util.*;
  * out-of-safe-range int element writes → E8004), spec §Operational
  * semantics evaluation order for reads, writes, and array literals
  * including hoisted side effects and side-effecting receivers/first
- * elements, cross-backend parity against LuaJIT, and frontend
- * E3007/E3017 compile-error gates rejected before any backend).
+ * elements, the both-reads comparison evaluation position (the left
+ * read's E8002 raises before any right-operand hoisted side effect,
+ * pinned with {@code expectedNotOutput} negative stdout assertions),
+ * cross-backend parity against LuaJIT, and frontend E3007/E3017
+ * compile-error gates rejected before any backend).
  *
  * <p>Fixture format (per {@code conformance-test-architecture} D3, extended
- * by ISSUE-0091 with {@code expectedCompileError}):
+ * by ISSUE-0091 with {@code expectedCompileError} and by ISSUE-0094 with
+ * {@code expectedNotOutput} — negative stdout assertions that pin, e.g.,
+ * "the error raises before any later operand's side effect prints"):
  * <pre>
  * {
  *   "version": "1.0",
@@ -56,6 +61,7 @@ import java.util.*;
  *     "description": "what this test verifies",
  *     "source": "DEAL source code as string",
  *     "expectedOutput": "string that stdout must contain" | null,
+ *     "expectedNotOutput": ["substrings stdout must NOT contain"],
  *     "expectedError": "E8001" | null,
  *     "expectedExitCode": 0 | 1,
  *     "expectedCompileError": "E3001" | null,
@@ -83,7 +89,8 @@ import java.util.*;
  * <p>Schema validation (per {@code conformance-test-architecture} D6 —
  * invalid configurations must fail with a clear message, never pass
  * silently): a fixture that combines {@code expectedCompileError} with
- * any runtime assertion ({@code expectedOutput}/{@code expectedError}/
+ * any runtime assertion ({@code expectedOutput}/
+ * {@code expectedNotOutput}/{@code expectedError}/
  * {@code expectedExitCode}) or IR assertion ({@code irContains}/
  * {@code irNotContains}) is rejected up front, because the compile-error
  * gate returns before runtime/IR dispatch and would silently drop those
@@ -244,7 +251,8 @@ public class BackendConformanceTest {
     /**
      * Schema validation (per {@code conformance-test-architecture} D6):
      * a fixture that sets {@code expectedCompileError} together with
-     * runtime assertions ({@code expectedOutput}/{@code expectedError}/
+     * runtime assertions ({@code expectedOutput}/
+     * {@code expectedNotOutput}/{@code expectedError}/
      * {@code expectedExitCode}) or IR assertions ({@code irContains}/
      * {@code irNotContains}) would silently drop those assertions — the
      * compile-error gate returns before any runtime/IR dispatch, so a
@@ -260,14 +268,18 @@ public class BackendConformanceTest {
         Object expectedOutput = test.get("expectedOutput");
         Object expectedError = test.get("expectedError");
         Object expectedExitCode = test.get("expectedExitCode");
+        List<?> expectedNotOutput = (List<?>) test.getOrDefault(
+            "expectedNotOutput", List.of());
         List<?> irContains = (List<?>) test.getOrDefault("irContains", List.of());
         List<?> irNotContains = (List<?>) test.getOrDefault("irNotContains", List.of());
         boolean runtimeSet = (expectedOutput != null && expectedOutput != JSON_NULL)
             || (expectedError != null && expectedError != JSON_NULL)
-            || (expectedExitCode != null && expectedExitCode != JSON_NULL);
+            || (expectedExitCode != null && expectedExitCode != JSON_NULL)
+            || !expectedNotOutput.isEmpty();
         if (runtimeSet || !irContains.isEmpty() || !irNotContains.isEmpty()) {
             return "expectedCompileError is set together with runtime/IR "
-                + "assertions (expectedOutput/expectedError/expectedExitCode/"
+                + "assertions (expectedOutput/expectedNotOutput/"
+                + "expectedError/expectedExitCode/"
                 + "irContains/irNotContains); the compile-error gate stops "
                 + "before codegen and would silently drop them "
                 + "(conformance-test-architecture D6: invalid fixture "
@@ -283,6 +295,10 @@ public class BackendConformanceTest {
         String source = jsonString(test, "source", null);
         String expectedCompileError = jsonString(test, "expectedCompileError", null);
         List<String> backends = (List<String>) test.getOrDefault("backends", List.of());
+        List<String> expectedNotOutput = new ArrayList<>();
+        for (Object o : (List<?>) test.getOrDefault("expectedNotOutput", List.of())) {
+            expectedNotOutput.add(String.valueOf(o));
+        }
 
         if (source == null) {
             System.out.println("  [" + name + "] FAIL: missing 'source' field");
@@ -375,7 +391,8 @@ public class BackendConformanceTest {
 
             boolean hasRuntimeAssertions = (expectedOutput != null && expectedOutput != JSON_NULL)
                 || (expectedError != null && expectedError != JSON_NULL)
-                || (expectedExitCode != null && expectedExitCode != JSON_NULL);
+                || (expectedExitCode != null && expectedExitCode != JSON_NULL)
+                || !expectedNotOutput.isEmpty();
 
             if (!hasRuntimeAssertions) {
                 System.out.println("  [" + name + "] OK" +
@@ -391,7 +408,7 @@ public class BackendConformanceTest {
             if (appliesToLuajit) {
                 if (luajitAvailable) {
                     if (!runLuaAssertions(name, source, expectedOutput,
-                            expectedError, expectedExitCode)) {
+                            expectedNotOutput, expectedError, expectedExitCode)) {
                         return; // failure already reported
                     }
                     ranAny = true;
@@ -401,7 +418,7 @@ public class BackendConformanceTest {
             if (appliesToJvm) {
                 if (jvmAvailable) {
                     if (!runJvmAssertions(name, fc, expectedOutput,
-                            expectedError, expectedExitCode)) {
+                            expectedNotOutput, expectedError, expectedExitCode)) {
                         return; // failure already reported
                     }
                     ranAny = true;
@@ -487,7 +504,9 @@ public class BackendConformanceTest {
 
     /** Runs the LuaJIT execution + assertions. Returns true when all pass. */
     private static boolean runLuaAssertions(String name, String source,
-                                            Object expectedOutput, Object expectedError,
+                                            Object expectedOutput,
+                                            List<String> expectedNotOutput,
+                                            Object expectedError,
                                             Object expectedExitCode) {
         String lua = generateLua(source, "fixture-" + name + ".deal");
         if (lua == null) {
@@ -521,6 +540,15 @@ public class BackendConformanceTest {
             if (!output.contains("DEAL_ERROR_CODE: " + expErr)) {
                 System.out.println("  [" + name + "] FAIL: expected error '" +
                     expErr + "', got: " + output);
+                failed++;
+                return false;
+            }
+        }
+
+        for (String forbidden : expectedNotOutput) {
+            if (output.contains(forbidden)) {
+                System.out.println("  [" + name + "] FAIL: output must NOT "
+                    + "contain '" + forbidden + "', got: " + output);
                 failed++;
                 return false;
             }
@@ -572,7 +600,9 @@ public class BackendConformanceTest {
      * for {@code javac}, and a bypassed JVM execution produces no output.
      */
     private static boolean runJvmAssertions(String name, FrontendCompile fc,
-                                            Object expectedOutput, Object expectedError,
+                                            Object expectedOutput,
+                                            List<String> expectedNotOutput,
+                                            Object expectedError,
                                             Object expectedExitCode) {
         // 1. Codegen with the real JVM backend. Errors (E6000 for
         //    out-of-skeleton constructs) fail the fixture.
@@ -647,6 +677,15 @@ public class BackendConformanceTest {
                 if (!output.contains("DEAL_ERROR_CODE: " + expErr)) {
                     System.out.println("  [" + name + "] FAIL: expected error '"
                         + expErr + "', got: " + output);
+                    failed++;
+                    return false;
+                }
+            }
+
+            for (String forbidden : expectedNotOutput) {
+                if (output.contains(forbidden)) {
+                    System.out.println("  [" + name + "] FAIL: output must NOT "
+                        + "contain '" + forbidden + "', got: " + output);
                     failed++;
                     return false;
                 }

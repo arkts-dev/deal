@@ -2553,7 +2553,12 @@ public final class JvmBackend {
      * temporary in source order before the inert comparison expression,
      * so a later operand always evaluates — never skipped by a Java
      * {@code &&}/{@code ||} short-circuit that only LuaJIT's separate
-     * operand evaluation would observe.
+     * operand evaluation would observe. In the both-reads case the left
+     * read's boxed helper pre-statement is anchored at the left
+     * operand's evaluation position — immediately after the left
+     * receiver/index hoisted statements and before the right operand's
+     * first hoisted statement — so the left read's E8002 (negative
+     * index) always raises before any right-operand side effect.
      */
     private String emitArrayReadComparison(BinaryExpr bin, boolean eq) {
         boolean leftRead = isPrimitiveArrayRead(bin.left());
@@ -2570,17 +2575,31 @@ public final class JvmBackend {
             return "false";
         }
         if (leftRead && rightRead) {
-            // Both operands are reads: evaluate left receiver, left
-            // index, right receiver, right index — all before the inert
-            // comparison of the two boxed temporaries.
-            List<String> ops = emitOperandsInOrder(
-                List.of(lr.array(), lr.index(), rr.array(), rr.index()));
+            // Both operands are reads: evaluate the left read completely
+            // (receiver, index, and its boxed helper call — which raises
+            // E8002 for a negative index) before the right operand's
+            // first evaluation, then the right read completely, then the
+            // inert comparison of the two boxed temporaries. The left
+            // read's boxed helper pre-statement is anchored immediately
+            // after the left operands' hoisted statements and BEFORE the
+            // right operands are even emitted, so a right operand's
+            // hoisted side effect can never run before the left read's
+            // E8002 (appending both helper pre-statements after a single
+            // four-operand emitOperandsInOrder call placed the right
+            // operand's hoisted println first: `ys[-1] ===
+            // makeArr("made", console.log("h"))[0]` printed "h" before
+            // the E8002 while LuaJIT evaluates the left read — and
+            // raises — before the right operand is evaluated).
+            List<String> lops = emitOperandsInOrder(
+                List.of(lr.array(), lr.index()));
             String n0 = nextEvalTempName();
-            String n1 = nextEvalTempName();
             preStatements.add(new PreLine(boxed + " " + n0 + " = " + helper
-                + "(" + ops.get(0) + ", " + ops.get(1) + ");", 0));
+                + "(" + lops.get(0) + ", " + lops.get(1) + ");", 0));
+            List<String> rops = emitOperandsInOrder(
+                List.of(rr.array(), rr.index()));
+            String n1 = nextEvalTempName();
             preStatements.add(new PreLine(boxed + " " + n1 + " = " + helper
-                + "(" + ops.get(2) + ", " + ops.get(3) + ");", 0));
+                + "(" + rops.get(0) + ", " + rops.get(1) + ");", 0));
             preStatementsDeclareTemps = true;
             if (eq) {
                 return "((" + n0 + " == null && " + n1 + " == null) || ("
