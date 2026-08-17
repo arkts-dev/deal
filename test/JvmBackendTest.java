@@ -166,6 +166,8 @@ public class JvmBackendTest {
             testPrimitiveArrays();
             testArrayRuntimeErrorCodes();
             testArrayEvaluationOrderHoisted();
+            testArrayReadComparisonNilSemantics();
+            testArrayEvalOrderSideEffectingReceiver();
             testArrayUnsupportedElementTypesRejected();
             testArrayUseBeforeDeclarationGuards();
             testNullReturnSideEffects();
@@ -1182,6 +1184,249 @@ public class JvmBackendTest {
                     + "the index-side and value-side hoisted prints");
                 check(java.contains("__intArrayWrite(xs, __t0, pick(\"value\", null));"),
                     "the write helper call carries the materialized index");
+            }
+        }
+    }
+
+    /** === / !== operand positions with array reads past the end
+     * (ISSUE-0094 rework): the spec read-site contract applies no typed
+     * boundary at a comparison operand, so LuaJIT reads nil and computes
+     * the comparison — the JVM boxed comparison reads must yield the same
+     * nil semantics (nil === v false, nil !== v true, nil === nil true)
+     * for all four element types instead of raising E8001. Also pins the
+     * strict evaluation of the non-read operand (never skipped by a Java
+     * short-circuit), the negative-index E8002 that LuaJIT raises
+     * unconditionally in the same position, and the boxed-helper emission
+     * shape. */
+    private static void testArrayReadComparisonNilSemantics() throws Exception {
+        System.out.println("-- Array reads in === / !== positions (javac + java) --");
+
+        ExecResult run = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let xs: int[] = [1];
+              let ns: number[] = [1.5];
+              let ss: string[] = ["a"];
+              let bs: boolean[] = [true];
+              if (xs[99] === 5) { console.log("bad1"); }
+              if (xs[99] !== 5) { console.log("int-neq"); }
+              if (xs[99] === xs[99]) { console.log("nil-eq-nil"); }
+              if (ns[99] !== 2.5) { console.log("number-neq"); }
+              if (ss[99] === "x") { console.log("bad2"); }
+              if (ss[99] !== "x") { console.log("string-neq"); }
+              if (bs[99] === true) { console.log("bad3"); }
+              if (bs[99] !== true) { console.log("boolean-neq"); }
+              if (xs[0] === 1 && xs[99] !== 1) { console.log("mixed"); }
+            }
+            """, "arrcmp");
+        check(run.exitCode() == 0, "comparison nil semantics exits 0: " + run.output());
+        check(run.output().contains("int-neq")
+                && run.output().contains("nil-eq-nil")
+                && run.output().contains("number-neq")
+                && run.output().contains("string-neq")
+                && run.output().contains("boolean-neq")
+                && run.output().contains("mixed")
+                && !run.output().contains("bad"),
+            "nil === v / nil !== v / nil === nil semantics for all four "
+            + "element types: " + run.output());
+
+        // The non-read comparison operand always evaluates — the Java
+        // null-guard short-circuit must never skip a DEAL-visible effect
+        // (LuaJIT evaluates both operands strictly). Both directions.
+        ExecResult rhs = compileAndRunJvm("""
+            import * as console from "std/console"
+            function mark(label: string, v: int): int { console.log(label); return v; }
+            export function test(): null {
+              let xs: int[] = [1];
+              if (xs[99] === mark("rhs", 5)) { console.log("bad-eq"); }
+              if (xs[99] !== mark("rhs2", 5)) { console.log("neq-ok"); }
+            }
+            """, "arrcmprhs");
+        check(rhs.exitCode() == 0, "RHS-evaluation shape exits 0: " + rhs.output());
+        check(rhs.output().contains("rhs") && rhs.output().contains("rhs2")
+                && rhs.output().contains("neq-ok")
+                && !rhs.output().contains("bad-eq"),
+            "the value operand always evaluates in both directions: "
+                + rhs.output());
+
+        ExecResult lhs = compileAndRunJvm("""
+            import * as console from "std/console"
+            function mark(label: string, v: int): int { console.log(label); return v; }
+            export function test(): null {
+              let xs: int[] = [1];
+              if (mark("lhs", 5) === xs[99]) { console.log("bad-eq"); }
+              if (mark("lhs2", 5) !== xs[99]) { console.log("neq-ok"); }
+            }
+            """, "arrcmplhs");
+        check(lhs.exitCode() == 0, "LHS-evaluation shape exits 0: " + lhs.output());
+        check(lhs.output().contains("lhs") && lhs.output().contains("lhs2")
+                && lhs.output().contains("neq-ok")
+                && !lhs.output().contains("bad-eq"),
+            "the value operand always evaluates on the left too: "
+                + lhs.output());
+
+        // Read-vs-read with only one side past the end: nil === 5 is
+        // false, 5 === nil is false, nil !== 5 is true — and the
+        // in-bounds elements still compare normally.
+        ExecResult rr = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let xs: int[] = [1];
+              let ys: int[] = [5];
+              if (xs[99] === ys[0]) { console.log("bad-a"); }
+              if (ys[0] === xs[99]) { console.log("bad-b"); }
+              if (xs[99] !== ys[0]) { console.log("rr-neq"); }
+              if (xs[0] === ys[0]) { console.log("bad-c"); }
+              if (xs[0] !== ys[0]) { console.log("rr-in-bounds-neq"); }
+              if (xs[0] === xs[0]) { console.log("rr-in-bounds-eq"); }
+            }
+            """, "arrcmprr");
+        check(rr.exitCode() == 0, "read-vs-read shape exits 0: " + rr.output());
+        check(rr.output().contains("rr-neq")
+                && rr.output().contains("rr-in-bounds-neq")
+                && rr.output().contains("rr-in-bounds-eq")
+                && !rr.output().contains("bad"),
+            "read-vs-read nil semantics and in-bounds element comparisons: "
+                + rr.output());
+
+        // A negative index in a comparison operand still raises E8002
+        // (LuaJIT emits the negative-index check unconditionally at the
+        // read, whatever the surrounding position).
+        ExecResult neg = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let xs: int[] = [1];
+              if (xs[-1] === 5) { console.log("bad"); }
+            }
+            """, "arrcmpneg");
+        check(neg.exitCode() == 1, "negative comparison index exits 1: "
+            + neg.output());
+        check(neg.output().contains("DEAL_ERROR_CODE: E8002"),
+            "negative index in === raises E8002: " + neg.output());
+
+        // A comparison read inside a while condition re-evaluates per
+        // iteration: the boxed read pre-statement is flushed inside the
+        // loop before the condition test (LuaJIT re-evaluates the
+        // condition every iteration), never once before the loop.
+        ExecResult w = compileAndRunJvm("""
+            export function test(): int {
+              let xs: int[] = [1, 2, 3];
+              let i: int = 0;
+              while (xs[i] !== 3) {
+                i = i + 1;
+              }
+              return i;
+            }
+            """, "arrcmpwhile");
+        check(w.exitCode() == 0, "while comparison read exits 0: " + w.output());
+        check(w.output().contains("2"),
+            "the boxed comparison read re-evaluates per iteration "
+            + "(i reaches 2): " + w.output());
+
+        // Emission shape: boxed helpers, nullable temporaries, no lambda.
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            export function test(): null {
+              let xs: int[] = [1];
+              if (xs[99] === 5) { console.log("eq"); }
+              if (xs[99] !== 5) { console.log("neq"); }
+            }
+            """, "jvmtest-arrcmp-emission.deal");
+        check(f.errors().isEmpty(), "comparison emission frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-arrcmp-emission.deal", "main");
+            check(!res.hasErrors(), "comparison emission codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains("static java.lang.Long __intArrayReadBoxed"),
+                    "__intArrayReadBoxed helper emitted");
+                check(java.contains("__intArrayReadBoxed(xs, 99L)"),
+                    "past-end === read routes through the boxed helper");
+                check(java.contains("static java.lang.String __stringArrayReadBoxed")
+                        && java.contains("static java.lang.Double __numberArrayReadBoxed")
+                        && java.contains("static java.lang.Boolean __booleanArrayReadBoxed"),
+                    "boxed helpers emitted for all four element types");
+                check(!java.contains("->"),
+                    "no lambda emitted for comparison positions: " + java);
+            }
+        }
+    }
+
+    /** Array evaluation order with a side-effecting receiver and hoisting
+     * index and RHS operands (the reviewer's critical repro): the
+     * receiver's inline call must run BEFORE the index operand's hoisted
+     * print — the materialization is anchored at the earliest hoist start
+     * after the receiver, not at the last hoisting operand's start, which
+     * printed b, a, i, c, v. Same anchoring for array literals with a
+     * side-effecting first element and hoisting later elements. */
+    private static void testArrayEvalOrderSideEffectingReceiver() throws Exception {
+        System.out.println("-- Array evaluation order with a side-effecting receiver --");
+
+        ExecResult run = compileAndRunJvm("""
+            import * as console from "std/console"
+            function pick(label: string, z: null): int { console.log(label); return 0; }
+            function getArr(label: string, xs: int[]): int[] { console.log(label); return xs; }
+            export function test(): null {
+              let xs: int[] = [5, 6];
+              getArr("a", xs)[pick("i", console.log("b"))] = pick("v", console.log("c"));
+              if (xs[0] === 0) { console.log("write-ok"); }
+            }
+            """, "arrrecvwrite");
+        check(run.exitCode() == 0, "side-effecting receiver write exits 0: "
+            + run.output());
+        check(run.output().contains("a\nb\ni\nc\nv\nwrite-ok"),
+            "receiver 'a' runs before the index operand's hoisted 'b' "
+            + "(a, b, i, c, v): " + run.output());
+
+        ExecResult lit = compileAndRunJvm("""
+            import * as console from "std/console"
+            function pick(label: string, z: null): int { console.log(label); return 0; }
+            function getA(label: string): int { console.log(label); return 1; }
+            export function test(): null {
+              let xs: int[] = [getA("a"), pick("i", console.log("b")), pick("v", console.log("c"))];
+              if (xs[0] === 1 && xs[1] === 0 && xs[2] === 0) { console.log("lit-ok"); }
+            }
+            """, "arrrecvlit");
+        check(lit.exitCode() == 0, "side-effecting first literal element exits 0: "
+            + lit.output());
+        check(lit.output().contains("a\nb\ni\nc\nv\nlit-ok"),
+            "literal first element 'a' runs before the hoisted 'b' of the "
+            + "second element (a, b, i, c, v): " + lit.output());
+
+        // Emission shape: the receiver's inline call is materialized at
+        // the index operand's hoist start — BEFORE the hoisted println —
+        // and never inside a lambda.
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            function pick(label: string, z: null): int { console.log(label); return 0; }
+            function getArr(label: string, xs: int[]): int[] { console.log(label); return xs; }
+            export function test(): null {
+              let xs: int[] = [5, 6];
+              getArr("a", xs)[pick("i", console.log("b"))] = pick("v", console.log("c"));
+            }
+            """, "jvmtest-arrrecv-emission.deal");
+        check(f.errors().isEmpty(), "receiver-order emission frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-arrrecv-emission.deal", "main");
+            check(!res.hasErrors(), "receiver-order emission codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                int recvIdx = java.indexOf("__t1 = getArr(\"a\", xs);");
+                int hoistIdx = java.indexOf("java.lang.System.out.println(\"b\");");
+                int inlineIdx = java.indexOf("__t0 = pick(\"i\", null);");
+                check(recvIdx >= 0 && hoistIdx >= 0 && inlineIdx >= 0
+                        && recvIdx < hoistIdx && hoistIdx < inlineIdx,
+                    "the receiver materialization lands before the index "
+                    + "operand's hoisted println and the index's "
+                    + "materialized inline call: " + java);
+                check(!java.contains("->"),
+                    "no lambda emitted for the receiver shape: " + java);
             }
         }
     }

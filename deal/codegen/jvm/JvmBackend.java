@@ -1298,6 +1298,19 @@ public final class JvmBackend {
         emitLine("static double __numberArrayRead(__NumberArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected number, got null\"); return a.data[(int) i]; }");
         emitLine("static java.lang.String __stringArrayRead(__StringArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected string, got null\"); return a.data[(int) i]; }");
         emitLine("static boolean __booleanArrayRead(__BooleanArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected boolean, got null\"); return a.data[(int) i]; }");
+        emitLine("// boxed array reads for === / !== operand positions (ISSUE-0094 rework):");
+        emitLine("// the read-site contract (spec §Bounds and nil behavior) applies no typed");
+        emitLine("// boundary to a comparison operand, so LuaJIT reads nil past the end and");
+        emitLine("// computes nil === v (false) / nil !== v (true) / nil === nil (true) on");
+        emitLine("// that value instead of raising E8001. A primitive Java read cannot yield");
+        emitLine("// nil, so the comparison position boxes the read: null past the end (the");
+        emitLine("// LuaJIT nil), the element value otherwise. A negative index still raises");
+        emitLine("// E8002 — LuaJIT emits that check unconditionally at the read, whatever");
+        emitLine("// the surrounding position.");
+        emitLine("static java.lang.Long __intArrayReadBoxed(__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Long.valueOf(a.data[(int) i]); }");
+        emitLine("static java.lang.Double __numberArrayReadBoxed(__NumberArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Double.valueOf(a.data[(int) i]); }");
+        emitLine("static java.lang.String __stringArrayReadBoxed(__StringArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static java.lang.Boolean __booleanArrayReadBoxed(__BooleanArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Boolean.valueOf(a.data[(int) i]); }");
         emitLine("// array writes: 0 <= i <= length (E8002 otherwise); i == length appends one");
         emitLine("// element (spec §Array writes); the stored value is runtime-checked against the");
         emitLine("// element type — int elements route through checkInt (E8004, like LuaJIT's");
@@ -2025,6 +2038,23 @@ public final class JvmBackend {
             return emitShortCircuit(bin, op == BinaryOp.AND);
         }
 
+        // Array reads in === / !== operand positions (ISSUE-0094 rework):
+        // the read-site contract (spec §Bounds and nil behavior) applies
+        // no typed boundary to a comparison operand, so LuaJIT reads nil
+        // past the end and computes the comparison on the nil value
+        // (`nil === v` → false, `nil !== v` → true, `nil === nil` →
+        // true) instead of raising the boundary failure. A primitive Java
+        // read cannot yield nil; the comparison position is emitted with
+        // nullable boxed reads and LuaJIT's nil semantics instead of the
+        // typed read helpers (see emitArrayReadComparison).
+        if (op == BinaryOp.EQ || op == BinaryOp.NEQ) {
+            boolean leftRead = isPrimitiveArrayRead(bin.left());
+            boolean rightRead = isPrimitiveArrayRead(bin.right());
+            if (leftRead || rightRead) {
+                return emitArrayReadComparison(bin, op == BinaryOp.EQ);
+            }
+        }
+
         List<String> operands = emitOperandsInOrder(
             List.of(bin.left(), bin.right()));
         String left = operands.get(0);
@@ -2251,14 +2281,19 @@ public final class JvmBackend {
      * earlier <em>inline</em> side-effecting operand would otherwise run
      * after them — {@code f(g(), console.log("x"))} printed "x" before
      * {@code g()} ran, while LuaJIT evaluates arguments left to right
-     * ("g-ran" first). When operand j hoists, every earlier operand whose
-     * emitted code is not pure after emission (an inline call, an inline
-     * assignment, checked int arithmetic — even inside a nested
-     * combination that hoisted other parts of itself) is materialized
-     * into a fresh temporary assigned immediately before j's hoisted
-     * statements; operands after a hoist stay inline (the flush already
-     * precedes them), and operands whose emitted code is inert (literals,
-     * reads, fully hoisted calls) are left alone. The declarations
+     * ("g-ran" first). Every operand that is followed by a hoisting
+     * operand and whose emitted code is not pure after emission (an
+     * inline call, an inline assignment, checked int arithmetic — even
+     * inside a nested combination that hoisted other parts of itself) is
+     * materialized into a fresh temporary assigned at the earliest hoist
+     * start among the operands AFTER it — the start of the next hoisting
+     * operand's pre-statement segment, i.e. immediately after the
+     * operand's own evaluation (its own hoisted statements, when it
+     * hoisted itself, already precede that point) and before the first
+     * hoisted statement of every later operand. Operands after the last
+     * hoist stay inline (the flush already precedes them), and operands
+     * whose emitted code is inert (literals, reads, fully hoisted calls)
+     * are left alone. The declarations
      * reference no user-controlled names ({@code __t<n>} is unreachable from
      * {@link #javaName}), and {@link #preStatementsDeclareTemps} is set so
      * a module-level field initializer referencing a materialized
@@ -2273,20 +2308,44 @@ public final class JvmBackend {
             codes.add(emitExpression(nodes.get(i)));
             hoistStarts.add(preStatements.size() > before ? before : -1);
         }
-        // Process hoisting operands right to left: insertions for operand j
-        // land at the start of j's hoisted statements, so later operands
-        // are rewritten first and earlier insertions (smaller indices) only
-        // shift them rightward — never reorder them. Every earlier operand
-        // whose emitted code is not pure after emission is materialized —
-        // including an operand that hoisted itself but still carries an
-        // inline call after its own hoisted statements (a nested
-        // combination), whose inline effects would otherwise run after
-        // operand j's hoisted statements.
+        // Process the hoisting operands right to left in contiguous
+        // groups: for a hoisting operand j, the operands materialized
+        // before j's first hoisted statement are exactly the earlier
+        // operands from the previous hoisting operand (inclusive) up to
+        // j — the previous hoisting operand's own inline remainder still
+        // needs materialization immediately after its hoisted statements,
+        // and no earlier operand may be anchored later than that earliest
+        // boundary. Each materialization lands at the start of j's
+        // hoisted statements, i.e. the earliest hoist start among the
+        // operands AFTER the materialized operand: immediately after the
+        // operand's own evaluation (its hoisted statements, when it
+        // hoisted itself, already precede that point) and before the
+        // first hoisted statement of every later operand. Anchoring at
+        // the LAST hoisting operand's start instead would run the
+        // operand's inline effects after an intermediate operand's
+        // hoisted side effects (the
+        // getArr("a", xs)[pick("i", console.log("b"))] = … miscompilation:
+        // printed b, a instead of a, b). Within a group the
+        // materializations are inserted consecutively in operand order,
+        // so operand i's temporary assignment precedes operand i + 1's.
+        // Processing groups right to left makes later insertions land
+        // first and earlier insertions (smaller indices) only shift them
+        // rightward — never reorder them. Every operand whose emitted
+        // code is not pure after emission is materialized — including an
+        // operand that hoisted itself but still carries an inline call
+        // after its own hoisted statements (a nested combination), whose
+        // inline effects would otherwise run after operand j's hoisted
+        // statements.
         boolean[] materialized = new boolean[nodes.size()];
-        for (int j = nodes.size() - 1; j >= 0; j--) {
-            if (hoistStarts.get(j) < 0) continue;
+        List<Integer> hoistOps = new ArrayList<>(nodes.size());
+        for (int i = 0; i < nodes.size(); i++) {
+            if (hoistStarts.get(i) >= 0) hoistOps.add(i);
+        }
+        for (int g = hoistOps.size() - 1; g >= 0; g--) {
+            int j = hoistOps.get(g);
+            int first = g == 0 ? 0 : hoistOps.get(g - 1);
             int insertAt = hoistStarts.get(j);
-            for (int i = 0; i < j; i++) {
+            for (int i = first; i < j; i++) {
                 if (materialized[i]) continue;
                 if (isPureAfterEmission(nodes.get(i))) continue;
                 Type t = typeOf(nodes.get(i));
@@ -2441,7 +2500,11 @@ public final class JvmBackend {
      * emitted negative-index check), index past the end → E8001
      * "expected &lt;T&gt;, got null" (LuaJIT reads nil there and the read
      * site's typed boundary fails with that shape — spec §Bounds and nil
-     * behavior). Tables and other indexable forms stay out of scope.
+     * behavior). Comparison positions ({@code ===}/{@code !==} operands)
+     * do not route through this method: their read site applies no typed
+     * boundary, so {@link #emitArrayReadComparison} boxes the read and
+     * computes LuaJIT's nil-comparison semantics instead. Tables and
+     * other indexable forms stay out of scope.
      */
     private String emitIndexRead(IndexExpr idx) {
         Type arrayType = typeOf(idx.array());
@@ -2458,6 +2521,179 @@ public final class JvmBackend {
         }
         List<String> codes = emitOperandsInOrder(List.of(idx.array(), idx.index()));
         return readHelper + "(" + codes.get(0) + ", " + codes.get(1) + ")";
+    }
+
+    /**
+     * True when {@code e} is an index read of one of the four supported
+     * primitive array types — the only in-scope read shape that can yield
+     * the LuaJIT nil past the end. Table indexing and out-of-slice
+     * element types are not affected (they are E6000 elsewhere).
+     */
+    private boolean isPrimitiveArrayRead(ExpressionNode e) {
+        if (!(e instanceof IndexExpr idx)) return false;
+        if (!(typeOf(idx.array()) instanceof Type.Array arr)) return false;
+        return arrayReadHelper(arr.element()) != null;
+    }
+
+    /**
+     * Emits {@code ===}/{@code !==} where at least one operand is a
+     * primitive array read. The spec's read-site contract (spec §Bounds
+     * and nil behavior) applies no typed boundary to a comparison
+     * operand, so a read past the end must NOT raise E8001 here: LuaJIT
+     * reads nil and computes the comparison on that value —
+     * {@code nil === v} → {@code false}, {@code nil !== v} →
+     * {@code true}, {@code nil === nil} → {@code true} (the reviewer's
+     * four-type probes: {@code xs[99] === 5} → {@code neq}). Each read is
+     * therefore emitted as a nullable boxed temporary (the boxed helper
+     * still raises E8002 for a negative index — LuaJIT raises that
+     * unconditionally at the read) and the comparison evaluates the
+     * boxed values with the nil semantics. Operand evaluation stays
+     * strict left-to-right: every effectful operand (the reads and any
+     * inline-calling other operand) is materialized into a pre-statement
+     * temporary in source order before the inert comparison expression,
+     * so a later operand always evaluates — never skipped by a Java
+     * {@code &&}/{@code ||} short-circuit that only LuaJIT's separate
+     * operand evaluation would observe.
+     */
+    private String emitArrayReadComparison(BinaryExpr bin, boolean eq) {
+        boolean leftRead = isPrimitiveArrayRead(bin.left());
+        boolean rightRead = isPrimitiveArrayRead(bin.right());
+        IndexExpr lr = leftRead ? (IndexExpr) bin.left() : null;
+        IndexExpr rr = rightRead ? (IndexExpr) bin.right() : null;
+        Type element = ((Type.Array) typeOf((lr != null ? lr : rr).array()))
+            .element();
+        String helper = arrayReadBoxedHelper(element);
+        String boxed = arrayBoxedJavaType(element);
+        if (helper == null || boxed == null) {
+            unsupported("array comparison on " + typeName(element)
+                + " elements", bin.span());
+            return "false";
+        }
+        if (leftRead && rightRead) {
+            // Both operands are reads: evaluate left receiver, left
+            // index, right receiver, right index — all before the inert
+            // comparison of the two boxed temporaries.
+            List<String> ops = emitOperandsInOrder(
+                List.of(lr.array(), lr.index(), rr.array(), rr.index()));
+            String n0 = nextEvalTempName();
+            String n1 = nextEvalTempName();
+            preStatements.add(new PreLine(boxed + " " + n0 + " = " + helper
+                + "(" + ops.get(0) + ", " + ops.get(1) + ");", 0));
+            preStatements.add(new PreLine(boxed + " " + n1 + " = " + helper
+                + "(" + ops.get(2) + ", " + ops.get(3) + ");", 0));
+            preStatementsDeclareTemps = true;
+            if (eq) {
+                return "((" + n0 + " == null && " + n1 + " == null) || ("
+                    + n0 + " != null && " + n1 + " != null && "
+                    + boxedEq(n0, n1, element) + "))";
+            }
+            return "((" + n0 + " == null) != (" + n1 + " == null) || ("
+                + n0 + " != null && " + n1 + " != null && "
+                + boxedNe(n0, n1, element) + "))";
+        }
+        // One read + one value operand. The read (receiver, index) is
+        // boxed into a pre-statement temporary first; an effectful value
+        // operand is then materialized into its own temporary so the
+        // final comparison references only inert values and its Java
+        // && / || short-circuit can never skip a DEAL-visible effect.
+        if (leftRead) {
+            List<String> ops = emitOperandsInOrder(
+                List.of(lr.array(), lr.index()));
+            String n = nextEvalTempName();
+            preStatements.add(new PreLine(boxed + " " + n + " = " + helper
+                + "(" + ops.get(0) + ", " + ops.get(1) + ");", 0));
+            preStatementsDeclareTemps = true;
+            String value = materializeValueOperand(bin.right());
+            if (eq) return "(" + n + " != null && "
+                + boxedEqValue(n, value, element) + ")";
+            return "(" + n + " == null || "
+                + boxedNeValue(n, value, element) + ")";
+        }
+        String value = materializeValueOperand(bin.left());
+        List<String> ops = emitOperandsInOrder(
+            List.of(rr.array(), rr.index()));
+        String n = nextEvalTempName();
+        preStatements.add(new PreLine(boxed + " " + n + " = " + helper
+            + "(" + ops.get(0) + ", " + ops.get(1) + ");", 0));
+        preStatementsDeclareTemps = true;
+        if (eq) return "(" + n + " != null && "
+            + valueBoxedEq(value, n, element) + ")";
+        return "(" + n + " == null || " + valueBoxedNe(value, n, element) + ")";
+    }
+
+    /**
+     * Emits the non-read comparison operand {@code v} and, when its
+     * emitted code can still have an observable effect (an inline call,
+     * an assignment, checked int arithmetic — anything
+     * {@link #isPureAfterEmission} flags), materializes it into a fresh
+     * temporary pre-statement so the surrounding nil-aware comparison
+     * expression only references inert values. Returns the code to use
+     * in the comparison (the temporary or the inert inline code).
+     */
+    private String materializeValueOperand(ExpressionNode v) {
+        String code = emitExpression(v);
+        if (isPureAfterEmission(v)) return code;
+        String javaType = javaLocalType(typeOf(v), v.span());
+        if (javaType == null) return code; // diagnostic already recorded
+        String temp = nextEvalTempName();
+        preStatements.add(new PreLine(
+            javaType + " " + temp + " = " + code + ";", 0));
+        preStatementsDeclareTemps = true;
+        return temp;
+    }
+
+    /** Equality of two boxed read values ({@code null} handled by the
+     * caller): strings via {@code equals}, the other primitives unboxed. */
+    private String boxedEq(String a, String b, Type element) {
+        return element instanceof Type.String
+            ? a + ".equals(" + b + ")"
+            : boxedUnbox(a, element) + " == " + boxedUnbox(b, element);
+    }
+
+    /** Inequality of two boxed read values ({@code null} handled by the
+     * caller). */
+    private String boxedNe(String a, String b, Type element) {
+        return element instanceof Type.String
+            ? "(!" + a + ".equals(" + b + "))"
+            : boxedUnbox(a, element) + " != " + boxedUnbox(b, element);
+    }
+
+    /** Equality of a boxed read value with a plain value operand. */
+    private String boxedEqValue(String boxed, String value, Type element) {
+        return element instanceof Type.String
+            ? boxed + ".equals(" + value + ")"
+            : boxedUnbox(boxed, element) + " == " + value;
+    }
+
+    /** Inequality of a boxed read value with a plain value operand. */
+    private String boxedNeValue(String boxed, String value, Type element) {
+        return element instanceof Type.String
+            ? "(!" + boxed + ".equals(" + value + "))"
+            : boxedUnbox(boxed, element) + " != " + value;
+    }
+
+    /** Equality of a plain value operand with a boxed read value. */
+    private String valueBoxedEq(String value, String boxed, Type element) {
+        return element instanceof Type.String
+            ? value + ".equals(" + boxed + ")"
+            : value + " == " + boxedUnbox(boxed, element);
+    }
+
+    /** Inequality of a plain value operand with a boxed read value. */
+    private String valueBoxedNe(String value, String boxed, Type element) {
+        return element instanceof Type.String
+            ? "(!" + value + ".equals(" + boxed + "))"
+            : value + " != " + boxedUnbox(boxed, element);
+    }
+
+    /** Java unboxing accessor for a boxed read temporary. */
+    private String boxedUnbox(String boxed, Type element) {
+        return switch (element) {
+            case Type.Int ignored -> boxed + ".longValue()";
+            case Type.Number ignored -> boxed + ".doubleValue()";
+            case Type.Boolean ignored -> boxed + ".booleanValue()";
+            default -> boxed;
+        };
     }
 
     /**
@@ -2893,6 +3129,35 @@ public final class JvmBackend {
             case Type.Number ignored -> "__numberArrayRead";
             case Type.String ignored -> "__stringArrayRead";
             case Type.Boolean ignored -> "__booleanArrayRead";
+            default -> null;
+        };
+    }
+
+    /** Emitted boxed read-helper method name for a supported primitive
+     * element type (same {@code null}-on-unsupported contract as
+     * {@link #arrayReadHelper}). The boxed helper yields {@code null}
+     * past the end (the LuaJIT nil) instead of raising E8001, for the
+     * comparison positions whose read site applies no typed boundary
+     * (spec §Bounds and nil behavior); a negative index still raises
+     * E8002, which LuaJIT emits unconditionally at the read. */
+    private String arrayReadBoxedHelper(Type element) {
+        return switch (element) {
+            case Type.Int ignored -> "__intArrayReadBoxed";
+            case Type.Number ignored -> "__numberArrayReadBoxed";
+            case Type.String ignored -> "__stringArrayReadBoxed";
+            case Type.Boolean ignored -> "__booleanArrayReadBoxed";
+            default -> null;
+        };
+    }
+
+    /** Java reference type of a boxed read temporary for a supported
+     * primitive element type (nullable, unlike the storage types). */
+    private String arrayBoxedJavaType(Type element) {
+        return switch (element) {
+            case Type.Int ignored -> "java.lang.Long";
+            case Type.Number ignored -> "java.lang.Double";
+            case Type.String ignored -> "java.lang.String";
+            case Type.Boolean ignored -> "java.lang.Boolean";
             default -> null;
         };
     }
