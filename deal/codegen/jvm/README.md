@@ -24,18 +24,20 @@ Supported (real semantics, spec JVM value mapping):
 | `number` | primitive `double` (Lua-style floored `%` via `numMod`; literals that overflow to ±Infinity — e.g. checker-accepted `1e999` — render as `Double.POSITIVE_INFINITY`/`Double.NEGATIVE_INFINITY`, mirroring the Lua backend's `(1/0)`, so the artifact stays valid Java) |
 | `boolean` | primitive `boolean` |
 | `string` | `java.lang.String` (`===` via `equals`; ordering via the emitted `scalarCompare` helper — Unicode scalar-value order, matching LuaJIT's UTF-8 bytewise order including supplementary characters) |
+| template literals | plain Java string concatenation in source order (`("a" + expr + "b")`) — checker-typed `string` interpolations, empty literal parts elided, an empty interpolation kept, a template with no interpolations emitted as its literal |
 | `null` | `void` returns / `Void` locals and params; `null === null` is `true`, `z === null`/`!==` emit Java `==`/`!=` (spec §Value equality) |
 | functions | `static` methods of the generated module class |
 | `let` locals / module fields | locals (shadowing disambiguated `$n`) / `static` fields |
 | `if`/`else if`/`else`, `return`, assignment, direct calls | plain Java control flow |
+| `while` loops | plain Java `while` with the condition routed through the emitted `loopCond` identity helper (javac never sees a constant-expression condition — JLS §14.21 keeps `while (false)` bodies and statements after `while (true)` reachable); the condition re-evaluates on every iteration, with hoisted null-typed side effects running inside the loop before each condition test; module-level while loops run in the load-time `static` initializer in source order and reject any `return` in their body with E6000 |
 | standalone expression statements (`x + 1;`) | lowered to a dummy-local declaration (`long __ignored = intAdd(x, 1L);`) so they are genuinely evaluated — an int overflow there is an observable E8004, as under LuaJIT |
 | `int()` / `number()` intrinsics | `intFromNumber` / `numberFromInt` helpers (E8001/E8004) |
 | `import * as c from "std/console"` | `c.log` → `java.lang.System.out.println`, `c.error` → `java.lang.System.err.println` |
 
 Out of scope (rejected with a backend `E6000` diagnostic, never silently
 miscompiled): modules (any import other than `std/console`), classes, arrays,
-tables, nullables, function types, stdlib modules, async/await, loops,
-try/throw, host ABI, `@jsonable`, template literals, for-of.
+tables, nullables, function types, stdlib modules, async/await, for/for-of loops,
+try/throw, host ABI, `@jsonable`.
 
 The JVM's static type system proves typed boundaries redundant, which the
 current normative spec explicitly permits (`docs/spec-v1.1.md` §JVM backend
