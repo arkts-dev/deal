@@ -169,6 +169,7 @@ public class JvmBackendTest {
             testArrayReadComparisonNilSemantics();
             testArrayEvalOrderSideEffectingReceiver();
             testArrayReadComparisonBothReadsOrder();
+            testArrayReadComparisonPlainLeftOperandOrder();
             testArrayBoundaryLessReadPositions();
             testArrayUnsupportedElementTypesRejected();
             testArrayUseBeforeDeclarationGuards();
@@ -1709,6 +1710,209 @@ public class JvmBackendTest {
                     + "boundary converts with booleanNotNull: " + java);
                 check(!java.contains("->"),
                     "no lambda emitted for the boundary-less shapes: " + java);
+            }
+        }
+    }
+
+    /** Plain-value-left {@code ===}/{@code !==} operand evaluation
+     * order (ISSUE-0094 rework): when the LEFT operand is a plain
+     * non-nil-capable value and the RIGHT operand carries the LuaJIT
+     * nil semantics (a primitive array read or a nil-aware {@code &&}/
+     * {@code ||} result), the left operand's inline evaluation is
+     * materialized into a pre-statement IMMEDIATELY — before the right
+     * operand is even emitted, so the right operand's boxed read helper
+     * call (and its operands' hoisted side effects) can never run
+     * first. A late materialization inverted the spec's strict
+     * left-to-right order (§Operational semantics):
+     * {@code mark("lhs", 5) === xs[-1]} raised the right read's E8002
+     * before printing "lhs" (LuaJIT prints "lhs" first) and
+     * {@code (9007199254740991 + 1) === xs[-1]} raised the read's E8002
+     * where LuaJIT raises the left arithmetic's E8004 first. */
+    private static void testArrayReadComparisonPlainLeftOperandOrder()
+            throws Exception {
+        System.out.println("-- Plain-left === / !== operand order (javac + java) --");
+
+        // The reviewer's int shape: the left effect must print before
+        // the right read's E8002. The number/string/boolean and
+        // nil-aware-right shapes follow in their own artifacts below.
+        ExecResult run = compileAndRunJvm("""
+            import * as console from "std/console"
+            function mark(label: string, v: int): int { console.log(label); return v; }
+            export function test(): null {
+              let xs: int[] = [1];
+              if (mark("lhs", 5) === xs[-1]) { console.log("bad"); }
+            }
+            """, "arrplainlhserr");
+        check(run.exitCode() == 1
+                && run.output().contains("lhs")
+                && run.output().contains("DEAL_ERROR_CODE: E8002")
+                && !run.output().contains("bad"),
+            "int shape: 'lhs' prints before the right read's E8002, no "
+            + "'bad': " + run.output());
+
+        ExecResult runN = compileAndRunJvm("""
+            import * as console from "std/console"
+            function markN(label: string, v: number): number { console.log(label); return v; }
+            export function test(): null {
+              let ns: number[] = [1.5];
+              if (markN("lhsN", 2.5) === ns[-1]) { console.log("badN"); }
+            }
+            """, "arrplainlhserrnum");
+        check(runN.exitCode() == 1
+                && runN.output().contains("lhsN")
+                && runN.output().contains("DEAL_ERROR_CODE: E8002")
+                && !runN.output().contains("badN"),
+            "number shape: 'lhsN' prints before the right read's E8002: "
+                + runN.output());
+
+        ExecResult runS = compileAndRunJvm("""
+            import * as console from "std/console"
+            function markS(label: string, v: string): string { console.log(label); return v; }
+            export function test(): null {
+              let ss: string[] = ["a"];
+              if (markS("lhsS", "x") === ss[-1]) { console.log("badS"); }
+            }
+            """, "arrplainlhserrstr");
+        check(runS.exitCode() == 1
+                && runS.output().contains("lhsS")
+                && runS.output().contains("DEAL_ERROR_CODE: E8002")
+                && !runS.output().contains("badS"),
+            "string shape: 'lhsS' prints before the right read's E8002: "
+                + runS.output());
+
+        ExecResult runB = compileAndRunJvm("""
+            import * as console from "std/console"
+            function markB(label: string, v: boolean): boolean { console.log(label); return v; }
+            export function test(): null {
+              let bs: boolean[] = [true];
+              if (markB("lhs", true) === bs[-1]) { console.log("bad"); }
+            }
+            """, "arrplainlhserrbool");
+        check(runB.exitCode() == 1
+                && runB.output().contains("lhs")
+                && runB.output().contains("DEAL_ERROR_CODE: E8002")
+                && !runB.output().contains("bad"),
+            "boolean shape: 'lhs' prints before the right read's E8002: "
+                + runB.output());
+
+        ExecResult runNA = compileAndRunJvm("""
+            import * as console from "std/console"
+            function markB(label: string, v: boolean): boolean { console.log(label); return v; }
+            export function test(): null {
+              let bs: boolean[] = [true];
+              if (markB("lhs", true) === (bs[-1] && true)) { console.log("bad"); }
+            }
+            """, "arrplainlhserrnilaware");
+        check(runNA.exitCode() == 1
+                && runNA.output().contains("lhs")
+                && runNA.output().contains("DEAL_ERROR_CODE: E8002")
+                && !runNA.output().contains("bad"),
+            "nil-aware && right operand: 'lhs' prints before the right "
+            + "operand's read E8002: " + runNA.output());
+
+        // Both-raise precedence: the left operand's checked arithmetic
+        // must raise E8004 before the right read's E8002.
+        ExecResult both = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let xs: int[] = [1];
+              if ((9007199254740991 + 1) === xs[-1]) { console.log("bad"); }
+            }
+            """, "arrplainlhsbothraise");
+        check(both.exitCode() == 1
+                && both.output().contains("DEAL_ERROR_CODE: E8004")
+                && !both.output().contains("E8002")
+                && !both.output().contains("bad"),
+            "both-raise precedence: the left arithmetic's E8004 raises "
+            + "first, never the read's E8002: " + both.output());
+
+        // Positive control: an in-bounds right read with a hoisting
+        // index — lhs, h, i, eq-ok (the left call still evaluates
+        // completely first).
+        ExecResult ok = compileAndRunJvm("""
+            import * as console from "std/console"
+            function mark(label: string, v: int): int { console.log(label); return v; }
+            function pick(label: string, z: null): int { console.log(label); return 0; }
+            export function test(): null {
+              let xs: int[] = [1];
+              let zs: int[] = [5];
+              if (mark("lhs", 5) === zs[pick("i", console.log("h"))]) { console.log("eq-ok"); }
+            }
+            """, "arrplainlhsinbounds");
+        check(ok.exitCode() == 0
+                && ok.output().contains("lhs\nh\ni\neq-ok")
+                && !ok.output().contains("bad"),
+            "in-bounds positive control prints lhs, h, i, eq-ok: "
+                + ok.output());
+
+        // The JVM's spec order for an effectful right receiver and index
+        // (receiver before index, §Operational semantics rule 1):
+        // lhs, made, idx — LuaJIT emits the index first (documented
+        // divergence), so this shape is pinned JVM-only.
+        ExecResult recv = compileAndRunJvm("""
+            import * as console from "std/console"
+            function mark(label: string, v: int): int { console.log(label); return v; }
+            function getArr(label: string, xs: int[]): int[] { console.log(label); return xs; }
+            export function test(): null {
+              let xs: int[] = [1];
+              if (mark("lhs", 5) === getArr("made", xs)[mark("idx", 99)]) { console.log("bad"); }
+            }
+            """, "arrplainlhsrecv");
+        check(recv.exitCode() == 0
+                && recv.output().contains("lhs\nmade\nidx")
+                && !recv.output().contains("bad"),
+            "effectful right receiver/index order is lhs, made, idx "
+            + "(past-end read yields nil; 5 === nil is false): "
+                + recv.output());
+
+        // Emission shapes: the effectful left operand's materialization
+        // pre-statement is anchored BEFORE the right read's boxed helper
+        // call (int and checked-arithmetic shapes), a pure left operand
+        // is NOT materialized (the comparison references the literal
+        // directly), and no lambda is ever emitted.
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            function mark(label: string, v: int): int { console.log(label); return v; }
+            export function test(): null {
+              let xs: int[] = [1];
+              if (mark("lhs", 5) === xs[-1]) { console.log("bad"); }
+              if ((9007199254740991 + 1) === xs[-1]) { console.log("bad2"); }
+              if (5 === xs[99]) { console.log("bad3"); }
+            }
+            """, "jvmtest-arrplainlhs-order-emission.deal");
+        check(f.errors().isEmpty(), "plain-left order emission frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-arrplainlhs-order-emission.deal", "main");
+            check(!res.hasErrors(), "plain-left order emission codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                int markIdx = java.indexOf("long __t0 = mark(\"lhs\", 5L);");
+                int read1Idx = java.indexOf(
+                    "__intArrayReadBoxed(xs, intNeg(1L));");
+                int addIdx = java.indexOf(
+                    "intAdd(9007199254740991L, 1L);");
+                int read2Idx = read1Idx >= 0
+                    ? java.indexOf("__intArrayReadBoxed(xs, intNeg(1L));",
+                        read1Idx + 1)
+                    : -1;
+                check(markIdx >= 0 && read1Idx >= 0 && addIdx >= 0
+                        && markIdx < read1Idx && addIdx < read2Idx,
+                    "each effectful left operand's materialization lands "
+                    + "before ITS right read's boxed helper call (mark "
+                    + "before the first E8002 read, the checked add "
+                    + "before the second E8002 read): " + java);
+                check(java.matches(
+                        "(?s).*5L == __t\\d+\\.longValue\\(\\).*")
+                        && !java.matches("(?s).*long __t\\d+ = 5L;.*"),
+                    "a pure literal left operand is not materialized — "
+                    + "the comparison references the literal directly "
+                    + "and no 'long __t = 5L' pre-statement exists: "
+                        + java);
+                check(!java.contains("->"),
+                    "no lambda emitted for the plain-left shapes: " + java);
             }
         }
     }

@@ -359,7 +359,7 @@ Every supported primitive-array form and runtime check, with the test
 covering it. All fixture evidence below runs through the real frontend →
 real `JvmBackend` codegen → `javac` subprocess → `java` subprocess
 executing the emitted artifact (`test/conformance/fixtures/jvm-arrays-slice.json`,
-29 fixtures: 15 JVM-only + 14 cross-backend parity fixtures that also run
+37 fixtures: 16 JVM-only + 21 cross-backend parity fixtures that also run
 under LuaJIT as the reference; `test/BackendConformanceTest` fails a
 fixture whose codegen or JVM execution is bypassed):
 
@@ -437,6 +437,39 @@ fixture whose codegen or JVM execution is bypassed):
   `JvmBackendTest.testArrayReadComparisonBothReadsOrder`
   (runtime and emission assertions: the left read's helper call lands
   before the right operand's hoisted println).
+- **Plain-value-left comparison evaluation order** (spec §Operational
+  semantics: the left operand evaluates completely before the right
+  operand's first evaluation even when the right operand carries the
+  nil semantics — a primitive array read or a nil-aware `&&`/`||`
+  result): a plain effectful left operand is materialized into a
+  pre-statement immediately after its emission and BEFORE the right
+  operand is even emitted, so the right read's boxed helper call
+  (and its operands' hoisted side effects) can never run first — a
+  late materialization ran `mark("lhs", 5) === xs[-1]`'s right read
+  E8002 before printing "lhs" (LuaJIT prints "lhs" first) and
+  `(9007199254740991 + 1) === xs[-1]`'s read E8002 where LuaJIT
+  raises the left arithmetic's E8004 first; a pure literal left
+  operand is never materialized. Pinned by
+  `jvm-arr-cmp-lhs-effect-before-read-error-parity` (cross-backend:
+  "lhs" then E8002, exit 1, int),
+  `jvm-arr-cmp-lhs-effect-boolean-parity` (boolean),
+  `jvm-arr-cmp-lhs-effect-number-parity` (number),
+  `jvm-arr-cmp-lhs-effect-string-parity` (string),
+  `jvm-arr-cmp-lhs-effect-nilaware-right-parity` (a nil-aware
+  `&&` right operand), `jvm-arr-cmp-both-raise-precedence-parity`
+  (cross-backend: E8004, never E8002, exit 1),
+  `jvm-arr-cmp-lhs-effect-inbounds-order-parity` (cross-backend
+  positive control: lhs, h, i, eq-ok),
+  `jvm-arr-cmp-lhs-effect-read-order` (JVM-only: the spec's
+  receiver-before-index order lhs, made, idx against an effectful
+  right receiver and index — LuaJIT emits the index first, the
+  documented read divergence below) +
+  `JvmBackendTest.testArrayReadComparisonPlainLeftOperandOrder`
+  (runtime shapes for all four element types, the nil-aware right,
+  the both-raise E8004 precedence, the in-bounds positive control,
+  the JVM-only receiver/index order, and emission assertions: the
+  left materialization lands before its right read's boxed helper
+  call, a pure literal is never materialized, never a lambda).
 - **Discarded standalone array read past the end → no E8001** (the
   spec read-site contract applies no typed boundary to a discarded
   value: LuaJIT drops the emitted read's nil, so the JVM discards a
@@ -539,8 +572,16 @@ fixture whose codegen or JVM execution is bypassed):
   no E8001 on both), `jvm-arr-not-read-parity` (Lua's `not nil`
   coercion on both), `jvm-arr-shortcircuit-read-parity` (nil
   truthiness in `&&`/`||` operands plus the skipped right operands on
-  both), and `jvm-arr-and-boundary-parity` (the result nil failing a
-  typed boolean boundary with E8001 on both).
+  both), `jvm-arr-and-boundary-parity` (the result nil failing a
+  typed boolean boundary with E8001 on both), and the seven
+  plain-value-left comparison fixtures listed above
+  (`jvm-arr-cmp-lhs-effect-before-read-error-parity`,
+  `jvm-arr-cmp-lhs-effect-boolean-parity`,
+  `jvm-arr-cmp-lhs-effect-number-parity`,
+  `jvm-arr-cmp-lhs-effect-string-parity`,
+  `jvm-arr-cmp-lhs-effect-nilaware-right-parity`,
+  `jvm-arr-cmp-both-raise-precedence-parity`,
+  `jvm-arr-cmp-lhs-effect-inbounds-order-parity`).
 - **Frontend compile-error gates rejected before any backend** —
   `jvm-arr-frontend-reject-index-type` (E3007 non-int index) and
   `jvm-arr-frontend-reject-length-write` (E3017 read-only `.length`
@@ -812,7 +853,17 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   `jvm-arr-discard-past-end-parity`, `jvm-arr-not-read-parity`,
   `jvm-arr-shortcircuit-read-parity`, `jvm-arr-and-boundary-parity`
   (all cross-backend),
+  `jvm-arr-cmp-lhs-effect-before-read-error-parity`,
+  `jvm-arr-cmp-lhs-effect-boolean-parity`,
+  `jvm-arr-cmp-lhs-effect-number-parity`,
+  `jvm-arr-cmp-lhs-effect-string-parity`,
+  `jvm-arr-cmp-lhs-effect-nilaware-right-parity`,
+  `jvm-arr-cmp-both-raise-precedence-parity`,
+  `jvm-arr-cmp-lhs-effect-inbounds-order-parity` (all cross-backend —
+  a plain value LEFT operand evaluates completely before a right
+  read's E8002 or its own error raises),
   `JvmBackendTest.testArrayReadComparisonNilSemantics`,
+  `JvmBackendTest.testArrayReadComparisonPlainLeftOperandOrder`,
   `JvmBackendTest.testArrayBoundaryLessReadPositions`.
 - **Read evaluation order: receiver before index (spec) — LuaJIT
   evaluates the index first.** Spec §Operational semantics rule 1

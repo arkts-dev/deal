@@ -2808,7 +2808,14 @@ public final class JvmBackend {
      * materialized into a pre-statement temporary so the final
      * comparison references only inert values and its Java {@code &&}/
      * {@code ||} short-circuit can never skip a DEAL-visible effect
-     * (LuaJIT evaluates both {@code ===} operands strictly).
+     * (LuaJIT evaluates both {@code ===} operands strictly) — a plain
+     * effectful LEFT operand is materialized right after its emission,
+     * before the right operand is emitted at all, so a right read's
+     * E8002 helper call can never run first (a late materialization
+     * inverted the order: mark("lhs", 5) === xs[-1] raised the read's
+     * E8002 before printing "lhs", and (9007199254740991 + 1) ===
+     * xs[-1] raised the read's E8002 where LuaJIT raises the left
+     * arithmetic's E8004 first).
      */
     private String emitArrayReadComparison(BinaryExpr bin, boolean eq) {
         Type element = comparisonElement(bin);
@@ -2821,6 +2828,22 @@ public final class JvmBackend {
         boolean leftNil = isNilCapableOperand(bin.left());
         boolean rightNil = isNilCapableOperand(bin.right());
         String l = emitNilCapableOperand(bin.left());
+        if (!leftNil) {
+            // A plain non-nil left operand is emitted as inline code.
+            // Materialize any inline effect IMMEDIATELY — before the
+            // right operand is even emitted — because the right
+            // operand's boxed read temp appends its helper
+            // pre-statement (and its receiver/index operands' hoisted
+            // side effects) to preStatements, and a late
+            // materialization would land the left operand's evaluation
+            // after them, inverting the spec's strict left-to-right
+            // order (§Operational semantics): mark("lhs", 5) === xs[-1]
+            // ran the right read's E8002 before the left call printed
+            // "lhs", and (9007199254740991 + 1) === xs[-1] raised the
+            // read's E8002 where LuaJIT raises the left arithmetic's
+            // E8004 first.
+            l = materializeIfEffectful(l, bin.left());
+        }
         String r = emitNilCapableOperand(bin.right());
         if (leftNil && rightNil) {
             // Both operands boxed nullable values: nil === nil is true
@@ -2847,7 +2870,10 @@ public final class JvmBackend {
             return "(" + l + " == null || "
                 + boxedNeValue(l, r, element) + ")";
         }
-        l = materializeIfEffectful(l, bin.left());
+        // rightNil: the plain left operand was already materialized
+        // before the right operand was emitted, so the comparison
+        // references only inert code and its Java &&/|| short-circuit
+        // can never skip a DEAL-visible effect.
         if (eq) return "(" + r + " != null && "
             + valueBoxedEq(l, r, element) + ")";
         return "(" + r + " == null || " + valueBoxedNe(l, r, element) + ")";
