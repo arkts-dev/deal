@@ -359,8 +359,10 @@ Every supported primitive-array form and runtime check, with the test
 covering it. All fixture evidence below runs through the real frontend →
 real `JvmBackend` codegen → `javac` subprocess → `java` subprocess
 executing the emitted artifact (`test/conformance/fixtures/jvm-arrays-slice.json`,
-37 fixtures: 16 JVM-only + 21 cross-backend parity fixtures that also run
-under LuaJIT as the reference; `test/BackendConformanceTest` fails a
+40 fixtures: 18 JVM-only + 21 cross-backend parity fixtures that also run
+under LuaJIT as the reference + 1 LuaJIT-only fixture pinning the
+reference backend's silent nil-hole collapse for a documented
+divergence; `test/BackendConformanceTest` fails a
 fixture whose codegen or JVM execution is bypassed):
 
 - **`int[]` array literal + index read + `.length`** —
@@ -553,6 +555,21 @@ fixture whose codegen or JVM execution is bypassed):
   console.log("b")), pick("v", console.log("c"))]` prints a, b, i, c,
   v): `jvm-arr-literal-eval-order-hoisted-parity` (cross-backend,
   LuaJIT agrees) + `JvmBackendTest.testArrayEvalOrderSideEffectingReceiver`.
+- **Boolean literal element with a nil-valued operand → E8001 at the
+  JVM construction (documented divergence).** `[bs[99] && true]`
+  raises E8001 "expected boolean, got null" on the JVM because a
+  primitive Java array cannot store a nil element; the reference
+  LuaJIT performs no element check at literal construction and the
+  nil hole collapses, silently yielding an empty (or shorter) array
+  and exiting 0 (no error at the literal, the declaration boundary,
+  or a parameter boundary — check_array iterates `1..#v` and sees no
+  element): `jvm-arr-lit-nil-element-jvm-e8001` (declaration shape,
+  E8001 + exit 1 + expectedNotOutput "unreachable") and
+  `jvm-arr-lit-nil-element-mixed-jvm-e8001` (the `[true, bs[99] &&
+  true]` mixed shape raises at the nil element, exit 1) pin the JVM
+  side JVM-only; `jvm-arr-lit-nil-element-luajit-collapse`
+  (LuaJIT-only: decl-len-zero, param-len-zero, mixed-len-one, done,
+  exit 0, expectedNotOutput E8001/E8003) pins the reference side.
 - **Cross-backend parity against LuaJIT** —
   `jvm-arr-literal-read-write-length-parity` (int[] literal, writes,
   the append idiom, .length, alias mutation — identical observable
@@ -843,9 +860,16 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   LuaJIT's emitted identifier assignment performs no value check and
   silently stores the nil (later reads of `b` then coerce or raise
   against the nil). A boolean literal element (`[bs[99] && true]`)
-  raises E8001 at the JVM construction, where LuaJIT's check_array
-  reports E8003 for the nil element — both raise, with the code
-  differing because the JVM wrapper cannot store a nil element. The
+  raises E8001 "expected boolean, got null" at the JVM construction,
+  because a primitive Java array cannot store a nil element. LuaJIT
+  performs no element check at literal construction and the nil hole
+  collapses: the literal silently yields an empty (or shorter) array
+  and execution continues — verified against real luajit, where
+  `let xs: boolean[] = [bs[99] && true]` yields length 0 and exits 0
+  with no error at the literal, at the declaration boundary, or at a
+  parameter boundary (check_array iterates `1..#v` and sees no
+  element), and `[true, bs[99] && true]` yields a 1-element array —
+  the JVM raises where the reference computes. The
   JVM follows the spec; the LuaJIT difference is
   listed rather than matched because the spec is normative. Pinned by
   `jvm-arr-cmp-past-end-parity` (cross-backend, all four element
@@ -864,7 +888,12 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   read's E8002 or its own error raises),
   `JvmBackendTest.testArrayReadComparisonNilSemantics`,
   `JvmBackendTest.testArrayReadComparisonPlainLeftOperandOrder`,
-  `JvmBackendTest.testArrayBoundaryLessReadPositions`.
+  `JvmBackendTest.testArrayBoundaryLessReadPositions`,
+  `jvm-arr-lit-nil-element-luajit-collapse` (LuaJIT-only pin of the
+  silent empty/shorter-array collapse on the reference backend) and
+  `jvm-arr-lit-nil-element-jvm-e8001` +
+  `jvm-arr-lit-nil-element-mixed-jvm-e8001` (JVM-only pins of the
+  E8001 raised at the JVM construction).
 - **Read evaluation order: receiver before index (spec) — LuaJIT
   evaluates the index first.** Spec §Operational semantics rule 1
   ("Evaluate receiver expression before member/index/call arguments")

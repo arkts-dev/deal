@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM primitive arrays slice (ISSUE-0094). JVM-only fixtures (plus twenty-one cross-backend parity fixtures that also run under LuaJIT as the reference) that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: int[]/number[]/string[]/boolean[] array literals (including the empty literal under a contextual type), index reads, element writes (in-place writes, the i === length append — via the xs[xs.length] idiom and via a plain index-equals-length write — with the wrapped storage growing in place so aliases observe every write), .length reads, arrays through function parameters and returns, runtime bounds checks (negative read → E8002, read past the end → E8001 \"expected int, got null\" mirroring LuaJIT's nil-at-the-boundary, negative write → E8002, gap write → E8002, out-of-safe-range int element write → E8004 via the element value check), spec §Operational semantics evaluation order for reads (receiver before index) and writes (receiver, index, RHS before the LHS write check — including hoisted null-typed side effects materialized into temporaries in order, and the side-effecting receiver + hoisting index + hoisting RHS shape anchored at the earliest hoist start after each operand), array-literal element evaluation order with a side-effecting first element and hoisting later elements, === / !== operand positions for past-end reads in all four element types (nil comparison semantics per the spec read-site contract, never E8001), negative indexes in comparison positions (E8002 on both backends), the both-reads comparison evaluation position — the left read's E8002 raises before any right-operand hoisted side effect (\"h\"/\"made\" never print, pinned with expectedNotOutput negative stdout assertions) and in-bounds both-reads comparisons keep strict left-to-right order with hoisted right-side effects, boundary-less read positions computing with Lua's nil semantics instead of raising (a discarded standalone read drops the boxed value — no E8001; `!read` coerces the nil to true; `&&`/`||` operands coerce the nil to falsy with the nil-aware result following Lua's and/or — and the result nil failing at a typed boolean boundary with E8001 on both backends), and two frontend compile-error gates rejected before any backend (E3007 non-int index, E3017 read-only .length assignment).",
+  "description": "JVM primitive arrays slice (ISSUE-0094). JVM-only fixtures (plus twenty-one cross-backend parity fixtures that also run under LuaJIT as the reference, and one LuaJIT-only fixture pinning the reference backend's silent nil-hole collapse for a documented divergence) that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: int[]/number[]/string[]/boolean[] array literals (including the empty literal under a contextual type), index reads, element writes (in-place writes, the i === length append — via the xs[xs.length] idiom and via a plain index-equals-length write — with the wrapped storage growing in place so aliases observe every write), .length reads, arrays through function parameters and returns, runtime bounds checks (negative read → E8002, read past the end → E8001 \"expected int, got null\" mirroring LuaJIT's nil-at-the-boundary, negative write → E8002, gap write → E8002, out-of-safe-range int element write → E8004 via the element value check), spec §Operational semantics evaluation order for reads (receiver before index) and writes (receiver, index, RHS before the LHS write check — including hoisted null-typed side effects materialized into temporaries in order, and the side-effecting receiver + hoisting index + hoisting RHS shape anchored at the earliest hoist start after each operand), array-literal element evaluation order with a side-effecting first element and hoisting later elements, === / !== operand positions for past-end reads in all four element types (nil comparison semantics per the spec read-site contract, never E8001), negative indexes in comparison positions (E8002 on both backends), the both-reads comparison evaluation position — the left read's E8002 raises before any right-operand hoisted side effect (\"h\"/\"made\" never print, pinned with expectedNotOutput negative stdout assertions) and in-bounds both-reads comparisons keep strict left-to-right order with hoisted right-side effects, boundary-less read positions computing with Lua's nil semantics instead of raising (a discarded standalone read drops the boxed value — no E8001; `!read` coerces the nil to true; `&&`/`||` operands coerce the nil to falsy with the nil-aware result following Lua's and/or — and the result nil failing at a typed boolean boundary with E8001 on both backends), two frontend compile-error gates rejected before any backend (E3007 non-int index, E3017 read-only .length assignment), and the boolean-literal-element construction divergence — a nil-valued literal element raises E8001 at the JVM construction where LuaJIT performs no element check and the nil hole collapses to an empty (or shorter) array with no error anywhere (pinned JVM-side and LuaJIT-side).",
   "tests": [
     {
       "name": "jvm-arr-literal-read-length",
@@ -661,6 +661,67 @@
       "expectedCompileError": null,
       "irContains": [
         "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-lit-nil-element-luajit-collapse",
+      "description": "LuaJIT reference pin for the documented literal-construction divergence (backends: [\"luajit\"] only — the JVM side deliberately diverges and is pinned JVM-only by jvm-arr-lit-nil-element-jvm-e8001 and jvm-arr-lit-nil-element-mixed-jvm-e8001). A boolean literal element whose value is a past-end read's nil (`[bs[99] && true]`) performs NO element check at literal construction: the Lua table literal's nil hole collapses, so the literal silently yields an empty (or shorter) array and execution continues — no error at the literal, at the declaration boundary, or at a parameter boundary (check_array iterates 1..#v and sees no element). `[true, bs[99] && true]` yields a 1-element array",
+      "source": "import * as console from \"std/console\"\nfunction f(xs: boolean[]): null {\n  if (xs.length === 0) { console.log(\"param-len-zero\"); }\n}\nexport function test(): null {\n  let bs: boolean[] = [true];\n  let xs: boolean[] = [bs[99] && true];\n  if (xs.length === 0) { console.log(\"decl-len-zero\"); }\n  f([bs[99] && true]);\n  let ys: boolean[] = [true, bs[99] && true];\n  if (ys.length === 1) { console.log(\"mixed-len-one\"); }\n  console.log(\"done\");\n}",
+      "expectedOutput": "decl-len-zero\nparam-len-zero\nmixed-len-one\ndone",
+      "expectedNotOutput": [
+        "E8001",
+        "E8003"
+      ],
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [boolean]",
+        "index [] : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "jvm-arr-lit-nil-element-jvm-e8001",
+      "description": "JVM-only pin for the documented literal-construction divergence (the LuaJIT reference side is pinned by jvm-arr-lit-nil-element-luajit-collapse): a boolean literal element whose value is a past-end read's nil (`[bs[99] && true]`) raises E8001 \"expected boolean, got null\" at the JVM construction because a primitive Java array cannot store a nil element — where LuaJIT performs no element check and silently collapses the nil hole to an empty array, exit 0",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let bs: boolean[] = [true];\n  let xs: boolean[] = [bs[99] && true];\n  console.log(\"unreachable\");\n}",
+      "expectedOutput": null,
+      "expectedNotOutput": [
+        "unreachable"
+      ],
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [boolean]",
+        "index [] : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-lit-nil-element-mixed-jvm-e8001",
+      "description": "JVM-only pin for the documented literal-construction divergence, mixed-literal shape: `[true, bs[99] && true]` evaluates the first (fine) element and then raises E8001 \"expected boolean, got null\" at the nil element's construction, exit 1 — where LuaJIT yields a 1-element array and continues (pinned by jvm-arr-lit-nil-element-luajit-collapse)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let bs: boolean[] = [true];\n  let ys: boolean[] = [true, bs[99] && true];\n  console.log(\"unreachable\");\n}",
+      "expectedOutput": null,
+      "expectedNotOutput": [
+        "unreachable"
+      ],
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [boolean]",
+        "index [] : boolean"
       ],
       "irNotContains": [],
       "backends": [
