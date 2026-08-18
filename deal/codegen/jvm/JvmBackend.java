@@ -378,7 +378,8 @@ import java.util.Set;
  * field), and module-level indirect calls through function-typed fields
  * are guarded like module-level direct calls: the field's value must be
  * statically known (a bare module-function or intrinsic identifier
- * initializer, no preceding module-level assignment) and the held
+ * initializer and every preceding module-level assignment to it a bare
+ * module-function or intrinsic identifier) and the held
  * function must not (transitively) read a later-declared field or reach
  * a later-declared function — otherwise E6000, never a silent
  * divergence. Function expressions, nested functions, and signatures

@@ -826,15 +826,18 @@ fixture whose codegen or JVM execution is bypassed):
   — javac: 'void' type not allowed here). A nil-aware boolean default
   still crosses the constructor's `booleanNotNull` boundary (E8001),
   exactly like every other typed boolean boundary.
-- **Imported-class values are E6000, never a broken artifact.** A
-  checker-inferred class type can name an IMPORTED class (an
-  annotation-less declaration like `let c = lib.getC()`): `javaLocalType`
-  and the class-typed table read require
-  `moduleClasses.containsKey(c.name())` and otherwise record E6000
+- **Imported-class values were E6000 until ISSUE-0109, never a broken
+  artifact.** A checker-inferred class type can name an IMPORTED class
+  (an annotation-less declaration like `let c = lib.getC()`): before
+  ISSUE-0109, `javaLocalType` and the class-typed table read required
+  `moduleClasses.containsKey(c.name())` and otherwise recorded E6000
   ("imported classes / cross-module nominal identity are deferred to
   ISSUE-0109") — the pre-fix backend emitted `$C_C c = Lib.getC();`
   and javac rejected the artifact ("cannot find symbol: class $C_C")
-  after the CLI reported success.
+  after the CLI reported success. ISSUE-0109 lifted the rejection:
+  imported-class values now map to the DECLARING module's generated
+  nested class and run its nominal checks (see the ISSUE-0109 review
+  evidence below).
 - **The runtime nominal check lives exactly where it cannot be proven
   redundant.** The slice's one untyped boundary is a table field read in
   a class-typed contextual target (the checker types the read with the
@@ -953,7 +956,7 @@ fixture whose codegen or JVM execution is bypassed):
   declared before a function-typed field that calls through it stays
   subject to the existing later-field read/write analysis.
 - **Tests proving the slice** —
-  - `test/conformance/fixtures/jvm-function-values-slice.json` — 30
+  - `test/conformance/fixtures/jvm-function-values-slice.json` — 36
     fixtures. 19 JVM-only runtime fixtures run through the real
     frontend → real `JvmBackend` codegen → `javac` subprocess → `java`
     subprocess executing the emitted artifact (the harness fails a
@@ -972,29 +975,57 @@ fixture whose codegen or JVM execution is bypassed):
     boundary, return boundary). Six frontend compile-error gates are
     rejected before any backend (E3001 parameter/return signature
     mismatch, E5004 reverse arity, E3009/E5001 indirect-call
-    arity/argument mismatch, E3008 non-function callee). Five fixtures
-    run under both backends as cross-backend parity with real luajit
-    (callback, arity-extension assignment, intrinsic function value,
-    reassignment, and the indirect-call boolean-argument boundary: a
-    past-end boolean[] read's nil passed through && as the argument of
-    an indirect call fails E8001, exit 1 on both backends — the JVM
-    converts the boxed temporary with booleanNotNull at the argument
-    position, LuaJIT's check_boolean(nil) raises at callee entry).
+    arity/argument mismatch, E3008 non-function callee). Nine fixtures
+    run under both backends as cross-backend parity with real luajit:
+    the callback, arity-extension assignment, intrinsic function value,
+    and reassignment shapes; the indirect-call boolean-argument
+    boundary (a past-end boolean[] read's nil passed through && as the
+    argument of an indirect call fails E8001, exit 1 on both backends —
+    the JVM converts the boxed temporary with booleanNotNull at the
+    argument position, LuaJIT's check_boolean(nil) raises at callee
+    entry); the live module-field adapter delegation — the
+    adapter-then-reassign shape (`let h: (a,b)=>int = g; g = dbl;
+    h(10, 999)` computes 20 on BOTH backends, never a stale snapshot)
+    and its load-time variant (`expectedOutput` markers print only when
+    the live read is observed); and the two E8010 evaluate-then-check
+    ordering shapes — the callback-argument probe
+    `take(markF("pre", inc), markI("post", 1))` prints the marker only
+    when markF ran before markI and then still raises E8010, exit 1, on
+    both backends, and the return-position probe `return markF("pre",
+    inc)` prints the marker and then raises E8010 on both backends
+    (`expectedOutput` + `expectedError: E8010` + `expectedExitCode: 1`
+    pin the side effect around the raise; the pre-fix JVM dropped it).
+    Two LuaJIT-only reference fixtures pin the semantics of the shapes
+    the JVM slice conservatively rejects with E6000 until ISSUE-0110:
+    the reassigned-LOCAL adapter (LuaJIT's adapter reads the binding
+    live, so `f = dbl` retargets the earlier adapter and `h(10, 999)`
+    computes 20) and the side-effecting call-result adapter (LuaJIT
+    re-evaluates `picker()` on EVERY invoke — two invokes run it twice,
+    so `h(10,999) + h(10,999) + count === 68`, never the 67 of a
+    creation-time-only evaluation).
   - `test/JvmBackendTest.testFunctionValues` — emission assertions for
     the wrapper class, the descriptor string, the wrapper instance
     field, indirect dispatch through `invoke`, the adapter's
-    static-method delegation, the intrinsic wrapper fields, and the
-    local-value snapshot temporary (`__fn0 = g;` / `__fn0.invoke(p0)`),
-    plus javac+java execution of the typed-variable, local-adapter,
-    call-result-adapter, module-field-adapter, E8010 callback/return
-    check, and load-time indirect-call shapes; E6000 guards for the
-    load-time value use of a later-declared function, a call-valued
-    field initializer, and an assignment before the call site; and E6000
-    for the deferred signature shapes (nested function types, nullable
-    function types, async function types, rest function types, arrays of
-    functions). The no-lambda assertions across the suite now target the
-    lambda arrow form `" -> "` — wrapper descriptor strings legitimately
-    carry the arrow glyph without spaces.
+    static-method delegation, the intrinsic wrapper fields, the
+    local-value snapshot temporary (`__fn0 = g;` / `__fn0.invoke(p0)`)
+    for a binding the enclosing body never reassigns, and the LIVE
+    module-field adapter body (`g.invoke(p0)` with no `__fn0 = g;`
+    snapshot of a field), plus javac+java execution of the
+    typed-variable, local-adapter, module-field-adapter (with the
+    reassignment-after-creation retarget pinned to 20), and
+    load-time-indirect-call shapes; E6000 for the reassigned
+    local/parameter adapter (pinned for both shapes with frontend-clean
+    probes), the call-result adapter, the load-time value use of a
+    later-declared function, a call-valued field initializer, and an
+    assignment before the call site; E6000 for the deferred signature
+    shapes (nested function types, nullable function types, async
+    function types, rest function types, arrays of functions); and the
+    E8010 callback/return checks with module-field evaluation-order
+    probes asserting the checked value expression runs before the raise
+    (the marker prints and `DEAL_ERROR_CODE: E8010` follows). The
+    no-lambda assertions across the suite now target the lambda arrow
+    form `" -> "` — wrapper descriptor strings legitimately carry the
+    arrow glyph without spaces.
 - **Deferred to ISSUE-0110 (documented, not silent)** — function
   expressions, nested function declarations, and function signatures
   containing arrays, classes, nullables, nested function types, rest
@@ -1074,11 +1105,14 @@ live in `test/JvmBackendTest`):
 
 Not in this slice (deferred, documented): non-literal default
 expressions on imported classes (ISSUE-0109), stdlib modules other than
-`std/console`, function values (including async function expressions),
+`std/console`, the ISSUE-0110 function shapes (function expressions,
+nested function declarations, function arrays, and function signatures
+containing arrays/classes/nullables/nested function types or async
+markers — plain first-class function values landed in ISSUE-0098),
 host class exports (E6000 at the import — the fixture-list item
 "host class export where supported" is not yet supported), host
 parameters/returns of array/class/table/function type (E6000 at the
-import), `@jsonable`.
+import), `@jsonable`. (ISSUE-0098: rebase fixups — restore the semicolon lost in the ISSUE-0096 conflict resolution, correct the fixture counts in the README review evidence (36 fixtures: 19 JVM-only runtime, 6 frontend gates, 9 cross-backend parity, 2 LuaJIT-only reference), and align the post-rebase documentation with the merged canonical slices (function values no longer wholesale-deferred in the ISSUE-0096 section, imported classes landed via ISSUE-0109, tables landed via ISSUE-0095, function-typed class fields stay E6000))
 
 
 - **Tests proving both** —
@@ -1493,15 +1527,18 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   side effects through the emitted `__init$` trigger and imported direct
   calls compile to static calls on the imported module's class. Imports of
   declaration/host modules remain E6000 at the import statement (host ABI
-  and imported classes are deferred to later issues — ISSUE-0109 for
-  imported classes and cross-module nominal identity), and class-name
+  is deferred to a later issue; imported classes and cross-module nominal
+  identity landed in ISSUE-0109, with only non-literal default
+  expressions on imported classes still E6000), and class-name
   collisions between modules are E6000 — never a silent artifact
   overwrite. Stdlib imports follow the ISSUE-0097 boundary: `std/console`,
   `std/string`, `std/math`, and `std/time` are supported builtins (their
   declared functions use only the slice's prerequisite value types), while
   `std/table` and `std/json` are E6000 at the import statement — used or
   unused — because their only functions take or return a `table`, a value
-  type the slice does not support yet (tables are E6000).
+  type the slice does not support yet as a function parameter or return
+  type (minimal tables landed in ISSUE-0095 for literals and the
+  class/table untyped-boundary reads, not for table-typed signatures).
 - Module-level forward references are rejected: Java's
   illegal-forward-reference rule forbids `static { …x… }` /
   `static long b = c + 1L;` before `static long c;` is declared, and
