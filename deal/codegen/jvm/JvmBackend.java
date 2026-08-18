@@ -1169,13 +1169,6 @@ public final class JvmBackend {
                         importReads);
                 }
             }
-            // Member accesses read their object in a value position (a class
-            // field read or a table field read — ISSUE-0095); a module field
-            // referenced there is still a field read for the use-before-
-            // declaration closure.
-            case MemberAccessExpr mae ->
-                collectExprRefs(mae.object(), locals, fieldReads, calledFunctions,
-                    importReads);
             // Object literals: property values are value positions (class
             // construction provided values and table literal values —
             // ISSUE-0095); class-construction defaults are value positions
@@ -1977,9 +1970,6 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
     }
-        indent--;
-        emitLine("}");
-    }
 
     private void emitVariable(VariableDeclaration vd) {
         Type declaredType = vd.typeAnnotation().isPresent()
@@ -2610,15 +2600,24 @@ public final class JvmBackend {
             preStatementsDeclareTemps = true;
             codes.set(i, temp);
         }
+        Map<String, ExpressionNode> providedNodes = new LinkedHashMap<>();
         Map<String, String> provided = new LinkedHashMap<>();
         for (int i = 0; i < obj.properties().size(); i++) {
+            providedNodes.put(obj.properties().get(i).name(),
+                valueNodes.get(i));
             provided.put(obj.properties().get(i).name(), codes.get(i));
         }
         List<String> args = new ArrayList<>();
         for (ClassField cf : cd.fields()) {
             String code = provided.get(cf.name());
+            ExpressionNode valueNode = providedNodes.get(cf.name());
             if (code == null && cf.defaultExpr().isPresent()) {
-                code = emitExpression(cf.defaultExpr().get());
+                valueNode = cf.defaultExpr().get();
+                code = emitExpression(valueNode);
+            }
+            if (code != null && valueNode != null
+                    && needsBooleanBoundary(valueNode, typeOf(valueNode))) {
+                code = "booleanNotNull(" + code + ")";
             }
             if (code == null) {
                 // Checker-guaranteed unreachable (E4001 missing required
@@ -4027,8 +4026,12 @@ public final class JvmBackend {
                 // and the value matches its type; Java evaluates the object
                 // expression, then the value — LuaJIT's left-to-right order.
                 String obj = emitExpression(mae.object());
+                String value = emitExpression(ae.value());
+                if (needsBooleanBoundary(ae.value(), typeOf(ae.value()))) {
+                    value = "booleanNotNull(" + value + ")";
+                }
                 return "(" + obj + ")." + javaName(mae.field()) + " = "
-                    + emitExpression(ae.value());
+                    + value;
             }
             unsupported("assignment to table fields", ae.span());
             return "null";
