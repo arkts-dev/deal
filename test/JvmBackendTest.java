@@ -381,8 +381,14 @@ public class JvmBackendTest {
         if (!f.errors().isEmpty()) {
             throw new RuntimeException("frontend errors: " + f.errors());
         }
-        JvmBackend.JvmCodegenResult res =
-            JvmBackend.generate(f.program(), f.checkResult(), name, "Main");
+        // The sourcePath must equal the checker's module path: the
+        // checker types with the source FILENAME ("jvmtest-<name>.deal"),
+        // and the backend's locality predicate (ISSUE-0095) recognizes a
+        // local Type.Class by its module path matching the backend-held
+        // module path or source path — the same alignment the
+        // BackendConformanceTest adapter uses.
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-" + name + ".deal", "Main");
         if (res.hasErrors()) {
             throw new RuntimeException("codegen errors: " + res.diagnostics());
         }
@@ -3116,7 +3122,7 @@ public class JvmBackendTest {
             "nominal check failure reports E8001 with exit 1: " + err.output());
 
         // Real artifact: table-typed reads of a nested table pass through
-        // the $checkTable boundary.
+        // the $check$Table boundary.
         ExecResult tbl = compileAndRunJvm("""
             export function test(): int {
               let t: table = { inner: { n: 5 } };
@@ -3213,6 +3219,77 @@ public class JvmBackendTest {
                 && defaultBoolBoundary.output().contains("DEAL_ERROR_CODE: E8001"),
             "nil-aware default fails the boolean boundary with E8001: "
                 + defaultBoolBoundary.output());
+
+        // ISSUE-0095 reviewer round 10: a local class named `Table` is
+        // legal DEAL and its nominal-check helper spells `$checkTable` —
+        // the pre-fix name of the fixed table-boundary runtime helper.
+        // The pre-fix artifact declared `static $T $checkTable(Object)`
+        // twice and javac rejected it ("method $checkTable(Object) is
+        // already defined") after the CLI reported success. The fixed
+        // helper is now `$check$Table` (the raw `$` is unspellable in
+        // DEAL, so classCheckName can never generate it).
+        Frontend tableClass = compileFrontend("""
+            class Table { x: int = 0; }
+            export function test(): int {
+              let t: Table = {};
+              let holder: table = { item: t };
+              let q: Table = holder.item;
+              return q.x;
+            }
+            """, "jvmtest-class-table.deal");
+        check(tableClass.errors().isEmpty(),
+            "class named Table frontend clean: " + tableClass.errors());
+        if (tableClass.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult tableRes = JvmBackend.generate(
+                tableClass.program(), tableClass.checkResult(),
+                "jvmtest-class-table.deal", "Main");
+            check(!tableRes.hasErrors(),
+                "class named Table codegen clean: " + tableRes.diagnostics());
+            if (!tableRes.hasErrors()) {
+                String tableJava = tableRes.source();
+                check(occurrences(tableJava,
+                        "static $C_Table $checkTable(") == 1,
+                    "the class Table's nominal-check helper is declared "
+                    + "exactly once");
+                check(occurrences(tableJava,
+                        "static $T $check$Table(") == 1,
+                    "the fixed table-boundary helper is declared exactly "
+                    + "once under $check$Table");
+                check(!tableJava.contains("static $T $checkTable("),
+                    "no duplicate $checkTable declaration remains: "
+                    + tableJava);
+            }
+        }
+
+        // The same program must compile and run as a real artifact:
+        // construction of Table, the table round-trip through the
+        // class-typed nominal check, and the field read.
+        ExecResult tableRun = compileAndRunJvm("""
+            class Table { x: int = 0; }
+            export function test(): int {
+              let t: Table = {};
+              let holder: table = { item: t };
+              let q: Table = holder.item;
+              return q.x;
+            }
+            """, "class-table-collision");
+        check(tableRun.exitCode() == 0 && tableRun.output().contains("0"),
+            "the Table-named class artifact compiles and runs through the "
+            + "nominal check to 0: " + tableRun.output());
+
+        // Control probes: classes named like the other fixed runtime
+        // helpers stay collision-free through the $C_/$check prefixes
+        // (Point vs the identity base $Base, and the error-helper name
+        // DealError, pinned by the emission checks above).
+        ExecResult baseRun = compileAndRunJvm("""
+            class Base { x: int = 7; }
+            export function test(): int {
+              let p: Base = {};
+              return p.x;
+            }
+            """, "class-named-base");
+        check(baseRun.exitCode() == 0 && baseRun.output().contains("7"),
+            "a class named Base compiles and runs: " + baseRun.output());
     }
 
     private static void testUseBeforeDeclarationRejected() {
@@ -4966,6 +5043,138 @@ public class JvmBackendTest {
                 + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("Entry.java")),
             "no artifact written when the backend reports errors");
+
+        // ISSUE-0095 reviewer round 10: locality is decided from the
+        // Type.Class MODULE PATH, never the bare class name — the pre-fix
+        // name-keyed guard let a same-named LOCAL class C satisfy the
+        // imported-class check for lib.C, emitting `$C_C c = Lib.getC();`
+        // (javac: incompatible types Lib.$C_C → Entry.$C_C) after the CLI
+        // reported "Compilation successful: 2 module(s)".
+        writeFile("src2/lib.deal", """
+            class C { v: int = 0; }
+            export function getC(): C { return { v: 9 }; }
+            """);
+        writeFile("src2/entry.deal", """
+            import * as lib from "./lib"
+            class C { v: int = 0; }
+            export function run(): int {
+              let c = lib.getC();
+              return 1;
+            }
+            """);
+
+        Path entryFile2 = tmpDir.resolve("src2/entry.deal").toAbsolutePath();
+        Path outputDir2 = tmpDir.resolve("build/imported_class_same_name");
+        List<Path> roots2 = List.of(tmpDir.resolve("src2").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator2 = new CompilationOrchestrator(
+            entryFile2, outputDir2, false, false, false, Backend.JVM,
+            (DealConfig) null, roots2, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success2 = orchestrator2.compile();
+        check(!success2,
+            "a same-named local class must not satisfy the imported-class "
+            + "guard: " + orchestrator2.diagnostics());
+        check(orchestrator2.diagnostics().stream()
+                .anyMatch(d -> "E6000".equals(d.code())
+                    && d.message().contains("imported classes")),
+            "the same-named-local-class scenario reports E6000 naming "
+            + "imported classes: " + orchestrator2.diagnostics());
+        check(!Files.exists(outputDir2.resolve("Entry.java")),
+            "no artifact written for the same-named-local-class scenario");
+
+        // A lib.C-context object literal (`lib.takeC({ v: 9 })`) in a
+        // module that also declares its own C: the construction site must
+        // refuse the imported class type instead of tagging the literal
+        // with the LOCAL module identity (the pre-fix silent
+        // nominal-identity corruption).
+        writeFile("src3/lib.deal", """
+            class C { v: int = 0; }
+            export function takeC(c: C): int { return c.v; }
+            """);
+        writeFile("src3/entry.deal", """
+            import * as lib from "./lib"
+            class C { v: int = 0; }
+            export function run(): int {
+              return lib.takeC({ v: 9 });
+            }
+            """);
+
+        Path entryFile3 = tmpDir.resolve("src3/entry.deal").toAbsolutePath();
+        Path outputDir3 = tmpDir.resolve("build/imported_class_construct");
+        List<Path> roots3 = List.of(tmpDir.resolve("src3").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator3 = new CompilationOrchestrator(
+            entryFile3, outputDir3, false, false, false, Backend.JVM,
+            (DealConfig) null, roots3, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success3 = orchestrator3.compile();
+        check(!success3,
+            "construction of an imported class type is E6000 even with a "
+            + "same-named local class: " + orchestrator3.diagnostics());
+        check(orchestrator3.diagnostics().stream()
+                .anyMatch(d -> "E6000".equals(d.code())
+                    && d.message().contains("imported classes")),
+            "the imported-class construction scenario reports E6000 naming "
+            + "imported classes: " + orchestrator3.diagnostics());
+        check(!Files.exists(outputDir3.resolve("Entry.java")),
+            "no artifact written for the imported-class construction "
+            + "scenario");
+
+        // Positive control: passing an imported class VALUE straight
+        // through (`lib.takeC(lib.getC())`) never binds a local or
+        // constructs with the foreign type, so it must still compile and
+        // run — the value is produced and consumed inside lib.
+        writeFile("src4/lib.deal", """
+            class C { v: int = 0; }
+            export function getC(): C { return { v: 42 }; }
+            export function takeC(c: C): int { return c.v; }
+            """);
+        writeFile("src4/entry.deal", """
+            import * as lib from "./lib"
+            export function run(): int {
+              return lib.takeC(lib.getC());
+            }
+            """);
+
+        Path entryFile4 = tmpDir.resolve("src4/entry.deal").toAbsolutePath();
+        Path outputDir4 = tmpDir.resolve("build/imported_class_passthrough");
+        List<Path> roots4 = List.of(tmpDir.resolve("src4").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator4 = new CompilationOrchestrator(
+            entryFile4, outputDir4, false, false, false, Backend.JVM,
+            (DealConfig) null, roots4, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success4 = orchestrator4.compile();
+        check(success4, "imported class value pass-through compiles: "
+            + orchestrator4.diagnostics());
+        check(Files.exists(outputDir4.resolve("Entry.java"))
+                && Files.exists(outputDir4.resolve("Lib.java")),
+            "pass-through artifacts written");
+        if (success4 && Files.exists(outputDir4.resolve("Entry.java"))) {
+            Files.writeString(outputDir4.resolve("JvmConformanceRunner.java"),
+                BackendConformanceTest.buildJvmRunner(
+                    parseProgram("""
+                        export function run(): int { return 1; }
+                        """), "Entry"));
+            ProcessBuilder javac = new ProcessBuilder("javac", "-encoding", "UTF-8",
+                "Entry.java", "Lib.java", "JvmConformanceRunner.java");
+            javac.directory(outputDir4.toFile());
+            javac.redirectErrorStream(true);
+            Process p = javac.start();
+            String javacOut = new String(p.getInputStream().readAllBytes()).trim();
+            int javacExit = p.waitFor();
+            check(javacExit == 0, "pass-through artifacts compile with javac: "
+                + javacOut);
+            ProcessBuilder javaRun = new ProcessBuilder("java", "-cp",
+                outputDir4.toString(), "JvmConformanceRunner");
+            javaRun.redirectErrorStream(true);
+            Process p2 = javaRun.start();
+            String out = new String(p2.getInputStream().readAllBytes()).trim();
+            int exit = p2.waitFor();
+            check(exit == 0 && out.contains("42"),
+                "the pass-through call runs to 42: " + out);
+        }
     }
 
     /** An import of a COMPILED project module (ISSUE-0096) is supported by

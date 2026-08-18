@@ -28,7 +28,7 @@ Supported (real semantics, spec JVM value mapping):
 | `null` | `void` returns / `Void` locals and params; `null === null` is `true`, `z === null`/`!==` emit Java `==`/`!=` (spec §Value equality) |
 | functions | `static` methods of the generated module class: parameters, return values, direct calls, nested calls, and direct self-recursion (a function body calling itself — the module-level use-before-declaration guard applies only to load-time call sites, never to function-body call sites) |
 | `class C { ... }` | a generated nested static class `$C_<name>` extending the emitted `$Base` identity holder (spec v1.1 §Classes: nominal record, no methods, no constructors — the only callables are the module functions above). Object-literal construction in a class-typed context emits `new $C_<name>(args)` with declaration-order constructor arguments: provided field values evaluate left-to-right in literal order and defaults are evaluated per construction (spec §Construction). Only required-present primitive fields (`int`/`number`/`boolean`/`string`) are supported; field reads/writes emit direct accesses |
-| `table` | a minimal ordered string-key map (`$T` over `java.lang.LinkedHashMap<String,Object>`), emitted for the slice's one untyped boundary: a table field read in a contextual target type. Class-typed reads run the runtime nominal check (`$check<C>` — `instanceof` plus the identity string, E8001 "expected instance of @mod/C, got …" for a wrong-class value, "expected class instance" for a non-class value, mirroring LuaJIT's `__rt.check_type` class branch); table-typed reads run `$checkTable`. Table literals chain `put` calls in literal order. Every other class-typed boundary (locals, parameters, returns, field reads/writes, construction) is provably typed by the JVM's static type system, which spec-v1.1 §JVM backend contract explicitly permits to make typed-boundary checks redundant |
+| `table` | a minimal ordered string-key map (`$T` over `java.lang.LinkedHashMap<String,Object>`), emitted for the slice's one untyped boundary: a table field read in a contextual target type. Class-typed reads run the runtime nominal check (`$check<C>` — `instanceof` plus the identity string, E8001 "expected instance of @mod/C, got …" for a wrong-class value, "expected class instance" for a non-class value, mirroring LuaJIT's `__rt.check_type` class branch); table-typed reads run the fixed `$check$Table` helper (the extra raw `$` keeps it collision-free against a local class named `Table`, whose nominal-check helper spells `$checkTable`). Table literals chain `put` calls in literal order. Every other class-typed boundary (locals, parameters, returns, field reads/writes, construction) is provably typed by the JVM's static type system, which spec-v1.1 §JVM backend contract explicitly permits to make typed-boundary checks redundant |
 | object literals | class construction when the contextual target is a class type (the checker's `checkClassConstruction`), a table literal otherwise (`table` target or no target) |
 | `let` locals / module fields | locals (shadowing disambiguated `$n`) / `static` fields |
 | `if`/`else if`/`else`, `return`, assignment, direct calls | plain Java control flow |
@@ -747,7 +747,7 @@ fixture whose codegen or JVM execution is bypassed):
   preserving left-to-right order when a value hoists a side-effecting
   null-typed call. Table reads are supported only for class and table
   contextual targets (class: the nominal check above; table:
-  `$checkTable`, E8001 for a non-table value); primitive/nullable/array/
+  `$check$Table`, E8001 for a non-table value); primitive/nullable/array/
   function targets and table field writes are E6000 — this slice's
   runtime checks cover nominal class checks, and every other table form
   is a documented limitation, never a silent miscompile.
@@ -964,7 +964,17 @@ cross-module nominal identity (ISSUE-0109), stdlib modules other than
     checked class-typed table read, and class field reads flowing into
     arithmetic; javac + java runs for construction/field writes/nominal
     success (42), the identically-shaped sibling E8001 failure, and the
-    `$checkTable` pass-through; the round-9 defect regressions — the
+    `$check$Table` pass-through; the round-10 defect regressions — a
+    local class named `Table` staying collision-free against the
+    `$check$Table` runtime helper (the pre-fix helper was `$checkTable`,
+    the exact name `classCheckName` generates for class `Table`:
+    javac rejected the duplicate declaration) and the module-path
+    locality gate (a same-named LOCAL class must not satisfy the
+    imported-class guard for a foreign `Type.Class` module path:
+    `let c = lib.getC()` and `lib.takeC({ v: 9 })` in a module that
+    also declares its own class C are E6000 with no artifact, never a
+    broken `$C_C` reference or a silently local-tagged construction);
+    the round-9 defect regressions — the
     nil-aware construction value failing the boolean boundary with E8001
     instead of an unboxing NPE (plus the in-bounds positive control),
     arithmetic and null-typed-call default expressions constructing and

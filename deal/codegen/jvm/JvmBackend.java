@@ -1178,7 +1178,8 @@ public final class JvmBackend {
                     collectExprRefs(prop.value(), locals, fieldReads,
                         calledFunctions, importReads);
                 }
-                if (typeOf(ol) instanceof Type.Class cls) {
+                if (typeOf(ol) instanceof Type.Class cls
+                        && isLocalClassType(cls)) {
                     ClassDeclaration cd = moduleClasses.get(cls.name());
                     if (cd != null) {
                         for (ClassField cf : cd.fields()) {
@@ -1505,7 +1506,8 @@ public final class JvmBackend {
                     walkDominanceExpr(prop.value(), locals, written, fnDeclIdx,
                         readViolations, writeViolations);
                 }
-                if (typeOf(ol) instanceof Type.Class cls) {
+                if (typeOf(ol) instanceof Type.Class cls
+                        && isLocalClassType(cls)) {
                     ClassDeclaration cd = moduleClasses.get(cls.name());
                     if (cd != null) {
                         for (ClassField cf : cd.fields()) {
@@ -1584,10 +1586,13 @@ public final class JvmBackend {
         emitLine("static void __init$() {}");
         emitLine("// ---- DEAL classes and tables (ISSUE-0095) ----");
         emitLine("// Nominal identity base: every generated DEAL class extends $Base and");
-        emitLine("// carries its spec ClassDescriptor (@<modulePath>/<Name>). The $");
-        emitLine("// prefix of every generated name here is unreachable from javaName,");
-        emitLine("// which escapes user '$' characters, so these declarations can never");
-        emitLine("// collide with translated user identifiers, fields, or functions.");
+        emitLine("// carries its spec ClassDescriptor (@<modulePath>/<Name>). Generated");
+        emitLine("// class names carry the $C_ prefix and per-class nominal checks the");
+        emitLine("// $check prefix; the fixed runtime helpers here stay unreachable from");
+        emitLine("// BOTH (javaName translates user identifiers without raw '$', so");
+        emitLine("// $check + javaName(<C>) can never spell $check$Table — the extra '$'");
+        emitLine("// is unspellable in DEAL — while a class named Table WOULD collide");
+        emitLine("// with the fixed helper if it were named $checkTable).");
         emitLine("static class $Base {");
         emitLine("    final java.lang.String $identity;");
         emitLine("    $Base(java.lang.String identity) { this.$identity = identity; }");
@@ -1614,8 +1619,14 @@ public final class JvmBackend {
         emitLine("    return v.getClass().getSimpleName();");
         emitLine("}");
         emitLine("// Table-typed boundary check for table reads with a table contextual");
-        emitLine("// target (E8001 when the dynamic value is not a table).");
-        emitLine("static $T $checkTable(java.lang.Object v) {");
+        emitLine("// target (E8001 when the dynamic value is not a table). The name is");
+        emitLine("// $check$Table — NOT $checkTable: a local class named Table emits the");
+        emitLine("// nominal-check helper $check + javaName(\"Table\") == $checkTable, and");
+        emitLine("// two same-named static methods would make javac reject the artifact");
+        emitLine("// after the CLI reported success. The '$' between check and Table");
+        emitLine("// cannot appear in any generated class-check name (javaName never");
+        emitLine("// emits a raw '$'), so the fixed helper can never collide.");
+        emitLine("static $T $check$Table(java.lang.Object v) {");
         emitLine("    if (v instanceof $T t) return t;");
         emitLine("    throw new DealError(\"E8001\", \"expected table, got \" + $describe(v));");
         emitLine("}");
@@ -1856,10 +1867,31 @@ public final class JvmBackend {
     }
 
     /** The emitted name of the runtime nominal-check helper for class
-     * {@code name} ({@code $check<Name>}). Unreachable from
-     * {@link #javaName} for the same reason as {@code $C_}. */
+     * {@code name} ({@code $check<Name>}). The {@code $check} prefix is
+     * unreachable from {@link #javaName} output for the same reason as
+     * {@code $C_}, and the fixed runtime helper {@code $check$Table}
+     * stays unreachable too (the extra raw {@code $} can never appear in
+     * {@code javaName} output). */
     private String classCheckName(String name) {
         return "$check" + javaName(name);
+    }
+
+    /** True when a checker-inferred {@code Type.Class} refers to a class
+     * of THIS module — the only classes whose generated Java types and
+     * nominal-check helpers exist in the emitted artifact. The checker
+     * records the declaring module path in the type; a local class's
+     * path is the backend-held {@code modulePath} in the orchestrator,
+     * the {@code sourcePath} in the single-module harnesses (where the
+     * checker types with the source filename while codegen runs with
+     * {@code Main}), or empty for the builtin {@code Error} class. Any
+     * other path is an IMPORTED class (deferred to ISSUE-0109) even when
+     * a same-named local class exists — the bare-name
+     * {@code moduleClasses} lookup alone would silently claim a foreign
+     * value for the local generated class (a broken artifact or a
+     * nominal-identity corruption). */
+    private boolean isLocalClassType(Type.Class cls) {
+        String mp = cls.modulePath();
+        return mp.isEmpty() || mp.equals(modulePath) || mp.equals(sourcePath);
     }
 
     /**
@@ -2567,6 +2599,17 @@ public final class JvmBackend {
      * already rejected.
      */
     private String emitClassConstruction(Type.Class cls, ObjectLiteralExpr obj) {
+        // Locality is decided from the Type.Class MODULE PATH, then the
+        // name-keyed lookup — a same-named local class must not satisfy
+        // the guard for a foreign path (the literal would otherwise be
+        // tagged with the LOCAL module identity — a silent
+        // nominal-identity corruption).
+        if (!isLocalClassType(cls)) {
+            unsupported("construction of imported class '" + cls.name()
+                + "' (imported classes / cross-module nominal identity "
+                + "are deferred to ISSUE-0109)", obj.span());
+            return "null";
+        }
         ClassDeclaration cd = moduleClasses.get(cls.name());
         if (cd == null) {
             unsupported("construction of class '" + cls.name()
@@ -3908,7 +3951,7 @@ public final class JvmBackend {
      * checker's type map. Class-typed targets run the runtime nominal
      * check through the class's emitted {@code $check<C>} helper (E8001
      * for a wrong-class or non-class value — never a silent cast), and
-     * table-typed targets run {@code $checkTable}. Primitive, nullable,
+     * table-typed targets run {@code $check$Table}. Primitive, nullable,
      * array, and function target types are out of slice (E6000): this
      * slice's runtime checks cover nominal class checks, and rejecting the
      * rest is the documented skeleton contract — never a silent
@@ -3919,20 +3962,28 @@ public final class JvmBackend {
         Type target = typeOf(mae);
         String get = "(" + obj + ").get(" + quoteJavaString(mae.field()) + ")";
         if (target instanceof Type.Class cls) {
-            if (!moduleClasses.containsKey(cls.name())) {
-                // The same imported-class guard as javaLocalType: a
-                // class-typed table read for an imported class would
-                // emit a nominal-check helper the module never declared.
+            // Locality is decided from the Type.Class MODULE PATH, then
+            // the name-keyed lookup — a same-named local class must not
+            // satisfy the guard for a foreign path (the read would run
+            // the LOCAL nominal check against a lib.C value, corrupting
+            // the nominal identity).
+            if (!isLocalClassType(cls)) {
                 unsupported("class-typed table read for imported class '"
                     + cls.name() + "' (imported classes / cross-module "
                     + "nominal identity are deferred to ISSUE-0109)",
                     mae.span());
                 return "null";
             }
+            if (!moduleClasses.containsKey(cls.name())) {
+                unsupported("class-typed table read for class '"
+                    + cls.name() + "' (only local module-level classes "
+                    + "are supported)", mae.span());
+                return "null";
+            }
             return classCheckName(cls.name()) + "(" + get + ")";
         }
         if (target instanceof Type.Table) {
-            return "$checkTable(" + get + ")";
+            return "$check$Table(" + get + ")";
         }
         unsupported("table field reads with target type " + typeName(target)
             + " (this slice checks class and table targets only)",
@@ -4324,13 +4375,24 @@ public final class JvmBackend {
                 // IMPORTED class (an annotation-less declaration like
                 // `let c = lib.getC()`): emitting its generated class
                 // reference without the class would leave a symbol javac
-                // rejects after the CLI reported success. Imported
-                // classes / cross-module nominal identity are deferred
-                // to ISSUE-0109 — E6000, never a broken artifact.
-                if (!moduleClasses.containsKey(c.name())) {
+                // rejects after the CLI reported success. Locality is
+                // decided from the Type.Class MODULE PATH — a same-named
+                // local class must not satisfy the guard for a foreign
+                // path (lib.C would then be declared as the LOCAL
+                // $C_C and javac would reject the incompatible
+                // assignment). Imported classes / cross-module nominal
+                // identity are deferred to ISSUE-0109 — E6000, never a
+                // broken artifact.
+                if (!isLocalClassType(c)) {
                     unsupported("values of imported class type '" + c.name()
                         + "' (imported classes / cross-module nominal "
                         + "identity are deferred to ISSUE-0109)", span);
+                    yield null;
+                }
+                if (!moduleClasses.containsKey(c.name())) {
+                    unsupported("values of class type '" + c.name()
+                        + "' (only local module-level classes are "
+                        + "supported)", span);
                     yield null;
                 }
                 yield classNameForClass(c.name());
