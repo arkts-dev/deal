@@ -2,8 +2,10 @@ package deal.test;
 
 import deal.ast.*;
 import deal.checker.*;
+import deal.codegen.Backend;
 import deal.codegen.jvm.JvmBackend;
 import deal.codegen.lua.LuaBackend;
+import deal.module.CompilationOrchestrator;
 import deal.ir.IrDumper;
 import deal.lexer.*;
 import deal.parser.*;
@@ -11,19 +13,20 @@ import deal.types.Type;
 import deal.types.Types;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 
 /**
  * Loads backend-neutral JSON fixture tests from
  * {@code test/conformance/fixtures/} and executes them against the
- * LuaJIT backend and (ISSUE-0091, ISSUE-0092, ISSUE-0093) the JVM
- * backend. The
+ * LuaJIT backend and (ISSUE-0091, ISSUE-0092, ISSUE-0093, ISSUE-0094,
+ * ISSUE-0096) the JVM backend. The
  * ISSUE-0092 semantic-slice fixtures live in
  * {@code test/conformance/fixtures/jvm-semantic-slice.json} (while loops,
  * template literals, and the surrounding primitive surface — JVM-only,
  * each runtime fixture compiled with {@code javac} and executed with
- * {@code java} against the emitted artifact), and the ISSUE-0093
+ * {@code java} against the emitted artifact), the ISSUE-0093
  * functions/direct-calls fixtures live in
  * {@code test/conformance/fixtures/jvm-functions-slice.json} (direct
  * calls, multiple parameters, return values, nested calls, direct
@@ -32,7 +35,7 @@ import java.util.*;
  * field → parameter → body-top let → inner-block let, with and
  * without the module field, where every binding gets a distinct
  * emitted Java name — and two frontend arity/type compile-error gates
- * rejected before any backend), and the ISSUE-0094 primitive-array
+ * rejected before any backend), the ISSUE-0094 primitive-array
  * fixtures live in
  * {@code test/conformance/fixtures/jvm-arrays-slice.json} (int[]/number[]/
  * string[]/boolean[] literals, index reads, element writes — in-place
@@ -50,7 +53,47 @@ import java.util.*;
  * read's E8002 raises before any right-operand hoisted side effect,
  * pinned with {@code expectedNotOutput} negative stdout assertions),
  * cross-backend parity against LuaJIT, and frontend E3007/E3017
- * compile-error gates rejected before any backend).
+ * compile-error gates rejected before any backend), and the ISSUE-0096
+ * multi-module fixtures live in
+ * {@code test/conformance/fixtures/jvm-modules-slice.json}
+ * (namespace imports/exports and imported direct calls across compiled
+ * project modules — see the multi-module section below).
+ *
+ * <h2>Multi-module fixtures (ISSUE-0096)</h2>
+ *
+ * <p>A fixture may replace {@code source} with a {@code modules} object
+ * mapping relative {@code .deal} source paths to DEAL source strings, plus
+ * an {@code entry} field naming the entry module:
+ * <pre>
+ * {
+ *   "name": "jvm-mod-imported-direct-call",
+ *   "modules": {
+ *     "lib.deal": "export function add(a: int, b: int): int { return a + b; }",
+ *     "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return lib.add(2, 3); }"
+ *   },
+ *   "entry": "main.deal",
+ *   "expectedOutput": "5",
+ *   "backends": ["jvm"]
+ * }
+ * </pre>
+ * Multi-module fixtures are JVM-only and run the REAL whole-project
+ * pipeline: {@link CompilationOrchestrator} with {@link Backend#JVM} —
+ * module discovery (import resolution over the temp project root),
+ * signature extraction, dependency ordering, name resolution, type
+ * checking, and JvmBackend codegen per module into an output directory —
+ * followed by {@code javac} over every emitted {@code .java} artifact plus
+ * a runner class and {@code java} execution of the emitted artifacts
+ * (the entry module's class derives from its module path; the runner
+ * auto-invokes the entry's zero-arity exports exactly like the
+ * single-module adapter). A bypassed parser/checker/module-discovery
+ * yields no compile and the fixture fails; a bypassed codegen leaves no
+ * {@code .java} artifact (asserted); a bypassed JVM execution produces no
+ * output. {@code expectedCompileError} fixtures run the same orchestrator
+ * pipeline, assert the named frontend error, assert no E6xxx backend code
+ * appears, and assert no {@code .java} artifact was written — the gate
+ * stops before codegen. {@code irContains}/{@code irNotContains} are
+ * checked against the concatenation of every module's IR dump (the
+ * orchestrator runs with {@code --dump-ir}).
  *
  * <p>Fixture format (per {@code conformance-test-architecture} D3, extended
  * by ISSUE-0091 with {@code expectedCompileError} and by ISSUE-0094 with
@@ -291,6 +334,57 @@ public class BackendConformanceTest {
         return null;
     }
 
+    /**
+     * Schema validation for multi-module fixtures (ISSUE-0096): {@code
+     * modules} must replace {@code source} (exactly one of the two), be a
+     * non-empty object of relative {@code .deal} paths to source strings,
+     * name a valid {@code entry} among its keys, and list {@code backends}
+     * as exactly {@code ["jvm"]} — the LuaJIT harness compiles single
+     * sources only, so a multi-module fixture must never claim LuaJIT
+     * coverage. Violations must fail with a clear message, never pass
+     * silently (conformance-test-architecture D6).
+     */
+    static String multiModuleConfigViolation(Map<String, Object> test) {
+        Object source = test.get("source");
+        Object modules = test.get("modules");
+        boolean hasSource = source != null && source != JSON_NULL;
+        boolean hasModules = modules != null && modules != JSON_NULL;
+        if (hasSource == hasModules) {
+            return "fixture must set exactly one of 'source' (single-module) "
+                + "or 'modules' (multi-module); got source=" + hasSource
+                + ", modules=" + hasModules;
+        }
+        if (!(modules instanceof Map<?, ?> mods) || mods.isEmpty()) {
+            return "'modules' must be a non-empty object mapping relative "
+                + ".deal source paths to DEAL source strings";
+        }
+        for (Object v : mods.values()) {
+            if (!(v instanceof String)) {
+                return "every 'modules' value must be a DEAL source string; "
+                    + "got: " + v;
+            }
+        }
+        String entry = jsonString(test, "entry", null);
+        if (entry == null) {
+            return "a multi-module fixture requires an 'entry' field naming "
+                + "the entry module (one of the 'modules' keys)";
+        }
+        if (!mods.containsKey(entry)) {
+            return "'entry' (" + entry + ") is not a key of 'modules': "
+                + mods.keySet();
+        }
+        if (!entry.endsWith(".deal")) {
+            return "'entry' must be a .deal source path, got: " + entry;
+        }
+        List<?> backends = (List<?>) test.getOrDefault("backends", List.of());
+        if (backends.size() != 1 || !"jvm".equals(String.valueOf(backends.get(0)))) {
+            return "multi-module fixtures are JVM-only (the LuaJIT harness "
+                + "compiles single sources); 'backends' must be exactly "
+                + "[\"jvm\"], got: " + backends;
+        }
+        return null;
+    }
+
     @SuppressWarnings("unchecked")
     private static void runTestCase(String fixtureName, Map<String, Object> test) {
         String name = jsonString(test, "name", "<unnamed>");
@@ -303,17 +397,32 @@ public class BackendConformanceTest {
             expectedNotOutput.add(String.valueOf(o));
         }
 
-        if (source == null) {
+        // ISSUE-0096: a fixture with a 'modules' object is a multi-module
+        // fixture — it replaces 'source' and is dispatched to the
+        // orchestrator-based pipeline instead of the single-source
+        // frontend.
+        Object modulesObj = test.get("modules");
+        boolean multiModule = modulesObj != null && modulesObj != JSON_NULL;
+
+        if (!multiModule && source == null) {
             System.out.println("  [" + name + "] FAIL: missing 'source' field");
             failed++;
             return;
         }
 
         String configViolation = fixtureConfigViolation(test);
+        if (configViolation == null && multiModule) {
+            configViolation = multiModuleConfigViolation(test);
+        }
         if (configViolation != null) {
             System.out.println("  [" + name + "] FAIL: invalid fixture "
                 + "configuration: " + configViolation);
             failed++;
+            return;
+        }
+
+        if (multiModule) {
+            runMultiModuleTestCase(fixtureName, test);
             return;
         }
 
@@ -502,6 +611,396 @@ public class BackendConformanceTest {
     }
 
     // =========================================================================
+    // Multi-module adapter (ISSUE-0096)
+    // =========================================================================
+
+    /** Result of running the real whole-project pipeline. */
+    private record OrchestratorRun(boolean success, List<Diagnostic> diagnostics,
+                                   String capturedOutput) {}
+
+    /**
+     * Runs a multi-module fixture through the real {@link
+     * CompilationOrchestrator} pipeline with {@link Backend#JVM}: module
+     * discovery, signature extraction, dependency ordering, name
+     * resolution, type checking, and per-module JvmBackend codegen into
+     * {@code outputRoot} (the fixture's module sources are written under
+     * {@code projectRoot}, which is the single module root). The
+     * orchestrator's stdout/stderr (phase logs, diagnostic reports) is
+     * captured so fixture output stays clean and failure messages can
+     * quote it.
+     */
+    private static OrchestratorRun runOrchestrator(Path projectRoot, Path entryFile,
+                                                    Path outputRoot) {
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        PrintStream originalOut = System.out;
+        PrintStream originalErr = System.err;
+        try {
+            System.setOut(new PrintStream(captured, true, StandardCharsets.UTF_8));
+            System.setErr(new PrintStream(captured, true, StandardCharsets.UTF_8));
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                entryFile.toAbsolutePath().normalize(),
+                outputRoot.toAbsolutePath().normalize(),
+                false, true, false, Backend.JVM,
+                null, List.of(projectRoot.toAbsolutePath().normalize()), null);
+            boolean success = orchestrator.compile();
+            return new OrchestratorRun(success, orchestrator.diagnostics(),
+                captured.toString(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            return new OrchestratorRun(false, List.of(),
+                "orchestrator I/O failure: " + e + "\n"
+                    + captured.toString(StandardCharsets.UTF_8));
+        } finally {
+            System.out.flush();
+            System.err.flush();
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+        }
+    }
+
+    /**
+     * Writes every {@code modules} entry under the temp project root and
+     * returns relative path → absolute file path. A relative path that
+     * escapes the root is rejected — fixtures are trusted test data, but a
+     * traversal would silently write outside the temp dir.
+     */
+    private static Map<String, Path> writeModuleFiles(Path root,
+                                                      Map<String, Object> modulesObj)
+            throws IOException {
+        Map<String, Path> written = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : modulesObj.entrySet()) {
+            Path target = root.resolve(e.getKey()).normalize();
+            if (!target.startsWith(root)) {
+                throw new IllegalStateException("module path escapes the "
+                    + "project root: " + e.getKey());
+            }
+            Files.createDirectories(target.getParent());
+            Files.writeString(target, String.valueOf(e.getValue()));
+            written.put(e.getKey(), target);
+        }
+        return written;
+    }
+
+    /**
+     * Class name of the entry module's emitted artifact. The orchestrator
+     * computes the entry's module path relative to the single module root
+     * ({@code a/b.deal → a.b}), and {@link JvmBackend#classNameFor} derives
+     * the class name — mirrored here so the runner and artifact assertions
+     * reference the same name the orchestrator used.
+     */
+    private static String entryClassName(String entryRel) {
+        String path = entryRel;
+        if (path.endsWith(".deal")) {
+            path = path.substring(0, path.length() - ".deal".length());
+        }
+        return JvmBackend.classNameFor(path.replace('/', '.').replace('\\', '.'));
+    }
+
+    /**
+     * Parses the entry module with the real lexer + parser for the runner
+     * (its export list drives auto-invocation). Type checking is NOT
+     * re-run here — the orchestrator already checked every module — so
+     * this parse cannot act as a checker bypass for the fixture.
+     */
+    private static ProgramNode parseEntryProgram(Path entryFile) throws IOException {
+        String source = Files.readString(entryFile);
+        LexResult lex = new Lexer(source, entryFile.toString()).tokenize();
+        if (lex.hasErrors()) {
+            throw new IllegalStateException("entry module lex errors: "
+                + lex.diagnostics());
+        }
+        ParseResult parse = new Parser(lex.tokens(), entryFile.toString()).parse();
+        if (parse.hasErrors()) {
+            throw new IllegalStateException("entry module parse errors: "
+                + parse.diagnostics());
+        }
+        return parse.program();
+    }
+
+    /** Concatenates every module IR dump the orchestrator wrote (sorted by
+     * file name) for the fixture's {@code irContains}/{@code irNotContains}
+     * assertions. */
+    private static String collectIrDumps(Path outputRoot) throws IOException {
+        List<Path> dumps = new ArrayList<>();
+        try (var stream = Files.list(outputRoot)) {
+            stream.filter(p -> p.toString().endsWith(".ir.txt"))
+                  .sorted()
+                  .forEach(dumps::add);
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Path dump : dumps) {
+            sb.append("=== IR: ").append(dump.getFileName()).append(" ===\n");
+            sb.append(Files.readString(dump)).append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** Assertion block shared by the single-module and multi-module JVM
+     * adapters: the same {@code DEAL_ERROR_CODE} contract and exit-code
+     * check as the LuaJIT runner. Returns true when every assertion holds. */
+    private static boolean assertJvmRun(String name, String output, int actualExitCode,
+                                        Object expectedOutput, List<String> expectedNotOutput,
+                                        Object expectedError, Object expectedExitCode) {
+        if (expectedOutput != null && expectedOutput != JSON_NULL) {
+            String expStr = String.valueOf(expectedOutput);
+            if (!output.contains(expStr)) {
+                System.out.println("  [" + name + "] FAIL: expected output '"
+                    + expStr + "', got: " + output);
+                failed++;
+                return false;
+            }
+        }
+
+        if (expectedError != null && expectedError != JSON_NULL) {
+            String expErr = String.valueOf(expectedError);
+            if (!output.contains("DEAL_ERROR_CODE: " + expErr)) {
+                System.out.println("  [" + name + "] FAIL: expected error '"
+                    + expErr + "', got: " + output);
+                failed++;
+                return false;
+            }
+        }
+
+        for (String forbidden : expectedNotOutput) {
+            if (output.contains(forbidden)) {
+                System.out.println("  [" + name + "] FAIL: output must NOT "
+                    + "contain '" + forbidden + "', got: " + output);
+                failed++;
+                return false;
+            }
+        }
+
+        if (expectedExitCode != null && expectedExitCode != JSON_NULL) {
+            int expCode = ((Number) expectedExitCode).intValue();
+            if (actualExitCode != expCode) {
+                System.out.println("  [" + name + "] FAIL: expected exit code "
+                    + expCode + ", got " + actualExitCode);
+                System.out.println("    Output: " + output);
+                failed++;
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The real multi-module JVM path (ISSUE-0096): orchestrator compile of
+     * every module → IR dump assertions → {@code javac} over every emitted
+     * {@code .java} artifact plus a runner → {@code java} execution of the
+     * emitted artifacts → stdout/error/exit-code assertions. Every stage
+     * must genuinely run: a bypassed parser/checker/module-discovery
+     * yields a failed compile, a bypassed codegen leaves no {@code .java}
+     * artifact (asserted before javac), and a bypassed JVM execution
+     * produces no output.
+     */
+    @SuppressWarnings("unchecked")
+    private static void runMultiModuleTestCase(String fixtureName, Map<String, Object> test) {
+        String name = jsonString(test, "name", "<unnamed>");
+        String description = jsonString(test, "description", "");
+        String entry = jsonString(test, "entry", null);
+        Map<String, Object> modulesObj = (Map<String, Object>) test.get("modules");
+        String expectedCompileError = jsonString(test, "expectedCompileError", null);
+
+        Path projectRoot = null;
+        try {
+            projectRoot = Files.createTempDirectory("deal_backend_conf_mm_");
+            Map<String, Path> written = writeModuleFiles(projectRoot, modulesObj);
+            Path entryFile = written.get(entry);
+            Path outputRoot = projectRoot.resolve("out");
+
+            // ---- Frontend compile-error gate (orchestrator-based) ----
+            // The whole pipeline runs; the named frontend error must appear,
+            // no E6xxx backend-lowering code may appear, and no .java
+            // artifact may exist (codegen never ran). A bypassed
+            // parser/checker/module-discovery produces no such diagnostic
+            // and the fixture fails.
+            if (expectedCompileError != null) {
+                OrchestratorRun run = runOrchestrator(projectRoot, entryFile, outputRoot);
+                boolean matched = run.diagnostics().stream()
+                    .anyMatch(d -> expectedCompileError.equals(d.code()));
+                boolean onlyFrontend = run.diagnostics().stream()
+                    .allMatch(d -> !d.code().startsWith("E6"));
+                if (run.success()) {
+                    System.out.println("  [" + name + "] FAIL: expected frontend "
+                        + "compile-error " + expectedCompileError
+                        + " but the project compiled successfully");
+                    failed++;
+                    return;
+                }
+                if (!matched) {
+                    System.out.println("  [" + name + "] FAIL: expected frontend "
+                        + "compile-error " + expectedCompileError + " but got: "
+                        + (run.diagnostics().isEmpty() ? "<no errors>"
+                            : run.diagnostics().stream().map(Diagnostic::toString)
+                                .toList()));
+                    failed++;
+                    return;
+                }
+                if (!onlyFrontend) {
+                    System.out.println("  [" + name + "] FAIL: error codes came "
+                        + "from backend lowering, not the frontend: "
+                        + run.diagnostics());
+                    failed++;
+                    return;
+                }
+                boolean artifactWritten = Files.isDirectory(outputRoot);
+                if (artifactWritten) {
+                    try (var stream = Files.walk(outputRoot)) {
+                        artifactWritten = stream.anyMatch(
+                            p -> p.toString().endsWith(".java"));
+                    }
+                }
+                if (artifactWritten) {
+                    System.out.println("  [" + name + "] FAIL: the compile-error "
+                        + "gate produced .java artifacts (codegen ran): "
+                        + run.capturedOutput());
+                    failed++;
+                    return;
+                }
+                System.out.println("  [" + name + "] OK — compile-error "
+                    + expectedCompileError + " rejected before backend"
+                    + " (orchestrator pipeline; no codegen invoked)");
+                passed++;
+                return;
+            }
+
+            // ---- Runtime fixture: the whole project must compile. ----
+            OrchestratorRun run = runOrchestrator(projectRoot, entryFile, outputRoot);
+            if (!run.success()) {
+                System.out.println("  [" + name + "] FAIL: orchestrator compile "
+                    + "failed: " + run.diagnostics() + "\n"
+                    + run.capturedOutput());
+                failed++;
+                return;
+            }
+
+            // IR assertions over every module's IR dump.
+            String ir = collectIrDumps(outputRoot);
+            List<String> irContains = (List<String>) test.getOrDefault("irContains", List.of());
+            List<String> irNotContains = (List<String>) test.getOrDefault("irNotContains", List.of());
+            boolean irOk = true;
+            for (String needle : irContains) {
+                if (!ir.contains(needle)) {
+                    System.out.println("  [" + name + "] FAIL: IR should contain '"
+                        + needle + "'");
+                    System.out.println("    IR:\n" + ir);
+                    irOk = false;
+                }
+            }
+            for (String needle : irNotContains) {
+                if (ir.contains(needle)) {
+                    System.out.println("  [" + name + "] FAIL: IR should NOT "
+                        + "contain '" + needle + "'");
+                    System.out.println("    IR:\n" + ir);
+                    irOk = false;
+                }
+            }
+            if (!irOk) {
+                failed++;
+                return;
+            }
+
+            Object expectedOutput = test.get("expectedOutput");
+            Object expectedError = test.get("expectedError");
+            Object expectedExitCode = test.get("expectedExitCode");
+            boolean hasRuntimeAssertions =
+                (expectedOutput != null && expectedOutput != JSON_NULL)
+                || (expectedError != null && expectedError != JSON_NULL)
+                || (expectedExitCode != null && expectedExitCode != JSON_NULL);
+
+            if (!hasRuntimeAssertions) {
+                System.out.println("  [" + name + "] OK" +
+                    (description.isEmpty() ? "" : " — " + description));
+                passed++;
+                return;
+            }
+
+            if (!jvmAvailable) {
+                System.out.println("  [" + name + "] SKIP (multi-module runtime "
+                    + "test, javac/java unavailable)");
+                skipped++;
+                return;
+            }
+
+            // Codegen was real: the entry artifact must exist before javac.
+            String entryClass = entryClassName(entry);
+            Path entryJava = outputRoot.resolve(entryClass + ".java");
+            if (!Files.exists(entryJava)) {
+                System.out.println("  [" + name + "] FAIL: JVM codegen produced "
+                    + "no '" + entryJava.getFileName() + "' artifact");
+                failed++;
+                return;
+            }
+
+            // Runner: auto-invokes the entry module's zero-arity exports,
+            // driven by the real parser's export list.
+            ProgramNode entryProgram = parseEntryProgram(entryFile);
+            Path runnerFile = outputRoot.resolve("JvmConformanceRunner.java");
+            Files.writeString(runnerFile, buildJvmRunner(entryProgram, entryClass));
+
+            // javac over every emitted .java artifact plus the runner.
+            List<String> javacArgs = new ArrayList<>();
+            javacArgs.add("javac");
+            javacArgs.add("-encoding");
+            javacArgs.add("UTF-8");
+            try (var stream = Files.list(outputRoot)) {
+                stream.filter(p -> p.toString().endsWith(".java"))
+                      .sorted()
+                      .forEach(p -> javacArgs.add(p.getFileName().toString()));
+            }
+            ProcessBuilder pb = new ProcessBuilder(javacArgs);
+            pb.directory(outputRoot.toFile());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String javacOutput = new String(p.getInputStream().readAllBytes()).trim();
+            int javacExit = p.waitFor();
+            if (javacExit != 0) {
+                System.out.println("  [" + name + "] FAIL: javac failed (exit "
+                    + javacExit + "):\n" + javacOutput);
+                failed++;
+                return;
+            }
+            if (!Files.exists(outputRoot.resolve(entryClass + ".class"))
+                    || !Files.exists(outputRoot.resolve("JvmConformanceRunner.class"))) {
+                System.out.println("  [" + name + "] FAIL: javac exited 0 but no "
+                    + ".class artifacts were produced (JVM compilation bypassed)");
+                failed++;
+                return;
+            }
+
+            // Execute the emitted artifacts with java.
+            ProcessBuilder pb2 = new ProcessBuilder("java", "-cp",
+                outputRoot.toString(), "JvmConformanceRunner");
+            pb2.directory(outputRoot.toFile());
+            pb2.redirectErrorStream(true);
+            Process p2 = pb2.start();
+            String output = new String(p2.getInputStream().readAllBytes()).trim();
+            int actualExitCode = p2.waitFor();
+
+            if (!assertJvmRun(name, output, actualExitCode, expectedOutput,
+                    List.of(), expectedError, expectedExitCode)) {
+                return; // failure already reported
+            }
+
+            System.out.println("  [" + name + "] OK" +
+                (description.isEmpty() ? "" : " — " + description));
+            passed++;
+
+        } catch (Exception e) {
+            System.out.println("  [" + name + "] FAIL: multi-module JVM "
+                + "execution exception: " + e.getMessage());
+            e.printStackTrace(System.out);
+            failed++;
+        } finally {
+            if (projectRoot != null) {
+                try {
+                    Files.walk(projectRoot).sorted(Comparator.reverseOrder())
+                        .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+                } catch (IOException ignored) {}
+            }
+        }
+    }
+
+    // =========================================================================
     // LuaJIT adapter (unchanged behavior)
     // =========================================================================
 
@@ -665,46 +1164,8 @@ public class BackendConformanceTest {
             int actualExitCode = p2.waitFor();
 
             // 4. Assertions — same observable contract as the LuaJIT runner.
-            if (expectedOutput != null && expectedOutput != JSON_NULL) {
-                String expStr = String.valueOf(expectedOutput);
-                if (!output.contains(expStr)) {
-                    System.out.println("  [" + name + "] FAIL: expected output '"
-                        + expStr + "', got: " + output);
-                    failed++;
-                    return false;
-                }
-            }
-
-            if (expectedError != null && expectedError != JSON_NULL) {
-                String expErr = String.valueOf(expectedError);
-                if (!output.contains("DEAL_ERROR_CODE: " + expErr)) {
-                    System.out.println("  [" + name + "] FAIL: expected error '"
-                        + expErr + "', got: " + output);
-                    failed++;
-                    return false;
-                }
-            }
-
-            for (String forbidden : expectedNotOutput) {
-                if (output.contains(forbidden)) {
-                    System.out.println("  [" + name + "] FAIL: output must NOT "
-                        + "contain '" + forbidden + "', got: " + output);
-                    failed++;
-                    return false;
-                }
-            }
-
-            if (expectedExitCode != null && expectedExitCode != JSON_NULL) {
-                int expCode = ((Number) expectedExitCode).intValue();
-                if (actualExitCode != expCode) {
-                    System.out.println("  [" + name + "] FAIL: expected exit code "
-                        + expCode + ", got " + actualExitCode);
-                    System.out.println("    Output: " + output);
-                    failed++;
-                    return false;
-                }
-            }
-            return true;
+            return assertJvmRun(name, output, actualExitCode, expectedOutput,
+                expectedNotOutput, expectedError, expectedExitCode);
         } catch (Exception e) {
             System.out.println("  [" + name + "] FAIL: JVM execution exception: "
                 + e.getMessage());

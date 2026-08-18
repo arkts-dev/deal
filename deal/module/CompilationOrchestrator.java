@@ -1007,15 +1007,19 @@ public final class CompilationOrchestrator {
     }
 
     /**
-     * JVM use site (ISSUE-0091): emits one {@code <ClassName>.java} module
-     * class per module. Backend diagnostics (E6000 for out-of-skeleton
-     * constructs — including any import other than {@code std/console}, at
-     * the import statement itself) fail the compilation with the standard
-     * diagnostic report; no artifact is written for a module the backend
-     * rejects. Class names are derived from the full module path
-     * ({@code app/main} → {@code AppMain}), and a collision between two
-     * modules mapping to the same class name (e.g. a case-only difference)
-     * is an E6000 error — never a silent artifact overwrite.
+     * JVM use site (ISSUE-0091, ISSUE-0096): emits one {@code
+     * <ClassName>.java} module class per module, with the per-module import
+     * resolution map (raw import path → imported module path) built exactly
+     * like the LuaJIT use site — only non-declaration modules are entries,
+     * so an import of a declaration/host module reaches the backend
+     * unresolved. Backend diagnostics (E6000 for out-of-slice constructs —
+     * including imports other than {@code std/console} and compiled project
+     * modules, at the import statement itself) fail the compilation with
+     * the standard diagnostic report; no artifact is written for a module
+     * the backend rejects. Class names are derived from the full module
+     * path ({@code app/main} → {@code AppMain}), and a collision between
+     * two modules mapping to the same class name (e.g. a case-only
+     * difference) is an E6000 error — never a silent artifact overwrite.
      */
     private void codegenAllJvm() throws IOException {
         if (sourceMapExplicit) {
@@ -1035,8 +1039,29 @@ public final class CompilationOrchestrator {
         Map<ModuleInfo, JvmBackend.JvmCodegenResult> results = new LinkedHashMap<>();
         for (ModuleInfo info : modules.values()) {
             if (info.isDeclarationFile) continue;
+            // Import resolutions (ISSUE-0096): raw import path → module
+            // path of the imported COMPILED module. Declaration files are
+            // skipped above and never become entries, so an import of a
+            // declaration/host module reaches the backend unresolved and is
+            // rejected with E6000 at the import statement — declaration and
+            // host modules stay out of the JVM slice (host ABI is deferred).
+            Map<String, String> importResolutions = new HashMap<>();
+            for (StatementNode stmt : info.rawAst.statements()) {
+                if (stmt instanceof ImportDeclaration imp) {
+                    String resolvedSource = resolveImportPath(imp.modulePath(),
+                        Path.of(info.sourcePath));
+                    if (resolvedSource != null) {
+                        ModuleInfo imported = modules.get(resolvedSource);
+                        if (imported != null && !imported.isDeclarationFile) {
+                            importResolutions.put(imp.modulePath(),
+                                imported.modulePath);
+                        }
+                    }
+                }
+            }
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                info.rawAst, info.checkResult, info.sourcePath, info.modulePath);
+                info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
+                importResolutions);
             for (Diagnostic d : res.diagnostics()) {
                 diagnostics.add(d);
                 hasErrors = true;

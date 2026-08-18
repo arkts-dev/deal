@@ -1,0 +1,299 @@
+{
+  "version": "1.0",
+  "description": "JVM modules, imports, and exports slice (ISSUE-0096). JVM-only multi-module fixtures: each fixture writes its 'modules' (relative .deal source paths → DEAL source) plus 'entry' under a temp project root and runs the real whole-project pipeline — CompilationOrchestrator with Backend.JVM (module discovery, signature extraction, dependency ordering, name resolution, type checking, per-module JvmBackend codegen) → javac over every emitted .java artifact plus a runner class → java executing the emitted artifacts (the harness fails a fixture whose parser/checker/module-discovery yields no compile, whose codegen leaves no artifact, or whose JVM execution is bypassed). Covered forms: namespace imports (import * as alias from \"...\") of compiled project modules, exported functions consumed through imported direct calls (alias.fn(args) → a static call on the imported module's emitted class), imported calls at module level (load time) and inside function bodies, transitive import chains (depth-first load order), unused imports still running the imported module's load-time side effects, same-basename modules in different directories deriving isolated class names, multiple imports of same-named exports through distinct aliases, imported null-returning (void) calls, imported self-recursion, argument evaluation order with hoisted side effects across the module boundary, and three frontend compile-error gates rejected before any backend (E2004 missing export, E3009 arity mismatch, E5003 return-type mismatch in an imported module).",
+  "tests": [
+    {
+      "name": "jvm-mod-imported-direct-call",
+      "description": "A namespace import's exported function is called directly from the entry module: lib.add(2, 3) computes 5 through a static call on the imported module's emitted class",
+      "modules": {
+        "lib.deal": "export function add(a: int, b: int): int { return a + b; }",
+        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return lib.add(2, 3); }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "5",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "import * as lib from \"./lib\""
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-export-signatures",
+      "description": "Multiple exported functions with mixed signatures (boolean + string params, string returns) are consumed through the alias: pick selects the branch string and wrap decorates it",
+      "modules": {
+        "lib.deal": "export function pick(flag: boolean, yes: string, no: string): string { if (flag) { return yes; } return no; }\nexport function wrap(s: string): string { return \"[\" + s + \"]\"; }",
+        "main.deal": "import * as console from \"std/console\"\nimport * as lib from \"./lib\"\nexport function run(): null {\n  console.log(lib.pick(true, \"yes\", \"no\"));\n  console.log(lib.wrap(\"x\"));\n  console.log(lib.pick(false, \"yes\", \"no\"));\n}"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "yes\n[x]\nno",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-nested-module-calls",
+      "description": "An imported module's exported function internally calls its own non-exported function: outer(3, 4) = double(3) + double(4) = 14",
+      "modules": {
+        "lib.deal": "function double(x: int): int { return x * 2; }\nexport function outer(a: int, b: int): int { return double(a) + double(b); }",
+        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return lib.outer(3, 4); }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "14",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-imported-recursion",
+      "description": "An imported exported function recurses on itself inside its own module: lib.fact(6) computes 720 across the module boundary",
+      "modules": {
+        "lib.deal": "export function fact(n: int): int {\n  if (n <= 1) { return 1; }\n  return n * fact(n - 1);\n}",
+        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return lib.fact(6); }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "720",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-imported-void-call",
+      "description": "An imported null-returning exported function is called from the entry function body: the void call hoists into a pre-statement and its console output is observable",
+      "modules": {
+        "lib.deal": "import * as console from \"std/console\"\nexport function announce(msg: string): null { console.log(msg); }",
+        "main.deal": "import * as lib from \"./lib\"\nexport function run(): null { lib.announce(\"from-lib\"); }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "from-lib",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-import-load-time-order",
+      "description": "The import statement runs the imported module's load-time statements where it appears (depth-first, before the importing module's later load-time statements): lib-load, then main-load, then the called export prints ping",
+      "modules": {
+        "lib.deal": "import * as console from \"std/console\"\nconsole.log(\"lib-load\");\nexport function ping(): null { console.log(\"ping\"); }",
+        "main.deal": "import * as console from \"std/console\"\nimport * as lib from \"./lib\"\nconsole.log(\"main-load\");\nexport function run(): null { lib.ping(); }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "lib-load\nmain-load\nping",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-unused-import-side-effect",
+      "description": "An imported-but-unused alias still runs the imported module's load-time side effects (LuaJIT runs require for the import regardless of use): lib-initialized prints even though the alias is never referenced",
+      "modules": {
+        "lib.deal": "import * as console from \"std/console\"\nconsole.log(\"lib-initialized\");\nexport function helper(): int { return 7; }",
+        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return 1; }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "lib-initialized",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-transitive-import",
+      "description": "A transitive import chain initializes depth-first in import order (c-load, b-load, main-load) and b's exported plus() calls c's exported base() across the b→c module boundary: plus(5) = 10 + 5 = 15",
+      "modules": {
+        "c.deal": "import * as console from \"std/console\"\nconsole.log(\"c-load\");\nexport function base(): int { return 10; }",
+        "b.deal": "import * as console from \"std/console\"\nimport * as c from \"./c\"\nconsole.log(\"b-load\");\nexport function plus(x: int): int { return c.base() + x; }",
+        "main.deal": "import * as console from \"std/console\"\nimport * as b from \"./b\"\nconsole.log(\"main-load\");\nexport function run(): int { return b.plus(5); }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "c-load\nb-load\nmain-load\n15",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-class-name-isolation",
+      "description": "Two modules with the same basename in different directories derive isolated class names (a/calc → ACalc, b/calc → BCalc): each defines its own same-named export compute(), and the entry calls both through distinct aliases — aCalc.compute() * 10 + bCalc.compute() = 12",
+      "modules": {
+        "a/calc.deal": "export function compute(): int { return 1; }",
+        "b/calc.deal": "export function compute(): int { return 2; }",
+        "main.deal": "import * as aCalc from \"./a/calc\"\nimport * as bCalc from \"./b/calc\"\nexport function run(): int { return aCalc.compute() * 10 + bCalc.compute(); }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "12",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-load-time-imported-call",
+      "description": "An imported direct call at module level (load time) feeds a module field initializer: base = lib.value() = 40, then run() returns base + 2 = 42",
+      "modules": {
+        "lib.deal": "export function value(): int { return 40; }",
+        "main.deal": "import * as lib from \"./lib\"\nlet base: int = lib.value();\nexport function run(): int { return base + 2; }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-imported-strings-while",
+      "description": "An imported exported function uses a while loop and string concatenation inside its own module: lib.repeat(\"ab\", 3) returns \"ababab\" through the module boundary",
+      "modules": {
+        "lib.deal": "export function repeat(s: string, n: int): string {\n  let acc: string = \"\";\n  let i: int = 0;\n  while (i < n) { acc = acc + s; i = i + 1; }\n  return acc;\n}",
+        "main.deal": "import * as lib from \"./lib\"\nexport function run(): string { return lib.repeat(\"ab\", 3); }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "ababab",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-imported-arg-order",
+      "description": "Left-to-right argument evaluation with hoisted null-typed side effects holds across the module boundary: the two console.log arguments run first then second before the imported pair() call returns 7",
+      "modules": {
+        "lib.deal": "export function pair(x: null, y: null): int { return 7; }",
+        "main.deal": "import * as console from \"std/console\"\nimport * as lib from \"./lib\"\nexport function run(): int { return lib.pair(console.log(\"first\"), console.log(\"second\")); }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "first\nsecond\n7",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-multiple-imports",
+      "description": "Two imports whose exported function names are identical stay distinct through their aliases: left.value() + right.value() = 30 + 12 = 42",
+      "modules": {
+        "a/left.deal": "export function value(): int { return 30; }",
+        "b/right.deal": "export function value(): int { return 12; }",
+        "main.deal": "import * as left from \"./a/left\"\nimport * as right from \"./b/right\"\nexport function run(): int { return left.value() + right.value(); }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-missing-export",
+      "description": "Frontend compile-error gate (E2004): the entry module calls lib.missing(), which the imported module does not export — the real orchestrator frontend rejects the project before any backend, and no .java artifact is written",
+      "modules": {
+        "lib.deal": "export function present(): int { return 1; }",
+        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return lib.missing(1); }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E2004",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-imported-arity-mismatch",
+      "description": "Frontend compile-error gate (E3009): the entry module calls the imported two-parameter lib.add() with one argument — the real orchestrator frontend rejects the project before any backend, and no .java artifact is written",
+      "modules": {
+        "lib.deal": "export function add(a: int, b: int): int { return a + b; }",
+        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return lib.add(1); }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3009",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-mod-imported-type-error",
+      "description": "Frontend compile-error gate (E5003): the IMPORTED module itself has a return-type error (broken(): int returns a string) — the real orchestrator frontend type-checks lib.deal and rejects the project before any backend, and no .java artifact is written",
+      "modules": {
+        "lib.deal": "export function broken(): int { return \"not an int\"; }",
+        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return lib.broken(); }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E5003",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    }
+  ]
+}

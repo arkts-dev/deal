@@ -2,9 +2,13 @@ package deal.test;
 
 import deal.ast.ProgramNode;
 import deal.checker.CheckResult;
+import deal.checker.ModuleResolver;
 import deal.checker.NameResolver;
+import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
+import deal.types.Type;
+import deal.types.Types;
 import deal.codegen.Backend;
 import deal.codegen.jvm.JvmBackend;
 import deal.lexer.Diagnostic;
@@ -26,6 +30,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Unit tests for the JVM backend skeleton (ISSUE-0091), the first
@@ -34,7 +39,9 @@ import java.util.Map;
  * against module fields and other visible bindings), and the
  * primitive-array slice (ISSUE-0094 — {@code int[]}/{@code number[]}/
  * {@code string[]}/{@code boolean[]} literals, index reads, element
- * writes, and {@code .length} reads with the spec's runtime checks):
+ * writes, and {@code .length} reads with the spec's runtime checks), and
+ * the modules/imports/exports slice (ISSUE-0096 — multi-module
+ * compilation, namespace imports, and imported direct calls):
  * <ul>
  *   <li>parameter shadowing (ISSUE-0093): a parameter shadowing a
  *       module field emits ONE disambiguated Java name in both the
@@ -133,7 +140,20 @@ import java.util.Map;
  *       {@code Backend.JVM} emits and compiles a real {@code .java} artifact,
  *       rejects out-of-scope projects with E6000, detects class-name
  *       collisions, the default stays LuaJIT, {@code DealConfig} and the CLI
- *       accept {@code jvm}.</li>
+ *       accept {@code jvm},</li>
+ *   <li>the modules slice (ISSUE-0096): multi-module orchestrator compiles
+ *       emit one artifact class per module with the import resolution map
+ *       ({@code testModuleImports}), same-basename modules in different
+ *       directories derive isolated class names ({@code
+ *       testModuleClassIsolation}), sibling imports initialize
+ *       depth-first in import order ({@code testModuleUnusedImportLoadTime}),
+ *       backend-level emission pins the load-time {@code __init$} trigger
+ *       and the static cross-class call ({@code
+ *       testModuleImportBackendEmission}), an unused project-module import
+ *       still runs the imported module's load-time code ({@code
+ *       testOrchestratorJvmImportSupported}), and a declaration/host-module
+ *       import stays E6000 with no artifact ({@code
+ *       testOrchestratorJvmDeclarationImportRejected}).</li>
  * </ul>
  *
  * <p>The end-to-end JVM conformance fixtures live in
@@ -200,8 +220,14 @@ public class JvmBackendTest {
             testOrchestratorJvmBackend();
             testOrchestratorDefaultStaysLua();
             testOrchestratorJvmRejectsUnsupported();
-            testOrchestratorJvmImportRejected();
+            testOrchestratorJvmImportSupported();
+            testOrchestratorJvmDeclarationImportRejected();
             testOrchestratorJvmClassCollision();
+            testModuleImports();
+            testModuleClassIsolation();
+            testModuleUnusedImportLoadTime();
+            testModuleImportBackendEmission();
+            testModuleImportUseBeforeImportRejected();
             testOrchestratorJvmSourceMapWarning();
             testDealConfigBackendField();
             testCliBackendFlag();
@@ -255,6 +281,16 @@ public class JvmBackendTest {
     // deprecated, and this suppression keeps the build warning-free.
     @SuppressWarnings("deprecation")
     private static Frontend compileFrontend(String source, String filename) {
+        return compileFrontend(source, filename,
+            new BackendConformanceTest.StubModuleResolver());
+    }
+
+    /** Frontend compile with an explicit module resolver (ISSUE-0096 module
+     * probes: a fixed export map accepts namespace imports without an
+     * orchestrator). */
+    @SuppressWarnings("deprecation")
+    private static Frontend compileFrontend(String source, String filename,
+                                            ModuleResolver moduleResolver) {
         List<Diagnostic> errors = new ArrayList<>();
 
         LexResult lex = new Lexer(source, filename).tokenize();
@@ -274,9 +310,7 @@ public class JvmBackendTest {
             return new Frontend(null, null, errors);
         }
 
-        BackendConformanceTest.StubModuleResolver resolver =
-            new BackendConformanceTest.StubModuleResolver();
-        NameResolver nr = new NameResolver(filename, resolver);
+        NameResolver nr = new NameResolver(filename, moduleResolver);
         SymbolTable symTable;
         try {
             symTable = nr.resolve(parse.program());
@@ -343,6 +377,78 @@ public class JvmBackendTest {
         } catch (IOException ignored) {}
 
         return new ExecResult(out, exit);
+    }
+
+    /**
+     * Compiles every {@code .java} artifact in {@code dir} together with a
+     * generated runner (auto-invoking the entry program's zero-arity
+     * exports) via {@code javac} + {@code java} subprocesses — the same
+     * contract the conformance adapter enforces for multi-module fixtures.
+     */
+    private static ExecResult runJvmArtifacts(Path dir, ProgramNode entryProgram,
+                                              String entryClass) throws Exception {
+        Files.writeString(dir.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(entryProgram, entryClass));
+
+        List<String> javacArgs = new ArrayList<>();
+        javacArgs.add("javac");
+        javacArgs.add("-encoding");
+        javacArgs.add("UTF-8");
+        try (var stream = Files.list(dir)) {
+            stream.filter(p -> p.toString().endsWith(".java"))
+                  .sorted()
+                  .forEach(p -> javacArgs.add(p.getFileName().toString()));
+        }
+        ProcessBuilder javac = new ProcessBuilder(javacArgs);
+        javac.directory(dir.toFile());
+        javac.redirectErrorStream(true);
+        Process p1 = javac.start();
+        String javacOut = new String(p1.getInputStream().readAllBytes()).trim();
+        int javacExit = p1.waitFor();
+        if (javacExit != 0) {
+            throw new RuntimeException("javac failed: " + javacOut);
+        }
+
+        ProcessBuilder java = new ProcessBuilder("java", "-cp", dir.toString(),
+            "JvmConformanceRunner");
+        java.redirectErrorStream(true);
+        Process p2 = java.start();
+        String out = new String(p2.getInputStream().readAllBytes()).trim();
+        int exit = p2.waitFor();
+        return new ExecResult(out, exit);
+    }
+
+    /**
+     * A fixed-export module resolver for backend-level module probes
+     * (ISSUE-0096): the real NameResolver/TypeChecker accept namespace
+     * imports without an orchestrator.
+     */
+    private static final class FixedModuleResolver implements ModuleResolver {
+        private final Map<String, Map<String, Type>> modules;
+
+        FixedModuleResolver(Map<String, Map<String, Type>> modules) {
+            this.modules = modules;
+        }
+
+        @Override
+        public Map<String, Type> resolveModule(String modulePath,
+                                               String importingModule,
+                                               Set<String> modulesInProgress)
+                throws ModuleNotFoundException {
+            Map<String, Type> exports = modules.get(modulePath);
+            if (exports == null) {
+                throw new ModuleNotFoundException("Module not found: " + modulePath);
+            }
+            return exports;
+        }
+
+        @Override
+        public Symbol.ClassSymbol resolveClassSymbol(String className,
+                                                      String modulePath,
+                                                      String importingModule)
+                throws ModuleNotFoundException {
+            return null;
+        }
     }
 
     // =========================================================================
@@ -4565,12 +4671,13 @@ public class JvmBackendTest {
             "no artifact written when the backend reports errors");
     }
 
-    /** A non-std/console import is rejected by the orchestrator's JVM path at
-     * the import statement itself — even when the import is never used — so
-     * the imported module's LuaJIT require-time side effects can never be
-     * silently dropped. */
-    private static void testOrchestratorJvmImportRejected() throws Exception {
-        System.out.println("-- Orchestrator: unused non-console import → E6000 --");
+    /** An import of a COMPILED project module (ISSUE-0096) is supported by
+     * the orchestrator's JVM path — even when the import is never used — and
+     * the imported module's load-time side effects still run (the import
+     * emits the {@code __init$} initialization trigger exactly where
+     * LuaJIT runs require). */
+    private static void testOrchestratorJvmImportSupported() throws Exception {
+        System.out.println("-- Orchestrator: unused project-module import runs load-time code --");
 
         writeFile("src/other.deal", """
             import * as console from "std/console"
@@ -4583,7 +4690,7 @@ public class JvmBackendTest {
             """);
 
         Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/import_rejected");
+        Path outputDir = tmpDir.resolve("build/import_supported");
         List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
@@ -4591,12 +4698,410 @@ public class JvmBackendTest {
             (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
-        check(!success, "unused non-console import fails the JVM compile");
+        check(success, "unused project-module import compiles: "
+            + orchestrator.diagnostics());
+        if (!success) return;
+
+        Path entryArtifact = outputDir.resolve("Entry.java");
+        Path otherArtifact = outputDir.resolve("Other.java");
+        check(Files.exists(entryArtifact), "entry artifact written");
+        check(Files.exists(otherArtifact), "imported module artifact written");
+
+        if (Files.exists(entryArtifact) && Files.exists(otherArtifact)) {
+            String java = Files.readString(entryArtifact);
+            check(java.contains("Other.__init$();"),
+                "the import emits the init trigger for the imported class");
+            check(java.contains("static {"),
+                "the trigger sits in a load-time static block");
+
+            // The emitted artifacts must be real: javac + java run the
+            // imported module's load-time println even though the alias is
+            // never used.
+            Files.writeString(outputDir.resolve("JvmConformanceRunner.java"),
+                BackendConformanceTest.buildJvmRunner(
+                    parseProgram("""
+                        export function run(): int { return 1; }
+                        """), "Entry"));
+            ProcessBuilder javac = new ProcessBuilder("javac", "-encoding", "UTF-8",
+                "Entry.java", "Other.java", "JvmConformanceRunner.java");
+            javac.directory(outputDir.toFile());
+            javac.redirectErrorStream(true);
+            Process p = javac.start();
+            String javacOut = new String(p.getInputStream().readAllBytes()).trim();
+            int javacExit = p.waitFor();
+            check(javacExit == 0, "orchestrator artifacts compile with javac: "
+                + javacOut);
+
+            ProcessBuilder javaRun = new ProcessBuilder("java", "-cp",
+                outputDir.toString(), "JvmConformanceRunner");
+            javaRun.redirectErrorStream(true);
+            Process p2 = javaRun.start();
+            String out = new String(p2.getInputStream().readAllBytes()).trim();
+            int exit = p2.waitFor();
+            check(exit == 0, "runner exits 0");
+            check(out.contains("other-module-ran"),
+                "the unused import ran the imported module's load-time "
+                + "console.log: " + out);
+        }
+    }
+
+    /** An import of a DECLARATION file (a host module) stays out of the JVM
+     * slice (host ABI is deferred): the orchestrator's JVM path reports
+     * E6000 at the import statement and writes no artifact. */
+    private static void testOrchestratorJvmDeclarationImportRejected() throws Exception {
+        System.out.println("-- Orchestrator: declaration-file import → E6000 --");
+
+        writeFile("src/hostlib.d.deal", """
+            export function foo(): int;
+            """);
+        writeFile("src/entry.deal", """
+            import * as m from "./hostlib"
+            export function run(): int { return m.foo(); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/import_decl_rejected");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JVM,
+            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success = orchestrator.compile();
+        check(!success, "declaration-file import fails the JVM compile");
         check(orchestrator.diagnostics().stream()
-                .anyMatch(d -> "E6000".equals(d.code())),
-            "orchestrator reports E6000 for the import: " + orchestrator.diagnostics());
+                .anyMatch(d -> "E6000".equals(d.code())
+                    && d.message().contains("project modules")),
+            "orchestrator reports E6000 for the declaration import: "
+                + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("Entry.java")),
-            "no artifact for the module with the rejected import");
+            "no artifact for the module with the declaration import");
+    }
+
+    /** Parses a small DEAL snippet with the real lexer+parser for runner
+     * construction (no type checking — the orchestrator already checked the
+     * real module). */
+    private static ProgramNode parseProgram(String source) {
+        try {
+            LexResult lex = new Lexer(source, "jvmtest-runner.deal").tokenize();
+            if (lex.hasErrors()) throw new IllegalStateException("lex: " + lex.diagnostics());
+            ParseResult parse = new Parser(lex.tokens(), "jvmtest-runner.deal").parse();
+            if (parse.hasErrors()) throw new IllegalStateException("parse: " + parse.diagnostics());
+            return parse.program();
+        } catch (IllegalStateException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /**
+     * Multi-module compilation through the orchestrator's JVM path
+     * (ISSUE-0096): the entry imports lib and calls its exported add()
+     * through the alias; the emitted entry artifact carries the load-time
+     * init trigger and the static cross-class call, and the artifacts run
+     * with javac + java.
+     */
+    private static void testModuleImports() throws Exception {
+        System.out.println("-- Orchestrator: multi-module import + imported direct call --");
+
+        writeFile("src/lib.deal", """
+            function double(x: int): int { return x * 2; }
+            export function add(a: int, b: int): int { return double(a) + double(b); }
+            """);
+        writeFile("src/entry.deal", """
+            import * as lib from "./lib"
+            export function run(): int { return lib.add(10, 20); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/imports");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JVM,
+            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success = orchestrator.compile();
+        check(success, "multi-module JVM compile succeeds: "
+            + orchestrator.diagnostics());
+        if (!success) return;
+
+        Path entryArtifact = outputDir.resolve("Entry.java");
+        Path libArtifact = outputDir.resolve("Lib.java");
+        check(Files.exists(entryArtifact), "entry artifact written");
+        check(Files.exists(libArtifact), "imported module artifact written");
+
+        if (Files.exists(entryArtifact)) {
+            String java = Files.readString(entryArtifact);
+            check(java.contains("Lib.__init$();"),
+                "the import emits the load-time init trigger for Lib");
+            check(java.contains("return Lib.add(10L, 20L);"),
+                "the imported direct call emits a static call on the "
+                + "imported class: " + java);
+        }
+
+        ExecResult exec = runJvmArtifacts(outputDir,
+            parseProgram("export function run(): int { return 0; }"), "Entry");
+        check(exec.exitCode() == 0, "artifacts run with exit 0");
+        check(exec.output().contains("60"),
+            "imported call computes double(10) + double(20) = 60: "
+                + exec.output());
+    }
+
+    /**
+     * Module class-name isolation (ISSUE-0096): two same-basename modules
+     * in different directories derive distinct artifact classes
+     * ({@code a/calc → ACalc}, {@code b/calc → BCalc}), each with its own
+     * same-named export, and the entry calls both through distinct aliases.
+     */
+    private static void testModuleClassIsolation() throws Exception {
+        System.out.println("-- Orchestrator: module class-name isolation --");
+
+        writeFile("src/a/calc.deal", """
+            export function compute(): int { return 1; }
+            """);
+        writeFile("src/b/calc.deal", """
+            export function compute(): int { return 2; }
+            """);
+        writeFile("src/entry.deal", """
+            import * as aCalc from "./a/calc"
+            import * as bCalc from "./b/calc"
+            export function run(): int { return aCalc.compute() * 10 + bCalc.compute(); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/isolation");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JVM,
+            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success = orchestrator.compile();
+        check(success, "class-isolation project compiles: "
+            + orchestrator.diagnostics());
+        if (!success) return;
+
+        Path aArtifact = outputDir.resolve("ACalc.java");
+        Path bArtifact = outputDir.resolve("BCalc.java");
+        Path entryArtifact = outputDir.resolve("Entry.java");
+        check(Files.exists(aArtifact), "ACalc.java written for a/calc");
+        check(Files.exists(bArtifact), "BCalc.java written for b/calc");
+        check(Files.exists(entryArtifact), "Entry.java written");
+        if (Files.exists(aArtifact)) {
+            check(Files.readString(aArtifact).contains("public final class ACalc"),
+                "a/calc derives class ACalc");
+        }
+        if (Files.exists(bArtifact)) {
+            check(Files.readString(bArtifact).contains("public final class BCalc"),
+                "b/calc derives class BCalc");
+        }
+
+        ExecResult exec = runJvmArtifacts(outputDir,
+            parseProgram("export function run(): int { return 0; }"), "Entry");
+        check(exec.exitCode() == 0, "artifacts run with exit 0");
+        check(exec.output().contains("12"),
+            "isolated classes compute 1 * 10 + 2 = 12: " + exec.output());
+    }
+
+    /**
+     * Sibling-import load-time ordering (ISSUE-0096): two project-module
+     * imports initialize depth-first in import order (b-load, then c-load),
+     * before the importing module's own load-time statements — exactly
+     * where LuaJIT runs each require.
+     */
+    private static void testModuleUnusedImportLoadTime() throws Exception {
+        System.out.println("-- Orchestrator: sibling imports run load-time code in import order --");
+
+        writeFile("src/b.deal", """
+            import * as console from "std/console"
+            console.log("b-load");
+            export function plus(x: int): int { return x + 1; }
+            """);
+        writeFile("src/c.deal", """
+            import * as console from "std/console"
+            console.log("c-load");
+            export function base(): int { return 10; }
+            """);
+        writeFile("src/entry.deal", """
+            import * as b from "./b"
+            import * as c from "./c"
+            import * as console from "std/console"
+            console.log("entry-load");
+            export function run(): int { return b.plus(c.base()); }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/sibling_imports");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JVM,
+            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success = orchestrator.compile();
+        check(success, "sibling-import project compiles: "
+            + orchestrator.diagnostics());
+        if (!success) return;
+
+        ExecResult exec = runJvmArtifacts(outputDir,
+            parseProgram("export function run(): int { return 0; }"), "Entry");
+        check(exec.exitCode() == 0, "artifacts run with exit 0");
+        check(exec.output().contains("b-load\nc-load\nentry-load"),
+            "load-time order is b-load, c-load, entry-load: " + exec.output());
+        check(exec.output().contains("11"),
+            "b.plus(c.base()) = 11: " + exec.output());
+    }
+
+    /**
+     * Backend-level emission checks for module imports (ISSUE-0096): without
+     * an import resolution map the import stays E6000 (the pre-existing
+     * rejection, unchanged for the no-map overloads); with the map the
+     * import emits the load-time init trigger, the imported direct call
+     * emits a static call on the imported class, and an imported
+     * null-returning call hoists as a pre-statement.
+     */
+    private static void testModuleImportBackendEmission() {
+        System.out.println("-- Module import codegen emission (ISSUE-0096) --");
+
+        Map<String, Map<String, Type>> modules = Map.of(
+            "./lib", Map.of("add", Types.func(
+                List.of(Type.Int.INSTANCE, Type.Int.INSTANCE), Type.Int.INSTANCE)));
+        Frontend f = compileFrontend("""
+            import * as lib from "./lib"
+            export function run(): int { return lib.add(10, 20); }
+            """, "jvmtest-import.deal", new FixedModuleResolver(modules));
+        if (!f.errors().isEmpty()) {
+            fail("checker must accept the module-import probe: " + f.errors());
+            return;
+        }
+
+        // Without an import resolution map the import is E6000 — the
+        // imported module's require-time side effects can never be silently
+        // dropped (the pre-existing no-map overloads keep this behavior).
+        JvmBackend.JvmCodegenResult bare = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-import.deal", "main");
+        check(bare.hasErrors(), "import without a resolution map is E6000");
+        check(bare.diagnostics().stream().anyMatch(d -> d.message()
+                .contains("project modules")),
+            "the rejection names the supported import forms: "
+                + bare.diagnostics());
+
+        // With the map the import is accepted: the alias maps to the
+        // imported module path, the call emits a static call on the
+        // imported class, and the import statement emits the load-time
+        // init trigger.
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-import.deal", "main",
+            Map.of("./lib", "lib"));
+        check(!res.hasErrors(), "module import emits without E6000: "
+            + res.diagnostics());
+        check(res.source().contains("    static {\n        Lib.__init$();\n    }"),
+            "the import emits the load-time init trigger for Lib");
+        check(res.source().contains("return Lib.add(10L, 20L);"),
+            "the imported direct call emits Lib.add(10L, 20L)");
+
+        // An imported null-returning call is a void pre-statement.
+        Map<String, Map<String, Type>> voidModules = Map.of(
+            "./lib", Map.of("tick", Types.func(List.of(), Type.Null.INSTANCE)));
+        Frontend voidF = compileFrontend("""
+            import * as lib from "./lib"
+            export function run(): null { lib.tick(); }
+            """, "jvmtest-import-void.deal",
+            new FixedModuleResolver(voidModules));
+        if (!voidF.errors().isEmpty()) {
+            fail("checker must accept the imported void-call probe: "
+                + voidF.errors());
+            return;
+        }
+        JvmBackend.JvmCodegenResult voidRes = JvmBackend.generate(
+            voidF.program(), voidF.checkResult(), "jvmtest-import-void.deal",
+            "main", Map.of("./lib", "lib"));
+        check(!voidRes.hasErrors(), "imported void call emits without E6000: "
+            + voidRes.diagnostics());
+        check(voidRes.source().contains("Lib.tick();"),
+            "the imported void call emits Lib.tick(); as a pre-statement");
+    }
+
+    /**
+     * A module-level use of an import alias before its import statement is
+     * E6000 (ISSUE-0096): LuaJIT emits the {@code require} at the import's
+     * source position, so an earlier use reads the not-yet-required global
+     * and fails at load — verified with real luajit for both shapes —
+     * while Java would silently initialize the imported class. The
+     * transitive shape (a module-level call of a function whose body uses
+     * a later import) is included.
+     */
+    private static void testModuleImportUseBeforeImportRejected() {
+        System.out.println("-- Module-level alias use before its import → E6000 --");
+
+        Map<String, Map<String, Type>> modules = Map.of(
+            "./lib", Map.of("value", Types.func(List.of(), Type.Int.INSTANCE)));
+
+        List<String> sources = List.of(
+            // direct: a field initializer uses the alias before the import
+            // statement's position.
+            """
+            let base: int = lib.value();
+            import * as lib from "./lib"
+            export function run(): int { return base; }
+            """,
+            // direct: a module-level expression statement uses the alias
+            // before the import statement's position.
+            """
+            if (lib.value() === 40) { }
+            import * as lib from "./lib"
+            export function run(): int { return 1; }
+            """,
+            // transitive: a module-level call of a function whose body uses
+            // the alias, with the import declared after the call site.
+            """
+            function f(): int { return lib.value(); }
+            f();
+            import * as lib from "./lib"
+            export function run(): int { return 1; }
+            """);
+
+        for (String source : sources) {
+            Frontend f = compileFrontend(source, "jvmtest-import-order.deal",
+                new FixedModuleResolver(modules));
+            if (!f.errors().isEmpty()) {
+                fail("checker must accept the import-order probe (the backend "
+                    + "rejects it): " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-import-order.deal",
+                "main", Map.of("./lib", "lib"));
+            check(res.hasErrors(), "backend rejects the use-before-import shape");
+            check(res.diagnostics().stream().anyMatch(d -> d.message()
+                    .contains("before its import statement")
+                    || d.message().contains("uses the import")),
+                "the diagnostic names the import ordering: " + res.diagnostics());
+        }
+
+        // The import-first shape stays clean (the trigger runs before the
+        // use — LuaJIT parity).
+        Frontend ok = compileFrontend("""
+            import * as lib from "./lib"
+            let base: int = lib.value();
+            export function run(): int { return base; }
+            """, "jvmtest-import-order-ok.deal",
+            new FixedModuleResolver(modules));
+        if (!ok.errors().isEmpty()) {
+            fail("checker must accept the import-first probe: " + ok.errors());
+            return;
+        }
+        JvmBackend.JvmCodegenResult okRes = JvmBackend.generate(
+            ok.program(), ok.checkResult(), "jvmtest-import-order-ok.deal",
+            "main", Map.of("./lib", "lib"));
+        check(!okRes.hasErrors(), "import-first shape emits without E6000: "
+            + okRes.diagnostics());
+        check(okRes.source().contains("Lib.__init$();"),
+            "the import trigger still emits for the import-first shape");
+        check(okRes.source().contains("Lib.value()"),
+            "the imported call still emits for the import-first shape");
     }
 
     /** Two modules whose paths differ only in case would derive the same

@@ -29,7 +29,8 @@ import java.util.Set;
  * calls slice, ISSUE-0094 primitive-array slice — array literals,
  * indexing, element assignment, and {@code .length} reads for
  * {@code int[]}, {@code number[]}, {@code string[]}, and
- * {@code boolean[]}): a small but real end-to-end JVM backend.
+ * {@code boolean[]}, ISSUE-0096 modules/imports/exports slice): a small
+ * but real end-to-end JVM backend.
  *
  * <p>Walks the typed AST (the compiler's IR — see {@code deal-compiler-architecture-v1})
  * and emits a self-contained Java class whose static methods implement the
@@ -42,24 +43,44 @@ import java.util.Set;
  * guarantees every artifact it emits is valid Java).
  *
  * <p>Semantic slice scope (ISSUE-0091 skeleton + ISSUE-0092 slice +
- * ISSUE-0093 slice + ISSUE-0094 slice):
+ * ISSUE-0093 slice + ISSUE-0094 slice + ISSUE-0096 slice):
  * functions, {@code let} locals, module fields, literals,
  * int/number/boolean/string arithmetic and comparisons, {@code if}/
  * {@code else}, {@code while} loops, {@code return}, assignment, direct
  * calls, template literals (lowered to string concatenation), the
  * {@code int()}/{@code number()} conversion intrinsics, {@code std/console}
  * output ({@code console.log}/{@code console.error} → {@code System.out}/
- * {@code System.err}), and primitive arrays — {@code int[]},
+ * {@code System.err}), primitive arrays — {@code int[]},
  * {@code number[]}, {@code string[]}, {@code boolean[]} — as literals,
- * index reads, element writes, and {@code .length} reads. Anything
- * outside this scope — modules (any import other than
- * {@code std/console}, rejected at the import statement itself
- * even when unused), classes, tables, nullables, nullable arrays,
+ * index reads, element writes, and {@code .length} reads, and
+ * multi-module compilation (ISSUE-0096): namespace imports
+ * ({@code import * as alias from "./lib"}) of compiled project modules,
+ * exported functions, and imported direct calls ({@code alias.fn(args)} →
+ * a static call on the imported module's emitted class). Anything
+ * outside this scope — classes, tables, nullables, nullable arrays,
  * arrays of nullable elements, nested (multi-dimensional) arrays, class
  * arrays, function arrays, stdlib modules other than
- * {@code std/console}, async, host ABI, {@code @jsonable}, for/for-of
- * loops, break/continue, try/throw — is rejected with a backend
- * {@code E6000} diagnostic, never silently miscompiled.
+ * {@code std/console}, declaration/host-module imports, async, host ABI,
+ * {@code @jsonable}, for/for-of loops, break/continue, try/throw — is
+ * rejected with a backend {@code E6000} diagnostic, never silently
+ * miscompiled.
+ *
+ * <p>Module imports (ISSUE-0096) emit a load-time initialization trigger:
+ * the import statement becomes {@code static { <ImportedClass>.__init$();
+ * }} at the import's source position, and invoking a static method of a
+ * class triggers that class's initialization (JLS §12.4.1), which runs the
+ * imported module's load-time statements (its own static initializers and
+ * field initializers) exactly where LuaJIT runs {@code require} —
+ * depth-first in import order, before the importing module's later
+ * load-time statements. The trigger is emitted even for an
+ * imported-but-unused alias, so the imported module's load-time side
+ * effects are never silently dropped. Java's at-most-once class
+ * initialization matches LuaJIT's "modules initialize at most once per
+ * runtime instance", and runtime import cycles are rejected before codegen
+ * by the orchestrator (E2005), so no Java initialization cycle can occur
+ * (declaration-only cycles only ever call each other's empty {@code
+ * __init$}, which Java's in-progress initialization rule handles without
+ * deadlock).
  *
  * <p>Primitive arrays (ISSUE-0094) map to emitted mutable wrapper
  * classes ({@code __IntArray}/{@code __NumberArray}/{@code __StringArray}/
@@ -274,10 +295,26 @@ public final class JvmBackend {
     private final StringBuilder out = new StringBuilder();
     private int indent = 0;
 
-    /** Import alias → raw module path (e.g. {@code console → std/console}).
-     * Only {@code std/console} aliases are recorded: every other import is
-     * rejected with E6000 at the import statement (ISSUE-0091 rework). */
+    /**
+     * Import alias → module path of the imported module ({@code console →
+     * std/console} for the builtin, {@code lib → lib} for a compiled
+     * project module). The pre-scan records an alias only for {@code
+     * std/console} and for imports present in {@link #importResolutions};
+     * every other import — a stdlib module other than {@code std/console}
+     * or a declaration/host module — is rejected with E6000 at the import
+     * statement (ISSUE-0091 rework, ISSUE-0096).
+     */
     private final Map<String, String> importAliases = new LinkedHashMap<>();
+
+    /**
+     * Raw import path → module path of the imported compiled module
+     * ({@code "./lib" → lib}), supplied by {@code CompilationOrchestrator}
+     * phase 4 — the same mapping the LuaJIT use site builds. Only imports
+     * present here are accepted as project-module imports; declaration
+     * files and host modules are never entries and stay E6000 at the
+     * import statement.
+     */
+    private final Map<String, String> importResolutions;
 
     /**
      * Stack of visible local-variable bindings (DEAL name → emitted Java
@@ -414,6 +451,17 @@ public final class JvmBackend {
     private final Map<String, String> forwardReadViolations =
         new LinkedHashMap<>();
 
+    /**
+     * Function name → set of import aliases its body references
+     * transitively (through same-module calls). Used to reject a
+     * module-level call of a function whose body reaches an import
+     * declared at or after the call site: LuaJIT has not run the require
+     * yet and fails at load, while Java would silently initialize the
+     * imported class (ISSUE-0096).
+     */
+    private final Map<String, Set<String>> transitiveImportReads =
+        new LinkedHashMap<>();
+
     /** Function name → a module field declared after the function that its
      * body WRITES (write-dominance analysis; see
      * {@link #computeForwardFieldViolations}). Emitting such a function is
@@ -434,12 +482,25 @@ public final class JvmBackend {
      * module-level calls that transitively read later-declared fields. */
     private int currentModuleStatementIndex = -1;
 
+    /** Import alias → statement index of its import statement (project
+     * modules only; {@code std/console} has no load-time trigger and no
+     * entry). Used to reject module-level uses of an alias before its
+     * import statement: LuaJIT emits the {@code require} at the import's
+     * source position, so an earlier use reads the not-yet-required
+     * global and fails at load, while Java would silently initialize the
+     * imported class (ISSUE-0096). */
+    private final Map<String, Integer> importAliasStatementIndices =
+        new LinkedHashMap<>();
+
     private JvmBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
-                       String sourcePath, String modulePath) {
+                       String sourcePath, String modulePath,
+                       Map<String, String> importResolutions) {
         this.typeMap = typeMap;
         this.symbols = symbols;
         this.sourcePath = sourcePath;
         this.modulePath = modulePath;
+        this.importResolutions = importResolutions == null
+            ? Map.of() : Map.copyOf(importResolutions);
         localScopes.push(new LinkedHashMap<>());
     }
 
@@ -453,7 +514,7 @@ public final class JvmBackend {
      */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath) {
-        return generate(program, result, sourcePath, sourcePath);
+        return generate(program, result, sourcePath, sourcePath, Map.of());
     }
 
     /**
@@ -464,8 +525,24 @@ public final class JvmBackend {
      */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath) {
+        return generate(program, result, sourcePath, modulePath, Map.of());
+    }
+
+    /**
+     * Generates Java source for a checked module with an explicit module
+     * path and the orchestrator's import resolution map (ISSUE-0096).
+     *
+     * @param importResolutions raw import path → module path of the
+     *                          imported compiled module (e.g. {@code "./lib"
+     *                          → lib}); an import whose raw path is absent
+     *                          is rejected with E6000 at the import
+     *                          statement
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            Map<String, String> importResolutions) {
         JvmBackend backend = new JvmBackend(result.typeMap(), result.symbolTable(),
-            sourcePath, modulePath);
+            sourcePath, modulePath, importResolutions);
         return backend.generateProgram(program);
     }
 
@@ -578,17 +655,29 @@ public final class JvmBackend {
         for (int i = 0; i < statements.size(); i++) {
             StatementNode stmt = statements.get(i);
             if (stmt instanceof ImportDeclaration imp) {
-                // ISSUE-0091 rework: any import other than std/console is
-                // out of scope and rejected AT THE IMPORT STATEMENT itself —
-                // even when unused — because the imported module's load-time
-                // side effects run under LuaJIT (require time) but could
-                // never run in a skeleton JVM build, and multi-module
-                // projects must fail loudly rather than silently dropping
-                // module code.
+                // ISSUE-0096: imports of compiled project modules are
+                // supported — the alias maps to the imported module's
+                // module path, and alias.fn(args) emits a static call on
+                // the imported module's emitted class. std/console stays
+                // the trusted builtin. Any other import — a stdlib module
+                // other than std/console, a declaration/host module (never
+                // an importResolutions entry: the orchestrator skips
+                // declaration files in JVM codegen) — is out of scope and
+                // rejected AT THE IMPORT STATEMENT itself, even when
+                // unused, because the imported module's require-time side
+                // effects have no JVM slice equivalent and must fail
+                // loudly rather than be silently dropped.
                 if ("std/console".equals(imp.modulePath())) {
                     importAliases.put(imp.alias(), imp.modulePath());
+                    continue;
+                }
+                String resolved = importResolutions.get(imp.modulePath());
+                if (resolved != null) {
+                    importAliases.put(imp.alias(), resolved);
+                    importAliasStatementIndices.put(imp.alias(), i);
                 } else {
-                    unsupported("module imports other than std/console ('"
+                    unsupported("module imports other than compiled "
+                        + "project modules and std/console ('"
                         + imp.modulePath() + "')", imp.span());
                 }
             } else if (stmt instanceof VariableDeclaration vd) {
@@ -729,18 +818,23 @@ public final class JvmBackend {
     private void computeTransitiveFieldReads() {
         Map<String, Set<String>> directReads = new LinkedHashMap<>();
         Map<String, Set<String>> directCalls = new LinkedHashMap<>();
+        Map<String, Set<String>> directImportReads = new LinkedHashMap<>();
         for (Map.Entry<String, FunctionDeclaration> e : moduleFunctions.entrySet()) {
             Set<String> reads = new LinkedHashSet<>();
             Set<String> calls = new LinkedHashSet<>();
-            collectBodyReferences(e.getValue(), reads, calls);
+            Set<String> imports = new LinkedHashSet<>();
+            collectBodyReferences(e.getValue(), reads, calls, imports);
             directReads.put(e.getKey(), reads);
             directCalls.put(e.getKey(), calls);
+            directImportReads.put(e.getKey(), imports);
         }
         for (String name : moduleFunctions.keySet()) {
             transitiveFieldReads.put(name, closureReads(name, directReads,
                 directCalls, new LinkedHashMap<>(), new HashSet<>()));
             transitiveFunctionCalls.put(name, closureCalls(name, directCalls,
                 new LinkedHashMap<>(), new HashSet<>()));
+            transitiveImportReads.put(name, closureReads(name, directImportReads,
+                directCalls, new LinkedHashMap<>(), new HashSet<>()));
         }
     }
 
@@ -795,60 +889,64 @@ public final class JvmBackend {
      * unsupported by the backend (rejected later), so they are not walked.
      */
     private void collectBodyReferences(FunctionDeclaration fd,
-            Set<String> fieldReads, Set<String> calledFunctions) {
+            Set<String> fieldReads, Set<String> calledFunctions,
+            Set<String> importReads) {
         Deque<Set<String>> locals = new ArrayDeque<>();
         Set<String> params = new LinkedHashSet<>();
         for (Parameter p : fd.params()) params.add(p.name());
         locals.push(params);
         collectStatementListRefs(fd.body().statements(), locals,
-            fieldReads, calledFunctions);
+            fieldReads, calledFunctions, importReads);
     }
 
     private void collectStatementListRefs(List<StatementNode> stmts,
             Deque<Set<String>> locals, Set<String> fieldReads,
-            Set<String> calledFunctions) {
+            Set<String> calledFunctions, Set<String> importReads) {
         for (StatementNode stmt : stmts) {
-            collectStatementRefs(stmt, locals, fieldReads, calledFunctions);
+            collectStatementRefs(stmt, locals, fieldReads, calledFunctions,
+                importReads);
         }
     }
 
     private void collectStatementRefs(StatementNode stmt,
             Deque<Set<String>> locals, Set<String> fieldReads,
-            Set<String> calledFunctions) {
+            Set<String> calledFunctions, Set<String> importReads) {
         switch (stmt) {
             case VariableDeclaration vd -> {
                 collectExprRefs(vd.initializer(), locals, fieldReads,
-                    calledFunctions);
+                    calledFunctions, importReads);
                 locals.peek().add(vd.name());
             }
             case ReturnStatement rs -> rs.expr().ifPresent(
-                e -> collectExprRefs(e, locals, fieldReads, calledFunctions));
+                e -> collectExprRefs(e, locals, fieldReads, calledFunctions,
+                    importReads));
             case ExpressionStatement es ->
-                collectExprRefs(es.expr(), locals, fieldReads, calledFunctions);
+                collectExprRefs(es.expr(), locals, fieldReads,
+                    calledFunctions, importReads);
             case IfStatement is -> {
                 collectExprRefs(is.condition(), locals, fieldReads,
-                    calledFunctions);
+                    calledFunctions, importReads);
                 collectBlockRefs(is.thenBlock(), locals, fieldReads,
-                    calledFunctions);
+                    calledFunctions, importReads);
                 if (is.elseBranch().isPresent()) {
                     switch (is.elseBranch().get()) {
                         case Either.Left<IfStatement, Block> left ->
                             collectStatementRefs(left.value(), locals,
-                                fieldReads, calledFunctions);
+                                fieldReads, calledFunctions, importReads);
                         case Either.Right<IfStatement, Block> right ->
                             collectBlockRefs(right.value(), locals,
-                                fieldReads, calledFunctions);
+                                fieldReads, calledFunctions, importReads);
                     }
                 }
             }
             case WhileStatement ws -> {
                 collectExprRefs(ws.condition(), locals, fieldReads,
-                    calledFunctions);
+                    calledFunctions, importReads);
                 collectBlockRefs(ws.body(), locals, fieldReads,
-                    calledFunctions);
+                    calledFunctions, importReads);
             }
             case Block b -> collectBlockRefs(b, locals, fieldReads,
-                calledFunctions);
+                calledFunctions, importReads);
             // Unsupported statement kinds (for/for-of, try, nested
             // functions, classes, …) are rejected with E6000 when emitted;
             // nothing to walk here.
@@ -857,15 +955,17 @@ public final class JvmBackend {
     }
 
     private void collectBlockRefs(Block b, Deque<Set<String>> locals,
-            Set<String> fieldReads, Set<String> calledFunctions) {
+            Set<String> fieldReads, Set<String> calledFunctions,
+            Set<String> importReads) {
         locals.push(new LinkedHashSet<>());
         collectStatementListRefs(b.statements(), locals, fieldReads,
-            calledFunctions);
+            calledFunctions, importReads);
         locals.pop();
     }
 
     private void collectExprRefs(ExpressionNode e, Deque<Set<String>> locals,
-            Set<String> fieldReads, Set<String> calledFunctions) {
+            Set<String> fieldReads, Set<String> calledFunctions,
+            Set<String> importReads) {
         switch (e) {
             case IdentifierExpr id -> {
                 if (!isLocallyBound(locals, id.name())
@@ -873,13 +973,23 @@ public final class JvmBackend {
                         && moduleFieldIndices.containsKey(id.name())) {
                     fieldReads.add(id.name());
                 }
+                // An import alias in a value position is E6000 at emission;
+                // record it anyway so a module-level call of a function
+                // that reaches an import declared after the call site is
+                // rejected (LuaJIT reads the not-yet-required global).
+                if (importAliasStatementIndices.containsKey(id.name())) {
+                    importReads.add(id.name());
+                }
             }
             case BinaryExpr bin -> {
-                collectExprRefs(bin.left(), locals, fieldReads, calledFunctions);
-                collectExprRefs(bin.right(), locals, fieldReads, calledFunctions);
+                collectExprRefs(bin.left(), locals, fieldReads,
+                    calledFunctions, importReads);
+                collectExprRefs(bin.right(), locals, fieldReads,
+                    calledFunctions, importReads);
             }
             case UnaryExpr u ->
-                collectExprRefs(u.expr(), locals, fieldReads, calledFunctions);
+                collectExprRefs(u.expr(), locals, fieldReads, calledFunctions,
+                    importReads);
             case CallExpr call -> {
                 if (call.callee() instanceof IdentifierExpr id
                         && symbols.resolve(id.name()) instanceof Symbol.FunctionSymbol
@@ -887,12 +997,19 @@ public final class JvmBackend {
                     calledFunctions.add(id.name());
                 } else {
                     collectExprRefs(call.callee(), locals, fieldReads,
-                        calledFunctions);
+                        calledFunctions, importReads);
                 }
                 for (ExpressionNode arg : call.args()) {
-                    collectExprRefs(arg, locals, fieldReads, calledFunctions);
+                    collectExprRefs(arg, locals, fieldReads, calledFunctions,
+                        importReads);
                 }
             }
+            // The member-access object is the import alias for an imported
+            // direct call (lib.add(...)) — walked so the alias lands in
+            // importReads.
+            case MemberAccessExpr mae ->
+                collectExprRefs(mae.object(), locals, fieldReads,
+                    calledFunctions, importReads);
             // Assignment targets are writes, not reads; LuaJIT and Java
             // agree on write order (the write happens, then the later field
             // initializer overwrites), so only the value side is walked.
@@ -902,10 +1019,13 @@ public final class JvmBackend {
             // forward static-field reference under Java — so they are
             // walked like any other read.
             case AssignmentExpr ae -> {
-                collectExprRefs(ae.value(), locals, fieldReads, calledFunctions);
+                collectExprRefs(ae.value(), locals, fieldReads, calledFunctions,
+                    importReads);
                 if (ae.target() instanceof IndexExpr idx) {
-                    collectExprRefs(idx.array(), locals, fieldReads, calledFunctions);
-                    collectExprRefs(idx.index(), locals, fieldReads, calledFunctions);
+                    collectExprRefs(idx.array(), locals, fieldReads,
+                        calledFunctions, importReads);
+                    collectExprRefs(idx.index(), locals, fieldReads,
+                        calledFunctions, importReads);
                 }
             }
             // Array reads/literals/length are value positions (ISSUE-0094):
@@ -915,21 +1035,23 @@ public final class JvmBackend {
             // would slip past the load-time guard and emit a Java forward
             // reference (LuaJIT fails at load with a nil read).
             case IndexExpr idx -> {
-                collectExprRefs(idx.array(), locals, fieldReads, calledFunctions);
-                collectExprRefs(idx.index(), locals, fieldReads, calledFunctions);
+                collectExprRefs(idx.array(), locals, fieldReads,
+                    calledFunctions, importReads);
+                collectExprRefs(idx.index(), locals, fieldReads,
+                    calledFunctions, importReads);
             }
             case ArrayLiteralExpr al -> {
                 for (ExpressionNode elem : al.elements()) {
-                    collectExprRefs(elem, locals, fieldReads, calledFunctions);
+                    collectExprRefs(elem, locals, fieldReads, calledFunctions,
+                        importReads);
                 }
             }
-            case MemberAccessExpr mae ->
-                collectExprRefs(mae.object(), locals, fieldReads, calledFunctions);
             // Template interpolations are value positions; the literal
             // parts carry no references.
             case TemplateLiteralExpr tl -> {
                 for (ExpressionNode part : tl.parts()) {
-                    collectExprRefs(part, locals, fieldReads, calledFunctions);
+                    collectExprRefs(part, locals, fieldReads, calledFunctions,
+                        importReads);
                 }
             }
             // Literals and unsupported forms (rejected later) are not walked.
@@ -955,6 +1077,21 @@ public final class JvmBackend {
                 Set.of())) {
             Integer idx = moduleFieldIndices.get(field);
             if (idx != null && idx >= callIndex) return field;
+        }
+        return null;
+    }
+
+    /** The name of an import alias declared at or after {@code callIndex}
+     * that {@code functionName}'s body references transitively, or {@code
+     * null}. LuaJIT emits the {@code require} at the import's source
+     * position, so a module-level call of such a function before that
+     * position reads the not-yet-required global and fails at load, while
+     * Java would silently initialize the imported class (ISSUE-0096). */
+    private String laterImportRead(String functionName, int callIndex) {
+        for (String alias : transitiveImportReads.getOrDefault(functionName,
+                Set.of())) {
+            Integer idx = importAliasStatementIndices.get(alias);
+            if (idx != null && idx > callIndex) return alias;
         }
         return null;
     }
@@ -1276,6 +1413,11 @@ public final class JvmBackend {
         emitLine("// would make statements after the loop unreachable and a constant-false");
         emitLine("// condition would make the loop body unreachable — both javac errors.");
         emitLine("static boolean loopCond(boolean v) { return v; }");
+        emitLine("// Import initialization trigger (ISSUE-0096): importers invoke this");
+        emitLine("// no-op so the imported class initializes (JLS §12.4.1) exactly where");
+        emitLine("// LuaJIT runs require. The name contains '$', which DEAL identifiers");
+        emitLine("// cannot contain, so it can never collide with a user function.");
+        emitLine("static void __init$() {}");
         emitLine();
         emitLine("// ---- DEAL primitive array runtime support (ISSUE-0094) ----");
         emitLine("// int[]/number[]/string[]/boolean[] map to mutable wrapper classes — the");
@@ -1367,7 +1509,7 @@ public final class JvmBackend {
             case IfStatement is -> emitIf(is);
             case Block b -> emitBlock(b);
             case ExpressionStatement es -> emitExpressionStatement(es);
-            case ImportDeclaration id -> { /* recorded in the pre-scan; nothing to emit */ }
+            case ImportDeclaration id -> emitImportTrigger(id);
             case ExportDeclaration ed -> emitExport(ed);
             case ClassDeclaration cd ->
                 unsupported("class declarations", cd.span());
@@ -1390,6 +1532,30 @@ public final class JvmBackend {
         } else {
             unsupported("this export form", ed.span());
         }
+    }
+
+    /**
+     * Emits the load-time trigger for a project-module import (ISSUE-0096):
+     * a {@code static { <Class>.__init$(); }} block at the import
+     * statement's source position. Invoking a static method of a class
+     * triggers that class's initialization (JLS §12.4.1), which runs the
+     * imported module's load-time statements — exactly where LuaJIT runs
+     * {@code require} for the import. The trigger is emitted even when the
+     * alias is never used, so the imported module's load-time side effects
+     * are never silently dropped. {@code std/console} imports have no
+     * trigger (the builtin has no require-time side effects in the slice).
+     */
+    private void emitImportTrigger(ImportDeclaration id) {
+        String module = importAliases.get(id.alias());
+        if (module == null || "std/console".equals(module)) {
+            return; // std/console: no load-time trigger
+        }
+        String className = classNameFor(module);
+        emitLine("static {");
+        indent++;
+        emitLine(className + ".__init$();");
+        indent--;
+        emitLine("}");
     }
 
     private void emitVariable(VariableDeclaration vd) {
@@ -2566,6 +2732,17 @@ public final class JvmBackend {
                         call.span());
                     return "null";
                 }
+                String laterImport = laterImportRead(id.name(),
+                    currentModuleStatementIndex);
+                if (laterImport != null) {
+                    unsupported("module-level call of '" + id.name()
+                        + "' whose body (transitively) uses the import '"
+                        + laterImport + "' declared at or after the call "
+                        + "site (LuaJIT has not run the require yet and "
+                        + "fails at load; Java would silently initialize "
+                        + "the imported class)", call.span());
+                    return "null";
+                }
             }
             List<String> argCodes = emitOperandsInOrder(call.args());
             StringBuilder sb = new StringBuilder(javaName(id.name())).append('(');
@@ -2579,7 +2756,15 @@ public final class JvmBackend {
         return "null";
     }
 
-    /** {@code console.log(x)} / {@code console.error(x)} on a std/console alias. */
+    /**
+     * A member access used as a direct call: {@code alias.fn(args)}.
+     * {@code std/console} aliases map {@code log}/{@code error} to
+     * {@code System.out}/{@code System.err}; project-module aliases
+     * (ISSUE-0096) map to a static call on the imported module's emitted
+     * class ({@code lib.add(a, b)} → {@code Lib.add(a, b)}), which also
+     * triggers the imported module's class initialization exactly where
+     * LuaJIT's require has already run it (the import statement's trigger).
+     */
     private String emitMemberAccessCall(MemberAccessExpr mae, CallExpr call) {
         if (!(mae.object() instanceof IdentifierExpr id)) {
             unsupported("member access on non-identifier objects", mae.span());
@@ -2587,25 +2772,49 @@ public final class JvmBackend {
         }
         String module = importAliases.get(id.name());
         if (module == null) {
-            unsupported("member access (only std/console output is supported)",
-                mae.span());
+            unsupported("member access (only module function calls on "
+                + "imported project modules and std/console output are "
+                + "supported)", mae.span());
             return "null";
         }
-        if (!"std/console".equals(module)) {
-            unsupported("module imports other than std/console", mae.span());
-            return "null";
-        }
-        String target = switch (mae.field()) {
-            case "log" -> "java.lang.System.out";
-            case "error" -> "java.lang.System.err";
-            default -> {
-                unsupported("export '" + mae.field() + "' of std/console", mae.span());
-                yield null;
+        if ("std/console".equals(module)) {
+            String target = switch (mae.field()) {
+                case "log" -> "java.lang.System.out";
+                case "error" -> "java.lang.System.err";
+                default -> {
+                    unsupported("export '" + mae.field() + "' of std/console", mae.span());
+                    yield null;
+                }
+            };
+            if (target == null) return "null";
+            List<String> argCodes = emitOperandsInOrder(call.args());
+            StringBuilder sb = new StringBuilder(target).append(".println(");
+            for (int i = 0; i < argCodes.size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(argCodes.get(i));
             }
-        };
-        if (target == null) return "null";
+            return sb.append(')').toString();
+        }
+        // Project-module import (ISSUE-0096): a static call on the imported
+        // module's emitted class. The checker has already verified the
+        // export exists (E2004) and typed the member as the exported
+        // function, so the emitted method is guaranteed to be declared by
+        // the imported module's artifact.
+        if (currentModuleStatementIndex >= 0) {
+            Integer importIdx = importAliasStatementIndices.get(id.name());
+            if (importIdx != null && importIdx > currentModuleStatementIndex) {
+                unsupported("module-level use of import '" + id.name()
+                    + "' before its import statement (LuaJIT reads the "
+                    + "not-yet-required global at load and fails; Java "
+                    + "would silently initialize the imported class)",
+                    mae.span());
+                return "null";
+            }
+        }
+        String className = classNameFor(module);
         List<String> argCodes = emitOperandsInOrder(call.args());
-        StringBuilder sb = new StringBuilder(target).append(".println(");
+        StringBuilder sb = new StringBuilder(className).append('.')
+            .append(javaName(mae.field())).append('(');
         for (int i = 0; i < argCodes.size(); i++) {
             if (i > 0) sb.append(", ");
             sb.append(argCodes.get(i));

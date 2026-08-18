@@ -1,4 +1,4 @@
-# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice)
+# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice, ISSUE-0096 modules/imports/exports slice)
 
 A small but real end-to-end JVM backend for the DEAL compiler. It walks the
 typed AST (the compiler's IR — `deal-compiler-architecture-v1`) and emits a
@@ -34,13 +34,16 @@ Supported (real semantics, spec JVM value mapping):
 | `int()` / `number()` intrinsics | `intFromNumber` / `numberFromInt` helpers (E8001/E8004) |
 | `import * as c from "std/console"` | `c.log` → `java.lang.System.out.println`, `c.error` → `java.lang.System.err.println` |
 | `int[]` / `number[]` / `string[]` / `boolean[]` | mutable wrapper classes `__IntArray` / `__NumberArray` / `__StringArray` / `__BooleanArray` holding a primitive Java array (the spec's "specialized primitive array wrapper") — literals `new __IntArray(new long[]{…})`, index reads via the emitted `__intArrayRead`-family helpers (typed read sites raise E8001 past the end; `===`/`!==` operand positions box the read — `__intArrayReadBoxed` family, null past the end — and compute the nil comparison per the read-site contract), element writes via the `__intArrayWrite`-family helpers, `.length` via `((long) xs.data.length)`. The wrapper identity is stable across appends (a write at `i == length` grows the wrapped storage in place), so aliases observe every write exactly like LuaJIT's shared 1-based table |
+| `import * as lib from "./lib"` (compiled project module, ISSUE-0096) | the import statement emits a load-time `static { <LibClass>.__init$(); }` trigger (a static-method invocation initializes the imported class per JLS §12.4.1, running its load-time statements exactly where LuaJIT runs `require` — depth-first in import order, also for unused aliases); `lib.add(a, b)` emits a static call on the imported module's emitted class (`Lib.add(a, b)`) |
 
 Out of scope (rejected with a backend `E6000` diagnostic, never silently
-miscompiled): modules (any import other than `std/console`), classes, tables,
-nullables, nullable arrays, arrays of nullable elements, nested
-(multi-dimensional) arrays, class arrays, function arrays, function types,
-stdlib modules, async/await, for/for-of loops, try/throw, host ABI,
-`@jsonable`.
+miscompiled): classes (including imported classes and cross-module nominal
+identity — deferred to ISSUE-0109), tables, nullables, nullable arrays,
+arrays of nullable elements, nested (multi-dimensional) arrays, class
+arrays, function arrays, function types, stdlib modules other than
+`std/console`, declaration/host-module imports (a `.d.deal` import is never
+a codegen entry and stays E6000 at the import statement; host ABI is
+deferred), async/await, for/for-of loops, try/throw, `@jsonable`.
 
 The JVM's static type system proves typed boundaries redundant, which the
 current normative spec explicitly permits (`docs/spec-v1.1.md` §JVM backend
@@ -296,11 +299,40 @@ reports success for an artifact `javac` would reject.
   fact(n - 1); }` — fixtures `jvm-fn-self-recursion-factorial` /
   `jvm-fn-self-recursion-fibonacci` / `jvm-fn-void-recursion`) and
   forward calls between functions run with full parity.
-- **Imports are rejected at the import statement.** Any `import` other than
-  `std/console` is an E6000 at the import itself — even when unused —
-  because the imported module's require-time side effects cannot be
-  reproduced by the skeleton (a never-initialized JVM class would silently
-  drop them) and multi-module JVM projects must fail loudly.
+- **Module imports emit a load-time initialization trigger.** An import of a
+  compiled project module becomes `static { <Class>.__init$(); }` at the
+  import statement's source position; invoking a static method of a class
+  triggers that class's initialization (JLS §12.4.1), which runs the
+  imported module's load-time statements (its own static initializers and
+  field initializers) exactly where LuaJIT runs `require` — depth-first in
+  import order, before the importing module's later load-time statements.
+  The trigger is emitted even when the alias is never used, so the
+  imported module's load-time side effects are never silently dropped
+  (pinned by the fixture `jvm-mod-unused-import-side-effect` and
+  `JvmBackendTest.testOrchestratorJvmImportSupported`). Java's at-most-once
+  class initialization matches LuaJIT's at-most-once module initialization,
+  runtime import cycles are rejected before codegen by the orchestrator
+  (E2005), and declaration-only cycles only ever call each other's empty
+  `__init$`, which Java's in-progress initialization rule handles without
+  deadlock. An import the orchestrator did not resolve to a compiled
+  module — a stdlib module other than `std/console`, a declaration/host
+  module — is an E6000 at the import itself, even when unused, because its
+  require-time semantics have no JVM slice equivalent.
+- **Module-level use of an import alias before its import statement is
+  rejected, not miscompiled.** LuaJIT emits the `require` at the import's
+  source position, so an earlier module-level use reads the
+  not-yet-required global and fails at load (verified with real luajit:
+  `let base: int = lib.value(); import * as lib from "./lib"` fails with
+  "attempt to index global 'lib' (a nil value)", and the transitive shape
+  `function f(): int { return lib.value(); } f(); import * as lib from
+  "./lib"` fails the same way at load), while Java would silently
+  initialize the imported class on first static call. Both shapes are
+  E6000: a direct module-level member call on an alias whose import
+  statement comes later, and a module-level call of a function whose body
+  references such an alias (transitively, through same-module calls — the
+  same closure machinery as the later-field/later-function guards). The
+  import-first shape stays clean and emits the trigger before the use
+  (pinned by `JvmBackendTest.testModuleImportUseBeforeImportRejected`).
 - **Class names are collision-safe.** The class name derives from the full
   module path (`app/main` → `AppMain`, `sub/main` → `SubMain`), and the
   orchestrator reports E6000 if two modules still map to the same class
@@ -638,15 +670,59 @@ fixture whose codegen or JVM execution is bypassed):
   plus `copyRuntimeLibrary`/`copyStdlibModules`, byte-for-byte unchanged,
   dispatched only when `backend == Backend.LUAJIT`.
 
-- **JVM use site** — `CompilationOrchestrator.codegenAllJvm()`: calls
-  `JvmBackend.generate(...)` for every module, merges E6000 diagnostics into
-  the standard error report (no artifact for a rejected module), writes
-  `<ClassName>.java` with collision detection, fails the compile on any
-  E6000, and prints a warning when `--source-map` is requested (the JVM
-  path produces no sidecars). The conformance use site is
-  `test/BackendConformanceTest.runJvmAssertions()`: real `JvmBackend`
-  codegen → `javac` subprocess (asserts `.class` artifacts exist) →
-  `java` subprocess → asserts stdout/error/exit code.
+- **JVM use site** — `CompilationOrchestrator.codegenAllJvm()`: builds the
+  per-module import resolution map (raw import path → imported compiled
+  module path, declaration files excluded — ISSUE-0096) exactly like the
+  LuaJIT use site, calls `JvmBackend.generate(...)` with it for every
+  module, merges E6000 diagnostics into the standard error report (no
+  artifact for a rejected module), writes `<ClassName>.java` with
+  collision detection, fails the compile on any E6000, and prints a
+  warning when `--source-map` is requested (the JVM path produces no
+  sidecars). The conformance use site is
+  `test/BackendConformanceTest.runJvmAssertions()` (single-module
+  fixtures): real `JvmBackend` codegen → `javac` subprocess (asserts
+  `.class` artifacts exist) → `java` subprocess → asserts
+  stdout/error/exit code; multi-module fixtures (ISSUE-0096) go through
+  `test/BackendConformanceTest.runMultiModuleTestCase()` instead: real
+  `CompilationOrchestrator` compile (module discovery, signatures,
+  ordering, checking, per-module JvmBackend codegen) → `javac` over every
+  emitted artifact plus a runner → `java` execution → asserts.
+
+## Review evidence: module/import/export forms (ISSUE-0096)
+
+Every supported module/import/export form and the test covering it
+(fixtures run the real frontend → orchestrator → JvmBackend codegen →
+`javac` → `java` pipeline in
+`test/conformance/fixtures/jvm-modules-slice.json`, driven by
+`test/BackendConformanceTest.runMultiModuleTestCase`; emission-level pins
+live in `test/JvmBackendTest`):
+
+| Form | Coverage |
+|---|---|
+| namespace import `import * as alias from "./lib"` (relative path) | every fixture; import-trigger emission pinned by `JvmBackendTest.testModuleImportBackendEmission` (`static { Lib.__init$(); }`) |
+| namespace import of a subdirectory module `import * as aCalc from "./a/calc"` | `jvm-mod-class-name-isolation`, `jvm-mod-multiple-imports` |
+| exported function `export function f(...): R { ... }` consumed through an alias | `jvm-mod-imported-direct-call` (`lib.add(2, 3)` → `Lib.add(2L, 3L)`, static-call emission pinned by `JvmBackendTest.testModuleImportBackendEmission`) |
+| multiple exports with mixed signatures (boolean/string params, string return) | `jvm-mod-export-signatures` |
+| an imported export whose body calls its own module's non-exported function | `jvm-mod-nested-module-calls` |
+| an imported export that self-recurses in its own module | `jvm-mod-imported-recursion` |
+| imported null-returning (void) call hoisted as a pre-statement | `jvm-mod-imported-void-call`; emission pinned by `JvmBackendTest.testModuleImportBackendEmission` (`Lib.tick();`) |
+| import load-time ordering (imported module's load-time statements run at the import position, before the importer's later statements) | `jvm-mod-import-load-time-order` (lib-load → main-load → ping); sibling-import depth-first order pinned by `JvmBackendTest.testModuleUnusedImportLoadTime` |
+| imported-but-unused alias still runs the imported module's load-time side effects | `jvm-mod-unused-import-side-effect`; `JvmBackendTest.testOrchestratorJvmImportSupported` |
+| transitive import chains (b imports c; entry imports b) | `jvm-mod-transitive-import` (c-load → b-load → main-load, `b.plus(5)` = 15) |
+| imported direct call at module level (load time) feeding a field initializer | `jvm-mod-load-time-imported-call` |
+| imported export using while loops and string concatenation in its own module | `jvm-mod-imported-strings-while` |
+| left-to-right argument evaluation with hoisted null-typed side effects across the module boundary | `jvm-mod-imported-arg-order` |
+| multiple imports whose exported names collide, disambiguated by alias | `jvm-mod-multiple-imports` |
+| module class-name isolation: same basename in different directories → distinct classes (`a/calc` → `ACalc`, `b/calc` → `BCalc`) | `jvm-mod-class-name-isolation`; artifacts pinned by `JvmBackendTest.testModuleClassIsolation`; collisions still E6000 (`JvmBackendTest.testOrchestratorJvmClassCollision`) |
+| orchestrator-level multi-module compile (artifacts, static call, javac + java execution) | `JvmBackendTest.testModuleImports` |
+| frontend compile-error gates rejected before any backend (no artifacts) | `jvm-mod-missing-export` (E2004 missing export), `jvm-mod-imported-arity-mismatch` (E3009), `jvm-mod-imported-type-error` (E5003 in the imported module) |
+| declaration/host-module import stays E6000 (out of slice, never silently dropped) | `JvmBackendTest.testOrchestratorJvmDeclarationImportRejected`; backend-level no-map rejection by `JvmBackendTest.testModuleImportBackendEmission` |
+| module-level alias use before its import statement is E6000 (LuaJIT fails at load; Java would silently initialize) | `JvmBackendTest.testModuleImportUseBeforeImportRejected` (direct field-initializer, direct statement, and transitive function-call shapes; the import-first shape stays clean) |
+
+Not in this slice (deferred, documented): imported classes and
+cross-module nominal identity (ISSUE-0109), stdlib modules other than
+`std/console`, function values, async/await, host ABI, `@jsonable`.
+
 
 - **Tests proving both** —
   - LuaJIT: the full pre-existing suite (`test/LuaBackendTest`,
@@ -693,6 +769,23 @@ fixture whose codegen or JVM execution is bypassed):
     two frontend compile-error gates rejected before any backend
     (E3007 non-boolean while condition, E3016 non-string template
     interpolation).
+  - JVM: `test/conformance/fixtures/jvm-modules-slice.json` — sixteen
+    ISSUE-0096 multi-module fixtures (JVM-only, every runtime fixture
+    passing through the real `CompilationOrchestrator` pipeline — module
+    discovery, signature extraction, dependency ordering, checking,
+    per-module JvmBackend codegen — then `javac` over every emitted
+    artifact plus a runner and `java` execution): imported direct calls,
+    mixed-signature exports, an imported export calling its own module's
+    internal function, imported self-recursion, imported void calls,
+    import load-time ordering, unused-import side effects, transitive
+    import chains, same-basename module class-name isolation, load-time
+    imported calls feeding field initializers, imported while/string
+    bodies, cross-boundary argument evaluation order, same-named exports
+    disambiguated by alias, and three frontend compile-error gates
+    rejected before any backend (E2004 missing export, E3009 arity
+    mismatch, E5003 return-type mismatch in the imported module). See
+    "Review evidence: module/import/export forms" for the form → test
+    mapping.
   - JVM: `test/conformance/fixtures/jvm-skeleton.json` — fifty-three
     fixtures (JVM-only, plus cross-backend parity fixtures that also run
     under LuaJIT as the reference behavior): literals/output, int arithmetic,
@@ -794,10 +887,14 @@ fixture whose codegen or JVM execution is bypassed):
     `DEAL_ERROR_CODE`
     contract for module-level errors
     with and without a zero-arity export, the orchestrator JVM path (artifact
-    exists, compiles, no `.lua`/runtime copied, import rejection,
+    exists, compiles, no `.lua`/runtime copied, project-module imports
+    supported with the load-time `__init$` trigger — including the
+    unused-import shape — declaration-file imports still E6000,
     class-name collision detection, the `--source-map` warning), the
     orchestrator default staying LuaJIT, `DealConfig` and CLI backend
-    selection.
+    selection, and the ISSUE-0096 module seam tests
+    (`testModuleImports`, `testModuleClassIsolation`,
+    `testModuleUnusedImportLoadTime`, `testModuleImportBackendEmission`).
 
 ## Tests
 
@@ -824,117 +921,21 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
 
 ## Known skeleton limitations (documented, not silent)
 
-- **Array reads past the end raise E8001 at typed read sites; the
-  boundary-less positions compute Lua's nil semantics instead.** LuaJIT
-  reads nil past the end and the *read site's* typed boundary raises
-  the error (E8001 "expected int"); the JVM typed read helper raises
-  "expected <elementType>, got null" directly because a primitive Java
-  array cannot yield nil. The code (E8001) matches the boundary
-  failure the spec's negative test documents (`let x: int = xs[99]; //
-  runtime: nil is not int`); the message spelling ("got null" vs
-  LuaJIT's plain "expected int") differs by design and is pinned
-  JVM-side. The boundary-less positions are different: spec §Bounds and
-  nil behavior applies no typed boundary to a discarded read, a
-  `===`/`!==` operand, a `!` operand, or a `&&`/`||` operand, so
-  LuaJIT computes on the nil value and the JVM must not raise E8001
-  there. A discarded standalone read drops the boxed value (no E8001);
-  `===`/`!==` compute the nil comparison (`xs[99] === 5` → false,
-  `xs[99] !== 5` → true, `xs[99] === xs[99]` → true); `!read` coerces
-  `not nil` → true (`(x == null || !x.booleanValue())`); and
-  `&&`/`||` operands coerce the nil to falsy with the result following
-  Lua's and/or — `nil or true` → true, `nil and true` → nil — carried
-  in boxed `java.lang.Boolean` temporaries whose null then fails at a
-  typed boolean boundary (E8001 "expected boolean, got null") exactly
-  where LuaJIT's check_boolean(nil) fails. All these positions emit
-  nullable boxed reads (`__intArrayReadBoxed` family: null past the
-  end, still E8002 for a negative index — LuaJIT raises that
-  unconditionally), and every effectful operand is materialized into a
-  pre-statement temporary first, so a later operand always evaluates
-  (LuaJIT evaluates both `===` operands strictly, and skips a
-  `&&`/`||` right operand only when the left operand already decides
-  the result) — never skipped by a Java short-circuit. One residual
-  divergence stays spec-conformant: an identifier-assignment RHS read
-  (`b = bs[99]`, `b = bs[99] && true`) is a typed position under the
-  spec read-site contract (the read result is checked against the
-  target type — boolean), so the JVM raises E8001 there, while
-  LuaJIT's emitted identifier assignment performs no value check and
-  silently stores the nil (later reads of `b` then coerce or raise
-  against the nil). A boolean literal element (`[bs[99] && true]`)
-  raises E8001 "expected boolean, got null" at the JVM construction,
-  because a primitive Java array cannot store a nil element. LuaJIT
-  performs no element check at literal construction and the nil hole
-  collapses: the literal silently yields an empty (or shorter) array
-  and execution continues — verified against real luajit, where
-  `let xs: boolean[] = [bs[99] && true]` yields length 0 and exits 0
-  with no error at the literal, at the declaration boundary, or at a
-  parameter boundary (check_array iterates `1..#v` and sees no
-  element), and `[true, bs[99] && true]` yields a 1-element array —
-  the JVM raises where the reference computes. The
-  JVM follows the spec; the LuaJIT difference is
-  listed rather than matched because the spec is normative. Pinned by
-  `jvm-arr-cmp-past-end-parity` (cross-backend, all four element
-  types), `jvm-arr-cmp-negative-index-parity`,
-  `jvm-arr-discard-past-end-parity`, `jvm-arr-not-read-parity`,
-  `jvm-arr-shortcircuit-read-parity`, `jvm-arr-and-boundary-parity`
-  (all cross-backend),
-  `jvm-arr-cmp-lhs-effect-before-read-error-parity`,
-  `jvm-arr-cmp-lhs-effect-boolean-parity`,
-  `jvm-arr-cmp-lhs-effect-number-parity`,
-  `jvm-arr-cmp-lhs-effect-string-parity`,
-  `jvm-arr-cmp-lhs-effect-nilaware-right-parity`,
-  `jvm-arr-cmp-both-raise-precedence-parity`,
-  `jvm-arr-cmp-lhs-effect-inbounds-order-parity` (all cross-backend —
-  a plain value LEFT operand evaluates completely before a right
-  read's E8002 or its own error raises),
-  `JvmBackendTest.testArrayReadComparisonNilSemantics`,
-  `JvmBackendTest.testArrayReadComparisonPlainLeftOperandOrder`,
-  `JvmBackendTest.testArrayBoundaryLessReadPositions`,
-  `jvm-arr-lit-nil-element-luajit-collapse` (LuaJIT-only pin of the
-  silent empty/shorter-array collapse on the reference backend) and
-  `jvm-arr-lit-nil-element-jvm-e8001` +
-  `jvm-arr-lit-nil-element-mixed-jvm-e8001` (JVM-only pins of the
-  E8001 raised at the JVM construction).
-- **Read evaluation order: receiver before index (spec) — LuaJIT
-  evaluates the index first.** Spec §Operational semantics rule 1
-  ("Evaluate receiver expression before member/index/call arguments")
-  is the only authority the issue adopts, and the JVM follows it
-  (`get("arr", xs)[mark("idx", 2)]` prints arr, idx). LuaJIT's emitted
-  read evaluates the index expression before the receiver (its
-  check_int(index) closure statement runs before the table lookup), so
-  the same program prints idx, arr under real luajit — an observable
-  divergence for side-effecting receiver/index expressions. The JVM
-  side is spec-conformant and pinned by `jvm-arr-eval-order-read`; the
-  LuaJIT difference is listed here rather than matched because the spec
-  is normative.
-- **The element value check runs after the RHS evaluates.** Spec
-  §Operational semantics rule 3 ("Evaluate assignment RHS before LHS
-  write check") governs: the JVM emits the write as a helper call whose
-  Java arguments (receiver, index, RHS) evaluate left to right before
-  the helper performs the bounds check, the int element check
-  (`checkInt`), and the store. LuaJIT's emission performs the bounds
-  check before evaluating the RHS — an error-code divergence in the
-  corner where the RHS itself raises (`xs[4] = 9223372036854775807`:
-  JVM reports the RHS's E8004, LuaJIT reports the E8002 bounds error
-  first). The JVM follows the normative spec order and pins it
-  (`JvmBackendTest.testArrayRuntimeErrorCodes`,
-  `jvm-arr-eval-order-write`, `jvm-arr-eval-order-hoisted`).
-- **Array equality stays out of scope.** `xs === ys` on two arrays is
-  reference identity under LuaJIT and would be `==` on the wrappers
-  under JVM, but the slice scope lists only literals, indexing,
-  assignment, and length — array comparisons are E6000 rather than a
-  silent unlisted feature.
-
 - The normative spec for this backend is `docs/spec-v1.1.md` (§JVM value
   mapping / §JVM backend contract); `docs/spec-v1.2.md` is a future draft
   whose grammar is not normative here (e.g. its grammar forbids
   module-level statements while the current checker accepts them and the
   backend implements their load-time semantics). The backend cites
   spec-v1.1 only.
-- Multi-module JVM projects are rejected at the backend: any import other
-  than `std/console` is E6000 at the import statement (the imported
-  module's require-time side effects have no skeleton JVM equivalent), and
-  class-name collisions between modules are E6000 — never a silent
-  artifact overwrite.
+- Multi-module JVM projects support compiled project modules only
+  (ISSUE-0096): a namespace import of a compiled module runs its load-time
+  side effects through the emitted `__init$` trigger and imported direct
+  calls compile to static calls on the imported module's class. Imports of
+  declaration/host modules and stdlib modules other than `std/console`
+  remain E6000 at the import statement (host ABI and imported classes are
+  deferred to later issues — ISSUE-0109 for imported classes and
+  cross-module nominal identity), and class-name collisions between
+  modules are E6000 — never a silent artifact overwrite.
 - Module-level forward references are rejected: Java's
   illegal-forward-reference rule forbids `static { …x… }` /
   `static long b = c + 1L;` before `static long c;` is declared, and
