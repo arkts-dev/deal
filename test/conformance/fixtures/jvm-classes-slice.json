@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM classes and nominal checks slice (ISSUE-0095). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: local class declarations with defaulted primitive fields, object-literal class construction (defaults applied per construction, provided fields in literal evaluation order, construction before the class declaration — checker hoisting), primitive field reads and writes (int/number/boolean/string), fresh instances per construction, module-level (load-time) construction, class-field default expressions (arithmetic defaults, defaults containing null-typed calls, and nil-aware boolean defaults failing the typed boolean boundary with E8001 — parity with the identifier boundary), the boolean construction-value boundary (a nil-aware &&/|| provided value raises E8001 — never a bare unboxing NPE — while the in-bounds positive control constructs normally), the same-module nominal runtime checks at the slice's one untyped boundary (a table field read in a class-typed contextual target — success for a genuine instance, E8001 for a plain table value, for a null value, and for an identically-shaped sibling class, pinning nominal — never structural — identity), and one frontend compile-error gate rejected before any backend runs (E3001 nominal A→B assignment). Spec v1.1 classes are sealed records with no methods and no constructors, so the method surface is empty: the only callables are the module functions the earlier function-slice fixtures cover (methods where supported = none, documented in the review evidence).",
+  "description": "JVM classes and nominal checks slice (ISSUE-0095). Fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed); every fixture is JVM-only except the write-order parity pin, which also runs under real luajit. Covered forms: local class declarations with defaulted primitive fields, object-literal class construction (defaults applied per construction, provided fields in literal evaluation order, construction before the class declaration — checker hoisting), primitive field reads and writes (int/number/boolean/string), fresh instances per construction, module-level (load-time) construction, class-field default expressions (arithmetic defaults, defaults containing null-typed calls, and nil-aware boolean defaults failing the typed boolean boundary with E8001 — parity with the identifier boundary), the boolean construction-value boundary (a nil-aware &&/|| provided value raises E8001 — never a bare unboxing NPE — while the in-bounds positive control constructs normally), the same-module nominal runtime checks at the slice's one untyped boundary (a table field read in a class-typed contextual target — success for a genuine instance, E8001 for a plain table value, for a null value, and for an identically-shaped sibling class, pinning nominal — never structural — identity), and class-field write evaluation order (a cross-backend parity pin: getBox().x = make(note(\"value\")) prints target → value → make under both real luajit and the emitted JVM artifact — spec v1.1 §Operational semantics rule 1 evaluates the receiver before the RHS, pinning the pre-fix JVM inversion — and a JVM-only error-precedence pin: the receiver getP() still prints target before the RHS's nil-aware xs[0] && xs[5] crosses the write's typed boolean boundary with E8001), and one frontend compile-error gate rejected before any backend runs (E3001 nominal A→B assignment). Spec v1.1 classes are sealed records with no methods and no constructors, so the method surface is empty: the only callables are the module functions the earlier function-slice fixtures cover (methods where supported = none, documented in the review evidence).",
   "tests": [
     {
       "name": "jvm-class-construction-defaults",
@@ -278,6 +278,41 @@
       "irContains": [
         "class P",
         "[boundary: class-construct]"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-class-field-write-eval-order-parity",
+      "description": "Cross-backend parity for class field write evaluation order with a side-effecting receiver and a hoisting RHS: spec v1.1 §Operational semantics rule 1 evaluates the receiver before member/index/call arguments, so getBox() prints 'target', the RHS's hoisted null-typed call prints 'value', then make prints 'make' — target, value, make under both real luajit and the emitted JVM artifact (the pre-fix JVM flushed the RHS's hoisted print before the whole assignment statement: value, target, make)",
+      "source": "import * as console from \"std/console\"\nclass Box { x: int = 0; }\nfunction note(s: string): null { console.log(s); return; }\nfunction getBox(): Box { note(\"target\"); return { x: 0 }; }\nfunction make(v: null): int { note(\"make\"); return 1; }\nexport function test(): int { getBox().x = make(note(\"value\")); return 0; }",
+      "expectedOutput": "target\nvalue\nmake",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Box",
+        "field x"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-class-field-write-error-precedence",
+      "description": "JVM-only pin for error precedence in a class field write: the receiver evaluates first (spec v1.1 §Operational semantics rule 1), so getP() prints 'target' before the RHS's nil-aware && over a past-end boolean[] read crosses the write's typed boolean boundary and raises E8001 — target then DEAL_ERROR_CODE: E8001, exit 1 (the pre-fix JVM ran the RHS's hoisted boxed reads first and raised E8001 without printing 'target')",
+      "source": "import * as console from \"std/console\"\nclass P { b: boolean = false; }\nfunction getP(): P { console.log(\"target\"); return { b: false }; }\nexport function test(): int {\n  let xs: boolean[] = [true, false];\n  getP().b = xs[0] && xs[5];\n  return 1;\n}",
+      "expectedOutput": "target",
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "class P",
+        "field b"
       ],
       "irNotContains": [],
       "backends": [

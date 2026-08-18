@@ -4106,15 +4106,25 @@ public final class JvmBackend {
             if (objType instanceof Type.Class) {
                 // A declared class field write (spec v1.1 §Class assignment
                 // semantics): the checker guarantees the field is declared
-                // and the value matches its type; Java evaluates the object
-                // expression, then the value — LuaJIT's left-to-right order.
-                String obj = emitExpression(mae.object());
-                String value = emitExpression(ae.value());
+                // and the value matches its type. Spec §Operational
+                // semantics rule 1 makes evaluation strict and
+                // left-to-right: the receiver expression runs before the
+                // assignment RHS. emitOperandsInOrder keeps that order
+                // when the value hoists side-effecting pre-statements (a
+                // null-typed call argument, a boxed nil-aware read),
+                // materializing the receiver into a temporary assigned
+                // before the hoisted statements — the same hazard the
+                // array-write branch handles. The emitted assignment
+                // expression keeps its DEAL value in value positions
+                // (`return p.x = 5;`, `f(p.x = 5)`).
+                List<String> codes = emitOperandsInOrder(
+                    List.of(mae.object(), ae.value()));
+                String value = codes.get(1);
                 if (needsBooleanBoundary(ae.value(), typeOf(ae.value()))) {
                     value = "booleanNotNull(" + value + ")";
                 }
-                return "(" + obj + ")." + javaName(mae.field()) + " = "
-                    + value;
+                return "(" + codes.get(0) + ")." + javaName(mae.field())
+                    + " = " + value;
             }
             unsupported("assignment to table fields", ae.span());
             return "null";

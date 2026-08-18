@@ -3290,6 +3290,109 @@ public class JvmBackendTest {
             """, "class-named-base");
         check(baseRun.exitCode() == 0 && baseRun.output().contains("7"),
             "a class named Base compiles and runs: " + baseRun.output());
+
+        // ISSUE-0095 reviewer round 11: the class-field write branch
+        // emitted the receiver inline and flushed the RHS's hoisted
+        // pre-statements before the whole assignment statement, so a
+        // hoisting RHS (a null-typed call argument, a boxed nil-aware
+        // read) ran its side effects BEFORE the receiver's inline
+        // effects — the pre-fix artifact for getBox().x =
+        // make(note("value")) printed value → target → make while
+        // LuaJIT's strict left-to-right order (spec v1.1 §Operational
+        // semantics rule 1: receiver before member/index/call
+        // arguments) prints target → value → make. Both operands now
+        // route through emitOperandsInOrder, which materializes the
+        // receiver into a temporary assigned before the hoisted
+        // statements — exactly the array-write branch's fix for the
+        // same hazard.
+        Frontend fieldWriteOrder = compileFrontend("""
+            import * as console from "std/console"
+            class Box { x: int = 0; }
+            function note(s: string): null { console.log(s); return; }
+            function getBox(): Box { note("target"); return { x: 0 }; }
+            function make(v: null): int { note("make"); return 1; }
+            export function test(): int {
+              getBox().x = make(note("value"));
+              return 0;
+            }
+            """, "jvmtest-class-write-order.deal");
+        check(fieldWriteOrder.errors().isEmpty(),
+            "field-write order probe frontend clean: " + fieldWriteOrder.errors());
+        if (fieldWriteOrder.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult orderRes = JvmBackend.generate(
+                fieldWriteOrder.program(), fieldWriteOrder.checkResult(),
+                "jvmtest-class-write-order.deal", "Main");
+            check(!orderRes.hasErrors(),
+                "field-write order probe codegen clean: " + orderRes.diagnostics());
+            if (!orderRes.hasErrors()) {
+                String orderJava = orderRes.source();
+                int receiverTemp = orderJava.indexOf(" = getBox();");
+                int hoistedCall = orderJava.indexOf("note(\"value\");");
+                int store = orderJava.indexOf(".x = make(null);");
+                check(receiverTemp >= 0 && hoistedCall >= 0 && store >= 0
+                        && receiverTemp < hoistedCall && hoistedCall < store,
+                    "receiver materialized into a temp before the RHS's "
+                    + "hoisted call, store last: " + orderJava);
+            }
+        }
+
+        // The same program must run receiver → value → store as a real
+        // artifact (LuaJIT parity, pinned by the cross-backend fixture
+        // jvm-class-field-write-eval-order-parity).
+        ExecResult writeOrderRun = compileAndRunJvm("""
+            import * as console from "std/console"
+            class Box { x: int = 0; }
+            function note(s: string): null { console.log(s); return; }
+            function getBox(): Box { note("target"); return { x: 0 }; }
+            function make(v: null): int { note("make"); return 1; }
+            export function test(): int {
+              getBox().x = make(note("value"));
+              return 0;
+            }
+            """, "class-write-order");
+        check(writeOrderRun.exitCode() == 0
+                && writeOrderRun.output().startsWith("target\nvalue\nmake"),
+            "class field write evaluates receiver → value → store "
+            + "(spec rule 1): " + writeOrderRun.output());
+
+        // Error precedence: when the RHS raises at its typed boundary (a
+        // nil-aware && over boolean[] reads), the receiver must still
+        // evaluate first — the pre-fix artifact raised E8001 before the
+        // receiver's inline call ran (no "target").
+        ExecResult writeErrOrder = compileAndRunJvm("""
+            import * as console from "std/console"
+            class P { b: boolean = false; }
+            function getP(): P { console.log("target"); return { b: false }; }
+            export function test(): int {
+              let xs: boolean[] = [true, false];
+              getP().b = xs[0] && xs[5];
+              return 1;
+            }
+            """, "class-write-err-order");
+        check(writeErrOrder.exitCode() == 1
+                && writeErrOrder.output().startsWith(
+                    "target\nDEAL_ERROR_CODE: E8001"),
+            "receiver effects run before the RHS's E8001 boundary "
+            + "failure: " + writeErrOrder.output());
+
+        // The pure-user-function variant (no stdlib): the module string
+        // accumulates exactly target, value, make in evaluation order.
+        ExecResult writeOrderPure = compileAndRunJvm("""
+            let noteLog: string = "";
+            class Box { x: int = 0; }
+            function note(s: string): null { noteLog = noteLog + s; return; }
+            function getBox(): Box { note("target"); return { x: 0 }; }
+            function make(v: null): int { note("make"); return 1; }
+            export function test(): int {
+              getBox().x = make(note("value"));
+              if (noteLog === "targetvaluemake") { return 0; }
+              return 1;
+            }
+            """, "class-write-order-pure");
+        check(writeOrderPure.exitCode() == 0
+                && writeOrderPure.output().contains("0"),
+            "pure-function field write accumulates targetvaluemake: "
+                + writeOrderPure.output());
     }
 
     private static void testUseBeforeDeclarationRejected() {

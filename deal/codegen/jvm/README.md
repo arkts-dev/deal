@@ -851,11 +851,12 @@ cross-module nominal identity (ISSUE-0109), stdlib modules other than
     javac reject the artifact after the CLI reported success), and two
     frontend compile-error gates rejected before any backend (E3009
     arity mismatch, E5001 argument-type mismatch).
-  - JVM: `test/conformance/fixtures/jvm-classes-slice.json` — seventeen
-    ISSUE-0095 fixtures, all JVM-only, every runtime fixture passing
-    through the real frontend → real `JvmBackend` codegen → `javac`
-    subprocess → `java` subprocess executing the emitted artifact (the
-    harness fails a fixture whose codegen or JVM execution is bypassed):
+  - JVM: `test/conformance/fixtures/jvm-classes-slice.json` — nineteen
+    ISSUE-0095 fixtures — eighteen JVM-only plus one cross-backend
+    parity pin — every runtime fixture passing through the real
+    frontend → real `JvmBackend` codegen → `javac` subprocess → `java`
+    subprocess executing the emitted artifact (the harness fails a
+    fixture whose codegen or JVM execution is bypassed):
     local class declarations with defaulted primitive fields, empty and
     partially-provided object-literal construction, provided fields
     evaluated left-to-right in literal order even when the literal order
@@ -882,7 +883,19 @@ cross-module nominal identity (ISSUE-0109), stdlib modules other than
     identifier boundary), and the boolean construction-value boundary (a
     nil-aware provided value `{ b: xs[0] && xs[5] }` raises E8001 —
     never the pre-fix unboxing NullPointerException — while the
-    in-bounds positive control `xs[0] || xs[1]` constructs normally).
+    in-bounds positive control `xs[0] || xs[1]` constructs normally),
+    class-field write evaluation order (the cross-backend parity pin:
+    `getBox().x = make(note("value"))` prints target → value → make
+    under both real luajit and the emitted JVM artifact — spec
+    §Operational semantics rule 1 evaluates the receiver before the
+    RHS, so the pre-fix JVM's value → target → make inversion is
+    pinned — and the JVM-only error-precedence pin: the receiver's
+    `getP()` still prints target before the RHS's nil-aware
+    `xs[0] && xs[5]` crosses the write's typed boolean boundary and
+    raises E8001, where the pre-fix artifact raised E8001 without
+    running the receiver). Both write-order forms route the receiver
+    and the RHS through `emitOperandsInOrder`, the same
+    materialization the array-write branch uses.
     Methods: spec v1.1 §Classes declares the class body
     "no methods, no constructors", so the slice's method surface is
     empty by construction — the only callables are the module functions
