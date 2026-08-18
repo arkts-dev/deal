@@ -45,9 +45,11 @@ Line terminators are LF (`\n`), CRLF (`\r\n`), and CR (`\r`).
 - `//` comments extend to end-of-line (line-ending character consumed, not emitted).
 - `/* */` comments do **not** nest. `/* /* */` ends at the first `*/`.
 - Comments are equivalent to whitespace except recognized compiler directive comments.
-- A compiler directive comment has the form `// @name` and applies only where this specification defines that directive.
-- `// @jsonable` applies only when it immediately precedes an `export class` declaration with no non-comment token between the directive and the declaration.
-- If `// @jsonable` appears before any construct other than `export class`, the compiler emits a warning and ignores the directive.
+- A compiler directive comment is a line comment matching `CompilerDirectiveComment` in the lexical grammar.
+- A compiler directive comment with an unrecognized directive name is a compile-time error.
+- `// @deal-version VERSION` and `// @extern-c` are file directives. `// @deal-version` must occur before the first non-comment token. `// @extern-c` must occur after any leading imports and before the first declaration in a C FFI declaration file. Each file directive may occur at most once.
+- `// @jsonable`, `// @c-struct`, and `// @c-pointer` are declaration directives. A declaration directive block is the maximal contiguous sequence of declaration directive comments and whitespace immediately before a declaration, with no intervening non-comment token or non-directive comment. The block attaches to that declaration.
+- Only `// @deal-version` accepts an argument, which must be exactly one non-empty version value after trimming surrounding horizontal whitespace. Every other recognized directive must have no argument other than horizontal whitespace.
 
 ### String escapes and Unicode
 
@@ -86,13 +88,14 @@ let s: string = `Items: ${xs[0]}, ${xs[1]}`;
 
 ### Numeric overflow, NaN, and Infinity
 
-- `int` is an exact integer type.
+- `int` is a signed 32-bit exact integer type with range `[-2147483648, 2147483647]`; integer literals outside this range are compile-time errors.
+ - The decimal token `2147483648` is permitted only as the immediate operand of unary `-`, producing the `int` value `-2147483648`. In every other expression or literal context, `2147483648` is a compile-time error.
  - Division `a / b` on two `int` values returns `int` and uses integer division rounded toward zero: `5 / 2 === 2`, `-5 / 2 === -2`.
  - Division-by-zero of an `int` is a **runtime error**.
  - Remainder `a % b` uses truncated division.
- - All `int` arithmetic (`+ - * / % **`) checks the backend-supported safe range and raises a runtime error on overflow.
+ - All `int` arithmetic (`+ - * / % **`) checks the signed 32-bit range and raises a runtime error on overflow.
  - `-0` is normalized to `0` in `int` checks and arithmetic. Negative zero does not exist in `int`.
- - Runtime check: `int(x)` rejects `NaN`, `Infinity`, non-integer values, and values outside the backend-supported range.
+ - Runtime check: `int(x)` rejects `NaN`, `Infinity`, non-integer values, and values outside the signed 32-bit range.
 
 - `number` is a 64-bit IEEE 754 double.
  - `NaN`, `Infinity`, `-Infinity` are representable values. `NaN` is not equal to itself (`x === x` is false).
@@ -131,6 +134,14 @@ TemplateLiteral ::= '`' (StringCharacter | '${' Expression '}')* '`'
 
 StringCharacter ::= /* any SourceCharacter except line terminators and unescaped quote */
  | '\n' | '\t' | '\\' | '\"' | '\''
+
+CompilerDirectiveComment ::= '//' [ \t]* '@' DirectiveName DirectiveArgument? LineTerminator?
+
+DirectiveName ::= 'deal-version' | 'jsonable' | 'extern-c' | 'c-struct' | 'c-pointer'
+
+DirectiveArgument ::= [^\r\n]*
+
+LineTerminator ::= '\n' | '\r\n' | '\r'
 
 Operator ::= '+' | '-' | '*' | '/' | '%' | '**'
  | '===' | '!==' | '<' | '<=' | '>' | '>='
@@ -404,6 +415,7 @@ Type :=
  int
  number
   string
+  bytes
   table
   Error
   ClassName // nominal record type
@@ -429,7 +441,7 @@ PrimaryType ::= BuiltinType
  | Identifier
  | '(' FunctionType ')'
 
-BuiltinType ::= 'null' | 'boolean' | 'int' | 'number' | 'string' | 'table' | 'Error'
+BuiltinType ::= 'null' | 'boolean' | 'int' | 'number' | 'string' | 'bytes' | 'table' | 'Error'
 
 FunctionType ::= 'async'? '(' FunctionTypeParams? ')' '=>' Type
 
@@ -454,6 +466,7 @@ boolean
 int
 number
 string
+bytes
 table
 Error
 
@@ -531,6 +544,7 @@ if (x !== null) {
 All type constructors are invariant. No subtyping:
 
 - `int` is not assignable to `number` and vice versa.
+- `bytes` is only assignable to `bytes`.
 - `Array<int>` is not assignable to `Array<number>` and vice versa.
 - `Nullable<int>` is not assignable to `Nullable<number>` and vice versa.
 - `ClassName` is only assignable from itself.
@@ -547,9 +561,11 @@ int(x: int | null): int
 
 number(x: int): number
 number(x: number | null): number
+
+bytes(length: int): bytes
 ```
 
-They fail at runtime when the value is out of representable range or null.
+Numeric conversions fail at runtime when the value is out of representable range or null. `bytes(length)` allocates a zero-filled DEAL-owned byte buffer and raises a runtime error if `length < 0`.
 
 ### Equality and comparison operand rules
 
@@ -559,7 +575,7 @@ Two types are equal iff their canonical forms are identical. Class types are equ
 
 Value equality: `===` and `!==` are valid only when operand types are equal. Exception: `T | null` may be compared with `null`.
 
-No implicit numeric, string, boolean, class, function, array, or table cross-type equality exists. `==` and `!=` are not valid operators.
+No implicit numeric, string, bytes, boolean, class, function, array, or table cross-type equality exists. `==` and `!=` are not valid operators.
 
 ```ts
 let a: int = 1;
@@ -617,7 +633,9 @@ String concatenation uses `+`. Both operands must be `string`. No implicit strin
 | array literal `[e1, ..., eN]` | `T[]` where all `e_i` have the same `T` |
 | table literal `{ p: e, ... }` | `table` |
 | class body `{ ... }` with target `ClassName` | `ClassName` (contextual) |
+| `bytes(n)` where `n: int` | `bytes` |
 | index `a[b]` where `a: T[]`, `b: int` | `T` |
+| index `b[i]` where `b: bytes`, `i: int` | `int` byte value in `0..255` |
 | member `a.p` where `a: table` | **error** unless the surrounding context provides a target type |
 | member `a.p` where `a: ClassName` | required field: declared field type; optional field `p?: T`: `T \| null`; optional nullable field `p?: T \| null`: `T \| null` |
 | call `f(e1, ..., eN)` where `f: (p1: T1, ..., pN: TN) => R` | `R` |
@@ -668,7 +686,7 @@ The field `f: T` without a default is **not valid**. A required-present field mu
 
 ### JSON serialization (`@jsonable`)
 
-The `@jsonable` pragma is a normative compiler directive that generates per-class serialization functions for an exported class:
+The `@jsonable` pragma is a normative declaration directive that generates per-class serialization functions when attached to an `export class` declaration. If `// @jsonable` is attached to any other declaration, the compiler emits a warning and ignores it:
 
 ```ts
 // @jsonable
@@ -1186,7 +1204,7 @@ Resolution order for an identifier expression:
 2. Enclosing block scopes.
 3. Module-level declarations.
 4. Imported module bindings.
-5. Compiler intrinsics (`int`, `number`, `has`) and prelude symbols.
+5. Compiler intrinsics (`int`, `number`, `bytes`, `has`) and prelude symbols.
 
 Shadowing:
 
@@ -1390,7 +1408,13 @@ for (let i: int = 0; i < xs.length; i = i + 1) {
 }
 ```
 
-`length` is the only compiler-resolved intrinsic property. It is available only on arrays. For `xs.length` where `xs: T[]`, the expression has type `int`. It is not a table field lookup, not a class field, and not dynamically dispatchable. Assignment to `xs.length` is a compile-time error.
+`length` is a compiler-resolved intrinsic property available only on arrays and `bytes`. For `xs.length` where `xs: T[]`, the expression has type `int`. For `b.length` where `b: bytes`, the expression has type `int`. It is not a table field lookup, not a class field, and not dynamically dispatchable. Assignment to `.length` is a compile-time error.
+
+## Bytes
+
+`bytes` is a distinct DEAL-owned mutable byte buffer type.
+
+Byte indexing is zero-based. Writes require an `int` in `0..255`; reads and writes reject indexes outside `0 <= i < b.length`. Assignment copies the buffer reference, not its contents. `bytes` is allowed as a class field and default value type, but is not jsonable.
 
 ---
 
@@ -1740,13 +1764,103 @@ Host ABI:
 - Every call/value crossing the host boundary is runtime-checked.
 - External declaration files may declare async functions. A host function declared as `async (...) => R` must return a backend async operation accepted by the backend's `await` lowering. Source code cannot observe that operation except through `await`.
 
+### C FFI declaration files
+
+A C FFI declaration file is a `.d.deal` declaration file containing `// @extern-c` after any leading imports and before its first declaration. The C library to load is specified by the importing project's `deal.json` external entry using `nativeLibrary` (see Package manifest).
+
+`// @extern-c` marks the file. Each exported class must have exactly one of `// @c-struct` or `// @c-pointer`; `// @jsonable` has no effect. Async function declarations are compile-time errors, and each exported function name is its C symbol name.
+
+C FFI types are exactly:
+
+| Type | Parameter | Return |
+|---|---:|---:|
+| `int`, `number`, `boolean`, `string` | yes | yes |
+| `bytes` | yes | no |
+| `null` | no | yes |
+| same-file `// @c-struct` class | yes | yes |
+| same-file `// @c-pointer` class | yes | yes |
+
+All other parameter and return types are compile-time errors.
+
+```ts
+// @extern-c
+
+// @c-struct
+export class Vec2 {
+  x: number = 0.0;
+  y: number = 0.0;
+}
+
+export function init(): null;
+export function cos(x: number): number;
+export function add(a: int, b: int): int;
+export function invert(x: boolean): boolean;
+export function logLine(s: string): null;
+export function length(v: Vec2): number;
+export function midpoint(a: Vec2, b: Vec2): Vec2;
+```
+
+#### C struct classes
+
+A `// @c-struct` class is a nominal exported DEAL class whose fields define its C FFI struct layout.
+
+Rules:
+
+- Fields must be required fields with defaults.
+- Valid field types are exactly `int`, `number`, `boolean`, and same-file `// @c-pointer` classes.
+- All other field types are compile-time errors.
+- Field order is source order.
+- Field ABI mapping uses the C FFI ABI mapping table.
+- C structs follow target ABI; use shims when portability matters.
+- No packing, alignment, or nesting controls exist.
+- Struct values cross C FFI by value.
+- DEAL construction uses normal class defaults; C FFI struct returns read every field from the returned C struct.
+- C mutation of a copied struct argument is not visible to DEAL unless represented by the function return value.
+
+#### C pointer classes
+
+A `// @c-pointer` class is a nominal exported DEAL type representing a non-null opaque `void*` token. It has no DEAL-visible fields or storage layout.
+
+Rules:
+
+- A non-empty `// @c-pointer` class body is a compile-time error.
+- Object-literal construction of `// @c-pointer` values is a compile-time error.
+- `// @c-pointer` is not jsonable.
+- DEAL code may store, pass, and return `// @c-pointer` values.
+- DEAL code does not automatically release `// @c-pointer` values; cleanup must use explicit C FFI functions.
+- A C `NULL` pointer crossing into DEAL raises `FFI_NULL_POINTER`.
+
+#### C FFI ABI mapping
+
+The C ABI of an exported FFI function is derived from its DEAL function signature.
+
+| DEAL type | C ABI type | Mapping |
+|---|---|---|
+| `int` | `int32_t` | signed 32-bit integer |
+| `number` | `double` | IEEE 754 double |
+| `boolean` | `_Bool` | `false` as 0, `true` as 1; nonzero return as `true` |
+| `string` parameter | `const char*` | non-null borrowed NUL-terminated UTF-8 input string |
+| `string` return | `const char*` | non-null borrowed NUL-terminated UTF-8 output string copied into DEAL |
+| `bytes` parameter | `const uint8_t*`, `int32_t` length | read-only borrowed buffer and byte length |
+| `null` return | `void` | returns `null` |
+| `// @c-struct` class | C struct by value | source-order scalar fields |
+| `// @c-pointer` class | `void*` | non-null opaque pointer token |
+
+String arguments are encoded as temporary NUL-terminated UTF-8 buffers. Embedded U+0000 raises `FFI_INVALID_STRING`. Argument buffers remain alive until return conversion completes.
+
+A `string` return is a non-null borrowed `const char*`. `NULL` raises `FFI_NULL_STRING`. DEAL copies bytes up to the first NUL, validates them as UTF-8, decodes them to Unicode scalar values, and never frees the pointer. Malformed UTF-8 raises `FFI_INVALID_UTF8`.
+
+A `bytes` parameter lowers to `const uint8_t*` plus immediate `int32_t` length. The buffer is read-only, borrowed, and valid only during the call. C must copy to retain it.
+
+C APIs that require out parameters, struct pointers, mutable buffers, caller-owned returned memory, callbacks, or complex ownership should be exposed through a small C shim that converts them into DEAL FFI shapes: scalar returns, by-value `// @c-struct` results, `// @c-pointer` handles, borrowed strings, and caller-allocated `bytes` parameters.
+
 Declaration metadata versioning:
 
 ```ts
 // @deal-version 1.2
 ```
 
-If omitted, compiler assumes the current project `languageVersion`. A compiler must reject declaration files with a newer major version. Minor-version migrations may be performed only by explicit compiler migration rules. DEAL v1.2 is not source-compatible with v1.1; projects using v1.2 must set `languageVersion` to `"1.2"` and satisfy the v1.2 grammar.
+If omitted, compiler assumes the current project `languageVersion`. A compiler must reject declaration files with a newer major version. Minor-version migrations may be performed only by explicit compiler migration rules. DEAL v1.2 is not source-compatible with earlier language versions; projects using v1.2 must set `languageVersion` to `"1.2"` and satisfy the v1.2 grammar.
 
 ### Package manifest
 
@@ -1774,8 +1888,18 @@ Rules:
 - `moduleRoots` participate in import resolution.
 - DEAL has no package registry. `dependencies` is reserved for local/package-manager integration later.
 - Standard library modules may be described by bundled `.d.deal` files, but are resolved as part of the language distribution rather than as project external host modules.
-- `externals` declares host modules available to the compiler.
-- Importing an external module not listed in `externals` is a compile-time error.
+- `externals` declares host modules available to the compiler; importing an unlisted external is a compile-time error. A C FFI entry must include `nativeLibrary`.
+
+```json
+{
+  "externals": {
+    "native/math": {
+      "declaration": "native/math.d.deal",
+      "nativeLibrary": "math"
+    }
+  }
+}
+```
 
 ### Standard library declarations
 
@@ -1854,6 +1978,8 @@ The compiler type-checks host API use from the declaration file. Runtime values 
 
 Raw backend APIs, including Lua `require`, Lua `ffi`, JVM reflection, filesystem, process, networking, and debug APIs, are not source-language features unless exposed by an imported declaration module.
 
+C FFI is available only through `// @extern-c` declaration files.
+
 ### Host ABI and interoperability
 
 #### Value mapping
@@ -1869,6 +1995,14 @@ let f: (x: int) => int = lib.f;
 ```
 
 Target-typed table member reads and declared function-signature checks are supported. Dynamic table calls are forbidden. Explicit class/table conversion syntax is deferred.
+
+#### C FFI runtime semantics
+
+Importing a C FFI module loads its native library and resolves all declared symbols before the module export table becomes visible. Failure raises `FFI_LIBRARY_LOAD` or `FFI_SYMBOL_MISSING` during module initialization and marks the module failed as in module initialization semantics.
+
+Calls are synchronous. DEAL does not read or expose `errno`. C signals, `longjmp`, process aborts, and memory faults are outside DEAL semantics.
+
+A compiler targeting a backend without C FFI support rejects `// @extern-c` with `FFI_UNSUPPORTED_BACKEND`.
 
 #### Function ABI decision
 
@@ -2002,6 +2136,7 @@ Typed boundaries are exactly:
 - assignment to a variable with declared or inferred type `T`
 - assignment to a declared class field of type `T`
 - assignment to an array element of `T[]`
+- assignment to a byte element of `bytes`
 - function parameter entry
 - function return
 - async function completion value
@@ -2014,6 +2149,8 @@ Typed boundaries are exactly:
 - value exposed through module export table
 - value crossing from host into DEAL through `.d.deal`
 - value crossing from DEAL into host through `.d.deal`
+- value crossing from C FFI into DEAL
+- value crossing from DEAL into C FFI
 - standard-library function parameter and return
 - external declaration function parameter and return
 - `@jsonable` `fromJson` field validation
@@ -2032,9 +2169,10 @@ When a backend mapping conflicts with the source-language semantics or the backe
 | `null` | unique sentinel `__NULL` |
 | missing optional field | absent key or `__MISSING` internally |
 | `boolean` | Lua boolean |
-| `int` | checked Lua number in `[-(2^53 - 1), 2^53 - 1]` |
+| `int` | checked Lua number in `[-2147483648, 2147483647]` |
 | `number` | Lua number |
 | `string` | Lua string containing valid UTF-8 |
+| `bytes` | backend byte buffer object or LuaJIT `uint8_t[]` wrapper |
 | `table` | Lua table |
 | `ClassName` | Lua table tagged with class symbol |
 | `T[]` | Lua table with 1-based contiguous storage |
@@ -2049,9 +2187,10 @@ When a backend mapping conflicts with the source-language semantics or the backe
 | `null` | Java `null` reference |
 | missing optional field | per-field presence bit or `Missing` sentinel |
 | `boolean` | primitive `boolean` |
-| `int` | primitive `long` |
+| `int` | primitive `int` |
 | `number` | primitive `double` |
 | `string` | `java.lang.String` with no unpaired surrogate code units |
+| `bytes` | `byte[]`, `ByteBuffer`, or runtime-owned byte buffer wrapper |
 | `table` | `TTable` runtime object, e.g. ordered map |
 | `ClassName` | generated record class or `TClassObject` runtime shape |
 | `T[]` | `TArray<T>` runtime object or specialized primitive array |
@@ -2072,7 +2211,7 @@ Recommended JVM representation:
 | DEAL type | JVM representation |
 |---|---|
 | `boolean` | `boolean` where statically known; boxed `Boolean` at dynamic boundaries |
-| `int` | `long` where statically known; boxed `Long` at dynamic boundaries |
+| `int` | `int` where statically known; boxed `Integer` at dynamic boundaries |
 | `number` | `double` where statically known; boxed `Double` at dynamic boundaries |
 | `string` | non-null `java.lang.String` with no unpaired surrogate code units |
 | `null` | `DealNull.INSTANCE` at dynamic boundaries; Java `null` only where representation is statically nullable |
@@ -2081,6 +2220,7 @@ Recommended JVM representation:
 | optional field `p?: T` | presence bit plus field storage |
 | optional nullable field `p?: T | null` | presence bit plus nullable storage |
 | `table` | `DealTable` |
+| `bytes` | runtime-owned byte buffer wrapper over `byte[]` or `ByteBuffer` |
 | `T[]` | `DealArray<T>` or specialized primitive array wrapper |
 | `(…) => R` | `DealFunction` wrapper with runtime descriptor |
 | `async (…) => R` | `DealAsyncFunction` wrapper with runtime descriptor |
@@ -2099,7 +2239,7 @@ RuntimeTypeDescriptor :=
  | FunctionDescriptor
 
 PrimitiveDescriptor :=
- "null" | "boolean" | "int" | "number" | "string" | "table"
+ "null" | "boolean" | "int" | "number" | "string" | "bytes" | "table"
 
 ClassDescriptor :=
   "@" ModuleRoot "/" ModuleRelativePath "/" ClassName
@@ -2149,7 +2289,7 @@ Equality semantics for `===`:
 - `int` compares by integer value.
 - `number` compares by IEEE 754 equality: `NaN === NaN` is `false`; `NaN !== NaN` is `true`.
 - Strings compare by Unicode scalar-value sequence.
-- Arrays, tables, classes, and functions compare by reference identity.
+- Arrays, bytes, tables, classes, and functions compare by reference identity.
 - Values of different static types cannot be compared, except `T | null` vs `null`.
 
 ### Runtime library
@@ -2180,7 +2320,7 @@ function __rt.check_int(v)
  v = v + 0
  if v == math.huge or v == -math.huge then error("runtime: expected int, got infinity") end
  if v % 1 ~= 0 then error("runtime: expected int") end
- if v < -9007199254740991 or v > 9007199254740991 then error("runtime: int out of safe range") end
+ if v < -2147483648 or v > 2147483647 then error("runtime: int out of range") end
  return v
 end
 
@@ -2771,6 +2911,19 @@ Array runtime diagnostics:
 | `E8002` | array index out of bounds |
 | `E8003` | array element type check failed |
 
+C FFI runtime `Error.code` values:
+
+`FFI_*` codes are runtime `Error.code` string values. They are not compile-time diagnostic identifiers; compile-time C FFI errors use the normal numeric diagnostic code namespace.
+
+| Code | Meaning |
+|---|---|
+| `FFI_LIBRARY_LOAD` | library failed to load or configure |
+| `FFI_SYMBOL_MISSING` | declared symbol not present in library |
+| `FFI_INVALID_STRING` | embedded U+0000 in string input |
+| `FFI_INVALID_UTF8` | C FFI string return was not valid UTF-8 |
+| `FFI_NULL_STRING` | C FFI string return was `NULL` |
+| `FFI_NULL_POINTER` | C FFI pointer value crossing into DEAL was `NULL` |
+
 ### Operational semantics summary
 
 Evaluation is strict and left-to-right:
@@ -2789,10 +2942,14 @@ A conforming implementation must include tests for:
 
 - Lexer: comments, string escapes, integer/number literals.
 - Parser: precedence, blocks, assignment targets, classes, functions, imports/exports.
-- Type checker: invariance, nullable assignment, arrays, class nominal typing, table dynamic reads.
-- Runtime: null sentinel, missing optional fields, class defaults, array indexing, function wrappers.
+- Type checker: invariance, nullable assignment, arrays, bytes, class nominal typing, table dynamic reads.
+- Runtime: null sentinel, missing optional fields, class defaults, array indexing, bytes indexing and byte-value checks, function wrappers.
+- Runtime: `int` accepts `2147483647` and `-2147483648`, rejects values outside signed 32-bit range, and raises overflow on arithmetic outside that range.
 - ABI: import/export, host function wrapping, standard library module.
 - Diagnostics: stable code, location span, expected/actual type.
 - Host ABI: declared external imports, missing external rejection, runtime boundary checks.
+- C FFI: declaration rules for `// @extern-c`, `// @c-struct`, `// @c-pointer`, type allowlists, and async rejection.
+- C FFI: ABI mapping for scalars, Unicode strings via UTF-8, `bytes`, `// @c-struct`, `// @c-pointer`, and `null` returns.
+- C FFI: runtime errors for library load, symbol lookup, embedded U+0000, invalid UTF-8, null strings, and null pointers; compile-time rejection for unsupported backends and invalid manifest policy.
 - Stdlib: console, string, table, JSON, math, time.
 - AI-codegen benchmark: give agents the feature subset and validate generated solutions.
