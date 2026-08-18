@@ -39,9 +39,12 @@ import java.util.Set;
  * against module fields and other visible bindings), and the
  * primitive-array slice (ISSUE-0094 — {@code int[]}/{@code number[]}/
  * {@code string[]}/{@code boolean[]} literals, index reads, element
- * writes, and {@code .length} reads with the spec's runtime checks), and
- * the modules/imports/exports slice (ISSUE-0096 — multi-module
- * compilation, namespace imports, and imported direct calls):
+ * writes, and {@code .length} reads with the spec's runtime checks), the
+ * modules/imports/exports slice (ISSUE-0096 — multi-module
+ * compilation, namespace imports, and imported direct calls), and the
+ * stdlib-boundary slice (ISSUE-0097 — the stdlib modules whose declared
+ * functions use only the supported value types: {@code std/console},
+ * {@code std/string}, {@code std/math}, {@code std/time}):
  * <ul>
  *   <li>parameter shadowing (ISSUE-0093): a parameter shadowing a
  *       module field emits ONE disambiguated Java name in both the
@@ -71,9 +74,24 @@ import java.util.Set;
  *       (literals, arithmetic, locals, if/else, console output, intrinsics),</li>
  *   <li>E6000 rejection of out-of-scope constructs (classes, tables,
  *       nested/nullable/class/function arrays, for/for-of loops, async,
- *       non-console imports — at the import statement itself, even when
+ *       non-project imports — at the import statement itself, even when
  *       unused —, module-level returns, use-before-declaration,
  *       runtime-helper name collisions),</li>
+ *   <li>the stdlib boundary (ISSUE-0097): {@code std/string}/
+ *       {@code std/math}/{@code std/time} imports compile and execute
+ *       their declared functions through the emitted {@code __str*}/
+ *       {@code __mathSqrt} helpers and fully-qualified
+ *       {@code java.lang.Math}/{@code java.lang.String} expressions —
+ *       UTF-8 byte-wise {@code length}/{@code substring}/{@code split}
+ *       (including the {@code "héllo"} byte-length and character-boundary
+ *       pins), plain-text search/replace with the empty-{@code old}
+ *       guard, the Lua-whitespace {@code trim}, the negative-input
+ *       {@code sqrt} E8001, the extreme-negative {@code absInt}, and the
+ *       second-truncated {@code nowMillis()} — while {@code std/table}
+ *       and {@code std/json} imports (used and unused) stay E6000 at the
+ *       import statement because their functions require {@code table}
+ *       values, all compiled and executed with {@code javac} +
+ *       {@code java} subprocesses,</li>
  *   <li>observable-behavior preservation for null-typed side effects
  *       (null-typed returns/initializers/assignments/arguments — including
  *       captures of locals and parameters reassigned later in their scope,
@@ -221,6 +239,14 @@ public class JvmBackendTest {
             testOrchestratorDefaultStaysLua();
             testOrchestratorJvmRejectsUnsupported();
             testOrchestratorJvmImportSupported();
+            testStdlibCallEmission();
+            testStdlibTableBoundaryRejected();
+            testStdlibExecution();
+            testStdlibSqrtNegativeRuntimeError();
+            testStdlibByteSemantics();
+            testStdlibTimeNowMillis();
+            testStdlibHelperNameCollisions();
+            testOrchestratorJvmStdlibImport();
             testOrchestratorJvmDeclarationImportRejected();
             testOrchestratorJvmClassCollision();
             testModuleImports();
@@ -633,9 +659,13 @@ public class JvmBackendTest {
             new Case("async function", """
                 export async function test(): int { return 5; }
                 """),
-            new Case("non-console module import", """
-                import * as s from "std/string"
-                export function test(): int { return s.length("ab"); }
+            new Case("stdlib module import whose functions need table values", """
+                import * as t from "std/table"
+                export function test(): int { return 1; }
+                """),
+            new Case("unused stdlib module import whose functions need table values", """
+                import * as j from "std/json"
+                export function test(): int { return 1; }
                 """),
             new Case("unused non-console module import", """
                 import * as m from "./other"
@@ -4742,6 +4772,371 @@ public class JvmBackendTest {
             check(out.contains("other-module-ran"),
                 "the unused import ran the imported module's load-time "
                 + "console.log: " + out);
+        }
+    }
+
+    // =========================================================================
+    // ISSUE-0097 stdlib boundary slice: std/console, std/string, std/math, std/time
+    // =========================================================================
+
+    /** The supported stdlib aliases emit the ISSUE-0097 call forms:
+     * {@code __str*}/{@code __mathSqrt} helpers, plain-text
+     * {@code String.contains/startsWith/endsWith}, fully-qualified
+     * {@code java.lang.Math} expressions, and the second-truncated
+     * {@code nowMillis()} form — with every helper definition present in
+     * the module class. */
+    private static void testStdlibCallEmission() {
+        System.out.println("-- Stdlib call emission (ISSUE-0097) --");
+
+        Frontend f = compileFrontend("""
+            import * as str from "std/string"
+            import * as math from "std/math"
+            import * as time from "std/time"
+            export function run(): string {
+              let n: int = str.length("abc");
+              let sub: string = str.substring("hello", 1, 4);
+              let c: boolean = str.contains("hello", "ell");
+              let sw: boolean = str.startsWith("hello", "h");
+              let ew: boolean = str.endsWith("hello", "o");
+              let r: string = str.replace("a", "a", "b");
+              let parts: string[] = str.split("a,b", ",");
+              let t: string = str.trim("  x  ");
+              let fl: number = math.floor(1.9);
+              let ce: number = math.ceil(1.1);
+              let sq: number = math.sqrt(4.0);
+              let ai: int = math.absInt(-3);
+              let an: number = math.absNumber(-1.5);
+              let mn: int = math.minInt(2, 3);
+              let mx: int = math.maxInt(2, 3);
+              let now: int = time.nowMillis();
+              return sub;
+            }
+            """, "jvmtest-stdlib-emission.deal");
+        if (!f.errors().isEmpty()) {
+            fail("frontend must accept the stdlib program: " + f.errors());
+            return;
+        }
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(f.program(),
+            f.checkResult(), "jvmtest-stdlib-emission.deal", "main");
+        if (res.hasErrors()) {
+            fail("backend must accept the stdlib program: " + res.diagnostics());
+            return;
+        }
+        String java = res.source();
+        check(java.contains("__strLength("), "length emits __strLength");
+        check(java.contains("__strSubstring("), "substring emits __strSubstring");
+        check(java.contains(").contains("), "contains emits String.contains");
+        check(java.contains(").startsWith("), "startsWith emits String.startsWith");
+        check(java.contains(").endsWith("), "endsWith emits String.endsWith");
+        check(java.contains("__strReplace("), "replace emits __strReplace");
+        check(java.contains("__strSplit("), "split emits __strSplit");
+        check(java.contains("__strTrim("), "trim emits __strTrim");
+        check(java.contains("java.lang.Math.floor("), "floor emits Math.floor");
+        check(java.contains("java.lang.Math.ceil("), "ceil emits Math.ceil");
+        check(java.contains("__mathSqrt("), "sqrt emits __mathSqrt");
+        check(java.contains("checkInt(java.lang.Math.abs("),
+            "absInt re-checks with checkInt");
+        check(java.contains("java.lang.Math.abs("), "absNumber emits Math.abs");
+        check(java.contains("java.lang.Math.min("), "minInt emits Math.min");
+        check(java.contains("java.lang.Math.max("), "maxInt emits Math.max");
+        check(java.contains("(java.lang.System.currentTimeMillis() / 1000L) * 1000L"),
+            "nowMillis emits the second-truncated form");
+        check(java.contains("static long __strLength(java.lang.String s)"),
+            "the __strLength helper definition is emitted");
+        check(java.contains("static java.lang.String __strSubstring("),
+            "the __strSubstring helper definition is emitted");
+        check(java.contains("static __StringArray __strSplit("),
+            "the __strSplit helper definition is emitted");
+        check(java.contains("static double __mathSqrt(double x)"),
+            "the __mathSqrt helper definition is emitted");
+    }
+
+    /** {@code std/table} and {@code std/json} imports — used and unused —
+     * are E6000 at the import statement: their only functions require
+     * {@code table} values, which the JVM slice does not support. */
+    private static void testStdlibTableBoundaryRejected() throws Exception {
+        System.out.println("-- Stdlib table-boundary imports → E6000 --");
+
+        record Case(String what, String source, String module) {}
+        List<Case> cases = List.of(
+            new Case("std/table import + table use", """
+                import * as t from "std/table"
+                let tbl: table = {};
+                export function test(): int { return 1; }
+                """, "std/table"),
+            new Case("unused std/table import", """
+                import * as t from "std/table"
+                export function test(): int { return 1; }
+                """, "std/table"),
+            new Case("std/json import + call", """
+                import * as j from "std/json"
+                let parsed: table = j.parse("{}");
+                export function test(): int { return 1; }
+                """, "std/json"),
+            new Case("unused std/json import", """
+                import * as j from "std/json"
+                export function test(): int { return 1; }
+                """, "std/json")
+        );
+        for (Case c : cases) {
+            Frontend f = compileFrontend(c.source(), "jvmtest-stdlib-boundary.deal");
+            if (!f.errors().isEmpty()) {
+                fail("frontend must accept the table-boundary stdlib import '"
+                    + c.what() + "' (the backend rejects it): " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(f.program(),
+                f.checkResult(), "jvmtest-stdlib-boundary.deal", "main");
+            check(res.hasErrors(), "backend rejects " + c.what());
+            check(res.diagnostics().stream().anyMatch(d ->
+                    "E6000".equals(d.code())
+                        && d.message().contains("table values")
+                        && d.message().contains(c.module())),
+                "E6000 names the table boundary for " + c.what() + ": "
+                    + res.diagnostics());
+        }
+
+        // The orchestrator's JVM path reports the same E6000 at the import
+        // statement and writes no artifact for the std/table-importing
+        // module (the backend is the single rejection site).
+        writeFile("src/table_import.deal", """
+            import * as t from "std/table"
+            export function run(): int { return 1; }
+            """);
+        Path entryFile = tmpDir.resolve("src/table_import.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/table_boundary");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JVM,
+            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean success = orchestrator.compile();
+        check(!success, "orchestrator JVM path rejects std/table imports");
+        check(orchestrator.diagnostics().stream().anyMatch(d ->
+                "E6000".equals(d.code()) && d.message().contains("table values")),
+            "orchestrator reports the table boundary: "
+                + orchestrator.diagnostics());
+        check(!Files.exists(outputDir.resolve("Table_import.java")),
+            "no artifact written for the std/table-importing module");
+    }
+
+    /** Real stdlib execution through the emitted artifact: every supported
+     * std/string and std/math function computes its LuaJIT reference value,
+     * including the substring clipping and negative-start corrections. */
+    private static void testStdlibExecution() throws Exception {
+        System.out.println("-- Stdlib execution (ISSUE-0097) --");
+
+        ExecResult res = compileAndRunJvm("""
+            import * as str from "std/string"
+            import * as math from "std/math"
+            import * as console from "std/console"
+            export function run(): string {
+              let n: int = str.length("hello");
+              let sub: string = str.substring("hello", 1, 4);
+              let clip: string = str.substring("abc", 1, 10);
+              let past: string = str.substring("abc", 5, 10);
+              let neg: string = str.substring("abc", -3, 3);
+              let trimmed: string = str.trim("  deal  ");
+              let replaced: string = str.replace("a-b-c", "-", ":");
+              let kept: string = str.replace("hello", "", "x");
+              let parts: string[] = str.split("a,,b", ",");
+              let fl: int = int(math.floor(3.8));
+              let ce: int = int(math.ceil(3.2));
+              let sq: int = int(math.sqrt(9.0));
+              let ai: int = math.absInt(-7);
+              let an: number = math.absNumber(-2.5);
+              let mn: int = math.minInt(3, 9);
+              let mx: int = math.maxInt(3, 9);
+              let vt: string = str.trim("\u000bhello\u000b");
+              let ff: string = str.trim("\u000chello\u000c");
+              if (n !== 5 || sub !== "ell" || clip !== "bc" || past !== ""
+                  || neg !== "bc" || trimmed !== "deal"
+                  || replaced !== "a:b:c" || kept !== "hello"
+                  || fl !== 3 || ce !== 4 || sq !== 3 || ai !== 7
+                  || an !== 2.5 || mn !== 3 || mx !== 9
+                  || vt !== "hello" || ff !== "hello") {
+                console.log("stdlib-bad");
+                return "bad";
+              }
+              if (parts.length !== 3 || parts[0] !== "a"
+                  || parts[1] !== "" || parts[2] !== "b") {
+                console.log("stdlib-bad");
+                return "bad";
+              }
+              console.log("stdlib-ok");
+              return "stdlib-done";
+            }
+            """, "stdlib-execution");
+        check(res.exitCode() == 0, "stdlib execution exits 0: " + res.output());
+        check(res.output().contains("stdlib-ok"),
+            "stdlib execution prints stdlib-ok: " + res.output());
+        check(res.output().contains("stdlib-done"),
+            "stdlib execution returns the final value: " + res.output());
+    }
+
+    /** {@code math.sqrt} of a negative number raises E8001 exactly like
+     * std/math.lua — a real runtime error surfaced by executing the
+     * emitted artifact. */
+    private static void testStdlibSqrtNegativeRuntimeError() throws Exception {
+        System.out.println("-- Stdlib sqrt(-1) → E8001 --");
+
+        ExecResult res = compileAndRunJvm("""
+            import * as math from "std/math"
+            export function run(): number { return math.sqrt(-1.0); }
+            """, "stdlib-sqrt-neg");
+        check(res.exitCode() == 1, "sqrt(-1) exits 1: " + res.output());
+        check(res.output().contains("DEAL_ERROR_CODE: E8001"),
+            "sqrt(-1) reports E8001: " + res.output());
+        check(res.output().contains("sqrt of negative number"),
+            "sqrt(-1) reports the std/math.lua message: " + res.output());
+    }
+
+    /** UTF-8 byte-wise semantics (the LuaJIT reference): {@code
+     * length("héllo")} is 6 bytes, {@code substring("héllo", 1, 3)} is
+     * {@code "é"} (a complete byte range), and a mid-character cut
+     * decodes as U+FFFD — the documented closest-byte-faithful reading,
+     * since {@code java.lang.String} cannot hold LuaJIT's raw partial
+     * bytes. */
+    private static void testStdlibByteSemantics() throws Exception {
+        System.out.println("-- Stdlib UTF-8 byte semantics --");
+
+        ExecResult res = compileAndRunJvm("""
+            import * as str from "std/string"
+            export function run(): string {
+              let bytes: int = str.length("héllo");
+              let chars: string = str.substring("héllo", 1, 3);
+              let inner: string = str.substring("héllo", 1, 2);
+              if (bytes !== 6) { return "bad-bytes"; }
+              if (chars !== "é") { return "bad-chars"; }
+              if (inner !== "�") { return "bad-inner"; }
+              return "bytes-ok";
+            }
+            """, "stdlib-bytes");
+        check(res.exitCode() == 0, "byte-semantics run exits 0: " + res.output());
+        check(res.output().contains("bytes-ok"),
+            "byte semantics compute the LuaJIT values: " + res.output());
+    }
+
+    /** {@code nowMillis()} reproduces LuaJIT's {@code os.time() * 1000}:
+     * positive, near the current epoch, and second-truncated. */
+    private static void testStdlibTimeNowMillis() throws Exception {
+        System.out.println("-- Stdlib nowMillis (ISSUE-0097) --");
+
+        ExecResult res = compileAndRunJvm("""
+            import * as time from "std/time"
+            export function run(): int {
+              let t: int = time.nowMillis();
+              let g: int = t % 1000;
+              if (t > 1700000000000 && g === 0) { return 1; }
+              return 0;
+            }
+            """, "stdlib-nowmillis");
+        check(res.exitCode() == 0, "nowMillis run exits 0: " + res.output());
+        check(res.output().contains("1"), "nowMillis is positive, recent, and "
+            + "second-truncated: " + res.output());
+    }
+
+    /** DEAL functions named like the emitted stdlib helpers coexist with
+     * them: {@link JvmBackend#javaName} escapes every underscore, so the
+     * user functions translate to {@code $u$u…} names and never collide
+     * with the {@code __str*}/{@code __mathSqrt} helpers. */
+    private static void testStdlibHelperNameCollisions() throws Exception {
+        System.out.println("-- Stdlib helper name collisions --");
+
+        ExecResult res = compileAndRunJvm("""
+            function __strLength(s: string): int { return 1; }
+            function __strTrim(s: string): string { return s; }
+            function __strSplit(s: string, sep: string): string[] { return []; }
+            function __strReplace(s: string, o: string, to: string): string { return s; }
+            function __mathSqrt(x: number): number { return x; }
+            export function run(): string {
+              let a: int = __strLength("abc");
+              let b: string = __strTrim("  x  ");
+              let c: string[] = __strSplit("a", ",");
+              let d: string = __strReplace("a", "a", "b");
+              let e: number = __mathSqrt(4.0);
+              if (a !== 1 || b !== "  x  " || c.length !== 0
+                  || d !== "a" || e !== 4.0) {
+                return "collision-bad";
+              }
+              return "collision-ok";
+            }
+            """, "stdlib-helper-collide");
+        check(res.exitCode() == 0, "helper-name-collision run exits 0: "
+            + res.output());
+        check(res.output().contains("collision-ok"),
+            "user functions named like stdlib helpers coexist and run: "
+                + res.output());
+    }
+
+    /** The orchestrator's JVM path resolves stdlib imports from the real
+     * stdlib declarations, emits the supported stdlib calls, and the
+     * emitted artifacts compile and execute. */
+    private static void testOrchestratorJvmStdlibImport() throws Exception {
+        System.out.println("-- Orchestrator: stdlib imports through the JVM path --");
+
+        writeFile("src/strings.deal", """
+            import * as str from "std/string"
+            export function wordCount(s: string): int {
+              let parts: string[] = str.split(s, " ");
+              return parts.length;
+            }
+            """);
+        writeFile("src/entry.deal", """
+            import * as strings from "./strings"
+            import * as math from "std/math"
+            export function run(): int {
+              let words: int = strings.wordCount("a b c");
+              return math.absInt(words - 6);
+            }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/stdlib_import");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JVM,
+            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success = orchestrator.compile();
+        check(success, "stdlib-importing project compiles through the "
+            + "orchestrator JVM path: " + orchestrator.diagnostics());
+        if (!success) return;
+
+        Path entryArtifact = outputDir.resolve("Entry.java");
+        Path stringsArtifact = outputDir.resolve("Strings.java");
+        check(Files.exists(entryArtifact), "entry artifact written");
+        check(Files.exists(stringsArtifact), "imported module artifact written");
+
+        if (Files.exists(entryArtifact) && Files.exists(stringsArtifact)) {
+            String java = Files.readString(stringsArtifact);
+            check(java.contains("__strSplit("),
+                "the imported module emits the std/string split helper call");
+
+            Files.writeString(outputDir.resolve("JvmConformanceRunner.java"),
+                BackendConformanceTest.buildJvmRunner(
+                    parseProgram("""
+                        export function run(): int { return 3; }
+                        """), "Entry"));
+            ProcessBuilder javac = new ProcessBuilder("javac", "-encoding", "UTF-8",
+                "Entry.java", "Strings.java", "JvmConformanceRunner.java");
+            javac.directory(outputDir.toFile());
+            javac.redirectErrorStream(true);
+            Process p = javac.start();
+            String javacOut = new String(p.getInputStream().readAllBytes()).trim();
+            int javacExit = p.waitFor();
+            check(javacExit == 0, "orchestrator stdlib artifacts compile with "
+                + "javac: " + javacOut);
+
+            ProcessBuilder javaRun = new ProcessBuilder("java", "-cp",
+                outputDir.toString(), "JvmConformanceRunner");
+            javaRun.redirectErrorStream(true);
+            Process p2 = javaRun.start();
+            String out = new String(p2.getInputStream().readAllBytes()).trim();
+            int exit = p2.waitFor();
+            check(exit == 0, "runner exits 0: " + out);
+            check(out.contains("3"),
+                "stdlib helpers compute through the cross-module call: " + out);
         }
     }
 

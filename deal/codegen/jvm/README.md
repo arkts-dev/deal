@@ -1,4 +1,4 @@
-# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice, ISSUE-0096 modules/imports/exports slice)
+# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice, ISSUE-0096 modules/imports/exports slice, ISSUE-0097 stdlib-boundary slice)
 
 A small but real end-to-end JVM backend for the DEAL compiler. It walks the
 typed AST (the compiler's IR — `deal-compiler-architecture-v1`) and emits a
@@ -33,6 +33,9 @@ Supported (real semantics, spec JVM value mapping):
 | standalone expression statements (`x + 1;`) | lowered to a dummy-local declaration (`long __ignored = intAdd(x, 1L);`) so they are genuinely evaluated — an int overflow there is an observable E8004, as under LuaJIT |
 | `int()` / `number()` intrinsics | `intFromNumber` / `numberFromInt` helpers (E8001/E8004) |
 | `import * as c from "std/console"` | `c.log` → `java.lang.System.out.println`, `c.error` → `java.lang.System.err.println` |
+| `import * as str from "std/string"` (ISSUE-0097) | `length` → the emitted `__strLength` helper (UTF-8 byte count — DEAL strings are UTF-8 byte sequences, spec-v1.1 §String escapes and UTF-8, and LuaJIT's `#s` counts those bytes); `substring` → the emitted `__strSubstring` helper (LuaJIT's `string.sub(s, start + 1, end)` corrections: each bound clamps to [1, n] after a negative adjustment `pos += n+1`, `start > end` yields the empty string); `contains`/`startsWith`/`endsWith` → plain-text `java.lang.String.contains/startsWith/endsWith` (byte-wise and UTF-16-wise matching coincide for valid UTF-8, and Lua pattern magic characters are literal); `replace` → the emitted `__strReplace` helper (every plain-text occurrence; an empty `old` returns `s` unchanged, matching the LuaJIT guard before gsub); `split` → the emitted `__strSplit` helper returning `__StringArray` (LuaJIT's semantics: an empty `s` yields the empty array whatever the separator, an empty separator splits into individual UTF-8 bytes like `s:sub(i, i)` for `i = 1..#s`, and every occurrence of `sep` delimits a part with the trailing remainder — even empty — appended); `trim` → the emitted `__strTrim` helper (Lua's `%s` whitespace set exactly: space, tab, newline, vertical tab, form feed, carriage return) |
+| `import * as math from "std/math"` (ISSUE-0097) | `floor`/`ceil`/`absNumber` → `java.lang.Math.floor/ceil/abs`; `minInt`/`maxInt` → `java.lang.Math.min/max` (the same IEEE 754 semantics as LuaJIT's `math.*`); `absInt` → `checkInt(java.lang.Math.abs(x))` exactly like LuaJIT's `check_int(math.abs(x))`; `sqrt` → the emitted `__mathSqrt` helper (negative input → E8001 "sqrt of negative number", matching std/math.lua; NaN passes through) |
+| `import * as time from "std/time"` (ISSUE-0097) | `nowMillis` → `(java.lang.System.currentTimeMillis() / 1000L) * 1000L` — LuaJIT's `os.time() * 1000`: epoch milliseconds truncated to whole seconds, never the raw `System.currentTimeMillis()` (whose sub-second precision would diverge from the reference implementation) |
 | `int[]` / `number[]` / `string[]` / `boolean[]` | mutable wrapper classes `__IntArray` / `__NumberArray` / `__StringArray` / `__BooleanArray` holding a primitive Java array (the spec's "specialized primitive array wrapper") — literals `new __IntArray(new long[]{…})`, index reads via the emitted `__intArrayRead`-family helpers (typed read sites raise E8001 past the end; `===`/`!==` operand positions box the read — `__intArrayReadBoxed` family, null past the end — and compute the nil comparison per the read-site contract), element writes via the `__intArrayWrite`-family helpers, `.length` via `((long) xs.data.length)`. The wrapper identity is stable across appends (a write at `i == length` grows the wrapped storage in place), so aliases observe every write exactly like LuaJIT's shared 1-based table |
 | `import * as lib from "./lib"` (compiled project module, ISSUE-0096) | the import statement emits a load-time `static { <LibClass>.__init$(); }` trigger (a static-method invocation initializes the imported class per JLS §12.4.1, running its load-time statements exactly where LuaJIT runs `require` — depth-first in import order, also for unused aliases); `lib.add(a, b)` emits a static call on the imported module's emitted class (`Lib.add(a, b)`) |
 
@@ -40,8 +43,11 @@ Out of scope (rejected with a backend `E6000` diagnostic, never silently
 miscompiled): classes (including imported classes and cross-module nominal
 identity — deferred to ISSUE-0109), tables, nullables, nullable arrays,
 arrays of nullable elements, nested (multi-dimensional) arrays, class
-arrays, function arrays, function types, stdlib modules other than
-`std/console`, declaration/host-module imports (a `.d.deal` import is never
+arrays, function arrays, function types, stdlib imports other than the four
+supported modules (`std/console`, `std/string`, `std/math`, `std/time` —
+`std/table` and `std/json` stay E6000 at the import statement, used or
+unused, because their only functions take or return a `table`, a value
+type the slice does not support yet), declaration/host-module imports (a `.d.deal` import is never
 a codegen entry and stays E6000 at the import statement; host ABI is
 deferred), async/await, for/for-of loops, try/throw, `@jsonable`.
 
@@ -896,6 +902,110 @@ cross-module nominal identity (ISSUE-0109), stdlib modules other than
     (`testModuleImports`, `testModuleClassIsolation`,
     `testModuleUnusedImportLoadTime`, `testModuleImportBackendEmission`).
 
+## Review evidence: stdlib boundary (ISSUE-0097)
+
+Every supported stdlib module/function, with the test covering it. All
+fixture evidence below runs through the real frontend → real
+`JvmBackend` codegen → `javac` subprocess → `java` subprocess executing
+the emitted artifact (`test/conformance/fixtures/jvm-stdlib-slice.json`,
+14 fixtures: 12 single-module runtime fixtures + 1 frontend
+compile-error gate + 1 multi-module orchestrator fixture;
+`test/BackendConformanceTest` fails a fixture whose codegen or JVM
+execution is bypassed). `std/table` and `std/json` have zero supported
+functions in this slice — their functions take or return a `table`
+value — and their imports are E6000 at the import statement, used or
+unused (`JvmBackendTest.testStdlibTableBoundaryRejected`).
+
+- **`std/console.log` / `std/console.error`** (builtin since ISSUE-0091,
+  re-pinned with the other stdlib modules) — `jvm-std-console-output`
+  (observable stdout/stderr output) and the `jvm-skeleton.json`
+  `jvm-console-error` stderr pin.
+- **`std/string.length`** — UTF-8 byte count like LuaJIT's `#s`:
+  `jvm-std-string-length` ("hello" → 5, "" → 0, "héllo" → 6 — the
+  multibyte pin), `JvmBackendTest.testStdlibExecution` (n === 5),
+  `JvmBackendTest.testStdlibByteSemantics` (bytes === 6), and
+  `JvmBackendTest.testStdlibCallEmission` (the `__strLength(` call and
+  helper-definition emission assertions).
+- **`std/string.substring`** — LuaJIT's `string.sub(s, start + 1, end)`
+  corrections (each bound clamps to [1, n] after `pos += n+1` for
+  negatives, `start > end` yields the empty string):
+  `jvm-std-string-substring` (whole, middle, `start === end`,
+  `start > end`, end clipped, start past the end, negative start),
+  `JvmBackendTest.testStdlibExecution` (clip/past/neg),
+  `JvmBackendTest.testStdlibByteSemantics` (the complete byte range
+  `substring("héllo", 1, 3) === "é"` and the mid-character cut decoding
+  as U+FFFD — the documented closest-byte-faithful reading, since
+  `java.lang.String` cannot hold LuaJIT's raw partial bytes).
+- **`std/string.contains`** — plain-text containment (Lua pattern magic
+  characters literal, empty part contained): `jvm-std-string-search`
+  (found, `"%"` literal, empty part, negative case),
+  `JvmBackendTest.testStdlibExecution` (the trimmed-string check).
+- **`std/string.startsWith`** — `jvm-std-string-search` (prefix, empty
+  prefix, non-prefix).
+- **`std/string.endsWith`** — `jvm-std-string-search` (suffix, empty
+  suffix, non-suffix).
+- **`std/string.replace`** — every plain-text occurrence, empty `old`
+  returns the original, `%` in the replacement literal:
+  `jvm-std-string-replace` (all six shapes),
+  `JvmBackendTest.testStdlibExecution` (replaced + kept).
+- **`std/string.split`** — `jvm-std-string-split` (separator split,
+  single-element array, empty-string → empty array, empty-separator →
+  individual characters, consecutive/leading/trailing separators
+  producing empty parts, longer separator runs),
+  `JvmBackendTest.testStdlibExecution` (the `a,,b` parts and length),
+  `JvmBackendTest.testOrchestratorJvmStdlibImport` (split inside an
+  imported compiled project module through the orchestrator).
+- **`std/string.trim`** — Lua's `%s` whitespace set:
+  `jvm-std-string-trim` (leading/trailing, the `\\t`/`\\n`
+  whitespace forms, all-whitespace → empty, internal
+  whitespace preserved, already-trimmed),
+  `JvmBackendTest.testStdlibExecution` (trimmed === "deal",
+  plus the vertical-tab and form-feed members of the `%s` set
+  through Java unicode escapes in the test source).
+- **`std/math.floor`** — `jvm-std-math-number` (3.8 → 3.0, -3.2 → -4.0),
+  `JvmBackendTest.testStdlibExecution` (int(math.floor(3.8)) === 3).
+- **`std/math.ceil`** — `jvm-std-math-number` (3.2 → 4.0, -3.2 → -3.0),
+  `JvmBackendTest.testStdlibExecution` (int(math.ceil(3.2)) === 4).
+- **`std/math.sqrt`** — `jvm-std-math-number` (sqrt(9.0) === 3.0),
+  `jvm-std-math-sqrt-negative` (sqrt(-1.0) → E8001 "sqrt of negative
+  number", exit 1 — the std/math.lua error),
+  `JvmBackendTest.testStdlibSqrtNegativeRuntimeError` (E8001 + message).
+- **`std/math.absInt`** — `jvm-std-math-int` (absInt(-7) === 7,
+  absInt(7) === 7, absInt(-9007199254740991) === 9007199254740991 —
+  the extreme negative safe int),
+  `JvmBackendTest.testStdlibExecution` (ai === 7).
+- **`std/math.absNumber`** — `jvm-std-math-number` (absNumber(-2.5) ===
+  2.5), `JvmBackendTest.testStdlibExecution` (an === 2.5).
+- **`std/math.minInt`** — `jvm-std-math-int` (minInt(3, 9) === 3,
+  minInt(-5, 2) === -5), `JvmBackendTest.testStdlibExecution`.
+- **`std/math.maxInt`** — `jvm-std-math-int` (maxInt(3, 9) === 9,
+  maxInt(-5, 2) === 2), `JvmBackendTest.testStdlibExecution`.
+- **`std/time.nowMillis`** — `jvm-std-time-nowmillis` (positive, recent,
+  second-truncated — the `% 1000 === 0` pin for LuaJIT's
+  `os.time() * 1000` granularity),
+  `JvmBackendTest.testStdlibTimeNowMillis`.
+- **stdlib results composing across modules** — `jvm-std-compose`
+  (str.length feeding math.absInt, str.trim feeding str.contains).
+- **Frontend compile-error gate** — `jvm-std-frontend-error`
+  (str.length(42) → E5001 rejected before any backend runs).
+- **Multi-module orchestrator consumption** — `jvm-std-module-import`
+  (an imported compiled project module consumes std/string through the
+  real orchestrator pipeline; wordCount("a b c") === 3 across the
+  module boundary) and `JvmBackendTest.testOrchestratorJvmStdlibImport`
+  (orchestrator artifacts compile with `javac` and run with `java`).
+- **`std/table` / `std/json` boundary rejection** —
+  `JvmBackendTest.testStdlibTableBoundaryRejected` (used and unused
+  imports of both modules are E6000 at the import statement with a
+  message naming the `table` boundary) plus the
+  `testUnsupportedConstructsRejected` case re-anchored from
+  std/string (now supported) to std/table.
+- **Emission seams** — `JvmBackendTest.testStdlibCallEmission`
+  (every call form and helper definition in the generated Java),
+  `JvmBackendTest.testStdlibHelperNameCollisions` (DEAL functions named
+  `__strLength`/`__strTrim`/`__strSplit`/`__strReplace`/`__mathSqrt`
+  translate to `$u$u…` names and coexist with the emitted helpers —
+  compiled and executed).
+
 ## Tests
 
 ```bash
@@ -931,11 +1041,16 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   (ISSUE-0096): a namespace import of a compiled module runs its load-time
   side effects through the emitted `__init$` trigger and imported direct
   calls compile to static calls on the imported module's class. Imports of
-  declaration/host modules and stdlib modules other than `std/console`
-  remain E6000 at the import statement (host ABI and imported classes are
-  deferred to later issues — ISSUE-0109 for imported classes and
-  cross-module nominal identity), and class-name collisions between
-  modules are E6000 — never a silent artifact overwrite.
+  declaration/host modules remain E6000 at the import statement (host ABI
+  and imported classes are deferred to later issues — ISSUE-0109 for
+  imported classes and cross-module nominal identity), and class-name
+  collisions between modules are E6000 — never a silent artifact
+  overwrite. Stdlib imports follow the ISSUE-0097 boundary: `std/console`,
+  `std/string`, `std/math`, and `std/time` are supported builtins (their
+  declared functions use only the slice's prerequisite value types), while
+  `std/table` and `std/json` are E6000 at the import statement — used or
+  unused — because their only functions take or return a `table`, a value
+  type the slice does not support yet (tables are E6000).
 - Module-level forward references are rejected: Java's
   illegal-forward-reference rule forbids `static { …x… }` /
   `static long b = c + 1L;` before `static long c;` is declared, and

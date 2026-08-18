@@ -21,7 +21,7 @@ import java.util.*;
  * Loads backend-neutral JSON fixture tests from
  * {@code test/conformance/fixtures/} and executes them against the
  * LuaJIT backend and (ISSUE-0091, ISSUE-0092, ISSUE-0093, ISSUE-0094,
- * ISSUE-0096) the JVM backend. The
+ * ISSUE-0096, ISSUE-0097) the JVM backend. The
  * ISSUE-0092 semantic-slice fixtures live in
  * {@code test/conformance/fixtures/jvm-semantic-slice.json} (while loops,
  * template literals, and the surrounding primitive surface — JVM-only,
@@ -57,7 +57,18 @@ import java.util.*;
  * multi-module fixtures live in
  * {@code test/conformance/fixtures/jvm-modules-slice.json}
  * (namespace imports/exports and imported direct calls across compiled
- * project modules — see the multi-module section below).
+ * project modules — see the multi-module section below), and the
+ * ISSUE-0097 stdlib-boundary fixtures live in
+ * {@code test/conformance/fixtures/jvm-stdlib-slice.json}
+ * (the stdlib modules whose declared functions use only the slice's
+ * prerequisite value types — std/console output, std/string
+ * UTF-8 byte-wise length/substring/split plus the plain-text
+ * search/replace/trim helpers, std/math floor/ceil/sqrt/absInt/
+ * absNumber/minInt/maxInt with the sqrt-negative E8001 runtime error,
+ * std/time's second-truncated nowMillis, stdlib results composing
+ * across modules, a frontend E5001 compile-error gate, and a
+ * multi-module fixture consuming std/string through the orchestrator
+ * pipeline).
  *
  * <h2>Multi-module fixtures (ISSUE-0096)</h2>
  *

@@ -43,7 +43,8 @@ import java.util.Set;
  * guarantees every artifact it emits is valid Java).
  *
  * <p>Semantic slice scope (ISSUE-0091 skeleton + ISSUE-0092 slice +
- * ISSUE-0093 slice + ISSUE-0094 slice + ISSUE-0096 slice):
+ * ISSUE-0093 slice + ISSUE-0094 slice + ISSUE-0096 slice + ISSUE-0097
+ * stdlib-boundary slice):
  * functions, {@code let} locals, module fields, literals,
  * int/number/boolean/string arithmetic and comparisons, {@code if}/
  * {@code else}, {@code while} loops, {@code return}, assignment, direct
@@ -52,18 +53,47 @@ import java.util.Set;
  * output ({@code console.log}/{@code console.error} → {@code System.out}/
  * {@code System.err}), primitive arrays — {@code int[]},
  * {@code number[]}, {@code string[]}, {@code boolean[]} — as literals,
- * index reads, element writes, and {@code .length} reads, and
+ * index reads, element writes, and {@code .length} reads,
  * multi-module compilation (ISSUE-0096): namespace imports
  * ({@code import * as alias from "./lib"}) of compiled project modules,
  * exported functions, and imported direct calls ({@code alias.fn(args)} →
- * a static call on the imported module's emitted class). Anything
- * outside this scope — classes, tables, nullables, nullable arrays,
+ * a static call on the imported module's emitted class), and the stdlib
+ * modules whose declared functions use only those prerequisite value
+ * types (ISSUE-0097): {@code std/console} (already the trusted builtin),
+ * {@code std/string}, {@code std/math}, and {@code std/time} — every
+ * function of those four modules executes with the LuaJIT reference
+ * semantics of {@code std/*.lua} (UTF-8 byte-wise {@code length}/
+ * {@code substring}/{@code split}, plain-text search/replace, the Lua
+ * whitespace set for {@code trim}, {@code sqrt} of a negative number →
+ * {@code E8001}, {@code nowMillis()} → second-truncated epoch
+ * milliseconds like {@code os.time() * 1000}). {@code std/table} and
+ * {@code std/json} stay rejected with {@code E6000} at the import
+ * statement: their only functions take or return a {@code table}, a
+ * value type the slice does not support yet. Anything outside this
+ * scope — classes, tables, nullables, nullable arrays,
  * arrays of nullable elements, nested (multi-dimensional) arrays, class
- * arrays, function arrays, stdlib modules other than
- * {@code std/console}, declaration/host-module imports, async, host ABI,
+ * arrays, function arrays, stdlib imports other than the four supported
+ * modules, declaration/host-module imports, async, host ABI,
  * {@code @jsonable}, for/for-of loops, break/continue, try/throw — is
  * rejected with a backend {@code E6000} diagnostic, never silently
  * miscompiled.
+ *
+ * <p>Stdlib calls (ISSUE-0097) emit either an inline Java-library
+ * expression (plain-text {@code contains}/{@code startsWith}/
+ * {@code endsWith} on the mapped {@code java.lang.String};
+ * {@code java.lang.Math.floor/ceil/abs/min/max}; the second-truncated
+ * {@code System.currentTimeMillis()} form for {@code nowMillis}) or a
+ * call to an emitted {@code __str*}/{@code __mathSqrt} runtime helper
+ * (UTF-8 byte-wise {@code length}/{@code substring}/{@code split},
+ * plain-text {@code replace} with the empty-{@code old} guard, the
+ * Lua-whitespace {@code trim}, and the negative-input {@code E8001}
+ * check of {@code sqrt}). Every helper name starts with {@code __},
+ * which {@link #javaName} can never produce (each DEAL underscore
+ * escapes to {@code $u}), so a user function can never collide with a
+ * stdlib helper. Java's own left-to-right argument evaluation preserves
+ * the spec's evaluation order: the helpers are plain static calls whose
+ * Java arguments evaluate left to right before the helper body runs,
+ * exactly where LuaJIT evaluates the stdlib wrapper's arguments.
  *
  * <p>Module imports (ISSUE-0096) emit a load-time initialization trigger:
  * the import statement becomes {@code static { <ImportedClass>.__init$();
@@ -297,14 +327,40 @@ public final class JvmBackend {
 
     /**
      * Import alias → module path of the imported module ({@code console →
-     * std/console} for the builtin, {@code lib → lib} for a compiled
-     * project module). The pre-scan records an alias only for {@code
-     * std/console} and for imports present in {@link #importResolutions};
-     * every other import — a stdlib module other than {@code std/console}
-     * or a declaration/host module — is rejected with E6000 at the import
-     * statement (ISSUE-0091 rework, ISSUE-0096).
+     * std/console}, {@code str → std/string}, {@code math → std/math},
+     * {@code time → std/time} for the supported stdlib builtins,
+     * {@code lib → lib} for a compiled project module). The pre-scan
+     * records an alias only for the supported stdlib modules
+     * ({@link #SUPPORTED_STDLIB_MODULES}) and for imports present in
+     * {@link #importResolutions}; every other import — a spec stdlib
+     * module whose functions need {@code table} values
+     * ({@code std/table}, {@code std/json}) or a declaration/host module
+     * — is rejected with E6000 at the import statement (ISSUE-0091
+     * rework, ISSUE-0096, ISSUE-0097).
      */
     private final Map<String, String> importAliases = new LinkedHashMap<>();
+
+    /**
+     * The stdlib modules whose declared functions the JVM slice can
+     * execute (ISSUE-0097): every export of these modules is typed only
+     * with prerequisite value types the slice already supports (int,
+     * number, boolean, string, string[]). {@code std/console} was the
+     * trusted builtin since ISSUE-0091; {@code std/string},
+     * {@code std/math}, and {@code std/time} join it.
+     */
+    private static final Set<String> SUPPORTED_STDLIB_MODULES = Set.of(
+        "std/console", "std/string", "std/math", "std/time");
+
+    /**
+     * The spec-listed stdlib modules whose only functions take or return
+     * a {@code table} — a value type the JVM slice does not support
+     * (tables are E6000). Importing one is rejected at the import
+     * statement with E6000, even when unused: none of its functions can
+     * ever execute in this slice, and its require-time module object has
+     * no JVM equivalent.
+     */
+    private static final Set<String> TABLE_BOUNDARY_STDLIB_MODULES = Set.of(
+        "std/table", "std/json");
 
     /**
      * Raw import path → module path of the imported compiled module
@@ -658,16 +714,19 @@ public final class JvmBackend {
                 // ISSUE-0096: imports of compiled project modules are
                 // supported — the alias maps to the imported module's
                 // module path, and alias.fn(args) emits a static call on
-                // the imported module's emitted class. std/console stays
-                // the trusted builtin. Any other import — a stdlib module
-                // other than std/console, a declaration/host module (never
-                // an importResolutions entry: the orchestrator skips
+                // the imported module's emitted class. ISSUE-0097: the
+                // stdlib modules whose functions use only supported value
+                // types (std/console, std/string, std/math, std/time) are
+                // accepted as builtins. Any other import — a spec stdlib
+                // module whose functions need table values (std/table,
+                // std/json), a declaration/host module (never an
+                // importResolutions entry: the orchestrator skips
                 // declaration files in JVM codegen) — is out of scope and
                 // rejected AT THE IMPORT STATEMENT itself, even when
                 // unused, because the imported module's require-time side
                 // effects have no JVM slice equivalent and must fail
                 // loudly rather than be silently dropped.
-                if ("std/console".equals(imp.modulePath())) {
+                if (SUPPORTED_STDLIB_MODULES.contains(imp.modulePath())) {
                     importAliases.put(imp.alias(), imp.modulePath());
                     continue;
                 }
@@ -675,10 +734,17 @@ public final class JvmBackend {
                 if (resolved != null) {
                     importAliases.put(imp.alias(), resolved);
                     importAliasStatementIndices.put(imp.alias(), i);
+                } else if (TABLE_BOUNDARY_STDLIB_MODULES.contains(
+                        imp.modulePath())) {
+                    unsupported("import of '" + imp.modulePath() + "' "
+                        + "(its functions require table values, which the "
+                        + "JVM slice does not support yet)", imp.span());
                 } else {
                     unsupported("module imports other than compiled "
-                        + "project modules and std/console ('"
-                        + imp.modulePath() + "')", imp.span());
+                        + "project modules and the supported stdlib "
+                        + "modules (std/console, std/string, std/math, "
+                        + "std/time) ('" + imp.modulePath() + "')",
+                        imp.span());
                 }
             } else if (stmt instanceof VariableDeclaration vd) {
                 moduleFieldIndices.putIfAbsent(vd.name(), i);
@@ -1478,6 +1544,69 @@ public final class JvmBackend {
         emitLine("static java.lang.String __stringArrayWrite(__StringArray a, long i, java.lang.String v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine("static boolean __booleanArrayWrite(__BooleanArray a, long i, boolean v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { boolean[] nd = new boolean[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine();
+        emitLine("// ---- DEAL stdlib support (ISSUE-0097): std/string, std/math, std/time ----");
+        emitLine("// DEAL strings are UTF-8 byte sequences (spec-v1.1 §String escapes and UTF-8) and");
+        emitLine("// LuaJIT's stdlib operates on those bytes, so __strLength/__strSubstring/__strSplit");
+        emitLine("// operate on the UTF-8 encoding. The JVM mapping (java.lang.String) cannot hold");
+        emitLine("// invalid UTF-8: a byte-range cut inside a multi-byte character decodes as U+FFFD");
+        emitLine("// where LuaJIT would produce the raw partial bytes — the closest byte-faithful");
+        emitLine("// reading the representation allows (documented divergence). For valid UTF-8,");
+        emitLine("// byte-wise and UTF-16-wise search/replace/trim are equivalent, so contains/");
+        emitLine("// startsWith/endsWith/replace/trim match LuaJIT's plain-text byte semantics.");
+        emitLine("static long __strLength(java.lang.String s) { return (long) s.getBytes(java.nio.charset.StandardCharsets.UTF_8).length; }");
+        emitLine("// LuaJIT string.sub correction: start+1/end each clamp to [1, n] after a negative");
+        emitLine("// adjustment (pos += n+1), and start > end yields the empty string.");
+        emitLine("static java.lang.String __strSubstring(java.lang.String s, long start, long end) {");
+        emitLine("    byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);");
+        emitLine("    long n = (long) b.length;");
+        emitLine("    long st = start + 1L;");
+        emitLine("    if (st < 0L) st += n + 1L;");
+        emitLine("    if (st < 1L) st = 1L;");
+        emitLine("    long en = end;");
+        emitLine("    if (en < 0L) en += n + 1L;");
+        emitLine("    if (en > n) en = n;");
+        emitLine("    if (st > en) return \"\";");
+        emitLine("    return new java.lang.String(b, (int) (st - 1L), (int) (en - st + 1L), java.nio.charset.StandardCharsets.UTF_8);");
+        emitLine("}");
+        emitLine("// Plain-text replace of every occurrence; an empty old returns s unchanged");
+        emitLine("// (LuaJIT guards before gsub, which cannot match an empty pattern).");
+        emitLine("static java.lang.String __strReplace(java.lang.String s, java.lang.String old, java.lang.String to) { return old.isEmpty() ? s : s.replace(old, to); }");
+        emitLine("// Plain-text split with LuaJIT's semantics: an empty s yields the empty array");
+        emitLine("// (whatever the separator); an empty separator splits into individual bytes");
+        emitLine("// (LuaJIT iterates i = 1..#s and takes s:sub(i, i)); otherwise every occurrence");
+        emitLine("// of sep delimits a part, with the trailing remainder (even empty) appended.");
+        emitLine("static __StringArray __strSplit(java.lang.String s, java.lang.String sep) {");
+        emitLine("    java.util.ArrayList<java.lang.String> parts = new java.util.ArrayList<>();");
+        emitLine("    if (s.isEmpty()) return new __StringArray(parts.toArray(new java.lang.String[0]));");
+        emitLine("    if (sep.isEmpty()) {");
+        emitLine("        byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);");
+        emitLine("        for (byte value : b) parts.add(new java.lang.String(new byte[] { value }, java.nio.charset.StandardCharsets.UTF_8));");
+        emitLine("        return new __StringArray(parts.toArray(new java.lang.String[0]));");
+        emitLine("    }");
+        emitLine("    int start = 0;");
+        emitLine("    while (true) {");
+        emitLine("        int found = s.indexOf(sep, start);");
+        emitLine("        if (found < 0) { parts.add(s.substring(start)); break; }");
+        emitLine("        parts.add(s.substring(start, found));");
+        emitLine("        start = found + sep.length();");
+        emitLine("    }");
+        emitLine("    return new __StringArray(parts.toArray(new java.lang.String[0]));");
+        emitLine("}");
+        emitLine("// Lua pattern %s whitespace set: space, tab, newline, vertical tab, form feed,");
+        emitLine("// carriage return (exactly the std/string.lua trim contract).");
+        emitLine("static boolean __strIsTrimSpace(char c) { return c == ' ' || c == '\\t' || c == '\\n' || c == '\\u000b' || c == '\\f' || c == '\\r'; }");
+        emitLine("static java.lang.String __strTrim(java.lang.String s) {");
+        emitLine("    int st = 0;");
+        emitLine("    int en = s.length();");
+        emitLine("    while (st < en && __strIsTrimSpace(s.charAt(st))) st++;");
+        emitLine("    while (en > st && __strIsTrimSpace(s.charAt(en - 1))) en--;");
+        emitLine("    return s.substring(st, en);");
+        emitLine("}");
+        emitLine("// std/math.sqrt rejects negative inputs with E8001 (std/math.lua); NaN passes");
+        emitLine("// through to NaN like LuaJIT's x < 0 guard and math.sqrt. floor/ceil/abs/min/max");
+        emitLine("// map to java.lang.Math directly (same IEEE 754 semantics).");
+        emitLine("static double __mathSqrt(double x) { if (x < 0.0) throw new DealError(\"E8001\", \"sqrt of negative number\"); return java.lang.Math.sqrt(x); }");
+        emitLine();
     }
 
     // =========================================================================
@@ -1542,13 +1671,15 @@ public final class JvmBackend {
      * imported module's load-time statements — exactly where LuaJIT runs
      * {@code require} for the import. The trigger is emitted even when the
      * alias is never used, so the imported module's load-time side effects
-     * are never silently dropped. {@code std/console} imports have no
-     * trigger (the builtin has no require-time side effects in the slice).
+     * are never silently dropped. Stdlib imports have no trigger (the
+     * builtins have no require-time side effects in the slice — ISSUE-0097
+     * extends this from {@code std/console} to the other supported stdlib
+     * modules).
      */
     private void emitImportTrigger(ImportDeclaration id) {
         String module = importAliases.get(id.alias());
-        if (module == null || "std/console".equals(module)) {
-            return; // std/console: no load-time trigger
+        if (module == null || SUPPORTED_STDLIB_MODULES.contains(module)) {
+            return; // stdlib builtins: no load-time trigger
         }
         String className = classNameFor(module);
         emitLine("static {");
@@ -2759,7 +2890,9 @@ public final class JvmBackend {
     /**
      * A member access used as a direct call: {@code alias.fn(args)}.
      * {@code std/console} aliases map {@code log}/{@code error} to
-     * {@code System.out}/{@code System.err}; project-module aliases
+     * {@code System.out}/{@code System.err}; the supported stdlib aliases
+     * (ISSUE-0097) map to inline Java-library expressions or to emitted
+     * {@code __str*}/{@code __mathSqrt} helpers; project-module aliases
      * (ISSUE-0096) map to a static call on the imported module's emitted
      * class ({@code lib.add(a, b)} → {@code Lib.add(a, b)}), which also
      * triggers the imported module's class initialization exactly where
@@ -2773,8 +2906,9 @@ public final class JvmBackend {
         String module = importAliases.get(id.name());
         if (module == null) {
             unsupported("member access (only module function calls on "
-                + "imported project modules and std/console output are "
-                + "supported)", mae.span());
+                + "imported project modules and the supported stdlib "
+                + "modules — std/console output, std/string, std/math, "
+                + "std/time — are supported)", mae.span());
             return "null";
         }
         if ("std/console".equals(module)) {
@@ -2794,6 +2928,15 @@ public final class JvmBackend {
                 sb.append(argCodes.get(i));
             }
             return sb.append(')').toString();
+        }
+        if ("std/string".equals(module)) {
+            return emitStdlibStringMemberCall(mae, call);
+        }
+        if ("std/math".equals(module)) {
+            return emitStdlibMathMemberCall(mae, call);
+        }
+        if ("std/time".equals(module)) {
+            return emitStdlibTimeMemberCall(mae, call);
         }
         // Project-module import (ISSUE-0096): a static call on the imported
         // module's emitted class. The checker has already verified the
@@ -2820,6 +2963,96 @@ public final class JvmBackend {
             sb.append(argCodes.get(i));
         }
         return sb.append(')').toString();
+    }
+
+    /**
+     * Emits a {@code std/string} member call (ISSUE-0097). The checker has
+     * already verified the export exists (E2004) and typed every argument,
+     * so arity and types are guaranteed. Plain-text search predicates map
+     * to the mapped {@code java.lang.String} directly (byte-wise and
+     * UTF-16-wise matching coincide for valid UTF-8); {@code length}/
+     * {@code substring}/{@code split} route through the emitted UTF-8
+     * byte-wise helpers to reproduce LuaJIT's byte-string semantics, and
+     * {@code replace}/{@code trim} route through helpers for the
+     * empty-{@code old} guard and the Lua {@code %s} whitespace set.
+     * The helper call's Java arguments evaluate left to right before the
+     * helper body runs, preserving the spec's evaluation order.
+     */
+    private String emitStdlibStringMemberCall(MemberAccessExpr mae, CallExpr call) {
+        List<String> argCodes = emitOperandsInOrder(call.args());
+        String a0 = argCodes.get(0);
+        StringBuilder sb = new StringBuilder();
+        switch (mae.field()) {
+            case "length" -> sb.append("__strLength(").append(a0).append(')');
+            case "substring" -> sb.append("__strSubstring(").append(a0).append(", ")
+                .append(argCodes.get(1)).append(", ").append(argCodes.get(2))
+                .append(')');
+            case "contains" -> sb.append('(').append(a0).append(").contains(")
+                .append(argCodes.get(1)).append(')');
+            case "startsWith" -> sb.append('(').append(a0).append(").startsWith(")
+                .append(argCodes.get(1)).append(')');
+            case "endsWith" -> sb.append('(').append(a0).append(").endsWith(")
+                .append(argCodes.get(1)).append(')');
+            case "replace" -> sb.append("__strReplace(").append(a0).append(", ")
+                .append(argCodes.get(1)).append(", ").append(argCodes.get(2))
+                .append(')');
+            case "split" -> sb.append("__strSplit(").append(a0).append(", ")
+                .append(argCodes.get(1)).append(')');
+            case "trim" -> sb.append("__strTrim(").append(a0).append(')');
+            default -> {
+                unsupported("export '" + mae.field() + "' of std/string",
+                    mae.span());
+                return "null";
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Emits a {@code std/math} member call (ISSUE-0097). {@code floor}/
+     * {@code ceil}/{@code absNumber}/{@code minInt}/{@code maxInt} map to
+     * {@code java.lang.Math} (the same IEEE 754 semantics as LuaJIT's
+     * {@code math.*} over doubles); {@code absInt} re-checks its result
+     * with {@code checkInt} exactly like LuaJIT's {@code
+     * check_int(math.abs(x))}; {@code sqrt} routes through {@code
+     * __mathSqrt} for the negative-input E8001 (std/math.lua). All
+     * {@code java.lang} references are fully qualified so a user binding
+     * named {@code Math} can never shadow them.
+     */
+    private String emitStdlibMathMemberCall(MemberAccessExpr mae, CallExpr call) {
+        List<String> argCodes = emitOperandsInOrder(call.args());
+        String a0 = argCodes.isEmpty() ? null : argCodes.get(0);
+        return switch (mae.field()) {
+            case "floor" -> "java.lang.Math.floor(" + a0 + ")";
+            case "ceil" -> "java.lang.Math.ceil(" + a0 + ")";
+            case "sqrt" -> "__mathSqrt(" + a0 + ")";
+            case "absInt" -> "checkInt(java.lang.Math.abs(" + a0 + "))";
+            case "absNumber" -> "java.lang.Math.abs(" + a0 + ")";
+            case "minInt" -> "java.lang.Math.min(" + a0 + ", "
+                + argCodes.get(1) + ")";
+            case "maxInt" -> "java.lang.Math.max(" + a0 + ", "
+                + argCodes.get(1) + ")";
+            default -> {
+                unsupported("export '" + mae.field() + "' of std/math",
+                    mae.span());
+                yield "null";
+            }
+        };
+    }
+
+    /**
+     * Emits a {@code std/time} member call (ISSUE-0097). {@code
+     * nowMillis()} reproduces LuaJIT's {@code os.time() * 1000}: the
+     * current epoch milliseconds truncated to whole seconds — never the
+     * raw {@code System.currentTimeMillis()}, whose sub-second precision
+     * would diverge from the reference implementation.
+     */
+    private String emitStdlibTimeMemberCall(MemberAccessExpr mae, CallExpr call) {
+        if (!"nowMillis".equals(mae.field())) {
+            unsupported("export '" + mae.field() + "' of std/time", mae.span());
+            return "null";
+        }
+        return "(java.lang.System.currentTimeMillis() / 1000L) * 1000L";
     }
 
     /** A member access used as a value (not a call). Only the array

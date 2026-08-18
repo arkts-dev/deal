@@ -1,0 +1,206 @@
+{
+  "version": "1.0",
+  "description": "JVM stdlib boundary slice (ISSUE-0097). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: the stdlib modules whose declared functions use only the slice's prerequisite value types — std/console (observable stdout/stderr output), std/string (UTF-8 byte-wise length incl. the \"héllo\" 6-byte pin, substring with the LuaJIT clipping and negative-start corrections, plain-text contains/startsWith/endsWith incl. the empty-part and pattern-magic-character pins, plain-text replace incl. the empty-old and %-in-replacement pins, split incl. the empty-string/empty-separator/consecutive/leading/trailing separator pins, trim with the Lua %s whitespace set), std/math (floor/ceil/sqrt/absInt/absNumber/minInt/maxInt incl. negative inputs and the extreme negative absInt, sqrt of a negative number → E8001 runtime error), std/time (nowMillis positive, recent, and second-truncated like LuaJIT's os.time() * 1000), stdlib results composing across modules, a frontend compile-error gate (E5001 wrong argument type) rejected before any backend runs, and a multi-module fixture where an imported compiled project module consumes std/string through the real orchestrator pipeline. std/table and std/json stay out of this slice (their only functions require table values) — their E6000 import rejection is pinned by JvmBackendTest.testStdlibTableBoundaryRejected.",
+  "tests": [
+    {
+      "name": "jvm-std-console-output",
+      "description": "std/console.log and std/console.error are observable on stdout and stderr (captured by the runner's merged stream)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  console.log(\"jvm-std-console-log\");\n  console.error(\"jvm-std-console-error\");\n}",
+      "expectedOutput": "jvm-std-console-log\njvm-std-console-error",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-std-string-length",
+      "description": "std/string.length counts UTF-8 bytes like LuaJIT's #s: \"hello\" → 5, \"\" → 0, \"héllo\" → 6 (the multibyte pin — 500 only when the byte semantics hold)",
+      "source": "import * as str from \"std/string\"\nexport function test(): int {\n  let ascii: int = str.length(\"hello\");\n  let empty: int = str.length(\"\");\n  let bytes: int = str.length(\"héllo\");\n  return ascii * 100 + empty * 10 + (bytes - 6);\n}",
+      "expectedOutput": "500",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-std-string-substring",
+      "description": "std/string.substring applies the LuaJIT string.sub corrections over the DEAL 0-based exclusive bounds: the whole string, the middle, start === end, start > end, end clipped to the string length, start past the end, and a negative start corrected from the end",
+      "source": "import * as str from \"std/string\"\nexport function test(): string {\n  let whole: string = str.substring(\"hello\", 0, 5);\n  let mid: string = str.substring(\"hello\", 1, 4);\n  let same: string = str.substring(\"hello\", 2, 2);\n  let reversed: string = str.substring(\"hello\", 3, 1);\n  let clipped: string = str.substring(\"abc\", 1, 10);\n  let past: string = str.substring(\"abc\", 5, 10);\n  let neg: string = str.substring(\"abc\", -3, 3);\n  return whole + \"|\" + mid + \"|\" + same + \"|\" + reversed + \"|\" + clipped + \"|\" + past + \"|\" + neg;\n}",
+      "expectedOutput": "hello|ell|||bc||bc",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-std-string-search",
+      "description": "std/string.contains/startsWith/endsWith match plain text (Lua pattern magic characters are literal), the empty part is contained/prefix/suffix of every string, and negative cases compute — the ten predicate pins accumulate to 1023",
+      "source": "import * as str from \"std/string\"\nexport function test(): int {\n  let c1: boolean = str.contains(\"hello world\", \"world\");\n  let c2: boolean = str.contains(\"100%\", \"%\");\n  let c3: boolean = str.contains(\"hello\", \"\");\n  let c4: boolean = str.contains(\"abc\", \"abcd\");\n  let s1: boolean = str.startsWith(\"hello\", \"hel\");\n  let s2: boolean = str.startsWith(\"hello\", \"\");\n  let s3: boolean = str.startsWith(\"hello\", \"ello\");\n  let e1: boolean = str.endsWith(\"hello\", \"lo\");\n  let e2: boolean = str.endsWith(\"\", \"\");\n  let e3: boolean = str.endsWith(\"hello\", \"xyz\");\n  let n: int = 0;\n  if (c1) { n = n + 1; }\n  if (c2) { n = n + 2; }\n  if (c3) { n = n + 4; }\n  if (!c4) { n = n + 8; }\n  if (s1) { n = n + 16; }\n  if (s2) { n = n + 32; }\n  if (!s3) { n = n + 64; }\n  if (e1) { n = n + 128; }\n  if (e2) { n = n + 256; }\n  if (!e3) { n = n + 512; }\n  return n;\n}",
+      "expectedOutput": "1023",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-std-string-replace",
+      "description": "std/string.replace replaces every plain-text occurrence, returns the original on no match, returns the original when old is empty, treats Lua pattern magic characters literally, and treats % in the replacement literally",
+      "source": "import * as str from \"std/string\"\nexport function test(): string {\n  let a: string = str.replace(\"hello world\", \"world\", \"earth\");\n  let b: string = str.replace(\"aaa\", \"a\", \"b\");\n  let c: string = str.replace(\"hello\", \"xyz\", \"abc\");\n  let d: string = str.replace(\"hello\", \"\", \"x\");\n  let e: string = str.replace(\"a.b.c\", \".\", \"-\");\n  let f: string = str.replace(\"hello\", \"e\", \"100%\");\n  return a + \"|\" + b + \"|\" + c + \"|\" + d + \"|\" + e + \"|\" + f;\n}",
+      "expectedOutput": "hello earth|bbb|hello|hello|a-b-c|h100%llo",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-std-string-split",
+      "description": "std/string.split reproduces LuaJIT's plain-text split: separator split, single-element array, the empty string yielding the empty array whatever the separator, the empty separator splitting into individual characters, and consecutive/leading/trailing separators producing empty parts",
+      "source": "import * as str from \"std/string\"\nimport * as console from \"std/console\"\nexport function test(): null {\n  let parts: string[] = str.split(\"a,b,c\", \",\");\n  console.log(parts[0]);\n  console.log(parts[1]);\n  console.log(parts[2]);\n  let one: string[] = str.split(\"hello\", \",\");\n  console.log(one[0]);\n  let empty: string[] = str.split(\"\", \",\");\n  if (empty.length !== 0) { console.log(\"bad-empty\"); }\n  let chars: string[] = str.split(\"abc\", \"\");\n  console.log(chars[0]);\n  console.log(chars[1]);\n  console.log(chars[2]);\n  let consec: string[] = str.split(\"a,,b\", \",\");\n  console.log(consec[0]);\n  console.log(consec[1]);\n  console.log(consec[2]);\n  let lead: string[] = str.split(\",a,b\", \",\");\n  console.log(lead[0]);\n  console.log(lead[1]);\n  let trail: string[] = str.split(\"a,b,\", \",\");\n  console.log(trail[2]);\n  let longer: string[] = str.split(\"a-b-c-d-e\", \"-\");\n  console.log(longer[4]);\n}",
+      "expectedOutput": "a\nb\nc\nhello\na\nb\nc\na\n\nb\n\na\n\ne",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-std-string-trim",
+      "description": "std/string.trim removes leading and trailing Lua %s whitespace (space, tab, newline — the vertical-tab/form-feed members of the %s set are pinned by JvmBackendTest.testStdlibExecution because the harness JSON dialect has no \\uXXXX escapes and DEAL has no escape for them), keeps internal whitespace, and maps an all-whitespace string to the empty string",
+      "source": "import * as str from \"std/string\"\nexport function test(): string {\n  let a: string = str.trim(\"  hello  \");\n  let b: string = str.trim(\"\\t\\nhello\\n\");\n  let c: string = str.trim(\"   \");\n  let d: string = str.trim(\"  hello  world  \");\n  let e: string = str.trim(\"hello\");\n  return a + \"|\" + b + \"|\" + c + \"|\" + d + \"|\" + e;\n}",
+      "expectedOutput": "hello|hello||hello  world|hello",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-std-math-int",
+      "description": "std/math.absInt/minInt/maxInt compute on negative and positive operands, including absInt of the extreme negative safe int -9007199254740991 (every intermediate sum stays inside the safe range: small = 23, diff = g - 9007199254740968 = 23, total 46)",
+      "source": "import * as math from \"std/math\"\nexport function test(): int {\n  let a: int = math.absInt(-7);\n  let b: int = math.absInt(7);\n  let c: int = math.minInt(3, 9);\n  let d: int = math.maxInt(3, 9);\n  let e: int = math.minInt(-5, 2);\n  let f: int = math.maxInt(-5, 2);\n  let g: int = math.absInt(-9007199254740991);\n  let small: int = a + b + c + d + e + f;\n  let diff: int = g - 9007199254740968;\n  return small + diff;\n}",
+      "expectedOutput": "46",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-std-math-number",
+      "description": "std/math.floor/ceil/sqrt/absNumber compute on positive and negative inputs (floor(-3.2) === -4.0, ceil(-3.2) === -3.0, sqrt(9.0) === 3.0)",
+      "source": "import * as math from \"std/math\"\nexport function test(): int {\n  let f: number = math.floor(3.8);\n  let c: number = math.ceil(3.2);\n  let s: number = math.sqrt(9.0);\n  let ab: number = math.absNumber(-2.5);\n  let fn: number = math.floor(-3.2);\n  let cn: number = math.ceil(-3.2);\n  if (f === 3.0 && c === 4.0 && s === 3.0 && ab === 2.5 && fn === -4.0 && cn === -3.0) {\n    return 1;\n  }\n  return 0;\n}",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-std-math-sqrt-negative",
+      "description": "std/math.sqrt of a negative number raises E8001 'sqrt of negative number' exactly like std/math.lua — a real runtime error surfaced by executing the emitted artifact (exit 1)",
+      "source": "import * as math from \"std/math\"\nexport function test(): number { return math.sqrt(-1.0); }",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-std-time-nowmillis",
+      "description": "std/time.nowMillis() returns a positive, recent, second-truncated epoch milliseconds value (LuaJIT's os.time() * 1000 granularity — the % 1000 === 0 pin)",
+      "source": "import * as time from \"std/time\"\nexport function test(): int {\n  let t: int = time.nowMillis();\n  let granularity: int = t % 1000;\n  if (t > 1700000000000 && granularity === 0) {\n    return 1;\n  }\n  return 0;\n}",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-std-compose",
+      "description": "stdlib results compose across modules: str.length feeds math.absInt, str.trim feeds str.contains, and the observable console output pins both paths",
+      "source": "import * as str from \"std/string\"\nimport * as math from \"std/math\"\nimport * as console from \"std/console\"\nexport function test(): null {\n  let n: int = str.length(\"abc\");\n  let x: int = math.absInt(n - 10);\n  let trimmed: string = str.trim(\"  deal  \");\n  console.log(trimmed);\n  if (str.contains(trimmed, \"eal\") && x === 7) {\n    console.log(\"compose-ok\");\n  }\n}",
+      "expectedOutput": "deal\ncompose-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-std-frontend-error",
+      "description": "A wrong stdlib argument type (str.length(42) where length wants a string) is rejected by the frontend type checker (E5001) before any backend runs — codegen/javac/java never invoked",
+      "source": "import * as str from \"std/string\"\nexport function test(): int { return str.length(42); }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E5001",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-std-module-import",
+      "description": "A compiled project module consumes std/string through the real orchestrator pipeline (stdlib declaration resolution, module discovery, JVM codegen of both modules), and the imported wordCount splits 'a b c' into 3 words across the module boundary",
+      "modules": {
+        "lib.deal": "import * as str from \"std/string\"\nexport function wordCount(s: string): int {\n  let parts: string[] = str.split(s, \" \");\n  return parts.length;\n}",
+        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return lib.wordCount(\"a b c\"); }"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "3",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    }
+  ]
+}
