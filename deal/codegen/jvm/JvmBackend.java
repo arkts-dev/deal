@@ -2592,7 +2592,17 @@ public final class JvmBackend {
             if (code.startsWith("__t")) continue; // already materialized
             if (isPureAfterEmission(valueNodes.get(i))) continue;
             Type valueType = typeOf(valueNodes.get(i));
-            String javaType = javaLocalType(valueType, valueNodes.get(i).span());
+            // A nil-aware && / || provided value's emitted code is a
+            // boxed java.lang.Boolean temporary (null = the Lua nil) —
+            // the materialized temporary must stay boxed (a `boolean`
+            // declaration would auto-unbox and NPE on null before the
+            // constructor's booleanNotNull boundary could raise E8001),
+            // exactly like emitOperandsInOrder's own materialization
+            // below.
+            String javaType = (canYieldNil(valueNodes.get(i))
+                    && !isPrimitiveArrayRead(valueNodes.get(i)))
+                ? "java.lang.Boolean"
+                : javaLocalType(valueType, valueNodes.get(i).span());
             if (javaType == null) continue; // diagnostic already recorded
             String temp = nextEvalTempName();
             preStatements.add(new PreLine(
@@ -2613,7 +2623,19 @@ public final class JvmBackend {
             ExpressionNode valueNode = providedNodes.get(cf.name());
             if (code == null && cf.defaultExpr().isPresent()) {
                 valueNode = cf.defaultExpr().get();
-                code = emitExpression(valueNode);
+                if (typeOf(valueNode) == Type.Error.INSTANCE) {
+                    // The checker records every default subexpression's
+                    // type (ISSUE-0095 rework); Type.Error here means the
+                    // frontend reported errors — record an honest E6000,
+                    // never emit an artifact javac would reject.
+                    unsupported("default expression of field '" + cf.name()
+                        + "' of class '" + cd.name()
+                        + "' (unresolved default-expression type)",
+                        valueNode.span());
+                    code = zeroValueFor(cf.type());
+                } else {
+                    code = emitExpression(valueNode);
+                }
             }
             if (code != null && valueNode != null
                     && needsBooleanBoundary(valueNode, typeOf(valueNode))) {
@@ -3897,6 +3919,16 @@ public final class JvmBackend {
         Type target = typeOf(mae);
         String get = "(" + obj + ").get(" + quoteJavaString(mae.field()) + ")";
         if (target instanceof Type.Class cls) {
+            if (!moduleClasses.containsKey(cls.name())) {
+                // The same imported-class guard as javaLocalType: a
+                // class-typed table read for an imported class would
+                // emit a nominal-check helper the module never declared.
+                unsupported("class-typed table read for imported class '"
+                    + cls.name() + "' (imported classes / cross-module "
+                    + "nominal identity are deferred to ISSUE-0109)",
+                    mae.span());
+                return "null";
+            }
             return classCheckName(cls.name()) + "(" + get + ")";
         }
         if (target instanceof Type.Table) {
@@ -4286,7 +4318,23 @@ public final class JvmBackend {
                 yield arrayWrapperName(a.element());
             }
             case Type.Table ignored -> "$T";
-            case Type.Class c -> classNameForClass(c.name());
+            case Type.Class c -> {
+                // Only LOCAL module-level classes have emitted Java
+                // types. A checker-inferred class type can name an
+                // IMPORTED class (an annotation-less declaration like
+                // `let c = lib.getC()`): emitting its generated class
+                // reference without the class would leave a symbol javac
+                // rejects after the CLI reported success. Imported
+                // classes / cross-module nominal identity are deferred
+                // to ISSUE-0109 — E6000, never a broken artifact.
+                if (!moduleClasses.containsKey(c.name())) {
+                    unsupported("values of imported class type '" + c.name()
+                        + "' (imported classes / cross-module nominal "
+                        + "identity are deferred to ISSUE-0109)", span);
+                    yield null;
+                }
+                yield classNameForClass(c.name());
+            }
             case Type.Error ignored -> null;
             default -> {
                 unsupported("values of type " + typeName(t), span);

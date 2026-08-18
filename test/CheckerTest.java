@@ -248,6 +248,7 @@ public class CheckerTest {
         testErrorClassConstruction();
         // F9: Class field default values type-checked
         testClassDefaultValueTypeError();
+        testClassDefaultExpressionsTyped();
 
         // -- Type Checking: Throw statement (ISSUE-0010) --
         testThrowIntError();
@@ -1042,6 +1043,48 @@ public class CheckerTest {
             "class User { name: string = 42; }"
         );
         assertError(out, "E3001", "class default value type mismatch");
+
+        // Non-literal defaults are fully type-checked too (ISSUE-0095
+        // rework): the JVM backend emits defaults inline at each
+        // construction site and reads their subexpression types from the
+        // typeMap, so a non-literal mismatch must be a real diagnostic —
+        // never an artifact javac rejects.
+        CheckerOutput arithmetic = checkProgram(
+            "class User { name: string = 1 + 2; }"
+        );
+        assertError(arithmetic, "E3001",
+            "non-literal class default value type mismatch");
+    }
+
+    static void testClassDefaultExpressionsTyped() {
+        System.out.println("-- F9: Class default expressions type-checked --");
+        CheckerOutput out = checkProgram(
+            "class Point { x: int = 1 + 2; }\nlet p: Point = {};"
+        );
+        assertNoErrors(out, "arithmetic default type-checks clean");
+        for (StatementNode stmt : out.program().statements()) {
+            if (stmt instanceof ClassDeclaration cd) {
+                for (ClassField cf : cd.fields()) {
+                    if (cf.defaultExpr().isPresent()) {
+                        Type t = out.result.typeMap()
+                            .get(cf.defaultExpr().get());
+                        check(t instanceof Type.Int,
+                            "default subexpression recorded as int, got " + t);
+                    }
+                }
+            }
+        }
+
+        // A default containing a null-typed call type-checks: the inner
+        // call records Type.Null (the JVM backend hoists it into a
+        // pre-statement instead of emitting `wrap(noise())`).
+        CheckerOutput call = checkProgram(
+            "function noise(): null { return; }\n"
+            + "function wrap(x: null): string { return \"w\"; }\n"
+            + "class P { x: string = wrap(noise()); }\n"
+            + "let p: P = {};"
+        );
+        assertNoErrors(call, "null-typed call default type-checks clean");
     }
 
     // =========================================================================

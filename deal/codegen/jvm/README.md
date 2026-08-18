@@ -699,6 +699,29 @@ fixture whose codegen or JVM execution is bypassed):
   evaluation. The checker guarantees the field is declared and the value
   matches its type (spec §Field access / §Class assignment semantics),
   so no runtime check is needed at these provably typed boundaries.
+- **Default expressions are fully type-checked at the class declaration.**
+  `TypeChecker.checkClassDeclaration` runs every class-field default
+  through `checkExpression` at the class declaration site (where LuaJIT
+  evaluates the defaults table), so the typeMap carries types for every
+  default subexpression — the backend's `typeOf` reads them back when it
+  emits defaults inline at each construction site — and default type
+  mismatches are real E3001 diagnostics (the F9 code, replacing the
+  resolver's literal/identifier-only inference with a full
+  subexpression check). This closes the two pre-fix default holes:
+  `x: int = 1 + 2` (mis-typed as "ADD on error and error") and a
+  default containing a null-typed call (`wrap(noise())` emitted inline
+  — javac: 'void' type not allowed here). A nil-aware boolean default
+  still crosses the constructor's `booleanNotNull` boundary (E8001),
+  exactly like every other typed boolean boundary.
+- **Imported-class values are E6000, never a broken artifact.** A
+  checker-inferred class type can name an IMPORTED class (an
+  annotation-less declaration like `let c = lib.getC()`): `javaLocalType`
+  and the class-typed table read require
+  `moduleClasses.containsKey(c.name())` and otherwise record E6000
+  ("imported classes / cross-module nominal identity are deferred to
+  ISSUE-0109") — the pre-fix backend emitted `$C_C c = Lib.getC();`
+  and javac rejected the artifact ("cannot find symbol: class $C_C")
+  after the CLI reported success.
 - **The runtime nominal check lives exactly where it cannot be proven
   redundant.** The slice's one untyped boundary is a table field read in
   a class-typed contextual target (the checker types the read with the
@@ -828,7 +851,7 @@ cross-module nominal identity (ISSUE-0109), stdlib modules other than
     javac reject the artifact after the CLI reported success), and two
     frontend compile-error gates rejected before any backend (E3009
     arity mismatch, E5001 argument-type mismatch).
-  - JVM: `test/conformance/fixtures/jvm-classes-slice.json` — twelve
+  - JVM: `test/conformance/fixtures/jvm-classes-slice.json` — seventeen
     ISSUE-0095 fixtures, all JVM-only, every runtime fixture passing
     through the real frontend → real `JvmBackend` codegen → `javac`
     subprocess → `java` subprocess executing the emitted artifact (the
@@ -845,9 +868,22 @@ cross-module nominal identity (ISSUE-0109), stdlib modules other than
     same-module nominal runtime checks at the table boundary — success
     for a genuine instance (41 + 1 = 42), E8001 for a plain table value,
     for a null value, and for an identically-shaped sibling class
-    (nominal, never structural identity) — and one frontend
+    (nominal, never structural identity) — one frontend
     compile-error gate rejected before any backend (E3001 nominal A→B
-    assignment). Methods: spec v1.1 §Classes declares the class body
+    assignment), class-field default expressions (an arithmetic default
+    `x: int = 1 + 2` constructing and running — the pre-fix backend
+    mis-typed it as E6000 "ADD on error and error" while LuaJIT compiles
+    and runs the same program — a default containing a null-typed call
+    `wrap(noise())` hoisting the call into a pre-statement and emitting
+    valid Java — the pre-fix backend emitted `wrap(noise())` inline and
+    javac rejected the artifact after the CLI reported success — and a
+    nil-aware default `b: boolean = xs[0] && xs[5]` crossing the
+    constructor's typed boolean boundary with E8001, parity with the
+    identifier boundary), and the boolean construction-value boundary (a
+    nil-aware provided value `{ b: xs[0] && xs[5] }` raises E8001 —
+    never the pre-fix unboxing NullPointerException — while the
+    in-bounds positive control `xs[0] || xs[1]` constructs normally).
+    Methods: spec v1.1 §Classes declares the class body
     "no methods, no constructors", so the slice's method surface is
     empty by construction — the only callables are the module functions
     the ISSUE-0093 fixtures cover.
@@ -928,9 +964,18 @@ cross-module nominal identity (ISSUE-0109), stdlib modules other than
     checked class-typed table read, and class field reads flowing into
     arithmetic; javac + java runs for construction/field writes/nominal
     success (42), the identically-shaped sibling E8001 failure, and the
-    `$checkTable` pass-through; E6000 pins for class exports, optional/
-    nullable/class-typed class fields, nested class declarations, table
-    reads with primitive targets, and table field writes), ISSUE-0092
+    `$checkTable` pass-through; the round-9 defect regressions — the
+    nil-aware construction value failing the boolean boundary with E8001
+    instead of an unboxing NPE (plus the in-bounds positive control),
+    arithmetic and null-typed-call default expressions constructing and
+    running through javac + java, the nil-aware default crossing the
+    boolean boundary with E8001, and
+    `testImportedClassValuesRejected` pinning the orchestrator-level
+    E6000 for an annotation-less local inferred from an imported
+    class-typed export with no artifact written; E6000 pins for class
+    exports, optional/nullable/class-typed class fields, nested class
+    declarations, table reads with primitive targets, and table field
+    writes), ISSUE-0092
     while/template coverage
     (counting/nested/shadowed loops, `while (false)` bodies skipped,
     per-iteration condition re-evaluation with a hoisted null-typed call

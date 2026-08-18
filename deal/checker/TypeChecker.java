@@ -162,6 +162,40 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkClassDeclaration(ClassDeclaration cd) {
+        // ISSUE-0095 rework: every class-field default expression runs
+        // through checkExpression here — the class declaration site, the
+        // point where LuaJIT evaluates the defaults table — so the
+        // typeMap carries types for every default subexpression. The JVM
+        // backend reads those types back when it emits defaults inline
+        // at each construction site (unchecked defaults left every
+        // subexpression at Type.Error: `x: int = 1 + 2` mis-typed as
+        // E6000 "ADD on error and error", and a default containing a
+        // null-typed call emitted `wrap(noise())` — an artifact javac
+        // rejects after the CLI reported success). Default type
+        // mismatches become real E3001 diagnostics (the F9 code)
+        // instead of silent miscompiles. Checking at the declaration —
+        // not at each construction site — matches LuaJIT's
+        // declaration-site defaults-table evaluation and records each
+        // default exactly once.
+        for (ClassField cf : cd.fields()) {
+            if (cf.defaultExpr().isEmpty()) continue;
+            ExpressionNode def = cf.defaultExpr().get();
+            Type fieldType = nameResolver.resolveTypeNode(cf.type());
+            Type savedExpected = expectedType;
+            expectedType = fieldType;
+            Type defType = checkExpression(def);
+            expectedType = savedExpected;
+            if (fieldType != Type.Error.INSTANCE
+                    && defType != Type.Error.INSTANCE
+                    && !isAssignable(fieldType, defType)) {
+                error(DiagnosticCode.E3001,
+                    "Default value type mismatch for field '" + cf.name()
+                    + "': expected " + typeName(fieldType)
+                    + ", got " + typeName(defType),
+                    def.span());
+            }
+        }
+
         if (!cd.isJsonable()) {
             return; // nothing extra to check for non-jsonable classes
         }

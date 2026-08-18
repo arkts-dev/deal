@@ -199,29 +199,14 @@ public final class NameResolver {
         }
         root.define(name, new Symbol.ClassSymbol(name, cd.fields(), modulePath));
 
-        // Check for $ in field names (E2008) and default value type mismatches
+        // Check for $ in field names (E2008). Default value type
+        // mismatches are checked by TypeChecker.checkClassDeclaration
+        // (ISSUE-0095 rework): every default runs through checkExpression
+        // there — covering non-literal defaults this resolver-level
+        // literal/identifier inference could never see — and records
+        // subexpression types in the typeMap the JVM backend consumes.
         for (ClassField cf : cd.fields()) {
             checkNoDollar(cf.name(), cf.span());
-
-            cf.defaultExpr().ifPresent(defaultExpr -> {
-                Type fieldType = resolveTypeNode(cf.type());
-                if (fieldType == Type.Error.INSTANCE) return;
-                Type defaultType = inferDefaultType(defaultExpr);
-                if (defaultType != null && defaultType != Type.Error.INSTANCE) {
-                    // F3: Allow null default for nullable fields
-                    if (!Types.equals(fieldType, defaultType)
-                            && !(fieldType instanceof Type.Nullable ne
-                                 && Types.equals(ne.inner(), defaultType))
-                            && !(fieldType instanceof Type.Nullable
-                                 && defaultType instanceof Type.Null)) {
-                        error(DiagnosticCode.E3001,
-                            "Default value type mismatch for field '" + cf.name()
-                            + "': expected " + TypeChecker.typeName(fieldType)
-                            + ", got " + TypeChecker.typeName(defaultType),
-                            defaultExpr.span());
-                    }
-                }
-            });
         }
 
         // D6: Add synthetic C$fromJson and C$toJson function symbols for @jsonable classes.
@@ -242,38 +227,6 @@ public final class NameResolver {
             root.define(cd.name() + "$toJson",
                 new Symbol.FunctionSymbol(cd.name() + "$toJson", toJsonType));
         }
-    }
-
-    /**
-     * Infer the type of a default value expression.
-     * F8: Now handles non-literal defaults by delegating to a simple
-     * expression-to-type resolution where possible.
-     */
-    private Type inferDefaultType(ExpressionNode expr) {
-        return switch (expr) {
-            case LiteralExpr lit -> switch (lit.value()) {
-                case LiteralValue.NullLiteral n -> Type.Null.INSTANCE;
-                case LiteralValue.BooleanLiteral b -> Type.Boolean.INSTANCE;
-                case LiteralValue.IntLiteral i -> Type.Int.INSTANCE;
-                case LiteralValue.NumberLiteral n -> Type.Number.INSTANCE;
-                case LiteralValue.StringLiteral s -> Type.String.INSTANCE;
-            };
-            case UnaryExpr un -> {
-                if (un.op() == UnaryOp.NEG && un.expr() instanceof LiteralExpr lit) {
-                    yield inferDefaultType(lit);
-                }
-                yield null;
-            }
-            case IdentifierExpr id -> {
-                // Resolve a simple identifier to its declared type
-                Symbol sym = currentScope.resolve(id.name());
-                if (sym instanceof Symbol.VariableSymbol vs && vs.type() != null) {
-                    yield vs.type();
-                }
-                yield null;
-            }
-            default -> null;
-        };
     }
 
     private void hoistFunctionDeclarations(ProgramNode program) {

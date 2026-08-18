@@ -232,6 +232,7 @@ public class JvmBackendTest {
             testShadowedInitializer();
             testParameterShadowing();
             testClassSlice();
+            testImportedClassValuesRejected();
             testUseBeforeDeclarationRejected();
             testFunctionBodyModuleFieldAccessGuards();
             testAssignmentBeforeDeclarationRejected();
@@ -3125,6 +3126,93 @@ public class JvmBackendTest {
             """, "class-slice-table");
         check(tbl.exitCode() == 0 && tbl.output().contains("1"),
             "table-typed boundary reads pass through: " + tbl.output());
+
+        // ISSUE-0095 reviewer round 9: a provided construction value whose
+        // emitted code can be the Lua nil (a nil-aware && over boolean[]
+        // reads) must stay boxed through the construction materialization —
+        // the constructor's booleanNotNull boundary raises E8001, never a
+        // bare unboxing NPE (the pre-fix `boolean __t2 = __sc0;` crashed
+        // with a NullPointerException instead of a DEAL error).
+        ExecResult boolBoundary = compileAndRunJvm("""
+            class P { b: boolean = false; }
+            export function test(): int {
+              let xs: boolean[] = [true, false];
+              let p: P = { b: xs[0] && xs[5] };
+              return 1;
+            }
+            """, "class-slice-bool-boundary");
+        check(boolBoundary.exitCode() == 1
+                && boolBoundary.output().contains("DEAL_ERROR_CODE: E8001"),
+            "nil-aware construction value fails the boolean boundary with E8001: "
+                + boolBoundary.output());
+
+        // Positive control: an in-bounds nil-aware construction value
+        // constructs normally (no over-rejection, no over-boxing).
+        ExecResult boolOk = compileAndRunJvm("""
+            class P { b: boolean = false; }
+            export function test(): int {
+              let xs: boolean[] = [true, false];
+              let p: P = { b: xs[0] || xs[1] };
+              if (p.b === true) { return 1; }
+              return 0;
+            }
+            """, "class-slice-bool-ok");
+        check(boolOk.exitCode() == 0 && boolOk.output().contains("1"),
+            "in-bounds nil-aware construction value constructs normally: "
+                + boolOk.output());
+
+        // ISSUE-0095 reviewer round 9: class-field default expressions run
+        // through checkExpression in the checker, so the backend's typeOf
+        // sees real types — the pre-fix backend mis-typed `1 + 2` as
+        // "ADD on error and error" (E6000) while LuaJIT compiles and runs
+        // the same program.
+        ExecResult defaultArith = compileAndRunJvm("""
+            class Point { x: int = 1 + 2; }
+            export function test(): int {
+              let p: Point = {};
+              return p.x;
+            }
+            """, "class-slice-default-arith");
+        check(defaultArith.exitCode() == 0
+                && defaultArith.output().contains("3"),
+            "arithmetic default constructs and runs to 3: "
+                + defaultArith.output());
+
+        // A default containing a null-typed call: the checker's typeMap now
+        // types the inner call, so the call is hoisted into a pre-statement
+        // and the constructor argument is the null value — the pre-fix
+        // backend emitted `new $C_P(wrap(noise()))` (javac: 'void' type not
+        // allowed here) after the CLI reported success.
+        ExecResult defaultNullCall = compileAndRunJvm("""
+            function noise(): null { return; }
+            function wrap(x: null): string { return "w"; }
+            class P { x: string = wrap(noise()); }
+            export function test(): int {
+              let p: P = {};
+              if (p.x === "w") { return 1; }
+              return 0;
+            }
+            """, "class-slice-default-nullcall");
+        check(defaultNullCall.exitCode() == 0
+                && defaultNullCall.output().contains("1"),
+            "null-typed call inside a default emits valid Java and runs to 1: "
+                + defaultNullCall.output());
+
+        // A nil-aware DEFAULT crossing the constructor's boolean boundary
+        // raises E8001 (parity with the identifier boundary), pinned by
+        // jvm-class-default-bool-boundary.
+        ExecResult defaultBoolBoundary = compileAndRunJvm("""
+            let xs: boolean[] = [true, false];
+            class P { b: boolean = xs[0] && xs[5]; }
+            export function test(): int {
+              let p: P = {};
+              return 1;
+            }
+            """, "class-slice-default-bool-boundary");
+        check(defaultBoolBoundary.exitCode() == 1
+                && defaultBoolBoundary.output().contains("DEAL_ERROR_CODE: E8001"),
+            "nil-aware default fails the boolean boundary with E8001: "
+                + defaultBoolBoundary.output());
     }
 
     private static void testUseBeforeDeclarationRejected() {
@@ -4834,6 +4922,49 @@ public class JvmBackendTest {
                 .anyMatch(d -> "E6000".equals(d.code())),
             "orchestrator reports E6000: " + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("Unsupported_main.java")),
+            "no artifact written when the backend reports errors");
+    }
+
+    /** An annotation-less local inferred from an imported module's
+     * class-typed export is E6000 (imported classes / cross-module
+     * nominal identity are deferred to ISSUE-0109): the inferred
+     * {@code Type.Class} names the IMPORTED module's class, whose
+     * generated Java type the importing module never declares — the
+     * pre-fix backend emitted {@code $C_C c = Lib.getC();} and javac
+     * rejected the artifact ("cannot find symbol: class $C_C") after the
+     * CLI reported success (ISSUE-0095 reviewer round 9). */
+    private static void testImportedClassValuesRejected() throws Exception {
+        System.out.println("-- Orchestrator: imported-class values are E6000 --");
+
+        writeFile("src/lib.deal", """
+            class C { v: int = 0; }
+            export function getC(): C { return { v: 1 }; }
+            """);
+        writeFile("src/entry.deal", """
+            import * as lib from "./lib"
+            export function run(): int {
+              let c = lib.getC();
+              return 1;
+            }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/imported_class");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JVM,
+            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success = orchestrator.compile();
+        check(!success, "JVM backend rejects imported-class values: "
+            + orchestrator.diagnostics());
+        check(orchestrator.diagnostics().stream()
+                .anyMatch(d -> "E6000".equals(d.code())
+                    && d.message().contains("imported classes")),
+            "orchestrator reports E6000 naming imported classes: "
+                + orchestrator.diagnostics());
+        check(!Files.exists(outputDir.resolve("Entry.java")),
             "no artifact written when the backend reports errors");
     }
 
