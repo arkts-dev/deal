@@ -1,0 +1,732 @@
+{
+  "version": "1.0",
+  "description": "JVM primitive arrays slice (ISSUE-0094). JVM-only fixtures (plus twenty-one cross-backend parity fixtures that also run under LuaJIT as the reference, and one LuaJIT-only fixture pinning the reference backend's silent nil-hole collapse for a documented divergence) that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: int[]/number[]/string[]/boolean[] array literals (including the empty literal under a contextual type), index reads, element writes (in-place writes, the i === length append — via the xs[xs.length] idiom and via a plain index-equals-length write — with the wrapped storage growing in place so aliases observe every write), .length reads, arrays through function parameters and returns, runtime bounds checks (negative read → E8002, read past the end → E8001 \"expected int, got null\" mirroring LuaJIT's nil-at-the-boundary, negative write → E8002, gap write → E8002, out-of-safe-range int element write → E8004 via the element value check), spec §Operational semantics evaluation order for reads (receiver before index) and writes (receiver, index, RHS before the LHS write check — including hoisted null-typed side effects materialized into temporaries in order, and the side-effecting receiver + hoisting index + hoisting RHS shape anchored at the earliest hoist start after each operand), array-literal element evaluation order with a side-effecting first element and hoisting later elements, === / !== operand positions for past-end reads in all four element types (nil comparison semantics per the spec read-site contract, never E8001), negative indexes in comparison positions (E8002 on both backends), the both-reads comparison evaluation position — the left read's E8002 raises before any right-operand hoisted side effect (\"h\"/\"made\" never print, pinned with expectedNotOutput negative stdout assertions) and in-bounds both-reads comparisons keep strict left-to-right order with hoisted right-side effects, boundary-less read positions computing with Lua's nil semantics instead of raising (a discarded standalone read drops the boxed value — no E8001; `!read` coerces the nil to true; `&&`/`||` operands coerce the nil to falsy with the nil-aware result following Lua's and/or — and the result nil failing at a typed boolean boundary with E8001 on both backends), two frontend compile-error gates rejected before any backend (E3007 non-int index, E3017 read-only .length assignment), and the boolean-literal-element construction divergence — a nil-valued literal element raises E8001 at the JVM construction where LuaJIT performs no element check and the nil hole collapses to an empty (or shorter) array with no error anywhere (pinned JVM-side and LuaJIT-side).",
+  "tests": [
+    {
+      "name": "jvm-arr-literal-read-length",
+      "description": "An int[] literal, index reads, and .length: xs[0]+xs[1]+xs[2]+xs.length computes 63 (10+20+30+3) through the real frontend → JvmBackend codegen → javac → java artifact execution",
+      "source": "export function test(): int {\n  let xs: int[] = [10, 20, 30];\n  return xs[0] + xs[1] + xs[2] + xs.length;\n}",
+      "expectedOutput": "63",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [int]",
+        "index [] : int",
+        "member .length : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-write-readback",
+      "description": "Element writes into existing indexes mutate the array in place: xs[1] = 99, then xs[2] = xs[0] + xs[1] (=100), and the sum reads back 200",
+      "source": "export function test(): int {\n  let xs: int[] = [1, 2, 3];\n  xs[1] = 99;\n  xs[2] = xs[0] + xs[1];\n  return xs[0] + xs[1] + xs[2];\n}",
+      "expectedOutput": "200",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write",
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-append-at-length",
+      "description": "Writing at i === length appends (spec §Array writes): an empty literal grows via the xs[xs.length] = v append idiom (0→1→2) and a plain index-equals-length write appends the third element; the final sum + length is 10",
+      "source": "export function test(): int {\n  let xs: int[] = [];\n  xs[xs.length] = 1;\n  xs[xs.length] = 2;\n  xs[2] = 4;\n  return xs[0] + xs[1] + xs[2] + xs.length;\n}",
+      "expectedOutput": "10",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [int]",
+        "array-write",
+        "member .length : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-four-element-types",
+      "description": "number[], string[], and boolean[] literals, writes, reads, and length all run end-to-end: ns[1] recomputed to 2.5, ss[0] set to ss[1] + \"x\" = \"bx\", bs[1] set to bs[0] = true, every length reads 2",
+      "source": "export function test(): string {\n  let ns: number[] = [1.5, 2.5];\n  ns[1] = ns[0] + 1.0;\n  let ss: string[] = [\"a\", \"b\"];\n  ss[0] = ss[1] + \"x\";\n  let bs: boolean[] = [true, false];\n  bs[1] = bs[0];\n  if (ns[0] === 1.5 && ns[1] === 2.5 && ss[0] === \"bx\" && ss[1] === \"b\" && bs[0] && bs[1] && ns.length === 2 && ss.length === 2 && bs.length === 2) {\n    return \"ok\";\n  }\n  return \"bad\";\n}",
+      "expectedOutput": "ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [number]",
+        "array : [string]",
+        "array : [boolean]",
+        "index [] : number",
+        "index [] : string"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-function-param-return",
+      "description": "Arrays flow through function parameters and returns: fill(xs, 10) writes xs[0]=10 and xs[1]=11 into the caller's array and returns it, total(ys) sums 21, + xs.length = 23",
+      "source": "function fill(xs: int[], v: int): int[] {\n  xs[0] = v;\n  xs[1] = v + 1;\n  return xs;\n}\nfunction total(xs: int[]): int { return xs[0] + xs[1]; }\nexport function test(): int {\n  let xs: int[] = [0, 0];\n  let ys: int[] = fill(xs, 10);\n  return total(ys) + xs.length;\n}",
+      "expectedOutput": "23",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-alias-mutation-append",
+      "description": "Array aliases share one mutable wrapper: b = a, then b[1] = 9 and the b[3] = 4 append are both observed through a (a[1] + a[3] + a.length = 9 + 4 + 4 = 17) — append grows the wrapped storage in place, so the alias identity is stable",
+      "source": "export function test(): int {\n  let a: int[] = [1, 2, 3];\n  let b: int[] = a;\n  b[1] = 9;\n  b[3] = 4;\n  return a[1] + a[3] + a.length;\n}",
+      "expectedOutput": "17",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-negative-read-e8002",
+      "description": "A negative index read is a runtime E8002 (LuaJIT's emitted negative-array-index check), exit 1 — the read helper performs the bounds check before touching the storage",
+      "source": "export function test(): int {\n  let xs: int[] = [1, 2, 3];\n  return xs[-1];\n}",
+      "expectedOutput": null,
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-oob-read-e8001",
+      "description": "A read past the end is a runtime E8001 \"expected int, got null\" (spec §Bounds and nil behavior: LuaJIT reads nil there and the read site's typed boundary fails with that shape) — the JVM read raises the boundary failure directly, exit 1",
+      "source": "export function test(): int {\n  let xs: int[] = [1, 2, 3];\n  return xs[99];\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-negative-write-e8002",
+      "description": "A negative index write is a runtime E8002 (spec §Array writes rule 5: i < 0 is a runtime error), exit 1",
+      "source": "export function test(): int {\n  let xs: int[] = [1, 2, 3];\n  xs[-1] = 9;\n  return xs[0];\n}",
+      "expectedOutput": null,
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-gap-write-e8002",
+      "description": "Writing past the end with a gap (i > length) is a runtime E8002 (spec §Array writes rule 5) — only i === length appends, exit 1",
+      "source": "export function test(): int {\n  let xs: int[] = [1, 2, 3];\n  xs[4] = 99;\n  return xs[4];\n}",
+      "expectedOutput": null,
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-eval-order-read",
+      "description": "Read evaluation order (spec §Operational semantics rule 1): the receiver expression runs before the index expression — get prints 'arr', mark prints 'idx', then the read returns xs[2] = 300",
+      "source": "import * as console from \"std/console\"\nfunction mark(label: string, value: int): int { console.log(label); return value; }\nfunction get(label: string, xs: int[]): int[] { console.log(label); return xs; }\nexport function test(): int {\n  let xs: int[] = [100, 200, 300];\n  return get(\"arr\", xs)[mark(\"idx\", 2)];\n}",
+      "expectedOutput": "arr\nidx\n300",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-eval-order-write",
+      "description": "Write evaluation order (spec §Operational semantics rule 3: the assignment RHS evaluates before the LHS write check): receiver 'arr', index 'idx', RHS 'rhs' run strictly left to right, then the bounds check + store write xs[0] = 42",
+      "source": "import * as console from \"std/console\"\nfunction mark(label: string, value: int): int { console.log(label); return value; }\nfunction get(label: string, xs: int[]): int[] { console.log(label); return xs; }\nexport function test(): int {\n  let xs: int[] = [1, 2, 3];\n  get(\"arr\", xs)[mark(\"idx\", 0)] = mark(\"rhs\", 42);\n  return xs[0];\n}",
+      "expectedOutput": "arr\nidx\nrhs\n42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-eval-order-hoisted",
+      "description": "Left-to-right order survives hoisted null-typed side effects in the index and RHS: the index operand's hoisted 'index-side' print runs before its inline pick('index') call, which is materialized into a temporary ahead of the RHS's hoisted 'value-side' print — output index-side, index, value-side, value, then the written xs[0] = 0",
+      "source": "import * as console from \"std/console\"\nfunction pick(label: string, z: null): int { console.log(label); return 0; }\nexport function test(): int {\n  let xs: int[] = [5, 6];\n  xs[pick(\"index\", console.log(\"index-side\"))] = pick(\"value\", console.log(\"value-side\"));\n  return xs[0];\n}",
+      "expectedOutput": "index-side\nindex\nvalue-side\nvalue\n0",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-eval-order-write-hoisted-parity",
+      "description": "Cross-backend parity for write evaluation order with a side-effecting receiver and hoisting index and RHS operands: getArr prints 'a' (receiver first, spec §Operational semantics rule 1+3), the index operand's hoisted print 'b' runs before its inline pick('i') call, which is materialized into a temporary ahead of the RHS's hoisted print 'c', then pick('v') and the write — a, b, i, c, v, write-ok under both real luajit and the emitted JVM artifact (LuaJIT agrees on this shape)",
+      "source": "import * as console from \"std/console\"\nfunction pick(label: string, z: null): int { console.log(label); return 0; }\nfunction getArr(label: string, xs: int[]): int[] { console.log(label); return xs; }\nexport function test(): null {\n  let xs: int[] = [5, 6];\n  getArr(\"a\", xs)[pick(\"i\", console.log(\"b\"))] = pick(\"v\", console.log(\"c\"));\n  if (xs[0] === 0) { console.log(\"write-ok\"); }\n}",
+      "expectedOutput": "a\nb\ni\nc\nv\nwrite-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-literal-eval-order-hoisted-parity",
+      "description": "Cross-backend parity for array-literal element evaluation order with a side-effecting first element and hoisting later elements: getA prints 'a' before the second element's hoisted print 'b', its inline pick('i') call is materialized into a temporary ahead of the third element's hoisted print 'c', then pick('v') — a, b, i, c, v, lit-ok under both real luajit and the emitted JVM artifact",
+      "source": "import * as console from \"std/console\"\nfunction pick(label: string, z: null): int { console.log(label); return 0; }\nfunction getA(label: string): int { console.log(label); return 1; }\nexport function test(): null {\n  let xs: int[] = [getA(\"a\"), pick(\"i\", console.log(\"b\")), pick(\"v\", console.log(\"c\"))];\n  if (xs[0] === 1 && xs[1] === 0 && xs[2] === 0 && xs.length === 3) { console.log(\"lit-ok\"); }\n}",
+      "expectedOutput": "a\nb\ni\nc\nv\nlit-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [int]"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-past-end-parity",
+      "description": "Cross-backend parity for === / !== with array reads past the end in all four element types: the read site applies no typed boundary at a comparison operand (spec §Bounds and nil behavior), so LuaJIT reads nil and computes the comparison — xs[99] === 5 is false, xs[99] !== 5 is true, xs[99] === xs[99] is true (nil === nil), and the same nil semantics hold for number[]/string[]/boolean[] reads. The JVM emits boxed reads that yield null past the end instead of raising E8001, so both backends print int-neq, nil-eq-nil, number-neq, string-neq, boolean-neq, mixed",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let xs: int[] = [1];\n  let ns: number[] = [1.5];\n  let ss: string[] = [\"a\"];\n  let bs: boolean[] = [true];\n  if (xs[99] === 5) { console.log(\"bad1\"); }\n  if (xs[99] !== 5) { console.log(\"int-neq\"); }\n  if (xs[99] === xs[99]) { console.log(\"nil-eq-nil\"); }\n  if (ns[99] !== 2.5) { console.log(\"number-neq\"); }\n  if (ss[99] === \"x\") { console.log(\"bad2\"); }\n  if (ss[99] !== \"x\") { console.log(\"string-neq\"); }\n  if (bs[99] === true) { console.log(\"bad3\"); }\n  if (bs[99] !== true) { console.log(\"boolean-neq\"); }\n  if (xs[0] === 1 && xs[99] !== 1) { console.log(\"mixed\"); }\n}",
+      "expectedOutput": "int-neq\nnil-eq-nil\nnumber-neq\nstring-neq\nboolean-neq\nmixed",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-negative-index-parity",
+      "description": "Cross-backend parity: a negative array index in a comparison operand still raises E8002 on both backends — LuaJIT emits the negative-index check unconditionally at the read, whatever the surrounding position, and the JVM boxed comparison read raises it the same way (exit 1 on both)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let xs: int[] = [1];\n  if (xs[-1] === 5) { console.log(\"bad\"); }\n}",
+      "expectedOutput": null,
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-both-reads-neg-order-parity",
+      "description": "Cross-backend parity: both === operands are array reads, the left read raises E8002 (negative index), and the right read's receiver hoists a null-typed side effect — LuaJIT evaluates the left read completely (raising E8002) before the right operand's first evaluation, so 'h'/'made' never print; the JVM anchors the left read's boxed helper call at the left operand's evaluation position (before the right operand's hoisted println). Both backends print only DEAL_ERROR_CODE: E8002 and exit 1",
+      "source": "import * as console from \"std/console\"\nfunction makeArr(label: string, z: null): int[] { console.log(label); return [1]; }\nexport function test(): null {\n  let ys: int[] = [1];\n  if (ys[-1] === makeArr(\"made\", console.log(\"h\"))[0]) { console.log(\"bad\"); }\n}",
+      "expectedOutput": null,
+      "expectedNotOutput": [
+        "h",
+        "made",
+        "bad"
+      ],
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-both-reads-index-hoist-parity",
+      "description": "Cross-backend parity: both === operands are array reads, the left read raises E8002 (negative index), and the right read's index operand hoists a null-typed side effect — LuaJIT evaluates the left read (raising E8002) before the right operand's first evaluation, so 'h'/'i' never print; the JVM anchors the left read's boxed helper call before the right operand's hoisted println. Both backends print only DEAL_ERROR_CODE: E8002 and exit 1. The pin forbids 'h' (the hoisted print, which always precedes pick's 'i' label in any misordered evaluation) and 'bad'; the bare 'i' label cannot be pinned because the JVM E8002 message text 'negative array index' contains the letter i",
+      "source": "import * as console from \"std/console\"\nfunction pick(label: string, z: null): int { console.log(label); return 0; }\nexport function test(): null {\n  let ys: int[] = [1];\n  let zs: int[] = [1];\n  if (ys[-1] === zs[pick(\"i\", console.log(\"h\"))]) { console.log(\"bad\"); }\n}",
+      "expectedOutput": null,
+      "expectedNotOutput": [
+        "h",
+        "bad"
+      ],
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-both-reads-inbounds-order-parity",
+      "description": "Cross-backend parity for the positive control: both === / !== operands are in-bounds array reads and the right read's receiver hoists a null-typed side effect — the left read fully evaluates first, then the right read's hoisted print and receiver call run before its own read (h, made, h2, made2, eq-ok: 1 !== 1 is false, 1 === 1 is true) on both backends",
+      "source": "import * as console from \"std/console\"\nfunction makeArr(label: string, z: null): int[] { console.log(label); return [1]; }\nexport function test(): null {\n  let ys: int[] = [1];\n  if (ys[0] !== makeArr(\"made\", console.log(\"h\"))[0]) { console.log(\"bad-neq\"); }\n  if (ys[0] === makeArr(\"made2\", console.log(\"h2\"))[0]) { console.log(\"eq-ok\"); }\n}",
+      "expectedOutput": "h\nmade\nh2\nmade2\neq-ok",
+      "expectedNotOutput": [
+        "bad-neq"
+      ],
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-frontend-reject-index-type",
+      "description": "A non-int array index is rejected by the frontend type checker (E3007 Array index must be int) before any backend runs — codegen/javac/java never invoked",
+      "source": "export function test(): int {\n  let xs: int[] = [1, 2];\n  return xs[\"bad\"];\n}",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3007",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-frontend-reject-length-write",
+      "description": "Assignment to the read-only array .length intrinsic is rejected by the frontend type checker (E3017 Array length is read-only) before any backend runs — codegen/javac/java never invoked",
+      "source": "export function test(): null {\n  let xs: int[] = [1, 2];\n  xs.length = 5;\n}",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3017",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-literal-read-write-length-parity",
+      "description": "Cross-backend parity: int[] literal, element writes, the xs[xs.length] append idiom, .length, and alias mutation produce identical observable results under LuaJIT (the reference) and the emitted JVM artifact — every assertion routed through console output",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let xs: int[] = [10, 20, 30];\n  xs[1] = 99;\n  xs[xs.length] = 40;\n  if (xs[0] === 10 && xs[1] === 99 && xs[2] === 30 && xs[3] === 40 && xs.length === 4) {\n    console.log(\"array-parity\");\n  }\n  let ys: int[] = [];\n  ys[0] = 7;\n  let zs: int[] = ys;\n  zs[1] = 8;\n  if (ys[0] === 7 && ys[1] === 8 && ys.length === 2) {\n    console.log(\"alias-parity\");\n  }\n}",
+      "expectedOutput": "array-parity\nalias-parity",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array-write"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-multi-type-parity",
+      "description": "Cross-backend parity: number[]/string[]/boolean[] literals, writes, and reads produce identical observable results under LuaJIT and the emitted JVM artifact",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let ns: number[] = [1.5, 2.5];\n  ns[0] = ns[0] + 1.0;\n  let ss: string[] = [\"a\", \"b\"];\n  ss[0] = \"z\";\n  let bs: boolean[] = [true, false];\n  bs[1] = bs[0];\n  if (ns[0] === 2.5 && ns[1] === 2.5 && ss[0] === \"z\" && ss[1] === \"b\" && bs[0] === true && bs[1] === true) {\n    console.log(\"multi-parity\");\n  }\n}",
+      "expectedOutput": "multi-parity",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [number]",
+        "array : [string]",
+        "array : [boolean]"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-negative-read-parity",
+      "description": "Cross-backend parity: the negative index read raises E8002 on both LuaJIT (its emitted negative-index check) and the emitted JVM artifact, exit 1 on both",
+      "source": "export function test(): int {\n  let xs: int[] = [1, 2, 3];\n  return xs[-1];\n}",
+      "expectedOutput": null,
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-discard-past-end-parity",
+      "description": "Cross-backend parity: a standalone array read whose value is discarded applies no typed boundary (spec §Bounds and nil behavior — the read result is checked at the read site, and a discarded value has no read-site consumer), so LuaJIT drops the nil past the end without error and the JVM discards the boxed read the same way (no E8001) for all four element types — both backends print discard-ok and exit 0. A negative index in the same position still raises E8002 on both (pinned by jvm-arr-negative-read-parity)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let xs: int[] = [1];\n  let ns: number[] = [1.5];\n  let ss: string[] = [\"a\"];\n  let bs: boolean[] = [true];\n  xs[99];\n  ns[99];\n  ss[99];\n  bs[99];\n  console.log(\"discard-ok\");\n}",
+      "expectedOutput": "discard-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-not-read-parity",
+      "description": "Cross-backend parity: LuaJIT's `not` coerces the operand's nil (a past-end boolean[] read, or a nil-aware && / || result) to true (`not nil` is true), so `!bs[99]` computes true instead of raising E8001 — the JVM emits the same coercion (x == null || !x.booleanValue()) over a boxed read temporary. Both backends print not-coerced-true (declaration boundary over the coerced value), not-taken (if-condition), and not-niland (the nil-aware && result under !); the in-bounds negative control `!bs[0]` (true) never prints bad",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let bs: boolean[] = [true];\n  let b: boolean = !bs[99];\n  if (b) { console.log(\"not-coerced-true\"); }\n  if (!bs[99]) { console.log(\"not-taken\"); }\n  let d: boolean = !(bs[99] && true);\n  if (d) { console.log(\"not-niland\"); }\n  if (!bs[0]) { console.log(\"bad\"); }\n}",
+      "expectedOutput": "not-coerced-true\nnot-taken\nnot-niland",
+      "expectedNotOutput": [
+        "bad"
+      ],
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-shortcircuit-read-parity",
+      "description": "Cross-backend parity: LuaJIT's and/or coerce a past-end boolean[] read operand's nil to falsy, so `bs[99] || true` computes true instead of raising E8001, `true || read` and `false && read` skip the right operand entirely (its hoisted print and pick label never run — pinned with expectedNotOutput), and the nil-aware result value follows Lua (nil or true → true) — the JVM lowers the operands to boxed temporaries (null = the Lua nil) with the same truthiness guards. Both backends print or-coerced, true-or-skip, false-and-skip and never h/xx/yy",
+      "source": "import * as console from \"std/console\"\nfunction pick(label: string, z: null): int { console.log(label); return 0; }\nexport function test(): null {\n  let bs: boolean[] = [true];\n  let c: boolean = bs[99] || true;\n  if (c) { console.log(\"or-coerced\"); }\n  let g: boolean = true || bs[pick(\"xx\", console.log(\"h\"))];\n  if (g) { console.log(\"true-or-skip\"); }\n  let f: boolean = false && bs[pick(\"yy\", console.log(\"h2\"))];\n  if (!f) { console.log(\"false-and-skip\"); }\n}",
+      "expectedOutput": "or-coerced\ntrue-or-skip\nfalse-and-skip",
+      "expectedNotOutput": [
+        "h",
+        "xx",
+        "yy"
+      ],
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-and-boundary-parity",
+      "description": "Cross-backend parity: a past-end boolean[] read in an && left operand makes the Lua result nil (`nil and true` → nil), and the declaration's typed boolean boundary then fails exactly where LuaJIT's check_boolean(nil) fails — E8001, exit 1 on both backends (the JVM boxed result converts with booleanNotNull: E8001 “expected boolean, got null”). The `false || read` shape fails the same way (result nil), while `true || read`/`false && read` compute without error (pinned by jvm-arr-shortcircuit-read-parity)",
+      "source": "export function test(): boolean {\n  let bs: boolean[] = [true];\n  let b: boolean = bs[99] && true;\n  return b;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-lhs-effect-before-read-error-parity",
+      "description": "Cross-backend parity for the plain-value-left comparison evaluation order: `mark(\"lhs\", 5) === xs[-1]` — the spec's strict left-to-right order (spec-v1.1 §Operational semantics) evaluates the left operand completely before the right read begins, so the left call prints 'lhs' and the right read's E8002 (negative index) raises afterwards. Both backends print lhs then DEAL_ERROR_CODE: E8002 and exit 1 (the pre-fix JVM ran the right read first: no 'lhs')",
+      "source": "import * as console from \"std/console\"\nfunction mark(label: string, v: int): int { console.log(label); return v; }\nexport function test(): null {\n  let xs: int[] = [1];\n  if (mark(\"lhs\", 5) === xs[-1]) { console.log(\"bad\"); }\n}",
+      "expectedOutput": "lhs",
+      "expectedNotOutput": [
+        "bad"
+      ],
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-lhs-effect-boolean-parity",
+      "description": "Cross-backend parity for the boolean element shape of the plain-value-left comparison order: `markB(\"lhs\", true) === bs[-1]` — the left boolean call prints 'lhs' before the right boolean[] read's E8002 raises, on both backends",
+      "source": "import * as console from \"std/console\"\nfunction markB(label: string, v: boolean): boolean { console.log(label); return v; }\nexport function test(): null {\n  let bs: boolean[] = [true];\n  if (markB(\"lhs\", true) === bs[-1]) { console.log(\"bad\"); }\n}",
+      "expectedOutput": "lhs",
+      "expectedNotOutput": [
+        "bad"
+      ],
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-lhs-effect-nilaware-right-parity",
+      "description": "Cross-backend parity for a plain-value left against a nil-aware && right operand: `markB(\"lhs\", true) === (bs[-1] && true)` — the left call prints 'lhs' first, then the right operand's evaluation raises its read's E8002, on both backends (the pre-fix JVM inverted the order and raised without printing 'lhs')",
+      "source": "import * as console from \"std/console\"\nfunction markB(label: string, v: boolean): boolean { console.log(label); return v; }\nexport function test(): null {\n  let bs: boolean[] = [true];\n  if (markB(\"lhs\", true) === (bs[-1] && true)) { console.log(\"bad\"); }\n}",
+      "expectedOutput": "lhs",
+      "expectedNotOutput": [
+        "bad"
+      ],
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-both-raise-precedence-parity",
+      "description": "Cross-backend parity for the both-raise error precedence: `(9007199254740991 + 1) === xs[-1]` — both operands can raise, and the left operand's checked arithmetic must raise first (E8004 int out of safe range), never the right read's E8002, on both backends (the pre-fix JVM raised the read's E8002 first)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let xs: int[] = [1];\n  if ((9007199254740991 + 1) === xs[-1]) { console.log(\"bad\"); }\n}",
+      "expectedOutput": null,
+      "expectedNotOutput": [
+        "E8002",
+        "bad"
+      ],
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-lhs-effect-inbounds-order-parity",
+      "description": "Cross-backend parity for the positive control: an in-bounds right read whose index operand hoists a side effect — the left call prints 'lhs' before the right read's hoisted print 'h' and pick label 'i', then the comparison succeeds (5 === 5) and prints eq-ok, on both backends",
+      "source": "import * as console from \"std/console\"\nfunction mark(label: string, v: int): int { console.log(label); return v; }\nfunction pick(label: string, z: null): int { console.log(label); return 0; }\nexport function test(): null {\n  let xs: int[] = [1];\n  let zs: int[] = [5];\n  if (mark(\"lhs\", 5) === zs[pick(\"i\", console.log(\"h\"))]) { console.log(\"eq-ok\"); }\n}",
+      "expectedOutput": "lhs\nh\ni\neq-ok",
+      "expectedNotOutput": [
+        "bad"
+      ],
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-lhs-effect-number-parity",
+      "description": "Cross-backend parity for the number element shape of the plain-value-left comparison order: `markN(\"lhsN\", 2.5) === ns[-1]` — the left number call prints 'lhsN' before the right number[] read's E8002 raises, on both backends",
+      "source": "import * as console from \"std/console\"\nfunction markN(label: string, v: number): number { console.log(label); return v; }\nexport function test(): null {\n  let ns: number[] = [1.5];\n  if (markN(\"lhsN\", 2.5) === ns[-1]) { console.log(\"badN\"); }\n}",
+      "expectedOutput": "lhsN",
+      "expectedNotOutput": [
+        "badN"
+      ],
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : number"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-lhs-effect-string-parity",
+      "description": "Cross-backend parity for the string element shape of the plain-value-left comparison order: `markS(\"lhsS\", \"x\") === ss[-1]` — the left string call prints 'lhsS' before the right string[] read's E8002 raises, on both backends",
+      "source": "import * as console from \"std/console\"\nfunction markS(label: string, v: string): string { console.log(label); return v; }\nexport function test(): null {\n  let ss: string[] = [\"a\"];\n  if (markS(\"lhsS\", \"x\") === ss[-1]) { console.log(\"badS\"); }\n}",
+      "expectedOutput": "lhsS",
+      "expectedNotOutput": [
+        "badS"
+      ],
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : string"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-cmp-lhs-effect-read-order",
+      "description": "JVM-only pin for the plain-value-left comparison order against an effectful right read: `mark(\"lhs\", 5) === getArr(\"made\", xs)[mark(\"idx\", 99)]` — the JVM evaluates the left call completely first and then the right read's receiver before its index (spec-v1.1 §Operational semantics rule 1), printing lhs, made, idx and exiting 0 (the past-end read yields nil: 5 === nil is false, no E8001 at a comparison operand). LuaJIT's emitted read evaluates the index before the receiver (the documented read receiver/index order divergence), so this shape is pinned JVM-only",
+      "source": "import * as console from \"std/console\"\nfunction mark(label: string, v: int): int { console.log(label); return v; }\nfunction getArr(label: string, xs: int[]): int[] { console.log(label); return xs; }\nexport function test(): null {\n  let xs: int[] = [1];\n  if (mark(\"lhs\", 5) === getArr(\"made\", xs)[mark(\"idx\", 99)]) { console.log(\"bad\"); }\n}",
+      "expectedOutput": "lhs\nmade\nidx",
+      "expectedNotOutput": [
+        "bad"
+      ],
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-lit-nil-element-luajit-collapse",
+      "description": "LuaJIT reference pin for the documented literal-construction divergence (backends: [\"luajit\"] only — the JVM side deliberately diverges and is pinned JVM-only by jvm-arr-lit-nil-element-jvm-e8001 and jvm-arr-lit-nil-element-mixed-jvm-e8001). A boolean literal element whose value is a past-end read's nil (`[bs[99] && true]`) performs NO element check at literal construction: the Lua table literal's nil hole collapses, so the literal silently yields an empty (or shorter) array and execution continues — no error at the literal, at the declaration boundary, or at a parameter boundary (check_array iterates 1..#v and sees no element). `[true, bs[99] && true]` yields a 1-element array",
+      "source": "import * as console from \"std/console\"\nfunction f(xs: boolean[]): null {\n  if (xs.length === 0) { console.log(\"param-len-zero\"); }\n}\nexport function test(): null {\n  let bs: boolean[] = [true];\n  let xs: boolean[] = [bs[99] && true];\n  if (xs.length === 0) { console.log(\"decl-len-zero\"); }\n  f([bs[99] && true]);\n  let ys: boolean[] = [true, bs[99] && true];\n  if (ys.length === 1) { console.log(\"mixed-len-one\"); }\n  console.log(\"done\");\n}",
+      "expectedOutput": "decl-len-zero\nparam-len-zero\nmixed-len-one\ndone",
+      "expectedNotOutput": [
+        "E8001",
+        "E8003"
+      ],
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [boolean]",
+        "index [] : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "jvm-arr-lit-nil-element-jvm-e8001",
+      "description": "JVM-only pin for the documented literal-construction divergence (the LuaJIT reference side is pinned by jvm-arr-lit-nil-element-luajit-collapse): a boolean literal element whose value is a past-end read's nil (`[bs[99] && true]`) raises E8001 \"expected boolean, got null\" at the JVM construction because a primitive Java array cannot store a nil element — where LuaJIT performs no element check and silently collapses the nil hole to an empty array, exit 0",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let bs: boolean[] = [true];\n  let xs: boolean[] = [bs[99] && true];\n  console.log(\"unreachable\");\n}",
+      "expectedOutput": null,
+      "expectedNotOutput": [
+        "unreachable"
+      ],
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [boolean]",
+        "index [] : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-lit-nil-element-mixed-jvm-e8001",
+      "description": "JVM-only pin for the documented literal-construction divergence, mixed-literal shape: `[true, bs[99] && true]` evaluates the first (fine) element and then raises E8001 \"expected boolean, got null\" at the nil element's construction, exit 1 — where LuaJIT yields a 1-element array and continues (pinned by jvm-arr-lit-nil-element-luajit-collapse)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let bs: boolean[] = [true];\n  let ys: boolean[] = [true, bs[99] && true];\n  console.log(\"unreachable\");\n}",
+      "expectedOutput": null,
+      "expectedNotOutput": [
+        "unreachable"
+      ],
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [boolean]",
+        "index [] : boolean"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    }
+  ]
+}
