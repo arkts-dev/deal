@@ -107,6 +107,7 @@ import javax.tools.ToolProvider;
  * frontend gate — each fixture's 'hosts' map supplying a declaration
  * path and a real host implementation class compiled with the emitted
  * artifacts), and the ISSUE-0108 nullable-slice fixtures live in
+
  * {@code test/conformance/fixtures/jvm-nullable-slice.json}
  * ({@code T | null} for the four primitives and local classes in
  * locals, module fields, class fields, parameters, and returns;
@@ -118,7 +119,23 @@ import javax.tools.ToolProvider;
  * failures for wrong inner values, wrong array wrappers, and
  * wrong-class arrays; the {@code int()}/{@code number()} nullable
  * conversion overloads including the runtime null failure; and frontend
- * E3001/E3006 compile-error gates rejected before any backend).
+ * E3001/E3006 compile-error gates rejected before any backend), and
+ * the ISSUE-0098 function-values/wrappers fixtures live in
+ * {@code test/conformance/fixtures/jvm-function-values-slice.json}
+ * (typed/inferred function-value variables, indirect calls through
+ * variables/parameters/module fields and call-result callees,
+ * callbacks, returned function values, the int/number intrinsics as
+ * function values, arity-extension adapters at variable/assignment
+ * positions — including LIVE module-field delegation with reassignment
+ * parity — E8010 runtime signature checks at callback/return
+ * boundaries with the checked value expression evaluated first
+ * (evaluate-then-check side-effect order pinned cross-backend),
+ * wrapper reference equality, load-time indirect calls, six frontend
+ * signature/indirect-call compile-error gates, nine cross-backend
+ * parity fixtures, and two LuaJIT-only reference fixtures pinning the
+ * reassigned-local and side-effecting call-result adapter semantics
+ * that the JVM slice conservatively rejects with E6000 until
+ * ISSUE-0110).
  *
  * <h2>Multi-module fixtures (ISSUE-0096)</h2>
  *

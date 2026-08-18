@@ -1,4 +1,4 @@
-# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice, ISSUE-0095 classes and nominal checks slice, ISSUE-0096 modules/imports/exports slice, ISSUE-0097 stdlib-boundary slice, ISSUE-0108 nullable slice, ISSUE-0109 imported classes and cross-module nominal identity slice, ISSUE-0100 host ABI slice)
+# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice, ISSUE-0095 classes and nominal checks slice, ISSUE-0096 modules/imports/exports slice, ISSUE-0097 stdlib-boundary slice, ISSUE-0098 function values and wrappers slice, ISSUE-0108 nullable slice, ISSUE-0109 imported classes and cross-module nominal identity slice, ISSUE-0100 host ABI slice)
 
 A small but real end-to-end JVM backend for the DEAL compiler. It walks the
 typed AST (the compiler's IR — `deal-compiler-architecture-v1`) and emits a
@@ -30,6 +30,7 @@ Supported (real semantics, spec JVM value mapping):
 | `class C { ... }` | a generated nested static class `$C_<name>` extending the emitted `$Base` identity holder (spec-v1.2 §Classes: nominal record, no methods, no constructors — the only callables are the module functions above). Object-literal construction in a class-typed context emits `new $C_<name>(args)` with declaration-order constructor arguments: provided field values evaluate left-to-right in literal order and defaults are evaluated per construction (spec §Construction). Required-present primitive fields (`int`/`number`/`boolean`/`string`) and required-present nullable primitive/class fields (`f: T | null`, defaulting to the DEAL null) are supported; field reads/writes emit direct accesses (ISSUE-0108 adds the nullable forms) |
 | `table` | a minimal ordered string-key map (`$T` over `java.lang.LinkedHashMap<String,Object>`), emitted for the slice's one untyped boundary: a table field read in a contextual target type. Class-typed reads run the runtime nominal check (`$check<C>` — `instanceof` plus the identity string, E8001 "expected instance of @mod/C, got …" for a wrong-class value, "expected class instance" for a non-class value, mirroring LuaJIT's `__rt.check_type` class branch); table-typed reads run the fixed `$check$Table` helper (the extra raw `$` keeps it collision-free against a local class named `Table`, whose nominal-check helper spells `$checkTable`). Table literals chain `put` calls in literal order. Every other class-typed boundary (locals, parameters, returns, field reads/writes, construction) is provably typed by the JVM's static type system, which spec-v1.2 §JVM backend contract explicitly permits to make typed-boundary checks redundant |
 | object literals | class construction when the contextual target is a class type (the checker's `checkClassConstruction`), a table literal otherwise (`table` target or no target) |
+| function values (ISSUE-0098) | per-signature abstract wrapper classes (`Fn2_II_R_I` for `(int,int)->int`) with the spec-convention descriptor string and an `invoke` method in the JVM value mapping, plus a per-declaration wrapper instance field (`add$fn`) whose invoke delegates to the static method; typed/inferred variables, callbacks, module fields, and returns of function type hold wrapper references; indirect calls dispatch through `invoke` (callee-of-a-call included); the `int`/`number` intrinsics are first-class wrapper values; arity extension lowers to delegating adapters at variable-initializer/assignment positions and to the LuaJIT-matching E8010 signature check at callback-argument/return positions; function equality is wrapper reference identity |
 | `let` locals / module fields | locals (shadowing disambiguated `$n`) / `static` fields |
 | `if`/`else if`/`else`, `return`, assignment, direct calls | plain Java control flow |
 | `while` loops | plain Java `while` with the condition routed through the emitted `loopCond` identity helper (javac never sees a constant-expression condition — JLS §14.21 keeps `while (false)` bodies and statements after `while (true)` reachable); the condition re-evaluates on every iteration, with hoisted null-typed side effects running inside the loop before each condition test; module-level while loops run in the load-time `static` initializer in source order and reject any `return` in their body with E6000 |
@@ -56,12 +57,17 @@ default evaluates in the declaring module's scope under LuaJIT, where
 the defaults table is built at load time; only literal constants emit
 inline at the construction site — ISSUE-0109), `table | null` values,
 nested (multi-dimensional) arrays,
-function arrays, function types, stdlib imports other than the four
+function arrays, stdlib imports other than the four
 supported modules (`std/console`, `std/string`, `std/math`, `std/time` —
 `std/table` and `std/json` stay E6000 at the import statement, used or
 unused, because their only functions take or return a `table`, a value
 type the slice does not support yet as a function parameter or return),
 for/for-of loops, try/throw, `@jsonable`.
+and (deferred to ISSUE-0110) function expressions, nested function
+declarations, and function signatures containing arrays, classes,
+nullables, nested function types, rest arms, or async markers. Plain
+function-type annotations over int/number/boolean/string/null signatures
+are fully supported.
 
 ## Host ABI slice (ISSUE-0100)
 
@@ -506,6 +512,7 @@ reports success for an artifact `javac` would reject.
   stay clean (pinned by `JvmBackendTest.testElseIfChainUseBeforeDeclaration`
   and the `jvm-elseif-chain-declared-first` fixture).
 
+
 ## Review evidence: primitive arrays (ISSUE-0094)
 
 Every supported primitive-array form and runtime check, with the test
@@ -856,6 +863,146 @@ fixture whose codegen or JVM execution is bypassed):
   function targets and table field writes are E6000 — this slice's
   runtime checks cover nominal class checks, and every other table form
   is a documented limitation, never a silent miscompile.
+
+## Review evidence: function values and wrappers (ISSUE-0098)
+
+- **Wrapper representation** — `JvmBackend.registerWrapperShape` /
+  `fnShapeName` / `fnDescriptor`: one abstract wrapper class per distinct
+  signature shape (`Fn2_II_R_I` = `(int,int)->int`; letters B/I/N/S/V for
+  boolean/int/number/string/null), carrying the spec-convention runtime
+  descriptor string (the same text the Lua backend stores in its runtime
+  function wrappers) and an `invoke` method with the JVM-mapped
+  signature. `emitFunction` emits the per-declaration wrapper instance
+  field (`add$fn`) at the declaration's source position, so load-time
+  reads of a later-declared function's wrapper are illegal Java forward
+  references and are rejected (E6000) exactly where LuaJIT reads the
+  global nil. The `int`/`number` intrinsic wrapper fields
+  (`_int$fn`/`_number$fn`) are emitted with the runtime support, like the
+  Lua backend's top-of-chunk wrappers. Both names are unreachable from
+  `javaName` (user identifiers cannot contain `$`; `_` escapes to `$u`).
+- **Value positions** — `emitIdentifier` maps function/intrinsic value
+  uses to the wrapper fields; `javaLocalType(Type.Func)` maps function
+  types to the wrapper class name, so typed/inferred variables,
+  parameters (callbacks), module fields, and return types all hold
+  wrapper references; `emitCall` dispatches indirect calls through
+  `invoke` — for identifier callees (locals/parameters/fields) and for
+  generic function-typed callee expressions (`picker()(41)` →
+  `picker().invoke(41L)`); null-returning indirect calls keep the
+  existing hoisting machinery.
+- **Arity extension (adapter positions)** — `emitTargeted` /
+  `emitFunctionValue` / `emitArityAdapter`: a narrower function type at a
+  variable initializer or an assignment (the only non-equal shape
+  `Types.isAssignable` admits) wraps the value in an anonymous subclass
+  of the target wrapper class whose invoke accepts the target parameters
+  and drops the extra ones — the JVM form of the Lua backend's
+  `__rt.function_` adapter. The delegation target never needs a capture:
+  a module function delegates to its static method, an intrinsic to its
+  conversion helper, a module field to its static field read LIVE on
+  every invoke (LuaJIT's adapter body re-reads the chunk-local binding,
+  so a field reassigned after the adapter's creation retargets the
+  adapter — pinned by the reassignment parity fixtures), and a
+  local/parameter to a fresh effectively-final `__fn<n>` snapshot
+  temporary only when the enclosing function body never reassigns it
+  (the binding's value is then stable, so the snapshot equals LuaJIT's
+  live read forever). A local/parameter the enclosing body reassigns
+  anywhere and any non-identifier value expression (a call result, which
+  LuaJIT re-evaluates on every invoke) are E6000 until ISSUE-0110 —
+  never a silent snapshot/once-only divergence. No lambda is ever
+  emitted.
+- **Signature checks (E8010, check positions)** —
+  `emitSignatureCheckWrapper`: at callback-argument and return
+  positions the runtime signature check LuaJIT performs at the
+  parameter/return boundary is reproduced — the value expression is
+  evaluated FIRST (materialized into a temporary at its evaluation
+  position, in the existing materialization order) and then a wrapper of
+  the target shape whose construction raises `E8010` with LuaJIT's exact
+  "function signature mismatch: expected (int,string)->int, got
+  (int)->int" contract (evaluate-then-check, spec §Operational
+  semantics rule 2 — a side effect in the checked value is never
+  dropped, pinned by the evaluation-order fixtures). The instance
+  initializer routes through the emitted `checkSig` descriptor
+  comparison so javac never proves the throw constant (JLS requires an
+  instance initializer to be able to complete normally); the invoke body
+  is unreachable. Later call arguments that are not pure after emission
+  are materialized into temporaries before the raising wrapper's
+  construction, so `apply(inc, mark("x", 41))` runs mark first and
+  raises E8010 after it, exactly like LuaJIT's
+  argument-evaluation-then-parameter-check order. `checkSig`
+  participates in the runtime-helper collision rejection.
+- **Function equality** — `emitBinary` emits Java reference `==`/`!=` on
+  function values: reads of the same declaration's wrapper field compare
+  equal, distinct wrappers (including distinct adapters) compare unequal
+  — LuaJIT's wrapper-table identity.
+- **Load-time indirect-call guards** — `moduleIndirectCallRisk` /
+  `moduleFieldValueFunction` / `moduleLevelAssignedFunctions`: a
+  module-level (load-time) indirect call through a function-typed field
+  gets the same protection as module-level direct calls. The field's
+  value set must be statically known — its initializer (followed
+  transitively through function-valued fields, memoized and
+  cycle-safe) and every module-level assignment to it before the call
+  site must be bare module-function or intrinsic identifiers — and every
+  function the field may hold must not (transitively) read a field or
+  reach a function declared at or after the call site. Since the JVM
+  static initializers mirror LuaJIT's load-time execution (source order
+  and control flow), the last executed assignment determines the held
+  wrapper on both backends — `f = dbl; f(2)` runs 4 under real luajit
+  and under the artifact. Every not-statically-known value shape is
+  E6000 (LuaJIT fails at load with a nil read; Java would silently read
+  the initialized static field or run the hoisted method).
+  `walkDominanceExpr` also walks indirect callees, so a function
+  declared before a function-typed field that calls through it stays
+  subject to the existing later-field read/write analysis.
+- **Tests proving the slice** —
+  - `test/conformance/fixtures/jvm-function-values-slice.json` — 30
+    fixtures. 19 JVM-only runtime fixtures run through the real
+    frontend → real `JvmBackend` codegen → `javac` subprocess → `java`
+    subprocess executing the emitted artifact (the harness fails a
+    fixture whose codegen or JVM execution is bypassed): typed and
+    inferred function-value variables with indirect calls, a callback
+    through a function-typed parameter, a mixed boolean/string callback
+    signature, returning a function value invoked through a call-result
+    callee, arity-extension adapters at a variable initializer and at a
+    reassignment, the int/number intrinsics as function values (exact
+    and arity-extended, plus an E8001 propagation through the intrinsic
+    wrapper), null signatures (`() => null` and `(null) => int`),
+    load-time indirect calls through function-typed module fields
+    (plain wrapper, adapter, and the reassignment shape), recursion routed through the stored
+    wrapper, wrapper reference equality, a two-level callback chain,
+    and the two E8010 runtime signature-check fixtures (callback
+    boundary, return boundary). Six frontend compile-error gates are
+    rejected before any backend (E3001 parameter/return signature
+    mismatch, E5004 reverse arity, E3009/E5001 indirect-call
+    arity/argument mismatch, E3008 non-function callee). Five fixtures
+    run under both backends as cross-backend parity with real luajit
+    (callback, arity-extension assignment, intrinsic function value,
+    reassignment, and the indirect-call boolean-argument boundary: a
+    past-end boolean[] read's nil passed through && as the argument of
+    an indirect call fails E8001, exit 1 on both backends — the JVM
+    converts the boxed temporary with booleanNotNull at the argument
+    position, LuaJIT's check_boolean(nil) raises at callee entry).
+  - `test/JvmBackendTest.testFunctionValues` — emission assertions for
+    the wrapper class, the descriptor string, the wrapper instance
+    field, indirect dispatch through `invoke`, the adapter's
+    static-method delegation, the intrinsic wrapper fields, and the
+    local-value snapshot temporary (`__fn0 = g;` / `__fn0.invoke(p0)`),
+    plus javac+java execution of the typed-variable, local-adapter,
+    call-result-adapter, module-field-adapter, E8010 callback/return
+    check, and load-time indirect-call shapes; E6000 guards for the
+    load-time value use of a later-declared function, a call-valued
+    field initializer, and an assignment before the call site; and E6000
+    for the deferred signature shapes (nested function types, nullable
+    function types, async function types, rest function types, arrays of
+    functions). The no-lambda assertions across the suite now target the
+    lambda arrow form `" -> "` — wrapper descriptor strings legitimately
+    carry the arrow glyph without spaces.
+- **Deferred to ISSUE-0110 (documented, not silent)** — function
+  expressions, nested function declarations, and function signatures
+  containing arrays, classes, nullables, nested function types, rest
+  arms, or async markers are rejected with E6000. The wrapper
+  descriptors are carried for the spec's runtime-type-information
+  contract but are observable only at the host boundary (deferred), not
+  as a source-level value — exactly as the spec states.
+
 
 ## Review evidence: backend-selection seam
 

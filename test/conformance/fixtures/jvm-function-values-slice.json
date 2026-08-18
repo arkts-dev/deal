@@ -1,0 +1,542 @@
+{
+  "version": "1.0",
+  "description": "JVM function values and wrappers slice (ISSUE-0098). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: first-class function values in typed and inferred variables, indirect calls through variables/parameters/module fields and call-result callees, callbacks with primitive/string/null signatures, returning function values, the int/number conversion intrinsics as function values (exact and arity-extended), arity-extension adapters at variable-initializer and assignment positions — module functions and intrinsics delegate directly, module fields are read LIVE on every invoke (a reassignment after creation retargets the adapter, pinned cross-backend), and never-reassigned locals/parameters snapshot (reassigned bindings and non-identifier adapter values are E6000 until ISSUE-0110, pinned in JvmBackendTest) — E8010 runtime signature checks at callback and return boundaries with the checked value expression evaluated FIRST (evaluate-then-check side-effect order pinned cross-backend), wrapper reference equality, recursion routed through the wrapper, load-time indirect calls through function-typed module fields, and six frontend compile-error gates (E3001 parameter/return signature mismatch, E5004 reverse arity, E3009/E5001 indirect-call arity/argument mismatch, E3008 non-function callee) rejected before any backend. Nine fixtures run under both backends as cross-backend parity with real luajit; two LuaJIT-only fixtures pin the reference semantics of the shapes the JVM slice conservatively rejects.",
+  "tests": [
+    {
+      "name": "jvm-fv-typed-variable-indirect-call",
+      "description": "First-class function value: a function declaration assigned to a typed variable of its exact signature and called indirectly through the variable (f(20, 22) = 42) — the call dispatches through the emitted wrapper's invoke, not a direct static call",
+      "source": "function add(a: int, b: int): int { return a + b; }\nexport function test(): int {\n  let f: (a: int, b: int) => int = add;\n  return f(20, 22);\n}",
+      "expectedOutput": "42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "(int,int)->int",
+        "ident add : (int,int)->int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-inferred-variable",
+      "description": "Type inference for function values: `let f = dbl` infers the function type without an annotation and calls through the inferred wrapper (dbl(21) = 42)",
+      "source": "function dbl(x: int): int { return x * 2; }\nexport function test(): int {\n  let f = dbl;\n  return f(21);\n}",
+      "expectedOutput": "42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "ident dbl : (int)->int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-callback-param",
+      "description": "Callback through a function-typed parameter: apply(f: (int)=>int, v) calls its parameter indirectly (apply(inc, 41) = 42)",
+      "source": "function inc(x: int): int { return x + 1; }\nfunction apply(f: (x: int) => int, v: int): int { return f(v); }\nexport function test(): int { return apply(inc, 41); }",
+      "expectedOutput": "42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function apply: int",
+        "ident inc : (int)->int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-callback-mixed-signatures",
+      "description": "Callback with a boolean/string signature: choose(f, true) calls the stored three-parameter function with boolean and string arguments and returns \"jvm\"",
+      "source": "function pick(flag: boolean, yes: string, no: string): string {\n  if (flag) { return yes; }\n  return no;\n}\nfunction choose(f: (flag: boolean, yes: string, no: string) => string, flag: boolean): string {\n  return f(flag, \"jvm\", \"lua\");\n}\nexport function test(): string { return choose(pick, true); }",
+      "expectedOutput": "jvm",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "(boolean,string,string)->string"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-return-function-value",
+      "description": "Returning a function value: picker() returns the wrapped inc and the result is invoked immediately (picker()(41) = 42) — the callee is a call expression, dispatched through the returned wrapper",
+      "source": "function inc(x: int): int { return x + 1; }\nfunction picker(): (x: int) => int { return inc; }\nexport function test(): int { return picker()(41); }",
+      "expectedOutput": "42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function picker: (int)->int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-arity-extension-assign",
+      "description": "Arity extension at a variable initializer: (int)=>int assigned to an (int,int)=>int variable wraps the value in an adapter whose invoke accepts and silently ignores the extra parameter (f(41, 999) = 42)",
+      "source": "function inc(x: int): int { return x + 1; }\nexport function test(): int {\n  let f: (a: int, b: int) => int = inc;\n  return f(41, 999);\n}",
+      "expectedOutput": "42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "(int,int)->int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-arity-extension-reassign",
+      "description": "Arity extension at an assignment: the wider function-typed variable is reassigned from the narrower function and the reassignment wraps the value in a fresh adapter (f = inc; f(41, 0) = 42)",
+      "source": "function inc(x: int): int { return x + 1; }\nexport function test(): int {\n  let f: (a: int, b: int) => int = inc;\n  f = inc;\n  return f(41, 0);\n}",
+      "expectedOutput": "42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-intrinsic-value-int",
+      "description": "The int conversion intrinsic as a first-class function value: ci: (number)=>int = int and ci(42.0) = 42 through the wrapper",
+      "source": "export function test(): int {\n  let ci: (n: number) => int = int;\n  return ci(42.0);\n}",
+      "expectedOutput": "42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "(number)->int",
+        "ident int : (number)->int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-intrinsic-value-number",
+      "description": "The number conversion intrinsic as a first-class function value: cn: (int)=>number = number and cn(42) = 42.0 through the wrapper",
+      "source": "export function test(): number {\n  let cn: (n: int) => number = number;\n  return cn(42);\n}",
+      "expectedOutput": "42.0",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "(int)->number",
+        "ident number : (int)->number"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-intrinsic-arity-extension",
+      "description": "Arity extension over an intrinsic value: (number)=>int assigned to a (number,string)=>int variable wraps int in an adapter whose invoke ignores the string (ci2(42.0, \"ignored\") = 42)",
+      "source": "export function test(): int {\n  let ci2: (n: number, s: string) => int = int;\n  return ci2(42.0, \"ignored\");\n}",
+      "expectedOutput": "42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-null-signatures",
+      "description": "Null in function signatures: () => null and (null) => int function values are stored, the void wrapper is invoked as a statement, and the null-parameter wrapper is called with null (wn(null) = 42)",
+      "source": "function noop(): null { return; }\nfunction withNull(n: null): int { return 42; }\nexport function test(): int {\n  let nf: () => null = noop;\n  nf();\n  let wn: (n: null) => int = withNull;\n  return wn(null);\n}",
+      "expectedOutput": "42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "()->null",
+        "(null)->int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-module-field-loadtime-call",
+      "description": "Module-level (load-time) indirect calls through function-typed module fields: the field holding the plain () => int wrapper, the field holding the arity-extension adapter, and the field holding the int intrinsic wrapper are all invoked inside the static initializer (42 + inc-adapter(41, 999) + int(40.0) = 124)",
+      "source": "function noop42(): int { return 42; }\nfunction inc(x: int): int { return x + 1; }\nlet g: () => int = noop42;\nlet h: (a: int, b: int) => int = inc;\nlet ci: (n: number) => int = int;\nlet r: int = g() + h(41, 999) + ci(40.0);\nexport function test(): int { return r; }",
+      "expectedOutput": "124",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-module-field-reassign-loadtime",
+      "description": "Module-level reassignment of a function-typed field before a load-time indirect call: the JVM static initializer mirrors LuaJIT's load-time execution, so the last assignment determines the held wrapper on both backends (f = dbl; f(2) = 4)",
+      "source": "function inc(x: int): int { return x + 1; }\nfunction dbl(x: int): int { return x * 2; }\nlet f: (x: int) => int = inc;\nf = dbl;\nlet r: int = f(2);\nexport function test(): int { return r; }",
+      "expectedOutput": "4",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-recursion-through-value",
+      "description": "Direct self-recursion routed through the function value: fact stores its own wrapper in a typed local and recurses through the indirect call (fact(5) = 120)",
+      "source": "function fact(n: int): int {\n  let f: (x: int) => int = fact;\n  if (n <= 1) { return 1; }\n  return n * f(n - 1);\n}\nexport function test(): int { return fact(5); }",
+      "expectedOutput": "120",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-function-equality",
+      "description": "Function-value equality is wrapper reference identity: two reads of the same declaration's wrapper field compare equal (f === g with both holding inc), matching LuaJIT's wrapper-table identity",
+      "source": "function inc(x: int): int { return x + 1; }\nexport function test(): int {\n  let f: (x: int) => int = inc;\n  let g: (x: int) => int = inc;\n  if (f === g) { return 1; }\n  return 0;\n}",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-callback-chain",
+      "description": "A function value passed through a two-level callback chain: twice(inc, 20) applies the stored wrapper twice (20 + 1 + 1 = 22)",
+      "source": "function inc(x: int): int { return x + 1; }\nfunction twice(f: (x: int) => int, v: int): int { return f(f(v)); }\nexport function test(): int { return twice(inc, 20); }",
+      "expectedOutput": "22",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-intrinsic-value-error",
+      "description": "A runtime error propagates through the intrinsic function-value wrapper: int(41.5) through the stored wrapper raises E8001 (non-integer number), exactly like the direct intrinsic call",
+      "source": "export function test(): int {\n  let ci: (n: number) => int = int;\n  return ci(41.5);\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-sig-check-callback-error",
+      "description": "Signature check at a callback parameter boundary: passing (int)=>int where (int,string)=>int is declared compiles (arity extension) but raises E8010 at the parameter boundary when apply is entered, exactly like LuaJIT's wrapper check",
+      "source": "function inc(x: int): int { return x + 1; }\nfunction apply(f: (a: int, b: string) => int, v: int): int { return f(v, \"ignored\"); }\nexport function test(): int { return apply(inc, 41); }",
+      "expectedOutput": null,
+      "expectedError": "E8010",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-sig-check-return-error",
+      "description": "Signature check at a return boundary: returning (int)=>int from a function declared (int,int)=>int compiles (arity extension) but raises E8010 when picker's return value crosses the declared boundary, exactly like LuaJIT's return check",
+      "source": "function inc(x: int): int { return x + 1; }\nfunction picker(): (a: int, b: int) => int { return inc; }\nexport function test(): int {\n  let f: (a: int, b: int) => int = picker();\n  return f(41, 999);\n}",
+      "expectedOutput": null,
+      "expectedError": "E8010",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-frontend-sig-param-type",
+      "description": "Signature failure (parameter types): (string)=>int is not assignable to an (int)=>int variable — the frontend type checker rejects with E3001 before any backend runs",
+      "source": "function g(s: string): int { return 1; }\nexport function test(): int {\n  let f: (x: int) => int = g;\n  return f(1);\n}",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3001",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-frontend-sig-return-type",
+      "description": "Signature failure (return type): () => string is not assignable to an () => int variable — E3001 before any backend runs",
+      "source": "function g(): string { return \"x\"; }\nexport function test(): int {\n  let f: () => int = g;\n  return f();\n}",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3001",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-frontend-sig-reverse-arity",
+      "description": "Signature failure (reverse arity): (int)=>int is not assignable to an () => int variable (actual has MORE parameters than the target) — the frontend rejects with the dedicated E5004 reverse-arity diagnostic before any backend runs",
+      "source": "function g(a: int): int { return a; }\nexport function test(): int {\n  let f: () => int = g;\n  return f();\n}",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E5004",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-frontend-indirect-arity",
+      "description": "Indirect-call arity failure: calling a one-parameter function value with two arguments is E3009 before any backend runs",
+      "source": "function inc(x: int): int { return x + 1; }\nexport function test(): int {\n  let f: (x: int) => int = inc;\n  return f(1, 2);\n}",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3009",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-frontend-indirect-arg-type",
+      "description": "Indirect-call argument-type failure: a string argument to a one-int-parameter function value is E5001 before any backend runs",
+      "source": "function inc(x: int): int { return x + 1; }\nexport function test(): int {\n  let f: (x: int) => int = inc;\n  return f(\"x\");\n}",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E5001",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-frontend-call-non-function",
+      "description": "Calling a non-function value: an int variable used as a callee is E3008 (\"int is not callable\") before any backend runs",
+      "source": "export function test(): int {\n  let x: int = 1;\n  return x();\n}",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3008",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-cross-callback-parity",
+      "description": "Cross-backend parity (LuaJIT + JVM): the callback apply(inc, 41) = 42 shape runs through both backends' real codegen and execution and prints the same marker",
+      "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction apply(f: (x: int) => int, v: int): int { return f(v); }\nexport function test(): null {\n  if (apply(inc, 41) === 42) { console.log(\"jvm-fv-cross-callback-ok\"); }\n}",
+      "expectedOutput": "jvm-fv-cross-callback-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-cross-arity-assign-parity",
+      "description": "Cross-backend parity (LuaJIT + JVM): the arity-extension assignment adapter ignores the extra parameter on both backends (f(41, 999) = 42)",
+      "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nexport function test(): null {\n  let f: (a: int, b: int) => int = inc;\n  if (f(41, 999) === 42) { console.log(\"jvm-fv-cross-arity-ok\"); }\n}",
+      "expectedOutput": "jvm-fv-cross-arity-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-cross-intrinsic-value-parity",
+      "description": "Cross-backend parity (LuaJIT + JVM): the int intrinsic stored as a function value converts through the wrapper on both backends (ci(42.0) = 42)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let ci: (n: number) => int = int;\n  if (ci(42.0) === 42) { console.log(\"jvm-fv-cross-intrinsic-ok\"); }\n}",
+      "expectedOutput": "jvm-fv-cross-intrinsic-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-cross-reassignment-parity",
+      "description": "Cross-backend parity (LuaJIT + JVM): reassigning a function-typed variable retargets later calls on both backends (f = dbl; f(21) = 42)",
+      "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction dbl(x: int): int { return x * 2; }\nexport function test(): null {\n  let f: (x: int) => int = inc;\n  f = dbl;\n  if (f(21) === 42) { console.log(\"jvm-fv-cross-reassign-ok\"); }\n}",
+      "expectedOutput": "jvm-fv-cross-reassign-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-cross-boolean-boundary-parity",
+      "description": "Cross-backend parity (LuaJIT + JVM): an indirect call through an inferred function-typed variable applies the same typed boolean boundary as a direct call — a past-end boolean[] read's nil passed through && as the boolean argument fails the parameter boundary with E8001, exit 1 on both backends (the JVM converts the boxed temporary with booleanNotNull at the argument position: E8001 \"expected boolean, got null\"; LuaJIT's check_boolean(nil) at callee entry).",
+      "source": "function flag(b: boolean): string { return \"flag\"; }\nexport function test(): string {\n  let f = flag;\n  let bs: boolean[] = [true];\n  return f(true && bs[99]);\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-cross-field-adapter-reassign-parity",
+      "description": "Cross-backend parity (LuaJIT + JVM): an arity-extension adapter over a function-typed MODULE FIELD reads the binding live on every invoke on both backends, so reassigning the field after the adapter's creation retargets the adapter (g = dbl; h(10, 999) = 20 — never a stale 11)",
+      "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction dbl(x: int): int { return x * 2; }\nlet g: (x: int) => int = inc;\nexport function test(): null {\n  let h: (a: int, b: int) => int = g;\n  g = dbl;\n  if (h(10, 999) === 20) { console.log(\"jvm-fv-cross-field-adapter-ok\"); }\n}",
+      "expectedOutput": "jvm-fv-cross-field-adapter-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-cross-loadtime-field-adapter-parity",
+      "description": "Cross-backend parity (LuaJIT + JVM): the load-time variant — a module-level adapter over a function-typed module field is created in the static initializer, the field is reassigned at load, and the adapter's later invoke reads the field live on both backends (h(10, 999) = 20)",
+      "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction dbl(x: int): int { return x * 2; }\nlet g: (x: int) => int = inc;\nlet h: (a: int, b: int) => int = g;\ng = dbl;\nlet r: int = h(10, 999);\nexport function test(): null {\n  if (r === 20) { console.log(\"jvm-fv-cross-loadtime-field-adapter-ok\"); }\n}",
+      "expectedOutput": "jvm-fv-cross-loadtime-field-adapter-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-cross-e8010-callback-eval-order",
+      "description": "Cross-backend parity (LuaJIT + JVM): at an E8010 callback-parameter check position the argument value expression is evaluated before the check raises — the marker prints only when markF(\"pre\", inc) ran before markI(\"post\", 1) (spec §Operational semantics rule 2), and the E8010 still follows on both backends (exit 1)",
+      "source": "import * as console from \"std/console\"\nlet order: int = 0;\nfunction inc(x: int): int { return x + 1; }\nfunction markF(tag: string, f: (x: int) => int): (x: int) => int {\n  if (tag === \"pre\") { order = order + 1; }\n  return f;\n}\nfunction markI(tag: string, v: int): int {\n  if (tag === \"post\") {\n    if (order === 1) { console.log(\"jvm-fv-cross-e8010-callback-eval-order-ok\"); }\n  }\n  return v;\n}\nfunction take(f: (a: int, b: string) => int, v: int): int { return f(v, \"ignored\"); }\nexport function test(): int { return take(markF(\"pre\", inc), markI(\"post\", 1)); }",
+      "expectedOutput": "jvm-fv-cross-e8010-callback-eval-order-ok",
+      "expectedError": "E8010",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-cross-e8010-return-eval",
+      "description": "Cross-backend parity (LuaJIT + JVM): at an E8010 return-boundary check position the returned value expression is evaluated before the check raises — markF logs its marker and only then does the E8010 fire on both backends (exit 1); the pre-fix JVM dropped the side effect entirely",
+      "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction markF(tag: string, f: (x: int) => int): (x: int) => int {\n  if (tag === \"pre\") { console.log(\"jvm-fv-cross-e8010-return-eval-ok\"); }\n  return f;\n}\nfunction picker(): (a: int, b: int) => int { return markF(\"pre\", inc); }\nexport function test(): int {\n  let f: (a: int, b: int) => int = picker();\n  return f(41, 999);\n}",
+      "expectedOutput": "jvm-fv-cross-e8010-return-eval-ok",
+      "expectedError": "E8010",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-lua-ref-reassigned-adapter",
+      "description": "LuaJIT reference semantics for the reassigned-local adapter shape that the JVM slice conservatively rejects with E6000 (pinned in JvmBackendTest.testFunctionValues): LuaJIT's adapter reads the binding live on every invoke, so f = dbl retargets the earlier adapter (h(10, 999) = 20)",
+      "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction dbl(x: int): int { return x * 2; }\nexport function test(): null {\n  let f: (x: int) => int = inc;\n  let h: (a: int, b: int) => int = f;\n  f = dbl;\n  if (h(10, 999) === 20) { console.log(\"jvm-fv-lua-ref-reassigned-adapter-ok\"); }\n}",
+      "expectedOutput": "jvm-fv-lua-ref-reassigned-adapter-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "jvm-fv-lua-ref-callresult-adapter",
+      "description": "LuaJIT reference semantics for the side-effecting call-result adapter shape that the JVM slice conservatively rejects with E6000 (pinned in JvmBackendTest.testFunctionValues): LuaJIT's adapter re-evaluates picker() on EVERY invoke — two invokes run picker twice (count reaches 2), so 33 + 33 + 2 = 68; a creation-time-only evaluation would compute 67",
+      "source": "import * as console from \"std/console\"\nlet count: int = 0;\nfunction thirty3(x: int): int { return 33; }\nfunction picker(): (x: int) => int { count = count + 1; return thirty3; }\nexport function test(): null {\n  let h: (a: int, b: int) => int = picker();\n  if (h(10, 999) + h(10, 999) + count === 68) { console.log(\"jvm-fv-lua-ref-callresult-adapter-ok\"); }\n}",
+      "expectedOutput": "jvm-fv-lua-ref-callresult-adapter-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit"
+      ]
+    }
+  ]
+}

@@ -333,6 +333,59 @@ import java.util.Set;
  * later-declared variable in an {@code else if} condition is rejected
  * with E6000 instead of emitting an illegal forward reference.
  *
+ * <p>Function values (ISSUE-0098 slice): a function declaration produces a
+ * first-class typed function value — a per-signature abstract wrapper
+ * class ({@code Fn2_II_R_I} for {@code (int,int)->int}) carrying the
+ * spec-convention runtime descriptor string and an {@code invoke} method
+ * with the JVM-mapped signature, plus a per-declaration wrapper instance
+ * field ({@code add$fn}) emitted at the declaration's source position
+ * whose invoke delegates to the static method (the JVM form of the Lua
+ * backend's runtime function wrappers). Typed/inferred variables,
+ * parameters (callbacks), module fields, and returns of function type
+ * hold wrapper references; indirect calls dispatch through
+ * {@code invoke}, including callees that are call results
+ * ({@code picker()(41)} → {@code picker().invoke(41L)}). The int/number
+ * conversion intrinsics are wrapped once per module exactly like the Lua
+ * backend's top-of-chunk wrappers. Arity extension (a narrower function
+ * type in a wider position — the only non-equal assignable shape) lowers
+ * to a delegating adapter at variable-initializer and assignment
+ * positions (extra parameters silently ignored) and to the runtime
+ * signature check LuaJIT performs at callback-argument and return
+ * boundaries: a wrapper of the target shape whose construction raises
+ * {@code E8010} "function signature mismatch: expected …, got …" where
+ * LuaJIT's parameter/return boundary check raises it. At check positions
+ * the value expression is evaluated FIRST (materialized into a
+ * temporary at its evaluation position) and later call arguments are
+ * materialized before the raising construction, so every evaluation
+ * completes exactly like LuaJIT's strict left-to-right
+ * evaluate-then-check order — a side effect in the checked value is
+ * never dropped. Adapters never capture: module functions delegate to
+ * their static method, intrinsics to their conversion helper, module
+ * fields to their static field read LIVE on every invoke (LuaJIT's
+ * adapter body re-reads the binding, so a field reassigned after the
+ * adapter's creation retargets the adapter), and a local/parameter to a
+ * fresh effectively-final {@code __fn<n>} snapshot temporary only when
+ * the enclosing function body never reassigns it (the binding's value
+ * is then stable, so the snapshot equals LuaJIT's live read forever).
+ * A local/parameter the enclosing body reassigns anywhere and any
+ * non-identifier value expression (a call result, which LuaJIT
+ * re-evaluates on every invoke) are rejected with E6000 until
+ * ISSUE-0110, never a silent divergence; no lambda is ever emitted.
+ * Function equality is wrapper
+ * reference identity (LuaJIT's wrapper-table identity). Load-time value
+ * uses of a not-yet-declared function are E6000 (LuaJIT reads the global
+ * nil; Java would emit an illegal forward reference to the wrapper
+ * field), and module-level indirect calls through function-typed fields
+ * are guarded like module-level direct calls: the field's value must be
+ * statically known (a bare module-function or intrinsic identifier
+ * initializer, no preceding module-level assignment) and the held
+ * function must not (transitively) read a later-declared field or reach
+ * a later-declared function — otherwise E6000, never a silent
+ * divergence. Function expressions, nested functions, and signatures
+ * containing arrays/classes/nullables/nested function types/rest arms/
+ * async markers stay deferred to ISSUE-0110 and are rejected with
+ * E6000.
+ *
  * <p>JVM value mapping follows the spec's JVM backend contract
  * ({@code docs/spec-v1.2.md} §JVM value mapping / §JVM backend contract —
  * the normative v1.2 spec):
@@ -595,7 +648,10 @@ public final class JvmBackend {
     /** The declared return type of the function currently being emitted
      * ({@code null} at module level). {@link #emitReturn} uses it to
      * emit {@code return null;} for {@code null}-typed return expressions
-     * inside nullable-returning functions (ISSUE-0108). */
+     * inside nullable-returning functions (ISSUE-0108), and it is the
+     * target type for returned function values under arity extension (a
+     * wider declared return signature wraps a narrower actual function,
+     * ISSUE-0098). */
     private Type currentReturnType = null;
 
     /**
@@ -701,6 +757,7 @@ public final class JvmBackend {
     private final Map<String, ClassDeclaration> moduleClasses =
         new LinkedHashMap<>();
 
+
     /**
      * One Java branch per declared class for the shared descriptor-driven
      * runtime-check seam (ISSUE-0110): each {@code emitClass} run appends
@@ -712,6 +769,63 @@ public final class JvmBackend {
      * module body so every declared class contributes its branches.
      */
     private final List<String> classCheckBranches = new ArrayList<>();
+
+    /** Module-level variable declarations by name (the AST nodes), for
+     * the load-time indirect-call value analysis
+     * ({@link #moduleIndirectCallRisk}). */
+    private final Map<String, VariableDeclaration> moduleFieldDecls =
+        new LinkedHashMap<>();
+
+    /** Module-level field name → the module function whose wrapper the
+     * field's initializer holds (directly or through other
+     * function-valued fields), or {@link #INTRINSIC_FIELD_VALUE} for an
+     * intrinsic-backed field. Absent/unknown = not statically known
+     * (conservative rejection for load-time indirect calls). */
+    private final Map<String, String> moduleFieldValueFunctions =
+        new LinkedHashMap<>();
+
+    /** Sentinel value in {@link #moduleFieldValueFunctions}: the field's
+     * initializer is the int/number intrinsic wrapper (reads no fields,
+     * reaches no module functions — always safe at load). */
+    private static final String INTRINSIC_FIELD_VALUE = "\u0000intrinsic";
+
+    /** Sentinel value in {@link #moduleFieldValueFunctions}: the field's
+     * initializer value is not statically known (conservative rejection
+     * for load-time indirect calls). */
+    private static final String UNKNOWN_FIELD_VALUE = "\u0000unknown";
+
+    /** In-progress guard for the field-value fixpoint (a cycle through
+     * function-valued field initializers is treated as unknown). */
+    private final Set<String> moduleFieldValueInProgress = new HashSet<>();
+
+    /** The module body in declaration order, for the load-time
+     * indirect-call guards. */
+    private List<StatementNode> moduleStatements = List.of();
+
+    /** Emitted function-wrapper shape classes (one abstract class per
+     * distinct signature), accumulated during emission and spliced into
+     * the class body right after the runtime support. */
+    private final StringBuilder wrapperClasses = new StringBuilder();
+
+    /** Wrapper shapes already registered (one class per shape name). */
+    private final Set<String> emittedWrapperShapes = new LinkedHashSet<>();
+
+    /** The statements of the function body currently being emitted, or
+     * {@code null} at module level — the scan scope for the
+     * adapter-capture reassignment check. */
+    private List<StatementNode> currentFunctionBody = null;
+
+    /** DEAL parameter names of the function body currently being emitted
+     * (empty at module level) — the base bindings of the adapter-capture
+     * reassignment scan. */
+    private List<String> currentFunctionParams = List.of();
+
+    /** Counter for function-value snapshot temporaries ({@code __fn0},
+     * {@code __fn1}, …) that keep an arity adapter's captured value
+     * effectively final without a lambda. Unreachable from
+     * {@link #javaName} (the {@code __} prefix escapes to {@code $u}). */
+    private int functionValueTempCounter = 0;
+
 
     /** Function name → module fields read by its body, transitively through
      * calls to other module functions (use-before-declaration detection for
@@ -987,7 +1101,8 @@ public final class JvmBackend {
         Map.entry("loopCond", List.of("boolean")),
         Map.entry("booleanNotNull", List.of("java.lang.Boolean")),
         Map.entry("intFromNullable", List.of("java.lang.Long")),
-        Map.entry("numberFromNullable", List.of("java.lang.Double")));
+        Map.entry("numberFromNullable", List.of("java.lang.Double")),
+        Map.entry("checkSig", List.of("java.lang.String", "java.lang.String")));
 
     /**
      * Translates a DEAL identifier to a Java identifier. The encoding is
@@ -1082,6 +1197,7 @@ public final class JvmBackend {
                 }
             } else if (stmt instanceof VariableDeclaration vd) {
                 moduleFieldIndices.putIfAbsent(vd.name(), i);
+                moduleFieldDecls.putIfAbsent(vd.name(), vd);
             } else if (stmt instanceof FunctionDeclaration fd) {
                 moduleFunctions.putIfAbsent(fd.name(), fd);
                 moduleFunctionIndices.putIfAbsent(fd.name(), i);
@@ -1100,6 +1216,7 @@ public final class JvmBackend {
                 moduleClasses.putIfAbsent(cd.name(), cd);
             }
         }
+        this.moduleStatements = List.copyOf(statements);
         computeTransitiveFieldReads();
         computeForwardFieldViolations();
 
@@ -1124,6 +1241,12 @@ public final class JvmBackend {
         indent++;
         emitRuntimeSupport();
         emitHostBindings();
+
+        // Function-wrapper shape classes are accumulated while statements
+        // are emitted and spliced here, after the runtime support: the
+        // class text must sit at class level, before the first member
+        // that references it is ever executed.
+        int wrapperInsertion = out.length();
 
         // Declarations (fields, functions, imports, exports) are emitted as
         // class members; every run of non-declaration module-level statements
@@ -1187,6 +1310,10 @@ public final class JvmBackend {
 
         indent--;
         emitLine("}");
+
+        if (wrapperClasses.length() > 0) {
+            out.insert(wrapperInsertion, wrapperClasses.toString());
+        }
 
         return new JvmCodegenResult(className, out.toString(), diagnostics);
     }
@@ -1615,6 +1742,239 @@ public final class JvmBackend {
     // Function-body access to later-declared module fields (reads and
     // writes — write-dominance analysis)
     // =========================================================================
+    // =========================================================================
+    // Module-level (load-time) indirect calls through function-valued
+    // fields (ISSUE-0098 slice)
+    // =========================================================================
+
+    /**
+     * Returns the rejection description for a module-level indirect call
+     * through the function-typed field {@code fieldName} at the current
+     * module statement index, or {@code null} when the call is safe.
+     * The field's runtime value is statically known only when its
+     * initializer is (transitively) a bare module-function identifier or
+     * an intrinsic wrapper AND no module-level assignment to the field
+     * precedes the call site; every other shape is conservatively
+     * rejected. When the value IS known, the same two load-time guards as
+     * for direct module-level calls apply to the held function:
+     * <ul>
+     * <li>its body must not (transitively) read a module field declared
+     * at or after the call site — LuaJIT fails at load reading the nil
+     * field, Java would silently read the field's default value;</li>
+     * <li>it must not (transitively) reach a module function declared at
+     * or after the call site — LuaJIT fails at load reading the
+     * not-yet-assigned function value, Java would hoist the method.</li>
+     * </ul>
+     */
+    private String moduleIndirectCallRisk(String fieldName) {
+        // The field's runtime value at the call site is statically known
+        // only when its initializer AND every module-level assignment to
+        // it before the call site are bare module-function or intrinsic
+        // identifiers; every other shape (a call result, an adapter
+        // expression, another function-valued field) is conservatively
+        // rejected. When the value set IS known, the same two load-time
+        // guards as for direct module-level calls apply to every function
+        // the field may hold: the JVM static field mirrors LuaJIT's
+        // load-time local (the static-initializer interleaving preserves
+        // source order and control flow), so the last executed
+        // assignment determines the value on both backends.
+        Set<String> possible = new LinkedHashSet<>();
+        boolean unknown = false;
+        String held = moduleFieldValueFunction(fieldName);
+        if (held == null) {
+            unknown = true;
+        } else if (!INTRINSIC_FIELD_VALUE.equals(held)) {
+            possible.add(held);
+        }
+        List<String> assigned = moduleLevelAssignedFunctions(fieldName,
+            currentModuleStatementIndex);
+        if (assigned == null) {
+            unknown = true;
+        } else {
+            possible.addAll(assigned);
+        }
+        if (unknown) {
+            return "module-level indirect call through '" + fieldName
+                + "' whose value is not statically known (an initializer "
+                + "or assignment that is not a bare module-function/"
+                + "intrinsic identifier)";
+        }
+        for (String fn : possible) {
+            String later = laterFieldRead(fn, currentModuleStatementIndex);
+            if (later != null) {
+                return "module-level indirect call through '" + fieldName
+                    + "' whose value ('" + fn + "') (transitively) reads the "
+                    + "module field '" + later + "' declared at or after the "
+                    + "call site (LuaJIT fails at load with a nil read; Java "
+                    + "would silently read the default value)";
+            }
+            String laterFn = laterFunctionCall(fn, currentModuleStatementIndex);
+            if (laterFn != null) {
+                return "module-level indirect call through '" + fieldName
+                    + "' whose value ('" + fn + "') reaches function '"
+                    + laterFn + "' declared at or after the call site (LuaJIT "
+                    + "assigns function values at their declaration point and "
+                    + "fails at load with a nil read; Java hoists methods and "
+                    + "would silently run)";
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The module functions assigned to {@code fieldName} by module-level
+     * statements between its declaration and {@code callIndex}
+     * (exclusive), or {@code null} when any assignment's value is not a
+     * statically known bare module-function/intrinsic identifier. The JVM
+     * static-initializer interleaving mirrors LuaJIT's load-time
+     * execution (source order and control flow), so every function this
+     * walk observes is one the field may genuinely hold at the call site.
+     */
+    private List<String> moduleLevelAssignedFunctions(String fieldName,
+            int callIndex) {
+        Integer decl = moduleFieldIndices.get(fieldName);
+        if (decl == null) return List.of();
+        List<String> result = new ArrayList<>();
+        for (int i = decl + 1; i < callIndex && i < moduleStatements.size(); i++) {
+            if (!stmtAssignedFunctions(moduleStatements.get(i), fieldName,
+                    result)) {
+                return null;
+            }
+        }
+        return result;
+    }
+
+    /** True when every assignment to {@code name} inside {@code stmt}
+     * assigns a bare module-function or intrinsic identifier (collecting
+     * the module functions into {@code out}); false when any assigned
+     * value is not statically known. */
+    private boolean stmtAssignedFunctions(StatementNode stmt, String name,
+            List<String> out) {
+        return switch (stmt) {
+            case ExpressionStatement es -> exprAssignedFunctions(es.expr(),
+                name, out);
+            case VariableDeclaration vd -> exprAssignedFunctions(vd.initializer(),
+                name, out);
+            case ReturnStatement rs -> rs.expr().isEmpty()
+                || exprAssignedFunctions(rs.expr().get(), name, out);
+            case IfStatement is -> exprAssignedFunctions(is.condition(), name, out)
+                && stmtAssignedFunctions(is.thenBlock(), name, out)
+                && (is.elseBranch().isEmpty()
+                    || elseBranchAssignedFunctions(is.elseBranch().get(), name, out));
+            case WhileStatement ws -> exprAssignedFunctions(ws.condition(), name, out)
+                && stmtAssignedFunctions(ws.body(), name, out);
+            case Block b -> blockAssignedFunctions(b, name, out);
+            default -> true;
+        };
+    }
+
+    private boolean elseBranchAssignedFunctions(
+            Either<IfStatement, Block> branch, String name, List<String> out) {
+        return switch (branch) {
+            case Either.Left<IfStatement, Block> left ->
+                stmtAssignedFunctions(left.value(), name, out);
+            case Either.Right<IfStatement, Block> right ->
+                blockAssignedFunctions(right.value(), name, out);
+        };
+    }
+
+    private boolean blockAssignedFunctions(Block b, String name,
+            List<String> out) {
+        for (StatementNode stmt : b.statements()) {
+            if (!stmtAssignedFunctions(stmt, name, out)) return false;
+        }
+        return true;
+    }
+
+    private boolean exprAssignedFunctions(ExpressionNode e, String name,
+            List<String> out) {
+        return switch (e) {
+            case AssignmentExpr ae -> {
+                if (ae.target() instanceof IdentifierExpr id
+                        && id.name().equals(name)) {
+                    yield knownFunctionValue(ae.value(), out);
+                }
+                yield exprAssignedFunctions(ae.value(), name, out);
+            }
+            case BinaryExpr bin -> exprAssignedFunctions(bin.left(), name, out)
+                && exprAssignedFunctions(bin.right(), name, out);
+            case UnaryExpr u -> exprAssignedFunctions(u.expr(), name, out);
+            case CallExpr call -> {
+                boolean ok = exprAssignedFunctions(call.callee(), name, out);
+                for (ExpressionNode arg : call.args()) {
+                    if (!ok) break;
+                    ok = exprAssignedFunctions(arg, name, out);
+                }
+                yield ok;
+            }
+            case MemberAccessExpr mae -> exprAssignedFunctions(mae.object(), name, out);
+            case TemplateLiteralExpr tl -> {
+                boolean ok = true;
+                for (ExpressionNode part : tl.parts()) {
+                    if (!exprAssignedFunctions(part, name, out)) {
+                        ok = false;
+                        break;
+                    }
+                }
+                yield ok;
+            }
+            default -> true;
+        };
+    }
+
+    /** True when {@code value} is a bare module-function or intrinsic
+     * identifier (collecting the module function's name into {@code out});
+     * false for any other value shape. */
+    private boolean knownFunctionValue(ExpressionNode value, List<String> out) {
+        if (!(value instanceof IdentifierExpr id)) return false;
+        Symbol sym = symbols.resolve(id.name());
+        if (sym instanceof Symbol.FunctionSymbol
+                && moduleFunctions.containsKey(id.name())) {
+            out.add(id.name());
+            return true;
+        }
+        if (sym instanceof Symbol.IntrinsicSymbol) {
+            return true; // reads no fields, reaches no module functions
+        }
+        return false;
+    }
+
+    /**
+     * The module function a function-typed field's initializer holds, or
+     * {@link #INTRINSIC_FIELD_VALUE} for an intrinsic-backed field, or
+     * {@code null} when the value is not statically known. Identifier
+     * initializers naming module functions, intrinsics, or other
+     * function-typed fields are followed (memoized, cycle-safe — a cycle
+     * is unknown and conservatively rejected).
+     */
+    private String moduleFieldValueFunction(String fieldName) {
+        String cached = moduleFieldValueFunctions.get(fieldName);
+        if (cached != null) return cached;
+        if (!moduleFieldValueInProgress.add(fieldName)) return null;
+        try {
+            VariableDeclaration vd = moduleFieldDecls.get(fieldName);
+            String result = null;
+            if (vd != null && vd.initializer() instanceof IdentifierExpr id) {
+                Symbol sym = symbols.resolve(id.name());
+                if (sym instanceof Symbol.FunctionSymbol
+                        && moduleFunctions.containsKey(id.name())) {
+                    result = id.name();
+                } else if (sym instanceof Symbol.IntrinsicSymbol) {
+                    result = INTRINSIC_FIELD_VALUE;
+                } else if (sym instanceof Symbol.VariableSymbol
+                        && moduleFieldIndices.containsKey(id.name())) {
+                    String inner = moduleFieldValueFunction(id.name());
+                    // A recursive unknown stays unknown (conservative).
+                    result = inner == null ? null : inner;
+                }
+            }
+            moduleFieldValueFunctions.put(fieldName,
+                result == null ? UNKNOWN_FIELD_VALUE : result);
+            return result;
+        } finally {
+            moduleFieldValueInProgress.remove(fieldName);
+        }
+    }
 
     /**
      * Computes, for every module-level function, the first module field
@@ -1797,9 +2157,15 @@ public final class JvmBackend {
                 walkDominanceExpr(u.expr(), locals, written, fnDeclIdx,
                     readViolations, writeViolations);
             case CallExpr call -> {
-                // Callee identifiers are hoisted function names (a field
-                // callee would be a function-valued field — unsupported);
-                // walk the arguments only.
+                // Direct callee identifiers are hoisted function names
+                // (FunctionSymbol — the IdentifierExpr walk skips them);
+                // an INDIRECT callee identifier is a read of a
+                // function-typed field and participates in the
+                // later-field dominance analysis (ISSUE-0098 slice).
+                if (call.callee() instanceof IdentifierExpr) {
+                    walkDominanceExpr(call.callee(), locals, written,
+                        fnDeclIdx, readViolations, writeViolations);
+                }
                 for (ExpressionNode arg : call.args()) {
                     walkDominanceExpr(arg, locals, written, fnDeclIdx,
                         readViolations, writeViolations);
@@ -2073,6 +2439,31 @@ public final class JvmBackend {
         emitLine("// $check(\"table\", v) and the seam raises E8001 \"expected table,");
         emitLine("// got ...\" for a non-table value — the same shape the retired");
         emitLine("// per-kind table-boundary helper raised.");
+        emitLine("// Function-signature check helper (E8010): wrapper descriptors are");
+        emitLine("// compared through this method so javac never proves the checking");
+        emitLine("// wrapper's initializer throw constant (JLS requires an instance");
+        emitLine("// initializer to be able to complete normally).");
+        emitLine("static boolean checkSig(java.lang.String expected, java.lang.String actual) { return expected.equals(actual); }");
+        emitLine();
+        // ---- DEAL JVM function values (ISSUE-0098 slice) ----
+        // The int / number conversion intrinsics are first-class function
+        // values, wrapped exactly like the Lua backend's runtime function
+        // wrappers for the same seeded signatures (number)->int and
+        // (int)->number. Direct intrinsic calls still route to the inline
+        // intFromNumber / numberFromInt helpers; value uses (assignment,
+        // callback arguments, arity adapters) flow through these wrappers.
+        registerWrapperShape(new Type.Func(List.of(Type.Number.INSTANCE),
+            Type.Int.INSTANCE));
+        registerWrapperShape(new Type.Func(List.of(Type.Int.INSTANCE),
+            Type.Number.INSTANCE));
+        emitLine("static final Fn1_N_R_I _int$fn = new Fn1_N_R_I() {");
+        emitLine("    @Override");
+        emitLine("    long invoke(double p0) { return intFromNumber(p0); }");
+        emitLine("};");
+        emitLine("static final Fn1_I_R_N _number$fn = new Fn1_I_R_N() {");
+        emitLine("    @Override");
+        emitLine("    double invoke(long p0) { return numberFromInt(p0); }");
+        emitLine("};");
         emitLine();
         emitLine("// ---- DEAL primitive array runtime support (ISSUE-0094) ----");
         emitLine("// int[]/number[]/string[]/boolean[] map to mutable wrapper classes — the");
@@ -2332,6 +2723,113 @@ public final class JvmBackend {
         emitLine("throw new DealError(\"E8001\", \"expected \" + descriptor + \", got \" + $describe(v));");
         indent--;
         emitLine("}");
+    }
+
+    // =========================================================================
+    // Function-value wrappers (ISSUE-0098 slice)
+    // =========================================================================
+
+    /**
+     * Registers the wrapper class for a function signature and returns its
+     * Java class name (e.g. {@code Fn2_II_R_I} for
+     * {@code (int,int)->int}). One abstract class per distinct signature
+     * shape; the class carries the spec-convention runtime descriptor
+     * string (the same text the Lua backend stores in its runtime
+     * function wrappers — observable only at the host boundary, deferred
+     * to ISSUE-0110) and an {@code invoke} method with the JVM-mapped
+     * signature. The class text is accumulated and spliced into the class
+     * body right after the runtime support.
+     */
+    private String registerWrapperShape(Type.Func f) {
+        String name = fnShapeName(f);
+        if (name == null) return null; // deferred shape; caller records E6000
+        if (emittedWrapperShapes.add(name)) {
+            StringBuilder body = new StringBuilder();
+            body.append("// DEAL function-value wrapper for descriptor ")
+                .append(quoteJavaString(fnDescriptor(f))).append("\n");
+            body.append("static abstract class ").append(name).append(" {\n");
+            body.append("    final java.lang.String descriptor = ")
+                .append(quoteJavaString(fnDescriptor(f))).append(";\n");
+            body.append("    abstract ").append(javaReturnType(f.returnType(), null))
+                .append(" invoke(");
+            for (int i = 0; i < f.paramTypes().size(); i++) {
+                if (i > 0) body.append(", ");
+                body.append(javaLocalType(f.paramTypes().get(i), null))
+                    .append(" p").append(i);
+            }
+            body.append(");\n");
+            body.append("}\n");
+            // The class text is spliced into the class body at indent 1;
+            // prefix every line with the class-body indent.
+            for (String line : body.toString().split("\n", -1)) {
+                if (line.isEmpty()) continue;
+                wrapperClasses.append("    ").append(line).append('\n');
+            }
+        }
+        return name;
+    }
+
+    /** The wrapper class name for a signature, or {@code null} when the
+     * signature contains a deferred type (array/class/nullable/nested
+     * function — the emitter records E6000 for those elsewhere). */
+    private static String fnShapeName(Type.Func f) {
+        StringBuilder sb = new StringBuilder("Fn").append(f.paramTypes().size());
+        if (f.paramTypes().isEmpty()) {
+            sb.append("_R_");
+        } else {
+            sb.append('_');
+            for (Type p : f.paramTypes()) {
+                Character c = fnShapeLetter(p);
+                if (c == null) return null;
+                sb.append(c);
+            }
+            sb.append("_R_");
+        }
+        Character rc = fnShapeLetter(f.returnType());
+        if (rc == null) return null;
+        sb.append(rc);
+        return sb.toString();
+    }
+
+    /** The one-letter signature-shape code ({@code B/I/N/S/V} for
+     * boolean/int/number/string/null; {@code null} for deferred types). */
+    private static Character fnShapeLetter(Type t) {
+        return switch (t) {
+            case Type.Boolean ignored -> 'B';
+            case Type.Int ignored -> 'I';
+            case Type.Number ignored -> 'N';
+            case Type.String ignored -> 'S';
+            case Type.Null ignored -> 'V';
+            default -> null;
+        };
+    }
+
+    /** The spec-convention runtime descriptor ({@code (int,int)->int}) —
+     * the same text the Lua backend stores in its runtime function
+     * wrappers. Only primitive/string/null signatures reach this point,
+     * so no escaping beyond the descriptor grammar is needed. */
+    private static String fnDescriptor(Type.Func f) {
+        StringBuilder sb = new StringBuilder();
+        if (f.isAsync()) sb.append("async");
+        sb.append("(");
+        for (int i = 0; i < f.paramTypes().size(); i++) {
+            if (i > 0) sb.append(",");
+            sb.append(singleTypeDescriptor(f.paramTypes().get(i)));
+        }
+        sb.append(")->").append(singleTypeDescriptor(f.returnType()));
+        return sb.toString();
+    }
+
+    /** One segment of a function signature descriptor. */
+    private static String singleTypeDescriptor(Type t) {
+        return switch (t) {
+            case Type.Int ignored -> "int";
+            case Type.Number ignored -> "number";
+            case Type.Boolean ignored -> "boolean";
+            case Type.String ignored -> "string";
+            case Type.Null ignored -> "null";
+            default -> "?";
+        };
     }
 
     // =========================================================================
@@ -3270,7 +3768,7 @@ public final class JvmBackend {
         // be emitted in the pre-declaration scope; only then is the
         // (disambiguated) name registered. A self-reference with no
         // enclosing binding was already rejected by emitStatement (E6000).
-        String initializer = emitExpressionFor(vd.initializer(), declaredType);
+        String initializer = emitTargeted(vd.initializer(), declaredType, false);
         if (needsBooleanBoundary(vd.initializer(), declaredType)) {
             initializer = "booleanNotNull(" + initializer + ")";
         }
@@ -3397,6 +3895,49 @@ public final class JvmBackend {
             return;
         }
 
+        // Emit the function's wrapper instance field right before the
+        // method (ISSUE-0098 slice): a function declaration produces a
+        // first-class typed function value (spec §Function values, calls,
+        // and wrappers) whose invoke delegates to the static method —
+        // the JVM form of the Lua backend's runtime function wrapper.
+        // The field sits at the declaration's source position, so
+        // load-time (static-initializer) reads of a later-declared
+        // function's wrapper are illegal Java forward references and
+        // rejected by emitIdentifier's load-time guard, exactly matching
+        // LuaJIT's declaration-point assignment of function values.
+        Symbol fnSym = symbols.resolve(fd.name());
+        if (fnSym instanceof Symbol.FunctionSymbol fs
+                && fs.funcType() != null
+                && fnShapeName(fs.funcType()) != null) {
+            Type.Func funcType = fs.funcType();
+            String shape = registerWrapperShape(funcType);
+            emitLine("static final " + shape + " " + javaFn + "$fn = new "
+                + shape + "() {");
+            indent++;
+            emitLine("@Override");
+            StringBuilder inv = new StringBuilder(javaReturn)
+                .append(" invoke(");
+            for (int i = 0; i < funcType.paramTypes().size(); i++) {
+                if (i > 0) inv.append(", ");
+                inv.append(javaLocalType(funcType.paramTypes().get(i),
+                    fd.span())).append(" p").append(i);
+            }
+            inv.append(") { ");
+            if (returnType instanceof Type.Null) {
+                inv.append(javaFn).append("(");
+            } else {
+                inv.append("return ").append(javaFn).append("(");
+            }
+            for (int i = 0; i < funcType.paramTypes().size(); i++) {
+                if (i > 0) inv.append(", ");
+                inv.append("p").append(i);
+            }
+            inv.append("); }");
+            emitLine(inv.toString());
+            indent--;
+            emitLine("};");
+        }
+
         // Declare the parameters in a fresh scope BEFORE building the
         // signature: the signature must use each parameter's DECLARED
         // (possibly disambiguated) Java name, not the raw {@link #javaName}
@@ -3436,6 +3977,14 @@ public final class JvmBackend {
         currentReturnType = returnType;
         currentModuleStatementIndex = -1;
         moduleLevel = false;
+        List<StatementNode> savedBody = currentFunctionBody;
+        List<String> savedParams = currentFunctionParams;
+        currentFunctionBody = fd.body().statements();
+        List<String> dealParams = new ArrayList<>();
+        for (Parameter p : fd.params()) {
+            dealParams.add(p.name());
+        }
+        currentFunctionParams = dealParams;
         for (StatementNode stmt : fd.body().statements()) {
             emitStatement(stmt);
             if (!statementCompletesNormally(stmt)) {
@@ -3446,9 +3995,12 @@ public final class JvmBackend {
                 break;
             }
         }
+        currentFunctionBody = savedBody;
+        currentFunctionParams = savedParams;
         currentReturnType = savedReturnType;
         currentModuleStatementIndex = savedModuleIndex;
         moduleLevel = savedModuleLevel;
+        currentReturnType = savedReturnType;
         localScopes.pop();
         localTypeScopes.pop();
         functionBindingNames.pop();
@@ -3495,7 +4047,7 @@ public final class JvmBackend {
             emitLine(retNullable ? "return null;" : "return;");
             return;
         }
-        String value = emitExpressionFor(e, currentReturnType);
+        String value = emitTargeted(e, currentReturnType, true);
         if (needsBooleanBoundary(e, currentReturnType)) {
             // The boundary keys on the DECLARED return type: a
             // nil-capable boolean result crossing into a
@@ -4363,12 +4915,45 @@ public final class JvmBackend {
             return adaptNarrowedRead(javaName(id.name()), vs.type(), readType);
         }
         if (sym instanceof Symbol.IntrinsicSymbol) {
-            unsupported("conversion intrinsics used as first-class values", id.span());
-            return "null";
+            // The int/number conversion intrinsics are first-class
+            // function values (ISSUE-0098 slice): value uses read the
+            // per-module wrapper fields emitted with the runtime support,
+            // exactly like the Lua backend's top-of-chunk wrappers.
+            return switch (id.name()) {
+                case "int" -> "_int$fn";
+                case "number" -> "_number$fn";
+                default -> {
+                    unsupported("intrinsic '" + id.name() + "' used as a value",
+                        id.span());
+                    yield "null";
+                }
+            };
         }
         if (sym instanceof Symbol.FunctionSymbol) {
-            unsupported("functions used as first-class values", id.span());
-            return "null";
+            if (!moduleFunctions.containsKey(id.name())) {
+                unsupported("non-module functions used as first-class values",
+                    id.span());
+                return "null";
+            }
+            // Load-time value use of a not-yet-declared function: LuaJIT
+            // assigns each function value at its declaration point in
+            // source order and reads the global nil for an earlier use,
+            // failing at load; Java would emit an illegal forward
+            // reference to the wrapper field (a class-body initializer
+            // may not reference a later static field). Reject instead of
+            // miscompiling. Function-body uses are fine: methods may
+            // legally reference later-declared static fields, and at call
+            // time every wrapper field is initialized (LuaJIT parity).
+            if (currentModuleStatementIndex >= 0
+                    && moduleFunctionIndices.getOrDefault(id.name(),
+                        Integer.MAX_VALUE) >= currentModuleStatementIndex) {
+                unsupported("module-level use of function '" + id.name()
+                    + "' as a value before its declaration (LuaJIT reads "
+                    + "the global nil at load; Java rejects the forward "
+                    + "reference to the wrapper field)", id.span());
+                return "null";
+            }
+            return javaName(id.name()) + "$fn";
         }
         if (sym instanceof Symbol.ModuleSymbol) {
             unsupported("module aliases used as values", id.span());
@@ -4616,6 +5201,23 @@ public final class JvmBackend {
                 default -> {
                     unsupported("operator " + op + " on strings", bin.span());
                     yield "\"\"";
+                }
+            };
+        }
+
+        // Function-value equality: wrapper reference identity. Reads of
+        // the same declaration's wrapper field compare equal; distinct
+        // wrappers (including distinct arity adapters) compare unequal —
+        // exactly LuaJIT's table identity over the runtime function
+        // wrappers (ISSUE-0098 slice).
+        if (leftType instanceof Type.Func && rightType instanceof Type.Func) {
+            return switch (op) {
+                case EQ -> "(" + left + " == " + right + ")";
+                case NEQ -> "(" + left + " != " + right + ")";
+                default -> {
+                    unsupported("operator " + op + " on function values",
+                        bin.span());
+                    yield "false";
                 }
             };
         }
@@ -4919,23 +5521,62 @@ public final class JvmBackend {
     }
 
     /**
-     * {@code emitOperandsInOrder} with a per-operand read-site target
-     * type (see {@link #emitExpressionFor}): {@code targets.get(i)} is
-     * the contextual target of a DIRECT index-read operand {@code i} (a
-     * call parameter type, an assignment RHS target, an array-literal
-     * element type, a class-construction field type), or {@code null}
-     * for no nullable target. Only direct reads consume the target — an
-     * operator nested between the boundary and the read types the read
-     * at its own operand position, so the element-typed read stays.
+     * {@link #emitOperandsInOrder(List)} with a per-operand target type:
+     * {@code targets.get(i)} is the contextual target of operand
+     * {@code i} — for a call argument the callee's parameter type, for
+     * other operand lists a direct index-read operand's read-site target
+     * (an assignment RHS target, an array-literal element type, a
+     * class-construction field type) or {@code null} for no target.
+     * Two target consumers exist:
+     * <ul>
+     * <li>an operand whose static type is a narrower function type than
+     * its target parameter (only arity extension is assignable here) is
+     * a call argument LuaJIT's parameter boundary check rejects with
+     * E8010 — the operand's VALUE is evaluated first (materialized into
+     * a temporary at the argument's evaluation position) and the emitted
+     * checking wrapper's construction then raises the same error after
+     * any materialized later operands (see below), exactly like
+     * LuaJIT's evaluate-all-arguments-then-check order;</li>
+     * <li>a DIRECT index-read operand at a nullable target is emitted
+     * with {@link #emitExpressionFor}, which yields the DEAL null past
+     * the end instead of raising the element-typed E8001. Only direct
+     * reads consume the target — an operator nested between the
+     * boundary and the read types the read at its own operand position,
+     * so the element-typed read stays.</li>
+     * </ul>
      */
     private List<String> emitOperandsInOrder(List<ExpressionNode> nodes,
                                              List<Type> targets) {
         List<String> codes = new ArrayList<>(nodes.size());
         List<Integer> hoistStarts = new ArrayList<>(nodes.size());
+        boolean[] throwsAtEval = new boolean[nodes.size()];
         for (int i = 0; i < nodes.size(); i++) {
             int before = preStatements.size();
-            codes.add(emitExpressionFor(nodes.get(i),
-                targets == null ? null : targets.get(i)));
+            Type target = targets != null && i < targets.size()
+                ? targets.get(i) : null;
+            if (target instanceof Type.Func tf
+                    && typeOf(nodes.get(i)) instanceof Type.Func af
+                    && !Types.equals(tf, af)) {
+                // A call argument whose static function type is narrower
+                // than the parameter: the checker admits only arity
+                // extension here, and LuaJIT's parameter boundary check
+                // raises E8010 when the call is made — the wrapper's
+                // construction raises it, at the argument's evaluation
+                // position.
+                if (Types.isAssignable(af, tf)
+                        && af.paramTypes().size() < tf.paramTypes().size()) {
+                    codes.add(emitSignatureCheckWrapper(tf, af, nodes.get(i)));
+                    throwsAtEval[i] = true;
+                } else {
+                    unsupported("call argument function value with a "
+                        + "signature not assignable to the parameter "
+                        + "(checker should have rejected it)",
+                        nodes.get(i).span());
+                    codes.add("null");
+                }
+            } else {
+                codes.add(emitExpressionFor(nodes.get(i), target));
+            }
             hoistStarts.add(preStatements.size() > before ? before : -1);
         }
         // Process the hoisting operands right to left in contiguous
@@ -4992,6 +5633,36 @@ public final class JvmBackend {
                 preStatementsDeclareTemps = true;
             }
         }
+        // A check-position operand whose evaluation raises (an arity
+        // signature check) must not raise before every LATER argument's
+        // evaluation completes: LuaJIT evaluates all arguments left to
+        // right and only then checks the parameters at callee entry, so
+        // `apply(inc, mark("x", 41))` runs mark first and raises E8010
+        // after it. Every later operand that is not pure after emission
+        // (an inline side-effecting call, a checked arithmetic result, or
+        // a hoisted call that still carries an inline remainder) is
+        // materialized into a temporary appended after its own hoisted
+        // statements — its full evaluation runs before the raising
+        // wrapper's construction, exactly like LuaJIT. Inert operands
+        // (literals, reads, fully hoisted null-typed calls) are left
+        // inline: their evaluation has no observable order.
+        boolean[] materializedForCheck = new boolean[nodes.size()];
+        for (int i = 0; i < nodes.size(); i++) {
+            if (!throwsAtEval[i]) continue;
+            for (int j = i + 1; j < nodes.size(); j++) {
+                if (materializedForCheck[j]) continue;
+                if (isPureAfterEmission(nodes.get(j))) continue;
+                Type t = typeOf(nodes.get(j));
+                String javaType = javaLocalType(t, nodes.get(j).span());
+                if (javaType == null) continue; // diagnostic already recorded
+                String temp = nextEvalTempName();
+                preStatements.add(new PreLine(
+                    javaType + " " + temp + " = " + codes.get(j) + ";", 0));
+                codes.set(j, temp);
+                materializedForCheck[j] = true;
+                preStatementsDeclareTemps = true;
+            }
+        }
         return codes;
     }
 
@@ -5031,6 +5702,428 @@ public final class JvmBackend {
         return javaLocalType(t, node.span());
     }
 
+    /**
+     * Emits an expression against an optional target type. When the
+     * expression's static type is a function type assignable to a
+     * DIFFERENT target function type (arity extension: the actual has
+     * fewer parameters than the target), the position decides the
+     * lowering — exactly like the Lua backend:
+     * <ul>
+     * <li>variable initializers and assignments (adapter positions) wrap
+     * the value in a delegating arity-extension adapter, so the produced
+     * value carries the target signature and silently ignores the extra
+     * parameters;</li>
+     * <li>return values and call arguments (check positions) emit the
+     * runtime signature check LuaJIT performs at the return/parameter
+     * boundary: the wrapper's construction raises E8010 with the exact
+     * "function signature mismatch" contract.</li>
+     * </ul>
+     */
+    private String emitTargeted(ExpressionNode e, Type target,
+            boolean checkPosition) {
+        if (target instanceof Type.Func tf && typeOf(e) instanceof Type.Func) {
+            return emitFunctionValue(tf, (Type.Func) typeOf(e), e, checkPosition);
+        }
+        return emitExpressionFor(e, target);
+    }
+
+    /**
+     * Emits a function value of static type {@code actual} against the
+     * target signature {@code target}. Equal signatures pass the plain
+     * wrapper value through; arity extension (fewer actual parameters,
+     * identical prefix types and return type — the only non-equal
+     * assignable shape {@code Types.isAssignable} admits) lowers to the
+     * delegating adapter at adapter positions and to the E8010 signature
+     * check at check positions. Anything else is a checker bug —
+     * defensive E6000.
+     */
+    private String emitFunctionValue(Type.Func target, Type.Func actual,
+            ExpressionNode value, boolean checkPosition) {
+        if (Types.equals(target, actual)) {
+            return emitExpression(value);
+        }
+        if (Types.isAssignable(actual, target)
+                && actual.paramTypes().size() < target.paramTypes().size()) {
+            return checkPosition
+                ? emitSignatureCheckWrapper(target, actual, value)
+                : emitArityAdapter(target, actual, value);
+        }
+        unsupported("function value with a signature not assignable to the "
+            + "target signature (checker should have rejected it)",
+            value.span());
+        return "null";
+    }
+
+    /**
+     * Emits the runtime function-signature check for a check position
+     * (return value or call argument) whose static function type is a
+     * narrower arity-extension shape than the declared target. The value
+     * expression is evaluated FIRST — materialized into a fresh
+     * effectively-final temporary declared at its evaluation position
+     * (for a call argument that is the argument's position in
+     * {@link #emitOperandsInOrder}'s materialization order, for a return
+     * value the return's evaluation) — and only then does the emitted
+     * anonymous subclass of the TARGET wrapper class's instance
+     * initializer raise E8010 with LuaJIT's exact "function signature
+     * mismatch: expected …, got …" contract. This reproduces LuaJIT's
+     * strict evaluate-then-check order (spec §Operational semantics rule
+     * 2 and the return-value contract): a side effect in the checked
+     * value expression always runs — never silently dropped — and the
+     * raise happens where LuaJIT's parameter/return boundary check
+     * raises (after any materialized later operands). The invoke body is
+     * unreachable and throws to satisfy the abstract method.
+     */
+    private String emitSignatureCheckWrapper(Type.Func target, Type.Func actual,
+            ExpressionNode value) {
+        String shape = registerWrapperShape(target);
+        if (shape == null) {
+            unsupported("function values whose signature contains "
+                + "arrays/classes/nullables/nested functions "
+                + "(deferred to ISSUE-0110)", value.span());
+            return "null";
+        }
+        String actualShape = registerWrapperShape(actual);
+        if (actualShape == null) {
+            unsupported("function values whose signature contains "
+                + "arrays/classes/nullables/nested functions "
+                + "(deferred to ISSUE-0110)", value.span());
+            return "null";
+        }
+        // Evaluate the value expression first (strict left-to-right /
+        // evaluate-then-check). The temporary's initializer runs at this
+        // operand's evaluation position — before any materialized later
+        // operand and before the raising construction below — exactly
+        // like LuaJIT's value evaluation preceding the boundary check.
+        String valueTemp = nextFunctionValueTempName();
+        preStatements.add(new PreLine(actualShape + " " + valueTemp + " = "
+            + emitExpression(value) + ";", 0));
+        preStatementsDeclareTemps = true;
+        StringBuilder sb = new StringBuilder("new ").append(shape)
+            .append("() { { if (!checkSig(")
+            .append(quoteJavaString(fnDescriptor(target))).append(", ")
+            .append(quoteJavaString(fnDescriptor(actual)))
+            .append(")) { throw new DealError(\"E8010\", ")
+            .append("\"function signature mismatch: expected ")
+            .append(fnDescriptor(target)).append(", got ")
+            .append(fnDescriptor(actual)).append("\"); } } @Override ");
+        sb.append(javaReturnType(target.returnType(), value.span()))
+            .append(" invoke(");
+        for (int i = 0; i < target.paramTypes().size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(javaLocalType(target.paramTypes().get(i), value.span()))
+                .append(" p").append(i);
+        }
+        sb.append(") { throw new java.lang.AssertionError(\"unreachable\"); } }");
+        return sb.toString();
+    }
+
+    /**
+     * Emits the arity-extension adapter expression: an anonymous subclass
+     * of the target wrapper class whose invoke accepts the target
+     * parameters, discards the extra trailing ones, and delegates to the
+     * actual function with the overlapping prefix. The delegation target
+     * never needs a capture:
+     * <ul>
+     * <li>a module function — the static method is called directly;</li>
+     * <li>the int/number intrinsic — the inline conversion helper is
+     * called directly;</li>
+     * <li>a module field — the static field is read LIVE on every
+     * invoke, exactly like LuaJIT's adapter body re-reading the
+     * chunk-local binding, so a field reassigned after the adapter's
+     * creation retargets the adapter;</li>
+     * <li>a local/parameter — its CURRENT value is snapshotted into a
+     * fresh effectively-final {@code __fn<n>} temporary declared right
+     * before the adapter, and this equals LuaJIT's live read only while
+     * the enclosing function body never reassigns the binding (the value
+     * is then stable forever). A binding the enclosing body reassigns
+     * anywhere and any non-identifier value expression (a call result,
+     * which LuaJIT re-evaluates on every invoke) are E6000 until
+     * ISSUE-0110 — never a silent snapshot/once-only divergence.</li>
+     * </ul>
+     * No lambda is ever emitted: the anonymous class body references only
+     * static members or a single-assignment temporary, so javac accepts
+     * the artifact.
+     */
+    private String emitArityAdapter(Type.Func target, Type.Func actual,
+            ExpressionNode value) {
+        String inner;
+        if (value instanceof IdentifierExpr id) {
+            String mapped = localJavaName(id.name());
+            Symbol sym = symbols.resolve(id.name());
+            if (mapped == null && sym instanceof Symbol.FunctionSymbol
+                    && moduleFunctions.containsKey(id.name())) {
+                inner = javaName(id.name()) + "("
+                    + overlappingAdapterArgs(actual.paramTypes().size()) + ")";
+            } else if (mapped == null && sym instanceof Symbol.IntrinsicSymbol) {
+                inner = switch (id.name()) {
+                    case "int" -> "intFromNumber(p0)";
+                    case "number" -> "numberFromInt(p0)";
+                    default -> {
+                        unsupported("intrinsic '" + id.name()
+                            + "' used as a value", id.span());
+                        yield "null";
+                    }
+                };
+            } else if (moduleFieldIndices.containsKey(id.name())
+                    && !shadowedByFunctionLocal(id.name())) {
+                // A module field holding a function value: read the static
+                // field LIVE on every invoke — exactly like LuaJIT's
+                // adapter body re-reading the binding — so a reassignment
+                // after the adapter's creation retargets the adapter.
+                inner = (mapped != null ? mapped : javaName(id.name()))
+                    + ".invoke("
+                    + overlappingAdapterArgs(actual.paramTypes().size()) + ")";
+            } else if (mapped != null) {
+                // A local or parameter binding: the snapshot equals
+                // LuaJIT's live read only while the binding never changes
+                // after the adapter's creation — reject any binding the
+                // enclosing function body reassigns anywhere (a Java
+                // anonymous class cannot capture a reassigned local, and
+                // routing every read/write through a shared mutable
+                // holder cell is deferred to ISSUE-0110).
+                if (capturedBindingReassignedInBody(id.name())) {
+                    unsupported("an arity-extension adapter over the "
+                        + "function-typed local/parameter '" + id.name()
+                        + "' that the enclosing function body reassigns "
+                        + "(LuaJIT's adapter reads the binding live on "
+                        + "every invoke; a Java anonymous class cannot "
+                        + "capture a reassigned local — deferred to "
+                        + "ISSUE-0110)", id.span());
+                    return "null";
+                }
+                inner = snapshotFunctionValue(actual, value);
+            } else {
+                unsupported("an arity-extension adapter over the function "
+                    + "value '" + id.name() + "' that is not a module "
+                    + "function, intrinsic, module field, or visible local "
+                    + "binding", id.span());
+                return "null";
+            }
+        } else {
+            unsupported("an arity-extension adapter over a non-identifier "
+                + "function-value expression (LuaJIT re-evaluates the "
+                + "expression on every invoke; the JVM slice cannot yet "
+                + "emit that — deferred to ISSUE-0110)", value.span());
+            return "null";
+        }
+        String shape = registerWrapperShape(target);
+        if (shape == null) {
+            unsupported("function values whose signature contains "
+                + "arrays/classes/nullables/nested functions "
+                + "(deferred to ISSUE-0110)", value.span());
+            return "null";
+        }
+        StringBuilder sb = new StringBuilder("new ").append(shape)
+            .append("() { @Override ");
+        sb.append(javaReturnType(target.returnType(), value.span()))
+            .append(" invoke(");
+        for (int i = 0; i < target.paramTypes().size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(javaLocalType(target.paramTypes().get(i), value.span()))
+                .append(" p").append(i);
+        }
+        sb.append(") { ");
+        if (target.returnType() instanceof Type.Null) {
+            sb.append(inner).append("; } }");
+        } else {
+            sb.append("return ").append(inner).append("; } }");
+        }
+        return sb.toString();
+    }
+
+    /** True when some non-base scope map (a function parameter or local)
+     * currently binds {@code name}, i.e. a module field of the same name
+     * is shadowed and the identifier refers to the local binding. The
+     * base (module-level) scope map is the deque's last element. */
+    private boolean shadowedByFunctionLocal(String name) {
+        for (Map<String, String> scope : localScopes) {
+            if (scope == localScopes.peekLast()) break;
+            if (scope.containsKey(name)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * True when the body of the function currently being emitted contains
+     * an assignment to a local binding named {@code name} — the captured
+     * binding itself or a same-named shadowing binding (conservative).
+     * LuaJIT's adapter reads the captured binding live on every invoke,
+     * so any reassignment after the adapter's creation retargets it; a
+     * Java anonymous class cannot capture a reassigned local, and routing
+     * every read/write of the binding through a shared mutable holder
+     * cell is deferred to ISSUE-0110 — reject instead of silently
+     * snapshotting a value the binding may later outlive (a binding the
+     * body never reassigns has a stable value, so the snapshot equals
+     * LuaJIT's live read forever).
+     */
+    private boolean capturedBindingReassignedInBody(String name) {
+        if (currentFunctionBody == null) return false;
+        Deque<Set<String>> locals = new ArrayDeque<>();
+        locals.push(new LinkedHashSet<>(currentFunctionParams));
+        return statementsAssignLocal(currentFunctionBody, locals, name);
+    }
+
+    private boolean statementsAssignLocal(List<StatementNode> stmts,
+            Deque<Set<String>> locals, String name) {
+        for (StatementNode stmt : stmts) {
+            if (statementAssignsLocal(stmt, locals, name)) return true;
+        }
+        return false;
+    }
+
+    private boolean blockAssignsLocal(Block b, Deque<Set<String>> locals,
+            String name) {
+        locals.push(new LinkedHashSet<>());
+        boolean found = statementsAssignLocal(b.statements(), locals, name);
+        locals.pop();
+        return found;
+    }
+
+    private boolean statementAssignsLocal(StatementNode stmt,
+            Deque<Set<String>> locals, String name) {
+        return switch (stmt) {
+            case VariableDeclaration vd -> {
+                if (exprAssignsLocal(vd.initializer(), locals, name)) {
+                    yield true;
+                }
+                locals.peek().add(vd.name());
+                yield false;
+            }
+            case ReturnStatement rs -> rs.expr().isPresent()
+                && exprAssignsLocal(rs.expr().get(), locals, name);
+            case ExpressionStatement es ->
+                exprAssignsLocal(es.expr(), locals, name);
+            case IfStatement is -> {
+                if (exprAssignsLocal(is.condition(), locals, name)
+                        || blockAssignsLocal(is.thenBlock(), locals, name)) {
+                    yield true;
+                }
+                if (is.elseBranch().isPresent()) {
+                    switch (is.elseBranch().get()) {
+                        case Either.Left<IfStatement, Block> left -> {
+                            if (statementAssignsLocal(left.value(), locals, name)) {
+                                yield true;
+                            }
+                        }
+                        case Either.Right<IfStatement, Block> right -> {
+                            if (blockAssignsLocal(right.value(), locals, name)) {
+                                yield true;
+                            }
+                        }
+                    }
+                }
+                yield false;
+            }
+            case WhileStatement ws -> {
+                if (exprAssignsLocal(ws.condition(), locals, name)) {
+                    yield true;
+                }
+                yield blockAssignsLocal(ws.body(), locals, name);
+            }
+            case Block b -> blockAssignsLocal(b, locals, name);
+            // Function declarations and unsupported kinds (for/for-of,
+            // try, classes, …) are separate scopes or rejected with E6000
+            // when emitted; nothing to walk here.
+            default -> false;
+        };
+    }
+
+    private boolean exprAssignsLocal(ExpressionNode e,
+            Deque<Set<String>> locals, String name) {
+        return switch (e) {
+            case AssignmentExpr ae -> {
+                if (ae.target() instanceof IdentifierExpr id
+                        && id.name().equals(name)
+                        && isLocallyBound(locals, name)) {
+                    yield true;
+                }
+                boolean found = exprAssignsLocal(ae.value(), locals, name);
+                if (!found && ae.target() instanceof IndexExpr idx) {
+                    found = exprAssignsLocal(idx.array(), locals, name)
+                        || exprAssignsLocal(idx.index(), locals, name);
+                }
+                yield found;
+            }
+            case BinaryExpr bin -> exprAssignsLocal(bin.left(), locals, name)
+                || exprAssignsLocal(bin.right(), locals, name);
+            case UnaryExpr u -> exprAssignsLocal(u.expr(), locals, name);
+            case CallExpr call -> {
+                boolean found = exprAssignsLocal(call.callee(), locals, name);
+                for (ExpressionNode arg : call.args()) {
+                    if (found) break;
+                    found = exprAssignsLocal(arg, locals, name);
+                }
+                yield found;
+            }
+            case MemberAccessExpr mae ->
+                exprAssignsLocal(mae.object(), locals, name);
+            case IndexExpr idx -> exprAssignsLocal(idx.array(), locals, name)
+                || exprAssignsLocal(idx.index(), locals, name);
+            case ArrayLiteralExpr al -> {
+                boolean found = false;
+                for (ExpressionNode elem : al.elements()) {
+                    if (exprAssignsLocal(elem, locals, name)) {
+                        found = true;
+                        break;
+                    }
+                }
+                yield found;
+            }
+            case TemplateLiteralExpr tl -> {
+                boolean found = false;
+                for (ExpressionNode part : tl.parts()) {
+                    if (exprAssignsLocal(part, locals, name)) {
+                        found = true;
+                        break;
+                    }
+                }
+                yield found;
+            }
+            // Literals and unsupported forms (rejected later) hold no writes.
+            default -> false;
+        };
+    }
+
+    /** Snapshots a never-reassigned local/parameter function value into
+     * an effectively-final temporary (declared in the pre-statements,
+     * evaluated in source order at adapter-creation time) and returns the
+     * temporary's {@code .invoke(...)} delegation for the adapter body.
+     * Only called after {@link #capturedBindingReassignedInBody} proved
+     * the enclosing function body never reassigns the binding, so the
+     * snapshot equals LuaJIT's live read forever. */
+    private String snapshotFunctionValue(Type.Func actual, ExpressionNode value) {
+        String shape = registerWrapperShape(actual);
+        if (shape == null) {
+            unsupported("function values whose signature contains "
+                + "arrays/classes/nullables/nested functions "
+                + "(deferred to ISSUE-0110)", value.span());
+            return "null";
+        }
+        String tmp = nextFunctionValueTempName();
+        preStatements.add(new PreLine(shape + " " + tmp + " = "
+            + emitExpression(value) + ";", 0));
+        preStatementsDeclareTemps = true;
+        return tmp + ".invoke(" + overlappingAdapterArgs(actual.paramTypes().size())
+            + ")";
+    }
+
+    /** The {@code p0, p1, …} references the adapter forwards to the
+     * actual function (its overlapping parameter prefix). */
+    private static String overlappingAdapterArgs(int count) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append("p").append(i);
+        }
+        return sb.toString();
+    }
+
+    /** A fresh function-value snapshot temporary ({@code __fn0},
+     * {@code __fn1}, …). Unreachable from {@link #javaName}. */
+    private String nextFunctionValueTempName() {
+        return "__fn" + functionValueTempCounter++;
+    }
+
     private String emitUnary(UnaryExpr u) {
         return switch (u.op()) {
             case NOT -> {
@@ -5066,7 +6159,41 @@ public final class JvmBackend {
             return emitMemberAccessCall(mae, call);
         }
         if (call.callee() instanceof IdentifierExpr id) {
-            if (localJavaName(id.name()) != null) {
+            String mapped = localJavaName(id.name());
+            if (mapped != null) {
+                // A visible variable binding (local, parameter, or module
+                // field). Function-typed bindings are indirect calls
+                // (ISSUE-0098 slice): they dispatch through the wrapper
+                // instance's invoke method — the same `.f(...)` shape the
+                // Lua backend emits. Anything else is not callable.
+                Type calleeType = typeOf(call.callee());
+                if (calleeType instanceof Type.Func f) {
+                    // Module-level (load-time) indirect calls through a
+                    // function-typed field get the same use-before-
+                    // declaration protection as module-level direct calls:
+                    // LuaJIT evaluates the field's initializer at load and
+                    // would fail on a value whose function reads a
+                    // later-declared field or reaches a later-declared
+                    // function, while Java would silently run the
+                    // initialized static field / hoisted method.
+                    if (currentModuleStatementIndex >= 0
+                            && moduleFieldIndices.containsKey(id.name())) {
+                        String risk = moduleIndirectCallRisk(id.name());
+                        if (risk != null) {
+                            unsupported(risk, call.span());
+                            return "null";
+                        }
+                    }
+                    List<String> argCodes = emitOperandsInOrder(call.args(),
+                        f.paramTypes());
+                    for (int i = 0; i < argCodes.size(); i++) {
+                        argCodes.set(i, boundaryArgCode(
+                            call.args().get(i), argCodes.get(i),
+                            f.paramTypes().get(i)));
+                    }
+                    return mapped + ".invoke("
+                        + String.join(", ", argCodes) + ")";
+                }
                 unsupported("calls through non-function values", call.span());
                 return "null";
             }
@@ -5133,6 +6260,22 @@ public final class JvmBackend {
                     argCodes.get(i), paramDeclaredType(id.name(), i)));
             }
             return sb.append(')').toString();
+        }
+        // Any other function-typed callee expression (a call or
+        // assignment producing a function value): emit the callee inline
+        // and dispatch through its wrapper — e.g. `picker()(41, 999)`
+        // becomes `picker().invoke(41L, 999L)`.
+        Type calleeType = typeOf(call.callee());
+        if (calleeType instanceof Type.Func f) {
+            String callee = emitExpression(call.callee());
+            List<String> argCodes = emitOperandsInOrder(call.args(),
+                f.paramTypes());
+            for (int i = 0; i < argCodes.size(); i++) {
+                argCodes.set(i, boundaryArgCode(
+                    call.args().get(i), argCodes.get(i),
+                    f.paramTypes().get(i)));
+            }
+            return callee + ".invoke(" + String.join(", ", argCodes) + ")";
         }
         unsupported("calls through non-identifier callees", call.span());
         return "null";
@@ -6126,8 +7269,11 @@ public final class JvmBackend {
             // assignment target's declared type: a T[] read assigned to a
             // T | null binding yields the DEAL null past the end
             // (LuaJIT's check_nullable at the assignment boundary), while
-            // a non-nullable target keeps the element-typed E8001 read.
-            String value = emitExpressionFor(ae.value(), targetType);
+            // a non-nullable target keeps the element-typed E8001 read;
+            // the same target selects the arity-extension adapter when a
+            // narrower function value is assigned to a wider
+            // function-typed binding.
+            String value = emitTargeted(ae.value(), targetType, false);
             if (needsBooleanBoundary(ae.value(), targetType)) {
                 // The boundary keys on the TARGET's declared type: a
                 // nil-capable boolean result assigned into a
@@ -6535,10 +7681,58 @@ public final class JvmBackend {
                 yield new Type.Nullable(inner);
             }
             case FunctionType ft -> {
-                unsupported("function types", ft.span());
-                yield Type.Error.INSTANCE;
+                // Function-type annotations (ISSUE-0098 slice): build the
+                // internal Type.Func from the primitive/string/null
+                // signature surface. Arrays, classes, nullables, nested
+                // function types, rest arms, and async markers are
+                // deferred to ISSUE-0110 / the async slice and rejected
+                // here — never silently miscompiled (DEAL v1.2 function
+                // types carry no rest arm).
+                if (ft.isAsync()) {
+                    unsupported("async function types", ft.span());
+                    yield Type.Error.INSTANCE;
+                }
+                List<Type> paramTypes = new ArrayList<>();
+                boolean ok = true;
+                for (FunctionTypeParam p : ft.params()) {
+                    Type pt = resolveTypeNode(p.type());
+                    if (pt == Type.Error.INSTANCE) {
+                        ok = false;
+                        break;
+                    }
+                    if (!isFunctionSignatureType(pt)) {
+                        unsupported("function parameter types other than "
+                            + "int/number/boolean/string/null (arrays, "
+                            + "classes, nullables, and nested function types "
+                            + "are deferred to ISSUE-0110)", p.type().span());
+                        ok = false;
+                        break;
+                    }
+                    paramTypes.add(pt);
+                }
+                Type rt = resolveTypeNode(ft.returnType());
+                if (rt == Type.Error.INSTANCE) {
+                    ok = false;
+                } else if (!isFunctionSignatureType(rt)) {
+                    unsupported("function return types other than "
+                        + "int/number/boolean/string/null (arrays, classes, "
+                        + "nullables, and nested function types are deferred "
+                        + "to ISSUE-0110)", ft.returnType().span());
+                    ok = false;
+                }
+                yield ok ? new Type.Func(paramTypes, rt)
+                         : Type.Error.INSTANCE;
             }
         };
+    }
+
+    /** True for the primitive/string/null types a function signature may
+     * contain in this slice (arrays, classes, nullables, and nested
+     * function types are deferred to ISSUE-0110). */
+    private static boolean isFunctionSignatureType(Type t) {
+        return t instanceof Type.Int || t instanceof Type.Number
+            || t instanceof Type.Boolean || t instanceof Type.String
+            || t instanceof Type.Null;
     }
 
     /** Java type for a local/parameter/field. {@code null} when unsupported. */
@@ -6592,6 +7786,22 @@ public final class JvmBackend {
                 yield nullableJavaType(n.inner(), span);
             }
             case Type.Error ignored -> null;
+            case Type.Func f -> {
+                // Function values (ISSUE-0098 slice): a per-signature
+                // wrapper class whose invoke method carries the JVM-mapped
+                // signature. The JVM type system proves the parameter and
+                // return checks the spec's runtime wrappers perform (the
+                // spec's JVM backend contract explicitly permits this);
+                // the int safe range stays enforced inside the functions.
+                String shape = fnShapeName(f);
+                if (shape == null) {
+                    unsupported("function values whose signature contains "
+                        + "arrays/classes/nullables/nested functions "
+                        + "(deferred to ISSUE-0110)", span);
+                    yield null;
+                }
+                yield registerWrapperShape(f);
+            }
             default -> {
                 unsupported("values of type " + typeName(t), span);
                 yield null;

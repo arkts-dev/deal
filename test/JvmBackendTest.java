@@ -210,6 +210,25 @@ import java.util.Set;
  *       testOrchestratorJvmImportSupported}), and a declaration/host-module
  *       import stays E6000 with no artifact ({@code
  *       testOrchestratorJvmDeclarationImportRejected}).</li>
+ *   <li>function values and wrappers (ISSUE-0098): per-signature wrapper
+ *       classes with spec-convention descriptor strings, per-declaration
+ *       wrapper instance fields, indirect-call dispatch through
+ *       {@code invoke}, intrinsic function-value wrappers, arity-extension
+ *       adapters at variable/assignment positions (static-method
+ *       delegation for module functions, LIVE static-field delegation for
+ *       module fields — a reassignment retargets the adapter — and
+ *       effectively-final snapshot temporaries for locals/parameters the
+ *       enclosing body never reassigns; reassigned locals/parameters and
+ *       non-identifier adapter values are E6000 until ISSUE-0110 — never
+ *       a lambda, never a silent divergence), E8010 runtime signature
+ *       checks at callback/return boundaries with LuaJIT's exact message
+ *       and the checked value expression evaluated FIRST
+ *       (evaluate-then-check — side effects never dropped), wrapper
+ *       reference equality, load-time indirect-call guards
+ *       (later-declared value uses and not-statically-known field values
+ *       E6000; the reassignment shape runs with LuaJIT parity), and the
+ *       deferred signature shapes (nested/nullable/async/rest function
+ *       types, arrays of functions) rejected with E6000.</li>
  * </ul>
  *
  * <p>The end-to-end JVM conformance fixtures live in
@@ -263,6 +282,7 @@ public class JvmBackendTest {
             testSharedCheckSeam();
             testNullableSlice();
             testImportedClassValues();
+            testFunctionValues();
             testUseBeforeDeclarationRejected();
             testFunctionBodyModuleFieldAccessGuards();
             testAssignmentBeforeDeclarationRejected();
@@ -673,8 +693,10 @@ public class JvmBackendTest {
         check(java.contains("static long intPow("), "pow helper emitted");
         check(!java.contains("nullAnd"),
             "null-typed calls are hoisted as pre-statements, not nullAnd-wrapped");
-        check(!java.contains("->"),
-            "emitted code contains no lambdas (capture-safety guarantee)");
+        check(!java.contains(" -> "),
+            "emitted code contains no lambdas (capture-safety guarantee; "
+                + "wrapper descriptor strings may contain the arrow glyph "
+                + "without spaces, e.g. (int,int)->int)");
         check(!java.contains("__rt"), "no Lua runtime references");
     }
 
@@ -935,7 +957,7 @@ public class JvmBackendTest {
                         res.source().indexOf("while"), res.source().indexOf("while") + 60));
                 check(res.source().contains("static boolean loopCond(boolean v) { return v; }"),
                     "loopCond identity helper emitted");
-                check(!res.source().contains("->"),
+                check(!res.source().contains(" -> "),
                     "while emission contains no lambda");
             }
         }
@@ -1402,8 +1424,10 @@ public class JvmBackendTest {
                 + res.diagnostics());
             if (!res.hasErrors()) {
                 String java = res.source();
-                check(!java.contains("->"),
-                    "no lambda emitted for array order: " + java);
+                check(!java.contains(" -> "),
+                    "no lambda emitted for array order (spaced arrow; "
+                    + "wrapper descriptor strings may carry the unspaced "
+                    + "arrow glyph): " + java);
                 int sideIdx = java.indexOf("\"index-side\"");
                 int tempIdx = java.indexOf("__t0 = pick(");
                 int valueIdx = java.indexOf("\"value-side\"");
@@ -1578,8 +1602,10 @@ public class JvmBackendTest {
                         && java.contains("static java.lang.Double __numberArrayReadBoxed")
                         && java.contains("static java.lang.Boolean __booleanArrayReadBoxed"),
                     "boxed helpers emitted for all four element types");
-                check(!java.contains("->"),
-                    "no lambda emitted for comparison positions: " + java);
+                check(!java.contains(" -> "),
+                    "no lambda emitted for comparison positions (spaced "
+                    + "arrow; wrapper descriptor strings may carry the "
+                    + "unspaced arrow glyph): " + java);
             }
         }
     }
@@ -1654,8 +1680,10 @@ public class JvmBackendTest {
                     "the receiver materialization lands before the index "
                     + "operand's hoisted println and the index's "
                     + "materialized inline call: " + java);
-                check(!java.contains("->"),
-                    "no lambda emitted for the receiver shape: " + java);
+                check(!java.contains(" -> "),
+                    "no lambda emitted for the receiver shape (spaced "
+                    + "arrow; wrapper descriptor strings may carry the "
+                    + "unspaced arrow glyph): " + java);
             }
         }
     }
@@ -1768,8 +1796,10 @@ public class JvmBackendTest {
                     "the left read's boxed helper call lands before the "
                     + "right operand's hoisted println, which lands before "
                     + "the right read's helper call: " + java);
-                check(!java.contains("->"),
-                    "no lambda emitted for the both-reads shape: " + java);
+                check(!java.contains(" -> "),
+                    "no lambda emitted for the both-reads shape (spaced "
+                    + "arrow; wrapper descriptor strings may carry the "
+                    + "unspaced arrow glyph): " + java);
             }
         }
     }
@@ -1921,8 +1951,10 @@ public class JvmBackendTest {
                     "&& / || operands lower to boxed short-circuit "
                     + "temporaries with truthiness guards and the typed "
                     + "boundary converts with booleanNotNull: " + java);
-                check(!java.contains("->"),
-                    "no lambda emitted for the boundary-less shapes: " + java);
+                check(!java.contains(" -> "),
+                    "no lambda emitted for the boundary-less shapes (spaced "
+                    + "arrow; wrapper descriptor strings may carry the "
+                    + "unspaced arrow glyph): " + java);
             }
         }
     }
@@ -2124,8 +2156,10 @@ public class JvmBackendTest {
                     + "the comparison references the literal directly "
                     + "and no 'long __t = 5L' pre-statement exists: "
                         + java);
-                check(!java.contains("->"),
-                    "no lambda emitted for the plain-left shapes: " + java);
+                check(!java.contains(" -> "),
+                    "no lambda emitted for the plain-left shapes (spaced "
+                    + "arrow; wrapper descriptor strings may carry the "
+                    + "unspaced arrow glyph): " + java);
             }
         }
     }
@@ -2743,7 +2777,7 @@ public class JvmBackendTest {
                 f.program(), f.checkResult(), "jvmtest-cap-nolambda.deal", "main");
             check(!res.hasErrors(), "no-lambda probe codegen clean: " + res.diagnostics());
             if (!res.hasErrors()) {
-                check(!res.source().contains("->"),
+                check(!res.source().contains(" -> "),
                     "no-lambda probe emits no lambda");
                 check(!res.source().contains("nullAnd"),
                     "no-lambda probe emits no nullAnd helper");
@@ -3532,6 +3566,456 @@ public class JvmBackendTest {
                 .anyMatch(d -> "E1049".equals(d.code())),
             "module-accumulator field write shape rejected with E1049: "
                 + writeOrderPureShape.errors());
+    }
+    // =========================================================================
+    // ISSUE-0098 slice: function values and wrappers
+    // =========================================================================
+
+    /**
+     * Function values and wrappers (ISSUE-0098): first-class function
+     * values through the real frontend → JvmBackend codegen → javac →
+     * java pipeline, with emission assertions that the artifact carries
+     * the per-signature wrapper classes (descriptor strings included),
+     * the per-declaration wrapper instance fields, indirect-call
+     * dispatch through {@code invoke}, the int/number intrinsic wrapper
+     * fields, and the arity-extension adapter shapes (static-method
+     * delegation for module functions, LIVE static-field delegation for
+     * module fields — the adapter body re-reads the field on every
+     * invoke, so a reassignment after creation retargets it exactly like
+     * LuaJIT — and effectively-final snapshot temporaries for
+     * locals/parameters the enclosing body never reassigns; a
+     * reassigned local/parameter and any non-identifier adapter value —
+     * which LuaJIT reads live / re-evaluates per invoke — are E6000
+     * until ISSUE-0110, never a lambda, never a silent divergence). Also
+     * covered: E8010 runtime signature checks at callback and return
+     * boundaries (matching LuaJIT's wrapper checks) with the checked
+     * value expression evaluated FIRST — the marker probes pin the
+     * evaluate-then-check order with module-field side effects — wrapper
+     * reference equality, the load-time indirect-call
+     * guards (a module-level value use of a later-declared function, a
+     * field with a not-statically-known value, an assigned function that
+     * reaches a later-declared function — all E6000, never a Java forward
+     * reference or a silent divergence; the plain reassignment shape runs
+     * with LuaJIT parity), and the deferred signature shapes (nested function
+     * types, nullable/async/rest function types, arrays of functions)
+     * rejected with E6000.
+     */
+    private static void testFunctionValues() throws Exception {
+        System.out.println("-- Function values and wrappers (ISSUE-0098) --");
+
+        // Typed variable + indirect call through the wrapper.
+        ExecResult typed = compileAndRunJvm("""
+            function add(a: int, b: int): int { return a + b; }
+            export function test(): int {
+              let f: (a: int, b: int) => int = add;
+              return f(20, 22);
+            }
+            """, "jvmtest-fv-typed");
+        check(typed.exitCode() == 0, "typed function value exits 0");
+        check(typed.output().contains("42"),
+            "typed function value computes 42 through the wrapper: "
+                + typed.output());
+
+        // Emission assertions: wrapper classes, wrapper fields, indirect
+        // dispatch, intrinsic wrappers, and the arity-extension adapter.
+        Frontend f = compileFrontend("""
+            function add(a: int, b: int): int { return a + b; }
+            function inc(x: int): int { return x + 1; }
+            export function test(): int {
+              let f: (a: int, b: int) => int = add;
+              let g: (a: int, b: int) => int = inc;
+              return f(1, 2) + g(41, 999);
+            }
+            """, "jvmtest-fv-emission.deal");
+        check(f.errors().isEmpty(), "emission probe frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-fv-emission.deal", "main");
+            check(!res.hasErrors(), "emission probe codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String src = res.source();
+                check(src.contains("static abstract class Fn2_II_R_I {"),
+                    "per-signature wrapper class emitted");
+                check(src.contains(
+                    "final java.lang.String descriptor = \"(int,int)->int\";"),
+                    "wrapper carries the spec-convention descriptor");
+                check(src.contains("static final Fn2_II_R_I add$fn = new Fn2_II_R_I()"),
+                    "per-declaration wrapper instance field emitted");
+                check(src.contains("f.invoke(1L, 2L)"),
+                    "indirect call dispatches through invoke");
+                check(src.contains(
+                    "Fn2_II_R_I g = new Fn2_II_R_I() { @Override long invoke(long p0, long p1) { return inc(p0); } };"),
+                    "arity adapter delegates to the static method, dropping p1");
+                check(src.contains("static final Fn1_N_R_I _int$fn = new Fn1_N_R_I() {")
+                    && src.contains("static final Fn1_I_R_N _number$fn = new Fn1_I_R_N() {"),
+                    "intrinsic function-value wrappers emitted");
+                check(!src.contains(" -> "),
+                    "no lambda is emitted (descriptor strings may carry the arrow glyph)");
+            }
+        }
+
+        // Adapter over a LOCAL function value: the adapter snapshots the
+        // local's current value into an effectively-final temporary.
+        ExecResult localAdapter = compileAndRunJvm("""
+            function inc(x: int): int { return x + 1; }
+            export function test(): int {
+              let g: (x: int) => int = inc;
+              let h: (a: int, b: int) => int = g;
+              return h(41, 999);
+            }
+            """, "jvmtest-fv-local-adapter");
+        check(localAdapter.exitCode() == 0, "local adapter exits 0");
+        check(localAdapter.output().contains("42"),
+            "local-value adapter computes 42: " + localAdapter.output());
+        Frontend localF = compileFrontend("""
+            function inc(x: int): int { return x + 1; }
+            export function test(): int {
+              let g: (x: int) => int = inc;
+              let h: (a: int, b: int) => int = g;
+              return h(41, 999);
+            }
+            """, "jvmtest-fv-local-adapter-emit.deal");
+        check(localF.errors().isEmpty(), "local adapter probe frontend clean");
+        if (localF.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                localF.program(), localF.checkResult(),
+                "jvmtest-fv-local-adapter-emit.deal", "main");
+            check(!res.hasErrors(), "local adapter probe codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains("Fn1_I_R_I __fn0 = g;"),
+                    "adapter snapshots the local into an effectively-final temporary");
+                check(res.source().contains("__fn0.invoke(p0)"),
+                    "adapter delegates through the snapshot temporary");
+            }
+        }
+
+        // Adapter over a call result: LuaJIT re-evaluates the value
+        // expression on EVERY invoke (side effects re-run); the JVM slice
+        // cannot emit that without an effectively-final capture — E6000,
+        // never a silent once-only evaluation divergence.
+        Frontend callAdapterF = compileFrontend("""
+            function inc(x: int): int { return x + 1; }
+            function picker(): (x: int) => int { return inc; }
+            export function test(): int {
+              let h: (a: int, b: int) => int = picker();
+              return h(41, 999);
+            }
+            """, "jvmtest-fv-call-adapter.deal");
+        check(callAdapterF.errors().isEmpty(),
+            "call-result adapter probe frontend clean: " + callAdapterF.errors());
+        if (callAdapterF.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                callAdapterF.program(), callAdapterF.checkResult(),
+                "jvmtest-fv-call-adapter.deal", "main");
+            check(res.hasErrors(), "call-result adapter is rejected");
+            check(res.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for the call-result adapter: " + res.diagnostics());
+        }
+
+        // Adapter over a module field: the adapter body reads the static
+        // field LIVE on every invoke — exactly like LuaJIT's adapter body
+        // re-reading the chunk-local binding — so reassigning the field
+        // after the adapter's creation retargets the adapter (dbl(10) =
+        // 20, never a stale inc snapshot of 11).
+        ExecResult fieldAdapter = compileAndRunJvm("""
+            function inc(x: int): int { return x + 1; }
+            function dbl(x: int): int { return x * 2; }
+            let g: (x: int) => int = inc;
+            export function test(): int {
+              let h: (a: int, b: int) => int = g;
+              g = dbl;
+              return h(10, 999);
+            }
+            """, "jvmtest-fv-field-adapter");
+        check(fieldAdapter.exitCode() == 0, "field adapter exits 0");
+        check(fieldAdapter.output().contains("20"),
+            "field adapter observes the reassignment live (20): "
+                + fieldAdapter.output());
+        Frontend fieldF = compileFrontend("""
+            function inc(x: int): int { return x + 1; }
+            let g: (x: int) => int = inc;
+            export function test(): int {
+              let h: (a: int, b: int) => int = g;
+              return h(41, 999);
+            }
+            """, "jvmtest-fv-field-adapter-emit.deal");
+        check(fieldF.errors().isEmpty(),
+            "field adapter emit probe frontend clean: " + fieldF.errors());
+        if (fieldF.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                fieldF.program(), fieldF.checkResult(),
+                "jvmtest-fv-field-adapter-emit.deal", "main");
+            check(!res.hasErrors(), "field adapter emit probe codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains("g.invoke(p0)"),
+                    "adapter body reads the static field live on every invoke");
+                check(!res.source().contains("__fn0 = g;"),
+                    "no creation-time snapshot of the field");
+            }
+        }
+
+        // The load-time variant: the module-level adapter body reads the
+        // static field live, so a load-time reassignment between the
+        // adapter's creation and the indirect call retargets it exactly
+        // like LuaJIT's load-time execution (h(10, 999) = 20).
+        ExecResult loadFieldAdapter = compileAndRunJvm("""
+            function inc(x: int): int { return x + 1; }
+            function dbl(x: int): int { return x * 2; }
+            let g: (x: int) => int = inc;
+            let h: (a: int, b: int) => int = g;
+            g = dbl;
+            let r: int = h(10, 999);
+            export function test(): int { return r; }
+            """, "jvmtest-fv-load-field-adapter");
+        check(loadFieldAdapter.exitCode() == 0,
+            "load-time field adapter exits 0");
+        check(loadFieldAdapter.output().contains("20"),
+            "load-time field adapter observes the reassignment live (20): "
+                + loadFieldAdapter.output());
+
+        // Adapter over a local/parameter that the enclosing body
+        // reassigns: LuaJIT's adapter reads the binding live and observes
+        // the later assignment; the JVM slice cannot emit a live capture
+        // of a reassigned binding — E6000, never a silent snapshot
+        // divergence.
+        record ReassignedCase(String what, String source) {}
+        List<ReassignedCase> reassigned = List.of(
+            new ReassignedCase("reassigned local", """
+                function inc(x: int): int { return x + 1; }
+                function dbl(x: int): int { return x * 2; }
+                export function test(): int {
+                  let g: (x: int) => int = inc;
+                  let h: (a: int, b: int) => int = g;
+                  g = dbl;
+                  return h(10, 999);
+                }
+                """),
+            new ReassignedCase("reassigned parameter", """
+                function inc(x: int): int { return x + 1; }
+                function dbl(x: int): int { return x * 2; }
+                function probe(g: (x: int) => int): int {
+                  let h: (a: int, b: int) => int = g;
+                  g = dbl;
+                  return h(10, 999);
+                }
+                export function test(): int { return probe(inc); }
+                """));
+        for (ReassignedCase c : reassigned) {
+            Frontend rf = compileFrontend(c.source,
+                "jvmtest-fv-reassigned.deal");
+            if (!rf.errors().isEmpty()) {
+                fail("frontend must accept the reassigned-adapter case '"
+                    + c.what() + "' (the backend rejects it): " + rf.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                rf.program(), rf.checkResult(), "jvmtest-fv-reassigned.deal",
+                "main");
+            check(res.hasErrors(), "backend rejects " + c.what());
+            check(res.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for " + c.what() + ": " + res.diagnostics());
+        }
+
+        // E8010 signature check at a callback parameter boundary.
+        ExecResult cbCheck = compileAndRunJvm("""
+            function inc(x: int): int { return x + 1; }
+            function apply(f: (a: int, b: string) => int, v: int): int { return f(v, "ignored"); }
+            export function test(): int { return apply(inc, 41); }
+            """, "jvmtest-fv-cb-check");
+        check(cbCheck.exitCode() == 1, "callback signature check exits 1");
+        check(cbCheck.output().contains("DEAL_ERROR_CODE: E8010"),
+            "callback signature check raises E8010: " + cbCheck.output());
+        check(cbCheck.output().contains(
+            "function signature mismatch: expected (int,string)->int, got (int)->int"),
+            "callback signature check carries LuaJIT's message: " + cbCheck.output());
+
+        // E8010 signature check at a return boundary.
+        ExecResult retCheck = compileAndRunJvm("""
+            function inc(x: int): int { return x + 1; }
+            function picker(): (a: int, b: int) => int { return inc; }
+            export function test(): int {
+              let f: (a: int, b: int) => int = picker();
+              return f(41, 999);
+            }
+            """, "jvmtest-fv-ret-check");
+        check(retCheck.exitCode() == 1, "return signature check exits 1");
+        check(retCheck.output().contains("DEAL_ERROR_CODE: E8010"),
+            "return signature check raises E8010: " + retCheck.output());
+
+        // The checked value expression is evaluated BEFORE E8010 raises
+        // (spec §Operational semantics rule 2 / strict return-value
+        // evaluation — LuaJIT's evaluate-then-check order). The callback
+        // probe pins the ORDER with a module-field counter: the marker
+        // prints only when markF ran before markI, and the broken
+        // snapshot-check wrapper never ran markF at all.
+        ExecResult cbEval = compileAndRunJvm("""
+            import * as console from "std/console"
+            let order: int = 0;
+            function inc(x: int): int { return x + 1; }
+            function markF(tag: string, f: (x: int) => int): (x: int) => int {
+              if (tag === "pre") { order = order + 1; }
+              return f;
+            }
+            function markI(tag: string, v: int): int {
+              if (tag === "post") {
+                if (order === 1) { console.log("f2-e8010-callback-eval-order-ok"); }
+              }
+              return v;
+            }
+            function take(f: (a: int, b: string) => int, v: int): int { return f(v, "ignored"); }
+            export function test(): int { return take(markF("pre", inc), markI("post", 1)); }
+            """, "jvmtest-fv-cb-eval");
+        check(cbEval.exitCode() == 1, "callback E8010 evaluation probe exits 1");
+        check(cbEval.output().contains("f2-e8010-callback-eval-order-ok"),
+            "the checked argument is evaluated before E8010 raises: "
+                + cbEval.output());
+        check(cbEval.output().contains("DEAL_ERROR_CODE: E8010"),
+            "the callback E8010 still raises: " + cbEval.output());
+
+        ExecResult retEval = compileAndRunJvm("""
+            import * as console from "std/console"
+            function inc(x: int): int { return x + 1; }
+            function markF(tag: string, f: (x: int) => int): (x: int) => int {
+              if (tag === "pre") { console.log("f2-e8010-return-eval-ok"); }
+              return f;
+            }
+            function picker(): (a: int, b: int) => int { return markF("pre", inc); }
+            export function test(): int {
+              let f: (a: int, b: int) => int = picker();
+              return f(41, 999);
+            }
+            """, "jvmtest-fv-ret-eval");
+        check(retEval.exitCode() == 1, "return E8010 evaluation probe exits 1");
+        check(retEval.output().contains("f2-e8010-return-eval-ok"),
+            "the returned value expression is evaluated before E8010 raises: "
+                + retEval.output());
+        check(retEval.output().contains("DEAL_ERROR_CODE: E8010"),
+            "the return E8010 still raises: " + retEval.output());
+
+        // The load-time clean shape: an indirect call through a
+        // function-typed module field whose value is statically known.
+        ExecResult loadCall = compileAndRunJvm("""
+            function noop42(): int { return 42; }
+            let g: () => int = noop42;
+            let r: int = g();
+            export function test(): int { return r; }
+            """, "jvmtest-fv-load-call");
+        check(loadCall.exitCode() == 0, "load-time indirect call exits 0");
+        check(loadCall.output().contains("42"),
+            "load-time indirect call computes 42: " + loadCall.output());
+
+        // A module-level reassignment of the function-typed field before
+        // the call site is allowed when every assigned value is a bare
+        // module-function identifier: the JVM static initializer mirrors
+        // LuaJIT's load-time execution, so the last assignment determines
+        // the value on both backends (dbl(2) = 4).
+        ExecResult loadReassign = compileAndRunJvm("""
+            function inc(x: int): int { return x + 1; }
+            function dbl(x: int): int { return x * 2; }
+            let f: (x: int) => int = inc;
+            f = dbl;
+            let r: int = f(2);
+            export function test(): int { return r; }
+            """, "jvmtest-fv-load-reassign");
+        check(loadReassign.exitCode() == 0, "load-time reassigned field exits 0");
+        check(loadReassign.output().contains("4"),
+            "load-time reassigned field computes 4: " + loadReassign.output());
+
+        // Load-time guards: value use of a later-declared function, a
+        // not-statically-known field value, and an assignment before the
+        // call site — E6000, never a Java forward reference.
+        record GuardCase(String what, String source) {}
+        List<GuardCase> guards = List.of(
+            new GuardCase("value use of a later-declared function", """
+                let f: () => int = later;
+                function later(): int { return 42; }
+                export function test(): int { return f(); }
+                """),
+            new GuardCase("indirect call through a field with a call-valued initializer", """
+                function noop42(): int { return 42; }
+                function picker(): () => int { return noop42; }
+                let g: () => int = picker();
+                let r: int = g();
+                export function test(): int { return r; }
+                """),
+            new GuardCase("indirect call whose assigned function reaches a later-declared function", """
+                function h(): int { return later(); }
+                let g: () => int = h;
+                g = h;
+                let r: int = g();
+                function later(): int { return 1; }
+                export function test(): int { return r; }
+                """));
+        for (GuardCase c : guards) {
+            Frontend gf = compileFrontend(c.source, "jvmtest-fv-guard.deal");
+            if (!gf.errors().isEmpty()) {
+                fail("frontend must accept the guarded function-value case '"
+                    + c.what() + "' (the backend rejects it): " + gf.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                gf.program(), gf.checkResult(), "jvmtest-fv-guard.deal", "main");
+            check(res.hasErrors(), "backend rejects " + c.what());
+            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for " + c.what() + ": " + res.diagnostics());
+        }
+
+        // Deferred signature shapes → E6000 (ISSUE-0110).
+        record DeferredCase(String what, String source) {}
+        List<DeferredCase> deferred = List.of(
+            new DeferredCase("nested function type", """
+                function inc(x: int): int { return x + 1; }
+                export function test(): int {
+                  let h: (x: int) => (y: int) => int = function(x: int): (y: int) => int { return inc; };
+                  return 1;
+                }
+                """),
+            new DeferredCase("nullable function type", """
+                function inc(x: int): int { return x + 1; }
+                export function test(): int {
+                  let f: ((x: int) => int) | null = inc;
+                  return 1;
+                }
+                """),
+            new DeferredCase("async function type", """
+                async function fetch(x: int): int { return x; }
+                export function test(): int {
+                  let f: async (x: int) => int = fetch;
+                  return 1;
+                }
+                """),
+            new DeferredCase("rest function type", """
+                function join(a: int, ...xs: int[]): int { return 1; }
+                export function test(): int {
+                  let f: (a: int, ...xs: int[]) => int = join;
+                  return 1;
+                }
+                """),
+            new DeferredCase("array of functions", """
+                function inc(x: int): int { return x + 1; }
+                export function test(): int {
+                  let fs: ((x: int) => int)[] = [inc];
+                  return 1;
+                }
+                """));
+        for (DeferredCase c : deferred) {
+            Frontend df = compileFrontend(c.source, "jvmtest-fv-deferred.deal");
+            if (!df.errors().isEmpty()) {
+                fail("frontend must accept the deferred case '" + c.what()
+                    + "' (the backend rejects it): " + df.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                df.program(), df.checkResult(), "jvmtest-fv-deferred.deal", "main");
+            check(res.hasErrors(), "backend rejects " + c.what());
+            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for " + c.what() + ": " + res.diagnostics());
+        }
     }
 
     private static void testUseBeforeDeclarationRejected() {
@@ -4442,7 +4926,7 @@ public class JvmBackendTest {
             check(!res.hasErrors(), "short-circuit probe codegen clean: "
                 + res.diagnostics());
             if (!res.hasErrors()) {
-                check(!res.source().contains("->"),
+                check(!res.source().contains(" -> "),
                     "short-circuit lowering emits no lambda");
                 check(res.source().contains("boolean b = __sc0;"),
                     "guarded initializer assigns the temporary in-function");
@@ -4663,7 +5147,7 @@ public class JvmBackendTest {
                 check(tempIdx >= 0 && logIdx >= 0 && tempIdx < logIdx,
                     "the earlier inline call is materialized before the "
                         + "hoisted println: " + src);
-                check(!src.contains("->"), "no lambda is emitted");
+                check(!src.contains(" -> "), "no lambda is emitted");
             }
         }
     }
