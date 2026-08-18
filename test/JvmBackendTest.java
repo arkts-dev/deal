@@ -72,11 +72,22 @@ import java.util.Set;
  *   <li>identifier translation and collision-safe class-name derivation,</li>
  *   <li>Java emission for the supported skeleton surface
  *       (literals, arithmetic, locals, if/else, console output, intrinsics),</li>
- *   <li>E6000 rejection of out-of-scope constructs (classes, tables,
- *       nested/nullable/class/function arrays, for/for-of loops, async,
- *       non-project imports — at the import statement itself, even when
- *       unused —, module-level returns, use-before-declaration,
- *       runtime-helper name collisions),</li>
+ *   <li>local classes and nominal checks (ISSUE-0095): module-level
+ *       {@code class} declarations emit a generated nested static class
+ *       ({@code $C_<name>} extending the {@code $Base} identity holder),
+ *       object-literal construction applies defaults per construction with
+ *       provided fields evaluated left-to-right, primitive field
+ *       reads/writes emit direct accesses, tables emit a minimal ordered
+ *       string-key map ({@code $T}), and a class-typed table read — the
+ *       slice's one untyped boundary — runs the emitted {@code $check<C>}
+ *       nominal check (E8001 for wrong-class and non-class values),</li>
+ *   <li>E6000 rejection of out-of-scope constructs (class exports, optional/
+ *       nullable/array/class/table-typed class fields, nested class
+ *       declarations, table reads with primitive targets, table field
+ *       writes, nested/nullable/class/function arrays, for/for-of
+ *       loops, async, non-project imports — at the import statement
+ *       itself, even when unused —, module-level returns,
+ *       use-before-declaration, runtime-helper name collisions),</li>
  *   <li>the stdlib boundary (ISSUE-0097): {@code std/string}/
  *       {@code std/math}/{@code std/time} imports compile and execute
  *       their declared functions through the emitted {@code __str*}/
@@ -220,6 +231,7 @@ public class JvmBackendTest {
             testModuleLevelStatements();
             testShadowedInitializer();
             testParameterShadowing();
+            testClassSlice();
             testUseBeforeDeclarationRejected();
             testFunctionBodyModuleFieldAccessGuards();
             testAssignmentBeforeDeclarationRejected();
@@ -650,11 +662,43 @@ public class JvmBackendTest {
                   return fs[0](3);
                 }
                 """),
-            new Case("table-typed value", """
-                export function test(): null {
-                  let t: table = {};
-                  return;
+            new Case("table field read with a primitive target type", """
+                export function test(): int {
+                  let t: table = { item: 5 };
+                  let n: int = t.item;
+                  return n;
                 }
+                """),
+            new Case("table field assignment", """
+                export function test(): int {
+                  let t: table = { item: 5 };
+                  t.item = 6;
+                  return 1;
+                }
+                """),
+            new Case("optional class field", """
+                class Point { x?: int; }
+                export function test(): int { return 1; }
+                """),
+            new Case("nullable class field", """
+                class Point { x: int | null = null; }
+                export function test(): int { return 1; }
+                """),
+            new Case("class-typed class field", """
+                class Inner { v: int = 0; }
+                class Outer { inner: Inner = {}; }
+                export function test(): int { return 1; }
+                """),
+            new Case("nested class declaration", """
+                export function test(): int {
+                  class Inner { v: int = 0; }
+                  return 1;
+                }
+                """),
+            new Case("class default reading a later module field", """
+                class Point { x: int = later; }
+                let later: int = 1;
+                export function test(): int { return 1; }
                 """),
             new Case("async function", """
                 export async function test(): int { return 5; }
@@ -2989,6 +3033,98 @@ public class JvmBackendTest {
         check(noFieldRun.exitCode() == 0, "no-field chain exits 0");
         check(noFieldRun.output().contains("15"),
             "no-field chain computes 15: " + noFieldRun.output());
+    }
+
+    /** ISSUE-0095: local classes and nominal checks — emission shape and
+     * real javac + java runs. */
+    private static void testClassSlice() throws Exception {
+        System.out.println("-- ISSUE-0095 class slice --");
+
+        // Emission shape: generated nested class carrying its spec identity,
+        // the nominal-check helper, the minimal table, construction with
+        // declaration-order defaults, and a checked table read. A class
+        // named like an emitted helper (DealError) stays collision-free
+        // through the $C_ prefix.
+        String source = """
+            class Point {
+              x: int = 1;
+              y: int = 2;
+            }
+            class DealError { value: int = 0; }
+            export function test(): int {
+              let p: Point = { y: 5 };
+              let holder: table = { item: p };
+              let q: Point = holder.item;
+              return q.x + q.y;
+            }
+            """;
+        Frontend f = compileFrontend(source, "jvmtest-class.deal");
+        check(f.errors().isEmpty(), "class slice frontend clean: " + f.errors());
+        if (!f.errors().isEmpty()) return;
+        JvmBackend.JvmCodegenResult res =
+            JvmBackend.generate(f.program(), f.checkResult(), "jvmtest-class.deal", "Main");
+        check(!res.hasErrors(), "class slice codegen clean: " + res.diagnostics());
+        if (res.hasErrors()) return;
+        String java = res.source();
+        check(java.contains("static final class $C_Point extends $Base"),
+            "generated class extends the identity base");
+        check(java.contains("super(\"@Main/Point\")"),
+            "generated class carries its spec ClassDescriptor identity");
+        check(java.contains("static $C_Point $checkPoint(java.lang.Object v)"),
+            "nominal check helper emitted");
+        check(java.contains("static $C_DealError $checkDealError("),
+            "a class named like the error helper stays collision-free");
+        check(java.contains("new $C_Point(1L, 5L)"),
+            "construction fills declaration-order defaults around provided fields");
+        check(java.contains("new $T().put(\"item\", p)"),
+            "table literal chains put calls");
+        check(java.contains("$checkPoint((holder).get(\"item\"))"),
+            "class-typed table read runs the runtime nominal check");
+        check(java.contains("return intAdd((q).x, (q).y);"),
+            "class field reads flow into arithmetic");
+
+        // Real artifact: per-construction defaults, a field write, and a
+        // nominal-check success through the table boundary.
+        ExecResult ok = compileAndRunJvm("""
+            class Box { value: int = 0; }
+            export function test(): int {
+              let a: Box = {};
+              let b: Box = { value: 41 };
+              a.value = b.value + 1;
+              let holder: table = { item: a };
+              let c: Box = holder.item;
+              return c.value;
+            }
+            """, "class-slice-ok");
+        check(ok.exitCode() == 0 && ok.output().contains("42"),
+            "class construction/field write/nominal check run to 42: " + ok.output());
+
+        // Real artifact: an identically-shaped sibling class fails the
+        // nominal check — identity is nominal, never structural.
+        ExecResult err = compileAndRunJvm("""
+            class A { x: int = 0; }
+            class B { x: int = 0; }
+            export function test(): int {
+              let a: A = { x: 7 };
+              let holder: table = { item: a };
+              let b: B = holder.item;
+              return b.x;
+            }
+            """, "class-slice-err");
+        check(err.exitCode() == 1 && err.output().contains("DEAL_ERROR_CODE: E8001"),
+            "nominal check failure reports E8001 with exit 1: " + err.output());
+
+        // Real artifact: table-typed reads of a nested table pass through
+        // the $checkTable boundary.
+        ExecResult tbl = compileAndRunJvm("""
+            export function test(): int {
+              let t: table = { inner: { n: 5 } };
+              let inner: table = t.inner;
+              return 1;
+            }
+            """, "class-slice-table");
+        check(tbl.exitCode() == 0 && tbl.output().contains("1"),
+            "table-typed boundary reads pass through: " + tbl.output());
     }
 
     private static void testUseBeforeDeclarationRejected() {

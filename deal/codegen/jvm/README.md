@@ -1,4 +1,4 @@
-# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice, ISSUE-0096 modules/imports/exports slice, ISSUE-0097 stdlib-boundary slice)
+# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice, ISSUE-0095 classes and nominal checks slice, ISSUE-0096 modules/imports/exports slice, ISSUE-0097 stdlib-boundary slice)
 
 A small but real end-to-end JVM backend for the DEAL compiler. It walks the
 typed AST (the compiler's IR — `deal-compiler-architecture-v1`) and emits a
@@ -27,6 +27,9 @@ Supported (real semantics, spec JVM value mapping):
 | template literals | plain Java string concatenation in source order (`("a" + expr + "b")`) — checker-typed `string` interpolations, empty literal parts elided, an empty interpolation kept, a template with no interpolations emitted as its literal |
 | `null` | `void` returns / `Void` locals and params; `null === null` is `true`, `z === null`/`!==` emit Java `==`/`!=` (spec §Value equality) |
 | functions | `static` methods of the generated module class: parameters, return values, direct calls, nested calls, and direct self-recursion (a function body calling itself — the module-level use-before-declaration guard applies only to load-time call sites, never to function-body call sites) |
+| `class C { ... }` | a generated nested static class `$C_<name>` extending the emitted `$Base` identity holder (spec v1.1 §Classes: nominal record, no methods, no constructors — the only callables are the module functions above). Object-literal construction in a class-typed context emits `new $C_<name>(args)` with declaration-order constructor arguments: provided field values evaluate left-to-right in literal order and defaults are evaluated per construction (spec §Construction). Only required-present primitive fields (`int`/`number`/`boolean`/`string`) are supported; field reads/writes emit direct accesses |
+| `table` | a minimal ordered string-key map (`$T` over `java.lang.LinkedHashMap<String,Object>`), emitted for the slice's one untyped boundary: a table field read in a contextual target type. Class-typed reads run the runtime nominal check (`$check<C>` — `instanceof` plus the identity string, E8001 "expected instance of @mod/C, got …" for a wrong-class value, "expected class instance" for a non-class value, mirroring LuaJIT's `__rt.check_type` class branch); table-typed reads run `$checkTable`. Table literals chain `put` calls in literal order. Every other class-typed boundary (locals, parameters, returns, field reads/writes, construction) is provably typed by the JVM's static type system, which spec-v1.1 §JVM backend contract explicitly permits to make typed-boundary checks redundant |
+| object literals | class construction when the contextual target is a class type (the checker's `checkClassConstruction`), a table literal otherwise (`table` target or no target) |
 | `let` locals / module fields | locals (shadowing disambiguated `$n`) / `static` fields |
 | `if`/`else if`/`else`, `return`, assignment, direct calls | plain Java control flow |
 | `while` loops | plain Java `while` with the condition routed through the emitted `loopCond` identity helper (javac never sees a constant-expression condition — JLS §14.21 keeps `while (false)` bodies and statements after `while (true)` reachable); the condition re-evaluates on every iteration, with hoisted null-typed side effects running inside the loop before each condition test; module-level while loops run in the load-time `static` initializer in source order and reject any `return` in their body with E6000 |
@@ -40,14 +43,20 @@ Supported (real semantics, spec JVM value mapping):
 | `import * as lib from "./lib"` (compiled project module, ISSUE-0096) | the import statement emits a load-time `static { <LibClass>.__init$(); }` trigger (a static-method invocation initializes the imported class per JLS §12.4.1, running its load-time statements exactly where LuaJIT runs `require` — depth-first in import order, also for unused aliases); `lib.add(a, b)` emits a static call on the imported module's emitted class (`Lib.add(a, b)`) |
 
 Out of scope (rejected with a backend `E6000` diagnostic, never silently
-miscompiled): classes (including imported classes and cross-module nominal
-identity — deferred to ISSUE-0109), tables, nullables, nullable arrays,
-arrays of nullable elements, nested (multi-dimensional) arrays, class
-arrays, function arrays, function types, stdlib imports other than the four
+miscompiled): `export class` (the module ABI surface for classes),
+optional class fields (their reads produce nullable values — ISSUE-0108),
+nullable class fields, array/class/table-typed class fields, nested
+(block/function-local) class declarations, table reads with
+primitive/nullable/array/function target types (this slice checks class and
+table targets only), table field writes, imported classes and cross-module
+nominal identity (ISSUE-0109), nullables, nullable arrays, arrays of
+nullable elements, nested (multi-dimensional) arrays, class arrays,
+function arrays, function types, stdlib imports other than the four
 supported modules (`std/console`, `std/string`, `std/math`, `std/time` —
 `std/table` and `std/json` stay E6000 at the import statement, used or
 unused, because their only functions take or return a `table`, a value
-type the slice does not support yet), declaration/host-module imports (a `.d.deal` import is never
+type the slice does not support yet as a function parameter or return),
+declaration/host-module imports (a `.d.deal` import is never
 a codegen entry and stays E6000 at the import statement; host ABI is
 deferred), async/await, for/for-of loops, try/throw, `@jsonable`.
 
@@ -657,6 +666,69 @@ fixture whose codegen or JVM execution is bypassed):
   write whose array identifier is a later-declared local is E6000 — and
   the declared-first shape stays clean with full parity.
 
+## Classes and nominal checks (ISSUE-0095)
+
+- **Each local class emits one generated nested class with its spec
+  identity.** `class Point { x: int = 0; }` emits
+  `static final class $C_Point extends $Base { long x; $C_Point(long x) {
+  super("@<modulePath>/Point"); this.x = x; } }` plus the nominal-check
+  helper `static $C_Point $checkPoint(java.lang.Object v)`. The `$C_`
+  prefix is unreachable from `javaName` (user `$` escapes to `$d`), so
+  generated names can never collide with translated user identifiers,
+  other generated names, the runtime helpers, or the module class name
+  (a defensive E6000 covers a module path whose derived class name
+  itself starts with `$C_`). The identity string is the spec
+  `ClassDescriptor` built from the backend-held module path — the same
+  convention as the LuaJIT backend's `qualifiedClassName`
+  (runtime-class-identity D2(0)) — so every producer and consumer inside
+  the module agrees even when the checker's `Type.Class` carries the
+  harness filename.
+- **Construction applies defaults per construction, never shared.**
+  Provided field values evaluate left-to-right in literal order
+  (materialized ahead of the constructor call, whose arguments run in
+  declaration order with omitted fields filled by their default
+  expressions — spec v1.1 §Construction: defaults are evaluated per
+  construction). Two constructions of a class with a defaulted field
+  yield independent instances (pinned by
+  `jvm-class-fresh-instances-per-construction`). Construction before the
+  class declaration resolves through checker hoisting and the Java
+  nested-class reference (pinned by `jvm-class-module-level-construction`).
+- **Field reads/writes are direct and checker-guaranteed.** A member
+  access on a class-typed value emits `(obj).field`; an assignment
+  emits `(obj).field = value` with Java's left-to-right target-then-value
+  evaluation. The checker guarantees the field is declared and the value
+  matches its type (spec §Field access / §Class assignment semantics),
+  so no runtime check is needed at these provably typed boundaries.
+- **The runtime nominal check lives exactly where it cannot be proven
+  redundant.** The slice's one untyped boundary is a table field read in
+  a class-typed contextual target (the checker types the read with the
+  expected class, but the emitted `$T.get` is `Object`-typed): the read
+  emits `$checkC(tbl.get("k"))`, which succeeds for a genuine `C`
+  instance and raises E8001 otherwise — a wrong-class value reports
+  "expected instance of @mod/C, got @mod/D" (nominal identity, pinned by
+  `jvm-class-same-shape-nominal-failure`), a non-class value reports
+  "expected class instance" (plain table: `jvm-class-nominal-check-failure-table`;
+  null: `jvm-class-nominal-check-failure-null`), mirroring LuaJIT's
+  `__rt.check_type` class branch. Every other class-typed boundary in the
+  slice (locals, parameters, returns, field reads/writes, construction)
+  is proven by the JVM static type system — the redundancy the spec's
+  JVM backend contract explicitly permits.
+- **Methods: spec v1.1 classes have none.** §Classes declares a sealed
+  record shape with "no inheritance, no methods, no constructors", so
+  the class body contributes no callable surface; the only callables are
+  the module functions covered by the ISSUE-0093 function fixtures.
+  (The v1.2 draft is not normative for this backend.)
+- **Tables stay minimal.** A table is an ordered string-key map over
+  `java.lang.Object`; literals chain `put` calls so property values
+  evaluate in literal order with the existing hoisting machinery
+  preserving left-to-right order when a value hoists a side-effecting
+  null-typed call. Table reads are supported only for class and table
+  contextual targets (class: the nominal check above; table:
+  `$checkTable`, E8001 for a non-table value); primitive/nullable/array/
+  function targets and table field writes are E6000 — this slice's
+  runtime checks cover nominal class checks, and every other table form
+  is a documented limitation, never a silent miscompile.
+
 ## Review evidence: backend-selection seam
 
 - **Selection seam** — `deal/codegen/Backend.java` (`LUAJIT`, `JVM`,
@@ -756,6 +828,29 @@ cross-module nominal identity (ISSUE-0109), stdlib modules other than
     javac reject the artifact after the CLI reported success), and two
     frontend compile-error gates rejected before any backend (E3009
     arity mismatch, E5001 argument-type mismatch).
+  - JVM: `test/conformance/fixtures/jvm-classes-slice.json` — twelve
+    ISSUE-0095 fixtures, all JVM-only, every runtime fixture passing
+    through the real frontend → real `JvmBackend` codegen → `javac`
+    subprocess → `java` subprocess executing the emitted artifact (the
+    harness fails a fixture whose codegen or JVM execution is bypassed):
+    local class declarations with defaulted primitive fields, empty and
+    partially-provided object-literal construction, provided fields
+    evaluated left-to-right in literal order even when the literal order
+    differs from the field declaration order (tag("second") prints before
+    tag("first") and each value lands in its declared field), primitive
+    field reads and writes across all four
+    primitive types, fresh instances per construction (mutating one
+    instance never leaks into another), module-level (load-time)
+    construction before the class declaration (checker hoisting), the
+    same-module nominal runtime checks at the table boundary — success
+    for a genuine instance (41 + 1 = 42), E8001 for a plain table value,
+    for a null value, and for an identically-shaped sibling class
+    (nominal, never structural identity) — and one frontend
+    compile-error gate rejected before any backend (E3001 nominal A→B
+    assignment). Methods: spec v1.1 §Classes declares the class body
+    "no methods, no constructors", so the slice's method surface is
+    empty by construction — the only callables are the module functions
+    the ISSUE-0093 fixtures cover.
   - JVM: `test/conformance/fixtures/jvm-semantic-slice.json` — fourteen
     ISSUE-0092 fixtures, all JVM-only, every runtime fixture passing
     through the real frontend → real `JvmBackend` codegen → `javac`
@@ -825,7 +920,18 @@ cross-module nominal identity (ISSUE-0109), stdlib modules other than
     and nested-combination positions ×5 (twenty-one fixtures run under
     both backends as cross-backend parity)) run end-to-end under
     `test/BackendConformanceTest`.
-  - Seam: `test/JvmBackendTest.java` — ISSUE-0092 while/template coverage
+  - Seam: `test/JvmBackendTest.java` — ISSUE-0095 class-slice coverage
+    (emission assertions for the generated nested class extending `$Base`
+    with its spec identity, the `$check<C>` nominal-check helper, a
+    helper-named class staying collision-free through the `$C_` prefix,
+    declaration-order construction, chained `put` table literals, the
+    checked class-typed table read, and class field reads flowing into
+    arithmetic; javac + java runs for construction/field writes/nominal
+    success (42), the identically-shaped sibling E8001 failure, and the
+    `$checkTable` pass-through; E6000 pins for class exports, optional/
+    nullable/class-typed class fields, nested class declarations, table
+    reads with primitive targets, and table field writes), ISSUE-0092
+    while/template coverage
     (counting/nested/shadowed loops, `while (false)` bodies skipped,
     per-iteration condition re-evaluation with a hoisted null-typed call
     pinned at tick ×3, function-body module-field dominance guards

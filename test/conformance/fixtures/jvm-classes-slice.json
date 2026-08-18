@@ -1,0 +1,203 @@
+{
+  "version": "1.0",
+  "description": "JVM classes and nominal checks slice (ISSUE-0095). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: local class declarations with defaulted primitive fields, object-literal class construction (defaults applied per construction, provided fields in literal evaluation order, construction before the class declaration — checker hoisting), primitive field reads and writes (int/number/boolean/string), fresh instances per construction, module-level (load-time) construction, the same-module nominal runtime checks at the slice's one untyped boundary (a table field read in a class-typed contextual target — success for a genuine instance, E8001 for a plain table value, for a null value, and for an identically-shaped sibling class, pinning nominal — never structural — identity), and one frontend compile-error gate rejected before any backend runs (E3001 nominal A→B assignment). Spec v1.1 classes are sealed records with no methods and no constructors, so the method surface is empty: the only callables are the module functions the earlier function-slice fixtures cover (methods where supported = none, documented in the review evidence).",
+  "tests": [
+    {
+      "name": "jvm-class-construction-defaults",
+      "description": "A local class with defaulted primitive fields constructed from an empty object literal receives every default (p.x = 10, p.y = 20)",
+      "source": "class Point { x: int = 10; y: int = 20; }\nexport function test(): int {\n  let p: Point = {};\n  return p.x + p.y;\n}",
+      "expectedOutput": "30",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Point",
+        "field x",
+        "field y",
+        "[boundary: class-construct]"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-class-construction-provided-fields",
+      "description": "Provided fields override defaults in an object-literal construction; omitted fields keep their defaults",
+      "source": "class Point { x: int = 0; y: int = 0; }\nexport function test(): int {\n  let p: Point = { x: 1, y: 2 };\n  return p.x * 10 + p.y;\n}",
+      "expectedOutput": "12",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Point",
+        "[boundary: class-construct]"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-class-field-read-write",
+      "description": "Declared primitive class fields are readable and writable: p.x and p.y are read, mutated, and read back (1+5=6, 2+2=4 → 64)",
+      "source": "class Point { x: int = 0; y: int = 0; }\nexport function test(): int {\n  let p: Point = { x: 1, y: 2 };\n  p.x = p.x + 5;\n  p.y = p.y + 2;\n  return p.x * 10 + p.y;\n}",
+      "expectedOutput": "64",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Point",
+        "field x"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-class-primitive-field-types",
+      "description": "All four primitive field types flow through construction and reads: int, number, boolean, and string fields keep their provided values",
+      "source": "class Mixed { i: int = 0; n: number = 0.0; b: boolean = false; s: string = \"\"; }\nexport function test(): int {\n  let m: Mixed = { i: 3, n: 2.5, b: true, s: \"jvm\" };\n  if (m.b === true && m.s === \"jvm\" && m.i === 3 && m.n > 2.0 && m.n < 3.0) { return m.i + 1; }\n  return 0;\n}",
+      "expectedOutput": "4",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Mixed"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-class-fresh-instances-per-construction",
+      "description": "Defaults are applied per construction, never shared: mutating one instance's field leaves a second instance's field at its default (7 + 0 = 7)",
+      "source": "class Bag { count: int = 0; }\nexport function test(): int {\n  let a: Bag = {};\n  let b: Bag = {};\n  a.count = 7;\n  return a.count + b.count;\n}",
+      "expectedOutput": "7",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Bag"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-class-module-level-construction",
+      "description": "A module-level (load-time) class construction runs in the static initializer, and a construction before the class declaration resolves through checker hoisting (origin.x * 10 + origin.y = 12)",
+      "source": "let origin: Point = {};\nclass Point { x: int = 1; y: int = 2; }\nexport function test(): int { return origin.x * 10 + origin.y; }",
+      "expectedOutput": "12",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Point"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-class-construction-evaluation-order",
+      "description": "Provided field values evaluate left-to-right in literal order even when the literal order differs from the field declaration order: tag(second) prints before tag(first), and each value still lands in its declared field",
+      "source": "import * as console from \"std/console\"\nclass Pair { a: string = \"\"; b: string = \"\"; }\nfunction tag(s: string): string { console.log(s); return s; }\nexport function test(): int {\n  let p: Pair = { b: tag(\"second\"), a: tag(\"first\") };\n  if (p.a === \"first\" && p.b === \"second\") { return 1; }\n  return 0;\n}",
+      "expectedOutput": "second\nfirst",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Pair"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-class-nominal-check-success",
+      "description": "A genuine Box instance crossing the slice's untyped boundary (a table field read in a class-typed contextual target) passes the runtime nominal check and its field reads back (41 + 1 = 42)",
+      "source": "class Box { value: int = 0; }\nexport function test(): int {\n  let real: Box = { value: 41 };\n  let holder: table = { item: real };\n  let b: Box = holder.item;\n  return b.value + 1;\n}",
+      "expectedOutput": "42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Box",
+        "/Box"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-class-nominal-check-failure-table",
+      "description": "A plain table value crossing the class-typed boundary fails the runtime nominal check with E8001 (expected class instance) — never a silent cast",
+      "source": "class Box { value: int = 0; }\nexport function test(): int {\n  let holder: table = { item: { value: 1 } };\n  let b: Box = holder.item;\n  return b.value;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Box"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-class-nominal-check-failure-null",
+      "description": "A null value crossing the class-typed boundary fails the runtime nominal check with E8001 (expected class instance)",
+      "source": "class Box { value: int = 0; }\nexport function test(): int {\n  let holder: table = { item: null };\n  let b: Box = holder.item;\n  return b.value;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Box"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-class-same-shape-nominal-failure",
+      "description": "Identically-shaped sibling classes stay nominally distinct at runtime: an A instance crossing a B-typed boundary fails with E8001 (expected instance of B, got A) — identity is nominal, never structural",
+      "source": "class A { x: int = 0; }\nclass B { x: int = 0; }\nexport function test(): int {\n  let a: A = { x: 7 };\n  let holder: table = { item: a };\n  let b: B = holder.item;\n  return b.x;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "class A",
+        "class B"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-class-frontend-nominal-assignment-error",
+      "description": "A direct A→B assignment between identically-shaped classes is a frontend compile error (E3001) rejected before any backend — nominal typing is enforced statically too",
+      "source": "class A { x: int = 0; }\nclass B { x: int = 0; }\nlet a: A = { x: 1 };\nlet b: B = a;",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3001",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    }
+  ]
+}

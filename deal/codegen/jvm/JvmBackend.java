@@ -43,17 +43,21 @@ import java.util.Set;
  * guarantees every artifact it emits is valid Java).
  *
  * <p>Semantic slice scope (ISSUE-0091 skeleton + ISSUE-0092 slice +
- * ISSUE-0093 slice + ISSUE-0094 slice + ISSUE-0096 slice + ISSUE-0097
- * stdlib-boundary slice):
+ * ISSUE-0093 slice + ISSUE-0094 slice + ISSUE-0095 classes +
+ * ISSUE-0096 slice + ISSUE-0097 stdlib-boundary slice):
  * functions, {@code let} locals, module fields, literals,
  * int/number/boolean/string arithmetic and comparisons, {@code if}/
  * {@code else}, {@code while} loops, {@code return}, assignment, direct
  * calls, template literals (lowered to string concatenation), the
  * {@code int()}/{@code number()} conversion intrinsics, {@code std/console}
  * output ({@code console.log}/{@code console.error} → {@code System.out}/
- * {@code System.err}), primitive arrays — {@code int[]},
- * {@code number[]}, {@code string[]}, {@code boolean[]} — as literals,
- * index reads, element writes, and {@code .length} reads,
+ * {@code System.err}), local {@code class} declarations (generated nested
+ * static classes with primitive fields), object-literal class
+ * construction, primitive field reads/writes, minimal {@code table}
+ * values, the same-module nominal runtime checks that table boundary
+ * reads require (see the ISSUE-0095 paragraph below), primitive arrays —
+ * {@code int[]}, {@code number[]}, {@code string[]}, {@code boolean[]} —
+ * as literals, index reads, element writes, and {@code .length} reads,
  * multi-module compilation (ISSUE-0096): namespace imports
  * ({@code import * as alias from "./lib"}) of compiled project modules,
  * exported functions, and imported direct calls ({@code alias.fn(args)} →
@@ -69,8 +73,13 @@ import java.util.Set;
  * milliseconds like {@code os.time() * 1000}). {@code std/table} and
  * {@code std/json} stay rejected with {@code E6000} at the import
  * statement: their only functions take or return a {@code table}, a
- * value type the slice does not support yet. Anything outside this
- * scope — classes, tables, nullables, nullable arrays,
+ * value type the slice still does not support as a function parameter
+ * or return. Anything outside this scope — class exports (the module
+ * ABI surface for classes is a later slice), optional/nullable/array/
+ * class/table-typed class fields, nested class declarations, table reads
+ * with non-class/non-table targets, table field writes, imported
+ * classes, cross-module nominal class identity, arrays of non-primitive
+ * elements, nullables, nullable arrays,
  * arrays of nullable elements, nested (multi-dimensional) arrays, class
  * arrays, function arrays, stdlib imports other than the four supported
  * modules, declaration/host-module imports, async, host ABI,
@@ -289,6 +298,33 @@ import java.util.Set;
  * Lua harness iterates {@code pairs()} — an unspecified order — so fixtures
  * must not depend on cross-backend invocation order) and prints
  * non-{@code null} results.
+ *
+ * <p>Local classes and nominal checks (ISSUE-0095) add the DEAL v1.1
+ * nominal record class surface: module-level {@code class} declarations,
+ * object-literal construction in class-typed contexts (defaults applied
+ * per construction), primitive field reads/writes, and same-module
+ * nominal runtime checks. Each DEAL class emits a generated nested
+ * static class ({@code $C_<name>}, extending the emitted {@code $Base}
+ * identity holder); spec v1.1 classes are sealed records with no
+ * methods and no constructors, so there is no method surface beyond the
+ * module functions the earlier slices already support. The only in-slice
+ * untyped boundary is the DEAL table ({@code table} read in a contextual
+ * target type — the checker types such reads with the expected target),
+ * so tables emit a minimal ordered string-key map ({@code $T}) and a
+ * class-typed table read is the one site where a runtime nominal check
+ * cannot be proven redundant: {@code $check<C>} verifies the value is a
+ * {@code C} instance and raises E8001 otherwise (mirroring LuaJIT's
+ * {@code __rt.check_type} class branch: "expected instance of @mod/C,
+ * got …" for a wrong-class value, "expected class instance" for a
+ * non-class value). Every other class-typed boundary in the slice
+ * (locals, parameters, returns, field reads/writes, construction) is
+ * provably typed by the JVM's static type system, which spec-v1.1
+ * §JVM backend contract explicitly permits to make typed-boundary checks
+ * redundant. Out of slice: optional/nullable/array/class/table-typed
+ * class fields, {@code export class} (module ABI), nested class
+ * declarations, table reads with primitive/nullable/array target types,
+ * table field writes, cross-module classes — all E6000, never silently
+ * miscompiled.
  */
 public final class JvmBackend {
 
@@ -484,6 +520,13 @@ public final class JvmBackend {
     /** Module-level variable declarations by name → statement index in the
      * module body. */
     private final Map<String, Integer> moduleFieldIndices =
+        new LinkedHashMap<>();
+
+    /** Module-level (non-exported) class declarations by name, in
+     * declaration order ({@code export class} stays E6000 — the module ABI
+     * surface is a later slice). Registered in the pre-scan, before any
+     * emission, so construction sites before the declaration resolve. */
+    private final Map<String, ClassDeclaration> moduleClasses =
         new LinkedHashMap<>();
 
     /** Function name → module fields read by its body, transitively through
@@ -755,12 +798,26 @@ public final class JvmBackend {
                     && ed.declaration() instanceof FunctionDeclaration fd) {
                 moduleFunctions.putIfAbsent(fd.name(), fd);
                 moduleFunctionIndices.putIfAbsent(fd.name(), i);
+            } else if (stmt instanceof ClassDeclaration cd) {
+                moduleClasses.putIfAbsent(cd.name(), cd);
             }
         }
         computeTransitiveFieldReads();
         computeForwardFieldViolations();
 
         String className = classNameFor(modulePath);
+        // Defensive: a generated DEAL class name must never collide with the
+        // module class name (reachable only for a module path whose derived
+        // class name starts with the $C_ prefix, e.g. a path segment
+        // "$C_Box"); an artifact with two same-named class declarations is
+        // one javac rejects after the CLI reported success.
+        for (Map.Entry<String, ClassDeclaration> ce : moduleClasses.entrySet()) {
+            if (classNameForClass(ce.getKey()).equals(className)) {
+                unsupported("class '" + ce.getKey() + "' whose generated "
+                    + "class name collides with the module class name '"
+                    + className + "'", ce.getValue().span());
+            }
+        }
         emitLine("// Generated by DEAL compiler — JVM backend (skeleton). DO NOT EDIT.");
         emitLine("// Source: " + sourcePath);
         emitLine("// Module: " + modulePath);
@@ -1112,6 +1169,33 @@ public final class JvmBackend {
                         importReads);
                 }
             }
+            // Member accesses read their object in a value position (a class
+            // field read or a table field read — ISSUE-0095); a module field
+            // referenced there is still a field read for the use-before-
+            // declaration closure.
+            case MemberAccessExpr mae ->
+                collectExprRefs(mae.object(), locals, fieldReads, calledFunctions,
+                    importReads);
+            // Object literals: property values are value positions (class
+            // construction provided values and table literal values —
+            // ISSUE-0095); class-construction defaults are value positions
+            // too (evaluated per construction at the construction site).
+            case ObjectLiteralExpr ol -> {
+                for (Property prop : ol.properties()) {
+                    collectExprRefs(prop.value(), locals, fieldReads,
+                        calledFunctions, importReads);
+                }
+                if (typeOf(ol) instanceof Type.Class cls) {
+                    ClassDeclaration cd = moduleClasses.get(cls.name());
+                    if (cd != null) {
+                        for (ClassField cf : cd.fields()) {
+                            cf.defaultExpr().ifPresent(
+                                d -> collectExprRefs(d, locals, fieldReads,
+                                    calledFunctions, importReads));
+                        }
+                    }
+                }
+            }
             // Template interpolations are value positions; the literal
             // parts carry no references.
             case TemplateLiteralExpr tl -> {
@@ -1418,6 +1502,27 @@ public final class JvmBackend {
                         readViolations, writeViolations);
                 }
             }
+            // Object literal property values (class construction provided
+            // values and table literal values) and class-construction
+            // defaults are value positions: a later-declared module field
+            // read there is a forward-field violation exactly like a plain
+            // read (ISSUE-0095).
+            case ObjectLiteralExpr ol -> {
+                for (Property prop : ol.properties()) {
+                    walkDominanceExpr(prop.value(), locals, written, fnDeclIdx,
+                        readViolations, writeViolations);
+                }
+                if (typeOf(ol) instanceof Type.Class cls) {
+                    ClassDeclaration cd = moduleClasses.get(cls.name());
+                    if (cd != null) {
+                        for (ClassField cf : cd.fields()) {
+                            cf.defaultExpr().ifPresent(
+                                d -> walkDominanceExpr(d, locals, written,
+                                    fnDeclIdx, readViolations, writeViolations));
+                        }
+                    }
+                }
+            }
             case TemplateLiteralExpr tl -> {
                 for (ExpressionNode part : tl.parts()) {
                     walkDominanceExpr(part, locals, written, fnDeclIdx,
@@ -1484,6 +1589,43 @@ public final class JvmBackend {
         emitLine("// LuaJIT runs require. The name contains '$', which DEAL identifiers");
         emitLine("// cannot contain, so it can never collide with a user function.");
         emitLine("static void __init$() {}");
+        emitLine("// ---- DEAL classes and tables (ISSUE-0095) ----");
+        emitLine("// Nominal identity base: every generated DEAL class extends $Base and");
+        emitLine("// carries its spec ClassDescriptor (@<modulePath>/<Name>). The $");
+        emitLine("// prefix of every generated name here is unreachable from javaName,");
+        emitLine("// which escapes user '$' characters, so these declarations can never");
+        emitLine("// collide with translated user identifiers, fields, or functions.");
+        emitLine("static class $Base {");
+        emitLine("    final java.lang.String $identity;");
+        emitLine("    $Base(java.lang.String identity) { this.$identity = identity; }");
+        emitLine("}");
+        emitLine("// Minimal DEAL table: ordered string-key map over java.lang.Object");
+        emitLine("// values. Tables are the only untyped boundary of this slice — a table");
+        emitLine("// field read in a class-typed contextual target is where the runtime");
+        emitLine("// nominal check must run (the read is Object-typed, so no static proof");
+        emitLine("// exists). Property values box: DEAL ints are Long, numbers Double,");
+        emitLine("// booleans Boolean, strings String, classes the generated class");
+        emitLine("// instances, nested tables $T.");
+        emitLine("static final class $T {");
+        emitLine("    private final java.util.LinkedHashMap<java.lang.String, java.lang.Object> entries = new java.util.LinkedHashMap<>();");
+        emitLine("    $T() {}");
+        emitLine("    $T put(java.lang.String k, java.lang.Object v) { entries.put(k, v); return this; }");
+        emitLine("    java.lang.Object get(java.lang.String k) { return entries.get(k); }");
+        emitLine("}");
+        emitLine("// Human-readable DEAL identity of a dynamic value for E8001 messages");
+        emitLine("// (mirrors LuaJIT's actual_class reporting in check_type).");
+        emitLine("static java.lang.String $describe(java.lang.Object v) {");
+        emitLine("    if (v instanceof $Base b) return b.$identity;");
+        emitLine("    if (v == null) return \"null\";");
+        emitLine("    if (v instanceof $T) return \"table\";");
+        emitLine("    return v.getClass().getSimpleName();");
+        emitLine("}");
+        emitLine("// Table-typed boundary check for table reads with a table contextual");
+        emitLine("// target (E8001 when the dynamic value is not a table).");
+        emitLine("static $T $checkTable(java.lang.Object v) {");
+        emitLine("    if (v instanceof $T t) return t;");
+        emitLine("    throw new DealError(\"E8001\", \"expected table, got \" + $describe(v));");
+        emitLine("}");
         emitLine();
         emitLine("// ---- DEAL primitive array runtime support (ISSUE-0094) ----");
         emitLine("// int[]/number[]/string[]/boolean[] map to mutable wrapper classes — the");
@@ -1640,8 +1782,11 @@ public final class JvmBackend {
             case ExpressionStatement es -> emitExpressionStatement(es);
             case ImportDeclaration id -> emitImportTrigger(id);
             case ExportDeclaration ed -> emitExport(ed);
-            case ClassDeclaration cd ->
-                unsupported("class declarations", cd.span());
+            case ClassDeclaration cd -> {
+                if (moduleLevel) emitClass(cd);
+                else unsupported("class declarations nested inside functions "
+                    + "or blocks", cd.span());
+            }
             case WhileStatement ws -> emitWhile(ws);
             case ForStatement fs -> unsupported("for loops", fs.span());
             case ForOfStatement fos -> unsupported("for-of loops", fos.span());
@@ -1657,7 +1802,8 @@ public final class JvmBackend {
         if (ed.declaration() instanceof FunctionDeclaration fd) {
             emitFunction(fd, true);
         } else if (ed.declaration() instanceof ClassDeclaration cd) {
-            unsupported("class declarations", cd.span());
+            unsupported("class exports (the module ABI surface is a later slice)",
+                cd.span());
         } else {
             unsupported("this export form", ed.span());
         }
@@ -1685,6 +1831,152 @@ public final class JvmBackend {
         emitLine("static {");
         indent++;
         emitLine(className + ".__init$();");
+        indent--;
+        emitLine("}");
+    }
+
+    // =========================================================================
+    // Classes (ISSUE-0095: local classes and nominal checks)
+    // =========================================================================
+
+    /** The emitted Java name of the generated class for DEAL class
+     * {@code name}. The {@code $C_} prefix is unreachable from
+     * {@link #javaName} (every user {@code $} escapes to {@code $d}), so a
+     * generated name can never collide with a translated user identifier or
+     * with another generated name (javaName is injective and DEAL class
+     * names are unique per module). */
+    private String classNameForClass(String name) {
+        return "$C_" + javaName(name);
+    }
+
+    /** The runtime identity string of a local class: the spec's
+     * {@code ClassDescriptor} ({@code @<modulePath>/<name>}, bare name when
+     * the module path is empty), mirroring the LuaJIT backend's
+     * {@code qualifiedClassName} (runtime-class-identity D2(0)): every
+     * producer and consumer in the module uses the backend-held module
+     * path, never the checker's {@code Type.Class} module path (the
+     * conformance adapter checks with the filename while codegen runs with
+     * {@code Main}). */
+    private String classIdentity(String name) {
+        return (modulePath == null || modulePath.isEmpty())
+            ? name : "@" + modulePath + "/" + name;
+    }
+
+    /** The emitted name of the runtime nominal-check helper for class
+     * {@code name} ({@code $check<Name>}). Unreachable from
+     * {@link #javaName} for the same reason as {@code $C_}. */
+    private String classCheckName(String name) {
+        return "$check" + javaName(name);
+    }
+
+    /**
+     * Emits a module-level (non-exported) DEAL class declaration: a
+     * generated nested static class carrying the declared primitive fields
+     * plus a runtime nominal-check helper. Spec v1.1 classes are sealed
+     * records with no methods and no constructors — the only callables in
+     * the module are the functions the earlier slices emit, so a class body
+     * contributes no method surface. Only required-present primitive
+     * fields ({@code int}/{@code number}/{@code boolean}/{@code string}
+     * with defaults) are in scope; optional fields (nullable reads),
+     * nullable fields, and array/class/table-typed fields are E6000.
+     */
+    private void emitClass(ClassDeclaration cd) {
+        if (cd.isJsonable()) {
+            unsupported("@jsonable classes", cd.span());
+            return;
+        }
+        String gen = classNameForClass(cd.name());
+        String identity = classIdentity(cd.name());
+        // A default expression reading a module field declared AFTER the
+        // class is E6000: LuaJIT evaluates the defaults table at the class
+        // declaration (load time), where the later local does not exist yet
+        // — the read binds to the global nil and fails with E8001 — while a
+        // construction-time inline default would silently read the
+        // initialized static field. Defaults reading already-declared
+        // fields stay allowed (the inline per-construction evaluation the
+        // spec's §Construction requires).
+        for (ClassField cf : cd.fields()) {
+            if (cf.defaultExpr().isPresent()) {
+                String undeclared = undeclaredUseIn(cf.defaultExpr().get());
+                if (undeclared != null) {
+                    unsupported("class field default of '" + cd.name() + "."
+                        + cf.name() + "' reading the module field '"
+                        + undeclared + "' declared after the class "
+                        + "(LuaJIT evaluates the defaults table at the class "
+                        + "declaration and fails at load reading the global "
+                        + "nil; Java would silently read the initialized "
+                        + "static field)", cf.span());
+                    return;
+                }
+            }
+        }
+        List<String> fieldTypes = new ArrayList<>();
+        List<String> fieldNames = new ArrayList<>();
+        for (ClassField cf : cd.fields()) {
+            if (cf.optional()) {
+                unsupported("optional class fields (their reads produce "
+                    + "nullable values)", cf.span());
+                return;
+            }
+            if (cf.nullable()) {
+                unsupported("nullable class fields", cf.span());
+                return;
+            }
+            Type fieldType = resolveTypeNode(cf.type());
+            if (fieldType == Type.Error.INSTANCE) return;
+            if (!(fieldType instanceof Type.Int)
+                    && !(fieldType instanceof Type.Number)
+                    && !(fieldType instanceof Type.Boolean)
+                    && !(fieldType instanceof Type.String)) {
+                unsupported("class fields of type " + typeName(fieldType)
+                    + " (only primitive fields are supported)", cf.span());
+                return;
+            }
+            fieldTypes.add(javaLocalType(fieldType, cf.span()));
+            fieldNames.add(javaName(cf.name()));
+        }
+
+        emitLine("// DEAL class " + cd.name() + " — identity " + identity);
+        emitLine("static final class " + gen + " extends $Base {");
+        indent++;
+        for (int i = 0; i < fieldNames.size(); i++) {
+            emitLine(fieldTypes.get(i) + " " + fieldNames.get(i) + ";");
+        }
+        StringBuilder params = new StringBuilder();
+        for (int i = 0; i < fieldNames.size(); i++) {
+            if (i > 0) params.append(", ");
+            params.append(fieldTypes.get(i)).append(' ')
+                .append(fieldNames.get(i));
+        }
+        emitLine(gen + "(" + params + ") {");
+        indent++;
+        emitLine("super(" + quoteJavaString(identity) + ");");
+        for (String fieldName : fieldNames) {
+            emitLine("this." + fieldName + " = " + fieldName + ";");
+        }
+        indent--;
+        emitLine("}");
+        indent--;
+        emitLine("}");
+
+        // The runtime nominal check: the one in-slice boundary the static
+        // type system cannot prove (a table read in a class-typed
+        // contextual target). Mirrors __rt.check_type's class branch —
+        // wrong-class values report "expected instance of <identity>, got
+        // <actual identity>", non-class values report "expected class
+        // instance" — E8001 in both shapes.
+        emitLine("static " + gen + " " + classCheckName(cd.name())
+            + "(java.lang.Object v) {");
+        indent++;
+        emitLine("if (v instanceof " + gen + " b) return b;");
+        emitLine("if (v instanceof $Base) throw new DealError(\"E8001\", "
+            + "\"expected instance of " + identity + ", got \" "
+            + "+ (($Base) v).$identity);");
+        emitLine("throw new DealError(\"E8001\", \"expected class instance, "
+            + "got \" + $describe(v));");
+        indent--;
+        emitLine("}");
+    }
         indent--;
         emitLine("}");
     }
@@ -2211,10 +2503,7 @@ public final class JvmBackend {
             case MemberAccessExpr mae -> emitMemberAccessValue(mae);
             case IndexExpr idx -> emitIndexRead(idx);
             case ArrayLiteralExpr al -> emitArrayLiteral(al);
-            case ObjectLiteralExpr ol -> {
-                unsupported("object literals", ol.span());
-                yield "null";
-            }
+            case ObjectLiteralExpr ol -> emitObjectLiteral(ol);
             case FunctionExpr fe -> {
                 unsupported("function expressions", fe.span());
                 yield "null";
@@ -2251,6 +2540,134 @@ public final class JvmBackend {
             case LiteralValue.NumberLiteral n -> javaDoubleLiteral(n.value());
             case LiteralValue.StringLiteral s -> quoteJavaString(s.value());
         };
+    }
+
+    // =========================================================================
+    // Object literals: class construction and tables (ISSUE-0095)
+    // =========================================================================
+
+    /** An object literal is either a class construction (class-typed
+     * contextual target — the checker's {@code checkClassConstruction}),
+     * a table literal ({@code table} target or no target), or out of
+     * slice (E6000). */
+    private String emitObjectLiteral(ObjectLiteralExpr ol) {
+        Type t = typeOf(ol);
+        if (t instanceof Type.Class cls) {
+            return emitClassConstruction(cls, ol);
+        }
+        if (t instanceof Type.Table) {
+            return emitTableLiteral(ol);
+        }
+        unsupported("object literals without a class or table target type",
+            ol.span());
+        return "null";
+    }
+
+    /**
+     * Emits a class construction ({@code new $C_<Name>(args)}). Provided
+     * field values are evaluated left-to-right in literal order (LuaJIT
+     * evaluates the provided-fields table in literal order), defaults are
+     * evaluated per construction exactly as spec v1.1 §Construction
+     * requires (inline, at the construction site — never shared). The
+     * constructor argument order is field declaration order, with provided
+     * values materialized first so a side-effecting provided value runs in
+     * literal order regardless of declaration order. The checker guarantees
+     * provided names are declared fields and required fields are present;
+     * the defensive branch only ever fires for a program the checker
+     * already rejected.
+     */
+    private String emitClassConstruction(Type.Class cls, ObjectLiteralExpr obj) {
+        ClassDeclaration cd = moduleClasses.get(cls.name());
+        if (cd == null) {
+            unsupported("construction of class '" + cls.name()
+                + "' (only local module-level classes are supported)",
+                obj.span());
+            return "null";
+        }
+        List<ExpressionNode> valueNodes = new ArrayList<>();
+        for (Property prop : obj.properties()) valueNodes.add(prop.value());
+        List<String> codes = emitOperandsInOrder(valueNodes);
+        // The constructor arguments run in field DECLARATION order, but
+        // LuaJIT evaluates the provided-fields table in LITERAL order — an
+        // effectful provided value whose literal position differs from its
+        // declaration position would otherwise run out of order. Every
+        // still-inline effectful provided value is materialized into a
+        // fresh temporary appended after the hoisted statements (emitOperands
+        // InOrder already materialized every effectful value that precedes a
+        // hoisting sibling, so the remaining ones all sit after the last
+        // hoist and keep their relative literal order); pure values stay
+        // inline.
+        for (int i = 0; i < valueNodes.size(); i++) {
+            String code = codes.get(i);
+            if (code.startsWith("__t")) continue; // already materialized
+            if (isPureAfterEmission(valueNodes.get(i))) continue;
+            Type valueType = typeOf(valueNodes.get(i));
+            String javaType = javaLocalType(valueType, valueNodes.get(i).span());
+            if (javaType == null) continue; // diagnostic already recorded
+            String temp = nextEvalTempName();
+            preStatements.add(new PreLine(
+                javaType + " " + temp + " = " + code + ";", 0));
+            preStatementsDeclareTemps = true;
+            codes.set(i, temp);
+        }
+        Map<String, String> provided = new LinkedHashMap<>();
+        for (int i = 0; i < obj.properties().size(); i++) {
+            provided.put(obj.properties().get(i).name(), codes.get(i));
+        }
+        List<String> args = new ArrayList<>();
+        for (ClassField cf : cd.fields()) {
+            String code = provided.get(cf.name());
+            if (code == null && cf.defaultExpr().isPresent()) {
+                code = emitExpression(cf.defaultExpr().get());
+            }
+            if (code == null) {
+                // Checker-guaranteed unreachable (E4001 missing required
+                // field); defensive E6000 keeps the artifact contract.
+                unsupported("construction omitting the required-present field '"
+                    + cf.name() + "' of class '" + cd.name() + "'", obj.span());
+                code = zeroValueFor(cf.type());
+            }
+            args.add(code);
+        }
+        return "new " + classNameForClass(cd.name()) + "("
+            + String.join(", ", args) + ")";
+    }
+
+    /** A placeholder for the defensive missing-required-field branch (the
+     * artifact is discarded anyway — hasErrors gates compilation). */
+    private static String zeroValueFor(TypeNode typeNode) {
+        if (typeNode instanceof NamedType nt) {
+            return switch (nt.name()) {
+                case "int" -> "0L";
+                case "number" -> "0.0";
+                case "boolean" -> "false";
+                case "string" -> "";
+                default -> "null";
+            };
+        }
+        return "null";
+    }
+
+    /**
+     * Emits a table literal as {@code new $T().put(k1, v1).put(k2, v2)}.
+     * Property values evaluate left-to-right in literal order (chained
+     * {@code put} calls: each target evaluates before the next value
+     * argument), with the hoisting machinery preserving order when a value
+     * hoists a side-effecting null-typed call. Keys are the DEAL property
+     * names verbatim (the spec's identifier-only property names), matching
+     * LuaJIT's string-keyed table.
+     */
+    private String emitTableLiteral(ObjectLiteralExpr ol) {
+        List<ExpressionNode> valueNodes = new ArrayList<>();
+        for (Property prop : ol.properties()) valueNodes.add(prop.value());
+        List<String> codes = emitOperandsInOrder(valueNodes);
+        StringBuilder sb = new StringBuilder("new $T()");
+        for (int i = 0; i < ol.properties().size(); i++) {
+            sb.append(".put(")
+                .append(quoteJavaString(ol.properties().get(i).name()))
+                .append(", ").append(codes.get(i)).append(')');
+        }
+        return sb.toString();
     }
 
     /**
@@ -3055,17 +3472,27 @@ public final class JvmBackend {
         return "(java.lang.System.currentTimeMillis() / 1000L) * 1000L";
     }
 
-    /** A member access used as a value (not a call). Only the array
-     * {@code .length} intrinsic is supported (ISSUE-0094): for
-     * {@code xs.length} with {@code xs: T[]} the checker types the
-     * expression as {@code int} (spec §Length and iteration), and the
-     * backend emits a read of the wrapper's storage length. Every other
-     * member access as a value stays out of scope (E6000). */
+    /**
+     * A member access used as a value (not a call): the array
+     * {@code .length} intrinsic (ISSUE-0094), a declared class field
+     * read (spec v1.1 §Field access — the checker guarantees the field is
+     * declared and returns its declared type), or a table field read in a
+     * contextual target type — the slice's one untyped boundary, where the
+     * runtime nominal check runs (see {@link #emitTableRead}). Everything
+     * else is E6000.
+     */
     private String emitMemberAccessValue(MemberAccessExpr mae) {
         Type objType = typeOf(mae.object());
         if (objType instanceof Type.Array && "length".equals(mae.field())) {
             String obj = emitExpression(mae.object());
             return "((long) " + obj + ".data.length)";
+        }
+        if (objType instanceof Type.Class) {
+            String obj = emitExpression(mae.object());
+            return "(" + obj + ")." + javaName(mae.field());
+        }
+        if (objType instanceof Type.Table) {
+            return emitTableRead(mae);
         }
         unsupported("member access as a value", mae.span());
         return "null";
@@ -3455,6 +3882,33 @@ public final class JvmBackend {
         return sb.append("})").toString();
     }
 
+    /**
+     * A table field read whose contextual target type comes from the
+     * checker's type map. Class-typed targets run the runtime nominal
+     * check through the class's emitted {@code $check<C>} helper (E8001
+     * for a wrong-class or non-class value — never a silent cast), and
+     * table-typed targets run {@code $checkTable}. Primitive, nullable,
+     * array, and function target types are out of slice (E6000): this
+     * slice's runtime checks cover nominal class checks, and rejecting the
+     * rest is the documented skeleton contract — never a silent
+     * miscompile.
+     */
+    private String emitTableRead(MemberAccessExpr mae) {
+        String obj = emitExpression(mae.object());
+        Type target = typeOf(mae);
+        String get = "(" + obj + ").get(" + quoteJavaString(mae.field()) + ")";
+        if (target instanceof Type.Class cls) {
+            return classCheckName(cls.name()) + "(" + get + ")";
+        }
+        if (target instanceof Type.Table) {
+            return "$checkTable(" + get + ")";
+        }
+        unsupported("table field reads with target type " + typeName(target)
+            + " (this slice checks class and table targets only)",
+            mae.span());
+        return "null";
+    }
+
     private String emitIntrinsicCall(String name, CallExpr call) {
         if (call.args().size() != 1) {
             // Checker enforces arity; defensive backend diagnostic.
@@ -3564,6 +4018,20 @@ public final class JvmBackend {
             }
             return writeHelper + "(" + codes.get(0) + ", " + codes.get(1)
                 + ", " + rhs + ")";
+        }
+        if (ae.target() instanceof MemberAccessExpr mae) {
+            Type objType = typeOf(mae.object());
+            if (objType instanceof Type.Class) {
+                // A declared class field write (spec v1.1 §Class assignment
+                // semantics): the checker guarantees the field is declared
+                // and the value matches its type; Java evaluates the object
+                // expression, then the value — LuaJIT's left-to-right order.
+                String obj = emitExpression(mae.object());
+                return "(" + obj + ")." + javaName(mae.field()) + " = "
+                    + emitExpression(ae.value());
+            }
+            unsupported("assignment to table fields", ae.span());
+            return "null";
         }
         unsupported("assignment to non-variable targets", ae.span());
         return "null";
@@ -3752,13 +4220,22 @@ public final class JvmBackend {
                 case "int" -> Type.Int.INSTANCE;
                 case "number" -> Type.Number.INSTANCE;
                 case "string" -> Type.String.INSTANCE;
-                case "table" -> {
-                    unsupported("table types", nt.span());
-                    yield Type.Error.INSTANCE;
-                }
+                case "table" -> Type.Table.INSTANCE;
                 default -> {
-                    unsupported("type '" + nt.name() + "' (classes are not supported)",
-                        nt.span());
+                    // A local module-level class (the checker's hoisted
+                    // ClassSymbol). The builtin Error and imported classes
+                    // are out of slice: Error values cannot be produced
+                    // (throw/catch is E6000) and imported classes are a
+                    // later slice — emitting the generated class reference
+                    // without emitting the class would leave a symbol javac
+                    // rejects after the CLI reported success.
+                    Symbol sym = symbols.resolve(nt.name());
+                    if (sym instanceof Symbol.ClassSymbol
+                            && moduleClasses.containsKey(nt.name())) {
+                        yield new Type.Class(nt.name(), modulePath);
+                    }
+                    unsupported("type '" + nt.name() + "' (only local classes "
+                        + "are supported)", nt.span());
                     yield Type.Error.INSTANCE;
                 }
             };
@@ -3805,6 +4282,8 @@ public final class JvmBackend {
                 }
                 yield arrayWrapperName(a.element());
             }
+            case Type.Table ignored -> "$T";
+            case Type.Class c -> classNameForClass(c.name());
             case Type.Error ignored -> null;
             default -> {
                 unsupported("values of type " + typeName(t), span);
