@@ -7,7 +7,10 @@ export function test_narrowing(): int {
   let n: int | null = 1;
   if (n !== null) {
     let i: int = n; // OK: narrowed to int
+    if (i !== 1) {
+      throw { code: "TEST_FAIL", message: "nullable narrowing: narrowed value mismatch" };
+    }
     return i;
   }
-  return 0;
+  throw { code: "TEST_FAIL", message: "nullable narrowing: null is a failing path" };
 }
