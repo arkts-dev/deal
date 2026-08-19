@@ -3,11 +3,22 @@
 // @expected: runtime-ok
 // @features: functions, recursion, luajit
 
+let downCalls: int = 0;
+
 function down(n: int): int {
+  downCalls = downCalls + 1;
   if (n === 0) { return 0; }
   return down(n - 1);
 }
 
 export function test_direct_recursion(): int {
-  return down(8);
+  downCalls = 0;
+  let result: int = down(8);
+  if (result !== 0) {
+    throw { code: "TEST_FAIL", message: "direct recursion terminal value mismatch" };
+  }
+  if (downCalls !== 9) {
+    throw { code: "TEST_FAIL", message: "direct recursion call count mismatch" };
+  }
+  return 0;
 }
