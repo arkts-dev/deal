@@ -132,10 +132,13 @@ import javax.tools.ToolProvider;
  * (evaluate-then-check side-effect order pinned cross-backend),
  * wrapper reference equality, load-time indirect calls, six frontend
  * signature/indirect-call compile-error gates, twelve cross-backend
- * parity fixtures, and two LuaJIT-only reference fixtures pinning the
- * reassigned-local and side-effecting call-result adapter semantics
- * that the JVM slice conservatively rejects with E6000 until
- * ISSUE-0110).
+ * parity fixtures, and four LuaJIT-only reference fixtures pinning the
+ * reassigned-local adapter, the side-effecting call-result adapter, and
+ * the two load-time guard shapes (a load-time-called function body
+ * assigning the field before the indirect call, and a load-time-called
+ * function body containing the indirect call — LuaJIT's module load
+ * fails with a raw upvalue error) that the JVM slice conservatively
+ * rejects with E6000 until ISSUE-0110).
  *
  * <h2>Multi-module fixtures (ISSUE-0096)</h2>
  *

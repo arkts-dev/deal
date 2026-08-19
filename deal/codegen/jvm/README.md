@@ -974,7 +974,32 @@ fixture whose codegen or JVM execution is bypassed):
   a later-declared function exactly like the statement-separated form) —
   and every function the field may hold must
   not (transitively) read a field, reach a function, or use an import
-  declared at or after the call site. Since the JVM static initializers
+  declared at or after the call site. A module-level call of ANOTHER
+  function executed before the guarded read is a potential assignment
+  source: the walk scans the called function's body (transitively,
+  `transitiveAssignedFields`) for assignments to the guarded field — any
+  such assignment makes the value set not statically known and the
+  indirect call is E6000 (`set()` assigning `g = a` before `g(2)`:
+  LuaJIT executes the assignment at load and the later call reaches
+  `a` → the not-yet-assigned `b` and fails at load; the pre-fix walk
+  missed the assignment and silently ran the hoisted method) — and a
+  sibling indirect call in the walked statements is analyzed the same
+  way: a direct call of a module function checks the transitive
+  assigned-field set, an indirect call through a function-typed field
+  checks the static value superset of that field (`fieldValueSuperset` —
+  the initializer chain plus every assignment anywhere in the module,
+  cycle-safe, over-approximating; an adapter initializer delegates to
+  the inner field's superset), and any other function-typed callee (a
+  local, a call result) is conservatively unknown. The inverse shape is
+  guarded too: a module-level call of a function whose body
+  (transitively) INVOKES a function-valued binding through an indirect
+  call is E6000 at the direct-call site (`transitiveIndirectCalls`), and
+  the same check applies to every function a guarded indirect call's
+  field may hold — the invoked wrapper's value is not statically known
+  to the load-time guards, so the held function's hazards cannot be
+  checked (LuaJIT fails at load when the invoked function reaches a
+  not-yet-declared value; Java would silently run the hoisted method —
+  conservative until ISSUE-0110). Since the JVM static initializers
   mirror LuaJIT's load-time execution (source order and control flow),
   the last executed assignment determines the held wrapper on both
   backends — `f = dbl; f(2)` runs 4 under real luajit and under the
@@ -986,7 +1011,7 @@ fixture whose codegen or JVM execution is bypassed):
   declared before a function-typed field that calls through it stays
   subject to the existing later-field read/write analysis.
 - **Tests proving the slice** —
-  - `test/conformance/fixtures/jvm-function-values-slice.json` — 39
+  - `test/conformance/fixtures/jvm-function-values-slice.json` — 41
     fixtures. 19 JVM-only runtime fixtures run through the real
     frontend → real `JvmBackend` codegen → `javac` subprocess → `java`
     subprocess executing the emitted artifact (the harness fails a
@@ -1046,14 +1071,24 @@ fixture whose codegen or JVM execution is bypassed):
     variant — a call-result callee whose return boundary raises E8010
     raises it before any argument's evaluation on both backends
     (`expectedError: E8010` with the E8002 message pinned out).
-    Two LuaJIT-only reference fixtures pin the semantics of the shapes
+    Four LuaJIT-only reference fixtures pin the semantics of the shapes
     the JVM slice conservatively rejects with E6000 until ISSUE-0110:
     the reassigned-LOCAL adapter (LuaJIT's adapter reads the binding
     live, so `f = dbl` retargets the earlier adapter and `h(10, 999)`
-    computes 20) and the side-effecting call-result adapter (LuaJIT
+    computes 20), the side-effecting call-result adapter (LuaJIT
     re-evaluates `picker()` on EVERY invoke — two invokes run it twice,
     so `h(10,999) + h(10,999) + count === 68`, never the 67 of a
-    creation-time-only evaluation).
+    creation-time-only evaluation), and the two load-time guard shapes —
+    a load-time-called function body assigning the field before the
+    indirect call (`set()` assigns `g = a`, then `g(2)` invokes `a`,
+    whose body reads the not-yet-assigned `b` — LuaJIT's module load
+    fails with the raw error `attempt to index upvalue 'b' (a nil
+    value)`, exit 1, and the success marker never prints) and a
+    load-time-called function body CONTAINING the indirect call
+    (`run()` calling `g(2)` after the retarget — the same raw load
+    failure under LuaJIT) — both pinned with `expectedOutput` on the
+    upvalue error text, `expectedExitCode: 1`, and `expectedNotOutput`
+    on the success marker.
   - `test/JvmBackendTest.testFunctionValues` — emission assertions for
     the wrapper class, the descriptor string, the wrapper instance
     field, indirect dispatch through `invoke`, the adapter's
@@ -1088,7 +1123,19 @@ fixture whose codegen or JVM execution is bypassed):
     statement — `let r: int = side(g = one) + g();` — and an assignment
     inside the call's enclosing while body — all E6000 where LuaJIT
     fails at load and the pre-fix walk silently ran the hoisted
-    method); the load-time indirect
+    method); the load-time-called-body guards — a module-level call
+    executed before the guarded indirect call is a potential assignment
+    source: `set()` assigning `g = a` before `g(2)` is E6000 (the walk
+    scans the called body's transitive assigned fields), a sibling
+    indirect call whose field may hold an assigning function is E6000
+    (the static value superset of `h` includes `setG`, which assigns
+    `g`), and a sibling call-result indirect call is E6000 (the invoked
+    body cannot be analyzed) — and the inverse shape: a load-time-called
+    function whose body (transitively) INVOKES a function value is E6000
+    at the direct-call site (`run()` calling `g(2)`) and through the
+    indirect-call guard (a held function invoking another field — all
+    frontend-clean probes, LuaJIT's load fails with a raw upvalue error
+    in each shape); the load-time indirect
     import hazard (`moduleIndirectCallRisk` consults `laterImportRead`
     exactly like the direct-call path — an indirect call of a function
     using an import declared after the call site is E6000, pinned in

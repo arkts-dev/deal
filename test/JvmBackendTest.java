@@ -237,9 +237,15 @@ import java.util.Set;
  *       pre-statements), load-time indirect-call guards
  *       (later-declared value uses, not-statically-known field values,
  *       adapter live-read retargets reaching a later-declared function,
- *       snapshot fields capturing a later-declared function, and the
- *       indirect import hazard E6000; the reassignment and snapshot
- *       shapes run with LuaJIT parity), and the
+ *       snapshot fields capturing a later-declared function, the
+ *       indirect import hazard E6000, module-level calls executed
+ *       before the guarded call treated as potential assignment sources
+ *       — a load-time-called function body assigning the field and a
+ *       sibling indirect call whose field may hold an assigning
+ *       function are E6000 — and the inverse: a load-time-called
+ *       function whose body invokes a function value is E6000 at the
+ *       direct-call site and through the indirect-call guard; the
+ *       reassignment and snapshot shapes run with LuaJIT parity), and the
  *       deferred signature shapes (nested/nullable/async/rest function
  *       types, arrays of functions, and function equality/inequality
  *       over array-/class-/nullable-parameter signatures) rejected with
@@ -3627,7 +3633,23 @@ public class JvmBackendTest {
      * index operands, and the call statement itself) must all observe —
      * the plain reassignment and snapshot-field shapes run with LuaJIT
      * parity; the indirect import hazard is pinned in
-     * testModuleImportUseBeforeImportRejected), the reassigned
+     * testModuleImportUseBeforeImportRejected), the module-level calls
+     * executed before a guarded indirect call as potential assignment
+     * sources — a load-time-called function body that assigns the field
+     * (`set()` assigns `g = a` before `g(2)`; LuaJIT executes the
+     * assignment at load and fails when the held `a` reaches the
+     * later-declared `b` — the walk observes the assignment and rejects),
+     * a sibling indirect call whose field may hold an assigning function
+     * (the static value superset of `h` includes `setG`, which assigns
+     * `g`), and a sibling call-result indirect call (the invoked body
+     * cannot be analyzed) — and the inverse shape: a load-time-called
+     * function whose body (transitively) INVOKES a function value is
+     * rejected at the direct-call site and through the indirect-call
+     * guard (`run()` calling `g(2)`, and a held function invoking
+     * another field — the invoked wrapper's value is not statically
+     * known to the load-time guards, so the held function's hazards
+     * cannot be checked; LuaJIT fails at load when the invoked function
+     * reaches a not-yet-declared value), the reassigned
      * local/parameter adapter E6000 also fires when the reassignment is
      * hidden in a table-literal property value, and the deferred
      * signature shapes (nested function
@@ -4253,6 +4275,58 @@ public class JvmBackendTest {
                 }
                 function later(x: int): int { return x * 2; }
                 export function test(): int { return acc; }
+                """),
+            new GuardCase(
+                "assignment inside a load-time-called function body", """
+                function inc(x: int): int { return x + 1; }
+                function a(): int { return b(); }
+                let g: (x: int) => int = inc;
+                function set(): null { g = a; }
+                set();
+                let r: int = g(2);
+                function b(): int { return 42; }
+                export function test(): int { return r; }
+                """),
+            new GuardCase(
+                "indirect call inside a load-time-called function body", """
+                function inc(x: int): int { return x + 1; }
+                function a(): int { return b(); }
+                let g: (x: int) => int = inc;
+                function set(): null { g = a; }
+                set();
+                function run(): int { return g(2); }
+                let r: int = run();
+                function b(): int { return 42; }
+                export function test(): int { return r; }
+                """),
+            new GuardCase(
+                "held function invoking another field indirectly at load time", """
+                function inc(x: int): int { return x + 1; }
+                function a(): int { return b(); }
+                let h: (x: int) => int = inc;
+                function run(): int { return h(2); }
+                let g: () => int = run;
+                let r: int = g();
+                function b(): int { return 42; }
+                export function test(): int { return r; }
+                """),
+            new GuardCase(
+                "sibling indirect call whose field may hold an assigning function", """
+                function zero(): int { return 0; }
+                let g: () => int = zero;
+                function setG(): int { g = one; return 0; }
+                function one(): int { return 2; }
+                let h: () => int = setG;
+                let r: int = h() + g();
+                export function test(): int { return r; }
+                """),
+            new GuardCase(
+                "sibling call-result indirect call in the walked statement", """
+                function zero(): int { return 0; }
+                function picker(): () => int { return zero; }
+                let g: () => int = zero;
+                let r: int = picker()() + g();
+                export function test(): int { return r; }
                 """));
         for (GuardCase c : guards) {
             Frontend gf = compileFrontend(c.source, "jvmtest-fv-guard.deal");

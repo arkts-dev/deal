@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM function values and wrappers slice (ISSUE-0098). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: first-class function values in typed and inferred variables, indirect calls through variables/parameters/module fields and call-result callees, callbacks with primitive/string/null signatures, returning function values, the int/number conversion intrinsics as function values (exact and arity-extended), arity-extension adapters at variable-initializer and assignment positions — module functions and intrinsics delegate directly, module fields are read LIVE on every invoke (a reassignment after creation retargets the adapter, pinned cross-backend), and never-reassigned locals/parameters snapshot (reassigned bindings and non-identifier adapter values are E6000 until ISSUE-0110, pinned in JvmBackendTest) — E8010 runtime signature checks at callback and return boundaries with the checked value expression evaluated FIRST (evaluate-then-check side-effect order pinned cross-backend), wrapper reference equality, recursion routed through the wrapper, load-time indirect calls through function-typed module fields, and six frontend compile-error gates (E3001 parameter/return signature mismatch, E5004 reverse arity, E3009/E5001 indirect-call arity/argument mismatch, E3008 non-function callee) rejected before any backend. Twelve fixtures run under both backends as cross-backend parity with real luajit; two LuaJIT-only fixtures pin the reference semantics of the shapes the JVM slice conservatively rejects.",
+  "description": "JVM function values and wrappers slice (ISSUE-0098). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: first-class function values in typed and inferred variables, indirect calls through variables/parameters/module fields and call-result callees, callbacks with primitive/string/null signatures, returning function values, the int/number conversion intrinsics as function values (exact and arity-extended), arity-extension adapters at variable-initializer and assignment positions — module functions and intrinsics delegate directly, module fields are read LIVE on every invoke (a reassignment after creation retargets the adapter, pinned cross-backend), and never-reassigned locals/parameters snapshot (reassigned bindings and non-identifier adapter values are E6000 until ISSUE-0110, pinned in JvmBackendTest) — E8010 runtime signature checks at callback and return boundaries with the checked value expression evaluated FIRST (evaluate-then-check side-effect order pinned cross-backend), wrapper reference equality, recursion routed through the wrapper, load-time indirect calls through function-typed module fields, and six frontend compile-error gates (E3001 parameter/return signature mismatch, E5004 reverse arity, E3009/E5001 indirect-call arity/argument mismatch, E3008 non-function callee) rejected before any backend. Twelve fixtures run under both backends as cross-backend parity with real luajit; four LuaJIT-only fixtures pin the reference semantics of the shapes the JVM slice conservatively rejects — the reassigned-local and side-effecting call-result adapters, and the two load-time guard shapes (a module-level-called function body assigning the field before the indirect call, and a load-time-called function body containing the indirect call) that fail the LuaJIT module load with a raw upvalue error.",
   "tests": [
     {
       "name": "jvm-fv-typed-variable-indirect-call",
@@ -593,6 +593,40 @@
       "backends": [
         "luajit"
       ]
-    }
-  ]
+    },
+  {
+    "name": "jvm-fv-lua-ref-loadtime-body-assignment",
+    "description": "LuaJIT reference semantics for the load-time shape the JVM slice conservatively rejects with E6000 (pinned in JvmBackendTest.testFunctionValues): a module-level call of set() before the indirect call executes the assignment g = a at load time, so the later g(2) invokes a — whose body reads the not-yet-assigned b — and the module load fails with a raw Lua error instead of running test(); the JVM value-set walk observes the assignment inside the load-time-called body and rejects with E6000 instead of silently running the hoisted method",
+    "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction a(): int { return b(); }\nlet g: (x: int) => int = inc;\nfunction set(): null { g = a; }\nset();\nlet r: int = g(2);\nfunction b(): int { return 42; }\nexport function test(): null {\n  console.log(\"jvm-fv-lua-ref-loadtime-body-assignment-ok\");\n}",
+    "expectedOutput": "attempt to index upvalue 'b' (a nil value)",
+    "expectedError": null,
+    "expectedExitCode": 1,
+    "expectedCompileError": null,
+    "irContains": [],
+    "irNotContains": [],
+    "expectedNotOutput": [
+      "jvm-fv-lua-ref-loadtime-body-assignment-ok"
+    ],
+    "backends": [
+      "luajit"
+    ]
+  },
+  {
+    "name": "jvm-fv-lua-ref-loadtime-indirect-call-body",
+    "description": "LuaJIT reference semantics for the load-time shape the JVM slice conservatively rejects with E6000 (pinned in JvmBackendTest.testFunctionValues): run() invoked at load time contains the indirect call g(2); g was retargeted to a by the earlier load-time set(), so the invoked a reads the not-yet-assigned b and the module load fails with a raw Lua error instead of running test(); the JVM rejects the load-time call of run() with E6000 (the invoked wrapper's value is not statically known to the load-time guards) instead of silently running the hoisted method",
+    "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction a(): int { return b(); }\nlet g: (x: int) => int = inc;\nfunction set(): null { g = a; }\nset();\nfunction run(): int { return g(2); }\nlet r: int = run();\nfunction b(): int { return 42; }\nexport function test(): null {\n  console.log(\"jvm-fv-lua-ref-loadtime-indirect-call-body-ok\");\n}",
+    "expectedOutput": "attempt to index upvalue 'b' (a nil value)",
+    "expectedError": null,
+    "expectedExitCode": 1,
+    "expectedCompileError": null,
+    "irContains": [],
+    "irNotContains": [],
+    "expectedNotOutput": [
+      "jvm-fv-lua-ref-loadtime-indirect-call-body-ok"
+    ],
+    "backends": [
+      "luajit"
+    ]
+  }
+]
 }

@@ -861,6 +861,56 @@ public final class JvmBackend {
     private final Map<String, String> forwardWriteViolations =
         new LinkedHashMap<>();
 
+    /**
+     * Function name → the module fields its body ASSIGNS, transitively
+     * through direct calls to other module functions (any assignment
+     * position — statements, value positions, hidden operands). Used by
+     * the load-time indirect-call value-set walk: a module-level call of
+     * such a function executed before the guarded field read is a
+     * potential assignment source, so the field's value set is not
+     * statically known and the call is rejected (LuaJIT executes the
+     * assignment at load; the value-set walk must observe it).
+     */
+    private final Map<String, Set<String>> transitiveAssignedFields =
+        new LinkedHashMap<>();
+
+    /**
+     * Function name → the function-valued bindings (module fields,
+     * locals, parameters) its body invokes through INDIRECT calls,
+     * transitively through direct calls to other module functions;
+     * non-identifier function-typed callees contribute
+     * {@link #UNKNOWN_HELD_VALUE}. Used to reject a module-level call of
+     * a function whose (transitive) body contains an indirect call: the
+     * invoked wrapper's value is not statically known to the load-time
+     * guard — LuaJIT fails at load when the held function reaches a
+     * not-yet-declared value, while Java would silently run the hoisted
+     * method. Conservative until ISSUE-0110.
+     */
+    private final Map<String, Set<String>> transitiveIndirectCalls =
+        new LinkedHashMap<>();
+
+    /**
+     * Function-typed module field name → the static superset of module
+     * functions the field may hold at any load-time read: its
+     * initializer (followed transitively through other function-valued
+     * fields — an adapter over a field delegates to that field's value,
+     * so the inner field's superset is included) plus EVERY assignment
+     * to the field anywhere in the module (module-level statements and
+     * every function body, hidden value positions included). A
+     * non-identifier initializer/assignment value contributes
+     * {@link #UNKNOWN_HELD_VALUE}. The superset over-approximates
+     * (assignments in bodies that never run at load count too) and is
+     * used only by the value-set walk's indirect-callee check to add a
+     * conservative rejection, never to admit a shape.
+     */
+    private final Map<String, Set<String>> fieldValueSupersets =
+        new LinkedHashMap<>();
+
+    /** Sentinel member of the value-set analyses: the field's value (or
+     * an indirect callee) is an expression that is not a bare
+     * module-function/intrinsic identifier and cannot be analyzed. */
+    private static final String UNKNOWN_HELD_VALUE = "<expression>";
+
     /** Statement index of the module-level statement currently being
      * emitted ({@code -1} inside function bodies). Used to detect
      * module-level calls that transitively read later-declared fields. */
@@ -1412,14 +1462,22 @@ public final class JvmBackend {
         Map<String, Set<String>> directReads = new LinkedHashMap<>();
         Map<String, Set<String>> directCalls = new LinkedHashMap<>();
         Map<String, Set<String>> directImportReads = new LinkedHashMap<>();
+        Map<String, Set<String>> directFieldAssigns = new LinkedHashMap<>();
+        Map<String, Set<String>> directIndirectCalls = new LinkedHashMap<>();
         for (Map.Entry<String, FunctionDeclaration> e : moduleFunctions.entrySet()) {
             Set<String> reads = new LinkedHashSet<>();
             Set<String> calls = new LinkedHashSet<>();
             Set<String> imports = new LinkedHashSet<>();
+            Set<String> assigns = new LinkedHashSet<>();
+            Set<String> indirect = new LinkedHashSet<>();
             collectBodyReferences(e.getValue(), reads, calls, imports);
+            collectBodyFieldAssignments(e.getValue(), assigns);
+            collectBodyIndirectCalls(e.getValue(), indirect);
             directReads.put(e.getKey(), reads);
             directCalls.put(e.getKey(), calls);
             directImportReads.put(e.getKey(), imports);
+            directFieldAssigns.put(e.getKey(), assigns);
+            directIndirectCalls.put(e.getKey(), indirect);
         }
         for (String name : moduleFunctions.keySet()) {
             transitiveFieldReads.put(name, closureReads(name, directReads,
@@ -1428,6 +1486,12 @@ public final class JvmBackend {
                 new LinkedHashMap<>(), new HashSet<>()));
             transitiveImportReads.put(name, closureReads(name, directImportReads,
                 directCalls, new LinkedHashMap<>(), new HashSet<>()));
+            transitiveAssignedFields.put(name, closureReads(name,
+                directFieldAssigns, directCalls, new LinkedHashMap<>(),
+                new HashSet<>()));
+            transitiveIndirectCalls.put(name, closureReads(name,
+                directIndirectCalls, directCalls, new LinkedHashMap<>(),
+                new HashSet<>()));
         }
     }
 
@@ -1680,6 +1744,299 @@ public final class JvmBackend {
         return false;
     }
 
+    /**
+     * Collects into {@code assigned} the module fields {@code fd}'s body
+     * assigns (an assignment expression whose target is an identifier
+     * resolving to a module field and not shadowed by a parameter or
+     * local), in every value position (statements, call arguments,
+     * object-literal property values, array-literal elements, index
+     * operands, class-construction defaults) — the same shapes
+     * {@link #collectExprRefs} walks. Used by
+     * {@link #computeTransitiveFieldReads} for
+     * {@link #transitiveAssignedFields}: a module-level call of a
+     * function whose body assigns a function-typed field retargets that
+     * field at load time, so the value-set walk must observe it.
+     */
+    private void collectBodyFieldAssignments(FunctionDeclaration fd,
+            Set<String> assigned) {
+        Deque<Set<String>> locals = new ArrayDeque<>();
+        Set<String> params = new LinkedHashSet<>();
+        for (Parameter p : fd.params()) params.add(p.name());
+        locals.push(params);
+        collectStatementFieldAssignments(fd.body().statements(), locals,
+            assigned);
+    }
+
+    private void collectStatementFieldAssignments(List<StatementNode> stmts,
+            Deque<Set<String>> locals, Set<String> assigned) {
+        for (StatementNode stmt : stmts) {
+            switch (stmt) {
+                case VariableDeclaration vd -> {
+                    collectExprFieldAssignments(vd.initializer(), locals,
+                        assigned);
+                    locals.peek().add(vd.name());
+                }
+                case ReturnStatement rs -> rs.expr().ifPresent(
+                    e -> collectExprFieldAssignments(e, locals, assigned));
+                case ExpressionStatement es -> collectExprFieldAssignments(
+                    es.expr(), locals, assigned);
+                case IfStatement is -> {
+                    collectExprFieldAssignments(is.condition(), locals,
+                        assigned);
+                    collectBlockFieldAssignments(is.thenBlock(), locals,
+                        assigned);
+                    if (is.elseBranch().isPresent()) {
+                        switch (is.elseBranch().get()) {
+                            case Either.Left<IfStatement, Block> left ->
+                                collectStatementFieldAssignments(
+                                    List.of(left.value()), locals, assigned);
+                            case Either.Right<IfStatement, Block> right ->
+                                collectBlockFieldAssignments(right.value(),
+                                    locals, assigned);
+                        }
+                    }
+                }
+                case WhileStatement ws -> {
+                    collectExprFieldAssignments(ws.condition(), locals,
+                        assigned);
+                    collectBlockFieldAssignments(ws.body(), locals, assigned);
+                }
+                case Block b -> collectBlockFieldAssignments(b, locals,
+                    assigned);
+                // Unsupported statement kinds (for/for-of, try, nested
+                // functions, classes, …) are rejected with E6000 when
+                // emitted; nothing to walk here.
+                default -> { }
+            }
+        }
+    }
+
+    private void collectBlockFieldAssignments(Block b,
+            Deque<Set<String>> locals, Set<String> assigned) {
+        locals.push(new LinkedHashSet<>());
+        collectStatementFieldAssignments(b.statements(), locals, assigned);
+        locals.pop();
+    }
+
+    private void collectExprFieldAssignments(ExpressionNode e,
+            Deque<Set<String>> locals, Set<String> assigned) {
+        switch (e) {
+            case AssignmentExpr ae -> {
+                collectExprFieldAssignments(ae.value(), locals, assigned);
+                if (ae.target() instanceof IdentifierExpr id
+                        && !isLocallyBound(locals, id.name())
+                        && moduleFieldIndices.containsKey(id.name())) {
+                    assigned.add(id.name());
+                }
+                // A non-identifier target's sub-expressions are value
+                // positions: an assignment hidden there executes at the
+                // assignment, exactly like a bare target.
+                switch (ae.target()) {
+                    case IndexExpr idx -> {
+                        collectExprFieldAssignments(idx.array(), locals,
+                            assigned);
+                        collectExprFieldAssignments(idx.index(), locals,
+                            assigned);
+                    }
+                    case MemberAccessExpr mae ->
+                        collectExprFieldAssignments(mae.object(), locals,
+                            assigned);
+                    default -> { }
+                }
+            }
+            case BinaryExpr bin -> {
+                collectExprFieldAssignments(bin.left(), locals, assigned);
+                collectExprFieldAssignments(bin.right(), locals, assigned);
+            }
+            case UnaryExpr u ->
+                collectExprFieldAssignments(u.expr(), locals, assigned);
+            case CallExpr call -> {
+                collectExprFieldAssignments(call.callee(), locals, assigned);
+                for (ExpressionNode arg : call.args()) {
+                    collectExprFieldAssignments(arg, locals, assigned);
+                }
+            }
+            case MemberAccessExpr mae ->
+                collectExprFieldAssignments(mae.object(), locals, assigned);
+            case IndexExpr idx -> {
+                collectExprFieldAssignments(idx.array(), locals, assigned);
+                collectExprFieldAssignments(idx.index(), locals, assigned);
+            }
+            case ArrayLiteralExpr al -> {
+                for (ExpressionNode elem : al.elements()) {
+                    collectExprFieldAssignments(elem, locals, assigned);
+                }
+            }
+            case ObjectLiteralExpr ol -> {
+                for (Property prop : ol.properties()) {
+                    collectExprFieldAssignments(prop.value(), locals,
+                        assigned);
+                }
+                if (typeOf(ol) instanceof Type.Class cls
+                        && isLocalClassType(cls)) {
+                    ClassDeclaration cd = moduleClasses.get(cls.name());
+                    if (cd != null) {
+                        for (ClassField cf : cd.fields()) {
+                            cf.defaultExpr().ifPresent(
+                                d -> collectExprFieldAssignments(d, locals,
+                                    assigned));
+                        }
+                    }
+                }
+            }
+            case TemplateLiteralExpr tl -> {
+                for (ExpressionNode part : tl.parts()) {
+                    collectExprFieldAssignments(part, locals, assigned);
+                }
+            }
+            default -> { }
+        }
+    }
+
+    /**
+     * Collects into {@code indirect} the function-valued bindings
+     * {@code fd}'s body invokes through indirect calls: every call whose
+     * callee has function type and is not a direct module-function call,
+     * a conversion-intrinsic call, or an imported-module member call
+     * (those carry their own load-time analyses — later-function,
+     * intrinsic, and import-hazard checks). Identifier callees contribute
+     * their name; any other function-typed callee contributes
+     * {@link #UNKNOWN_HELD_VALUE}. Used by
+     * {@link #computeTransitiveFieldReads} for
+     * {@link #transitiveIndirectCalls}: a module-level call of a function
+     * whose (transitive) body invokes a wrapper is rejected — the wrapper
+     * value is not statically known to the load-time guard (conservative
+     * until ISSUE-0110).
+     */
+    private void collectBodyIndirectCalls(FunctionDeclaration fd,
+            Set<String> indirect) {
+        for (StatementNode stmt : fd.body().statements()) {
+            collectStatementIndirectCalls(stmt, indirect);
+        }
+    }
+
+    private void collectStatementIndirectCalls(StatementNode stmt,
+            Set<String> indirect) {
+        switch (stmt) {
+            case VariableDeclaration vd ->
+                collectExprIndirectCalls(vd.initializer(), indirect);
+            case ReturnStatement rs -> rs.expr().ifPresent(
+                e -> collectExprIndirectCalls(e, indirect));
+            case ExpressionStatement es ->
+                collectExprIndirectCalls(es.expr(), indirect);
+            case IfStatement is -> {
+                collectExprIndirectCalls(is.condition(), indirect);
+                collectBlockIndirectCalls(is.thenBlock(), indirect);
+                if (is.elseBranch().isPresent()) {
+                    switch (is.elseBranch().get()) {
+                        case Either.Left<IfStatement, Block> left ->
+                            collectStatementIndirectCalls(left.value(),
+                                indirect);
+                        case Either.Right<IfStatement, Block> right ->
+                            collectBlockIndirectCalls(right.value(), indirect);
+                    }
+                }
+            }
+            case WhileStatement ws -> {
+                collectExprIndirectCalls(ws.condition(), indirect);
+                collectBlockIndirectCalls(ws.body(), indirect);
+            }
+            case Block b -> collectBlockIndirectCalls(b, indirect);
+            // Unsupported statement kinds (for/for-of, try, nested
+            // functions, classes, …) are rejected with E6000 when
+            // emitted; nothing to walk here.
+            default -> { }
+        }
+    }
+
+    private void collectBlockIndirectCalls(Block b, Set<String> indirect) {
+        for (StatementNode stmt : b.statements()) {
+            collectStatementIndirectCalls(stmt, indirect);
+        }
+    }
+
+    private void collectExprIndirectCalls(ExpressionNode e,
+            Set<String> indirect) {
+        switch (e) {
+            case CallExpr call -> {
+                ExpressionNode callee = call.callee();
+                if (callee instanceof IdentifierExpr id) {
+                    Symbol sym = symbols.resolve(id.name());
+                    boolean direct = sym instanceof Symbol.FunctionSymbol
+                        && moduleFunctions.containsKey(id.name());
+                    boolean intrinsic = sym instanceof Symbol.IntrinsicSymbol;
+                    if (!direct && !intrinsic
+                            && typeOf(callee) instanceof Type.Func) {
+                        indirect.add(id.name());
+                    }
+                } else if (callee instanceof MemberAccessExpr mae
+                        && mae.object() instanceof IdentifierExpr oid
+                        && importAliases.containsKey(oid.name())) {
+                    // An imported-module member call: covered by the
+                    // import-hazard analysis, not an indirect call.
+                } else {
+                    if (typeOf(callee) instanceof Type.Func) {
+                        indirect.add(UNKNOWN_HELD_VALUE);
+                    }
+                    collectExprIndirectCalls(callee, indirect);
+                }
+                for (ExpressionNode arg : call.args()) {
+                    collectExprIndirectCalls(arg, indirect);
+                }
+            }
+            case BinaryExpr bin -> {
+                collectExprIndirectCalls(bin.left(), indirect);
+                collectExprIndirectCalls(bin.right(), indirect);
+            }
+            case UnaryExpr u ->
+                collectExprIndirectCalls(u.expr(), indirect);
+            case AssignmentExpr ae -> {
+                collectExprIndirectCalls(ae.value(), indirect);
+                switch (ae.target()) {
+                    case IndexExpr idx -> {
+                        collectExprIndirectCalls(idx.array(), indirect);
+                        collectExprIndirectCalls(idx.index(), indirect);
+                    }
+                    case MemberAccessExpr mae ->
+                        collectExprIndirectCalls(mae.object(), indirect);
+                    default -> { }
+                }
+            }
+            case MemberAccessExpr mae ->
+                collectExprIndirectCalls(mae.object(), indirect);
+            case IndexExpr idx -> {
+                collectExprIndirectCalls(idx.array(), indirect);
+                collectExprIndirectCalls(idx.index(), indirect);
+            }
+            case ArrayLiteralExpr al -> {
+                for (ExpressionNode elem : al.elements()) {
+                    collectExprIndirectCalls(elem, indirect);
+                }
+            }
+            case ObjectLiteralExpr ol -> {
+                for (Property prop : ol.properties()) {
+                    collectExprIndirectCalls(prop.value(), indirect);
+                }
+                if (typeOf(ol) instanceof Type.Class cls
+                        && isLocalClassType(cls)) {
+                    ClassDeclaration cd = moduleClasses.get(cls.name());
+                    if (cd != null) {
+                        for (ClassField cf : cd.fields()) {
+                            cf.defaultExpr().ifPresent(
+                                d -> collectExprIndirectCalls(d, indirect));
+                        }
+                    }
+                }
+            }
+            case TemplateLiteralExpr tl -> {
+                for (ExpressionNode part : tl.parts()) {
+                    collectExprIndirectCalls(part, indirect);
+                }
+            }
+            default -> { }
+        }
+    }
+
     /** The name of a module field declared at or after {@code callIndex}
      * that {@code functionName}'s body reads transitively, or
      * {@code null}. {@code >=} also catches a field's own initializer
@@ -1761,8 +2118,19 @@ public final class JvmBackend {
      * <li>it must not (transitively) use an import alias declared at or
      * after the call site — LuaJIT emits the require at the import's
      * source position and fails at load reading the not-yet-required
-     * global, Java would silently initialize the imported class.</li>
+     * global, Java would silently initialize the imported class;</li>
+     * <li>its body must not (transitively) invoke a function-valued
+     * binding (a module field, local, or parameter) through an indirect
+     * call — the invoked wrapper's value is not statically known to
+     * this guard, so the held function's load-time hazards are not
+     * analyzable: LuaJIT fails at load when the invoked function
+     * reaches a not-yet-declared value, Java would silently run the
+     * hoisted method (conservative until ISSUE-0110).</li>
      * </ul>
+     * A module-level call of another function executed before the read
+     * is a potential assignment source: its body (transitively) may
+     * assign the field (see {@link #exprAssignedFunctions}), and such an
+     * assignment makes the value set not statically known.
      */
     private String moduleIndirectCallRisk(String fieldName) {
         // The field's runtime value at the call site is statically known
@@ -1813,6 +2181,20 @@ public final class JvmBackend {
                     + "fails at load; Java would silently initialize the "
                     + "imported class)";
             }
+            String indirect = transitiveIndirectCalls
+                .getOrDefault(fn, Set.of()).stream().findFirst()
+                .orElse(null);
+            if (indirect != null) {
+                return "module-level indirect call through '" + fieldName
+                    + "' whose value ('" + fn + "') (transitively) invokes "
+                    + "the function value '" + indirect + "' (an indirect "
+                    + "call executed at load time — the held value is not "
+                    + "statically known to the load-time guard, so its "
+                    + "load-time hazards cannot be checked; LuaJIT fails at "
+                    + "load when the invoked function reaches a "
+                    + "not-yet-declared value, Java would silently run the "
+                    + "hoisted method)";
+            }
         }
         return null;
     }
@@ -1833,7 +2215,10 @@ public final class JvmBackend {
      * before the read); the walk over-approximates inside that one
      * statement (assignments after the call position count too), and the
      * over-approximation only ever adds a conservative rejection, never a
-     * silent divergence.
+     * silent divergence. A module-level CALL of another function in the
+     * walked statements is a potential assignment source: the invoked
+     * body's transitive assignments to the field make the value set not
+     * statically known (see {@link #exprAssignedFunctions}).
      */
     private List<String> moduleLevelAssignedFunctions(String fieldName,
             int callIndex) {
@@ -1918,6 +2303,16 @@ public final class JvmBackend {
                 && exprAssignedFunctions(bin.right(), name, out);
             case UnaryExpr u -> exprAssignedFunctions(u.expr(), name, out);
             case CallExpr call -> {
+                // A module-level call executed before the guarded field
+                // read is a potential assignment source: the invoked
+                // function's body (transitively) may assign the field —
+                // LuaJIT executes the call and the assignment at load,
+                // so the value set must observe it (an assignment inside
+                // the called body, an indirect call whose held function
+                // may assign the field, or any function-typed callee
+                // whose invoked body cannot be analyzed all make the
+                // value set not statically known).
+                if (callMayAssignField(call, name)) yield false;
                 boolean ok = exprAssignedFunctions(call.callee(), name, out);
                 for (ExpressionNode arg : call.args()) {
                     if (!ok) break;
@@ -1998,6 +2393,263 @@ public final class JvmBackend {
         return false;
     }
 
+    /** True when a module-level call of {@code call} executed before the
+     * guarded field read may assign {@code name} — a direct call of a
+     * module function whose body assigns the field (transitively,
+     * {@link #transitiveAssignedFields}); an indirect call through a
+     * function-typed module field whose static value superset
+     * ({@link #fieldValueSuperset}) contains a function that (transitively)
+     * assigns the field, or whose superset is unknown; or any other
+     * function-typed callee (a local, parameter, call-result, or
+     * member-access expression) whose invoked body cannot be analyzed.
+     * Every other callee (intrinsics, non-function values) cannot assign
+     * a field. Conservative — only ever adds a rejection. */
+    private boolean callMayAssignField(CallExpr call, String name) {
+        ExpressionNode callee = call.callee();
+        if (callee instanceof IdentifierExpr cid) {
+            Symbol csym = symbols.resolve(cid.name());
+            if (csym instanceof Symbol.FunctionSymbol
+                    && moduleFunctions.containsKey(cid.name())) {
+                return transitiveAssignedFields
+                    .getOrDefault(cid.name(), Set.of()).contains(name);
+            }
+            if (csym instanceof Symbol.IntrinsicSymbol) {
+                return false; // pure conversion — reads and writes nothing
+            }
+            if (csym instanceof Symbol.VariableSymbol
+                    && moduleFieldIndices.containsKey(cid.name())
+                    && typeOf(callee) instanceof Type.Func) {
+                Set<String> superset = fieldValueSuperset(cid.name());
+                if (superset.contains(UNKNOWN_HELD_VALUE)) return true;
+                for (String fn : superset) {
+                    if (transitiveAssignedFields.getOrDefault(fn, Set.of())
+                            .contains(name)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            if (typeOf(callee) instanceof Type.Func) {
+                // A local/parameter function-typed binding invoked in the
+                // walked statements: its held value is not tracked —
+                // conservative.
+                return true;
+            }
+            return false;
+        }
+        // A call-result or member-access callee with function type: the
+        // invoked body cannot be analyzed — conservative.
+        return typeOf(callee) instanceof Type.Func;
+    }
+
+    /** The static value superset of the function-typed module field
+     * {@code name}: every module function it may hold at any load-time
+     * read (memoized; see {@link #fieldValueSupersets}). */
+    private Set<String> fieldValueSuperset(String name) {
+        Set<String> memo = fieldValueSupersets.get(name);
+        if (memo != null) return memo;
+        Set<String> result = fieldValueSupersetInner(name, new HashSet<>());
+        fieldValueSupersets.put(name, result);
+        return result;
+    }
+
+    private Set<String> fieldValueSupersetInner(String name,
+            Set<String> inProgress) {
+        if (!inProgress.add(name)) {
+            // A cycle in the field-initializer reference graph —
+            // impossible for valid programs (module fields only reference
+            // earlier fields), but stay conservative.
+            return Set.of(UNKNOWN_HELD_VALUE);
+        }
+        Set<String> result = new LinkedHashSet<>();
+        VariableDeclaration vd = moduleFieldDecls.get(name);
+        if (vd != null) {
+            ExpressionNode init = vd.initializer();
+            if (init instanceof IdentifierExpr id) {
+                Symbol sym = symbols.resolve(id.name());
+                if (sym instanceof Symbol.FunctionSymbol
+                        && moduleFunctions.containsKey(id.name())) {
+                    result.add(id.name());
+                } else if (sym instanceof Symbol.IntrinsicSymbol) {
+                    // The intrinsic wrapper holds no module function.
+                } else if (sym instanceof Symbol.VariableSymbol
+                        && moduleFieldIndices.containsKey(id.name())) {
+                    // An equal-signature snapshot or an arity adapter over
+                    // another function-valued field: the invoked function
+                    // is that field's value, so its superset is included.
+                    result.addAll(fieldValueSupersetInner(id.name(),
+                        inProgress));
+                } else {
+                    result.add(UNKNOWN_HELD_VALUE);
+                }
+            } else {
+                result.add(UNKNOWN_HELD_VALUE);
+            }
+        }
+        // EVERY assignment to the field anywhere in the module (module-level
+        // statements and every function body — hidden value positions
+        // included) adds its bare module-function values; any non-identifier
+        // assigned value makes the superset unknown. The scan
+        // over-approximates (assignments in bodies that never run at load
+        // count too) — used only for conservative rejection.
+        boolean unknown = false;
+        for (StatementNode stmt : moduleStatements) {
+            if (!assignedFieldValues(stmt, name, result)) {
+                unknown = true;
+                break;
+            }
+        }
+        if (!unknown) {
+            for (FunctionDeclaration fd : moduleFunctions.values()) {
+                if (!assignedFieldValues(fd.body(), name, result)) {
+                    unknown = true;
+                    break;
+                }
+            }
+        }
+        inProgress.remove(name);
+        if (unknown) result.add(UNKNOWN_HELD_VALUE);
+        return result;
+    }
+
+    /** True when every assignment to the module field {@code name} inside
+     * {@code stmt} assigns a bare module-function identifier (collected
+     * into {@code out}); false when any assigned value is not statically
+     * known. */
+    private boolean assignedFieldValues(StatementNode stmt, String name,
+            Set<String> out) {
+        return switch (stmt) {
+            case ExpressionStatement es ->
+                assignedFieldValuesExpr(es.expr(), name, out);
+            case VariableDeclaration vd ->
+                assignedFieldValuesExpr(vd.initializer(), name, out);
+            case ReturnStatement rs -> rs.expr().isEmpty()
+                || assignedFieldValuesExpr(rs.expr().get(), name, out);
+            case IfStatement is -> assignedFieldValuesExpr(is.condition(),
+                    name, out)
+                && assignedFieldValues(is.thenBlock(), name, out)
+                && (is.elseBranch().isEmpty()
+                    || assignedFieldValuesBranch(is.elseBranch().get(), name,
+                        out));
+            case WhileStatement ws -> assignedFieldValuesExpr(ws.condition(),
+                    name, out)
+                && assignedFieldValues(ws.body(), name, out);
+            case Block b -> assignedFieldValuesList(b.statements(), name, out);
+            default -> true;
+        };
+    }
+
+    private boolean assignedFieldValuesBranch(
+            Either<IfStatement, Block> branch, String name, Set<String> out) {
+        return switch (branch) {
+            case Either.Left<IfStatement, Block> left ->
+                assignedFieldValues(left.value(), name, out);
+            case Either.Right<IfStatement, Block> right ->
+                assignedFieldValuesList(right.value().statements(), name, out);
+        };
+    }
+
+    private boolean assignedFieldValuesList(List<StatementNode> stmts,
+            String name, Set<String> out) {
+        for (StatementNode stmt : stmts) {
+            if (!assignedFieldValues(stmt, name, out)) return false;
+        }
+        return true;
+    }
+
+    private boolean assignedFieldValuesExpr(ExpressionNode e, String name,
+            Set<String> out) {
+        return switch (e) {
+            case AssignmentExpr ae -> {
+                boolean ok = assignedFieldValuesExpr(ae.value(), name, out);
+                if (!ok) yield false;
+                if (ae.target() instanceof IdentifierExpr id
+                        && id.name().equals(name)) {
+                    if (ae.value() instanceof IdentifierExpr vid) {
+                        Symbol sym = symbols.resolve(vid.name());
+                        if (sym instanceof Symbol.FunctionSymbol
+                                && moduleFunctions.containsKey(vid.name())) {
+                            out.add(vid.name());
+                            yield ok;
+                        }
+                        if (sym instanceof Symbol.IntrinsicSymbol) {
+                            yield ok; // holds no module function
+                        }
+                    }
+                    yield false; // a non-identifier value — unknown
+                }
+                yield switch (ae.target()) {
+                    case IndexExpr idx ->
+                        assignedFieldValuesExpr(idx.array(), name, out)
+                            && assignedFieldValuesExpr(idx.index(), name, out);
+                    case MemberAccessExpr mae ->
+                        assignedFieldValuesExpr(mae.object(), name, out);
+                    default -> ok;
+                };
+            }
+            case BinaryExpr bin -> assignedFieldValuesExpr(bin.left(), name, out)
+                && assignedFieldValuesExpr(bin.right(), name, out);
+            case UnaryExpr u -> assignedFieldValuesExpr(u.expr(), name, out);
+            case CallExpr call -> {
+                boolean ok = assignedFieldValuesExpr(call.callee(), name, out);
+                for (ExpressionNode arg : call.args()) {
+                    if (!ok) break;
+                    ok = assignedFieldValuesExpr(arg, name, out);
+                }
+                yield ok;
+            }
+            case MemberAccessExpr mae ->
+                assignedFieldValuesExpr(mae.object(), name, out);
+            case IndexExpr idx -> assignedFieldValuesExpr(idx.array(), name, out)
+                && assignedFieldValuesExpr(idx.index(), name, out);
+            case ArrayLiteralExpr al -> {
+                boolean ok = true;
+                for (ExpressionNode elem : al.elements()) {
+                    if (!assignedFieldValuesExpr(elem, name, out)) {
+                        ok = false;
+                        break;
+                    }
+                }
+                yield ok;
+            }
+            case ObjectLiteralExpr ol -> {
+                boolean ok = true;
+                for (Property prop : ol.properties()) {
+                    if (!assignedFieldValuesExpr(prop.value(), name, out)) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok && typeOf(ol) instanceof Type.Class cls
+                        && isLocalClassType(cls)) {
+                    ClassDeclaration cd = moduleClasses.get(cls.name());
+                    if (cd != null) {
+                        for (ClassField cf : cd.fields()) {
+                            if (cf.defaultExpr().isPresent()
+                                    && !assignedFieldValuesExpr(
+                                        cf.defaultExpr().get(), name, out)) {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                yield ok;
+            }
+            case TemplateLiteralExpr tl -> {
+                boolean ok = true;
+                for (ExpressionNode part : tl.parts()) {
+                    if (!assignedFieldValuesExpr(part, name, out)) {
+                        ok = false;
+                        break;
+                    }
+                }
+                yield ok;
+            }
+            default -> true;
+        };
+    }
+
     /**
      * Collects into {@code possible} every module function the
      * function-typed field {@code fieldName} may hold when it is read at
@@ -2009,7 +2661,9 @@ public final class JvmBackend {
      * statically-known module function assigned to the field between the
      * declaration and {@code readIndex}. Returns true when any value is
      * not statically known (a call result, a non-field identifier, an
-     * unknown adapter value) — the caller conservatively rejects the
+     * unknown adapter value, an assignment inside a load-time-called
+     * function body, or a sibling indirect call whose field may hold an
+     * assigning function) — the caller conservatively rejects the
      * call. The JVM static-initializer interleaving mirrors LuaJIT's
      * load-time execution, so every function collected here is one the
      * field may genuinely hold at the read.
@@ -6470,6 +7124,27 @@ public final class JvmBackend {
                         + "site (LuaJIT has not run the require yet and "
                         + "fails at load; Java would silently initialize "
                         + "the imported class)", call.span());
+                    return "null";
+                }
+                // An indirect call inside a function invoked at load
+                // time: the invoked wrapper's value is not statically
+                // known to the load-time guards, so the held function's
+                // hazards cannot be checked (LuaJIT fails at load when
+                // the invoked function reaches a not-yet-declared value;
+                // Java would silently run the hoisted method) —
+                // conservative rejection until ISSUE-0110.
+                String indirect = transitiveIndirectCalls
+                    .getOrDefault(id.name(), Set.of()).stream().findFirst()
+                    .orElse(null);
+                if (indirect != null) {
+                    unsupported("module-level call of '" + id.name()
+                        + "' whose body (transitively) invokes the "
+                        + "function value '" + indirect + "' (an indirect "
+                        + "call executed at load time — the held value is "
+                        + "not statically known to the load-time guard; "
+                        + "LuaJIT fails at load when the invoked function "
+                        + "reaches a not-yet-declared value, Java would "
+                        + "silently run the hoisted method)", call.span());
                     return "null";
                 }
             }
