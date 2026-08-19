@@ -3596,7 +3596,9 @@ public class JvmBackendTest {
      * covered: E8010 runtime signature checks at callback and return
      * boundaries (matching LuaJIT's wrapper checks) with the checked
      * value expression evaluated FIRST — the marker probes pin the
-     * evaluate-then-check order with module-field side effects — wrapper
+     * evaluate-then-check order with module-field side effects, and a
+     * later materialized nil-yielding `(int | null)[]` read keeps its
+     * boxed Java shape (never a primitive-temp unboxing NPE) — wrapper
      * reference equality, the call-result-callee evaluation order (the
      * callee is materialized into a single-assignment temporary at its
      * evaluation position, BEFORE any argument's hoisted pre-statements —
@@ -3945,6 +3947,31 @@ public class JvmBackendTest {
         check(retCheck.exitCode() == 1, "return signature check exits 1");
         check(retCheck.output().contains("DEAL_ERROR_CODE: E8010"),
             "return signature check raises E8010: " + retCheck.output());
+
+        // A later operand materialized after an E8010-checking argument
+        // keeps the EMITTED code shape (ISSUE-0108 integration): the
+        // nil-yielding `(int | null)[]` read past the end yields the DEAL
+        // null (boxed `java.lang.Long`), so its materialization temporary
+        // must be the boxed type — a `long` temp would auto-unbox the
+        // null and crash with a bare Java NPE instead of the E8010 the
+        // parameter boundary raises (LuaJIT evaluates the read — nil, no
+        // error — and then raises E8010 at callee entry).
+        ExecResult cbCheckNullable = compileAndRunJvm("""
+            function inc(x: int): int { return x + 1; }
+            function take(f: (a: int, b: string) => int, v: int | null): int { return 1; }
+            export function test(): int {
+              let xs: (int | null)[] = [];
+              return take(inc, xs[0]);
+            }
+            """, "jvmtest-fv-cb-check-nullable");
+        check(cbCheckNullable.exitCode() == 1,
+            "nullable-later-operand E8010 probe exits 1");
+        check(cbCheckNullable.output().contains("DEAL_ERROR_CODE: E8010"),
+            "the E8010 raises (never a bare NPE on the null element): "
+                + cbCheckNullable.output());
+        check(!cbCheckNullable.output().contains("NullPointerException"),
+            "no unboxing NPE from a primitive materialization temp: "
+                + cbCheckNullable.output());
 
         // The checked value expression is evaluated BEFORE E8010 raises
         // (spec §Operational semantics rule 2 / strict return-value

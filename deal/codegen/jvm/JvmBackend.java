@@ -5709,8 +5709,13 @@ public final class JvmBackend {
             for (int j = i + 1; j < nodes.size(); j++) {
                 if (materializedForCheck[j]) continue;
                 if (isPureAfterEmission(nodes.get(j))) continue;
-                Type t = typeOf(nodes.get(j));
-                String javaType = javaLocalType(t, nodes.get(j).span());
+                // The temporary's Java type follows the EMITTED code
+                // shape, exactly like the main materialization loop: a
+                // nil-yielding index read at a nullable target carries
+                // the boxed element type, never the unboxed storage
+                // type.
+                String javaType = materializationTempType(nodes.get(j),
+                    targets == null ? null : targets.get(j));
                 if (javaType == null) continue; // diagnostic already recorded
                 String temp = nextEvalTempName();
                 preStatements.add(new PreLine(
