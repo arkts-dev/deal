@@ -5,5 +5,9 @@
 // @features: template-literal, nested-template
 
 export function test_nested(): string {
-  return `[${ \`inner\` }]`;
+  let result: string = `[${ \`inner\` }]`;
+  if (result !== "[inner]") {
+    throw { code: "TEST_FAIL", message: "nested template literal result mismatch" };
+  }
+  return result;
 }
