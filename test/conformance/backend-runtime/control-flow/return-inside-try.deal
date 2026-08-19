@@ -4,9 +4,18 @@
 // @features: try, return
 
 export function test_return_inside_try(): int {
-  try {
-    return 7;
-  } catch (e) {
-    return 99;
+  let catchRan: boolean = false;
+  function attemptReturn(): int {
+    try {
+      return 7;
+    } catch (e) {
+      catchRan = true;
+      return 99;
+    }
   }
+  let got: int = attemptReturn();
+  if (got !== 7 || catchRan !== false) {
+    throw { code: "TEST_FAIL", message: "return inside try: wrong result or catch executed" };
+  }
+  return 7;
 }

@@ -4,12 +4,22 @@
 // @features: error-handling, try, return, for-loop
 
 export function test_return_in_try_loop(): int {
-  let found: int = 0;
-  for (let i: int = 0; i < 10; i = i + 1) {
-    try {
-      if (i === 5) { return i; }
-    } catch (e) {}
-    found = i;
+  let catchRan: boolean = false;
+  function findFive(): int {
+    let found: int = 0;
+    for (let i: int = 0; i < 10; i = i + 1) {
+      try {
+        if (i === 5) { return i; }
+      } catch (e) {
+        catchRan = true;
+      }
+      found = i;
+    }
+    return found;
   }
-  return found;
+  let got: int = findFive();
+  if (got !== 5 || catchRan !== false) {
+    throw { code: "TEST_FAIL", message: "return inside try in loop: wrong result or catch executed" };
+  }
+  return 5;
 }
