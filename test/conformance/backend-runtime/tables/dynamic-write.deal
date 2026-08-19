@@ -7,6 +7,13 @@ export function test_table_write(): string {
   let t: table = {};
   t.key = "val";
   t.num = 42;
-  let v: string = t.key;
-  return v;
+  let key: string = t.key;
+  let num: int = t.num;
+  if (key !== "val") {
+    throw { code: "TEST_FAIL", message: "table key post-state mismatch" };
+  }
+  if (num !== 42) {
+    throw { code: "TEST_FAIL", message: "table num post-state mismatch" };
+  }
+  return key;
 }
