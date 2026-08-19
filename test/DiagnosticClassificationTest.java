@@ -284,8 +284,12 @@ public class DiagnosticClassificationTest {
         coverage.put("E8005", "test_runtime.lua (division by zero)");
         coverage.put("E8006", "test_runtime.lua (negative exponent)");
         coverage.put("E8007", "test_runtime.lua (extra class field)");
-        coverage.put("E8010", "test_runtime.lua (function sig mismatch)");
-        coverage.put("E8011", "test_runtime.lua (host module load validation)");
+        coverage.put("E8010", "test_runtime.lua (function sig mismatch) / "
+            + "BackendConformanceTest jvm-host-abi-slice "
+            + "(host return boundary) / JvmBackendTest (host ABI)");
+        coverage.put("E8011", "test_runtime.lua (host module load validation) / "
+            + "BackendConformanceTest jvm-host-abi-slice "
+            + "(missing host export) / JvmBackendTest (host ABI)");
 
         int total = DiagnosticCode.values().length;
         int covered = 0;

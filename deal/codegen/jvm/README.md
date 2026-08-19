@@ -1,4 +1,4 @@
-# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice, ISSUE-0095 classes and nominal checks slice, ISSUE-0096 modules/imports/exports slice, ISSUE-0097 stdlib-boundary slice, ISSUE-0108 nullable slice, ISSUE-0109 imported classes and cross-module nominal identity slice)
+# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice, ISSUE-0095 classes and nominal checks slice, ISSUE-0096 modules/imports/exports slice, ISSUE-0097 stdlib-boundary slice, ISSUE-0108 nullable slice, ISSUE-0109 imported classes and cross-module nominal identity slice, ISSUE-0100 host ABI slice)
 
 A small but real end-to-end JVM backend for the DEAL compiler. It walks the
 typed AST (the compiler's IR — `deal-compiler-architecture-v1`) and emits a
@@ -61,9 +61,102 @@ supported modules (`std/console`, `std/string`, `std/math`, `std/time` —
 `std/table` and `std/json` stay E6000 at the import statement, used or
 unused, because their only functions take or return a `table`, a value
 type the slice does not support yet as a function parameter or return),
-declaration/host-module imports (a `.d.deal` import is never
-a codegen entry and stays E6000 at the import statement; host ABI is
-deferred), async/await, for/for-of loops, try/throw, `@jsonable`.
+for/for-of loops, try/throw, `@jsonable`.
+
+## Host ABI slice (ISSUE-0100)
+
+A host-module import (a declaration file that is not a spec stdlib
+module — the same classification the LuaJIT use site builds,
+`host-module-abi` D5; bare imports flow through the production
+`deal.json` externals map, relative `./`/`../` declaration imports stay
+host modules without a listing) emits per-alias host bindings:
+a `static { __hostLoad$<alias>(); }` block at the import statement
+runs the load-time presence check, and every declared function export
+emits a wrapper method `__host$<alias>$<fn>` that DEAL member calls
+route through.
+
+The JVM host module object is a Java class named by the module path
+(`host/http` → `HostHttp`) whose `public static Object` methods
+implement the declared exports. The load-time check `Class.forName`s
+that class (missing → E8011 "host module not found") and validates
+every declared export with `getDeclaredMethod` against the
+descriptor-derived parameter classes (missing/signature-mismatched →
+E8011) — the spec's "the host module runtime object must expose
+exported names from its declaration; missing declared exports are
+load-time errors". Extra host methods are never looked up (structurally
+dropped — "extra host exports are ignored").
+
+Wrapper behavior per declared signature (spec-v1.1 §JVM value mapping —
+int → `long`, number → `double`, boolean → `boolean`, string →
+`java.lang.String`, `T | null` → the boxed reference, null → Java null):
+
+- parameters arrive as their statically-typed JVM mappings
+  (DEAL→host parameter checks are provably redundant, which the spec's
+  JVM backend contract permits; the checker already typed every call
+  site);
+- the host return arrives as `java.lang.Object` across the untyped
+  boundary and is checked against the declared return descriptor on
+  every call: wrong runtime kind → E8010 "return value 1 type
+  mismatch", Java null crossing a non-nullable return → E8010 (the
+  spec forbids exposing Java null as DEAL null without validation),
+  `T | null` accepts Java null as the DEAL null sentinel, an
+  out-of-safe-range int → E8004 (checkInt);
+- async exports must return a `java.util.concurrent.CompletableFuture`
+  — the backend async operation the await lowering accepts
+  (spec-v1.1 §Async operation semantics permits blocking calls as a
+  JVM lowering) — anything else → E8010 "host async function must
+  return an async operation"; the wrapper joins the operation and
+  checks the completion value against the declared return descriptor
+  → E8001 at the await site, mirroring LuaJIT's await-site completion
+  check. Async function declarations emit as plain blocking methods;
+  await of a DEAL async call is a plain call (its body already
+  blocked), await of a host async call blocks on the operation.
+
+The wrapper invokes the host reflectively, so a missing host class or
+method is a LOAD-TIME DEAL error, never a javac failure of the emitted
+artifact. Host class exports, rest parameters, and
+array/table/function-typed host parameters or returns stay E6000 at
+the import statement — rejected, never silently miscompiled.
+
+## Review evidence: host ABI slice (ISSUE-0100)
+
+Every supported host ABI form, with the test covering it. All fixture
+evidence runs through the real frontend → real `JvmBackend` codegen →
+`javac` subprocess → `java` subprocess executing the emitted artifact
+against a real host implementation class
+(`test/conformance/fixtures/jvm-host-abi-slice.json`, 16 JVM-only
+fixtures; `test/BackendConformanceTest` fails a fixture whose
+parser/checker/module-discovery yields no compile, whose codegen leaves
+no `.java` artifact, or whose JVM execution is bypassed):
+
+| Host ABI form (spec-v1.1 §Host ABI / §JVM value mapping) | Test covering it |
+|---|---|
+| declared host export exposure (load-time-validated wrappers; the host object exposes every declared name) | `jvm-host-export-presence` (load-time `info()` call + `add(2,3)` = 5); emission pins in `JvmBackendTest.testHostAbiSlice` (`$host$log$add$m`, `Class.forName("HostLog")`, the `(int,int)->int` descriptor) |
+| missing declared export → load-time E8011 | `jvm-host-missing-export`; `JvmBackendTest.testHostAbiSlice` (javac passes, `java` raises `DEAL_ERROR_CODE: E8011`) |
+| unloadable host class → load-time E8011 (the JVM analog of LuaJIT's wrapped require failure) | `jvm-host-missing-host-class` |
+| extra host exports ignored (never looked up, load unaffected) | `jvm-host-extra-export-ignored` |
+| sync return boundary check — wrong runtime kind → E8010 | `jvm-host-bad-return` (Long for a declared string) |
+| sync return boundary check — Java null crossing a non-nullable return → E8010 (no unvalidated null) | `jvm-host-bad-return-null-for-string` |
+| sync return boundary check — out-of-safe-range int → E8004 (checkInt) | `jvm-host-int-out-of-range-return` |
+| nullable return: Java null is the DEAL null sentinel, values pass, both observable with narrowing | `jvm-host-nullable-return-ok` |
+| nullable return boundary check — non-null wrong inner kind → E8010 | `jvm-host-nullable-return-bad` |
+| null return boundary — `->null` host function returning Java null passes (discard path + in-function) | `jvm-host-null-return-ok` |
+| null return boundary — non-null host result → E8010 | `jvm-host-null-return-bad` |
+| host function parameter adaptation (int/number/boolean/string/nullable parameters arrive as their JVM mappings) | `jvm-host-param-adaptation` |
+| async host operation shape — non-operation return → E8010 | `jvm-host-async-shape-bad`; `JvmBackendTest.testHostAbiSlice` |
+| async host ok — CompletableFuture joined by the blocking await lowering, completion value checked | `jvm-host-async-ok` (host async awaited through a DEAL async function) |
+| async host completion mismatch → E8001 at the await site | `jvm-host-async-completion-bad`; `JvmBackendTest.testHostAbiSlice` |
+| async function declarations emit as plain blocking methods (spec-permitted JVM lowering); async function expressions stay E6000 | `jvm-host-async-ok` (async `run`/`load`), `JvmBackendTest.testUnsupportedConstructsRejected` ("async function expression" case) |
+| function descriptor validation at load (getDeclaredMethod signature check against the declared descriptor) | `jvm-host-missing-export` (missing), `jvm-host-export-presence` + `JvmBackendTest.testHostAbiSlice` (present); signature-mismatch E8011 same path |
+| frontend compile-error rejected before backend (externals gating E2009, no artifacts) | `jvm-host-frontend-gate-e2009` |
+| unsupported declared shapes rejected at the import, never miscompiled: host class exports, rest parameters, array/table/function-typed parameters and returns → E6000 | `JvmBackendTest.testOrchestratorJvmDeclarationImportRejected` (class-export E6000); `JvmBackendTest.testHostAbiSlice` compiles only supported shapes |
+| relative (`./`) declaration import is a host module without an externals listing (host-module-abi D5(4)) | `JvmBackendTest.testOrchestratorJvmDeclarationImportRejected` |
+
+Not supported in this slice (E6000 at the import, documented): host
+class exports (the fixture-list item "host class export where
+supported" is therefore not yet supported — a host module declaring a
+class export is rejected, never miscompiled), rest parameters, and
+array/table/function-typed host parameters or returns.
 
 The JVM's static type system proves typed boundaries redundant, which the
 current normative spec explicitly permits (`docs/spec-v1.1.md` §JVM backend
@@ -822,12 +915,16 @@ live in `test/JvmBackendTest`):
 | module class-name isolation: same basename in different directories → distinct classes (`a/calc` → `ACalc`, `b/calc` → `BCalc`) | `jvm-mod-class-name-isolation`; artifacts pinned by `JvmBackendTest.testModuleClassIsolation`; collisions still E6000 (`JvmBackendTest.testOrchestratorJvmClassCollision`) |
 | orchestrator-level multi-module compile (artifacts, static call, javac + java execution) | `JvmBackendTest.testModuleImports` |
 | frontend compile-error gates rejected before any backend (no artifacts) | `jvm-mod-missing-export` (E2004 missing export), `jvm-mod-imported-arity-mismatch` (E3009), `jvm-mod-imported-type-error` (E5003 in the imported module) |
-| declaration/host-module import stays E6000 (out of slice, never silently dropped) | `JvmBackendTest.testOrchestratorJvmDeclarationImportRejected`; backend-level no-map rejection by `JvmBackendTest.testModuleImportBackendEmission` |
+| declaration/host-module import = host module (ISSUE-0100) | `test/conformance/fixtures/jvm-host-abi-slice.json` (16 fixtures) + `JvmBackendTest.testHostAbiSlice`; the pre-slice E6000 pin moved to the class-export case (`JvmBackendTest.testOrchestratorJvmDeclarationImportRejected`) |
 | module-level alias use before its import statement is E6000 (LuaJIT fails at load; Java would silently initialize) | `JvmBackendTest.testModuleImportUseBeforeImportRejected` (direct field-initializer, direct statement, and transitive function-call shapes; the import-first shape stays clean) |
 
 Not in this slice (deferred, documented): non-literal default
 expressions on imported classes (ISSUE-0109), stdlib modules other than
-`std/console`, function values, async/await, host ABI, `@jsonable`.
+`std/console`, function values (including async function expressions),
+host class exports (E6000 at the import — the fixture-list item
+"host class export where supported" is not yet supported), host
+parameters/returns of array/class/table/function type (E6000 at the
+import), `@jsonable`.
 
 
 - **Tests proving both** —
