@@ -249,7 +249,21 @@ import java.util.Set;
  *       deferred signature shapes (nested/nullable/async/rest function
  *       types, arrays of functions, and function equality/inequality
  *       over array-/class-/nullable-parameter signatures) rejected with
- *       E6000.</li>
+ *       E6000; module-level indirect calls through NON-identifier
+ *       callees (a call-result or assignment-produced function value —
+ *       the produced value is not statically known to the load-time
+ *       guard: LuaJIT fails at load when the produced function reads or
+ *       reaches a not-yet-declared value, Java would read the
+ *       uninitialized static wrapper field or run the hoisted method)
+ *       rejected with E6000; and cross-module function values (a
+ *       Func-typed argument to an imported module call — including the
+ *       arity-extension/E8010-boundary shape — and an imported call
+ *       result with Func static type) rejected with E6000 and no entry
+ *       artifact by the orchestrator
+ *       ({@code testCrossModuleFunctionValuesRejected} — the
+ *       per-module wrapper classes cannot cross a module boundary, so
+ *       the pre-fix emissions were artifacts javac rejected after the
+ *       CLI reported success).</li>
  * </ul>
  *
  * <p>The end-to-end JVM conformance fixtures live in
@@ -304,6 +318,7 @@ public class JvmBackendTest {
             testNullableSlice();
             testImportedClassValues();
             testFunctionValues();
+            testCrossModuleFunctionValuesRejected();
             testUseBeforeDeclarationRejected();
             testFunctionBodyModuleFieldAccessGuards();
             testAssignmentBeforeDeclarationRejected();
@@ -4327,6 +4342,36 @@ public class JvmBackendTest {
                 let g: () => int = zero;
                 let r: int = picker()() + g();
                 export function test(): int { return r; }
+                """),
+            // Module-level indirect calls through NON-identifier callees
+            // (a call or assignment producing a function value): the
+            // produced value is not statically known to the load-time
+            // guard, so every such load-time call is E6000 — LuaJIT
+            // fails at load when the produced function reads or reaches
+            // a not-yet-declared value, while Java would silently read
+            // the uninitialized static wrapper field (a bare
+            // NullPointerException) or run the hoisted method.
+            new GuardCase(
+                "module-level call-result callee returning a later-declared function", """
+                function picker(): (x: int) => int { return inc; }
+                let r: int = picker()(2);
+                function inc(x: int): int { return x + 1; }
+                export function test(): int { return r; }
+                """),
+            new GuardCase(
+                "module-level call-result callee whose produced function reaches a later-declared function", """
+                function mid(x: int): int { return laterFn(); }
+                function picker(): (x: int) => int { return mid; }
+                let r: int = picker()(2);
+                function laterFn(): int { return 42; }
+                export function test(): int { return r; }
+                """),
+            new GuardCase(
+                "module-level assignment-produced callee", """
+                function inc(x: int): int { return x + 1; }
+                let g: (x: int) => int = inc;
+                let r: int = (g = inc)(2);
+                export function test(): int { return r; }
                 """));
         for (GuardCase c : guards) {
             Frontend gf = compileFrontend(c.source, "jvmtest-fv-guard.deal");
@@ -4417,6 +4462,88 @@ public class JvmBackendTest {
             check(res.hasErrors(), "backend rejects " + c.what());
             check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
                 "E6000 for " + c.what() + ": " + res.diagnostics());
+        }
+    }
+
+    /**
+     * ISSUE-0098 cross-module function values: the per-signature wrapper
+     * classes are emitted per module as NESTED classes, so a function
+     * value cannot cross a project-module boundary — a Func-typed
+     * argument to an imported module call, or a Func-typed call result
+     * used as an assignment value / call-result callee, is E6000 with no
+     * entry artifact (never an artifact javac rejects after the CLI
+     * reported success). The pre-fix emissions
+     * ({@code Lib.apply(inc$fn, 41L)}, {@code Fn1_I_R_I f =
+     * Lib.picker();}, {@code Fn1_I_R_I __fn0 = Lib.picker();}) were all
+     * javac-rejected, and the member-call path also silently skipped the
+     * LuaJIT parameter-boundary E8010 check the same-module path emits.
+     * The same four shapes are pinned by the multi-module conformance
+     * fixtures in {@code test/conformance/fixtures/
+     * jvm-function-values-slice.json} through
+     * {@code BackendConformanceTest.runMultiModuleTestCase}.
+     */
+    private static void testCrossModuleFunctionValuesRejected() throws Exception {
+        System.out.println("-- Orchestrator: cross-module function values → E6000 --");
+
+        record XmodCase(String what, String libSource, String entrySource) {}
+        List<XmodCase> cases = List.of(
+            new XmodCase("callback argument",
+                "export function apply(f: (x: int) => int, v: int): int { return f(v); }\n",
+                "import * as lib from \"./lib\"\n"
+                    + "function inc(x: int): int { return x + 1; }\n"
+                    + "export function test(): int { return lib.apply(inc, 41); }\n"),
+            new XmodCase("arity-extension argument (E8010 boundary)",
+                "export function apply2(f: (a: int, b: string) => int, v: int): int { return f(v, \"i\"); }\n",
+                "import * as lib from \"./lib\"\n"
+                    + "function inc(x: int): int { return x + 1; }\n"
+                    + "export function test(): int { return lib.apply2(inc, 41); }\n"),
+            new XmodCase("returned function value",
+                "export function picker(): (x: int) => int { return inc; }\n"
+                    + "function inc(x: int): int { return x + 1; }\n",
+                "import * as lib from \"./lib\"\n"
+                    + "export function test(): int {\n"
+                    + "  let f: (x: int) => int = lib.picker();\n"
+                    + "  return f(41);\n"
+                    + "}\n"),
+            new XmodCase("imported call-result callee",
+                "export function picker(): (x: int) => int { return inc; }\n"
+                    + "function inc(x: int): int { return x + 1; }\n",
+                "import * as lib from \"./lib\"\n"
+                    + "export function test(): int { return lib.picker()(41); }\n"));
+
+        for (XmodCase c : cases) {
+            writeFile("src/lib.deal", c.libSource());
+            writeFile("src/entry.deal", c.entrySource());
+
+            Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
+            Path outputDir = tmpDir.resolve("build/xmod_fv");
+            List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                entryFile, outputDir, false, false, false, Backend.JVM,
+                (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+
+            boolean success = orchestrator.compile();
+            check(!success, "cross-module function-value case '" + c.what()
+                + "' is rejected: " + orchestrator.diagnostics());
+            check(orchestrator.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for cross-module function-value case '" + c.what()
+                    + "': " + orchestrator.diagnostics());
+            // The rejected ENTRY module writes no artifact (the clean
+            // lib module may still be written by the orchestrator's
+            // two-pass design) — never an artifact javac rejects after
+            // the CLI reported success.
+            check(!Files.exists(outputDir.resolve("Entry.java")),
+                "no entry artifact for '" + c.what() + "'");
+
+            if (Files.isDirectory(outputDir)) {
+                try (var stream = Files.walk(outputDir)) {
+                    stream.sorted(Comparator.reverseOrder()).forEach(f -> {
+                        try { Files.deleteIfExists(f); } catch (IOException ignored) {}
+                    });
+                }
+            }
         }
     }
 

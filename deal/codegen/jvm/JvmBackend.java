@@ -7176,6 +7176,27 @@ public final class JvmBackend {
         // temporary is single-assignment and effectively final).
         Type calleeType = typeOf(call.callee());
         if (calleeType instanceof Type.Func f) {
+            // Module-level (load-time) indirect calls through a
+            // non-identifier callee (a call or assignment producing a
+            // function value): the produced value is not statically
+            // known to the load-time guard — LuaJIT fails at load when
+            // the produced function reads or reaches a not-yet-declared
+            // value (the chunk-local is nil until its declaration runs),
+            // while Java would silently read the uninitialized static
+            // wrapper field (a bare NullPointerException) or run the
+            // hoisted method. Conservative rejection until ISSUE-0110.
+            if (currentModuleStatementIndex >= 0) {
+                unsupported("module-level indirect calls through "
+                    + "non-identifier callees (a call-result or "
+                    + "assignment-produced function value — the value "
+                    + "is not statically known to the load-time guard; "
+                    + "LuaJIT fails at load when the produced function "
+                    + "reads or reaches a not-yet-declared value, Java "
+                    + "would read the uninitialized static wrapper "
+                    + "field or run the hoisted method)",
+                    call.callee().span());
+                return "null";
+            }
             String shape = registerWrapperShape(f);
             if (shape == null) {
                 unsupported("function values whose signature contains "
@@ -7317,6 +7338,38 @@ public final class JvmBackend {
             }
         }
         String className = classNameFor(module);
+        // ISSUE-0098: function values cannot cross a project-module
+        // boundary — the per-signature wrapper classes are emitted per
+        // module as nested classes, so a caller-module wrapper is never
+        // a value of the callee module's wrapper class. A Func-typed
+        // argument (a callback, an arity-extension adapter value, or a
+        // conversion intrinsic) would emit an artifact javac rejects
+        // after the CLI reported success, and the member-call path has
+        // no function parameter targets, so the parameter-boundary
+        // E8010 check the same-module call path emits would be silently
+        // dropped — reject with E6000 until ISSUE-0110 emits the
+        // wrapper shapes as shared top-level classes.
+        for (int i = 0; i < call.args().size(); i++) {
+            if (typeOf(call.args().get(i)) instanceof Type.Func) {
+                unsupported("function values passed to an imported "
+                    + "module call (the per-module wrapper classes "
+                    + "cannot cross a module boundary — cross-module "
+                    + "function values are deferred to ISSUE-0110)",
+                    call.args().get(i).span());
+                return "null";
+            }
+        }
+        // A function value returned from an imported module call (used
+        // as an assignment value, a call-result callee, or a discarded
+        // statement value) carries the DEFINING module's wrapper class
+        // — the same boundary violation.
+        if (typeOf(call) instanceof Type.Func) {
+            unsupported("function values returned from an imported "
+                + "module call (the per-module wrapper classes cannot "
+                + "cross a module boundary — cross-module function "
+                + "values are deferred to ISSUE-0110)", mae.span());
+            return "null";
+        }
         List<String> argCodes = emitOperandsInOrder(call.args());
         StringBuilder sb = new StringBuilder(className).append('.')
             .append(javaName(mae.field())).append('(');

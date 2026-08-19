@@ -131,14 +131,24 @@ import javax.tools.ToolProvider;
  * boundaries with the checked value expression evaluated first
  * (evaluate-then-check side-effect order pinned cross-backend),
  * wrapper reference equality, load-time indirect calls, six frontend
- * signature/indirect-call compile-error gates, twelve cross-backend
- * parity fixtures, and four LuaJIT-only reference fixtures pinning the
- * reassigned-local adapter, the side-effecting call-result adapter, and
- * the two load-time guard shapes (a load-time-called function body
- * assigning the field before the indirect call, and a load-time-called
- * function body containing the indirect call — LuaJIT's module load
- * fails with a raw upvalue error) that the JVM slice conservatively
- * rejects with E6000 until ISSUE-0110).
+ * signature/indirect-call compile-error gates, four multi-module
+ * backend-rejection fixtures pinning the E6000 rejection of
+ * cross-module function-value flow (callback-in, arity-extension
+ * argument/E8010 boundary, return-out, and call-result callee — the
+ * per-module wrapper classes cannot cross a module boundary, so the
+ * pre-fix emissions were artifacts javac rejected after the CLI
+ * reported success; the rejected entry module writes no artifact),
+ * twelve cross-backend parity fixtures, and six LuaJIT-only reference
+ * fixtures pinning the reassigned-local adapter, the side-effecting
+ * call-result adapter, the two load-time guard shapes (a
+ * load-time-called function body assigning the field before the
+ * indirect call, and a load-time-called function body containing the
+ * indirect call — LuaJIT's module load fails with a raw upvalue error),
+ * and the two module-level call-result callee shapes (the produced
+ * function declared after the call site — E8001 'expected function' at
+ * load — and the produced function reaching a later-declared function —
+ * a raw upvalue load error) that the JVM slice conservatively rejects
+ * with E6000 until ISSUE-0110).
  *
  * <h2>Multi-module fixtures (ISSUE-0096)</h2>
  *
@@ -170,9 +180,14 @@ import javax.tools.ToolProvider;
  * yields no compile and the fixture fails; a bypassed codegen leaves no
  * {@code .java} artifact (asserted); a bypassed JVM execution produces no
  * output. {@code expectedCompileError} fixtures run the same orchestrator
- * pipeline, assert the named frontend error, assert no E6xxx backend code
- * appears, and assert no {@code .java} artifact was written — the gate
- * stops before codegen. {@code irContains}/{@code irNotContains} are
+ * pipeline: a FRONTEND expectation asserts the named frontend error, no
+ * E6 backend code, and no {@code .java} artifact at all (the gate stops
+ * before codegen), while a BACKEND expectation (an E6 code — the
+ * ISSUE-0098 E6000 cross-module function-value rejections) asserts the
+ * named E6000 and that the rejected entry module wrote no artifact (clean
+ * imported modules may still be written by the orchestrator's two-pass
+ * design — never an artifact javac rejects after the CLI reported
+ * success). {@code irContains}/{@code irNotContains} are
  * checked against the concatenation of every module's IR dump (the
  * orchestrator runs with {@code --dump-ir}).
  *
@@ -1265,6 +1280,18 @@ public class BackendConformanceTest {
      * yields a failed compile, a bypassed codegen leaves no {@code .java}
      * artifact (asserted before javac), and a bypassed JVM execution
      * produces no output.
+     *
+     * <p>Two {@code expectedCompileError} gates run here. A FRONTEND
+     * expectation asserts the named frontend error, asserts no E6 backend
+     * code appears, and asserts no {@code .java} artifact at all (the
+     * gate stops before codegen). A BACKEND expectation (an E6 code —
+     * ISSUE-0098's E6000 cross-module function-value rejections) runs the
+     * same orchestrator pipeline, asserts the named E6000 (any other E6
+     * code fails the gate), and asserts the rejected ENTRY module wrote
+     * no artifact (the orchestrator's two-pass design may still write
+     * clean imported modules' artifacts, so the artifact pin targets the
+     * entry) — never an artifact javac rejects after the CLI reported
+     * success.
      */
     /**
      * Runs one backend assertion group and attributes the pass/fail
@@ -1357,48 +1384,84 @@ public class BackendConformanceTest {
                     outputRoot, config);
                 boolean matched = run.diagnostics().stream()
                     .anyMatch(d -> expectedCompileError.equals(d.code()));
-                boolean onlyFrontend = run.diagnostics().stream()
-                    .allMatch(d -> !d.code().startsWith("E6"));
+                // An E6 expectation is a backend-rejection fixture
+                // (ISSUE-0098 cross-module function values): the named
+                // E6000 IS the expected diagnostic, so it is admitted —
+                // any OTHER E6 code still fails the gate. Frontend-error
+                // fixtures keep the strict no-E6 rule.
+                boolean backendCode = expectedCompileError.startsWith("E6");
+                boolean onlyExpectedCodes = run.diagnostics().stream()
+                    .allMatch(d -> !d.code().startsWith("E6")
+                        || expectedCompileError.equals(d.code()));
                 if (run.success()) {
-                    log("  [" + name + "] FAIL: expected frontend "
-                        + "compile-error " + expectedCompileError
+                    log("  [" + name + "] FAIL: expected "
+                        + (backendCode ? "backend rejection "
+                            : "frontend compile-error ")
+                        + expectedCompileError
                         + " but the project compiled successfully");
                     failed.incrementAndGet();
                     return false;
                 }
                 if (!matched) {
-                    log("  [" + name + "] FAIL: expected frontend "
-                        + "compile-error " + expectedCompileError + " but got: "
+                    log("  [" + name + "] FAIL: expected "
+                        + (backendCode ? "backend rejection "
+                            : "frontend compile-error ")
+                        + expectedCompileError + " but got: "
                         + (run.diagnostics().isEmpty() ? "<no errors>"
                             : run.diagnostics().stream().map(Diagnostic::toString)
                                 .toList()));
                     failed.incrementAndGet();
                     return false;
                 }
-                if (!onlyFrontend) {
+                if (!onlyExpectedCodes) {
                     log("  [" + name + "] FAIL: error codes came "
-                        + "from backend lowering, not the frontend: "
+                        + "from an unexpected phase (only '"
+                        + expectedCompileError + "' may appear): "
                         + run.diagnostics());
                     failed.incrementAndGet();
                     return false;
                 }
-                boolean artifactWritten = Files.isDirectory(outputRoot);
-                if (artifactWritten) {
-                    try (var stream = Files.walk(outputRoot)) {
-                        artifactWritten = stream.anyMatch(
-                            p -> p.toString().endsWith(".java"));
+                if (backendCode) {
+                    // The REJECTED entry module must write no artifact
+                    // (the orchestrator's two-pass design may still write
+                    // CLEAN imported modules' artifacts, so the artifact
+                    // pin targets the entry — the module whose codegen
+                    // recorded the rejection).
+                    Path entryJava = outputRoot.resolve(
+                        entryClassName(entry) + ".java");
+                    if (Files.exists(entryJava)) {
+                        log("  [" + name + "] FAIL: the "
+                            + "backend-rejection gate produced the entry "
+                            + "artifact '" + entryJava.getFileName()
+                            + "' (codegen ran for the rejected module): "
+                            + run.capturedOutput());
+                        failed.incrementAndGet();
+                        return;
+                    }
+                } else {
+                    boolean artifactWritten = Files.isDirectory(outputRoot);
+                    if (artifactWritten) {
+                        try (var stream = Files.walk(outputRoot)) {
+                            artifactWritten = stream.anyMatch(
+                                p -> p.toString().endsWith(".java"));
+                        }
+                    }
+                    if (artifactWritten) {
+                        log("  [" + name + "] FAIL: the compile-error "
+                            + "gate produced .java artifacts (codegen ran): "
+                            + run.capturedOutput());
+                        failed.incrementAndGet();
+                        return;
                     }
                 }
-                if (artifactWritten) {
-                    log("  [" + name + "] FAIL: the compile-error "
-                        + "gate produced .java artifacts (codegen ran): "
-                        + run.capturedOutput());
-                    failed.incrementAndGet();
-                    return false;
-                }
-                log("  [" + name + "] OK — compile-error "
-                    + expectedCompileError + " rejected before backend"
-                    + " (orchestrator pipeline; no codegen invoked)");
+                log("  [" + name + "] OK — "
+                    + (backendCode ? "backend rejection "
+                        : "compile-error ")
+                    + expectedCompileError
+                    + (backendCode
+                        ? " (orchestrator pipeline; no entry artifact written)"
+                        : " rejected before backend"
+                            + " (orchestrator pipeline; no codegen invoked)"));
                 passed.incrementAndGet();
                 return true;
             }
