@@ -348,8 +348,9 @@ import java.util.Set;
  * boundary: a nullable-typed table read ({@code C | null}, {@code
  * int | null}, {@code T[] | null}) passes the DEAL null through and
  * otherwise runs the inner check — the nullable nominal class check, a
- * {@code $checkNullable<primitive>} check, or the per-wrapper
- * {@code $check$<Wrapper>} array gate. Every other class/nullable-typed
+ * nullable primitive check, or the per-wrapper array gate (all unified
+ * behind the {@code $check(descriptor, value)} seam by ISSUE-0110 —
+ * see below). Every other class/nullable-typed
  * boundary in the slice
  * (locals, parameters, returns, field reads/writes, construction) is
  * provably typed by the JVM's static type system, which spec-v1.1
@@ -379,6 +380,28 @@ import java.util.Set;
  * class fields, nested class declarations, table reads with primitive
  * (non-nullable)/function target types, table field writes, non-literal
  * defaults on imported classes — all E6000, never silently miscompiled.
+ *
+ * <p>Descriptor and cross-feature integration join (ISSUE-0110) unifies
+ * every runtime check the prerequisite slices introduced behind ONE
+ * shared descriptor-driven seam: {@link #typeDescriptor(Type)} is the
+ * single JVM type-descriptor emitter (spec {@code RuntimeTypeDescriptor}
+ * format — primitives, {@code ?T}, {@code [T]}, {@code @module/Name},
+ * function and {@code async} operation types, {@code ...[T]} rest arms),
+ * and every untyped table-read boundary emits one call to the single
+ * emitted helper {@code $check(descriptor, value)} whose branches carry
+ * the exact acceptance semantics the retired per-feature helpers pinned
+ * ({@code check_int}/{@code check_nullable}/{@code check_array} parity,
+ * the module-qualified nominal messages, and the deterministic
+ * {@code "expected <descriptor>, got …"} mismatch shape for anything
+ * else). Local classes dispatch in-module; imported classes dispatch on
+ * the DECLARING module's seam ({@code Lib.$check("@lib/C", v)}), so the
+ * nominal identity machinery stays exactly where ISSUE-0109 placed it.
+ * Class identity strings, the seam's branch keys, and the call-site
+ * descriptor literals all flow from the same emitter — one spelling, no
+ * drift. Function and async-operation descriptors are spelled by the
+ * emitter for the later function-value (ISSUE-0098) and async
+ * (ISSUE-0099) slices to consume; no untyped function-value boundary
+ * exists in this slice yet.
  */
 public final class JvmBackend {
 
@@ -610,6 +633,18 @@ public final class JvmBackend {
      * emission, so construction sites before the declaration resolve. */
     private final Map<String, ClassDeclaration> moduleClasses =
         new LinkedHashMap<>();
+
+    /**
+     * One Java branch per declared class for the shared descriptor-driven
+     * runtime-check seam (ISSUE-0110): each {@code emitClass} run appends
+     * the {@code descriptor.equals(...)} branches for its class descriptor
+     * ({@code @module/Name}), its array descriptor ({@code [@module/Name]}),
+     * and its nullable-element array descriptor ({@code [?@module/Name]});
+     * {@link #emitSharedCheckSeam} emits them inside the single emitted
+     * {@code $check(descriptor, value)} helper, which is emitted AFTER the
+     * module body so every declared class contributes its branches.
+     */
+    private final List<String> classCheckBranches = new ArrayList<>();
 
     /** Function name → module fields read by its body, transitively through
      * calls to other module functions (use-before-declaration detection for
@@ -994,6 +1029,11 @@ public final class JvmBackend {
         }
         currentModuleStatementIndex = -1;
         moduleLevel = false;
+
+        // ISSUE-0110: the shared descriptor-driven runtime-check seam is
+        // emitted AFTER the module body so every declared class has
+        // appended its descriptor branches to classCheckBranches.
+        emitSharedCheckSeam();
 
         indent--;
         emitLine("}");
@@ -1704,13 +1744,12 @@ public final class JvmBackend {
         emitLine("static void __init$() {}");
         emitLine("// ---- DEAL classes and tables (ISSUE-0095) ----");
         emitLine("// Nominal identity base: every generated DEAL class extends $Base and");
-        emitLine("// carries its spec ClassDescriptor (@<modulePath>/<Name>). Generated");
-        emitLine("// class names carry the $C_ prefix and per-class nominal checks the");
-        emitLine("// $check prefix; the fixed runtime helpers here stay unreachable from");
-        emitLine("// BOTH (javaName translates user identifiers without raw '$', so");
-        emitLine("// $check + javaName(<C>) can never spell $check$Table — the extra '$'");
-        emitLine("// is unspellable in DEAL — while a class named Table WOULD collide");
-        emitLine("// with the fixed helper if it were named $checkTable).");
+        emitLine("// carries its spec ClassDescriptor (@<modulePath>/<Name>). The shared");
+        emitLine("// runtime-check seam $check(descriptor, value) (ISSUE-0110, emitted");
+        emitLine("// after the module body) dispatches the nominal checks on those");
+        emitLine("// descriptor strings; javaName translates user identifiers without");
+        emitLine("// raw '$', so no user function or class can collide with the fixed");
+        emitLine("// $check helper.");
         emitLine("static class $Base {");
         emitLine("    final java.lang.String $identity;");
         emitLine("    $Base(java.lang.String identity) { this.$identity = identity; }");
@@ -1763,18 +1802,11 @@ public final class JvmBackend {
         emitLine("    }");
         emitLine("    return null;");
         emitLine("}");
-        emitLine("// Table-typed boundary check for table reads with a table contextual");
-        emitLine("// target (E8001 when the dynamic value is not a table). The name is");
-        emitLine("// $check$Table — NOT $checkTable: a local class named Table emits the");
-        emitLine("// nominal-check helper $check + javaName(\"Table\") == $checkTable, and");
-        emitLine("// two same-named static methods would make javac reject the artifact");
-        emitLine("// after the CLI reported success. The '$' between check and Table");
-        emitLine("// cannot appear in any generated class-check name (javaName never");
-        emitLine("// emits a raw '$'), so the fixed helper can never collide.");
-        emitLine("static $T $check$Table(java.lang.Object v) {");
-        emitLine("    if (v instanceof $T t) return t;");
-        emitLine("    throw new DealError(\"E8001\", \"expected table, got \" + $describe(v));");
-        emitLine("}");
+        emitLine("// The table-typed boundary check now lives in the shared");
+        emitLine("// descriptor-driven seam (ISSUE-0110): table reads emit");
+        emitLine("// $check(\"table\", v) and the seam raises E8001 \"expected table,");
+        emitLine("// got ...\" for a non-table value — the same shape the retired");
+        emitLine("// per-kind table-boundary helper raised.");
         emitLine();
         emitLine("// ---- DEAL primitive array runtime support (ISSUE-0094) ----");
         emitLine("// int[]/number[]/string[]/boolean[] map to mutable wrapper classes — the");
@@ -1864,50 +1896,18 @@ public final class JvmBackend {
         emitLine("// subclass ($Array$<C>) so instanceof proves the element type, plus");
         emitLine("// per-class read/write helpers with the nominal E8001 checks.");
         emitLine("static class __RefArray { java.lang.Object[] data; __RefArray(java.lang.Object[] data) { this.data = data; } }");
-        emitLine("// Nullable boundary checks for table reads in nullable-typed contextual");
-        emitLine("// targets (runtime.lua's check_nullable): null passes through as the DEAL");
-        emitLine("// null, any Lua number passes for number and any integral in-range Lua");
-        emitLine("// number passes for int (runtime.lua's check_nullable delegates to");
-        emitLine("// check_int/check_number, which accept every Lua number — a Long crosses");
-        emitLine("// into number | null and an integral in-range Double crosses into int | null,");
-        emitLine("// with NaN/infinity/non-integral becoming E8001 and out-of-safe-range becoming E8004");
-        emitLine("// exactly like check_int), anything else raises E8001 \"expected <T>, got ...\".");
-        emitLine("static java.lang.Long $checkNullableInt(java.lang.Object v) { if (v == null) return null; if (v instanceof java.lang.Long l) return checkInt(l); if (v instanceof java.lang.Double d) { if (d.isNaN()) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (d.isInfinite()) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (d % 1.0 != 0.0) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); return checkInt((long) (double) d); } throw new DealError(\"E8001\", \"expected int, got \" + $describe(v)); }");
-        emitLine("static java.lang.Double $checkNullableNumber(java.lang.Object v) { if (v == null) return null; if (v instanceof java.lang.Long l) return (double) l; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v)); }");
-        emitLine("static java.lang.Boolean $checkNullableBoolean(java.lang.Object v) { if (v == null) return null; if (v instanceof java.lang.Boolean b) return b; throw new DealError(\"E8001\", \"expected boolean, got \" + $describe(v)); }");
-        emitLine("static java.lang.String $checkNullableString(java.lang.Object v) { if (v == null) return null; if (v instanceof java.lang.String str) return str; throw new DealError(\"E8001\", \"expected string, got \" + $describe(v)); }");
-        emitLine("// Array wrapper gates for table reads with an array-typed contextual");
-        emitLine("// target: the declared wrapper's gate passes only that wrapper class,");
-        emitLine("// anything else raises E8001 \"expected array, got ...\" (the JVM");
-        emitLine("// storage analog of LuaJIT's check_array: the wrapper's typed storage");
-        emitLine("// already proves every element — writes check the element type — so the");
-        emitLine("// wrapper-class gate is the element-mismatch boundary). A wrong wrapper");
-        emitLine("// never reaches a raw cast. The (T | null)[] gates below additionally");
-        emitLine("// accept the plain T[] wrapper (check_array's element-wise");
-        emitLine("// check_nullable(T) validation), and the per-class (C | null)[] gate");
-        emitLine("// accepts the plain C[] wrapper with shared Object[] storage.");
-        emitLine("static __IntArray $check$IntArray(java.lang.Object v) { if (v instanceof __IntArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static __NumberArray $check$NumberArray(java.lang.Object v) { if (v instanceof __NumberArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static __StringArray $check$StringArray(java.lang.Object v) { if (v instanceof __StringArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static __BooleanArray $check$BooleanArray(java.lang.Object v) { if (v instanceof __BooleanArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("// (T | null)[] gates for table reads with a (T | null)[] or");
-        emitLine("// (T | null)[] | null contextual target: the declared or-null");
-        emitLine("// wrapper passes as-is, and a plain T[] wrapper passes too —");
-        emitLine("// LuaJIT's check_array validates every element against");
-        emitLine("// check_nullable(T) and every plain T element passes, so a stored");
-        emitLine("// T[] reads back into (T | null)[]. The accepted T[] storage is");
-        emitLine("// COPIED into boxed or-null storage (O(n), mirroring check_array's");
-        emitLine("// element-wise validation — every stored long is already a valid");
-        emitLine("// int: writes run checkInt and out-of-range literals emit inline");
-        emitLine("// checkInt; the number/string/boolean elements carry their");
-        emitLine("// storage types). Anything else raises E8001. (The converted");
-        emitLine("// primitive copy is the documented storage-analog divergence from");
-        emitLine("// LuaJIT's same-table aliasing; the class-array conversion shares");
-        emitLine("// the Object[] storage instead.)");
-        emitLine("static __IntOrNullArray $check$IntOrNullArray(java.lang.Object v) { if (v instanceof __IntOrNullArray a) return a; if (v instanceof __IntArray a) { java.lang.Long[] nd = new java.lang.Long[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Long.valueOf(a.data[i]); return new __IntOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static __NumberOrNullArray $check$NumberOrNullArray(java.lang.Object v) { if (v instanceof __NumberOrNullArray a) return a; if (v instanceof __NumberArray a) { java.lang.Double[] nd = new java.lang.Double[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Double.valueOf(a.data[i]); return new __NumberOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static __StringOrNullArray $check$StringOrNullArray(java.lang.Object v) { if (v instanceof __StringOrNullArray a) return a; if (v instanceof __StringArray a) { java.lang.String[] nd = new java.lang.String[a.data.length]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); return new __StringOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static __BooleanOrNullArray $check$BooleanOrNullArray(java.lang.Object v) { if (v instanceof __BooleanOrNullArray a) return a; if (v instanceof __BooleanArray a) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Boolean.valueOf(a.data[i]); return new __BooleanOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("// The untyped-boundary checks the nullable slice needs (check_nullable");
+        emitLine("// semantics for ?int/?number/?boolean/?string, the per-wrapper array");
+        emitLine("// gates for [int]/[number]/[string]/[boolean] and their [?T]");
+        emitLine("// widening forms) all live in the single shared descriptor-driven");
+        emitLine("// $check(descriptor, value) seam now (ISSUE-0110, emitted after the");
+        emitLine("// module body). The acceptance semantics are byte-for-byte the ones");
+        emitLine("// the retired per-kind helpers carried: a Long crosses into number |");
+        emitLine("// null, an integral in-range Double crosses into int | null (NaN/");
+        emitLine("// infinity/non-integral E8001, out-of-safe-range E8004 — check_int");
+        emitLine("// parity), null passes check_nullable, a plain T[] wrapper passes a");
+        emitLine("// [?T] gate with the boxed copy, and a wrong wrapper raises E8001");
+        emitLine("// \"expected array, got ...\".");
         emitLine("// int(v: int | null) / number(v: number | null) conversion intrinsics:");
         emitLine("// null fails at runtime with E8001 (runtime.lua's int_convert/");
         emitLine("// number_convert \"cannot convert null to ...\" shapes).");
@@ -1977,6 +1977,73 @@ public final class JvmBackend {
         emitLine("// map to java.lang.Math directly (same IEEE 754 semantics).");
         emitLine("static double __mathSqrt(double x) { if (x < 0.0) throw new DealError(\"E8001\", \"sqrt of negative number\"); return java.lang.Math.sqrt(x); }");
         emitLine();
+    }
+
+    /**
+     * Emits the single shared descriptor-driven runtime-check seam
+     * (ISSUE-0110) at the end of the generated class (after the module
+     * body, so every declared class has appended its branches): ONE
+     * emitted {@code $check(descriptor, value)} helper that every typed
+     * boundary the JVM type system cannot prove routes through, with the
+     * expected type spelled as its spec {@code RuntimeTypeDescriptor}
+     * ({@code docs/spec-v1.1.md} §Runtime type descriptor format). A
+     * {@code ?} prefix applies {@code check_nullable} (the DEAL null
+     * passes through); the primitive branches carry the exact acceptance
+     * semantics of the retired per-kind helpers (check_int parity for
+     * {@code int} — a Long passes through {@code checkInt}, an integral
+     * in-range Double converts, NaN/infinity/non-integral raise E8001,
+     * out-of-safe-range raises E8004; {@code number} accepts every Long
+     * and Double like check_number); the array branches gate on the
+     * emitted wrappers with the {@code [?T]} widening forms (a plain
+     * {@code T[]} wrapper passes a {@code [?T]} gate — the boxed copy /
+     * shared-storage conversions the retired gates performed); the class
+     * branches (collected per declared class during {@link #emitClass})
+     * carry the module-qualified nominal checks; and every other
+     * descriptor raises the deterministic mismatch shape
+     * {@code "expected <descriptor>, got <$describe(v)>"} — the same
+     * E8001 code and message shapes the per-feature helpers pinned, now
+     * driven by one descriptor spelling.
+     *
+     * <p>The name {@code $check} is unreachable from {@link #javaName}
+     * output (user {@code $} escapes to {@code $d}), so no DEAL function,
+     * class, or field can collide with it — the retired
+     * {@code $check<C>}/{@code $check$Table} collision dance disappears
+     * with the per-kind helpers.
+     */
+    private void emitSharedCheckSeam() {
+        emitLine();
+        emitLine("// ---- Shared descriptor-driven runtime-check seam (ISSUE-0110) ----");
+        emitLine("// One helper, one descriptor convention (spec RuntimeTypeDescriptor,");
+        emitLine("// docs/spec-v1.1.md): every boundary the JVM type system cannot");
+        emitLine("// prove routes through $check(descriptor, value). A ? prefix is");
+        emitLine("// check_nullable: the DEAL null (Java null here) passes through.");
+        emitLine("static java.lang.Object $check(java.lang.String descriptor, java.lang.Object v) {");
+        indent++;
+        emitLine("if (descriptor.startsWith(\"?\")) {");
+        indent++;
+        emitLine("if (v == null) return null;");
+        emitLine("descriptor = descriptor.substring(1);");
+        indent--;
+        emitLine("}");
+        emitLine("if (descriptor.equals(\"table\")) { if (v instanceof $T t) return t; throw new DealError(\"E8001\", \"expected table, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"boolean\")) { if (v instanceof java.lang.Boolean b) return b; throw new DealError(\"E8001\", \"expected boolean, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"string\")) { if (v instanceof java.lang.String s) return s; throw new DealError(\"E8001\", \"expected string, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"int\")) { if (v instanceof java.lang.Long l) return checkInt(l); if (v instanceof java.lang.Double d) { if (d.isNaN()) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (d.isInfinite()) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (d % 1.0 != 0.0) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); return checkInt((long) (double) d); } throw new DealError(\"E8001\", \"expected int, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"number\")) { if (v instanceof java.lang.Long l) return (double) l; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"[int]\")) { if (v instanceof __IntArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"[number]\")) { if (v instanceof __NumberArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"[string]\")) { if (v instanceof __StringArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"[boolean]\")) { if (v instanceof __BooleanArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"[?int]\")) { if (v instanceof __IntOrNullArray a) return a; if (v instanceof __IntArray a) { java.lang.Long[] nd = new java.lang.Long[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Long.valueOf(a.data[i]); return new __IntOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"[?number]\")) { if (v instanceof __NumberOrNullArray a) return a; if (v instanceof __NumberArray a) { java.lang.Double[] nd = new java.lang.Double[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Double.valueOf(a.data[i]); return new __NumberOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"[?string]\")) { if (v instanceof __StringOrNullArray a) return a; if (v instanceof __StringArray a) { java.lang.String[] nd = new java.lang.String[a.data.length]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); return new __StringOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"[?boolean]\")) { if (v instanceof __BooleanOrNullArray a) return a; if (v instanceof __BooleanArray a) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Boolean.valueOf(a.data[i]); return new __BooleanOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        for (String branch : classCheckBranches) {
+            emitLine(branch);
+        }
+        emitLine("throw new DealError(\"E8001\", \"expected \" + descriptor + \", got \" + $describe(v));");
+        indent--;
+        emitLine("}");
     }
 
     // =========================================================================
@@ -2095,14 +2162,118 @@ public final class JvmBackend {
             ? name : "@" + modulePath + "/" + name;
     }
 
-    /** The emitted name of the runtime nominal-check helper for class
-     * {@code name} ({@code $check<Name>}). The {@code $check} prefix is
-     * unreachable from {@link #javaName} output for the same reason as
-     * {@code $C_}, and the fixed runtime helper {@code $check$Table}
-     * stays unreachable too (the extra raw {@code $} can never appear in
-     * {@code javaName} output). */
-    private String classCheckName(String name) {
-        return "$check" + javaName(name);
+    // =========================================================================
+    // The shared JVM type-descriptor emitter and runtime-check seam
+    // (ISSUE-0110)
+    // =========================================================================
+
+    /**
+     * The ONE JVM type-descriptor emitter (ISSUE-0110), public and static
+     * so the later function-value (ISSUE-0098) and async (ISSUE-0099)
+     * slices — and the unit tests — consume exactly one spelling. Maps a
+     * {@link Type} to the spec's {@code RuntimeTypeDescriptor} string
+     * ({@code docs/spec-v1.1.md} §Runtime type descriptor format):
+     * {@code ?T} nullables, {@code [T]} arrays, {@code @module/Name}
+     * classes (bare name only for an empty module path — the same
+     * spelling {@code IrDumper} produces), {@code (params)->ret} function
+     * types with the {@code async} prefix and {@code ...[T]} rest arms,
+     * and the primitive/table/Error forms.
+     */
+    public static String typeDescriptor(Type t) {
+        if (t == null) return "null";
+        return switch (t) {
+            case Type.Null ignored -> "null";
+            case Type.Boolean ignored -> "boolean";
+            case Type.Int ignored -> "int";
+            case Type.Number ignored -> "number";
+            case Type.String ignored -> "string";
+            case Type.Table ignored -> "table";
+            case Type.Error ignored -> "Error";
+            case Type.Array arr -> "[" + typeDescriptor(arr.element()) + "]";
+            case Type.Nullable n -> "?" + typeDescriptor(n.inner());
+            case Type.Class cls -> {
+                if (cls.modulePath() != null && !cls.modulePath().isEmpty()) {
+                    yield "@" + cls.modulePath() + "/" + cls.name();
+                }
+                yield cls.name();
+            }
+            case Type.Func f -> {
+                StringBuilder sb = new StringBuilder();
+                if (f.isAsync()) sb.append("async");
+                sb.append("(");
+                for (int i = 0; i < f.paramTypes().size(); i++) {
+                    if (i > 0) sb.append(",");
+                    sb.append(typeDescriptor(f.paramTypes().get(i)));
+                }
+                if (f.restType().isPresent()) {
+                    if (!f.paramTypes().isEmpty()) sb.append(",");
+                    sb.append("...").append(typeDescriptor(f.restType().get()));
+                }
+                sb.append(")->").append(typeDescriptor(f.returnType()));
+                yield sb.toString();
+            }
+        };
+    }
+
+    /**
+     * The seam-aligned descriptor for a runtime-check site: identical to
+     * {@link #typeDescriptor(Type)} for every non-class type, and the
+     * identity-aligned {@link #classCheckDescriptor} spelling for classes
+     * (so the call-site descriptor always equals the branch key the
+     * generated class appended to the seam — see
+     * {@link #classCheckDescriptor}).
+     */
+    private String runtimeTypeDescriptor(Type t) {
+        if (t instanceof Type.Class cls) return classCheckDescriptor(cls);
+        return typeDescriptor(t);
+    }
+
+    /**
+     * The spec {@code ClassDescriptor} string the runtime-check seam
+     * dispatches on for class {@code cls}: the backend-held
+     * module-qualified identity ({@link #classIdentity}) for a LOCAL
+     * class — the exact string the generated class carries — and
+     * {@code @<declaringModulePath>/<name>} for an imported class (the
+     * checker records the declaring module path in {@code Type.Class},
+     * and the declaring module's emitted seam branches on its own
+     * {@code classIdentity}, which equals that path under the
+     * orchestrator). Both spellings are the spec's
+     * {@code ClassDescriptor} form; the locality split exists because the
+     * single-module conformance harness checks with the source filename
+     * while codegen runs with the backend-held module path — the same
+     * alignment {@link #isLocalClassType} already encodes.
+     */
+    private String classCheckDescriptor(Type.Class cls) {
+        if (isLocalClassType(cls)) return classIdentity(cls.name());
+        return "@" + cls.modulePath() + "/" + cls.name();
+    }
+
+    /**
+     * The element descriptor a table-read array target dispatches on
+     * ({@code [int]}, {@code [string]}, {@code [?int]},
+     * {@code [@module/Name]}, {@code [?@module/Name]}, …), or {@code null}
+     * for an element type the slice does not support at the untyped
+     * boundary (nested arrays, function arrays, table elements — the
+     * caller records the E6000). Mirrors the element-type surface of the
+     * retired per-wrapper gates exactly.
+     */
+    private String elementCheckDescriptor(Type element) {
+        return switch (element) {
+            case Type.Int ignored -> "int";
+            case Type.Number ignored -> "number";
+            case Type.String ignored -> "string";
+            case Type.Boolean ignored -> "boolean";
+            case Type.Nullable ne -> switch (ne.inner()) {
+                case Type.Int ignored -> "?int";
+                case Type.Number ignored -> "?number";
+                case Type.String ignored -> "?string";
+                case Type.Boolean ignored -> "?boolean";
+                case Type.Class c -> "?" + classCheckDescriptor(c);
+                default -> null;
+            };
+            case Type.Class c -> classCheckDescriptor(c);
+            default -> null;
+        };
     }
 
     /**
@@ -2318,24 +2489,22 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
 
-        // The runtime nominal check: the one in-slice boundary the static
-        // type system cannot prove (a table read in a class-typed
-        // contextual target). Mirrors __rt.check_type's class branch —
-        // wrong-class values report "expected instance of <identity>, got
-        // <actual identity>", non-class values report "expected class
-        // instance" — E8001 in both shapes.
-        emitLine("static " + gen + " " + classCheckName(cd.name())
-            + "(java.lang.Object v) {");
-        indent++;
-        emitLine("if (v instanceof " + gen + " b) return b;");
-        emitLine("java.lang.String actualIdentity = $identityOf(v);");
-        emitLine("if (actualIdentity != null) throw new DealError(\"E8001\", "
-            + "\"expected instance of " + identity + ", got \" "
-            + "+ actualIdentity);");
-        emitLine("throw new DealError(\"E8001\", \"expected class instance, "
-            + "got \" + $describe(v));");
-        indent--;
-        emitLine("}");
+        // The runtime nominal check now lives in the shared
+        // descriptor-driven seam (ISSUE-0110): this class appends its
+        // descriptor branches — @<identity> (wrong-class values report
+        // "expected instance of <identity>, got <actual identity>",
+        // non-class values "expected class instance", E8001 in both
+        // shapes — the same semantics the retired per-class $check<C>
+        // helper carried) — to the single emitted
+        // $check(descriptor, value) helper.
+        classCheckBranches.add("if (descriptor.equals("
+            + quoteJavaString(identity) + ")) {");
+        classCheckBranches.add("    if (v instanceof " + gen + " b) return b;");
+        classCheckBranches.add("    java.lang.String actualIdentity = $identityOf(v);");
+        classCheckBranches.add("    if (actualIdentity != null) throw new DealError(\"E8001\", \"expected instance of "
+            + identity + ", got \" + actualIdentity);");
+        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected class instance, got \" + $describe(v));");
+        classCheckBranches.add("}");
 
         // Class arrays (ISSUE-0108): C[] maps to a per-class __RefArray
         // subclass ($Array$<C>) and (C | null)[] maps to a DISTINCT
@@ -2363,43 +2532,30 @@ public final class JvmBackend {
             + "(java.lang.Object[] data) { super(data); }");
         indent--;
         emitLine("}");
-        // The per-class wrapper gate for table reads with a C[] or
-        // C[] | null contextual target: only THIS class's ARRAY wrapper
-        // passes (the wrapper's Object[] storage plus the write-time
-        // nominal checks already prove every element), anything else
-        // raises E8001 — a wrong-shaped dynamic value never reaches a
-        // raw cast.
-        emitLine("static " + classArrayWrapperName(cd.name())
-            + " $check" + classArrayWrapperName(cd.name())
-            + "(java.lang.Object v) {");
-        indent++;
-        emitLine("if (v instanceof " + classArrayWrapperName(cd.name())
+        // The per-class array gates also live in the shared seam
+        // (ISSUE-0110): [@<identity>] passes only THIS class's ARRAY
+        // wrapper (the wrapper's Object[] storage plus the write-time
+        // nominal checks already prove every element), and [?@<identity>]
+        // additionally passes a plain C[] wrapper with SHARED Object[]
+        // storage — LuaJIT's check_array validates every element against
+        // check_nullable(C) and returns the SAME table, exactly like the
+        // retired per-class gates. Anything else raises E8001 "expected
+        // array, got ...".
+        classCheckBranches.add("if (descriptor.equals("
+            + quoteJavaString("[" + identity + "]") + ")) {");
+        classCheckBranches.add("    if (v instanceof " + classArrayWrapperName(cd.name())
             + " a) return a;");
-        emitLine("throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
-        indent--;
-        emitLine("}");
-        // The (C | null)[] gate (table reads with a (C | null)[] or
-        // (C | null)[] | null contextual target): this class's or-null
-        // wrapper passes as-is, and a plain C[] wrapper passes too —
-        // LuaJIT's check_array validates every element against
-        // check_nullable(C) and every plain C element passes, so a
-        // stored C[] reads back into (C | null)[]. The accepted C[]
-        // wrapper shares its Object[] storage (LuaJIT returns the SAME
-        // table — later writes through the converted array alias the
-        // original, exactly like the reference). Anything else raises
-        // E8001.
-        emitLine("static " + classOrNullArrayWrapperName(cd.name())
-            + " $check" + classOrNullArrayWrapperName(cd.name())
-            + "(java.lang.Object v) {");
-        indent++;
-        emitLine("if (v instanceof " + classOrNullArrayWrapperName(cd.name())
+        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
+        classCheckBranches.add("}");
+        classCheckBranches.add("if (descriptor.equals("
+            + quoteJavaString("[?" + identity + "]") + ")) {");
+        classCheckBranches.add("    if (v instanceof " + classOrNullArrayWrapperName(cd.name())
             + " a) return a;");
-        emitLine("if (v instanceof " + classArrayWrapperName(cd.name())
+        classCheckBranches.add("    if (v instanceof " + classArrayWrapperName(cd.name())
             + " a) return new " + classOrNullArrayWrapperName(cd.name())
             + "(a.data);");
-        emitLine("throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
-        indent--;
-        emitLine("}");
+        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
+        classCheckBranches.add("}");
         emitLine("static " + gen + " " + classArrayReadName(cd.name())
             + "(__RefArray a, long i) {");
         indent++;
@@ -4999,18 +5155,21 @@ public final class JvmBackend {
 
     /**
      * A table field read whose contextual target type comes from the
-     * checker's type map. Class-typed targets run the runtime nominal
-     * check through the class's emitted {@code $check<C>} helper (E8001
-     * for a wrong-class or non-class value — never a silent cast), and
-     * table-typed targets run {@code $check$Table}. The nullable slice
-     * (ISSUE-0108) adds the null-accepting boundary checks: nullable
-     * primitive targets ({@code $checkNullable<primitive>}), nullable
-     * class targets (null passes, otherwise the {@code $check<C>}
-     * nominal check), and array/nullable-array targets (the
-     * per-wrapper {@code $check$<Wrapper>} gates). Primitive
-     * (non-nullable)
-     * and function target types are out of slice (E6000) — never a
-     * silent miscompile.
+     * checker's type map. Every supported target now routes through the
+     * ONE shared descriptor-driven runtime-check seam (ISSUE-0110): the
+     * read emits {@code $check("<spec RuntimeTypeDescriptor>", value)}
+     * with the descriptor spelled by {@link #runtimeTypeDescriptor} —
+     * class-typed targets run the nominal check of the class descriptor
+     * ({@code @module/Name}; imported classes dispatch on the DECLARING
+     * module's seam via {@code Lib.$check(...)}, whose {@code
+     * instanceof} test and module-qualified identity strings compare
+     * against the declaring module's generated class, E8001 for a
+     * wrong-class or non-class value — never a silent cast),
+     * table-typed targets check {@code "table"}, nullable targets spell
+     * {@code ?T} and pass the DEAL null through (check_nullable),
+     * array targets spell {@code [T]}/{@code [?T]} and gate on the
+     * emitted wrapper. Primitive (non-nullable) and function target
+     * types stay out of slice (E6000) — never a silent miscompile.
      */
     private String emitTableRead(MemberAccessExpr mae) {
         String obj = emitExpression(mae.object());
@@ -5021,18 +5180,21 @@ public final class JvmBackend {
             // the name-keyed lookup — a same-named local class must not
             // satisfy the guard for a foreign path (the read would run
             // the LOCAL nominal check against a lib.C value, corrupting
-            // the nominal identity). An imported class (ISSUE-0109) runs
-            // the DECLARING module's nominal-check helper
-            // ({@code Lib.$checkC(...)}): its {@code instanceof} test and
-            // module-qualified identity string compare against the
-            // declaring module's generated class, so a genuine instance
-            // passes and a same-name sibling from another module reports
-            // E8001 "expected instance of @lib/C, got @other/C".
+            // the nominal identity). An imported class (ISSUE-0109)
+            // dispatches on the DECLARING module's shared seam
+            // ({@code Lib.$check("@lib/C", v)}): its {@code instanceof}
+            // test and module-qualified identity string compare against
+            // the declaring module's generated class, so a genuine
+            // instance passes and a same-name sibling from another
+            // module reports E8001 "expected instance of @lib/C, got
+            // @other/C".
             if (!isLocalClassType(cls)) {
                 String importedModule = importedClassModuleRef(cls, mae.span());
                 if (importedModule == null) return "null";
-                return importedModule + "." + classCheckName(cls.name())
-                    + "(" + get + ")";
+                return "((" + importedModule + "." + classNameForClass(cls.name())
+                    + ") " + importedModule + ".$check("
+                    + quoteJavaString(classCheckDescriptor(cls)) + ", "
+                    + get + "))";
             }
             if (!moduleClasses.containsKey(cls.name())) {
                 unsupported("class-typed table read for class '"
@@ -5040,17 +5202,20 @@ public final class JvmBackend {
                     + "are supported)", mae.span());
                 return "null";
             }
-            return classCheckName(cls.name()) + "(" + get + ")";
+            return "((" + classNameForClass(cls.name()) + ") $check("
+                + quoteJavaString(classCheckDescriptor(cls)) + ", "
+                + get + "))";
         }
         if (target instanceof Type.Table) {
-            return "$check$Table(" + get + ")";
+            return "(($T) $check(\"table\", " + get + "))";
         }
         if (target instanceof Type.Nullable nn) {
-            // Nullable boundary checks (ISSUE-0108): the read materializes
-            // the table lookup into an Object temporary (the receiver must
-            // evaluate exactly once) and applies the null-accepting check —
-            // LuaJIT's check_nullable: null passes as the DEAL null, a
-            // value of the inner type passes, anything else raises E8001.
+            // Nullable boundary checks (ISSUE-0108, unified ISSUE-0110):
+            // the read materializes the table lookup into an Object
+            // temporary (the receiver must evaluate exactly once) and the
+            // seam's ?T prefix applies check_nullable — null passes as
+            // the DEAL null, a value of the inner type passes, anything
+            // else raises E8001.
             String temp = nextEvalTempName();
             preStatements.add(new PreLine(
                 "java.lang.Object " + temp + " = " + get + ";", 0));
@@ -5063,23 +5228,36 @@ public final class JvmBackend {
                         + "are supported)", mae.span());
                     return "null";
                 }
-                return "(" + temp + " == null ? null : "
-                    + classCheckName(cls.name()) + "(" + temp + "))";
+                return "((" + classNameForClass(cls.name()) + ") $check("
+                    + quoteJavaString("?" + classCheckDescriptor(cls))
+                    + ", " + temp + "))";
             }
-            String check = nullableCheckHelper(inner);
-            if (check != null) return check + "(" + temp + ")";
             if (inner instanceof Type.Array arr
-                    && arrayCheckName(arr.element()) != null) {
-                return "(" + temp + " == null ? null : "
-                    + arrayCheckName(arr.element()) + "(" + temp + "))";
+                    && elementCheckDescriptor(arr.element()) != null
+                    && arrayWrapperName(arr.element()) != null) {
+                return "((" + arrayWrapperName(arr.element()) + ") $check("
+                    + quoteJavaString("?" + "["
+                        + elementCheckDescriptor(arr.element()) + "]")
+                    + ", " + temp + "))";
+            }
+            if (inner instanceof Type.Int || inner instanceof Type.Number
+                    || inner instanceof Type.Boolean
+                    || inner instanceof Type.String) {
+                // The retired $checkNullable<primitive> helpers accepted
+                // exactly these four inner types; anything else falls
+                // through to the single E6000 below (the pre-join gate
+                // order, so the diagnostic surface stays identical).
+                return "((" + nullableJavaType(inner, mae.span()) + ") $check("
+                    + quoteJavaString(runtimeTypeDescriptor(target))
+                    + ", " + temp + "))";
             }
             unsupported("table field reads with target type "
                 + typeName(target), mae.span());
             return "null";
         }
         if (target instanceof Type.Array arr) {
-            String check = arrayCheckName(arr.element());
-            if (check == null) {
+            String elementDesc = elementCheckDescriptor(arr.element());
+            if (elementDesc == null) {
                 unsupported("table field reads with target type "
                     + typeName(target), mae.span());
                 return "null";
@@ -5088,48 +5266,14 @@ public final class JvmBackend {
             preStatements.add(new PreLine(
                 "java.lang.Object " + temp + " = " + get + ";", 0));
             preStatementsDeclareTemps = true;
-            return check + "(" + temp + ")";
+            return "((" + arrayWrapperName(arr.element()) + ") $check("
+                + quoteJavaString("[" + elementDesc + "]")
+                + ", " + temp + "))";
         }
         unsupported("table field reads with target type " + typeName(target)
             + " (this slice checks class, nullable, array, and table "
             + "targets only)", mae.span());
         return "null";
-    }
-
-    /** The null-accepting runtime check helper for a nullable primitive
-     * inner type ({@code $checkNullableInt} etc.), or {@code null} for a
-     * non-primitive inner. */
-    private String nullableCheckHelper(Type inner) {
-        return switch (inner) {
-            case Type.Int ignored -> "$checkNullableInt";
-            case Type.Number ignored -> "$checkNullableNumber";
-            case Type.Boolean ignored -> "$checkNullableBoolean";
-            case Type.String ignored -> "$checkNullableString";
-            default -> null;
-        };
-    }
-
-    /** The per-wrapper array gate for a supported array element type
-     * ({@code $check$IntArray} etc., or the per-class
-     * {@code $check$Array$<C>} gate), or {@code null} for unsupported
-     * element types. */
-    private String arrayCheckName(Type element) {
-        return switch (element) {
-            case Type.Int ignored -> "$check$IntArray";
-            case Type.Number ignored -> "$check$NumberArray";
-            case Type.String ignored -> "$check$StringArray";
-            case Type.Boolean ignored -> "$check$BooleanArray";
-            case Type.Nullable ne -> switch (ne.inner()) {
-                case Type.Int ignored -> "$check$IntOrNullArray";
-                case Type.Number ignored -> "$check$NumberOrNullArray";
-                case Type.String ignored -> "$check$StringOrNullArray";
-                case Type.Boolean ignored -> "$check$BooleanOrNullArray";
-                case Type.Class c -> "$check" + classOrNullArrayWrapperName(c.name());
-                default -> null;
-            };
-            case Type.Class c -> "$check" + classArrayWrapperName(c.name());
-            default -> null;
-        };
     }
 
     private String emitIntrinsicCall(String name, CallExpr call) {

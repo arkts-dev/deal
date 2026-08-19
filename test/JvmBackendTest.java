@@ -256,6 +256,8 @@ public class JvmBackendTest {
             testShadowedInitializer();
             testParameterShadowing();
             testClassSlice();
+            testTypeDescriptorEmitter();
+            testSharedCheckSeam();
             testNullableSlice();
             testImportedClassValues();
             testUseBeforeDeclarationRejected();
@@ -3082,16 +3084,19 @@ public class JvmBackendTest {
             "generated class extends the identity base");
         check(java.contains("super(\"@Main/Point\")"),
             "generated class carries its spec ClassDescriptor identity");
-        check(java.contains("static $C_Point $checkPoint(java.lang.Object v)"),
-            "nominal check helper emitted");
-        check(java.contains("static $C_DealError $checkDealError("),
+        check(java.contains("static java.lang.Object $check(java.lang.String descriptor, java.lang.Object v)"),
+            "the shared descriptor-driven runtime-check seam is emitted");
+        check(java.contains("descriptor.equals(\"@Main/Point\")"),
+            "the Point class contributes its nominal-check branch to the seam");
+        check(java.contains("descriptor.equals(\"@Main/DealError\")"),
             "a class named like the error helper stays collision-free");
         check(java.contains("new $C_Point(1L, 5L)"),
             "construction fills declaration-order defaults around provided fields");
         check(java.contains("new $T().put(\"item\", p)"),
             "table literal chains put calls");
-        check(java.contains("$checkPoint((holder).get(\"item\"))"),
-            "class-typed table read runs the runtime nominal check");
+        check(java.contains("$check(\"@Main/Point\", (holder).get(\"item\"))"),
+            "class-typed table read runs the shared seam with the spec "
+            + "class descriptor");
         check(java.contains("return intAdd((q).x, (q).y);"),
             "class field reads flow into arithmetic");
 
@@ -3127,7 +3132,7 @@ public class JvmBackendTest {
             "nominal check failure reports E8001 with exit 1: " + err.output());
 
         // Real artifact: table-typed reads of a nested table pass through
-        // the $check$Table boundary.
+        // the $check("table", ...) boundary.
         ExecResult tbl = compileAndRunJvm("""
             export function test(): int {
               let t: table = { inner: { n: 5 } };
@@ -3225,14 +3230,15 @@ public class JvmBackendTest {
             "nil-aware default fails the boolean boundary with E8001: "
                 + defaultBoolBoundary.output());
 
-        // ISSUE-0095 reviewer round 10: a local class named `Table` is
-        // legal DEAL and its nominal-check helper spells `$checkTable` —
-        // the pre-fix name of the fixed table-boundary runtime helper.
-        // The pre-fix artifact declared `static $T $checkTable(Object)`
+        // ISSUE-0095 reviewer round 10, re-unified by ISSUE-0110: a
+        // local class named `Table` is legal DEAL. Its nominal check
+        // lives as a descriptor branch INSIDE the single shared seam —
+        // the pre-fix shape declared `static $T $checkTable(Object)`
         // twice and javac rejected it ("method $checkTable(Object) is
-        // already defined") after the CLI reported success. The fixed
-        // helper is now `$check$Table` (the raw `$` is unspellable in
-        // DEAL, so classCheckName can never generate it).
+        // already defined") after the CLI reported success. The shared
+        // $check helper has the raw `$` (unspellable in DEAL — javaName
+        // escapes it), so no per-kind helper name can collide with a
+        // generated class branch any more.
         Frontend tableClass = compileFrontend("""
             class Table { x: int = 0; }
             export function test(): int {
@@ -3253,15 +3259,20 @@ public class JvmBackendTest {
             if (!tableRes.hasErrors()) {
                 String tableJava = tableRes.source();
                 check(occurrences(tableJava,
-                        "static $C_Table $checkTable(") == 1,
-                    "the class Table's nominal-check helper is declared "
-                    + "exactly once");
+                        "static java.lang.Object $check(java.lang.String descriptor, java.lang.Object v)") == 1,
+                    "the shared runtime-check seam is declared exactly "
+                    + "once");
                 check(occurrences(tableJava,
-                        "static $T $check$Table(") == 1,
-                    "the fixed table-boundary helper is declared exactly "
-                    + "once under $check$Table");
-                check(!tableJava.contains("static $T $checkTable("),
-                    "no duplicate $checkTable declaration remains: "
+                        "descriptor.equals(\"@Main/Table\")") == 1,
+                    "the class Table's nominal-check branch is declared "
+                    + "exactly once inside the seam");
+                check(tableJava.contains(
+                        "$check(\"@Main/Table\", (holder).get(\"item\"))"),
+                    "the Table-typed read dispatches on the spec class "
+                    + "descriptor: " + tableJava);
+                check(!tableJava.contains("static $T $check$Table(")
+                        && !tableJava.contains("static $T $checkTable("),
+                    "no duplicate per-kind table-check helper remains: "
                     + tableJava);
             }
         }
@@ -5306,9 +5317,10 @@ public class JvmBackendTest {
 
         // (5) Cross-module nominal runtime checks: two modules export a
         // SAME-NAME class; an instance crossing an untyped table passes
-        // its own module's check (LibA.$checkItem succeeds) and fails the
-        // foreign module's check with E8001 naming both module-qualified
-        // identities (@src5a/Item vs @src5b/Item) — identity is
+        // its own module's check (Modela.$check("@modela/Item", …)
+        // succeeds) and fails the foreign module's check with E8001
+        // naming both module-qualified identities (@modela/Item vs
+        // @modelb/Item) — identity is
         // module-qualified, never bare-name. The foreign check raises the
         // IMPORTED module's DealError, which the conformance runner
         // reports with the DEAL_ERROR_CODE contract.
@@ -5354,9 +5366,10 @@ public class JvmBackendTest {
             + orchestrator5.diagnostics());
         if (success5 && Files.exists(outputDir5.resolve("Entry.java"))) {
             String java = Files.readString(outputDir5.resolve("Entry.java"));
-            check(java.contains("Modela.$checkItem(("),
-                "the imported class-typed table read emits the declaring "
-                + "module's nominal check: " + java);
+            check(java.contains("Modela.$check(\"@modela/Item\", ("),
+                "the imported class-typed table read dispatches on the "
+                + "declaring module's shared seam with the spec class "
+                + "descriptor: " + java);
             ExecResult exec = runJvmArtifacts(outputDir5,
                 parseProgram("export function run(): string { return \"\"; }"),
                 "Entry");
@@ -5443,6 +5456,181 @@ public class JvmBackendTest {
      * the emitted artifact with the real {@code javac} frontend and
      * executes it with {@code java}.
      */
+    /**
+     * ISSUE-0110: the single JVM type-descriptor emitter spells every
+     * supported type form in the spec {@code RuntimeTypeDescriptor}
+     * format — primitives, table/null/Error, nullables, arrays (nested
+     * and nullable-element), nominal classes with module paths, function
+     * types with array/class/nullable parameters, async operation types,
+     * and rest arms.
+     */
+    private static void testTypeDescriptorEmitter() {
+        System.out.println("-- Shared type-descriptor emitter (ISSUE-0110) --");
+        check(JvmBackend.typeDescriptor(Type.Int.INSTANCE).equals("int"),
+            "int spells 'int'");
+        check(JvmBackend.typeDescriptor(Type.Number.INSTANCE).equals("number"),
+            "number spells 'number'");
+        check(JvmBackend.typeDescriptor(Type.Boolean.INSTANCE).equals("boolean"),
+            "boolean spells 'boolean'");
+        check(JvmBackend.typeDescriptor(Type.String.INSTANCE).equals("string"),
+            "string spells 'string'");
+        check(JvmBackend.typeDescriptor(Type.Table.INSTANCE).equals("table"),
+            "table spells 'table'");
+        check(JvmBackend.typeDescriptor(Type.Null.INSTANCE).equals("null"),
+            "null spells 'null'");
+        check(JvmBackend.typeDescriptor(Type.Error.INSTANCE).equals("Error"),
+            "Error spells 'Error'");
+        check(JvmBackend.typeDescriptor(Types.nullable(Type.Int.INSTANCE)).equals("?int"),
+            "int | null spells '?int'");
+        check(JvmBackend.typeDescriptor(Types.array(Type.Int.INSTANCE)).equals("[int]"),
+            "int[] spells '[int]'");
+        check(JvmBackend.typeDescriptor(
+                Types.array(Types.array(Type.Int.INSTANCE))).equals("[[int]]"),
+            "int[][] spells '[[int]]'");
+        check(JvmBackend.typeDescriptor(
+                Types.nullable(Types.array(Type.Int.INSTANCE))).equals("?[int]"),
+            "int[] | null spells '?[int]'");
+        check(JvmBackend.typeDescriptor(
+                Types.array(Types.nullable(Type.Int.INSTANCE))).equals("[?int]"),
+            "(int | null)[] spells '[?int]'");
+        check(JvmBackend.typeDescriptor(Types.nullable(Types.array(
+                Types.nullable(Type.Int.INSTANCE)))).equals("?[?int]"),
+            "(int | null)[] | null spells '?[?int]'");
+        check(JvmBackend.typeDescriptor(
+                Types.classType("User", "models")).equals("@models/User"),
+            "a class with a module path spells '@models/User'");
+        check(JvmBackend.typeDescriptor(
+                Types.classType("User", "")).equals("User"),
+            "a class with an empty module path spells the bare name");
+        check(JvmBackend.typeDescriptor(Types.nullable(
+                Types.classType("User", "app"))).equals("?@app/User"),
+            "User | null spells '?@app/User'");
+        check(JvmBackend.typeDescriptor(Types.array(
+                Types.classType("User", "app"))).equals("[@app/User]"),
+            "User[] spells '[@app/User]'");
+        check(JvmBackend.typeDescriptor(Types.array(Types.nullable(
+                Types.classType("User", "app")))).equals("[?@app/User]"),
+            "(User | null)[] spells '[?@app/User]'");
+        check(JvmBackend.typeDescriptor(Types.func(
+                List.of(Type.Int.INSTANCE), Type.String.INSTANCE))
+                .equals("(int)->string"),
+            "(int)->string spells '(int)->string'");
+        check(JvmBackend.typeDescriptor(Types.func(
+                List.of(Type.Int.INSTANCE), Type.String.INSTANCE, true))
+                .equals("async(int)->string"),
+            "async(int)->string spells 'async(int)->string'");
+        check(JvmBackend.typeDescriptor(Types.func(
+                List.of(), Types.array(Type.Int.INSTANCE), Type.Null.INSTANCE))
+                .equals("(...[int])->null"),
+            "rest-only function spells '(...[int])->null'");
+        check(JvmBackend.typeDescriptor(Types.func(
+                List.of(Type.String.INSTANCE), Types.array(Type.Int.INSTANCE),
+                Type.Null.INSTANCE)).equals("(string,...[int])->null"),
+            "mixed fixed+rest spells '(string,...[int])->null'");
+        check(JvmBackend.typeDescriptor(Types.func(
+                List.of(Types.array(Type.Int.INSTANCE)),
+                Types.nullable(Types.classType("User", "app"))))
+                .equals("([int])->?@app/User"),
+            "an array parameter and a nullable class return compose in one "
+            + "descriptor");
+        check(JvmBackend.typeDescriptor(Types.func(
+                List.of(Types.nullable(Type.String.INSTANCE)),
+                Types.array(Types.classType("User", "app"))))
+                .equals("(?string)->[@app/User]"),
+            "a nullable parameter and a class-array return compose in one "
+            + "descriptor");
+        System.out.println("  typeDescriptor forms pinned");
+    }
+
+    /**
+     * ISSUE-0110: every supported untyped table-read boundary emits ONE
+     * shared {@code $check(descriptor, value)} call carrying the spec
+     * {@code RuntimeTypeDescriptor} of the expected type — one
+     * convention for classes, nullable classes, nullable primitives,
+     * arrays, nullable-element arrays, nullable arrays, and tables —
+     * and no retired per-kind helper remains in the artifact.
+     */
+    private static void testSharedCheckSeam() {
+        System.out.println("-- Shared descriptor-driven runtime-check seam (ISSUE-0110) --");
+        Frontend f = compileFrontend("""
+            class Point { x: int = 0; }
+            export function test(): int {
+              let p0: Point = { x: 1 };
+              let ps0: Point[] = [];
+              ps0[0] = p0;
+              let holder: table = { p: p0, n: 5, xs: [1], ps: ps0, inner: { k: 2 } };
+              let p: Point = holder.p;
+              let maybe: Point | null = holder.p;
+              let n: int | null = holder.n;
+              let xs: int[] = holder.xs;
+              let ys: (int | null)[] = holder.xs;
+              let zs: int[] | null = holder.xs;
+              let ps: Point[] = holder.ps;
+              let qs: (Point | null)[] = holder.ps;
+              let inner: table = holder.inner;
+              let total: int = p.x + xs[0] + ys.length + ps.length
+                  + qs.length;
+              if (maybe !== null) { total = total + maybe.x; }
+              if (n !== null) { total = total + n; }
+              if (zs !== null) { total = total + zs.length; }
+              return total;
+            }
+            """, "jvmtest-seam.deal");
+        check(f.errors().isEmpty(), "seam fixture frontend clean: " + f.errors());
+        if (!f.errors().isEmpty()) return;
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-seam.deal", "Main");
+        check(!res.hasErrors(), "seam fixture codegen clean: " + res.diagnostics());
+        if (res.hasErrors()) return;
+        String java = res.source();
+        check(java.contains("$check(\"@Main/Point\", "),
+            "class-typed read dispatches on the spec class descriptor");
+        check(java.contains("$check(\"?@Main/Point\", "),
+            "nullable class read dispatches on '?@Main/Point'");
+        check(java.contains("$check(\"?int\", "),
+            "nullable int read dispatches on '?int'");
+        check(java.contains("$check(\"[int]\", "),
+            "int[] read dispatches on '[int]'");
+        check(java.contains("$check(\"[?int]\", "),
+            "(int | null)[] read dispatches on '[?int]'");
+        check(java.contains("$check(\"?[int]\", "),
+            "int[] | null read dispatches on '?[int]'");
+        check(java.contains("$check(\"[@Main/Point]\", "),
+            "Point[] read dispatches on '[@Main/Point]'");
+        check(java.contains("$check(\"[?@Main/Point]\", "),
+            "(Point | null)[] read dispatches on '[?@Main/Point]'");
+        check(java.contains("$check(\"table\", "),
+            "table read dispatches on 'table'");
+        check(occurrences(java, "static java.lang.Object $check(java.lang.String descriptor, java.lang.Object v)") == 1,
+            "exactly one shared $check seam is emitted");
+        check(!java.contains("$check$Table") && !java.contains("$checkNullable")
+                && !java.contains("$check$IntArray"),
+            "no retired per-kind boundary helper remains in the artifact");
+        // The seam artifact is real Java: compile it with javac.
+        Path dir = null;
+        try {
+            dir = Files.createTempDirectory("jvmtest_seam_");
+            Files.writeString(dir.resolve("Main.java"), java);
+            Files.writeString(dir.resolve("JvmConformanceRunner.java"),
+                BackendConformanceTest.buildJvmRunner(f.program(), "Main"));
+            StringBuilder err = new StringBuilder();
+            boolean ok = BackendConformanceTest.compileWithJavac(dir,
+                List.of("Main.java", "JvmConformanceRunner.java"), err);
+            check(ok, "the seam artifact compiles with javac: " + err);
+        } catch (IOException e) {
+            fail("seam javac I/O: " + e);
+        } finally {
+            if (dir != null) {
+                try {
+                    Files.walk(dir).sorted(Comparator.reverseOrder())
+                        .forEach(p -> { try { Files.deleteIfExists(p); }
+                        catch (IOException ignored) {} });
+                } catch (IOException ignored) {}
+            }
+        }
+        System.out.println("  seam dispatch descriptors pinned");
+    }
+
     private static void testNullableSlice() throws Exception {
         System.out.println("-- Nullable slice (ISSUE-0108): boxed representation, narrowing, nullable arrays --");
 
