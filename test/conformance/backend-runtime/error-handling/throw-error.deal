@@ -4,10 +4,19 @@
 // @features: error-handling, throw
 
 export function test_throw(): string {
+  let catchRan: boolean = false;
+  let caughtCode: string = "";
   try {
     throw { code: "E_TEST", message: "test error" };
-    return "no_error";
   } catch (e) {
-    return e.code;
+    catchRan = true;
+    caughtCode = e.code;
   }
+  if (catchRan !== true) {
+    throw { code: "TEST_FAIL", message: "expected throw did not reach its catch" };
+  }
+  if (caughtCode !== "E_TEST") {
+    throw { code: "TEST_FAIL", message: "thrown Error code mismatch" };
+  }
+  return "E_TEST";
 }
