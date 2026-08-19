@@ -1742,9 +1742,15 @@ public final class JvmBackend {
      * its initializer (followed transitively through function-valued
      * fields, including arity-adapter edges, see
      * {@link #collectPossibleHeldFunctions}) and every module-level
-     * assignment to it before the call site must be bare module-function
-     * or intrinsic identifiers — and every function the field may hold
-     * gets the same load-time guards as a direct module-level call:
+     * assignment to it before the call site — including assignments
+     * inside the call's own top-level statement (see
+     * {@link #moduleLevelAssignedFunctions}) and assignments hidden in
+     * any value position (object-literal property values and
+     * class-construction defaults, array-literal elements, index
+     * operands — the scan mirrors {@link #collectExprRefs}) — must be
+     * bare module-function or intrinsic identifiers, and every function
+     * the field may hold gets the same load-time guards as a direct
+     * module-level call:
      * <ul>
      * <li>its body must not (transitively) read a module field declared
      * at or after the call site — LuaJIT fails at load reading the nil
@@ -1813,19 +1819,28 @@ public final class JvmBackend {
 
     /**
      * The module functions assigned to {@code fieldName} by module-level
-     * statements between its declaration and {@code callIndex}
-     * (exclusive), or {@code null} when any assignment's value is not a
-     * statically known bare module-function/intrinsic identifier. The JVM
+     * statements between its declaration and the call site, INCLUDING the
+     * call's own top-level statement ({@code callIndex} inclusive), or
+     * {@code null} when any assignment's value is not a statically known
+     * bare module-function/intrinsic identifier. The JVM
      * static-initializer interleaving mirrors LuaJIT's load-time
      * execution (source order and control flow), so every function this
      * walk observes is one the field may genuinely hold at the call site.
+     * The call's own statement is walked because an assignment evaluated
+     * earlier within it — a sub-expression of the call's enclosing
+     * initializer/condition, or a statement inside the same while/if/block
+     * body — genuinely precedes the call at load time (LuaJIT executes it
+     * before the read); the walk over-approximates inside that one
+     * statement (assignments after the call position count too), and the
+     * over-approximation only ever adds a conservative rejection, never a
+     * silent divergence.
      */
     private List<String> moduleLevelAssignedFunctions(String fieldName,
             int callIndex) {
         Integer decl = moduleFieldIndices.get(fieldName);
         if (decl == null) return List.of();
         List<String> result = new ArrayList<>();
-        for (int i = decl + 1; i < callIndex && i < moduleStatements.size(); i++) {
+        for (int i = decl + 1; i <= callIndex && i < moduleStatements.size(); i++) {
             if (!stmtAssignedFunctions(moduleStatements.get(i), fieldName,
                     result)) {
                 return null;
@@ -1884,7 +1899,20 @@ public final class JvmBackend {
                         && id.name().equals(name)) {
                     yield knownFunctionValue(ae.value(), out);
                 }
-                yield exprAssignedFunctions(ae.value(), name, out);
+                boolean ok = exprAssignedFunctions(ae.value(), name, out);
+                if (!ok) yield false;
+                // A non-identifier target's sub-expressions (an index
+                // operand or a member-access object) are value positions
+                // evaluated at the assignment: `t[g = one] = v` hides the
+                // same load-time assignment as `{ x: (g = one) }` does.
+                yield switch (ae.target()) {
+                    case IndexExpr idx -> exprAssignedFunctions(idx.array(),
+                        name, out)
+                        && exprAssignedFunctions(idx.index(), name, out);
+                    case MemberAccessExpr mae ->
+                        exprAssignedFunctions(mae.object(), name, out);
+                    default -> true;
+                };
             }
             case BinaryExpr bin -> exprAssignedFunctions(bin.left(), name, out)
                 && exprAssignedFunctions(bin.right(), name, out);
@@ -1898,6 +1926,47 @@ public final class JvmBackend {
                 yield ok;
             }
             case MemberAccessExpr mae -> exprAssignedFunctions(mae.object(), name, out);
+            case IndexExpr idx -> exprAssignedFunctions(idx.array(), name, out)
+                && exprAssignedFunctions(idx.index(), name, out);
+            case ArrayLiteralExpr al -> {
+                boolean ok = true;
+                for (ExpressionNode elem : al.elements()) {
+                    if (!exprAssignedFunctions(elem, name, out)) {
+                        ok = false;
+                        break;
+                    }
+                }
+                yield ok;
+            }
+            case ObjectLiteralExpr ol -> {
+                boolean ok = true;
+                for (Property prop : ol.properties()) {
+                    if (!exprAssignedFunctions(prop.value(), name, out)) {
+                        ok = false;
+                        break;
+                    }
+                }
+                // Class-construction defaults are value positions
+                // evaluated at the construction site (mirroring
+                // collectExprRefs): an assignment hidden in a default
+                // expression executes at load exactly like one hidden in
+                // a property value.
+                if (ok && typeOf(ol) instanceof Type.Class cls
+                        && isLocalClassType(cls)) {
+                    ClassDeclaration cd = moduleClasses.get(cls.name());
+                    if (cd != null) {
+                        for (ClassField cf : cd.fields()) {
+                            if (cf.defaultExpr().isPresent()
+                                    && !exprAssignedFunctions(
+                                        cf.defaultExpr().get(), name, out)) {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                yield ok;
+            }
             case TemplateLiteralExpr tl -> {
                 boolean ok = true;
                 for (ExpressionNode part : tl.parts()) {
@@ -1932,8 +2001,10 @@ public final class JvmBackend {
     /**
      * Collects into {@code possible} every module function the
      * function-typed field {@code fieldName} may hold when it is read at
-     * load-time statement index {@code readIndex} (exclusive end of the
-     * assignment walk): the value set of its initializer at its
+     * load-time statement index {@code readIndex} (the INCLUSIVE end of
+     * the assignment walk — the call's own statement is walked, see
+     * {@link #moduleLevelAssignedFunctions}): the value set of its
+     * initializer at its
      * declaration (see {@link #heldFunctionsAtDeclaration}) plus every
      * statically-known module function assigned to the field between the
      * declaration and {@code readIndex}. Returns true when any value is
@@ -6166,9 +6237,19 @@ public final class JvmBackend {
                     yield true;
                 }
                 boolean found = exprAssignsLocal(ae.value(), locals, name);
-                if (!found && ae.target() instanceof IndexExpr idx) {
-                    found = exprAssignsLocal(idx.array(), locals, name)
-                        || exprAssignsLocal(idx.index(), locals, name);
+                if (!found) {
+                    // A non-identifier target's sub-expressions are value
+                    // positions evaluated at the assignment: `t[g = dbl]
+                    // = v` or `(g = dbl).x = v` reassigns the binding
+                    // exactly like a bare statement assignment.
+                    found = switch (ae.target()) {
+                        case IndexExpr idx ->
+                            exprAssignsLocal(idx.array(), locals, name)
+                                || exprAssignsLocal(idx.index(), locals, name);
+                        case MemberAccessExpr mae ->
+                            exprAssignsLocal(mae.object(), locals, name);
+                        default -> false;
+                    };
                 }
                 yield found;
             }
@@ -6191,6 +6272,22 @@ public final class JvmBackend {
                 boolean found = false;
                 for (ExpressionNode elem : al.elements()) {
                     if (exprAssignsLocal(elem, locals, name)) {
+                        found = true;
+                        break;
+                    }
+                }
+                yield found;
+            }
+            // Table-literal and class-construction property values are
+            // value positions evaluated at the literal/construction site:
+            // an assignment hidden inside one (`let t = { x: (g = dbl)
+            // }`) reassigns the binding exactly like a bare statement
+            // assignment — the adapter's snapshot would silently go
+            // stale if the scan missed it.
+            case ObjectLiteralExpr ol -> {
+                boolean found = false;
+                for (Property prop : ol.properties()) {
+                    if (exprAssignsLocal(prop.value(), locals, name)) {
                         found = true;
                         break;
                     }

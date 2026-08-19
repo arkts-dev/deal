@@ -960,7 +960,19 @@ fixture whose codegen or JVM execution is bypassed):
   snapshots the inner field at the outer field's declaration position,
   so only assignments before that point count) and every module-level
   assignment to it before the call site must be bare module-function or
-  intrinsic identifiers — and every function the field may hold must
+  intrinsic identifiers — including assignments evaluated earlier
+  within the call's own top-level statement (a sub-expression of the
+  call's enclosing initializer/condition, or a statement inside the same
+  while/if/block body, genuinely precedes the read at load time, so the
+  walk covers the call statement itself, conservatively
+  over-approximating inside that one statement — the over-approximation
+  only ever adds rejection, never a silent divergence) and assignments
+  hidden in any value position (object-literal property values and
+  class-construction defaults, array-literal elements, index operands —
+  the assignment scans mirror `collectExprRefs`, so `let t = { x: (g =
+  one) }; g()` sees the hidden assignment and rejects when `one` reaches
+  a later-declared function exactly like the statement-separated form) —
+  and every function the field may hold must
   not (transitively) read a field, reach a function, or use an import
   declared at or after the call site. Since the JVM static initializers
   mirror LuaJIT's load-time execution (source order and control flow),
@@ -1060,7 +1072,9 @@ fixture whose codegen or JVM execution is bypassed):
     message is pinned out), and snapshot-field (`g1 = dbl` before `let g
     = g1` captures dbl: `g(21)` runs 42) shapes; E6000 for the
     reassigned
-    local/parameter adapter (pinned for both shapes with frontend-clean
+    local/parameter adapter (pinned for the direct-assignment shapes
+    and the reassignment hidden in a table-literal property value —
+    `let t = { x: (g = dbl) }` still counts — with frontend-clean
     probes), the call-result adapter, the load-time value use of a
     later-declared function, a call-valued field initializer, an
     assignment before the call site, the adapter live-read retargeted
@@ -1068,7 +1082,13 @@ fixture whose codegen or JVM execution is bypassed):
     adapter, dbl reaches `later` — LuaJIT fails at load, the guard
     rejects), and the snapshot field capturing a later-declared
     function (the same guard walks assignments to the inner field
-    before the outer field's declaration); the load-time indirect
+    before the outer field's declaration); the hidden-assignment guards
+    (a table-literal-hidden field assignment before a load-time indirect
+    call, an assignment evaluated earlier within the call's own
+    statement — `let r: int = side(g = one) + g();` — and an assignment
+    inside the call's enclosing while body — all E6000 where LuaJIT
+    fails at load and the pre-fix walk silently ran the hoisted
+    method); the load-time indirect
     import hazard (`moduleIndirectCallRisk` consults `laterImportRead`
     exactly like the direct-call path — an indirect call of a function
     using an import declared after the call site is E6000, pinned in

@@ -3619,10 +3619,18 @@ public class JvmBackendTest {
      * reaches a later-declared function, the adapter live-read retargeted
      * to a later-declared function, and the snapshot field capturing a
      * later-declared function — all E6000, never a Java forward
-     * reference or a silent divergence; the plain reassignment and
-     * snapshot-field shapes run with LuaJIT parity; the indirect
-     * import hazard is pinned in testModuleImportUseBeforeImportRejected),
-     * and the deferred signature shapes (nested function
+     * reference or a silent divergence — including assignments hidden
+     * in table-literal property values, assignments evaluated earlier
+     * within the call's own top-level statement, and assignments inside
+     * the call's enclosing while/if/block body, which the assignment
+     * scans (object-literal property values, array-literal elements,
+     * index operands, and the call statement itself) must all observe —
+     * the plain reassignment and snapshot-field shapes run with LuaJIT
+     * parity; the indirect import hazard is pinned in
+     * testModuleImportUseBeforeImportRejected), the reassigned
+     * local/parameter adapter E6000 also fires when the reassignment is
+     * hidden in a table-literal property value, and the deferred
+     * signature shapes (nested function
      * types, nullable/async/rest function types, arrays of functions)
      * rejected with E6000.
      */
@@ -3913,6 +3921,17 @@ public class JvmBackendTest {
                   return h(10, 999);
                 }
                 export function test(): int { return probe(inc); }
+                """),
+            new ReassignedCase(
+                "reassigned local hidden in a table-literal property value", """
+                function inc(x: int): int { return x + 1; }
+                function dbl(x: int): int { return x * 2; }
+                export function test(): int {
+                  let g: (x: int) => int = inc;
+                  let h: (a: int, b: int) => int = g;
+                  let t = { x: (g = dbl) };
+                  return h(10, 999);
+                }
                 """));
         for (ReassignedCase c : reassigned) {
             Frontend rf = compileFrontend(c.source,
@@ -4199,6 +4218,41 @@ public class JvmBackendTest {
                 let r: int = g(21);
                 function later(x: int): int { return x * 2; }
                 export function test(): int { return r; }
+                """),
+            new GuardCase(
+                "table-literal-hidden field assignment before a load-time indirect call", """
+                function zero(): int { return 0; }
+                function one(): int { return two(); }
+                let g: () => int = zero;
+                let t = { x: (g = one) };
+                let r: int = g();
+                function two(): int { return 2; }
+                export function test(): int { return r; }
+                """),
+            new GuardCase(
+                "same-statement assignment before a load-time indirect call", """
+                function zero(): int { return 0; }
+                function one(): int { return two(); }
+                function side(f: () => int): int { return f(); }
+                let g: () => int = zero;
+                let r: int = side(g = one) + g();
+                function two(): int { return 2; }
+                export function test(): int { return r; }
+                """),
+            new GuardCase(
+                "while-body assignment before a load-time indirect call", """
+                function inc(x: int): int { return x + 1; }
+                function dbl(x: int): int { return later(x); }
+                let f: (x: int) => int = inc;
+                let c: boolean = true;
+                let acc: int = 0;
+                while (c) {
+                  f = dbl;
+                  acc = f(2);
+                  c = false;
+                }
+                function later(x: int): int { return x * 2; }
+                export function test(): int { return acc; }
                 """));
         for (GuardCase c : guards) {
             Frontend gf = compileFrontend(c.source, "jvmtest-fv-guard.deal");
