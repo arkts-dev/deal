@@ -6,6 +6,9 @@
 import * as console from "std/console"
 
 export function test_console_log(): null {
-  console.log("hello");
-  return null;
+  let result: null = console.log("hello");
+  if (result !== null) {
+    throw { code: "TEST_FAIL", message: "console.log must complete with the declared null result" };
+  }
+  return result;
 }
