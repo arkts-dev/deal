@@ -4986,7 +4986,7 @@ public final class JvmBackend {
                 }
             };
         }
-        if (sym instanceof Symbol.FunctionSymbol) {
+        if (sym instanceof Symbol.FunctionSymbol fs) {
             if (!moduleFunctions.containsKey(id.name())) {
                 unsupported("non-module functions used as first-class values",
                     id.span());
@@ -5008,6 +5008,23 @@ public final class JvmBackend {
                     + "' as a value before its declaration (LuaJIT reads "
                     + "the global nil at load; Java rejects the forward "
                     + "reference to the wrapper field)", id.span());
+                return "null";
+            }
+            // Deferred signature shapes (array/class/nullable/table or
+            // nested-function parameters or returns): emitFunction emits
+            // the per-declaration wrapper field only when the signature
+            // shape is supported (fnShapeName != null), so a value use
+            // must be rejected with E6000 here instead of referencing a
+            // field that does not exist — an artifact javac would reject
+            // after the CLI reported success. Function equality/inequality
+            // is the value position that reaches emitIdentifier without a
+            // typed function-value boundary in between (every other
+            // position gates on the deferred shape earlier), exactly
+            // mirroring the emitFunction wrapper-field gate.
+            if (fs.funcType() == null || fnShapeName(fs.funcType()) == null) {
+                unsupported("function values whose signature contains "
+                    + "arrays/classes/nullables/nested functions "
+                    + "(deferred to ISSUE-0110)", id.span());
                 return "null";
             }
             return javaName(id.name()) + "$fn";

@@ -939,7 +939,14 @@ fixture whose codegen or JVM execution is bypassed):
 - **Function equality** — `emitBinary` emits Java reference `==`/`!=` on
   function values: reads of the same declaration's wrapper field compare
   equal, distinct wrappers (including distinct adapters) compare unequal
-  — LuaJIT's wrapper-table identity.
+  — LuaJIT's wrapper-table identity. Equality is the one value position
+  that reaches `emitIdentifier`'s function branch without a typed
+  function-value boundary in between, so that branch re-applies
+  `emitFunction`'s wrapper-field gate: functions whose signature
+  contains a deferred type (array/class/nullable/nested-function
+  parameter or return) are E6000 there — `emitFunction` never emits the
+  `$fn` field for those shapes, and referencing it would be an artifact
+  javac rejects after the CLI reported success.
 - **Load-time indirect-call guards** — `moduleIndirectCallRisk` /
   `collectPossibleHeldFunctions` / `heldFunctionsAtDeclaration` /
   `moduleLevelAssignedFunctions`: a module-level (load-time) indirect

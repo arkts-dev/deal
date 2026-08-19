@@ -234,7 +234,9 @@ import java.util.Set;
  *       indirect import hazard E6000; the reassignment and snapshot
  *       shapes run with LuaJIT parity), and the
  *       deferred signature shapes (nested/nullable/async/rest function
- *       types, arrays of functions) rejected with E6000.</li>
+ *       types, arrays of functions, and function equality/inequality
+ *       over array-/class-/nullable-parameter signatures) rejected with
+ *       E6000.</li>
  * </ul>
  *
  * <p>The end-to-end JVM conformance fixtures live in
@@ -4168,6 +4170,31 @@ public class JvmBackendTest {
                   let fs: ((x: int) => int)[] = [inc];
                   return 1;
                 }
+                """),
+            // Function equality/inequality over deferred signature shapes:
+            // the value use reaches emitIdentifier's FunctionSymbol branch
+            // without a typed function-value boundary in between, and the
+            // wrapper field emitFunction gates on does not exist for these
+            // signatures — E6000, never an artifact javac rejects after
+            // the CLI reported success.
+            new DeferredCase(
+                "function equality with array-parameter signatures", """
+                function f(xs: int[]): int { return xs[0]; }
+                function g(xs: int[]): int { return xs[0]; }
+                export function test(): boolean { return f === g; }
+                """),
+            new DeferredCase(
+                "function inequality with class-parameter signatures", """
+                class C { v: int = 0; }
+                function f(c: C): int { return c.v; }
+                function g(c: C): int { return c.v; }
+                export function test(): boolean { return f !== g; }
+                """),
+            new DeferredCase(
+                "function equality with nullable-parameter signatures", """
+                function f(x: int | null): int { return 1; }
+                function g(x: int | null): int { return 2; }
+                export function test(): boolean { return f === g; }
                 """));
         for (DeferredCase c : deferred) {
             Frontend df = compileFrontend(c.source, "jvmtest-fv-deferred.deal");
