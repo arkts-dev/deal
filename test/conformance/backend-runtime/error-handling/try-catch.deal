@@ -5,10 +5,18 @@
 
 export function test_trycatch(): string {
   let result: string = "initial";
+  let catchRan: boolean = false;
   try {
     result = "tried";
   } catch (e) {
+    catchRan = true;
     result = "caught";
+  }
+  if (catchRan !== false) {
+    throw { code: "TEST_FAIL", message: "forbidden catch executed" };
+  }
+  if (result !== "tried") {
+    throw { code: "TEST_FAIL", message: "try body post-state mismatch" };
   }
   return result;
 }
