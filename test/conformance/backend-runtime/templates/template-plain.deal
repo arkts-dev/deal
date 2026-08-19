@@ -5,5 +5,8 @@
 
 export function test_plain(): string {
   let s: string = `hello world`;
+  if (s !== "hello world") {
+    throw { code: "TEST_FAIL", message: "plain template literal produced wrong byte string" };
+  }
   return s;
 }
