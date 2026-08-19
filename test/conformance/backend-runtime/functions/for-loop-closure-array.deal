@@ -8,7 +8,22 @@ export function test_for_closure_array(): int {
   for (let i: int = 0; i < 3; i = i + 1) {
     fs[i] = function(): int { return i; };
   }
-  return fs[0]() * 100 + fs[1]() * 10 + fs[2]();
+  if (fs.length !== 3) {
+    throw { code: "TEST_FAIL", message: "for-loop closure array length mismatch" };
+  }
+  let v0: int = fs[0](); // each captured closure invoked once
+  let v1: int = fs[1]();
+  let v2: int = fs[2]();
+  if (v0 !== 0) {
+    throw { code: "TEST_FAIL", message: "for-loop closure array fs[0] captured value mismatch" };
+  }
+  if (v1 !== 1) {
+    throw { code: "TEST_FAIL", message: "for-loop closure array fs[1] captured value mismatch" };
+  }
+  if (v2 !== 2) {
+    throw { code: "TEST_FAIL", message: "for-loop closure array fs[2] captured value mismatch" };
+  }
+  return v0 * 100 + v1 * 10 + v2; // should return 12
 }
 
 export function main(): null {

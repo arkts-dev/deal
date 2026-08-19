@@ -12,7 +12,19 @@ export function test_for_closure(): int {
     if (i === 1) { f1 = function(): int { return i; }; }
     if (i === 2) { f2 = function(): int { return i; }; }
   }
-  return f0() * 100 + f1() * 10 + f2();
+  let v0: int = f0(); // each captured closure invoked once
+  let v1: int = f1();
+  let v2: int = f2();
+  if (v0 !== 0) {
+    throw { code: "TEST_FAIL", message: "for-loop closure f0 captured value mismatch" };
+  }
+  if (v1 !== 1) {
+    throw { code: "TEST_FAIL", message: "for-loop closure f1 captured value mismatch" };
+  }
+  if (v2 !== 2) {
+    throw { code: "TEST_FAIL", message: "for-loop closure f2 captured value mismatch" };
+  }
+  return v0 * 100 + v1 * 10 + v2; // should return 12
 }
 
 export function main(): null {
