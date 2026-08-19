@@ -2662,40 +2662,12 @@ public final class JvmBackend {
         };
     }
 
-    /**
-     * The runtime type descriptor of a DEAL type in the spec's
-     * {@code RuntimeTypeDescriptor} format (spec-v1.1 §Runtime type
-     * descriptor format): primitives, {@code ?T} nullable, {@code [T]}
-     * array, {@code async(...)->R} functions, and {@code @path/Name} class
-     * descriptors. Used for load-time validation messages and the
-     * call-time boundary-check dispatch inside {@code __hostCheck} —
-     * the same descriptor conventions the LuaJIT host ABI uses.
-     */
-    private String typeDescriptor(Type t) {
-        return switch (t) {
-            case Type.Int ignored -> "int";
-            case Type.Number ignored -> "number";
-            case Type.Boolean ignored -> "boolean";
-            case Type.String ignored -> "string";
-            case Type.Null ignored -> "null";
-            case Type.Table ignored -> "table";
-            case Type.Error ignored -> "error";
-            case Type.Array a -> "[" + typeDescriptor(a.element()) + "]";
-            case Type.Nullable n -> "?" + typeDescriptor(n.inner());
-            case Type.Class c -> classIdentity(c.name());
-            case Type.Func f -> {
-                StringBuilder sb = new StringBuilder(f.isAsync() ? "async(" : "(");
-                for (int i = 0; i < f.paramTypes().size(); i++) {
-                    if (i > 0) sb.append(',');
-                    sb.append(typeDescriptor(f.paramTypes().get(i)));
-                }
-                f.restType().ifPresent(r ->
-                    sb.append(",...").append(typeDescriptor(r)));
-                sb.append(")->").append(typeDescriptor(f.returnType()));
-                yield sb.toString();
-            }
-        };
-    }
+    // Host-boundary descriptors reuse the canonical ISSUE-0110 static
+    // {@link #typeDescriptor(Type)} emitter — the spec
+    // {@code RuntimeTypeDescriptor} spelling used for load-time
+    // validation messages and the call-time dispatch inside
+    // {@code __hostCheck} (the same descriptor conventions the LuaJIT
+    // host ABI uses).
 
     // =========================================================================
     // Classes (ISSUE-0095: local classes and nominal checks)
