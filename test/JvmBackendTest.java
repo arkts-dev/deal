@@ -223,7 +223,14 @@ import java.util.Set;
  *       a lambda, never a silent divergence), E8010 runtime signature
  *       checks at callback/return boundaries with LuaJIT's exact message
  *       and the checked value expression evaluated FIRST
- *       (evaluate-then-check — side effects never dropped), wrapper
+ *       (evaluate-then-check — side effects never dropped; a check
+ *       operand's VALUE lowers to an actual-shape temporary while the
+ *       raising construction stays INLINE at the argument position, so
+ *       two arity-mismatched function-valued arguments in one call
+ *       compile to valid Java and raise the FIRST parameter's E8010 in
+ *       parameter order, pinned in {@code testFunctionValues} and the
+ *       {@code jvm-fv-cross-e8010-two-mismatched-args} conformance
+ *       fixture), wrapper
  *       reference equality, call-result-callee evaluation order (the
  *       callee materialized into a single-assignment temporary at its
  *       evaluation position, before any argument's hoisted
@@ -3974,6 +3981,80 @@ public class JvmBackendTest {
         check(!cbCheckNullable.output().contains("NullPointerException"),
             "no unboxing NPE from a primitive materialization temp: "
                 + cbCheckNullable.output());
+
+        // Two arity-mismatched function-valued arguments in ONE call,
+        // with an impure later value expression (BOT-0716 finding): both
+        // value expressions must evaluate left to right, the FIRST
+        // parameter's boundary check must raise E8010 with the FIRST
+        // parameter's descriptor, and the emitted artifact must be valid
+        // Java. The pre-fix JVM materialized the later operand's RAISING
+        // construction into an actual-shape temporary
+        // (`Fn0_R_I __t0 = new Fn2_IS_R_I() {…}`), which javac rejected
+        // ("incompatible types") after the CLI reported success — and
+        // which would have raised the SECOND parameter's check before
+        // the first's.
+        ExecResult twoChecks = compileAndRunJvm("""
+            import * as console from "std/console"
+            function inc(x: int): int { return x + 1; }
+            function pickZero(): () => int {
+              console.log("f2-e8010-two-mismatched-args-ok");
+              return zero;
+            }
+            function zero(): int { return 0; }
+            function apply2(f: (a: int, b: string) => int, g: (a: int, b: string) => int): int { return f(1, "s"); }
+            export function test(): int { return apply2(inc, pickZero()); }
+            """, "jvmtest-fv-cb-two-checks");
+        check(twoChecks.exitCode() == 1,
+            "two-mismatched-args E8010 probe exits 1");
+        check(twoChecks.output().contains("f2-e8010-two-mismatched-args-ok"),
+            "the later argument's value expression evaluates before the raise: "
+                + twoChecks.output());
+        check(twoChecks.output().contains("DEAL_ERROR_CODE: E8010"),
+            "the two-mismatched-args E8010 raises: " + twoChecks.output());
+        check(twoChecks.output().contains(
+            "function signature mismatch: expected (int,string)->int, got (int)->int"),
+            "the FIRST parameter's check raises with its descriptor: "
+                + twoChecks.output());
+        check(!twoChecks.output().contains("got ()->int"),
+            "the second parameter's check never runs: " + twoChecks.output());
+
+        // Emission shape: each check operand's VALUE is an actual-shape
+        // temporary declared at its evaluation position and each raising
+        // construction stays INLINE at its argument position — neither
+        // materialization loop ever hoists the raising construction
+        // (the pre-fix javac-rejected shape).
+        Frontend twoChecksF = compileFrontend("""
+            function inc(x: int): int { return x + 1; }
+            function pickZero(): () => int { return zero; }
+            function zero(): int { return 0; }
+            function apply2(f: (a: int, b: string) => int, g: (a: int, b: string) => int): int { return f(1, "s"); }
+            export function test(): int { return apply2(inc, pickZero()); }
+            """, "jvmtest-fv-cb-two-checks-emit.deal");
+        check(twoChecksF.errors().isEmpty(),
+            "two-check emission probe frontend clean: " + twoChecksF.errors());
+        if (twoChecksF.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                twoChecksF.program(), twoChecksF.checkResult(),
+                "jvmtest-fv-cb-two-checks-emit.deal", "main");
+            check(!res.hasErrors(),
+                "two-check emission probe codegen clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                String src = res.source();
+                check(src.contains("Fn1_I_R_I __fn0 = inc$fn;"),
+                    "the first check operand's value temp carries its ACTUAL shape");
+                check(src.contains("Fn0_R_I __fn1 = pickZero();"),
+                    "the later check operand's value temp carries its ACTUAL shape");
+                check(!src.contains("Fn0_R_I __t")
+                    && !src.contains("Fn2_IS_R_I __t")
+                    && !src.contains("Fn1_I_R_I __t"),
+                    "no materialization temp holds a raising construction");
+                check(src.contains("new Fn2_IS_R_I() { { if (!checkSig(\"(int,string)->int\", \"(int)->int\"))")
+                    && src.contains("new Fn2_IS_R_I() { { if (!checkSig(\"(int,string)->int\", \"()->int\"))"),
+                    "both raising constructions stay inline at their argument positions in parameter order");
+                check(src.contains("apply2(new Fn2_IS_R_I()"),
+                    "the inline raise sits directly in the call argument list");
+            }
+        }
 
         // The checked value expression is evaluated BEFORE E8010 raises
         // (spec §Operational semantics rule 2 / strict return-value

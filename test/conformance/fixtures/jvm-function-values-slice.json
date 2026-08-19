@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM function values and wrappers slice (ISSUE-0098). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: first-class function values in typed and inferred variables, indirect calls through variables/parameters/module fields and call-result callees, callbacks with primitive/string/null signatures, returning function values, the int/number conversion intrinsics as function values (exact and arity-extended), arity-extension adapters at variable-initializer and assignment positions — module functions and intrinsics delegate directly, module fields are read LIVE on every invoke (a reassignment after creation retargets the adapter, pinned cross-backend), and never-reassigned locals/parameters snapshot (reassigned bindings and non-identifier adapter values are E6000 until ISSUE-0110, pinned in JvmBackendTest) — E8010 runtime signature checks at callback and return boundaries with the checked value expression evaluated FIRST (evaluate-then-check side-effect order pinned cross-backend), wrapper reference equality, recursion routed through the wrapper, load-time indirect calls through function-typed module fields, and six frontend compile-error gates (E3001 parameter/return signature mismatch, E5004 reverse arity, E3009/E5001 indirect-call arity/argument mismatch, E3008 non-function callee) rejected before any backend. Eleven fixtures run under both backends as cross-backend parity with real luajit; two LuaJIT-only fixtures pin the reference semantics of the shapes the JVM slice conservatively rejects.",
+  "description": "JVM function values and wrappers slice (ISSUE-0098). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: first-class function values in typed and inferred variables, indirect calls through variables/parameters/module fields and call-result callees, callbacks with primitive/string/null signatures, returning function values, the int/number conversion intrinsics as function values (exact and arity-extended), arity-extension adapters at variable-initializer and assignment positions — module functions and intrinsics delegate directly, module fields are read LIVE on every invoke (a reassignment after creation retargets the adapter, pinned cross-backend), and never-reassigned locals/parameters snapshot (reassigned bindings and non-identifier adapter values are E6000 until ISSUE-0110, pinned in JvmBackendTest) — E8010 runtime signature checks at callback and return boundaries with the checked value expression evaluated FIRST (evaluate-then-check side-effect order pinned cross-backend), wrapper reference equality, recursion routed through the wrapper, load-time indirect calls through function-typed module fields, and six frontend compile-error gates (E3001 parameter/return signature mismatch, E5004 reverse arity, E3009/E5001 indirect-call arity/argument mismatch, E3008 non-function callee) rejected before any backend. Twelve fixtures run under both backends as cross-backend parity with real luajit; two LuaJIT-only fixtures pin the reference semantics of the shapes the JVM slice conservatively rejects.",
   "tests": [
     {
       "name": "jvm-fv-typed-variable-indirect-call",
@@ -500,6 +500,24 @@
       "description": "Cross-backend parity (LuaJIT + JVM): at an E8010 return-boundary check position the returned value expression is evaluated before the check raises — markF logs its marker and only then does the E8010 fire on both backends (exit 1); the pre-fix JVM dropped the side effect entirely",
       "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction markF(tag: string, f: (x: int) => int): (x: int) => int {\n  if (tag === \"pre\") { console.log(\"jvm-fv-cross-e8010-return-eval-ok\"); }\n  return f;\n}\nfunction picker(): (a: int, b: int) => int { return markF(\"pre\", inc); }\nexport function test(): int {\n  let f: (a: int, b: int) => int = picker();\n  return f(41, 999);\n}",
       "expectedOutput": "jvm-fv-cross-e8010-return-eval-ok",
+      "expectedError": "E8010",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-cross-e8010-two-mismatched-args",
+      "description": "Cross-backend parity (LuaJIT + JVM): one call with TWO arity-mismatched function-valued arguments whose later value expression is impure (pickZero logs before returning) — both value expressions evaluate left to right (the marker prints) and only then does the FIRST parameter's boundary check raise E8010 with the first parameter's descriptor (the message carries 'got (int)->int'); the second parameter's descriptor ('got ()->int') is pinned never to print, and the emitted artifact must be valid Java — the pre-fix JVM materialized the later operand's raising construction into an ACTUAL-shape temporary ('Fn0_R_I __t0 = new Fn2_IS_R_I() {…}'), which the harness's javac step rejects ('incompatible types') and which would have raised the second parameter's check before the first's",
+      "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction pickZero(): () => int {\n  console.log(\"jvm-fv-cross-e8010-two-mismatched-args-ok\");\n  return zero;\n}\nfunction zero(): int { return 0; }\nfunction apply2(f: (a: int, b: string) => int, g: (a: int, b: string) => int): int { return f(1, \"s\"); }\nexport function test(): int { return apply2(inc, pickZero()); }",
+      "expectedOutput": "jvm-fv-cross-e8010-two-mismatched-args-ok",
+      "expectedNotOutput": [
+        "got ()->int"
+      ],
       "expectedError": "E8010",
       "expectedExitCode": 1,
       "expectedCompileError": null,

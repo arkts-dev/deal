@@ -974,7 +974,7 @@ fixture whose codegen or JVM execution is bypassed):
   declared before a function-typed field that calls through it stays
   subject to the existing later-field read/write analysis.
 - **Tests proving the slice** —
-  - `test/conformance/fixtures/jvm-function-values-slice.json` — 38
+  - `test/conformance/fixtures/jvm-function-values-slice.json` — 39
     fixtures. 19 JVM-only runtime fixtures run through the real
     frontend → real `JvmBackend` codegen → `javac` subprocess → `java`
     subprocess executing the emitted artifact (the harness fails a
@@ -993,7 +993,7 @@ fixture whose codegen or JVM execution is bypassed):
     boundary, return boundary). Six frontend compile-error gates are
     rejected before any backend (E3001 parameter/return signature
     mismatch, E5004 reverse arity, E3009/E5001 indirect-call
-    arity/argument mismatch, E3008 non-function callee). Eleven fixtures
+    arity/argument mismatch, E3008 non-function callee). Twelve fixtures
     run under both backends as cross-backend parity with real luajit:
     the callback, arity-extension assignment, intrinsic function value,
     and reassignment shapes; the indirect-call boolean-argument
@@ -1013,6 +1013,16 @@ fixture whose codegen or JVM execution is bypassed):
     inc)` prints the marker and then raises E8010 on both backends
     (`expectedOutput` + `expectedError: E8010` + `expectedExitCode: 1`
     pin the side effect around the raise; the pre-fix JVM dropped it);
+    the two-mismatched-arguments shape — `apply2(inc, pickZero())` with
+    TWO arity-mismatched function-valued arguments whose later value
+    expression is impure prints pickZero's marker (both value
+    expressions evaluate left to right) and then raises E8010 with the
+    FIRST parameter's descriptor (`expectedNotOutput` pins 'got
+    ()->int' — the second parameter's check never raises — and the
+    harness's javac step pins that the emitted artifact is valid Java:
+    the pre-fix JVM materialized the later operand's raising
+    construction into an actual-shape temporary and javac rejected the
+    artifact after the CLI reported success);
     and the two call-result-callee evaluation-order shapes — the callee
     evaluates COMPLETELY before every argument (spec §Operational
     semantics rule 1) even when a later argument hoists side-effecting
@@ -1068,7 +1078,15 @@ fixture whose codegen or JVM execution is bypassed):
     function types, rest function types, arrays of functions); and the
     E8010 callback/return checks with module-field evaluation-order
     probes asserting the checked value expression runs before the raise
-    (the marker prints and `DEAL_ERROR_CODE: E8010` follows). The
+    (the marker prints and `DEAL_ERROR_CODE: E8010` follows); the
+    two-mismatched-arguments probe pins the split check-operand shape
+    (`Fn1_I_R_I __fn0 = inc$fn;` / `Fn0_R_I __fn1 = pickZero();` value
+    temps with ACTUAL shapes, both raising constructions INLINE in the
+    call argument list in parameter order, and no materialization temp
+    ever holding a raising construction — the pre-fix
+    `Fn0_R_I __t0 = new Fn2_IS_R_I() {…}` shape javac rejected) plus
+    javac+java execution asserting the first parameter's descriptor
+    raises and the second's never prints. The
     no-lambda assertions across the suite now target the lambda arrow
     form `" -> "` — wrapper descriptor strings legitimately carry the
     arrow glyph without spaces.

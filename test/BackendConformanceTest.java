@@ -131,7 +131,7 @@ import javax.tools.ToolProvider;
  * boundaries with the checked value expression evaluated first
  * (evaluate-then-check side-effect order pinned cross-backend),
  * wrapper reference equality, load-time indirect calls, six frontend
- * signature/indirect-call compile-error gates, eleven cross-backend
+ * signature/indirect-call compile-error gates, twelve cross-backend
  * parity fixtures, and two LuaJIT-only reference fixtures pinning the
  * reassigned-local and side-effecting call-result adapter semantics
  * that the JVM slice conservatively rejects with E6000 until

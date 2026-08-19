@@ -5680,7 +5680,12 @@ public final class JvmBackend {
         // operand that hoisted itself but still carries an inline call
         // after its own hoisted statements (a nested combination), whose
         // inline effects would otherwise run after operand j's hoisted
-        // statements.
+        // statements. A check-position operand (throwsAtEval) is the
+        // one exception: its inline code is the E8010 raising
+        // construction, which deliberately stays at the argument
+        // position (see the skip inside the loop below) — its VALUE is
+        // already a pre-statement temporary at the operand's own
+        // evaluation position, so nothing observable is left to anchor.
         boolean[] materialized = new boolean[nodes.size()];
         List<Integer> hoistOps = new ArrayList<>(nodes.size());
         for (int i = 0; i < nodes.size(); i++) {
@@ -5692,6 +5697,22 @@ public final class JvmBackend {
             int insertAt = hoistStarts.get(j);
             for (int i = first; i < j; i++) {
                 if (materialized[i]) continue;
+                // A check-position operand's inline code is the RAISING
+                // wrapper construction (emitSignatureCheckWrapper), and
+                // its VALUE is already materialized into an
+                // actual-shape temporary at the operand's own evaluation
+                // position. Materializing the raising construction here
+                // would (a) type the temporary with the ACTUAL wrapper
+                // shape while the code is the TARGET wrapper subclass
+                // (javac rejects the artifact after the CLI reported
+                // success) and (b) run the raise before operand j's
+                // hoisted statements — inverting LuaJIT's
+                // evaluate-then-check order. The raise must stay INLINE
+                // at the argument position: all pre-statements
+                // (including j's hoisted statements and j's
+                // check-loop-materialized remainder) flush first, so the
+                // raise happens after every later argument's evaluation.
+                if (throwsAtEval[i]) continue;
                 if (isPureAfterEmission(nodes.get(i))) continue;
                 // The temporary's Java type follows the EMITTED code
                 // shape, not just the static type — see
@@ -5725,6 +5746,21 @@ public final class JvmBackend {
             if (!throwsAtEval[i]) continue;
             for (int j = i + 1; j < nodes.size(); j++) {
                 if (materializedForCheck[j]) continue;
+                // A later operand that is itself a check position has
+                // its VALUE already materialized into an actual-shape
+                // temporary at its own evaluation position
+                // (emitSignatureCheckWrapper); that pre-statement
+                // precedes operand i's inline raise, so operand j's
+                // value evaluates before the raise — exactly LuaJIT's
+                // evaluate-all-arguments-then-check order. Its INLINE
+                // code is the raising construction: materializing it
+                // here would (a) type the temporary with the ACTUAL
+                // shape while the code is the TARGET wrapper subclass
+                // (javac rejects the artifact) and (b) raise operand
+                // j's check before operand i's — inverting LuaJIT's
+                // parameter-order E8010 (the FIRST mismatched parameter
+                // raises).
+                if (throwsAtEval[j]) continue;
                 if (isPureAfterEmission(nodes.get(j))) continue;
                 // The temporary's Java type follows the EMITTED code
                 // shape, exactly like the main materialization loop: a
@@ -5851,6 +5887,19 @@ public final class JvmBackend {
      * raise happens where LuaJIT's parameter/return boundary check
      * raises (after any materialized later operands). The invoke body is
      * unreachable and throws to satisfy the abstract method.
+     *
+     * <p>The returned construction is the operand's INLINE code and must
+     * stay at the argument position: {@link #emitOperandsInOrder}'s two
+     * materialization loops deliberately skip check-position operands,
+     * because materializing the raising construction would type a
+     * temporary with the ACTUAL wrapper shape while the code is the
+     * TARGET wrapper subclass (a javac-rejected artifact after the CLI
+     * reported success) and would run the raise out of parameter order
+     * — LuaJIT evaluates every argument's value left to right and only
+     * then raises the FIRST mismatched parameter's E8010, so with two
+     * arity-mismatched function arguments the first parameter's check
+     * must raise and the second operand's value must still evaluate
+     * first (its own value temporary, declared here, does that).</p>
      */
     private String emitSignatureCheckWrapper(Type.Func target, Type.Func actual,
             ExpressionNode value) {
