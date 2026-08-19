@@ -1219,7 +1219,6 @@ public class BackendConformanceTest {
      * artifact (asserted before javac), and a bypassed JVM execution
      * produces no output.
      */
-    @SuppressWarnings("unchecked")
     /**
      * Runs one backend assertion group and attributes the pass/fail
      * outcome to the named backend gate ({@code luajit} / {@code jvm}).
@@ -1237,6 +1236,7 @@ public class BackendConformanceTest {
         return ok;
     }
 
+    @SuppressWarnings("unchecked")
     private static void runMultiModuleTestCase(String fixtureName, Map<String, Object> test) {
         String name = jsonString(test, "name", "<unnamed>");
         String description = jsonString(test, "description", "");
