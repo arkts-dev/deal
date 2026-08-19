@@ -6,5 +6,12 @@
 export function test_array_write(): int {
   let xs: int[] = [1, 2, 3];
   xs[0] = 99;
-  return xs[0];
+  let result: int = xs[0];
+  if (xs.length !== 3) {
+    throw { code: "TEST_FAIL", message: "array write length mismatch" };
+  }
+  if (result !== 99) {
+    throw { code: "TEST_FAIL", message: "array write value mismatch" };
+  }
+  return result;
 }
