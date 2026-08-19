@@ -10,5 +10,9 @@ export function test_ifelse(): int {
   } else {
     x = 2;
   }
-  return x; // should be 1
+  // should be 1
+  if (x !== 1) {
+    throw { code: "TEST_FAIL", message: "if/else took the wrong branch" };
+  }
+  return x;
 }
