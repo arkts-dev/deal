@@ -218,7 +218,7 @@
     },
     {
       "name": "jvm-xmod-class-param-return-local-fn",
-      "description": "An entry-local function declares an imported-class parameter and return type: shift(p: lib.Point): lib.Point mutates and returns the value, and the caller reads the returned instance's fields (shifted x=4, sum=8, 8+4=12) \u2014 class-typed values pass and return through MAIN-side functions too, not only through the declaring module's",
+      "description": "An entry-local function declares an imported-class parameter and return type: shift(p: lib.Point): lib.Point mutates and returns the value, and the caller reads the returned instance's fields (shifted x=4, sum=8, 8+4=12) — class-typed values pass and return through MAIN-side functions too, not only through the declaring module's",
       "modules": {
         "lib.deal": "export class Point {\n  x: int = 0;\n  y: int = 0;\n}\nexport function sum(p: Point): int { return p.x + p.y; }",
         "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nfunction shift(p: lib.Point): lib.Point {\n  p.x = p.x + 1;\n  return p;\n}\nexport function run(): int {\n  let p: lib.Point = { x: 3, y: 4 };\n  let q: lib.Point = shift(p);\n  return lib.sum(q) + q.y;\n}"

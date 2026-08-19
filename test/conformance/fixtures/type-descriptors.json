@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "Backend-neutral type descriptor tests \u2014 verifies that IR dump produces spec-format RuntimeTypeDescriptor strings for all DEAL types.",
+  "description": "Backend-neutral type descriptor tests — verifies that IR dump produces spec-format RuntimeTypeDescriptor strings for all DEAL types.",
   "tests": [
     {
       "name": "primitive-null",
@@ -211,7 +211,7 @@
     },
     {
       "name": "function-type-array-param",
-      "description": "Fixed array param type in function (v1.2 \u2014 rest params removed)",
+      "description": "Fixed array param type in function (v1.2 — rest params removed)",
       "source": "function sumValues(xs: int[]): null { return; }",
       "expectedOutput": null,
       "expectedError": null,
@@ -228,7 +228,7 @@
     },
     {
       "name": "fixed-params-mixed",
-      "description": "Mixed fixed params function (v1.2 \u2014 no rest arm)",
+      "description": "Mixed fixed params function (v1.2 — no rest arm)",
       "source": "function describe(label: string, values: int[]): null { return; }",
       "expectedOutput": null,
       "expectedError": null,
@@ -380,7 +380,7 @@
     },
     {
       "name": "function-type-descriptor-fixed-array-param",
-      "description": "Function type (string,[int])->null appears in IR for fixed-param function (v1.2 \u2014 no rest arm)",
+      "description": "Function type (string,[int])->null appears in IR for fixed-param function (v1.2 — no rest arm)",
       "source": "function describe(label: string, values: int[]): null { return; }\nlet f: (label: string, values: int[]) => null = describe;",
       "expectedOutput": null,
       "expectedError": null,
