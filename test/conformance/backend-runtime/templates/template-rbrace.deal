@@ -4,5 +4,9 @@
 // @features: template-literal, brace-scanning
 
 export function test_rbrace(): string {
-  return `${ "}" }`;
+  let result: string = `${ "}" }`;
+  if (result !== "}") {
+    throw { code: "TEST_FAIL", message: "template literal brace scanning produced wrong byte string" };
+  }
+  return result;
 }

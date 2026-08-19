@@ -6,5 +6,9 @@
 export function test_multi(): string {
   let a: string = "Alice";
   let b: string = "Bob";
-  return `Hello, ${a}! You have ${b} as a friend.`;
+  let result: string = `Hello, ${a}! You have ${b} as a friend.`;
+  if (result !== "Hello, Alice! You have Bob as a friend.") {
+    throw { code: "TEST_FAIL", message: "template multiple interpolations produced wrong byte string" };
+  }
+  return result;
 }
