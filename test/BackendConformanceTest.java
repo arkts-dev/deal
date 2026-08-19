@@ -484,6 +484,19 @@ public class BackendConformanceTest {
      * configuration is valid.
      */
     static String fixtureConfigViolation(Map<String, Object> test) {
+        // ISSUE-0100: 'hosts' (host modules with deal.json externals) is
+        // a multi-module concept — the single-module adapter has no
+        // project root, no deal.json, and no orchestrator, so a
+        // single-module fixture declaring hosts would silently drop them.
+        Object hosts = test.get("hosts");
+        if (hosts != null && hosts != JSON_NULL) {
+            Object source = test.get("source");
+            if (source != null && source != JSON_NULL) {
+                return "'hosts' requires the multi-module 'modules' form; "
+                    + "a single-module ('source') fixture cannot declare "
+                    + "host modules";
+            }
+        }
         Object expectedCompileError = test.get("expectedCompileError");
         if (expectedCompileError == null || expectedCompileError == JSON_NULL) {
             return null;
