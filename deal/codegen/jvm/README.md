@@ -1,4 +1,4 @@
-# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice, ISSUE-0095 classes and nominal checks slice, ISSUE-0096 modules/imports/exports slice, ISSUE-0097 stdlib-boundary slice, ISSUE-0098 function values and wrappers slice, ISSUE-0108 nullable slice, ISSUE-0109 imported classes and cross-module nominal identity slice, ISSUE-0100 host ABI slice)
+# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice, ISSUE-0095 classes and nominal checks slice, ISSUE-0096 modules/imports/exports slice, ISSUE-0097 stdlib-boundary slice, ISSUE-0098 function values and wrappers slice, ISSUE-0108 nullable slice, ISSUE-0109 imported classes and cross-module nominal identity slice, ISSUE-0100 host ABI slice, ISSUE-0099 async/await slice)
 
 A small but real end-to-end JVM backend for the DEAL compiler. It walks the
 typed AST (the compiler's IR — `deal-compiler-architecture-v1`) and emits a
@@ -45,6 +45,9 @@ Supported (real semantics, spec JVM value mapping):
 | `(T \| null)[]` (ISSUE-0108) | wrapper classes `__IntOrNullArray` / `__NumberOrNullArray` / `__StringOrNullArray` / `__BooleanOrNullArray` over boxed storage (`java.lang.Long[]` etc.) — Java `null` is the DEAL null element, exactly like LuaJIT's nil/`__NULL` storage. Reads yield the DEAL null past the end (a valid nullable element — no E8001 at the read) and still raise E8002 for a negative index; writes accept null (check_nullable permits it) and check only the index bounds |
 | `C[]` / `(C \| null)[]` (ISSUE-0108) | a per-class `$Array$<C>` wrapper extending the emitted `__RefArray` (`java.lang.Object[]` storage) plus per-class `$classArrayRead$`-family helpers: non-nullable reads raise E8001 past the end ("expected instance of @mod/C, got null") and run the nominal `instanceof` check on the element; nullable reads yield the DEAL null past the end; writes reject non-`C` values with E8001 (null passes for `(C \| null)[]`) |
 | `import * as lib from "./lib"` (compiled project module, ISSUE-0096) | the import statement emits a load-time `static { <LibClass>.__init$(); }` trigger (a static-method invocation initializes the imported class per JLS §12.4.1, running its load-time statements exactly where LuaJIT runs `require` — depth-first in import order, also for unused aliases); `lib.add(a, b)` emits a static call on the imported module's emitted class (`Lib.add(a, b)`) |
+| `async function f(...): R` (ISSUE-0099) | the spec-permitted JVM blocking-call lowering: a plain `static` method returning the declared `R` (the async marker changes nothing in the method itself). The blocking call is the internal async operation — it starts when invoked, completes exactly once with the declared-type value or by raising a `DealError` that propagates at the await site, and evaluation before an `await` precedes evaluation resumed after it. Async functions with primitive/string/boolean/null parameters and returns are in scope |
+| `await E` (ISSUE-0099) | evaluates the direct call `E` and applies the declared-return-type completion check at the await site: `int` completions route through `checkInt` (E8004 — the Java `long` is wider than the DEAL int safe range); `number`/`string`/`boolean` completions are proven by the emitted Java types, which §JVM backend contract permits; `null` completions (a null-returning async function) hoist the void call into a pre-statement and yield the DEAL null. Works in every expression position — let initializers, return positions, call arguments (nested `await outer(await inner())`), if conditions — and in discard positions (a standalone `await tick();` statement genuinely evaluates the call). An `Error` raised by the awaited operation propagates at the await site out of the caller |
+| async function values (ISSUE-0099) | reuse the ISSUE-0098 wrapper machinery unchanged: the per-signature wrapper shape class (`Fn1_I_R_I` for `async (x: int) => int`) and the per-declaration wrapper instance field (`value$fn`) cover async markers (the descriptor string carries the `async` prefix), typed locals/parameters/returns of async function type hold wrapper references, and `await f(args)` over such a binding emits `f.invoke(args)` with the await-site completion check. Arity extension inherits the adapter machinery. The v1.2 module shape (E1049) removes module-level statements, so the load-time function-value read guards stay defensive, pinned exactly like the sibling ISSUE-0098 load-time guards |
 
 Out of scope (rejected with a backend `E6000` diagnostic, never silently
 miscompiled): optional class fields (their reads produce nullable values
@@ -65,13 +68,14 @@ type the slice does not support yet as a function parameter or return),
 for/for-of loops, try/throw, `@jsonable`.
 and (deferred to ISSUE-0110) function expressions, nested function
 declarations, function signatures containing arrays, classes,
-nullables, nested function types, or async markers, and cross-module
+nullables, and nested function types, and cross-module
 function values — a Func-typed argument to an imported project-module
 call and an imported call result with Func static type are E6000
 because the per-module wrapper classes cannot cross a module boundary
 (never an artifact javac rejects after the CLI reported success). Plain
 function-type annotations over int/number/boolean/string/null signatures
-are fully supported.
+are fully supported, sync and async (ISSUE-0099 lifts the async marker
+into the same wrapper machinery — see "Async/await slice" below).
 
 ## Host ABI slice (ISSUE-0100)
 
@@ -186,6 +190,87 @@ the tracked divergences). This is why `let z: null = console.log("x")` runs the
 print and stores null under JVM while LuaJIT's `check_null` rejects the raw
 nil — the JVM backend proves the boundary statically, exactly as the spec
 allows.
+
+## Async/await slice (ISSUE-0099)
+
+The async slice extends the ISSUE-0100 blocking lowering with the
+await-site completion check for DEAL async calls and lifts the async
+marker into the ISSUE-0098 function-value machinery — no parallel
+wrapper infrastructure, no duplicated lowering:
+
+- **Async function declarations** emit as plain static methods returning
+  the declared type (spec-v1.2 §Async operation semantics permits
+  blocking calls as a JVM lowering; ISSUE-0100). The blocking call is
+  the internal async operation: it starts when invoked, completes
+  exactly once with the declared-type value or by raising a `DealError`
+  that propagates at the await site, and evaluation before an `await`
+  precedes evaluation resumed after it.
+- **`await E`** evaluates the direct call `E` and applies the
+  declared-return-type completion check at the await site: an `int`
+  completion routes through `checkInt` (E8004 — the Java `long` is
+  wider than the DEAL int safe range); `number`/`string`/`boolean`
+  completions are proven by the emitted Java types (spec-v1.2 §JVM
+  backend contract permits this); a `null` completion (a null-returning
+  async function) hoists the void call into a pre-statement and yields
+  the DEAL null like any other null-typed call. Works in let
+  initializers, return positions, call arguments (nested
+  `await outer(await inner())`), if conditions, and discard positions.
+- **Async function values** reuse `registerWrapperShape` / `fnShapeName`
+  unchanged: `resolveTypeNode` preserves the async marker on
+  function-type annotations, so a declared async function produces the
+  same per-signature wrapper shape class (`Fn1_I_R_I` for
+  `async (x: int) => int` — the descriptor string carries the
+  `async` prefix) and per-declaration wrapper instance field
+  (`value$fn`) the sync slice emits; typed locals, parameters
+  (callbacks), and returns of async function type hold wrapper
+  references; awaited indirect calls (`await f(6)`) dispatch through
+  `invoke`; and arity extension inherits the adapter machinery.
+- **Errors** raised by an awaited operation propagate at the await site
+  out of the caller (the runner's `DEAL_ERROR_CODE` contract).
+- **Out of slice (E6000, deferred to ISSUE-0110):** async function
+  expressions and function types with non-representable signatures
+  (arrays/classes/nullables/nested function types). Cross-module
+  function values stay E6000 for async signatures exactly like sync
+  ones (the per-module wrapper classes cannot cross a module
+  boundary). The v1.2 module shape (E1049) removes module-level
+  statements, so the load-time function-value-read guards stay
+  defensive, pinned exactly like the sibling ISSUE-0098 load-time
+  guards.
+- The frontend keeps enforcing every async rule (E3012 await outside
+  async, E3013 await on a non-async call, E3014 async call without
+  await) — the backend never sees a non-conforming await.
+
+## Review evidence: async/await slice (ISSUE-0099)
+
+Every supported async/await form, with the test covering it. All
+fixture evidence runs through the real frontend → real `JvmBackend`
+codegen → `javac` subprocess → `java` subprocess executing the emitted
+artifact (`test/conformance/fixtures/jvm-async-slice.json`, 13 runtime
++ 3 frontend-gate JVM-only fixtures; `test/BackendConformanceTest`
+fails a fixture whose parser/checker/module-discovery yields no
+compile, whose codegen leaves no `.java` artifact, or whose JVM
+execution is bypassed):
+
+| Async/await form (spec-v1.2 §Async operation semantics / §Function values, calls, and wrappers) | Test covering it |
+|---|---|
+| async function declaration → plain static method returning the declared type; direct await evaluates the call's return value | `jvm-async-direct-await`; emission pins in `JvmBackendTest.testAsyncSlice` (`static long g()`, `checkInt(g())`) |
+| await in value positions — let initializers, a return position, an if-condition — with int/string/boolean completions | `jvm-async-value-positions` |
+| standalone await statements (discard positions) genuinely evaluate the awaited calls | `jvm-async-discard-position` (three console-marked ticks) |
+| null completion (awaiting a null-returning async function yields the DEAL null) and boolean completion success | `jvm-async-completion-success`; `JvmBackendTest.testAsyncSlice` (`noop();` hoisted, no `checkInt(noop()`) |
+| await-site int completion check — the maximal safe-range int (2^53-1) passes through the await and back out | `jvm-async-completion-int-boundary` |
+| completion failure — an awaited operation raising E8005 propagates at the await site (DEAL_ERROR_CODE, exit 1) | `jvm-async-error-propagation`; `JvmBackendTest.testAsyncSlice` |
+| errors propagate through every enclosing await (one and two await levels) | `jvm-async-nested-error-propagation` |
+| nested awaits in call-argument position evaluate innermost-first | `jvm-async-nested-await-args`; `JvmBackendTest.testAsyncSlice` (await outer(await inner()) = 8) |
+| await in an if-condition position decides the branch | `jvm-async-await-in-condition` |
+| async function as a value in a typed local; awaited indirect call through the wrapper (`invoke`) | `jvm-async-function-value`; `JvmBackendTest.testAsyncSlice` (`Fn0_R_I f = value$fn;`, `checkInt(f.invoke())`) |
+| callback parameter of async function type; the declared function value passes in and dispatches | `jvm-async-function-value-callback`; `JvmBackendTest.testAsyncSlice` (`checkInt(cb.invoke(v))`) |
+| reassigned local binding of async function type; each awaited indirect call dispatches through the current value | `jvm-async-function-value-local-reassign` |
+| imported async direct calls through the real orchestrator pipeline (module discovery → checking → per-module codegen → javac → java) | `jvm-async-multi-module` (entry module exporting the v1.2 selected-entry non-async `main(): null`) |
+| arity extension of an async signature inherits the ISSUE-0098 adapter (extra parameters dropped) | `JvmBackendTest.testAsyncSlice` |
+| async function expressions stay E6000 (deferred) | `JvmBackendTest.testUnsupportedConstructsRejected` ("async function expression" case); `JvmBackendTest.testAsyncSlice` |
+| async signatures with array parameters stay E6000 (deferred) | `JvmBackendTest.testAsyncSlice` |
+| module-level function-value reads are the v1.2 grammar gate E1049 (the pre-rebase load-time guard shapes) | `JvmBackendTest.testAsyncSlice` |
+| frontend compile-errors rejected before any backend (E3012 await outside async, E3013 await on a sync call, E3014 async call without await) | `jvm-async-frontend-await-outside-async`, `jvm-async-frontend-await-sync-call`, `jvm-async-frontend-unawaited-call` |
 
 ## Observable-behavior guarantees (rework round)
 
@@ -1163,7 +1248,8 @@ fixture whose codegen or JVM execution is bypassed):
     table-literal property value — `let t = { x: (g = dbl) }` still
     counts — with frontend-clean probes), the call-result adapter, and
     the deferred signature shapes (nested function types, nullable
-    function types, async function types, arrays of functions); the
+    function types, arrays of functions — async function types are
+    ISSUE-0099-slice); the
     v1.2 grammar gates of every removed module-level shape — the
     module-field adapter (the LIVE static-field-delegation body `g.
     invoke(p0)` is no longer reachable: E1049), the load-time clean
@@ -1201,8 +1287,9 @@ fixture whose codegen or JVM execution is bypassed):
     glyph without spaces.
 - **Deferred to ISSUE-0110 (documented, not silent)** — function
   expressions, nested function declarations, and function signatures
-  containing arrays, classes, nullables, nested function types, or
-  async markers are rejected with E6000 (rest parameters and rest
+  containing arrays, classes, nullables, and nested function types
+  are rejected with E6000 (async markers are ISSUE-0099-slice;
+  rest parameters and rest
   function-type arms are a v1.2 parser error — E1047 — and never reach
   a backend). Cross-module function
   values are E6000 as well: the per-signature wrapper classes are
@@ -1292,8 +1379,9 @@ Not in this slice (deferred, documented): non-literal default
 expressions on imported classes (ISSUE-0109), stdlib modules other than
 `std/console`, the ISSUE-0110 function shapes (function expressions,
 nested function declarations, function arrays, and function signatures
-containing arrays/classes/nullables/nested function types or async
-markers — plain first-class function values landed in ISSUE-0098),
+containing arrays/classes/nullables/nested function types — plain
+first-class function values landed in ISSUE-0098 and async
+function values in ISSUE-0099),
 host class exports (E6000 at the import — the fixture-list item
 "host class export where supported" is not yet supported), host
 parameters/returns of array/class/table/function type (E6000 at the

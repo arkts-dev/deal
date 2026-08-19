@@ -321,7 +321,7 @@
     },
     {
       "name": "jvm-join-async-completion-descriptor-ir",
-      "description": "Async completion descriptor coverage at the IR layer: an async function declaration and its async function-typed value spell the spec descriptor async(int)->string, and the return inside the async body carries the async-completion boundary (the JVM async slice ISSUE-0099 consumes this seam; async functions stay E6000 at JVM codegen in this slice)",
+      "description": "Async completion descriptor coverage at the IR layer: an async function declaration and its async function-typed value spell the spec descriptor async(int)->string, and the return inside the async body carries the async-completion boundary (the JVM async slice ISSUE-0099 consumes this seam: async functions now compile through JvmBackend — jvm-async-slice.json — so the fixture is a cross-feature descriptor join, not an E6000 gate)",
       "source": "async function fetch(x: int): string { return \"s\"; }\nexport function main(): null {\n  let f: async (x: int) => string = fetch;\n  return null;\n}\n",
       "expectedOutput": null,
       "expectedError": null,

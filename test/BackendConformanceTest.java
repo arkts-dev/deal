@@ -106,7 +106,16 @@ import javax.tools.ToolProvider;
  * the blocking JVM await lowering), and an E2009
  * frontend gate — each fixture's 'hosts' map supplying a declaration
  * path and a real host implementation class compiled with the emitted
- * artifacts), and the ISSUE-0108 nullable-slice fixtures live in
+ * artifacts), the ISSUE-0099 async/await fixtures live in
+ * {@code test/conformance/fixtures/jvm-async-slice.json} (async
+ * declarations, await in value/discard/condition/nested-argument
+ * positions, completion success and failure — E8005 propagating
+ * through one and two await levels —, direct calls with
+ * primitive/string/boolean/null signatures, async function values in
+ * typed locals, callback parameters, and reassigned local bindings,
+ * imported async direct calls through the orchestrator pipeline, and
+ * frontend E3012/E3013/E3014 gates), and the ISSUE-0108
+ * nullable-slice fixtures live in
 
  * {@code test/conformance/fixtures/jvm-nullable-slice.json}
  * ({@code T | null} for the four primitives and local classes in

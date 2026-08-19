@@ -138,6 +138,42 @@ import java.util.Set;
  * positions (spec-v1.2 §std/string: lengths and positions are
  * measured in Unicode scalar values).
  *
+ * <p>Async/await (ISSUE-0099) extends the ISSUE-0100 blocking lowering
+ * with the await-site completion check for DEAL async calls and lifts
+ * async markers into the ISSUE-0098 function-value machinery: an
+ * {@code async function} compiles to a plain static method returning
+ * its declared type, and {@code await E} evaluates the direct call
+ * {@code E} and applies the declared-return-type completion check at
+ * the await site. The blocking call IS the internal async operation:
+ * it starts when invoked, completes exactly once with the
+ * declared-type value or by raising a {@code DealError} that
+ * propagates at the await site (observable through the runner's
+ * {@code DEAL_ERROR_CODE} contract), and evaluation before an
+ * {@code await} precedes evaluation resumed after it. Int
+ * completions route through {@code checkInt} (E8004 — the Java {@code
+ * long} representation is wider than the DEAL int safe range); the
+ * number/string/boolean/null completion checks are proven redundant by
+ * the emitted Java types, which spec-v1.2 §JVM backend contract
+ * permits. Async function values reuse the ISSUE-0098 wrapper
+ * machinery unchanged: {@code resolveTypeNode} accepts the {@code
+ * async} marker on function-type annotations, so a declared async
+ * function produces the same per-signature wrapper class
+ * ({@code Fn1_I_R_I} for {@code async (x: int) =&gt; int}) and
+ * per-declaration wrapper instance field ({@code value$fn}) the sync
+ * slice emits, typed locals/parameters of async function type hold
+ * wrapper references, and awaited indirect calls
+ * ({@code let f: async (x: int) =&gt; int = value; await f(6);})
+ * dispatch through {@code invoke} with the same completion check.
+ * Deferred to ISSUE-0110 with E6000: async function expressions and
+ * function types with non-representable signatures
+ * (arrays/classes/nullables/nested function types). Cross-module
+ * function values stay E6000 for async signatures exactly like sync
+ * ones (the per-module wrapper classes cannot cross a module
+ * boundary). The frontend keeps enforcing every spec-v1.2 async rule
+ * (E3012 await outside async, E3013 await on a non-async call, E3014
+ * async call without await — the backend never sees a non-conforming
+ * await).
+ *
  * <p>Stdlib calls (ISSUE-0097) emit either an inline Java-library
  * expression (plain-text {@code contains}/{@code startsWith}/
  * {@code endsWith} on the mapped {@code java.lang.String};
@@ -389,11 +425,14 @@ import java.util.Set;
  * module-function or intrinsic identifier) and every function the
  * field may hold must not (transitively) read a later-declared field,
  * reach a later-declared function, or use a later-declared import —
- * otherwise E6000, never a silent divergence. Function expressions,
- * nested functions, and signatures
- * containing arrays/classes/nullables/nested function types/rest arms/
- * async markers stay deferred to ISSUE-0110 and are rejected with
- * E6000.
+ * otherwise E6000, never a silent divergence. Async markers are
+ * ISSUE-0099-slice: the same wrapper classes, per-declaration wrapper
+ * fields, indirect calls, adapters, and guards cover async signatures
+ * unchanged (see the ISSUE-0099 paragraph above), with the
+ * await-site completion check applied at every await. Function
+ * expressions, nested functions, and signatures
+ * containing arrays/classes/nullables/nested function types/rest arms
+ * stay deferred to ISSUE-0110 and are rejected with E6000.
  *
  * <p>JVM value mapping follows the spec's JVM backend contract
  * ({@code docs/spec-v1.2.md} §JVM value mapping / §JVM backend contract —
@@ -844,6 +883,20 @@ public final class JvmBackend {
      * imported class (ISSUE-0096).
      */
     private final Map<String, Set<String>> transitiveImportReads =
+        new LinkedHashMap<>();
+
+    /** Function name → module functions whose VALUES its body reads
+     * transitively (through calls, the function itself included;
+     * ISSUE-0099). Used to reject a module-level call of a function
+     * that reaches a module function VALUE whose wrapper field is
+     * assigned at a declaration point at or after the call site:
+     * LuaJIT assigns function values at their declaration point and the
+     * load-time read binds to the not-yet-declared global nil, while
+     * Java would silently read the uninitialized static field's default
+     * value. (The v1.2 module shape E1049 gate removes module-level
+     * statements, so the guard is defensive like the sibling load-time
+     * guards; the machinery stays documented for the same reason.) */
+    private final Map<String, Set<String>> transitiveFunctionValueReads =
         new LinkedHashMap<>();
 
     /** Function name → a module field declared after the function that its
@@ -1480,13 +1533,15 @@ public final class JvmBackend {
         Map<String, Set<String>> directImportReads = new LinkedHashMap<>();
         Map<String, Set<String>> directFieldAssigns = new LinkedHashMap<>();
         Map<String, Set<String>> directIndirectCalls = new LinkedHashMap<>();
+        Map<String, Set<String>> directFnValueReads = new LinkedHashMap<>();
         for (Map.Entry<String, FunctionDeclaration> e : moduleFunctions.entrySet()) {
             Set<String> reads = new LinkedHashSet<>();
             Set<String> calls = new LinkedHashSet<>();
             Set<String> imports = new LinkedHashSet<>();
             Set<String> assigns = new LinkedHashSet<>();
             Set<String> indirect = new LinkedHashSet<>();
-            collectBodyReferences(e.getValue(), reads, calls, imports);
+            Set<String> fnValues = new LinkedHashSet<>();
+            collectBodyReferences(e.getValue(), reads, calls, imports, fnValues);
             collectBodyFieldAssignments(e.getValue(), assigns);
             collectBodyIndirectCalls(e.getValue(), indirect);
             directReads.put(e.getKey(), reads);
@@ -1494,6 +1549,7 @@ public final class JvmBackend {
             directImportReads.put(e.getKey(), imports);
             directFieldAssigns.put(e.getKey(), assigns);
             directIndirectCalls.put(e.getKey(), indirect);
+            directFnValueReads.put(e.getKey(), fnValues);
         }
         for (String name : moduleFunctions.keySet()) {
             transitiveFieldReads.put(name, closureReads(name, directReads,
@@ -1507,6 +1563,9 @@ public final class JvmBackend {
                 new HashSet<>()));
             transitiveIndirectCalls.put(name, closureReads(name,
                 directIndirectCalls, directCalls, new LinkedHashMap<>(),
+                new HashSet<>()));
+            transitiveFunctionValueReads.put(name, closureReads(name,
+                directFnValueReads, directCalls, new LinkedHashMap<>(),
                 new HashSet<>()));
         }
     }
@@ -1563,63 +1622,67 @@ public final class JvmBackend {
      */
     private void collectBodyReferences(FunctionDeclaration fd,
             Set<String> fieldReads, Set<String> calledFunctions,
-            Set<String> importReads) {
+            Set<String> importReads, Set<String> functionValueReads) {
         Deque<Set<String>> locals = new ArrayDeque<>();
         Set<String> params = new LinkedHashSet<>();
         for (Parameter p : fd.params()) params.add(p.name());
         locals.push(params);
         collectStatementListRefs(fd.body().statements(), locals,
-            fieldReads, calledFunctions, importReads);
+            fieldReads, calledFunctions, importReads, functionValueReads);
     }
 
     private void collectStatementListRefs(List<StatementNode> stmts,
             Deque<Set<String>> locals, Set<String> fieldReads,
-            Set<String> calledFunctions, Set<String> importReads) {
+            Set<String> calledFunctions, Set<String> importReads,
+            Set<String> functionValueReads) {
         for (StatementNode stmt : stmts) {
             collectStatementRefs(stmt, locals, fieldReads, calledFunctions,
-                importReads);
+                importReads, functionValueReads);
         }
     }
 
     private void collectStatementRefs(StatementNode stmt,
             Deque<Set<String>> locals, Set<String> fieldReads,
-            Set<String> calledFunctions, Set<String> importReads) {
+            Set<String> calledFunctions, Set<String> importReads,
+            Set<String> functionValueReads) {
         switch (stmt) {
             case VariableDeclaration vd -> {
                 collectExprRefs(vd.initializer(), locals, fieldReads,
-                    calledFunctions, importReads);
+                    calledFunctions, importReads, functionValueReads);
                 locals.peek().add(vd.name());
             }
             case ReturnStatement rs -> rs.expr().ifPresent(
                 e -> collectExprRefs(e, locals, fieldReads, calledFunctions,
-                    importReads));
+                    importReads, functionValueReads));
             case ExpressionStatement es ->
                 collectExprRefs(es.expr(), locals, fieldReads,
-                    calledFunctions, importReads);
+                    calledFunctions, importReads, functionValueReads);
             case IfStatement is -> {
                 collectExprRefs(is.condition(), locals, fieldReads,
-                    calledFunctions, importReads);
+                    calledFunctions, importReads, functionValueReads);
                 collectBlockRefs(is.thenBlock(), locals, fieldReads,
-                    calledFunctions, importReads);
+                    calledFunctions, importReads, functionValueReads);
                 if (is.elseBranch().isPresent()) {
                     switch (is.elseBranch().get()) {
                         case Either.Left<IfStatement, Block> left ->
                             collectStatementRefs(left.value(), locals,
-                                fieldReads, calledFunctions, importReads);
+                                fieldReads, calledFunctions, importReads,
+                                functionValueReads);
                         case Either.Right<IfStatement, Block> right ->
                             collectBlockRefs(right.value(), locals,
-                                fieldReads, calledFunctions, importReads);
+                                fieldReads, calledFunctions, importReads,
+                                functionValueReads);
                     }
                 }
             }
             case WhileStatement ws -> {
                 collectExprRefs(ws.condition(), locals, fieldReads,
-                    calledFunctions, importReads);
+                    calledFunctions, importReads, functionValueReads);
                 collectBlockRefs(ws.body(), locals, fieldReads,
-                    calledFunctions, importReads);
+                    calledFunctions, importReads, functionValueReads);
             }
             case Block b -> collectBlockRefs(b, locals, fieldReads,
-                calledFunctions, importReads);
+                calledFunctions, importReads, functionValueReads);
             // Unsupported statement kinds (for/for-of, try, nested
             // functions, classes, …) are rejected with E6000 when emitted;
             // nothing to walk here.
@@ -1629,16 +1692,16 @@ public final class JvmBackend {
 
     private void collectBlockRefs(Block b, Deque<Set<String>> locals,
             Set<String> fieldReads, Set<String> calledFunctions,
-            Set<String> importReads) {
+            Set<String> importReads, Set<String> functionValueReads) {
         locals.push(new LinkedHashSet<>());
         collectStatementListRefs(b.statements(), locals, fieldReads,
-            calledFunctions, importReads);
+            calledFunctions, importReads, functionValueReads);
         locals.pop();
     }
 
     private void collectExprRefs(ExpressionNode e, Deque<Set<String>> locals,
             Set<String> fieldReads, Set<String> calledFunctions,
-            Set<String> importReads) {
+            Set<String> importReads, Set<String> functionValueReads) {
         switch (e) {
             case IdentifierExpr id -> {
                 if (!isLocallyBound(locals, id.name())
@@ -1653,16 +1716,28 @@ public final class JvmBackend {
                 if (importAliasStatementIndices.containsKey(id.name())) {
                     importReads.add(id.name());
                 }
+                // A module function used as a VALUE (not a call callee,
+                // sync or async — ISSUE-0099): the wrapper instance
+                // field is assigned at the function's declaration point,
+                // so a module-level call reaching such a read at or
+                // after that point must be rejected (LuaJIT reads the
+                // not-yet-declared global nil at load; Java would read
+                // the uninitialized static field default).
+                if (symbols.resolve(id.name()) instanceof Symbol.FunctionSymbol
+                        && moduleFunctions.containsKey(id.name())
+                        && !isLocallyBound(locals, id.name())) {
+                    functionValueReads.add(id.name());
+                }
             }
             case BinaryExpr bin -> {
                 collectExprRefs(bin.left(), locals, fieldReads,
-                    calledFunctions, importReads);
+                    calledFunctions, importReads, functionValueReads);
                 collectExprRefs(bin.right(), locals, fieldReads,
-                    calledFunctions, importReads);
+                    calledFunctions, importReads, functionValueReads);
             }
             case UnaryExpr u ->
                 collectExprRefs(u.expr(), locals, fieldReads, calledFunctions,
-                    importReads);
+                    importReads, functionValueReads);
             case CallExpr call -> {
                 if (call.callee() instanceof IdentifierExpr id
                         && symbols.resolve(id.name()) instanceof Symbol.FunctionSymbol
@@ -1670,11 +1745,11 @@ public final class JvmBackend {
                     calledFunctions.add(id.name());
                 } else {
                     collectExprRefs(call.callee(), locals, fieldReads,
-                        calledFunctions, importReads);
+                        calledFunctions, importReads, functionValueReads);
                 }
                 for (ExpressionNode arg : call.args()) {
                     collectExprRefs(arg, locals, fieldReads, calledFunctions,
-                        importReads);
+                        importReads, functionValueReads);
                 }
             }
             // The member-access object is the import alias for an imported
@@ -1682,7 +1757,14 @@ public final class JvmBackend {
             // importReads.
             case MemberAccessExpr mae ->
                 collectExprRefs(mae.object(), locals, fieldReads,
-                    calledFunctions, importReads);
+                    calledFunctions, importReads, functionValueReads);
+            // An await's callee is a direct async call — walked exactly
+            // like any other call so its callee lands in calledFunctions
+            // and its argument reads land in fieldReads/functionValueReads
+            // (ISSUE-0099).
+            case AwaitExpression aw ->
+                collectExprRefs(aw.callee(), locals, fieldReads,
+                    calledFunctions, importReads, functionValueReads);
             // Assignment targets are writes, not reads; LuaJIT and Java
             // agree on write order (the write happens, then the later field
             // initializer overwrites), so only the value side is walked.
@@ -1693,12 +1775,12 @@ public final class JvmBackend {
             // walked like any other read.
             case AssignmentExpr ae -> {
                 collectExprRefs(ae.value(), locals, fieldReads, calledFunctions,
-                    importReads);
+                    importReads, functionValueReads);
                 if (ae.target() instanceof IndexExpr idx) {
                     collectExprRefs(idx.array(), locals, fieldReads,
-                        calledFunctions, importReads);
+                        calledFunctions, importReads, functionValueReads);
                     collectExprRefs(idx.index(), locals, fieldReads,
-                        calledFunctions, importReads);
+                        calledFunctions, importReads, functionValueReads);
                 }
             }
             // Array reads/literals/length are value positions (ISSUE-0094):
@@ -1709,14 +1791,14 @@ public final class JvmBackend {
             // reference (LuaJIT fails at load with a nil read).
             case IndexExpr idx -> {
                 collectExprRefs(idx.array(), locals, fieldReads,
-                    calledFunctions, importReads);
+                    calledFunctions, importReads, functionValueReads);
                 collectExprRefs(idx.index(), locals, fieldReads,
-                    calledFunctions, importReads);
+                    calledFunctions, importReads, functionValueReads);
             }
             case ArrayLiteralExpr al -> {
                 for (ExpressionNode elem : al.elements()) {
                     collectExprRefs(elem, locals, fieldReads, calledFunctions,
-                        importReads);
+                        importReads, functionValueReads);
                 }
             }
             // Object literals: property values are value positions (class
@@ -1726,7 +1808,7 @@ public final class JvmBackend {
             case ObjectLiteralExpr ol -> {
                 for (Property prop : ol.properties()) {
                     collectExprRefs(prop.value(), locals, fieldReads,
-                        calledFunctions, importReads);
+                        calledFunctions, importReads, functionValueReads);
                 }
                 if (typeOf(ol) instanceof Type.Class cls
                         && isLocalClassType(cls)) {
@@ -1735,7 +1817,8 @@ public final class JvmBackend {
                         for (ClassField cf : cd.fields()) {
                             cf.defaultExpr().ifPresent(
                                 d -> collectExprRefs(d, locals, fieldReads,
-                                    calledFunctions, importReads));
+                                    calledFunctions, importReads,
+                                    functionValueReads));
                         }
                     }
                 }
@@ -1745,7 +1828,7 @@ public final class JvmBackend {
             case TemplateLiteralExpr tl -> {
                 for (ExpressionNode part : tl.parts()) {
                     collectExprRefs(part, locals, fieldReads, calledFunctions,
-                        importReads);
+                        importReads, functionValueReads);
                 }
             }
             // Literals and unsupported forms (rejected later) are not walked.
@@ -1872,6 +1955,11 @@ public final class JvmBackend {
                     collectExprFieldAssignments(arg, locals, assigned);
                 }
             }
+            // An await's callee is a direct async call: its argument
+            // positions are value positions exactly like any other
+            // call's (ISSUE-0099).
+            case AwaitExpression aw ->
+                collectExprFieldAssignments(aw.callee(), locals, assigned);
             case MemberAccessExpr mae ->
                 collectExprFieldAssignments(mae.object(), locals, assigned);
             case IndexExpr idx -> {
@@ -1974,6 +2062,8 @@ public final class JvmBackend {
     private void collectExprIndirectCalls(ExpressionNode e,
             Set<String> indirect) {
         switch (e) {
+            case AwaitExpression aw ->
+                collectExprIndirectCalls(aw.callee(), indirect);
             case CallExpr call -> {
                 ExpressionNode callee = call.callee();
                 if (callee instanceof IdentifierExpr id) {
@@ -2094,6 +2184,25 @@ public final class JvmBackend {
                 functionName, Set.of(functionName))) {
             Integer idx = moduleFunctionIndices.get(reached);
             if (idx != null && idx >= callIndex) return reached;
+        }
+        return null;
+    }
+
+    /** The name of a module function whose VALUE (the wrapper instance
+     * field, assigned at the function's declaration point) is read
+     * transitively by {@code functionName}'s body, declared at or after
+     * {@code callIndex}, or {@code null} (ISSUE-0099). A module-level
+     * call reaching such a read before the declaration point fails at
+     * load under LuaJIT (the function value is a global nil until the
+     * declaration runs); Java would silently read the uninitialized
+     * static field's default value. Defensive in the v1.2 module shape
+     * (E1049 removes module-level statements), like the sibling
+     * load-time guards. */
+    private String laterFunctionValueRead(String functionName, int callIndex) {
+        for (String fn : transitiveFunctionValueReads.getOrDefault(
+                functionName, Set.of())) {
+            Integer idx = moduleFunctionIndices.get(fn);
+            if (idx != null && idx >= callIndex) return fn;
         }
         return null;
     }
@@ -2969,6 +3078,12 @@ public final class JvmBackend {
                         readViolations, writeViolations);
                 }
             }
+            // An await's callee is a direct async call: its argument
+            // positions are value reads exactly like any other call's
+            // (ISSUE-0099).
+            case AwaitExpression aw ->
+                walkDominanceExpr(aw.callee(), locals, written, fnDeclIdx,
+                    readViolations, writeViolations);
             case AssignmentExpr ae -> {
                 walkDominanceExpr(ae.value(), locals, written, fnDeclIdx,
                     readViolations, writeViolations);
@@ -4620,9 +4735,12 @@ public final class JvmBackend {
         // method: every DEAL async call is awaited immediately (the checker
         // rejects un-awaited async calls), and a host async call's wrapper
         // blocks on the returned CompletableFuture, so the body is
-        // synchronous Java with DEAL's observable semantics. Async
-        // function EXPRESSIONS stay E6000 (function values are out of the
-        // slice).
+        // synchronous Java with DEAL's observable semantics. ISSUE-0099
+        // adds the await-site completion check for DEAL async calls and
+        // lifts async markers into the ISSUE-0098 wrapper machinery, so
+        // async function VALUES emit the same per-declaration wrapper
+        // field as sync ones (below); async function EXPRESSIONS stay
+        // E6000.
         if (!moduleLevel) {
             unsupported("nested function declarations", fd.span());
             return;
@@ -5254,20 +5372,35 @@ public final class JvmBackend {
             }
             case TemplateLiteralExpr tl -> emitTemplateLiteral(tl);
             case AwaitExpression aw -> {
-                // ISSUE-0100 blocking await lowering: the awaited call is a
-                // direct async function call (the checker enforces both),
-                // so emitting the callee call computes the completion value
+                // ISSUE-0100 blocking await lowering, extended by
+                // ISSUE-0099 with the await-site completion check for
+                // DEAL async calls: the awaited call is a direct async
+                // function call (the checker enforces both), so emitting
+                // the callee call computes the completion value
                 // synchronously — a DEAL async function's body already
-                // blocked on ITS inner awaits and returns R directly, and a
-                // HOST async function's wrapper validated the operation
+                // blocked on ITS inner awaits and returns R directly, and
+                // a HOST async function's wrapper validated the operation
                 // shape (E8010), joined the CompletableFuture, and checked
                 // the completion value against the declared return
-                // descriptor (E8001 at this await site). No suspension
-                // point exists in the emitted Java, so the checker's
-                // after-await narrowing invalidation needs no codegen
-                // counterpart (the type map already holds the un-narrowed
-                // types here).
-                yield emitExpression(aw.callee());
+                // descriptor (E8001 at this await site). The emitted
+                // await applies the one completion check the blocking
+                // lowering cannot prove from Java types alone: an int
+                // completion routes through checkInt (E8004 — the Java
+                // long representation is wider than the DEAL int safe
+                // range); number/string/boolean completions are proven by
+                // the emitted Java types, which spec-v1.2 §JVM backend
+                // contract permits, and a null completion (a
+                // null-returning async function) hoists the void call
+                // into a pre-statement and yields the DEAL null like any
+                // other null-typed call. No suspension point exists in
+                // the emitted Java, so the checker's after-await
+                // narrowing invalidation needs no codegen counterpart
+                // (the type map already holds the un-narrowed types
+                // here).
+                String raw = emitExpression(aw.callee());
+                yield typeOf(aw) instanceof Type.Int
+                    ? "checkInt(" + raw + ")"
+                    : raw;
             }
         };
     }
@@ -7061,7 +7194,11 @@ public final class JvmBackend {
                 // field). Function-typed bindings are indirect calls
                 // (ISSUE-0098 slice): they dispatch through the wrapper
                 // instance's invoke method — the same `.f(...)` shape the
-                // Lua backend emits. Anything else is not callable.
+                // Lua backend emits. An async function-typed binding is
+                // the same shape (ISSUE-0099): `await f(args)` over a
+                // typed local/parameter/module field dispatches through
+                // invoke, and the await site applies the completion
+                // check. Anything else is not callable.
                 Type calleeType = typeOf(call.callee());
                 if (calleeType instanceof Type.Func f) {
                     // Module-level (load-time) indirect calls through a
@@ -7162,6 +7299,29 @@ public final class JvmBackend {
                         + "LuaJIT fails at load when the invoked function "
                         + "reaches a not-yet-declared value, Java would "
                         + "silently run the hoisted method)", call.span());
+                    return "null";
+                }
+                // A function VALUE read inside a function invoked at
+                // load time (ISSUE-0099): the read wrapper field is
+                // assigned at its declaration point, so a read of a
+                // function declared at or after the call site binds to
+                // the not-yet-declared global nil under LuaJIT while
+                // Java would silently read the uninitialized static
+                // field's default value. Defensive like the sibling
+                // guards: the v1.2 module shape E1049 gate removes
+                // module-level statements, so the shape cannot reach a
+                // backend today.
+                String laterFnValue = laterFunctionValueRead(id.name(),
+                    currentModuleStatementIndex);
+                if (laterFnValue != null) {
+                    unsupported("module-level call of '" + id.name()
+                        + "' whose body (transitively) reads the function "
+                        + "value of '" + laterFnValue + "' declared at or "
+                        + "after the call site (LuaJIT assigns function "
+                        + "values at their declaration point and fails at "
+                        + "load with a nil read; Java would silently read "
+                        + "the uninitialized static field's default)",
+                        call.span());
                     return "null";
                 }
             }
@@ -8672,17 +8832,17 @@ public final class JvmBackend {
                 yield new Type.Nullable(inner);
             }
             case FunctionType ft -> {
-                // Function-type annotations (ISSUE-0098 slice): build the
-                // internal Type.Func from the primitive/string/null
-                // signature surface. Arrays, classes, nullables, nested
-                // function types, rest arms, and async markers are
-                // deferred to ISSUE-0110 / the async slice and rejected
-                // here — never silently miscompiled (DEAL v1.2 function
-                // types carry no rest arm).
-                if (ft.isAsync()) {
-                    unsupported("async function types", ft.span());
-                    yield Type.Error.INSTANCE;
-                }
+                // Function-type annotations (ISSUE-0098 slice), with the
+                // async marker lifted by ISSUE-0099: build the internal
+                // Type.Func from the primitive/string/null signature
+                // surface, preserving the marker so the ISSUE-0098
+                // wrapper machinery (per-signature shape classes,
+                // per-declaration wrapper fields, indirect calls through
+                // invoke) carries async function values unchanged.
+                // Arrays, classes, nullables, and nested function types
+                // are deferred to ISSUE-0110 and rejected here — never
+                // silently miscompiled (DEAL v1.2 function types carry
+                // no rest arm).
                 List<Type> paramTypes = new ArrayList<>();
                 boolean ok = true;
                 for (FunctionTypeParam p : ft.params()) {
@@ -8711,7 +8871,7 @@ public final class JvmBackend {
                         + "to ISSUE-0110)", ft.returnType().span());
                     ok = false;
                 }
-                yield ok ? new Type.Func(paramTypes, rt)
+                yield ok ? new Type.Func(paramTypes, rt, ft.isAsync())
                          : Type.Error.INSTANCE;
             }
         };

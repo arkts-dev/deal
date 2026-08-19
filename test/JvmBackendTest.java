@@ -234,7 +234,7 @@ import java.util.Set;
  *       callee materialized into a single-assignment temporary at its
  *       evaluation position, before any argument's hoisted
  *       pre-statements), the deferred signature shapes
- *       (nested/nullable/async function types, arrays of functions, and
+ *       (nested/nullable function types, arrays of functions, and
  *       function equality/inequality over array-/class-/nullable-
  *       parameter signatures) rejected with E6000, and cross-module
  *       function values (a Func-typed argument to an imported module
@@ -303,6 +303,7 @@ public class JvmBackendTest {
             testTypeDescriptorEmitter();
             testSharedCheckSeam();
             testNullableSlice();
+            testAsyncSlice();
             testImportedClassValues();
             testFunctionValues();
             testCrossModuleFunctionValuesRejected();
@@ -3622,8 +3623,9 @@ public class JvmBackendTest {
      * and the E8002 message is pinned out), the reassigned
      * local/parameter adapter E6000 (also firing when the reassignment
      * is hidden in a table-literal property value), and the deferred
-     * signature shapes (nested function types, nullable/async function
-     * types, arrays of functions) rejected with E6000. Every v1.1
+     * signature shapes (nested function types, nullable function
+     * types, arrays of functions) rejected with E6000 — async function
+     * types are ISSUE-0099-slice, covered by testAsyncSlice. Every v1.1
      * module-field/load-time shape — the field adapter with LIVE static
      * -field delegation, the load-time indirect-call guards (a
      * module-level value use of a later-declared function, a field with
@@ -4410,13 +4412,6 @@ public class JvmBackendTest {
                 function inc(x: int): int { return x + 1; }
                 export function test(): int {
                   let f: ((x: int) => int) | null = inc;
-                  return 1;
-                }
-                """),
-            new DeferredCase("async function type", """
-                async function fetch(x: int): int { return x; }
-                export function test(): int {
-                  let f: async (x: int) => int = fetch;
                   return 1;
                 }
                 """),
@@ -6065,6 +6060,190 @@ public class JvmBackendTest {
             "orchestrator reports E6000: " + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("Unsupported_main.java")),
             "no artifact written when the backend reports errors");
+    }
+
+    // =========================================================================
+    // ISSUE-0099 async/await slice: blocking-call lowering, await-site
+    // completion checks, error propagation, and async function values
+    // through the ISSUE-0098 wrapper machinery
+    // =========================================================================
+
+    /**
+     * ISSUE-0099: async declarations emit plain static methods (the
+     * spec-permitted JVM blocking-call lowering), await sites emit the
+     * call plus the declared-return-type completion check (int
+     * completions route through checkInt, null-returning awaits hoist
+     * into pre-statements, discard positions evaluate the call), errors
+     * raised by awaited operations propagate at the await site, and
+     * async function values reuse the ISSUE-0098 wrapper machinery
+     * unchanged — the per-signature wrapper shape class, the
+     * per-declaration wrapper instance field assigned at the
+     * declaration point, indirect awaited calls dispatching through
+     * {@code invoke}, and the arity-extension adapter. Async function
+     * expressions and non-representable function-type signatures stay
+     * E6000, and the pre-rebase module-level function-value read shapes
+     * are the v1.2 grammar gate E1049 — never an artifact javac
+     * rejects after the CLI reported success.
+     */
+    private static void testAsyncSlice() throws Exception {
+        System.out.println("-- Async/await slice (javac + java) --");
+
+        // Blocking-call lowering (spec-v1.2's permitted JVM form) plus
+        // the await-site completion check: an async function emits a
+        // plain static method with its declared return type; an int
+        // await emits the call wrapped in checkInt. Async function
+        // values reuse the ISSUE-0098 wrapper machinery — the
+        // per-signature wrapper shape class and the per-declaration
+        // wrapper instance field cover async markers, and awaited
+        // indirect calls dispatch through invoke.
+        String emission = """
+            async function g(): int { return 42; }
+            async function noop(): null { return; }
+            async function value(): int { return 6; }
+            async function apply(cb: async (x: int) => int, v: int): int { return await cb(v); }
+            export async function test(): int {
+              let a: int = await g();
+              await noop();
+              let f: async () => int = value;
+              let b: int = await f();
+              return a + b;
+            }
+            """;
+        Frontend fe = compileFrontend(emission, "jvmtest-async.deal");
+        check(fe.errors().isEmpty(), "async frontend clean: " + fe.errors());
+        if (!fe.errors().isEmpty()) return;
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+            fe.program(), fe.checkResult(), "jvmtest-async.deal", "main");
+        check(!res.hasErrors(), "async codegen clean: " + res.diagnostics());
+        if (res.hasErrors()) return;
+        String java = res.source();
+        check(java.contains("static long g()"),
+            "async function g → plain static method");
+        check(java.contains("static void noop()"),
+            "null-returning async function → void method");
+        check(java.contains("checkInt(g())"),
+            "await of an int completion wraps the call in checkInt");
+        check(java.contains("static abstract class Fn0_R_I"),
+            "async () => int uses the ISSUE-0098 wrapper shape class");
+        check(java.contains("static abstract class Fn1_I_R_I"),
+            "async (x: int) => int uses the ISSUE-0098 wrapper shape class");
+        check(java.contains("static final Fn0_R_I value$fn = new Fn0_R_I()"),
+            "per-declaration wrapper instance field");
+        check(java.contains("Fn0_R_I f = value$fn;"),
+            "function-typed local initializes from the wrapper field");
+        check(java.contains("checkInt(f.invoke())"),
+            "awaited indirect call dispatches through invoke");
+        check(java.contains("checkInt(cb.invoke(v))"),
+            "await through a callback parameter dispatches through invoke");
+        check(java.contains("noop();"),
+            "null-returning await hoists the call into a pre-statement");
+        check(!java.contains("checkInt(noop()"),
+            "no int check on a null completion");
+
+        // Value/discard positions, nested awaits, and error propagation
+        // execute through the real javac + java pipeline.
+        ExecResult values = compileAndRunJvm("""
+            async function inner(): int { return 7; }
+            async function outer(x: int): int { return x + 1; }
+            async function tick(): int { return 1; }
+            export async function test(): int {
+              await tick();
+              return await outer(await inner());
+            }
+            """, "asyncvalues");
+        check(values.exitCode() == 0, "value/discard/nested awaits exit 0");
+        check(values.output().contains("8"),
+            "await outer(await inner()) computes 8: " + values.output());
+
+        ExecResult error = compileAndRunJvm("""
+            async function innermost(): int { return 1 / 0; }
+            async function mid(): int { return await innermost(); }
+            export async function test(): int { return await mid(); }
+            """, "asyncerror");
+        check(error.exitCode() == 1,
+            "awaited E8005 propagates → exit 1: " + error.output());
+        check(error.output().contains("DEAL_ERROR_CODE: E8005"),
+            "DEAL_ERROR_CODE: E8005 surfaces at the outermost await: "
+                + error.output());
+
+        ExecResult fnValue = compileAndRunJvm("""
+            async function plus1(x: int): int { return x + 1; }
+            async function apply(cb: async (x: int) => int, v: int): int { return await cb(v); }
+            export async function test(): int { return await apply(plus1, 6); }
+            """, "asyncfnvalue");
+        check(fnValue.exitCode() == 0, "function-value callback exits 0");
+        check(fnValue.output().contains("7"),
+            "awaited indirect call through the callback computes 7: "
+                + fnValue.output());
+
+        // Arity extension inherits the ISSUE-0098 adapter machinery: a
+        // narrower async signature at a wider async target wraps in a
+        // delegating adapter whose invoke drops the extra parameters.
+        ExecResult arity = compileAndRunJvm("""
+            async function one(x: int): int { return x; }
+            export async function test(): int {
+              let f: async (x: int, y: int) => int = one;
+              return await f(1, 2);
+            }
+            """, "asyncarity");
+        check(arity.exitCode() == 0, "async arity extension exits 0");
+        check(arity.output().contains("1"),
+            "await f(1, 2) drops the extra argument and computes 1: "
+                + arity.output());
+
+        // Deferred shapes stay E6000: async function expressions and
+        // non-representable async signatures (array parameters).
+        Frontend expr = compileFrontend("""
+            export async function test(): int {
+              let f: async () => int = async function(): int { return 42; };
+              return await f();
+            }
+            """, "jvmtest-async-expr.deal");
+        check(expr.errors().isEmpty(),
+            "frontend accepts the async function expression: "
+                + expr.errors());
+        if (!expr.errors().isEmpty()) return;
+        JvmBackend.JvmCodegenResult exprRes = JvmBackend.generate(
+            expr.program(), expr.checkResult(), "jvmtest-async-expr.deal", "main");
+        check(exprRes.hasErrors() && exprRes.diagnostics().stream()
+                .anyMatch(d -> "E6000".equals(d.code())),
+            "async function expressions stay E6000 (deferred): "
+                + exprRes.diagnostics());
+
+        Frontend shape = compileFrontend("""
+            async function total(xs: int[]): int { return xs[0]; }
+            export async function test(): int {
+              let f: async (xs: int[]) => int = total;
+              return await f([1]);
+            }
+            """, "jvmtest-async-shape.deal");
+        check(shape.errors().isEmpty(),
+            "frontend accepts the non-representable async signature: "
+                + shape.errors());
+        if (!shape.errors().isEmpty()) return;
+        JvmBackend.JvmCodegenResult shapeRes = JvmBackend.generate(
+            shape.program(), shape.checkResult(), "jvmtest-async-shape.deal", "main");
+        check(shapeRes.hasErrors() && shapeRes.diagnostics().stream()
+                .anyMatch(d -> "E6000".equals(d.code())),
+            "async signatures with array parameters stay E6000 "
+                + "(deferred to ISSUE-0110): " + shapeRes.diagnostics());
+
+        // v1.2 grammar gate: the pre-rebase module-level function-value
+        // read shapes (`let g: async () => int = value;` at top level,
+        // and a module-level call transitively reading a later-declared
+        // function's value) are E1049 at the frontend — the v1.2 module
+        // top level holds only declarations, so the load-time guards
+        // stay defensive and pinned exactly like the sibling ISSUE-0098
+        // load-time guards.
+        Frontend late = compileFrontend("""
+            let g: async () => int = value;
+            async function value(): int { return 1; }
+            export async function test(): int { return await g(); }
+            """, "jvmtest-async-late.deal");
+        check(late.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-level function-value read rejected with E1049: "
+                + late.errors());
     }
 
     /**
