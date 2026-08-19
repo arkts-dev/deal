@@ -5053,17 +5053,28 @@ public final class JvmBackend {
             }
             Map<String, Type> exports = hostModules.get(hostRaw);
             Type exportType = exports.get(mae.field());
-            if (!(exportType instanceof Type.Func)) {
+            if (!(exportType instanceof Type.Func f)) {
                 unsupported("host export '" + mae.field() + "' of module '"
                     + hostRaw + "'", mae.span());
                 return "null";
             }
-            List<String> argCodes = emitOperandsInOrder(call.args());
+            // The wrapper's Java parameter types are the declared DEAL
+            // parameter types' JVM mapping (visible to this backend), so
+            // each argument routes through the same boundaryArgCode
+            // adaptation every direct call uses — including the
+            // Object-mediated coercion of null-typed assignment arguments
+            // into the wrapper parameter's Java type.
+            List<Type> argTargets = new ArrayList<>(call.args().size());
+            for (int i = 0; i < call.args().size(); i++) {
+                argTargets.add(f.paramTypes().get(i));
+            }
+            List<String> argCodes = emitOperandsInOrder(call.args(), argTargets);
             StringBuilder sb = new StringBuilder(
                 hostWrapperName(id.name(), mae.field())).append('(');
             for (int i = 0; i < argCodes.size(); i++) {
                 if (i > 0) sb.append(", ");
-                sb.append(argCodes.get(i));
+                sb.append(boundaryArgCode(call.args().get(i),
+                    argCodes.get(i), f.paramTypes().get(i)));
             }
             return sb.append(')').toString();
         }
