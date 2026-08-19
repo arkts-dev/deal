@@ -89,9 +89,7 @@ import javax.tools.ToolProvider;
  * modules, and module-qualified runtime nominal-check success/failure
  * — E8001 naming both {@code @module/Name} identities — plus a
  * frontend E3001 gate, all through the orchestrator multi-module
- * pipeline), and the ISSUE-0108 nullable-slice fixtures live in
- * {@code test/conformance/fixtures/jvm-nullable-slice.json}
- * the ISSUE-0100 host ABI fixtures live in
+ * pipeline), the ISSUE-0100 host ABI fixtures live in
  * {@code test/conformance/fixtures/jvm-host-abi-slice.json}
  * (externals-gated host modules: declared export exposure, missing
  * declared exports as load-time E8011 errors, extra host exports
