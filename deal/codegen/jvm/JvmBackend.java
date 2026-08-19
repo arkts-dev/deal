@@ -44,7 +44,8 @@ import java.util.Set;
  *
  * <p>Semantic slice scope (ISSUE-0091 skeleton + ISSUE-0092 slice +
  * ISSUE-0093 slice + ISSUE-0094 slice + ISSUE-0095 classes +
- * ISSUE-0096 slice + ISSUE-0097 stdlib-boundary slice):
+ * ISSUE-0096 slice + ISSUE-0097 stdlib-boundary slice + ISSUE-0108
+ * nullable slice):
  * functions, {@code let} locals, module fields, literals,
  * int/number/boolean/string arithmetic and comparisons, {@code if}/
  * {@code else}, {@code while} loops, {@code return}, assignment, direct
@@ -52,13 +53,24 @@ import java.util.Set;
  * {@code int()}/{@code number()} conversion intrinsics, {@code std/console}
  * output ({@code console.log}/{@code console.error} → {@code System.out}/
  * {@code System.err}), local {@code class} declarations (generated nested
- * static classes with primitive fields), object-literal class
- * construction, primitive field reads/writes, minimal {@code table}
- * values, the same-module nominal runtime checks that table boundary
- * reads require (see the ISSUE-0095 paragraph below), primitive arrays —
- * {@code int[]}, {@code number[]}, {@code string[]}, {@code boolean[]} —
- * as literals, index reads, element writes, and {@code .length} reads,
- * multi-module compilation (ISSUE-0096): namespace imports
+ * static classes with primitive and nullable fields), object-literal
+ * class construction, primitive/nullable field reads/writes, minimal
+ * {@code table} values, the same-module nominal runtime checks that table
+ * boundary reads require (see the ISSUE-0095 paragraph below), primitive
+ * arrays — {@code int[]}, {@code number[]}, {@code string[]},
+ * {@code boolean[]} — as literals, index reads, element writes, and
+ * {@code .length} reads, the nullable value slice (ISSUE-0108):
+ * {@code T | null} for the four primitives and local classes in locals,
+ * module fields, class fields, parameters, and returns (boxed
+ * {@code java.lang.Long}/{@code Double}/{@code Boolean} for the numeric
+ * primitives, plain references otherwise), null-check branch narrowing
+ * (narrowed reads unbox through the sound {@code !== null} guard),
+ * {@code T[] | null} and {@code (T | null)[]} for the primitive and
+ * local-class element types, class arrays {@code C[]}, the nullable
+ * table-read boundary checks (null passes, a value of the inner type
+ * passes, anything else → E8001), and the {@code int}/{@code number}
+ * nullable conversion overloads (null → E8001), multi-module
+ * compilation (ISSUE-0096): namespace imports
  * ({@code import * as alias from "./lib"}) of compiled project modules,
  * exported functions, and imported direct calls ({@code alias.fn(args)} →
  * a static call on the imported module's emitted class), imported
@@ -87,14 +99,15 @@ import java.util.Set;
  * {@code std/json} stay rejected with {@code E6000} at the import
  * statement: their only functions take or return a {@code table}, a
  * value type the slice still does not support as a function parameter
- * or return. Anything outside this scope — optional/nullable/array/
- * class/table-typed class fields, nested class declarations, table reads
- * with non-class/non-table targets, table field writes,
- * non-literal default expressions on imported classes (their defaults
- * evaluate in the declaring module's scope under LuaJIT), arrays of
- * non-primitive elements, nullables, nullable arrays,
- * arrays of nullable elements, nested (multi-dimensional) arrays, class
- * arrays, function arrays, stdlib imports other than the four supported
+ * or return. Anything outside this scope — optional/array/class/
+ * table-typed (non-nullable) class fields, nested class declarations,
+ * table reads with primitive (non-nullable)/function target types,
+ * table field writes, non-literal default expressions on imported
+ * classes (their defaults evaluate in the declaring module's scope
+ * under LuaJIT), arrays of non-primitive non-class elements,
+ * {@code table | null} values, nullable tables, nested
+ * (multi-dimensional) arrays, function arrays, stdlib imports other
+ * than the four supported
  * modules, declaration/host-module imports, async, host ABI,
  * {@code @jsonable}, for/for-of loops, break/continue, try/throw — is
  * rejected with a backend {@code E6000} diagnostic, never silently
@@ -329,7 +342,13 @@ import java.util.Set;
  * {@code C} instance and raises E8001 otherwise (mirroring LuaJIT's
  * {@code __rt.check_type} class branch: "expected instance of @mod/C,
  * got …" for a wrong-class value, "expected class instance" for a
- * non-class value). Every other class-typed boundary in the slice
+ * non-class value). The nullable slice (ISSUE-0108) extends this
+ * boundary: a nullable-typed table read ({@code C | null}, {@code
+ * int | null}, {@code T[] | null}) passes the DEAL null through and
+ * otherwise runs the inner check — the nullable nominal class check, a
+ * {@code $checkNullable<primitive>} check, or the per-wrapper
+ * {@code $check$<Wrapper>} array gate. Every other class/nullable-typed
+ * boundary in the slice
  * (locals, parameters, returns, field reads/writes, construction) is
  * provably typed by the JVM's static type system, which spec-v1.1
  * §JVM backend contract explicitly permits to make typed-boundary checks
@@ -354,11 +373,10 @@ import java.util.Set;
  * every {@code $Base} carries) and reports
  * "expected instance of @modelb/Item, got @modela/Item" — exactly the
  * module-qualified identity LuaJIT's {@code actual_class} reports.
- * Out of slice: optional/nullable/array/class/table-typed
- * class fields, nested class declarations, table reads with
- * primitive/nullable/array target types, table field writes,
- * non-literal defaults on imported classes — all E6000, never silently
- * miscompiled.
+ * Out of slice: optional/array/class/table-typed (non-nullable)
+ * class fields, nested class declarations, table reads with primitive
+ * (non-nullable)/function target types, table field writes, non-literal
+ * defaults on imported classes — all E6000, never silently miscompiled.
  */
 public final class JvmBackend {
 
@@ -478,6 +496,22 @@ public final class JvmBackend {
      * parameter, exactly like LuaJIT's {@code local x = x + 1}.
      */
     private final Deque<Map<String, String>> localScopes = new ArrayDeque<>();
+
+    /**
+     * Declared DEAL type per binding scope, parallel to {@link
+     * #localScopes}: every entry records the declared type of the
+     * binding of the same DEAL name in the corresponding scope map.
+     * Nullable-slice reads consult this stack to adapt narrowed
+     * identifier reads to the binding's boxed (nullable) Java
+     * representation (ISSUE-0108).
+     */
+    private final Deque<Map<String, Type>> localTypeScopes = new ArrayDeque<>();
+
+    /** The declared return type of the function currently being emitted
+     * ({@code null} at module level). {@link #emitReturn} uses it to
+     * emit {@code return null;} for {@code null}-typed return expressions
+     * inside nullable-returning functions (ISSUE-0108). */
+    private Type currentReturnType = null;
 
     /**
      * Every emitted Java binding name declared inside the current function
@@ -650,6 +684,7 @@ public final class JvmBackend {
         this.importedClasses = importedClasses == null
             ? Map.of() : Map.copyOf(importedClasses);
         localScopes.push(new LinkedHashMap<>());
+        localTypeScopes.push(new LinkedHashMap<>());
     }
 
     // =========================================================================
@@ -791,7 +826,9 @@ public final class JvmBackend {
         Map.entry("scalarCompare", List.of("java.lang.String", "java.lang.String")),
         Map.entry("checkInt", List.of("long")),
         Map.entry("loopCond", List.of("boolean")),
-        Map.entry("booleanNotNull", List.of("java.lang.Boolean")));
+        Map.entry("booleanNotNull", List.of("java.lang.Boolean")),
+        Map.entry("intFromNullable", List.of("java.lang.Long")),
+        Map.entry("numberFromNullable", List.of("java.lang.Double")));
 
     /**
      * Translates a DEAL identifier to a Java identifier. The encoding is
@@ -1796,6 +1833,64 @@ public final class JvmBackend {
         emitLine("static java.lang.String __stringArrayWrite(__StringArray a, long i, java.lang.String v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine("static boolean __booleanArrayWrite(__BooleanArray a, long i, boolean v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { boolean[] nd = new boolean[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine();
+        emitLine("// ---- DEAL nullable and nullable-array runtime support (ISSUE-0108) ----");
+        emitLine("// (T | null)[] maps to a wrapper over BOXED elements (java.lang.Long[],");
+        emitLine("// java.lang.Double[], java.lang.String[], java.lang.Boolean[]): Java null");
+        emitLine("// is the DEAL null element, exactly like LuaJIT's table storage where nil/");
+        emitLine("// __NULL is the null element. Reads yield null past the end (the LuaJIT");
+        emitLine("// nil), and a negative index still raises E8002 (LuaJIT emits that check");
+        emitLine("// unconditionally at the read). Writes accept null (check_nullable");
+        emitLine("// permits it) and check only the index bounds.");
+        emitLine("static final class __IntOrNullArray { java.lang.Long[] data; __IntOrNullArray(java.lang.Long[] data) { this.data = data; } }");
+        emitLine("static final class __NumberOrNullArray { java.lang.Double[] data; __NumberOrNullArray(java.lang.Double[] data) { this.data = data; } }");
+        emitLine("static final class __StringOrNullArray { java.lang.String[] data; __StringOrNullArray(java.lang.String[] data) { this.data = data; } }");
+        emitLine("static final class __BooleanOrNullArray { java.lang.Boolean[] data; __BooleanOrNullArray(java.lang.Boolean[] data) { this.data = data; } }");
+        emitLine("static java.lang.Long __intOrNullArrayWrite(__IntOrNullArray a, long i, java.lang.Long v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Long[] nd = new java.lang.Long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static java.lang.Double __numberOrNullArrayWrite(__NumberOrNullArray a, long i, java.lang.Double v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Double[] nd = new java.lang.Double[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static java.lang.String __stringOrNullArrayWrite(__StringOrNullArray a, long i, java.lang.String v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static java.lang.Boolean __booleanOrNullArrayWrite(__BooleanOrNullArray a, long i, java.lang.Boolean v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("// (T | null)[] reads: null past the end (the LuaJIT nil — a valid");
+        emitLine("// nullable element, so NO E8001 at the read) and the stored boxed");
+        emitLine("// element otherwise; a negative index still raises E8002 (LuaJIT");
+        emitLine("// emits that check unconditionally at the read).");
+        emitLine("static java.lang.Long __intOrNullArrayRead(__IntOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static java.lang.Double __numberOrNullArrayRead(__NumberOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static java.lang.String __stringOrNullArrayRead(__StringOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static java.lang.Boolean __booleanOrNullArrayRead(__BooleanOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("// Class arrays (C[], (C | null)[]) map to __RefArray holding");
+        emitLine("// java.lang.Object[]; every class declaration also emits a per-class");
+        emitLine("// subclass ($Array$<C>) so instanceof proves the element type, plus");
+        emitLine("// per-class read/write helpers with the nominal E8001 checks.");
+        emitLine("static class __RefArray { java.lang.Object[] data; __RefArray(java.lang.Object[] data) { this.data = data; } }");
+        emitLine("// Nullable boundary checks for table reads in nullable-typed contextual");
+        emitLine("// targets (runtime.lua's check_nullable): null passes through as the DEAL");
+        emitLine("// null, a value of the inner type passes, anything else raises E8001");
+        emitLine("// \"expected <T>, got ...\".");
+        emitLine("static java.lang.Long $checkNullableInt(java.lang.Object v) { if (v == null) return null; if (v instanceof java.lang.Long l) return l; throw new DealError(\"E8001\", \"expected int, got \" + $describe(v)); }");
+        emitLine("static java.lang.Double $checkNullableNumber(java.lang.Object v) { if (v == null) return null; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v)); }");
+        emitLine("static java.lang.Boolean $checkNullableBoolean(java.lang.Object v) { if (v == null) return null; if (v instanceof java.lang.Boolean b) return b; throw new DealError(\"E8001\", \"expected boolean, got \" + $describe(v)); }");
+        emitLine("static java.lang.String $checkNullableString(java.lang.Object v) { if (v == null) return null; if (v instanceof java.lang.String str) return str; throw new DealError(\"E8001\", \"expected string, got \" + $describe(v)); }");
+        emitLine("// Array wrapper gates for table reads with an array-typed contextual");
+        emitLine("// target: the declared wrapper's gate passes only that wrapper class,");
+        emitLine("// anything else raises E8001 \"expected array, got ...\" (the JVM");
+        emitLine("// storage analog of LuaJIT's check_array: the wrapper's typed storage");
+        emitLine("// already proves every element — writes check the element type — so the");
+        emitLine("// wrapper-class gate is the element-mismatch boundary). A wrong wrapper");
+        emitLine("// never reaches a raw cast.");
+        emitLine("static __IntArray $check$IntArray(java.lang.Object v) { if (v instanceof __IntArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static __NumberArray $check$NumberArray(java.lang.Object v) { if (v instanceof __NumberArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static __StringArray $check$StringArray(java.lang.Object v) { if (v instanceof __StringArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static __BooleanArray $check$BooleanArray(java.lang.Object v) { if (v instanceof __BooleanArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static __IntOrNullArray $check$IntOrNullArray(java.lang.Object v) { if (v instanceof __IntOrNullArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static __NumberOrNullArray $check$NumberOrNullArray(java.lang.Object v) { if (v instanceof __NumberOrNullArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static __StringOrNullArray $check$StringOrNullArray(java.lang.Object v) { if (v instanceof __StringOrNullArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static __BooleanOrNullArray $check$BooleanOrNullArray(java.lang.Object v) { if (v instanceof __BooleanOrNullArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("// int(v: int | null) / number(v: number | null) conversion intrinsics:");
+        emitLine("// null fails at runtime with E8001 (runtime.lua's int_convert/");
+        emitLine("// number_convert \"cannot convert null to ...\" shapes).");
+        emitLine("static long intFromNullable(java.lang.Long v) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to int\"); return v; }");
+        emitLine("static double numberFromNullable(java.lang.Double v) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to number\"); return v; }");
+        emitLine();
         emitLine("// ---- DEAL stdlib support (ISSUE-0097): std/string, std/math, std/time ----");
         emitLine("// DEAL strings are UTF-8 byte sequences (spec-v1.1 §String escapes and UTF-8) and");
         emitLine("// LuaJIT's stdlib operates on those bytes, so __strLength/__strSubstring/__strSplit");
@@ -2012,6 +2107,45 @@ public final class JvmBackend {
         return classNameFor(module);
     }
 
+    /** The emitted Java name of the per-class array wrapper for DEAL
+     * class {@code name} ({@code $Array$<Name>}, extending the emitted
+     * {@code __RefArray} so {@code instanceof} proves the element type).
+     * The {@code $Array$} prefix is unreachable from {@link #javaName}
+     * output for the same reason as {@code $C_} (every user {@code $}
+     * escapes to {@code $d}). */
+    private String classArrayWrapperName(String name) {
+        return "$Array$" + javaName(name);
+    }
+
+    /** Per-class array read helper (C[] reads): negative index → E8002,
+     * past the end → E8001 "expected instance of &lt;identity&gt;, got
+     * null" (LuaJIT reads nil there and the read site's typed class
+     * boundary fails), otherwise the nominal-checked element. */
+    private String classArrayReadName(String name) {
+        return "$classArrayRead$" + javaName(name);
+    }
+
+    /** Per-class nullable-array read helper ((C | null)[] reads): like
+     * {@link #classArrayReadName} but past the end yields the DEAL null
+     * (a valid {@code C | null} element — LuaJIT's nil, no boundary
+     * failure at the read). */
+    private String classOrNullArrayReadName(String name) {
+        return "$classOrNullArrayRead$" + javaName(name);
+    }
+
+    /** Per-class array write helper (C[] writes): index bounds → E8002,
+     * a non-{@code C} value → E8001 (LuaJIT's check_type class branch). */
+    private String classArrayWriteName(String name) {
+        return "$classArrayWrite$" + javaName(name);
+    }
+
+    /** Per-class nullable-array write helper ((C | null)[] writes): null
+     * passes (check_nullable permits it), a non-{@code C} non-null value
+     * → E8001. */
+    private String classOrNullArrayWriteName(String name) {
+        return "$classOrNullArrayWrite$" + javaName(name);
+    }
+
     /** True when a checker-inferred {@code Type.Class} refers to a class
      * of THIS module — the only classes whose generated Java types and
      * nominal-check helpers exist in the emitted artifact. The checker
@@ -2038,10 +2172,12 @@ public final class JvmBackend {
      * plus a runtime nominal-check helper. Spec v1.1 classes are sealed
      * records with no methods and no constructors — the only callables in
      * the module are the functions the earlier slices emit, so a class body
-     * contributes no method surface. Only required-present primitive
+     * contributes no method surface. Required-present primitive
      * fields ({@code int}/{@code number}/{@code boolean}/{@code string}
-     * with defaults) are in scope; optional fields (nullable reads),
-     * nullable fields, and array/class/table-typed fields are E6000.
+     * with defaults) and required-present nullable primitive/class
+     * fields ({@code f: T | null}, defaulting to the DEAL null) are in
+     * scope; optional fields (nullable reads and presence checks), and
+     * array/class/table-typed (non-nullable) fields are E6000.
      */
     private void emitClass(ClassDeclaration cd) {
         if (cd.isJsonable()) {
@@ -2078,24 +2214,49 @@ public final class JvmBackend {
         for (ClassField cf : cd.fields()) {
             if (cf.optional()) {
                 unsupported("optional class fields (their reads produce "
-                    + "nullable values)", cf.span());
-                return;
-            }
-            if (cf.nullable()) {
-                unsupported("nullable class fields", cf.span());
+                    + "nullable values and presence checks)", cf.span());
                 return;
             }
             Type fieldType = resolveTypeNode(cf.type());
             if (fieldType == Type.Error.INSTANCE) return;
-            if (!(fieldType instanceof Type.Int)
+            if (cf.nullable()) {
+                // f: T | null — required-present nullable field
+                // (ISSUE-0108). The parser keeps the WHOLE `T | null`
+                // annotation as the field's type node and sets the
+                // nullable flag, so the resolved type is already
+                // Nullable(T). The inner type must be a primitive or a
+                // LOCAL class (the nullable slice scope); the default is
+                // the DEAL null (LuaJIT's __NULL defaults entry), which
+                // the boxed Java reference holds natively.
+                if (!(fieldType instanceof Type.Nullable nn)) {
+                    unsupported("nullable class fields of type "
+                        + typeName(fieldType), cf.span());
+                    return;
+                }
+                boolean innerOk = nn.inner() instanceof Type.Int
+                    || nn.inner() instanceof Type.Number
+                    || nn.inner() instanceof Type.Boolean
+                    || nn.inner() instanceof Type.String
+                    || (nn.inner() instanceof Type.Class cls
+                        && isLocalClassType(cls));
+                if (!innerOk) {
+                    unsupported("class fields of type " + typeName(fieldType)
+                        + " (only primitive and local class nullable"
+                        + " fields are supported)", cf.span());
+                    return;
+                }
+            } else if (!(fieldType instanceof Type.Int)
                     && !(fieldType instanceof Type.Number)
                     && !(fieldType instanceof Type.Boolean)
                     && !(fieldType instanceof Type.String)) {
                 unsupported("class fields of type " + typeName(fieldType)
-                    + " (only primitive fields are supported)", cf.span());
+                    + " (only primitive fields and nullable primitive/"
+                    + "class fields are supported)", cf.span());
                 return;
             }
-            fieldTypes.add(javaLocalType(fieldType, cf.span()));
+            String javaType = javaLocalType(fieldType, cf.span());
+            if (javaType == null) return;
+            fieldTypes.add(javaType);
             fieldNames.add(javaName(cf.name()));
         }
 
@@ -2140,6 +2301,81 @@ public final class JvmBackend {
             + "got \" + $describe(v));");
         indent--;
         emitLine("}");
+
+        // Class arrays (ISSUE-0108): C[] and (C | null)[] map to a
+        // per-class __RefArray subclass plus per-class read/write helpers
+        // carrying the nominal E8001 checks. The identity strings mirror
+        // the nominal check helper above.
+        emitLine("static final class " + classArrayWrapperName(cd.name())
+            + " extends __RefArray {");
+        indent++;
+        emitLine(classArrayWrapperName(cd.name())
+            + "(java.lang.Object[] data) { super(data); }");
+        indent--;
+        emitLine("}");
+        // The per-class wrapper gate for table reads with a C[] or
+        // C[] | null contextual target: only THIS class's array wrapper
+        // passes (the wrapper's Object[] storage plus the write-time
+        // nominal checks already prove every element), anything else
+        // raises E8001 — a wrong-shaped dynamic value never reaches a
+        // raw cast.
+        emitLine("static " + classArrayWrapperName(cd.name())
+            + " $check" + classArrayWrapperName(cd.name())
+            + "(java.lang.Object v) {");
+        indent++;
+        emitLine("if (v instanceof " + classArrayWrapperName(cd.name())
+            + " a) return a;");
+        emitLine("throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
+        indent--;
+        emitLine("}");
+        emitLine("static " + gen + " " + classArrayReadName(cd.name())
+            + "(__RefArray a, long i) {");
+        indent++;
+        emitLine("if (i < 0L) throw new DealError(\"E8002\", \"negative array index\");");
+        emitLine("if (i >= (long) a.data.length) throw new DealError(\"E8001\", "
+            + "\"expected instance of " + identity + ", got null\");");
+        emitLine("java.lang.Object v = a.data[(int) i];");
+        emitLine("if (v instanceof " + gen + " c) return c;");
+        emitLine("throw new DealError(\"E8001\", \"expected instance of "
+            + identity + ", got \" + $describe(v));");
+        indent--;
+        emitLine("}");
+        emitLine("static " + gen + " " + classOrNullArrayReadName(cd.name())
+            + "(__RefArray a, long i) {");
+        indent++;
+        emitLine("if (i < 0L) throw new DealError(\"E8002\", \"negative array index\");");
+        emitLine("if (i >= (long) a.data.length) return null;");
+        emitLine("java.lang.Object v = a.data[(int) i];");
+        emitLine("if (v == null) return null;");
+        emitLine("if (v instanceof " + gen + " c) return c;");
+        emitLine("throw new DealError(\"E8001\", \"expected instance of "
+            + identity + ", got \" + $describe(v));");
+        indent--;
+        emitLine("}");
+        emitLine("static " + gen + " " + classArrayWriteName(cd.name())
+            + "(__RefArray a, long i, java.lang.Object v) {");
+        indent++;
+        emitLine("if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\");");
+        emitLine("if (!(v instanceof " + gen + " c)) throw new DealError(\"E8001\", \"expected instance of " + identity + ", got \" + $describe(v));");
+        emitLine("if (i == (long) a.data.length) { java.lang.Object[] nd = new java.lang.Object[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = c; a.data = nd; } else { a.data[(int) i] = c; }");
+        emitLine("return c;");
+        indent--;
+        emitLine("}");
+        emitLine("static " + gen + " " + classOrNullArrayWriteName(cd.name())
+            + "(__RefArray a, long i, java.lang.Object v) {");
+        indent++;
+        emitLine("if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\");");
+        emitLine("if (v != null && !(v instanceof " + gen + " c)) throw new DealError(\"E8001\", \"expected instance of " + identity + ", got \" + $describe(v));");
+        emitLine("if (v instanceof " + gen + " c) {");
+        indent++;
+        emitLine("if (i == (long) a.data.length) { java.lang.Object[] nd = new java.lang.Object[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = c; a.data = nd; } else { a.data[(int) i] = c; }");
+        emitLine("return c;");
+        indent--;
+        emitLine("}");
+        emitLine("if (i == (long) a.data.length) { java.lang.Object[] nd = new java.lang.Object[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = null; a.data = nd; } else { a.data[(int) i] = null; }");
+        emitLine("return null;");
+        indent--;
+        emitLine("}");
     }
 
     private void emitVariable(VariableDeclaration vd) {
@@ -2160,8 +2396,10 @@ public final class JvmBackend {
         if (needsBooleanBoundary(vd.initializer(), declaredType)) {
             initializer = "booleanNotNull(" + initializer + ")";
         }
+        initializer = coerceNullValueCode(initializer, vd.initializer(),
+            javaType, vd.span());
         String visibility = moduleLevel ? "static " : "";
-        String javaVar = declareLocal(vd.name());
+        String javaVar = declareLocal(vd.name(), declaredType);
         if (moduleLevel) {
             if (preStatementsDeclareTemps) {
                 // The initializer references a temporary declared by the
@@ -2289,11 +2527,14 @@ public final class JvmBackend {
         // f(long x) { return intAdd(x$1, 1L); }} — cannot find symbol
         // x$1).
         Map<String, String> paramScope = new LinkedHashMap<>();
+        Map<String, Type> paramTypeScope = new LinkedHashMap<>();
         localScopes.push(paramScope);
+        localTypeScopes.push(paramTypeScope);
         functionBindingNames.push(new LinkedHashSet<>());
         List<String> paramNames = new ArrayList<>();
         for (Parameter p : fd.params()) {
-            paramNames.add(declareLocal(p.name()));
+            Type pt = resolveTypeNode(p.type());
+            paramNames.add(declareLocal(p.name(), pt));
         }
 
         StringBuilder sig = new StringBuilder();
@@ -2310,6 +2551,8 @@ public final class JvmBackend {
         indent++;
         boolean savedModuleLevel = moduleLevel;
         int savedModuleIndex = currentModuleStatementIndex;
+        Type savedReturnType = currentReturnType;
+        currentReturnType = returnType;
         currentModuleStatementIndex = -1;
         moduleLevel = false;
         for (StatementNode stmt : fd.body().statements()) {
@@ -2322,9 +2565,11 @@ public final class JvmBackend {
                 break;
             }
         }
+        currentReturnType = savedReturnType;
         currentModuleStatementIndex = savedModuleIndex;
         moduleLevel = savedModuleLevel;
         localScopes.pop();
+        localTypeScopes.pop();
         functionBindingNames.pop();
 
         indent--;
@@ -2338,12 +2583,16 @@ public final class JvmBackend {
         }
         ExpressionNode e = rs.expr().get();
         Type t = typeOf(e);
+        boolean retNullable = currentReturnType instanceof Type.Nullable;
         if (t instanceof Type.Null) {
             if (isBareNullLiteral(e) || e instanceof IdentifierExpr) {
                 // The null literal and a null-typed variable read have no
                 // observable side effects — and a bare identifier is not a
-                // valid Java expression statement.
-                emitLine("return;");
+                // valid Java expression statement. In a nullable-returning
+                // function the DEAL null is the Java null reference (a
+                // bare `return;` would make javac reject a non-void
+                // method).
+                emitLine(retNullable ? "return null;" : "return;");
                 return;
             }
             // Any other null-typed return expression is a side-effecting
@@ -2362,11 +2611,17 @@ public final class JvmBackend {
                 emitExpression(e);
                 flushPreStatements();
             }
-            emitLine("return;");
+            emitLine(retNullable ? "return null;" : "return;");
             return;
         }
         String value = emitExpression(e);
-        if (needsBooleanBoundary(e, t)) {
+        if (needsBooleanBoundary(e, currentReturnType)) {
+            // The boundary keys on the DECLARED return type: a
+            // nil-capable boolean result crossing into a
+            // `boolean | null` return is the DEAL null (LuaJIT's
+            // check_nullable stores it, no failure), while a `boolean`
+            // return fails with E8001 exactly where LuaJIT's
+            // check_boolean fails.
             value = "booleanNotNull(" + value + ")";
         }
         flushPreStatements();
@@ -2564,6 +2819,7 @@ public final class JvmBackend {
 
     private void emitScopedBlock(Block b) {
         localScopes.push(new LinkedHashMap<>());
+        localTypeScopes.push(new LinkedHashMap<>());
         List<StatementNode> body = b.statements();
         for (int i = 0; i < body.size(); i++) {
             emitStatement(body.get(i));
@@ -2576,6 +2832,7 @@ public final class JvmBackend {
             }
         }
         localScopes.pop();
+        localTypeScopes.pop();
     }
 
     private void emitExpressionStatement(ExpressionStatement es) {
@@ -2923,7 +3180,16 @@ public final class JvmBackend {
             }
             if (code != null && valueNode != null
                     && (localDefaults || providedNodes.containsKey(cf.name()))
-                    && needsBooleanBoundary(valueNode, typeOf(valueNode))) {
+                    && needsBooleanBoundary(valueNode,
+                        classFieldDeclaredType(cd, cf))) {
+                // The boundary keys on the FIELD's declared type: a
+                // nil-capable boolean construction value provided to a
+                // `boolean | null` field stores the DEAL null
+                // (LuaJIT's check_nullable, no failure), while a
+                // `boolean` field raises E8001 exactly where LuaJIT's
+                // check_boolean fails. (The imported-default guard above
+                // is ISSUE-0109: imported defaults are validated literal
+                // constants and emit standalone.)
                 code = "booleanNotNull(" + code + ")";
             }
             if (code == null) {
@@ -2932,6 +3198,13 @@ public final class JvmBackend {
                 unsupported("construction omitting the required-present field '"
                     + cf.name() + "' of class '" + cd.name() + "'", obj.span());
                 code = zeroValueFor(cf.type());
+            }
+            if (valueNode != null) {
+                Type declaredFieldType = classFieldDeclaredType(cd, cf);
+                String fieldJava = declaredFieldType == null ? null
+                    : javaLocalType(declaredFieldType, cf.span());
+                code = coerceNullValueCode(code, valueNode, fieldJava,
+                    valueNode.span());
             }
             args.add(code);
         }
@@ -3032,7 +3305,7 @@ public final class JvmBackend {
      * resolves to the field, since a Java local's scope starts at its own
      * initializer) legal.
      */
-    private String declareLocal(String name) {
+    private String declareLocal(String name, Type declaredType) {
         String base = javaName(name);
         String mapped = base;
         int n = 1;
@@ -3040,6 +3313,7 @@ public final class JvmBackend {
             mapped = base + "$" + (n++);
         }
         localScopes.peek().put(name, mapped);
+        localTypeScopes.peek().put(name, declaredType);
         // Parameters and function-body top-level lets share ONE scope map,
         // so this put() can overwrite an earlier mapping of the same DEAL
         // name (the parameter's). The overwritten emitted name is still in
@@ -3071,11 +3345,20 @@ public final class JvmBackend {
     }
 
     private String emitIdentifier(IdentifierExpr id) {
+        Type readType = typeOf(id);
         String mapped = localJavaName(id.name());
         if (mapped != null) {
-            return mapped;
+            Type declared = declaredTypeForBinding(id.name());
+            return adaptNarrowedRead(mapped, declared, readType);
         }
         Symbol sym = symbols.resolve(id.name());
+        if (sym instanceof Symbol.VariableSymbol vs) {
+            // A module field read: its declared type comes from the
+            // module-scope symbol (a narrowed read of a nullable module
+            // field inside a function unboxes / null-adapts like a
+            // local).
+            return adaptNarrowedRead(javaName(id.name()), vs.type(), readType);
+        }
         if (sym instanceof Symbol.IntrinsicSymbol) {
             unsupported("conversion intrinsics used as first-class values", id.span());
             return "null";
@@ -3089,6 +3372,69 @@ public final class JvmBackend {
             return "null";
         }
         return javaName(id.name());
+    }
+
+    /** The declared type of the visible binding of {@code name}: nearest
+     * local/parameter scope first (the {@link #localTypeScopes} stack,
+     * parallel to {@link #localScopes}), then the module-scope symbol. */
+    private Type declaredTypeForBinding(String name) {
+        for (Map<String, Type> scope : localTypeScopes) {
+            Type t = scope.get(name);
+            if (t != null) return t;
+        }
+        Symbol sym = symbols.resolve(name);
+        if (sym instanceof Symbol.VariableSymbol vs) return vs.type();
+        return null;
+    }
+
+    /**
+     * Adapts a read of a binding whose declared type is {@code T | null}
+     * (stored as a boxed reference) to the read's checked type
+     * (ISSUE-0108):
+     * <ul>
+     *   <li>a narrowed-to-{@code int}/{@code number}/{@code boolean} read
+     *       unboxes ({@code n.longValue()} etc. — the narrowing is sound,
+     *       so the boxed value is never null there);</li>
+     *   <li>a narrowed-to-{@code null} read is the DEAL null value — the
+     *       plain {@code null} literal, which flows into {@code null}-typed
+     *       (Java {@code Void}) contexts where the bare boxed name would
+     *       not type-check;</li>
+     *   <li>any other read (still nullable, or narrowed to a reference
+     *       type — string/class/array) keeps the boxed reference, which
+     *       already has the right Java type.</li>
+     * </ul>
+     */
+    private String adaptNarrowedRead(String code, Type declared, Type read) {
+        if (!(declared instanceof Type.Nullable)) return code;
+        if (read instanceof Type.Null) return "null";
+        return switch (read) {
+            case Type.Int ignored -> code + ".longValue()";
+            case Type.Number ignored -> code + ".doubleValue()";
+            case Type.Boolean ignored -> code + ".booleanValue()";
+            default -> code;
+        };
+    }
+
+    /**
+     * Coerces a null-typed ASSIGNMENT expression's emitted code into the
+     * Java type of the surrounding position (ISSUE-0108). The emitted
+     * code of {@code (m = null)} carries the assignment TARGET's Java
+     * type (a boxed {@code java.lang.Long} when {@code m: int | null}),
+     * while the expression's DEAL type is {@code null} — the checker
+     * lets it flow into any nullable or null target, whose Java type can
+     * differ ({@code java.lang.Void}, {@code java.lang.String}, a class
+     * reference, …). The runtime value of a null-typed assignment is the
+     * DEAL null, so the Object-mediated cast is sound for every
+     * reference target and evaluates the assignment exactly once.
+     */
+    private String coerceNullValueCode(String code, ExpressionNode e,
+                                       String targetJavaType, Span span) {
+        if (targetJavaType == null) return code;
+        if (e instanceof AssignmentExpr
+                && typeOf(e) instanceof Type.Null) {
+            return "(" + targetJavaType + ") (java.lang.Object) " + code;
+        }
+        return code;
     }
 
     private String emitBinary(BinaryExpr bin) {
@@ -3126,6 +3472,28 @@ public final class JvmBackend {
             if (leftRead || rightRead || canYieldNil(bin.left())
                     || canYieldNil(bin.right())) {
                 return emitArrayReadComparison(bin, op == BinaryOp.EQ);
+            }
+            // Nullable comparisons (ISSUE-0108): T | null ===/!== null,
+            // null ===/!== T | null, and T | null ===/!== T | null with
+            // LuaJIT's null semantics (null === null → true, null === v →
+            // false). The checker enforces identical operand types, so at
+            // most one side can be null-typed and both-nullable operands
+            // share the same inner type.
+            if (leftType instanceof Type.Nullable
+                    || rightType instanceof Type.Nullable) {
+                return emitNullableComparison(bin, op == BinaryOp.EQ);
+            }
+            // Reference identity comparisons: T[] === T[] and C === C are
+            // value-equality by identity (LuaJIT's `==` on tables —
+            // array wrappers and class instances are the same shape there),
+            // exactly like the Lua backend's plain `(a == b)` fallthrough.
+            if (leftType instanceof Type.Array
+                    || leftType instanceof Type.Class) {
+                List<String> idOps = emitOperandsInOrder(
+                    List.of(bin.left(), bin.right()));
+                return op == BinaryOp.EQ
+                    ? "(" + idOps.get(0) + " == " + idOps.get(1) + ")"
+                    : "(" + idOps.get(0) + " != " + idOps.get(1) + ")";
             }
         }
 
@@ -3183,11 +3551,18 @@ public final class JvmBackend {
         // Null equality: every null-typed value is the DEAL null value;
         // `null === null` is true (spec §Value equality). Operand side
         // effects were already hoisted into pre-statements by emitExpression,
-        // so the emitted operands are null here.
+        // so the emitted operands are null here. A null-typed ASSIGNMENT's
+        // emitted code carries the assignment target's Java type (e.g.
+        // `(m = null)` where `m: int | null` is Long-typed), so it is
+        // widened to Object to compare against a Void-typed null operand.
         if (leftType instanceof Type.Null && rightType instanceof Type.Null) {
+            String lc = bin.left() instanceof AssignmentExpr
+                ? "(java.lang.Object) " + left : left;
+            String rc = bin.right() instanceof AssignmentExpr
+                ? "(java.lang.Object) " + right : right;
             return switch (op) {
-                case EQ -> "(" + left + " == " + right + ")";
-                case NEQ -> "(" + left + " != " + right + ")";
+                case EQ -> "(" + lc + " == " + rc + ")";
+                case NEQ -> "(" + lc + " != " + rc + ")";
                 default -> {
                     unsupported("operator " + op + " on null values", bin.span());
                     yield "null";
@@ -3231,6 +3606,74 @@ public final class JvmBackend {
         unsupported("operator " + op + " on operand types "
             + typeName(leftType) + " and " + typeName(rightType), bin.span());
         return "null";
+    }
+
+    /**
+     * Emits {@code ===}/{@code !==} where at least one operand has a
+     * nullable declared type (ISSUE-0108), with LuaJIT's null semantics:
+     * {@code T | null === null} → {@code l == null} (a null-typed
+     * operand's value is the DEAL null, and its observable side effects
+     * were already hoisted into pre-statements or materialized here);
+     * {@code T | null === T | null} compares the unboxed values only when
+     * both sides are non-null. The ternary form evaluates each operand
+     * exactly once, strictly left to right (Java evaluates the condition,
+     * then exactly one arm), so an inline effectful operand is never
+     * evaluated twice and never skipped — LuaJIT evaluates both operands
+     * strictly. String inners compare with {@code equals}, numeric inners
+     * unbox, and class/array inners compare by identity (LuaJIT's `==` on
+     * tables).
+     */
+    private String emitNullableComparison(BinaryExpr bin, boolean eq) {
+        Type leftType = typeOf(bin.left());
+        Type rightType = typeOf(bin.right());
+        boolean leftNullable = leftType instanceof Type.Nullable;
+        boolean rightNullable = rightType instanceof Type.Nullable;
+        List<String> codes = emitOperandsInOrder(
+            List.of(bin.left(), bin.right()));
+        String l = codes.get(0);
+        String r = codes.get(1);
+        if (leftNullable && rightNullable) {
+            Type inner = ((Type.Nullable) leftType).inner();
+            if (eq) {
+                return "((" + l + " == null ? (" + r + " == null) : ("
+                    + r + " != null && " + nullableEq(l, r, inner) + ")))";
+            }
+            return "((" + l + " == null ? (" + r + " != null) : ("
+                + r + " == null || " + nullableNe(l, r, inner) + ")))";
+        }
+        if (leftNullable) {
+            // The right side is a null-typed value: its observable side
+            // effects (an inline assignment) must run before the
+            // comparison — materialize it when it is not inert. The
+            // comparison itself reads only the left boxed value.
+            r = materializeIfEffectful(r, bin.right());
+            return eq ? "(" + l + " == null)" : "(" + l + " != null)";
+        }
+        l = materializeIfEffectful(l, bin.left());
+        return eq ? "(" + r + " == null)" : "(" + r + " != null)";
+    }
+
+    /** Value equality of two non-null boxed nullable operands (the caller
+     * guarded the null cases). */
+    private String nullableEq(String l, String r, Type inner) {
+        return switch (inner) {
+            case Type.Int ignored -> l + ".longValue() == " + r + ".longValue()";
+            case Type.Number ignored -> l + ".doubleValue() == " + r + ".doubleValue()";
+            case Type.Boolean ignored -> l + ".booleanValue() == " + r + ".booleanValue()";
+            case Type.String ignored -> l + ".equals(" + r + ")";
+            default -> "(" + l + " == " + r + ")";
+        };
+    }
+
+    /** Value inequality of two non-null boxed nullable operands. */
+    private String nullableNe(String l, String r, Type inner) {
+        return switch (inner) {
+            case Type.Int ignored -> l + ".longValue() != " + r + ".longValue()";
+            case Type.Number ignored -> l + ".doubleValue() != " + r + ".doubleValue()";
+            case Type.Boolean ignored -> l + ".booleanValue() != " + r + ".booleanValue()";
+            case Type.String ignored -> "(!" + l + ".equals(" + r + "))";
+            default -> "(" + l + " != " + r + ")";
+        };
     }
 
     /**
@@ -3601,7 +4044,8 @@ public final class JvmBackend {
             StringBuilder sb = new StringBuilder(javaName(id.name())).append('(');
             for (int i = 0; i < argCodes.size(); i++) {
                 if (i > 0) sb.append(", ");
-                sb.append(boundaryArgCode(call.args().get(i), argCodes.get(i)));
+                sb.append(boundaryArgCode(call.args().get(i),
+                    argCodes.get(i), paramDeclaredType(id.name(), i)));
             }
             return sb.append(')').toString();
         }
@@ -3682,6 +4126,20 @@ public final class JvmBackend {
             .append(javaName(mae.field())).append('(');
         for (int i = 0; i < argCodes.size(); i++) {
             if (i > 0) sb.append(", ");
+            // A null-typed assignment argument carries the assignment
+            // TARGET's Java type, and the imported module's parameter
+            // Java type is not visible to this backend instance — the
+            // shape could mismatch across modules (imports stay out of
+            // the nullable slice, ISSUE-0108), so reject instead of
+            // emitting an artifact javac would reject.
+            if (call.args().get(i) instanceof AssignmentExpr ae
+                    && typeOf(ae) instanceof Type.Null) {
+                unsupported("null-typed assignment argument to an "
+                    + "imported function call (the imported parameter's "
+                    + "Java type is not visible to this backend)",
+                    ae.span());
+                return "null";
+            }
             sb.append(argCodes.get(i));
         }
         return sb.append(')').toString();
@@ -3809,15 +4267,20 @@ public final class JvmBackend {
 
     /**
      * Emits a read of {@code array[index]} where {@code array: T[]} and
-     * {@code T} is one of the four primitive element types. The receiver
+     * {@code T} is one of the four primitive element types, a local
+     * class, or a nullable element form. The receiver
      * and the index are emitted with {@link #emitOperandsInOrder} (the
      * spec's strict left-to-right evaluation order holds even when one of
      * them hoists side-effecting pre-statements), and the emitted helper
      * call performs the read-site checks: negative index → E8002 (LuaJIT's
      * emitted negative-index check), index past the end → E8001
-     * "expected &lt;T&gt;, got null" (LuaJIT reads nil there and the read
+     * "expected &lt;T&gt;, got null" for the non-nullable elements
+     * (LuaJIT reads nil there and the read
      * site's typed boundary fails with that shape — spec §Bounds and nil
-     * behavior). Comparison positions ({@code ===}/{@code !==} operands)
+     * behavior), while {@code (T | null)[]} reads yield the DEAL null
+     * past the end (a valid nullable element, no boundary failure) and
+     * {@code C[]} reads run the per-class nominal check. Comparison
+     * positions ({@code ===}/{@code !==} operands)
      * do not route through this method: their read site applies no typed
      * boundary, so {@link #emitArrayReadComparison} boxes the read and
      * computes LuaJIT's nil-comparison semantics instead. Tables and
@@ -3829,15 +4292,34 @@ public final class JvmBackend {
             unsupported("indexing of " + typeName(arrayType), idx.span());
             return "null";
         }
-        String readHelper = arrayReadHelper(arr.element());
-        if (readHelper == null) {
-            // Unsupported element type (nested/class/function/… arrays):
+        Type element = arr.element();
+        String helper = null;
+        if (element instanceof Type.Nullable ne) {
+            // (T | null)[] reads: the boxed read yields the DEAL null
+            // past the end (a valid nullable element — LuaJIT's nil, no
+            // boundary failure at the read); a negative index still
+            // raises E8002. Nullable class elements use the per-class
+            // helper with the nominal check.
+            helper = orNullArrayReadHelper(ne.inner());
+            if (helper == null && ne.inner() instanceof Type.Class cls
+                    && localClassJavaType(cls, idx.span()) != null) {
+                helper = classOrNullArrayReadName(cls.name());
+            }
+        } else if (element instanceof Type.Class cls) {
+            if (localClassJavaType(cls, idx.span()) != null) {
+                helper = classArrayReadName(cls.name());
+            }
+        } else {
+            helper = arrayReadHelper(element);
+        }
+        if (helper == null) {
+            // Unsupported element type (nested/function/… arrays):
             // record the E6000 and emit the inert placeholder.
-            javaArrayElementType(arr.element(), idx.span());
+            javaArrayElementType(element, idx.span());
             return "null";
         }
         List<String> codes = emitOperandsInOrder(List.of(idx.array(), idx.index()));
-        return readHelper + "(" + codes.get(0) + ", " + codes.get(1) + ")";
+        return helper + "(" + codes.get(0) + ", " + codes.get(1) + ")";
     }
 
     /**
@@ -4065,7 +4547,13 @@ public final class JvmBackend {
      */
     private String materializeIfEffectful(String code, ExpressionNode v) {
         if (isPureAfterEmission(v)) return code;
-        String javaType = javaLocalType(typeOf(v), v.span());
+        // A null-typed effectful value (an assignment like `(m = null)`
+        // whose emitted code carries the boxed target's Java type)
+        // materializes into an Object temporary: the DEAL null fits any
+        // reference and the temp is consumed only for its evaluation
+        // effects.
+        String javaType = typeOf(v) instanceof Type.Null
+            ? "java.lang.Object" : javaLocalType(typeOf(v), v.span());
         if (javaType == null) return code; // diagnostic already recorded
         String temp = nextEvalTempName();
         preStatements.add(new PreLine(
@@ -4088,13 +4576,33 @@ public final class JvmBackend {
         return emitExpression(e);
     }
 
+    /** The declared type of the {@code index}-th parameter of the local
+     * module function {@code name}, or {@code null} when the function or
+     * parameter is unknown (checker-gated unreachable). */
+    private Type paramDeclaredType(String name, int index) {
+        FunctionDeclaration fd = moduleFunctions.get(name);
+        if (fd == null || index >= fd.params().size()) return null;
+        return resolveTypeNode(fd.params().get(index).type());
+    }
+
     /** The call-argument code for {@code arg}: a boolean-typed nil-aware
      * {@code &&}/{@code ||} result is converted at the parameter boundary
      * (LuaJIT's callee prologue checks the parameter and fails on nil
-     * with E8001), every other argument keeps its emitted code. */
-    private String boundaryArgCode(ExpressionNode arg, String code) {
-        if (needsBooleanBoundary(arg, typeOf(arg))) {
+     * with E8001), every other argument keeps its emitted code. The
+     * boundary keys on the parameter's DECLARED type: a {@code
+     * boolean | null} parameter accepts the DEAL null (check_nullable),
+     * a {@code boolean} parameter fails with E8001. */
+    private String boundaryArgCode(ExpressionNode arg, String code,
+                                   Type paramType) {
+        if (needsBooleanBoundary(arg, paramType)) {
             return "booleanNotNull(" + code + ")";
+        }
+        if (paramType == null && needsBooleanBoundary(arg, typeOf(arg))) {
+            return "booleanNotNull(" + code + ")";
+        }
+        if (paramType != null) {
+            String paramJava = javaLocalType(paramType, arg.span());
+            return coerceNullValueCode(code, arg, paramJava, arg.span());
         }
         return code;
     }
@@ -4153,11 +4661,13 @@ public final class JvmBackend {
     }
 
     /**
-     * Emits an array literal {@code [e1, …, eN]} for one of the four
-     * primitive element types as {@code new __IntArray(new long[]{…})}
-     * (and the empty form {@code new long[]{} — an empty literal is
+     * Emits an array literal {@code [e1, …, eN]} for the four primitive
+     * element types as {@code new __IntArray(new long[]{…})} (and the
+     * empty form {@code new long[]{} — an empty literal is
      * only checker-accepted with a contextual array type, which
-     * {@link #typeOf} carries}). Elements are emitted with
+     * {@link #typeOf} carries}); nullable-element and class-element
+     * literals emit the corresponding or-null/per-class wrapper with
+     * boxed/upcast storage. Elements are emitted with
      * {@link #emitOperandsInOrder}, so left-to-right element evaluation
      * holds even when an element hoists side-effecting pre-statements
      * (an earlier inline element is materialized into a temporary before
@@ -4173,6 +4683,10 @@ public final class JvmBackend {
         String wrapper = arrayWrapperName(arr.element());
         String elemJava = javaArrayElementType(arr.element(), al.span());
         if (wrapper == null || elemJava == null) return "null";
+        // Element codes flow through Java's assignment conversion inside
+        // the initializer, which boxes unboxed primitive elements for the
+        // nullable-element wrappers (java.lang.Long[]{5L, null}) and
+        // upcasts class instances into __RefArray storage.
         List<String> codes = emitOperandsInOrder(al.elements());
         StringBuilder sb = new StringBuilder("new ").append(wrapper)
             .append("(new ").append(elemJava).append("[]{");
@@ -4192,11 +4706,15 @@ public final class JvmBackend {
      * checker's type map. Class-typed targets run the runtime nominal
      * check through the class's emitted {@code $check<C>} helper (E8001
      * for a wrong-class or non-class value — never a silent cast), and
-     * table-typed targets run {@code $check$Table}. Primitive, nullable,
-     * array, and function target types are out of slice (E6000): this
-     * slice's runtime checks cover nominal class checks, and rejecting the
-     * rest is the documented skeleton contract — never a silent
-     * miscompile.
+     * table-typed targets run {@code $check$Table}. The nullable slice
+     * (ISSUE-0108) adds the null-accepting boundary checks: nullable
+     * primitive targets ({@code $checkNullable<primitive>}), nullable
+     * class targets (null passes, otherwise the {@code $check<C>}
+     * nominal check), and array/nullable-array targets (the
+     * per-wrapper {@code $check$<Wrapper>} gates). Primitive
+     * (non-nullable)
+     * and function target types are out of slice (E6000) — never a
+     * silent miscompile.
      */
     private String emitTableRead(MemberAccessExpr mae) {
         String obj = emitExpression(mae.object());
@@ -4231,10 +4749,91 @@ public final class JvmBackend {
         if (target instanceof Type.Table) {
             return "$check$Table(" + get + ")";
         }
+        if (target instanceof Type.Nullable nn) {
+            // Nullable boundary checks (ISSUE-0108): the read materializes
+            // the table lookup into an Object temporary (the receiver must
+            // evaluate exactly once) and applies the null-accepting check —
+            // LuaJIT's check_nullable: null passes as the DEAL null, a
+            // value of the inner type passes, anything else raises E8001.
+            String temp = nextEvalTempName();
+            preStatements.add(new PreLine(
+                "java.lang.Object " + temp + " = " + get + ";", 0));
+            preStatementsDeclareTemps = true;
+            Type inner = nn.inner();
+            if (inner instanceof Type.Class cls) {
+                if (!isLocalClassType(cls) || !moduleClasses.containsKey(cls.name())) {
+                    unsupported("class-typed table read for class '"
+                        + cls.name() + "' (only local module-level classes "
+                        + "are supported)", mae.span());
+                    return "null";
+                }
+                return "(" + temp + " == null ? null : "
+                    + classCheckName(cls.name()) + "(" + temp + "))";
+            }
+            String check = nullableCheckHelper(inner);
+            if (check != null) return check + "(" + temp + ")";
+            if (inner instanceof Type.Array arr
+                    && arrayCheckName(arr.element()) != null) {
+                return "(" + temp + " == null ? null : "
+                    + arrayCheckName(arr.element()) + "(" + temp + "))";
+            }
+            unsupported("table field reads with target type "
+                + typeName(target), mae.span());
+            return "null";
+        }
+        if (target instanceof Type.Array arr) {
+            String check = arrayCheckName(arr.element());
+            if (check == null) {
+                unsupported("table field reads with target type "
+                    + typeName(target), mae.span());
+                return "null";
+            }
+            String temp = nextEvalTempName();
+            preStatements.add(new PreLine(
+                "java.lang.Object " + temp + " = " + get + ";", 0));
+            preStatementsDeclareTemps = true;
+            return check + "(" + temp + ")";
+        }
         unsupported("table field reads with target type " + typeName(target)
-            + " (this slice checks class and table targets only)",
-            mae.span());
+            + " (this slice checks class, nullable, array, and table "
+            + "targets only)", mae.span());
         return "null";
+    }
+
+    /** The null-accepting runtime check helper for a nullable primitive
+     * inner type ({@code $checkNullableInt} etc.), or {@code null} for a
+     * non-primitive inner. */
+    private String nullableCheckHelper(Type inner) {
+        return switch (inner) {
+            case Type.Int ignored -> "$checkNullableInt";
+            case Type.Number ignored -> "$checkNullableNumber";
+            case Type.Boolean ignored -> "$checkNullableBoolean";
+            case Type.String ignored -> "$checkNullableString";
+            default -> null;
+        };
+    }
+
+    /** The per-wrapper array gate for a supported array element type
+     * ({@code $check$IntArray} etc., or the per-class
+     * {@code $check$Array$<C>} gate), or {@code null} for unsupported
+     * element types. */
+    private String arrayCheckName(Type element) {
+        return switch (element) {
+            case Type.Int ignored -> "$check$IntArray";
+            case Type.Number ignored -> "$check$NumberArray";
+            case Type.String ignored -> "$check$StringArray";
+            case Type.Boolean ignored -> "$check$BooleanArray";
+            case Type.Nullable ne -> switch (ne.inner()) {
+                case Type.Int ignored -> "$check$IntOrNullArray";
+                case Type.Number ignored -> "$check$NumberOrNullArray";
+                case Type.String ignored -> "$check$StringOrNullArray";
+                case Type.Boolean ignored -> "$check$BooleanOrNullArray";
+                case Type.Class c -> "$check" + classArrayWrapperName(c.name());
+                default -> null;
+            };
+            case Type.Class c -> "$check" + classArrayWrapperName(c.name());
+            default -> null;
+        };
     }
 
     private String emitIntrinsicCall(String name, CallExpr call) {
@@ -4251,12 +4850,23 @@ public final class JvmBackend {
             case "int" -> {
                 if (argType instanceof Type.Number) yield "intFromNumber(" + emitted + ")";
                 if (argType instanceof Type.Int) yield emitted;
+                if (argType instanceof Type.Nullable nn
+                        && nn.inner() instanceof Type.Int) {
+                    // int(x: int | null) — null fails at runtime with
+                    // E8001 (runtime.lua's int_convert "cannot convert
+                    // null to int").
+                    yield "intFromNullable(" + emitted + ")";
+                }
                 unsupported("int() on " + typeName(argType), call.span());
                 yield "0L";
             }
             case "number" -> {
                 if (argType instanceof Type.Int) yield "numberFromInt(" + emitted + ")";
                 if (argType instanceof Type.Number) yield emitted;
+                if (argType instanceof Type.Nullable nn
+                        && nn.inner() instanceof Type.Number) {
+                    yield "numberFromNullable(" + emitted + ")";
+                }
                 unsupported("number() on " + typeName(argType), call.span());
                 yield "0.0";
             }
@@ -4303,9 +4913,19 @@ public final class JvmBackend {
             }
             String target = mapped != null ? mapped : javaName(id.name());
             String value = emitExpression(ae.value());
-            if (needsBooleanBoundary(ae.value(), typeOf(ae.value()))) {
+            Type targetType = declaredTypeForBinding(id.name());
+            if (needsBooleanBoundary(ae.value(), targetType)) {
+                // The boundary keys on the TARGET's declared type: a
+                // nil-capable boolean result assigned into a
+                // `boolean | null` binding is the DEAL null (LuaJIT's
+                // check_nullable stores it, no failure), while a
+                // `boolean` binding fails with E8001 exactly where
+                // LuaJIT's check_boolean fails.
                 value = "booleanNotNull(" + value + ")";
             }
+            if (targetType == null) targetType = typeOf(ae.value());
+            String targetJava = javaLocalType(targetType, ae.span());
+            value = coerceNullValueCode(value, ae.value(), targetJava, ae.span());
             return target + " = " + value;
         }
         if (ae.target() instanceof IndexExpr idx) {
@@ -4324,6 +4944,21 @@ public final class JvmBackend {
                 return "null";
             }
             String writeHelper = arrayWriteHelper(indexType);
+            if (writeHelper == null) {
+                // (T | null)[] and C[] writes route through the
+                // or-null/class helpers; any other element type records
+                // the E6000.
+                if (indexType instanceof Type.Nullable ne) {
+                    writeHelper = orNullArrayWriteHelper(ne.inner());
+                    if (writeHelper == null && ne.inner() instanceof Type.Class cls
+                            && localClassJavaType(cls, ae.span()) != null) {
+                        writeHelper = classOrNullArrayWriteName(cls.name());
+                    }
+                } else if (indexType instanceof Type.Class cls
+                        && localClassJavaType(cls, ae.span()) != null) {
+                    writeHelper = classArrayWriteName(cls.name());
+                }
+            }
             if (writeHelper == null) {
                 javaArrayElementType(indexType, ae.span());
                 return "null";
@@ -4344,6 +4979,11 @@ public final class JvmBackend {
             if (needsBooleanBoundary(ae.value(), indexType)) {
                 rhs = "booleanNotNull(" + rhs + ")";
             }
+            // A null-typed assignment value (`(m = null)`) carries the
+            // boxed target's Java type; coerce it to the element's
+            // storage type (the write helper's parameter type).
+            rhs = coerceNullValueCode(rhs, ae.value(),
+                javaArrayElementType(indexType, ae.span()), ae.span());
             return writeHelper + "(" + codes.get(0) + ", " + codes.get(1)
                 + ", " + rhs + ")";
         }
@@ -4366,8 +5006,18 @@ public final class JvmBackend {
                 List<String> codes = emitOperandsInOrder(
                     List.of(mae.object(), ae.value()));
                 String value = codes.get(1);
-                if (needsBooleanBoundary(ae.value(), typeOf(ae.value()))) {
+                Type fieldType = declaredFieldType(
+                    (Type.Class) objType, mae.field());
+                if (needsBooleanBoundary(ae.value(), fieldType)) {
+                    // Same target-type boundary rule as the identifier
+                    // branch: a `boolean | null` field stores the DEAL
+                    // null, a `boolean` field raises E8001.
                     value = "booleanNotNull(" + value + ")";
+                }
+                if (fieldType != null) {
+                    String fieldJava = javaLocalType(fieldType, ae.span());
+                    value = coerceNullValueCode(value, ae.value(),
+                        fieldJava, ae.span());
                 }
                 return "(" + codes.get(0) + ")." + javaName(mae.field())
                     + " = " + value;
@@ -4377,6 +5027,35 @@ public final class JvmBackend {
         }
         unsupported("assignment to non-variable targets", ae.span());
         return "null";
+    }
+
+    /** The declared internal type of a class field (its annotation type,
+     * wrapped in {@code Nullable} for a {@code f: T | null} field). The
+     * type resolution records an E6000 only for an unsupported annotation,
+     * which the class emission already rejected — so a supported field's
+     * re-resolution is diagnostic-free. */
+    private Type classFieldDeclaredType(ClassDeclaration cd, ClassField cf) {
+        Type t = resolveTypeNode(cf.type());
+        if (t == Type.Error.INSTANCE) return null;
+        if (cf.nullable()) {
+            // The parser keeps the whole `T | null` annotation as the
+            // field's type node; the resolved type is already Nullable(T).
+            if (!(t instanceof Type.Nullable)) return null;
+        }
+        return t;
+    }
+
+    /** The declared type of a local class's field, or {@code null} when
+     * the class or field is unknown (checker-gated unreachable). */
+    private Type declaredFieldType(Type.Class cls, String fieldName) {
+        ClassDeclaration cd = moduleClasses.get(cls.name());
+        if (cd == null) return null;
+        for (ClassField cf : cd.fields()) {
+            if (cf.name().equals(fieldName)) {
+                return classFieldDeclaredType(cd, cf);
+            }
+        }
+        return null;
     }
 
     // =========================================================================
@@ -4551,8 +5230,11 @@ public final class JvmBackend {
 
     /**
      * Resolves a type annotation to the internal type. Unsupported forms
-     * (classes, arrays, nullables, function types, tables) record an E6000
-     * diagnostic and return {@code Type.Error.INSTANCE}.
+     * (qualified types, function types, tables, and the unsupported
+     * named/inner forms) record an E6000 diagnostic and return
+     * {@code Type.Error.INSTANCE}; nullable and array wrappers resolve
+     * their inner forms and delegate support checks to the Java type
+     * mappers.
      */
     private Type resolveTypeNode(TypeNode typeNode) {
         return switch (typeNode) {
@@ -4602,8 +5284,8 @@ public final class JvmBackend {
                 Type elem = resolveTypeNode(at.elementType());
                 if (elem == Type.Error.INSTANCE) {
                     // Inner resolution already recorded its E6000 (e.g. a
-                    // nullable element or a nested array); do not
-                    // double-report.
+                    // nested array, a function element, or an unsupported
+                    // named type); do not double-report.
                     yield Type.Error.INSTANCE;
                 }
                 if (javaArrayElementType(elem, at.span()) == null) {
@@ -4612,8 +5294,23 @@ public final class JvmBackend {
                 yield new Type.Array(elem);
             }
             case NullableType nt -> {
-                unsupported("nullable types", nt.span());
-                yield Type.Error.INSTANCE;
+                Type inner = resolveTypeNode(nt.innerType());
+                if (inner == Type.Error.INSTANCE) {
+                    // Inner resolution already recorded its E6000; do not
+                    // double-report.
+                    yield Type.Error.INSTANCE;
+                }
+                if (inner instanceof Type.Null
+                        || inner instanceof Type.Nullable) {
+                    // `null | null` and `(T | null) | null` are frontend
+                    // errors (spec §Type grammar); the defensive gate keeps
+                    // the Type.Nullable invariant (inner is never null or
+                    // nullable).
+                    unsupported("nullable type '" + typeName(inner)
+                        + " | null'", nt.span());
+                    yield Type.Error.INSTANCE;
+                }
+                yield new Type.Nullable(inner);
             }
             case FunctionType ft -> {
                 unsupported("function types", ft.span());
@@ -4662,9 +5359,78 @@ public final class JvmBackend {
                 if (importedModule == null) yield null;
                 yield importedModule + "." + classNameForClass(c.name());
             }
+            case Type.Nullable n -> {
+                // T | null maps to the boxed reference representation
+                // (spec-v1.1 §JVM value mapping: "nullable JVM reference
+                // or tagged nullable wrapper for primitives"): boxed
+                // java.lang.Long/Double/Boolean for the numeric
+                // primitives, the (already-nullable) java.lang.String
+                // reference, the generated class reference, and the
+                // emitted array wrapper reference for T[] | null.
+                yield nullableJavaType(n.inner(), span);
+            }
             case Type.Error ignored -> null;
             default -> {
                 unsupported("values of type " + typeName(t), span);
+                yield null;
+            }
+        };
+    }
+
+    /** Java type of a LOCAL class value: only local module-level classes
+     * have emitted Java types (see {@link #isLocalClassType}). */
+    private String localClassJavaType(Type.Class c, Span span) {
+        // Only LOCAL module-level classes have emitted Java types. A
+        // checker-inferred class type can name an IMPORTED class (an
+        // annotation-less declaration like `let c = lib.getC()`):
+        // emitting its generated class reference without the class would
+        // leave a symbol javac rejects after the CLI reported success.
+        // Locality is decided from the Type.Class MODULE PATH — a
+        // same-named local class must not satisfy the guard for a foreign
+        // path (lib.C would then be declared as the LOCAL $C_C and javac
+        // would reject the incompatible assignment). Imported classes /
+        // cross-module nominal identity are deferred to ISSUE-0109 —
+        // E6000, never a broken artifact.
+        if (!isLocalClassType(c)) {
+            unsupported("values of imported class type '" + c.name()
+                + "' (imported classes / cross-module nominal identity "
+                + "are deferred to ISSUE-0109)", span);
+            return null;
+        }
+        if (!moduleClasses.containsKey(c.name())) {
+            unsupported("values of class type '" + c.name()
+                + "' (only local module-level classes are supported)",
+                span);
+            return null;
+        }
+        return classNameForClass(c.name());
+    }
+
+    /** Java type of a {@code T | null} value (ISSUE-0108): the boxed
+     * reference for primitive {@code T}, the plain reference for
+     * string/class/array {@code T}. {@code null} (with an E6000 recorded)
+     * for any out-of-slice inner type. */
+    private String nullableJavaType(Type inner, Span span) {
+        return switch (inner) {
+            case Type.Int ignored -> "java.lang.Long";
+            case Type.Number ignored -> "java.lang.Double";
+            case Type.Boolean ignored -> "java.lang.Boolean";
+            case Type.String ignored -> "java.lang.String";
+            case Type.Class c -> localClassJavaType(c, span);
+            case Type.Array a -> {
+                if (javaArrayElementType(a.element(), span) == null) {
+                    yield null;
+                }
+                yield arrayWrapperName(a.element());
+            }
+            case Type.Null ignored -> {
+                unsupported("nullable type 'null | null'", span);
+                yield null;
+            }
+            default -> {
+                unsupported("values of type " + typeName(inner) + " | null"
+                    + " (only primitive, local class, and supported array"
+                    + " inner types)", span);
                 yield null;
             }
         };
@@ -4675,12 +5441,14 @@ public final class JvmBackend {
     // =========================================================================
 
     /**
-     * Java storage element type for a supported primitive array element
-     * type, or {@code null} (with an E6000 diagnostic recorded) for any
-     * other element type: only {@code int[]}, {@code number[]},
-     * {@code string[]}, and {@code boolean[]} are in scope — nullable
-     * elements, nullable arrays, nested arrays, class arrays, and
-     * function arrays are rejected, never silently miscompiled.
+     * Java storage element type for a supported array element type, or
+     * {@code null} (with an E6000 diagnostic recorded) for any other
+     * element type: the four primitive elements, their nullable forms
+     * (boxed storage for {@code (T | null)[]}), and local class elements
+     * ({@code java.lang.Object} storage inside the per-class
+     * {@code $Array$<C>} wrapper) are in scope — nested arrays, function
+     * arrays, and nullable-table elements are rejected, never silently
+     * miscompiled.
      */
     private String javaArrayElementType(Type element, Span span) {
         return switch (element) {
@@ -4688,9 +5456,32 @@ public final class JvmBackend {
             case Type.Number ignored -> "double";
             case Type.String ignored -> "java.lang.String";
             case Type.Boolean ignored -> "boolean";
+            case Type.Nullable ne -> switch (ne.inner()) {
+                case Type.Int ignored -> "java.lang.Long";
+                case Type.Number ignored -> "java.lang.Double";
+                case Type.String ignored -> "java.lang.String";
+                case Type.Boolean ignored -> "java.lang.Boolean";
+                case Type.Class c -> {
+                    if (localClassJavaType(c, span) == null) yield null;
+                    yield "java.lang.Object";
+                }
+                default -> {
+                    unsupported("arrays with element type "
+                        + typeName(element)
+                        + " (only int[], number[], string[], boolean[], "
+                        + "local class arrays, and their nullable-element "
+                        + "forms are supported)", span);
+                    yield null;
+                }
+            };
+            case Type.Class c -> {
+                if (localClassJavaType(c, span) == null) yield null;
+                yield "java.lang.Object";
+            }
             default -> {
                 unsupported("arrays with element type " + typeName(element)
-                    + " (only int[], number[], string[], boolean[] are "
+                    + " (only int[], number[], string[], boolean[], local "
+                    + "class arrays, and their nullable-element forms are "
                     + "supported)", span);
                 yield null;
             }
@@ -4709,6 +5500,15 @@ public final class JvmBackend {
             case Type.Number ignored -> "__NumberArray";
             case Type.String ignored -> "__StringArray";
             case Type.Boolean ignored -> "__BooleanArray";
+            case Type.Nullable ne -> switch (ne.inner()) {
+                case Type.Int ignored -> "__IntOrNullArray";
+                case Type.Number ignored -> "__NumberOrNullArray";
+                case Type.String ignored -> "__StringOrNullArray";
+                case Type.Boolean ignored -> "__BooleanOrNullArray";
+                case Type.Class c -> classArrayWrapperName(c.name());
+                default -> null;
+            };
+            case Type.Class c -> classArrayWrapperName(c.name());
             default -> null;
         };
     }
@@ -4764,6 +5564,36 @@ public final class JvmBackend {
             case Type.Number ignored -> "__numberArrayWrite";
             case Type.String ignored -> "__stringArrayWrite";
             case Type.Boolean ignored -> "__booleanArrayWrite";
+            default -> null;
+        };
+    }
+
+    /** Emitted write-helper method name for a supported primitive inner
+     * type of a nullable element ({@code (T | null)[]} writes accept the
+     * DEAL null element — check_nullable permits it); {@code null} for
+     * non-primitive inners (class inners route through the per-class
+     * {@code $classOrNullArrayWrite$} helper). */
+    private String orNullArrayWriteHelper(Type inner) {
+        return switch (inner) {
+            case Type.Int ignored -> "__intOrNullArrayWrite";
+            case Type.Number ignored -> "__numberOrNullArrayWrite";
+            case Type.String ignored -> "__stringOrNullArrayWrite";
+            case Type.Boolean ignored -> "__booleanOrNullArrayWrite";
+            default -> null;
+        };
+    }
+
+    /** Emitted read-helper method name for a supported primitive inner
+     * type of a nullable element ({@code (T | null)[]} reads yield the
+     * DEAL null past the end); {@code null} for non-primitive inners
+     * (class inners route through the per-class
+     * {@code $classOrNullArrayRead$} helper). */
+    private String orNullArrayReadHelper(Type inner) {
+        return switch (inner) {
+            case Type.Int ignored -> "__intOrNullArrayRead";
+            case Type.Number ignored -> "__numberOrNullArrayRead";
+            case Type.String ignored -> "__stringOrNullArrayRead";
+            case Type.Boolean ignored -> "__booleanOrNullArrayRead";
             default -> null;
         };
     }

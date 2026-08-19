@@ -79,7 +79,7 @@ import javax.tools.ToolProvider;
  * std/time's second-truncated nowMillis, stdlib results composing
  * across modules, a frontend E5001 compile-error gate, and a
  * multi-module fixture consuming std/string through the orchestrator
- * pipeline), and the ISSUE-0109 imported-class / cross-module nominal
+ * pipeline), the ISSUE-0109 imported-class / cross-module nominal
  * identity fixtures live in
  * {@code test/conformance/fixtures/jvm-xmod-classes-slice.json}
  * (exported/imported classes, imported construction with literal
@@ -88,7 +88,19 @@ import javax.tools.ToolProvider;
  * modules, and module-qualified runtime nominal-check success/failure
  * — E8001 naming both {@code @module/Name} identities — plus a
  * frontend E3001 gate, all through the orchestrator multi-module
- * pipeline).
+ * pipeline), and the ISSUE-0108 nullable-slice fixtures live in
+ * {@code test/conformance/fixtures/jvm-nullable-slice.json}
+ * ({@code T | null} for the four primitives and local classes in
+ * locals, module fields, class fields, parameters, and returns;
+ * null-check branch narrowing both directions plus narrowing
+ * invalidation and module-field narrowing; {@code T[] | null} and
+ * {@code (T | null)[]} for the primitive and local-class element types;
+ * class arrays {@code C[]}; the table-read nullable boundary checks —
+ * runtime success for null/missing/int/class/array values and E8001
+ * failures for wrong inner values, wrong array wrappers, and
+ * wrong-class arrays; the {@code int()}/{@code number()} nullable
+ * conversion overloads including the runtime null failure; and frontend
+ * E3001/E3006 compile-error gates rejected before any backend).
  *
  * <h2>Multi-module fixtures (ISSUE-0096)</h2>
  *

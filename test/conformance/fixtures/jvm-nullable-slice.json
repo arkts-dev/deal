@@ -1,0 +1,465 @@
+{
+  "version": "1.0",
+  "description": "JVM nullable slice conformance (ISSUE-0108). Fixtures that run the real DEAL frontend (lexer \u2192 parser \u2192 name resolver \u2192 type checker) \u2192 real JvmBackend codegen \u2192 the REAL javac compiler frontend (single-module fixtures in-process via compileWithJavac; whole-project fixtures keep the javac launcher) \u2192 java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: T | null for the four primitives and local classes in locals, module fields, class fields, parameters, and returns; null-check branches (narrowing both directions, else-branch narrowing, narrowing invalidation after assignment, narrowed module fields); nullable boundary checks at the table-read untyped boundary (int | null, class | null nominal checks, array | null); nullable arrays T[] | null; arrays of nullable elements (T | null)[] for the primitives and local classes; class arrays C[] and (C | null)[]; the int()/number() nullable conversion overloads with the runtime null failure; and frontend compile-error gates (E3001 nullable-to-non-nullable read, E3001 narrowing invalidation, E3006 int === null) rejected before any backend runs.",
+  "tests": [
+    {
+      "name": "jvm-nullable-int-locals-flow",
+      "description": "int | null locals wrap a plain int, hold null, narrow to int in the !== null branch and to null in the === null branch; narrowed arithmetic computes 5+1+1=7",
+      "source": "export function test(): int {\n  let n: int | null = 5;\n  let m: int | null = null;\n  let total: int = 0;\n  if (n !== null) {\n    total = n + 1;\n  }\n  if (m === null) {\n    total = total + 1;\n  } else {\n    total = 99;\n  }\n  return total;\n}\n",
+      "expectedOutput": "7",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-string-flow",
+      "description": "string | null narrows to string for concatenation and string equality inside the null-check branch",
+      "source": "export function test(): int {\n  let s: string | null = \"ab\";\n  if (s !== null) {\n    let t: string = s + \"c\";\n    if (t === \"abc\") { return 1; }\n  }\n  return 0;\n}\n",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-boolean-flow",
+      "description": "boolean | null narrows to boolean in the non-null branch (used as an if condition) and to null in the === null branch",
+      "source": "export function test(): int {\n  let b: boolean | null = true;\n  let r: int = 0;\n  if (b !== null) {\n    if (b) { r = 1; } else { r = 2; }\n  }\n  if (b === null) { r = 9; }\n  return r;\n}\n",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-number-flow",
+      "description": "number | null flows through a nullable return value, narrows, and feeds number arithmetic",
+      "source": "function half(x: number): number | null {\n  if (x > 0.0) { return x / 2.0; }\n  return null;\n}\nexport function test(): number {\n  let a: number | null = half(5.0);\n  if (a !== null) { return a; }\n  return 0.0;\n}\n",
+      "expectedOutput": "2.5",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-class-flow",
+      "description": "a local class value wraps into C | null, the null-check branch narrows to C for field reads, and the === null branch holds the null side",
+      "source": "class Box { v: int = 7; }\nfunction make(): Box { return {}; }\nexport function test(): int {\n  let b: Box | null = make();\n  if (b !== null) {\n    let x: int = b.v;\n    return x;\n  }\n  return 0;\n}\n",
+      "expectedOutput": "7",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Box"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-fields",
+      "description": "required-present nullable fields (int | null, string | null, boolean | null, C | null) default to null, accept writes of values and null, and narrow through locals for reads (1 + 10 + 5 + 1 + 1 + 5 = 23)",
+      "source": "class Holder {\n  i: int | null = 1;\n  s: string | null = null;\n  flag: boolean | null = null;\n  box: Holder | null = null;\n}\nexport function test(): int {\n  let h: Holder = {};\n  let r: int = 0;\n  let hi: int | null = h.i;\n  if (hi !== null) { r = hi; }\n  h.i = null;\n  let hi2: int | null = h.i;\n  if (hi2 === null) { r = r + 10; }\n  h.i = 5;\n  let hi3: int | null = h.i;\n  if (hi3 !== null) { r = r + hi3; }\n  let hs: string | null = h.s;\n  if (hs === null) { r = r + 1; }\n  h.flag = true;\n  let hf: boolean | null = h.flag;\n  if (hf !== null) { if (hf) { r = r + 1; } }\n  h.box = h;\n  let b: Holder | null = h.box;\n  if (b !== null) {\n    let bi: int | null = b.i;\n    if (bi !== null) { r = r + bi; }\n  }\n  return r;\n}\n",
+      "expectedOutput": "23",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Holder",
+        "field i"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-params-returns",
+      "description": "nullable parameters accept plain values and null; nullable returns carry values and null (0-when returns null, 42 otherwise; want returns 'ok'/null)",
+      "source": "function pick(when: int, y: int | null): int | null {\n  if (when === 0) { return null; }\n  return y;\n}\nfunction name(want: boolean): string | null {\n  if (want) { return \"ok\"; }\n  return null;\n}\nexport function test(): int {\n  let a: int | null = pick(3, null);\n  let r: int = 0;\n  if (a === null) { r = 1; }\n  let b: int | null = pick(1, 42);\n  if (b !== null) { r = r + b; }\n  let s: string | null = name(true);\n  if (s !== null) { if (s === \"ok\") { r = r + 1; } }\n  let t: string | null = name(false);\n  if (t === null) { r = r + 1; }\n  return r;\n}\n",
+      "expectedOutput": "45",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-array-local",
+      "description": "int[] | null holds an array or null; the non-null branch reads, appends via the i === length write, and reads .length; the null side compares === null (1+2+9+4+1=17)",
+      "source": "function makeArr(): int[] { return [1, 2, 3]; }\nexport function test(): int {\n  let xs: int[] | null = makeArr();\n  let r: int = 0;\n  if (xs !== null) {\n    r = r + xs[0] + xs[1];\n    xs[3] = 9;\n    r = r + xs[3];\n    r = r + xs.length;\n  }\n  let none: int[] | null = null;\n  if (none === null) { r = r + 1; }\n  return r;\n}\n",
+      "expectedOutput": "17",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-elements-array",
+      "description": "(int | null)[] stores null and int elements, reads back null and values with the === null / !== null branches, and reads past the end as the DEAL null (1 + 5 + 1 = 7)",
+      "source": "export function test(): int {\n  let ys: (int | null)[] = [];\n  ys[0] = null;\n  ys[1] = 5;\n  let r: int = 0;\n  let first: int | null = ys[0];\n  if (first === null) { r = 1; }\n  let second: int | null = ys[1];\n  if (second !== null) { r = r + second; }\n  let past: int | null = ys[9];\n  if (past === null) { r = r + 1; }\n  return r;\n}\n",
+      "expectedOutput": "7",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-string-elements-array",
+      "description": "(string | null)[] literal from homogeneous nullable parameter values, nullable string read, and === null branch on the past-end read",
+      "source": "function f(w: string | null): int {\n  let xs: (string | null)[] = [w, w];\n  let r: int = 0;\n  let a: string | null = xs[0];\n  if (a !== null) { if (a === \"hi\") { r = 1; } }\n  let b: string | null = xs[5];\n  if (b === null) { r = r + 10; }\n  return r;\n}\nexport function test(): int { return f(\"hi\"); }\n",
+      "expectedOutput": "11",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-number-elements-array",
+      "description": "(number | null)[] writes number and null elements; narrowed reads feed number arithmetic and the int() conversion (5.0 + 1.0 = 6)",
+      "source": "export function test(): int {\n  let xs: (number | null)[] = [];\n  xs[0] = 2.5;\n  xs[1] = null;\n  let r: number = 0.0;\n  let a: number | null = xs[0];\n  if (a !== null) { r = a * 2.0; }\n  let b: number | null = xs[1];\n  if (b === null) { r = r + 1.0; }\n  return int(r);\n}\n",
+      "expectedOutput": "6",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-boolean-elements-array",
+      "description": "(boolean | null)[] stores true and null; the === null read branches and the narrowed boolean feeds an if condition",
+      "source": "export function test(): int {\n  let xs: (boolean | null)[] = [];\n  xs[0] = true;\n  xs[1] = null;\n  let r: int = 0;\n  let a: boolean | null = xs[0];\n  if (a !== null) { if (a) { r = 1; } }\n  let b: boolean | null = xs[1];\n  if (b === null) { r = r + 10; }\n  let c: boolean | null = xs[9];\n  if (c === null) { r = r + 100; }\n  return r;\n}\n",
+      "expectedOutput": "111",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-class-arrays",
+      "description": "C[] holds local class instances with per-class nominal reads/writes; C[] | null narrows to the array; (C | null)[] stores instances and null and narrows reads (1+1+2+1+1+1=7)",
+      "source": "class Point { x: int = 1; }\nexport function test(): int {\n  let p: Point = {};\n  let ps: Point[] = [p, p];\n  let r: int = 0;\n  r = r + ps[0].x + ps[1].x;\n  ps[1] = p;\n  r = r + ps.length;\n  let maybe: Point[] | null = ps;\n  if (maybe !== null) { r = r + maybe[0].x; }\n  let mp: (Point | null)[] = [];\n  mp[0] = p;\n  mp[1] = null;\n  let first: Point | null = mp[0];\n  if (first !== null) { r = r + first.x; }\n  let second: Point | null = mp[1];\n  if (second === null) { r = r + 1; }\n  return r;\n}\n",
+      "expectedOutput": "7",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Point"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-boundary-success",
+      "description": "a table read into an int | null contextual target passes a stored int through the nullable boundary check and narrows (41 + 1 = 42)",
+      "source": "export function test(): int {\n  let t: table = { v: 41 };\n  let n: int | null = t.v;\n  if (n !== null) { return n + 1; }\n  return 0;\n}\n",
+      "expectedOutput": "42",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-boundary-null",
+      "description": "a table read into an int | null contextual target passes the stored Java-null-equivalent missing entry through as the DEAL null and the === null branch runs",
+      "source": "export function test(): int {\n  let t: table = {};\n  let n: int | null = t.v;\n  if (n === null) { return 5; }\n  return 0;\n}\n",
+      "expectedOutput": "5",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-boundary-failure",
+      "description": "a table read into an int | null contextual target fails the runtime nullable boundary with E8001 when the stored value is a string (LuaJIT's check_nullable \u2192 check_int failure)",
+      "source": "export function test(): int {\n  let t: table = { v: \"x\" };\n  let n: int | null = t.v;\n  if (n === null) { return 1; }\n  return 0;\n}\n",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-class-boundary-success",
+      "description": "a table read into a C | null contextual target runs the nullable nominal check and passes a genuine instance through (x + 1 = 8)",
+      "source": "class Item { x: int = 7; }\nexport function test(): int {\n  let it: Item = {};\n  let t: table = { it: it };\n  let got: Item | null = t.it;\n  if (got !== null) { return got.x + 1; }\n  return 0;\n}\n",
+      "expectedOutput": "8",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "class Item"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-class-boundary-failure",
+      "description": "a table read into a C | null contextual target fails the nullable nominal check with E8001 when the stored value is a plain table (LuaJIT's check_type class branch)",
+      "source": "class Item { x: int = 7; }\nexport function test(): int {\n  let t: table = { it: {} };\n  let got: Item | null = t.it;\n  if (got !== null) { return got.x; }\n  return 0;\n}\n",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-array-boundary-success",
+      "description": "a table read into an int[] | null contextual target passes a stored array through the nullable array boundary and narrows to reads (1 + 2 = 3)",
+      "source": "export function test(): int {\n  let arr: int[] = [1, 2];\n  let t: table = { a: arr };\n  let got: int[] | null = t.a;\n  if (got !== null) { return got[0] + got[1]; }\n  return 0;\n}\n",
+      "expectedOutput": "3",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-array-boundary-failure",
+      "description": "a table read into an int[] | null contextual target fails the nullable array boundary with E8001 when the stored value is a table (LuaJIT's check_array failure)",
+      "source": "export function test(): int {\n  let t: table = { a: {} };\n  let got: int[] | null = t.a;\n  if (got !== null) { return got[0]; }\n  return 0;\n}\n",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-conversion-intrinsics",
+      "description": "int(n: int | null) unwraps a present value and number(n: number | null) converts; the results compose (3 + 2 = 5)",
+      "source": "export function test(): int {\n  let n: int | null = 3;\n  let d: number | null = 2.0;\n  let i: int = int(n);\n  let f: number = number(d);\n  return i + int(f);\n}\n",
+      "expectedOutput": "5",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-conversion-null-failure",
+      "description": "int(null-typed int | null) fails at runtime with E8001 'cannot convert null to int' (LuaJIT's int_convert null rejection)",
+      "source": "export function test(): int {\n  let n: int | null = null;\n  let i: int = int(n);\n  return i;\n}\n",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-module-field-narrowing",
+      "description": "a module-level int | null field narrows inside a function's null-check branch and the doubled value returns (4 * 2 = 8)",
+      "source": "let count: int | null = 4;\nexport function test(): int {\n  if (count !== null) {\n    return count * 2;\n  }\n  return 0;\n}\n",
+      "expectedOutput": "8",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-if-else-branches",
+      "description": "the === null branch narrows to null and the else branch narrows to int; r = 1 on the null side and 0 elsewhere (n starts null)",
+      "source": "export function test(): int {\n  let n: int | null = null;\n  let r: int = 0;\n  if (n === null) {\n    r = 1;\n  } else {\n    r = n + 1;\n  }\n  return r;\n}\n",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-null-typed-flow",
+      "description": "a null-typed local holds a nullable narrowed-to-null read, and null-typed values compare === null inside a nullable branch",
+      "source": "export function test(): int {\n  let n: int | null = 1;\n  let r: int = 0;\n  if (n === null) {\n    let z: null = n;\n    if (z === null) { r = 7; }\n  } else {\n    r = n;\n  }\n  return r;\n}\n",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-narrowing-invalidation",
+      "description": "assigning null inside a narrowed block invalidates the narrowing: the follow-up non-null read is a compile-time E3001 rejected before any backend runs",
+      "source": "let x: string | null = \"a\";\nif (x !== null) {\n  let a: string = x;\n  if (a === \"a\") { let u: int = 1; }\n  x = null;\n  let b: string = x;\n}\n",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3001",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-unwrapped-read-compile-error",
+      "description": "reading an int | null into an int target without narrowing is a compile-time E3001 rejected before any backend runs",
+      "source": "let n: int | null = 1;\nlet i: int = n;\n",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3001",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-null-compare-compile-error",
+      "description": "comparing a plain int with null is a compile-time E3006 rejected before any backend runs (only T | null compares with null)",
+      "source": "let i: int = 1;\nlet b: boolean = i === null;\n",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E3006",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-null-assignment-flow",
+      "description": "a null-typed assignment expression (whose emitted Java code carries the boxed target's type) flows into int | null, string | null, and null targets, and through a nullable parameter (1 + 10 + 100 + 1 = 112)",
+      "source": "function take(x: int | null): int { if (x === null) { return 3; } return 0; }\nexport function test(): int {\n  let m: int | null = 7;\n  let q: int | null = (m = null);\n  let r: int = 0;\n  if (q === null) { r = 1; }\n  if (m === null) { r = r + 10; }\n  let z: null = (m = null);\n  if (z === null) { r = r + 100; }\n  let s: string | null = (m = null);\n  if (s === null) { r = r + 1; }\n  take((m = null));\n  return r;\n}\n",
+      "expectedOutput": "112",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-array-wrong-wrapper-boundary",
+      "description": "a string[] stored in a table and read back as int[] | null fails the wrapper gate with E8001 (the JVM storage analog of LuaJIT's check_array element mismatch) \u2014 never a raw cast",
+      "source": "export function test(): int {\n  let xs: string[] = [\"a\"];\n  let t: table = { a: xs };\n  let got: int[] | null = t.a;\n  if (got !== null) { return got[0]; }\n  return 0;\n}\n",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-class-array-wrong-class-boundary",
+      "description": "an Other[] stored in a table and read back as Item[] | null fails the per-class wrapper gate with E8001 \u2014 the nominal array identity never accepts a same-shaped foreign class array",
+      "source": "class Item { x: int = 1; }\nclass Other { y: int = 2; }\nexport function test(): int {\n  let o: Other = {};\n  let os: Other[] = [o];\n  let t: table = { a: os };\n  let got: Item[] | null = t.a;\n  if (got !== null) { return got[0].x; }\n  return 0;\n}\n",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-class-array-boundary-success",
+      "description": "an Item[] stored in a table and read back as Item[] | null passes the per-class wrapper gate and narrows to reads (x + length = 2)",
+      "source": "class Item { x: int = 1; }\nexport function test(): int {\n  let it: Item = {};\n  let its: Item[] = [it];\n  let t: table = { a: its };\n  let got: Item[] | null = t.a;\n  if (got !== null) { return got[0].x + got.length; }\n  return 0;\n}\n",
+      "expectedOutput": "2",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    }
+  ]
+}

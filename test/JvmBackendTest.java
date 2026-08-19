@@ -94,10 +94,21 @@ import java.util.Set;
  *       module), and a same-named local class never satisfies the
  *       imported-class guard (locality is decided from the Type.Class
  *       module path),</li>
+ *   <li>the nullable slice (ISSUE-0108): {@code T | null} for the four
+ *       primitives and local classes across locals, module fields, class
+ *       fields, parameters, and returns (boxed reference representation,
+ *       narrowed reads unbox through the null-check branches),
+ *       {@code T[] | null} and {@code (T | null)[]} for the primitive
+ *       and local-class element types, class arrays {@code C[]}, the
+ *       table-read nullable boundary checks with runtime E8001 failures,
+ *       and the {@code int()}/{@code number()} nullable conversion
+ *       overloads — all compiled and executed with {@code javac} +
+ *       {@code java},</li>
  *   <li>E6000 rejection of out-of-scope constructs (optional/
- *       nullable/array/class/table-typed class fields, nested class
- *       declarations, table reads with primitive targets, table field
- *       writes, nested/nullable/class/function arrays, for/for-of
+ *       array/class/table-typed (non-nullable) class fields, nested class
+ *       declarations, table reads with primitive (non-nullable) targets,
+ *       table field writes, nested/function arrays, {@code table | null}
+ *       values, {@code (table | null)[]} elements, for/for-of
  *       loops, async, non-project imports — at the import statement
  *       itself, even when unused —, module-level returns,
  *       use-before-declaration, runtime-helper name collisions),</li>
@@ -173,8 +184,8 @@ import java.util.Set;
  *       the wrapper identity stable across growth (alias parity),
  *       evaluation order with hoisted null-typed side effects materialized
  *       into temporaries, arrays through function parameters/returns and
- *       module fields, E6000 rejection of nested arrays, nullable arrays,
- *       arrays of nullable/class/function elements, and
+ *       module fields, E6000 rejection of nested arrays and
+ *       function arrays, and
  *       use-before-declaration guards walking index/array-literal/length
  *       positions — all compiled and executed with {@code javac} +
  *       {@code java},</li>
@@ -245,6 +256,7 @@ public class JvmBackendTest {
             testShadowedInitializer();
             testParameterShadowing();
             testClassSlice();
+            testNullableSlice();
             testImportedClassValues();
             testUseBeforeDeclarationRejected();
             testFunctionBodyModuleFieldAccessGuards();
@@ -662,14 +674,14 @@ public class JvmBackendTest {
                   return rows[0][1];
                 }
                 """),
-            new Case("array of nullable elements", """
+            new Case("array of nullable table elements", """
                 export function test(): null {
-                  let xs: (int | null)[] = [];
+                  let xs: (table | null)[] = [];
                 }
                 """),
-            new Case("nullable array", """
+            new Case("nullable table type", """
                 export function test(): null {
-                  let xs: int[] | null = null;
+                  let t: table | null = null;
                 }
                 """),
             new Case("array of function elements", """
@@ -695,10 +707,6 @@ public class JvmBackendTest {
                 """),
             new Case("optional class field", """
                 class Point { x?: int; }
-                export function test(): int { return 1; }
-                """),
-            new Case("nullable class field", """
-                class Point { x: int | null = null; }
                 export function test(): int { return 1; }
                 """),
             new Case("class-typed class field", """
@@ -732,10 +740,9 @@ public class JvmBackendTest {
                 import * as m from "./other"
                 export function test(): int { return 1; }
                 """),
-            new Case("nullable type", """
+            new Case("nullable function type", """
                 export function test(): null {
-                  let n: int | null = null;
-                  return;
+                  let f: (() => int) | null = null;
                 }
                 """),
             new Case("throw", """
@@ -2116,9 +2123,11 @@ public class JvmBackendTest {
 
     /** Out-of-slice array shapes are rejected with E6000, never silently
      * miscompiled: nested (multi-dimensional) arrays, arrays of nullable
-     * elements, nullable arrays, class arrays, function arrays, table
-     * indexing (read and write), and array element types coming from
-     * inferred literals of unsupported element types. */
+     * table elements, function arrays, table indexing (read and write),
+     * and array element types coming from inferred literals of
+     * unsupported element types. (The ISSUE-0108 nullable slice brings
+     * nullable arrays, arrays of nullable primitive/class elements, and
+     * class arrays in scope.) */
     private static void testArrayUnsupportedElementTypesRejected() {
         System.out.println("-- Unsupported array shapes → E6000 --");
 
@@ -2130,14 +2139,9 @@ public class JvmBackendTest {
                   return rows[0][1];
                 }
                 """),
-            new Case("array of nullable elements", """
+            new Case("array of nullable table elements", """
                 export function test(): null {
-                  let xs: (int | null)[] = [];
-                }
-                """),
-            new Case("nullable array", """
-                export function test(): null {
-                  let xs: int[] | null = null;
+                  let xs: (table | null)[] = [];
                 }
                 """),
             new Case("array of function elements", """
@@ -2145,15 +2149,6 @@ public class JvmBackendTest {
                 export function test(): int {
                   let fs: ((x: int) => int)[] = [add1];
                   return fs[0](3);
-                }
-                """),
-            new Case("class array", """
-                class Point {
-                  x: int = 0;
-                }
-                export function test(): int {
-                  let ps: Point[] = [];
-                  return ps.length;
                 }
                 """),
             new Case("table index read", """
@@ -5129,6 +5124,8 @@ public class JvmBackendTest {
     private static void testImportedClassValues() throws Exception {
         System.out.println("-- Orchestrator: imported-class values, construction, and nominal identity --");
 
+
+
         // (1) An annotation-less local inferred from an imported module's
         // class-typed export: `let c = lib.getC()` declares c as
         // Lib.$C_C (the pre-ISSUE-0109 backend emitted `$C_C c =
@@ -5428,6 +5425,120 @@ public class JvmBackendTest {
                 "Entry");
             check(exec.exitCode() == 0 && exec.output().contains("42"),
                 "the pass-through call runs to 42: " + exec.output());
+        }
+    }
+
+    /**
+     * ISSUE-0108 nullable slice: the boxed reference representation of
+     * {@code T | null} (Long/Double/Boolean for the numeric primitives,
+     * String/class/array references), narrowed-read unboxing through the
+     * null-check branches, nullable class fields, nullable parameters and
+     * returns, {@code T[] | null} and {@code (T | null)[]} for the four
+     * primitives and local classes, the table-read nullable boundary
+     * checks (E8001 for a wrong inner value — the runtime probe lives in
+     * the conformance fixture jvm-nullable-boundary-failure), the
+     * nullable conversion intrinsics, and the still-rejected forms
+     * ({@code table | null}, {@code (table | null)[]}, optional class
+     * fields, class-typed class fields). Every runtime probe compiles
+     * the emitted artifact with the real {@code javac} frontend and
+     * executes it with {@code java}.
+     */
+    private static void testNullableSlice() throws Exception {
+        System.out.println("-- Nullable slice (ISSUE-0108): boxed representation, narrowing, nullable arrays --");
+
+        ExecResult flow = compileAndRunJvm("""
+            class Holder {
+              i: int | null = 1;
+              s: string | null = null;
+            }
+            function pick(when: int, y: int | null): int | null {
+              if (when === 0) { return null; }
+              return y;
+            }
+            export function test(): int {
+              let n: int | null = 5;
+              let r: int = 0;
+              if (n !== null) { r = n; }
+              let m: int | null = null;
+              if (m === null) { r = r + 10; } else { r = 99; }
+              let s: string | null = "ab";
+              if (s !== null) { if (s + "c" === "abc") { r = r + 1; } }
+              let b: boolean | null = true;
+              if (b !== null) { if (b) { r = r + 1; } }
+              let xs: int[] | null = [1, 2];
+              if (xs !== null) { r = r + xs[0] + xs[1] + xs.length; }
+              let ys: (int | null)[] = [];
+              ys[0] = null;
+              ys[1] = 7;
+              let y0: int | null = ys[0];
+              if (y0 === null) { r = r + 1; }
+              let y1: int | null = ys[1];
+              if (y1 !== null) { r = r + y1; }
+              let p: int | null = pick(3, 20);
+              if (p !== null) { r = r + p; }
+              let z: int | null = pick(0, 1);
+              if (z === null) { r = r + 1; }
+              let h: Holder = {};
+              let hi: int | null = h.i;
+              if (hi !== null) { r = r + hi; }
+              h.s = "x";
+              let hs: string | null = h.s;
+              if (hs !== null) { if (hs === "x") { r = r + 1; } }
+              let t: table = { v: 2 };
+              let tv: int | null = t.v;
+              if (tv !== null) { r = r + tv; }
+              return r;
+            }
+            """, "nullable-flow");
+        check(flow.exitCode() == 0, "nullable flow runs clean: " + flow.output());
+        check(flow.output().contains("55"), "nullable flow value 55: " + flow.output());
+
+        ExecResult neg = compileAndRunJvm("""
+            export function test(): int {
+              let ys: (int | null)[] = [];
+              let a: int | null = ys[-1];
+              if (a === null) { return 0; }
+              return 1;
+            }
+            """, "nullable-neg-index");
+        check(neg.output().contains("DEAL_ERROR_CODE: E8002"),
+            "negative index into (int | null)[] raises E8002: " + neg.output());
+
+        record Gate(String what, String source) {}
+        List<Gate> gates = List.of(
+            new Gate("nullable table type", """
+                export function test(): null {
+                  let t: table | null = null;
+                }
+                """),
+            new Gate("array of nullable table elements", """
+                export function test(): null {
+                  let xs: (table | null)[] = [];
+                }
+                """),
+            new Gate("optional class field", """
+                class Point { x?: int; }
+                export function test(): int { return 1; }
+                """),
+            new Gate("class-typed class field", """
+                class Inner { v: int = 0; }
+                class Outer { inner: Inner = {}; }
+                export function test(): int { return 1; }
+                """)
+        );
+        for (Gate g : gates) {
+            Frontend f = compileFrontend(g.source(), "jvmtest-nullable-gate.deal");
+            if (!f.errors().isEmpty()) {
+                fail("frontend must accept nullable gate '" + g.what()
+                    + "' (the backend rejects it): " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-nullable-gate.deal", "main");
+            check(res.hasErrors(), "backend rejects " + g.what());
+            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 diagnostic for " + g.what() + ": " + res.diagnostics());
         }
     }
 
