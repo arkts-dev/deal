@@ -16,6 +16,15 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import javax.tools.DiagnosticCollector;
+import javax.tools.JavaCompiler;
+import javax.tools.JavaFileObject;
+import javax.tools.StandardJavaFileManager;
+import javax.tools.ToolProvider;
 
 /**
  * Loads backend-neutral JSON fixture tests from
@@ -25,8 +34,10 @@ import java.util.*;
  * ISSUE-0092 semantic-slice fixtures live in
  * {@code test/conformance/fixtures/jvm-semantic-slice.json} (while loops,
  * template literals, and the surrounding primitive surface — JVM-only,
- * each runtime fixture compiled with {@code javac} and executed with
- * {@code java} against the emitted artifact), the ISSUE-0093
+ * each runtime fixture compiled with the javac frontend (in-process for
+ * the single-module adapter, ISSUE-0109 gate-time work — see
+ * {@link #compileWithJavac}) and executed with {@code java} against the
+ * emitted artifact), the ISSUE-0093
  * functions/direct-calls fixtures live in
  * {@code test/conformance/fixtures/jvm-functions-slice.json} (direct
  * calls, multiple parameters, return values, nested calls, direct
@@ -198,9 +209,9 @@ import java.util.*;
  */
 public class BackendConformanceTest {
 
-    private static int passed = 0;
-    private static int failed = 0;
-    private static int skipped = 0;
+    private static final AtomicInteger passed = new AtomicInteger();
+    private static final AtomicInteger failed = new AtomicInteger();
+    private static final AtomicInteger skipped = new AtomicInteger();
     private static boolean luajitAvailable;
     private static boolean jvmAvailable;
 
@@ -239,22 +250,45 @@ public class BackendConformanceTest {
         Path fixturesDir = Path.of("test/conformance/fixtures/");
         if (!Files.isDirectory(fixturesDir)) {
             System.out.println("No fixtures directory found at " + fixturesDir);
-            System.exit(failed > 0 ? 1 : 0);
+            System.exit(failed.get() > 0 ? 1 : 0);
         }
 
+        List<Path> fixtureFiles;
         try (var stream = Files.list(fixturesDir)) {
-            stream.filter(p -> p.toString().endsWith(".json"))
-                  .sorted()
-                  .forEach(BackendConformanceTest::runFixtureFile);
+            fixtureFiles = stream.filter(p -> p.toString().endsWith(".json"))
+                .sorted().toList();
+        }
+
+        // ISSUE-0109 gate-time work: fixture files are independent
+        // temp-root projects, so they run in parallel worker threads —
+        // sequential execution kept the suite over the gate's wall-clock
+        // budget because every JVM fixture spawns a javac + java pair.
+        // Each file buffers its output and flushes it as one contiguous
+        // block (FILE_OUTPUT / CONSOLE_LOCK), so parallel files never
+        // interleave lines and the per-test evidence stays readable.
+        int workers = Math.max(1,
+            Math.min(Runtime.getRuntime().availableProcessors(),
+                fixtureFiles.size()));
+        ExecutorService pool = Executors.newFixedThreadPool(workers);
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (Path file : fixtureFiles) {
+                futures.add(pool.submit(() -> runFixtureFile(file)));
+            }
+            for (Future<?> future : futures) {
+                future.get();
+            }
+        } finally {
+            pool.shutdownNow();
         }
 
         System.out.println();
         System.out.println("=== Backend Conformance Summary ===");
-        int total = passed + failed + skipped;
-        System.out.println("Total: " + total + ", Passed: " + passed +
-            ", Failed: " + failed + ", Skipped: " + skipped);
+        int total = passed.get() + failed.get() + skipped.get();
+        System.out.println("Total: " + total + ", Passed: " + passed.get() +
+            ", Failed: " + failed.get() + ", Skipped: " + skipped.get());
 
-        if (failed > 0) {
+        if (failed.get() > 0) {
             System.exit(1);
         }
     }
@@ -281,36 +315,134 @@ public class BackendConformanceTest {
     // Fixture file runner
     // =========================================================================
 
+    // =========================================================================
+    // Parallel fixture-file execution (ISSUE-0109 gate-time work)
+    // =========================================================================
+
+    /**
+     * Per-worker console buffer: fixture files run in parallel worker
+     * threads, and every line a file's run produces is appended to a
+     * thread-local buffer that flushes atomically when the file finishes.
+     * The main thread has no buffer and prints directly.
+     */
+    private static final ThreadLocal<StringBuilder> FILE_OUTPUT =
+        new ThreadLocal<>();
+
+    /**
+     * Serializes console flushes and the orchestrator capture swap:
+     * {@link #runOrchestrator} redirects the global streams while it
+     * compiles, so an unprotected concurrent flush could land inside
+     * another worker's capture.
+     */
+    private static final Object CONSOLE_LOCK = new Object();
+
+    /** Appends a fixture-run line to the worker buffer, or prints it
+     * directly when the calling thread is not a fixture worker. */
+    private static void log(String line) {
+        StringBuilder buffer = FILE_OUTPUT.get();
+        if (buffer == null) {
+            System.out.println(line);
+        } else {
+            buffer.append(line).append('\n');
+        }
+    }
+
+    /**
+     * Compiles the named {@code .java} files in {@code dir} with the javac
+     * frontend in-process (javax.tools — the identical parse/enter/
+     * analyze/generate passes the {@code javac} binary runs) instead of
+     * spawning a {@code javac} process per fixture. The JVM suites compile
+     * several hundred small artifact sets, and every spawned {@code javac}
+     * process pays a full JVM boot plus compiler initialization before
+     * parsing a single file; the in-process frontend applies the same
+     * {@code -encoding UTF-8} option and the compile directory as the
+     * classpath (the subprocess form ran with the same working directory
+     * and default classpath {@code "."}). Artifact execution stays a real
+     * {@code java} subprocess. Every multi-module conformance fixture
+     * (including all twelve ISSUE-0109 fixtures) and JvmBackendTest's
+     * artifact-acceptance pins keep the real {@code javac} binary.
+     * Returns true when javac accepted every file; appends diagnostics to
+     * {@code err} otherwise.
+     */
+    static boolean compileWithJavac(Path dir, List<String> javaFiles,
+                                    StringBuilder err) {
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        if (compiler == null) {
+            err.append("no system Java compiler available (javax.tools)");
+            return false;
+        }
+        DiagnosticCollector<JavaFileObject> diagnostics =
+            new DiagnosticCollector<>();
+        try (StandardJavaFileManager fileManager = compiler
+                .getStandardFileManager(diagnostics, null,
+                    StandardCharsets.UTF_8)) {
+            List<File> files = new ArrayList<>();
+            for (String name : javaFiles) {
+                files.add(dir.resolve(name).toFile());
+            }
+            Iterable<? extends JavaFileObject> units =
+                fileManager.getJavaFileObjectsFromFiles(files);
+            StringWriter messages = new StringWriter();
+            List<String> options = List.of(
+                "-encoding", "UTF-8",
+                "-classpath", dir.toString(),
+                "-d", dir.toString());
+            Boolean ok = compiler.getTask(messages, fileManager, diagnostics,
+                options, null, units).call();
+            if (!Boolean.TRUE.equals(ok)) {
+                err.append(messages);
+                for (javax.tools.Diagnostic<? extends JavaFileObject> d
+                        : diagnostics.getDiagnostics()) {
+                    err.append(d.toString()).append('\n');
+                }
+                return false;
+            }
+            return true;
+        } catch (IOException e) {
+            err.append(e.toString());
+            return false;
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static void runFixtureFile(Path file) {
-        System.out.println("--- Fixture: " + file.getFileName() + " ---");
-
+        StringBuilder buffer = new StringBuilder();
+        FILE_OUTPUT.set(buffer);
         try {
-            String raw = Files.readString(file);
-            Map<String, Object> root = (Map<String, Object>) parseJson(raw);
+            log("--- Fixture: " + file.getFileName() + " ---");
 
-            Object version = root.get("version");
-            if (!"1.0".equals(String.valueOf(version))) {
-                System.out.println("  FAIL: unsupported version: " + version);
-                failed++;
-                return;
-            }
+            try {
+                String raw = Files.readString(file);
+                Map<String, Object> root = (Map<String, Object>) parseJson(raw);
 
-            List<Map<String, Object>> tests =
-                (List<Map<String, Object>>) root.get("tests");
-            if (tests == null) {
-                System.out.println("  FAIL: no 'tests' array in fixture");
-                failed++;
-                return;
-            }
+                Object version = root.get("version");
+                if (!"1.0".equals(String.valueOf(version))) {
+                    log("  FAIL: unsupported version: " + version);
+                    failed.incrementAndGet();
+                    return;
+                }
 
-            for (Map<String, Object> test : tests) {
-                runTestCase(file.getFileName().toString(), test);
+                List<Map<String, Object>> tests =
+                    (List<Map<String, Object>>) root.get("tests");
+                if (tests == null) {
+                    log("  FAIL: no 'tests' array in fixture");
+                    failed.incrementAndGet();
+                    return;
+                }
+
+                for (Map<String, Object> test : tests) {
+                    runTestCase(file.getFileName().toString(), test);
+                }
+            } catch (Exception e) {
+                log("  FAIL: error processing fixture: " + e.getMessage());
+                e.printStackTrace(System.out);
+                failed.incrementAndGet();
             }
-        } catch (Exception e) {
-            System.out.println("  FAIL: error processing fixture: " + e.getMessage());
-            e.printStackTrace(System.out);
-            failed++;
+        } finally {
+            FILE_OUTPUT.remove();
+            synchronized (CONSOLE_LOCK) {
+                System.out.print(buffer);
+            }
         }
     }
 
@@ -425,8 +557,8 @@ public class BackendConformanceTest {
         boolean multiModule = modulesObj != null && modulesObj != JSON_NULL;
 
         if (!multiModule && source == null) {
-            System.out.println("  [" + name + "] FAIL: missing 'source' field");
-            failed++;
+            log("  [" + name + "] FAIL: missing 'source' field");
+            failed.incrementAndGet();
             return;
         }
 
@@ -435,9 +567,9 @@ public class BackendConformanceTest {
             configViolation = multiModuleConfigViolation(test);
         }
         if (configViolation != null) {
-            System.out.println("  [" + name + "] FAIL: invalid fixture "
+            log("  [" + name + "] FAIL: invalid fixture "
                 + "configuration: " + configViolation);
-            failed++;
+            failed.incrementAndGet();
             return;
         }
 
@@ -461,31 +593,31 @@ public class BackendConformanceTest {
                 boolean onlyFrontend = fc.errors().stream()
                     .allMatch(d -> !d.code().startsWith("E6"));
                 if (!matched) {
-                    System.out.println("  [" + name + "] FAIL: expected frontend "
+                    log("  [" + name + "] FAIL: expected frontend "
                         + "compile-error " + expectedCompileError + " but got: "
                         + (fc.errors().isEmpty() ? "<no errors>"
                             : fc.errors().stream().map(Diagnostic::toString)
                                 .toList()));
-                    failed++;
+                    failed.incrementAndGet();
                     return;
                 }
                 if (!onlyFrontend) {
-                    System.out.println("  [" + name + "] FAIL: error codes came "
+                    log("  [" + name + "] FAIL: error codes came "
                         + "from backend lowering, not the frontend: " + fc.errors());
-                    failed++;
+                    failed.incrementAndGet();
                     return;
                 }
-                System.out.println("  [" + name + "] OK — compile-error "
+                log("  [" + name + "] OK — compile-error "
                     + expectedCompileError + " rejected before backend"
                     + " (parser/checker only; no codegen invoked)");
-                passed++;
+                passed.incrementAndGet();
                 return;
             }
 
             if (fc.hasErrors()) {
-                System.out.println("  [" + name + "] FAIL: frontend errors: "
+                log("  [" + name + "] FAIL: frontend errors: "
                     + fc.errors());
-                failed++;
+                failed.incrementAndGet();
                 return;
             }
 
@@ -498,21 +630,21 @@ public class BackendConformanceTest {
             boolean irOk = true;
             for (String needle : irContains) {
                 if (!ir.contains(needle)) {
-                    System.out.println("  [" + name + "] FAIL: IR should contain '" + needle + "'");
-                    System.out.println("    IR:\n" + ir);
+                    log("  [" + name + "] FAIL: IR should contain '" + needle + "'");
+                    log("    IR:\n" + ir);
                     irOk = false;
                 }
             }
             for (String needle : irNotContains) {
                 if (ir.contains(needle)) {
-                    System.out.println("  [" + name + "] FAIL: IR should NOT contain '" + needle + "'");
-                    System.out.println("    IR:\n" + ir);
+                    log("  [" + name + "] FAIL: IR should NOT contain '" + needle + "'");
+                    log("    IR:\n" + ir);
                     irOk = false;
                 }
             }
 
             if (!irOk) {
-                failed++;
+                failed.incrementAndGet();
                 return;
             }
 
@@ -527,9 +659,9 @@ public class BackendConformanceTest {
                 || !expectedNotOutput.isEmpty();
 
             if (!hasRuntimeAssertions) {
-                System.out.println("  [" + name + "] OK" +
+                log("  [" + name + "] OK" +
                     (description.isEmpty() ? "" : " — " + description));
-                passed++;
+                passed.incrementAndGet();
                 return;
             }
 
@@ -558,20 +690,20 @@ public class BackendConformanceTest {
             }
 
             if (!ranAny) {
-                System.out.println("  [" + name + "] SKIP (runtime test, "
+                log("  [" + name + "] SKIP (runtime test, "
                     + "no applicable backend available)");
-                skipped++;
+                skipped.incrementAndGet();
                 return;
             }
 
-            System.out.println("  [" + name + "] OK" +
+            log("  [" + name + "] OK" +
                 (description.isEmpty() ? "" : " — " + description));
-            passed++;
+            passed.incrementAndGet();
 
         } catch (Exception e) {
-            System.out.println("  [" + name + "] FAIL: " + e.getMessage());
+            log("  [" + name + "] FAIL: " + e.getMessage());
             e.printStackTrace(System.out);
-            failed++;
+            failed.incrementAndGet();
         }
     }
 
@@ -652,28 +784,38 @@ public class BackendConformanceTest {
     private static OrchestratorRun runOrchestrator(Path projectRoot, Path entryFile,
                                                     Path outputRoot) {
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
-        PrintStream originalOut = System.out;
-        PrintStream originalErr = System.err;
-        try {
-            System.setOut(new PrintStream(captured, true, StandardCharsets.UTF_8));
-            System.setErr(new PrintStream(captured, true, StandardCharsets.UTF_8));
-            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-                entryFile.toAbsolutePath().normalize(),
-                outputRoot.toAbsolutePath().normalize(),
-                false, true, false, Backend.JVM,
-                null, List.of(projectRoot.toAbsolutePath().normalize()), null);
-            boolean success = orchestrator.compile();
-            return new OrchestratorRun(success, orchestrator.diagnostics(),
-                captured.toString(StandardCharsets.UTF_8));
-        } catch (IOException e) {
-            return new OrchestratorRun(false, List.of(),
-                "orchestrator I/O failure: " + e + "\n"
-                    + captured.toString(StandardCharsets.UTF_8));
-        } finally {
-            System.out.flush();
-            System.err.flush();
-            System.setOut(originalOut);
-            System.setErr(originalErr);
+        // The global stream swap is serialized against worker flushes
+        // (CONSOLE_LOCK): a parallel fixture file's output block must
+        // never land inside another file's orchestrator capture. The
+        // original streams are captured INSIDE the lock: reading them
+        // outside could observe another worker's swapped capture and
+        // then "restore" that dead buffer as the console, permanently
+        // redirecting every later flush into a buffer nobody prints
+        // (observed as silently missing fixture output blocks).
+        synchronized (CONSOLE_LOCK) {
+            PrintStream originalOut = System.out;
+            PrintStream originalErr = System.err;
+            try {
+                System.setOut(new PrintStream(captured, true, StandardCharsets.UTF_8));
+                System.setErr(new PrintStream(captured, true, StandardCharsets.UTF_8));
+                CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                    entryFile.toAbsolutePath().normalize(),
+                    outputRoot.toAbsolutePath().normalize(),
+                    false, true, false, Backend.JVM,
+                    null, List.of(projectRoot.toAbsolutePath().normalize()), null);
+                boolean success = orchestrator.compile();
+                return new OrchestratorRun(success, orchestrator.diagnostics(),
+                    captured.toString(StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                return new OrchestratorRun(false, List.of(),
+                    "orchestrator I/O failure: " + e + "\n"
+                        + captured.toString(StandardCharsets.UTF_8));
+            } finally {
+                System.out.flush();
+                System.err.flush();
+                System.setOut(originalOut);
+                System.setErr(originalErr);
+            }
         }
     }
 
@@ -763,9 +905,9 @@ public class BackendConformanceTest {
         if (expectedOutput != null && expectedOutput != JSON_NULL) {
             String expStr = String.valueOf(expectedOutput);
             if (!output.contains(expStr)) {
-                System.out.println("  [" + name + "] FAIL: expected output '"
+                log("  [" + name + "] FAIL: expected output '"
                     + expStr + "', got: " + output);
-                failed++;
+                failed.incrementAndGet();
                 return false;
             }
         }
@@ -773,18 +915,18 @@ public class BackendConformanceTest {
         if (expectedError != null && expectedError != JSON_NULL) {
             String expErr = String.valueOf(expectedError);
             if (!output.contains("DEAL_ERROR_CODE: " + expErr)) {
-                System.out.println("  [" + name + "] FAIL: expected error '"
+                log("  [" + name + "] FAIL: expected error '"
                     + expErr + "', got: " + output);
-                failed++;
+                failed.incrementAndGet();
                 return false;
             }
         }
 
         for (String forbidden : expectedNotOutput) {
             if (output.contains(forbidden)) {
-                System.out.println("  [" + name + "] FAIL: output must NOT "
+                log("  [" + name + "] FAIL: output must NOT "
                     + "contain '" + forbidden + "', got: " + output);
-                failed++;
+                failed.incrementAndGet();
                 return false;
             }
         }
@@ -792,10 +934,10 @@ public class BackendConformanceTest {
         if (expectedExitCode != null && expectedExitCode != JSON_NULL) {
             int expCode = ((Number) expectedExitCode).intValue();
             if (actualExitCode != expCode) {
-                System.out.println("  [" + name + "] FAIL: expected exit code "
+                log("  [" + name + "] FAIL: expected exit code "
                     + expCode + ", got " + actualExitCode);
-                System.out.println("    Output: " + output);
-                failed++;
+                log("    Output: " + output);
+                failed.incrementAndGet();
                 return false;
             }
         }
@@ -840,26 +982,26 @@ public class BackendConformanceTest {
                 boolean onlyFrontend = run.diagnostics().stream()
                     .allMatch(d -> !d.code().startsWith("E6"));
                 if (run.success()) {
-                    System.out.println("  [" + name + "] FAIL: expected frontend "
+                    log("  [" + name + "] FAIL: expected frontend "
                         + "compile-error " + expectedCompileError
                         + " but the project compiled successfully");
-                    failed++;
+                    failed.incrementAndGet();
                     return;
                 }
                 if (!matched) {
-                    System.out.println("  [" + name + "] FAIL: expected frontend "
+                    log("  [" + name + "] FAIL: expected frontend "
                         + "compile-error " + expectedCompileError + " but got: "
                         + (run.diagnostics().isEmpty() ? "<no errors>"
                             : run.diagnostics().stream().map(Diagnostic::toString)
                                 .toList()));
-                    failed++;
+                    failed.incrementAndGet();
                     return;
                 }
                 if (!onlyFrontend) {
-                    System.out.println("  [" + name + "] FAIL: error codes came "
+                    log("  [" + name + "] FAIL: error codes came "
                         + "from backend lowering, not the frontend: "
                         + run.diagnostics());
-                    failed++;
+                    failed.incrementAndGet();
                     return;
                 }
                 boolean artifactWritten = Files.isDirectory(outputRoot);
@@ -870,26 +1012,26 @@ public class BackendConformanceTest {
                     }
                 }
                 if (artifactWritten) {
-                    System.out.println("  [" + name + "] FAIL: the compile-error "
+                    log("  [" + name + "] FAIL: the compile-error "
                         + "gate produced .java artifacts (codegen ran): "
                         + run.capturedOutput());
-                    failed++;
+                    failed.incrementAndGet();
                     return;
                 }
-                System.out.println("  [" + name + "] OK — compile-error "
+                log("  [" + name + "] OK — compile-error "
                     + expectedCompileError + " rejected before backend"
                     + " (orchestrator pipeline; no codegen invoked)");
-                passed++;
+                passed.incrementAndGet();
                 return;
             }
 
             // ---- Runtime fixture: the whole project must compile. ----
             OrchestratorRun run = runOrchestrator(projectRoot, entryFile, outputRoot);
             if (!run.success()) {
-                System.out.println("  [" + name + "] FAIL: orchestrator compile "
+                log("  [" + name + "] FAIL: orchestrator compile "
                     + "failed: " + run.diagnostics() + "\n"
                     + run.capturedOutput());
-                failed++;
+                failed.incrementAndGet();
                 return;
             }
 
@@ -900,22 +1042,22 @@ public class BackendConformanceTest {
             boolean irOk = true;
             for (String needle : irContains) {
                 if (!ir.contains(needle)) {
-                    System.out.println("  [" + name + "] FAIL: IR should contain '"
+                    log("  [" + name + "] FAIL: IR should contain '"
                         + needle + "'");
-                    System.out.println("    IR:\n" + ir);
+                    log("    IR:\n" + ir);
                     irOk = false;
                 }
             }
             for (String needle : irNotContains) {
                 if (ir.contains(needle)) {
-                    System.out.println("  [" + name + "] FAIL: IR should NOT "
+                    log("  [" + name + "] FAIL: IR should NOT "
                         + "contain '" + needle + "'");
-                    System.out.println("    IR:\n" + ir);
+                    log("    IR:\n" + ir);
                     irOk = false;
                 }
             }
             if (!irOk) {
-                failed++;
+                failed.incrementAndGet();
                 return;
             }
 
@@ -928,16 +1070,16 @@ public class BackendConformanceTest {
                 || (expectedExitCode != null && expectedExitCode != JSON_NULL);
 
             if (!hasRuntimeAssertions) {
-                System.out.println("  [" + name + "] OK" +
+                log("  [" + name + "] OK" +
                     (description.isEmpty() ? "" : " — " + description));
-                passed++;
+                passed.incrementAndGet();
                 return;
             }
 
             if (!jvmAvailable) {
-                System.out.println("  [" + name + "] SKIP (multi-module runtime "
+                log("  [" + name + "] SKIP (multi-module runtime "
                     + "test, javac/java unavailable)");
-                skipped++;
+                skipped.incrementAndGet();
                 return;
             }
 
@@ -945,9 +1087,9 @@ public class BackendConformanceTest {
             String entryClass = entryClassName(entry);
             Path entryJava = outputRoot.resolve(entryClass + ".java");
             if (!Files.exists(entryJava)) {
-                System.out.println("  [" + name + "] FAIL: JVM codegen produced "
+                log("  [" + name + "] FAIL: JVM codegen produced "
                     + "no '" + entryJava.getFileName() + "' artifact");
-                failed++;
+                failed.incrementAndGet();
                 return;
             }
 
@@ -974,16 +1116,16 @@ public class BackendConformanceTest {
             String javacOutput = new String(p.getInputStream().readAllBytes()).trim();
             int javacExit = p.waitFor();
             if (javacExit != 0) {
-                System.out.println("  [" + name + "] FAIL: javac failed (exit "
+                log("  [" + name + "] FAIL: javac failed (exit "
                     + javacExit + "):\n" + javacOutput);
-                failed++;
+                failed.incrementAndGet();
                 return;
             }
             if (!Files.exists(outputRoot.resolve(entryClass + ".class"))
                     || !Files.exists(outputRoot.resolve("JvmConformanceRunner.class"))) {
-                System.out.println("  [" + name + "] FAIL: javac exited 0 but no "
+                log("  [" + name + "] FAIL: javac exited 0 but no "
                     + ".class artifacts were produced (JVM compilation bypassed)");
-                failed++;
+                failed.incrementAndGet();
                 return;
             }
 
@@ -1001,15 +1143,15 @@ public class BackendConformanceTest {
                 return; // failure already reported
             }
 
-            System.out.println("  [" + name + "] OK" +
+            log("  [" + name + "] OK" +
                 (description.isEmpty() ? "" : " — " + description));
-            passed++;
+            passed.incrementAndGet();
 
         } catch (Exception e) {
-            System.out.println("  [" + name + "] FAIL: multi-module JVM "
+            log("  [" + name + "] FAIL: multi-module JVM "
                 + "execution exception: " + e.getMessage());
             e.printStackTrace(System.out);
-            failed++;
+            failed.incrementAndGet();
         } finally {
             if (projectRoot != null) {
                 try {
@@ -1032,16 +1174,16 @@ public class BackendConformanceTest {
                                             Object expectedExitCode) {
         String lua = generateLua(source, "fixture-" + name + ".deal");
         if (lua == null) {
-            System.out.println("  [" + name + "] FAIL: codegen failed");
-            failed++;
+            log("  [" + name + "] FAIL: codegen failed");
+            failed.incrementAndGet();
             return false;
         }
 
         boolean isErrorTest = (expectedError != null && expectedError != JSON_NULL);
         ExecutionResult execResult = executeLua(lua, isErrorTest);
         if (execResult == null) {
-            System.out.println("  [" + name + "] FAIL: Lua execution returned null");
-            failed++;
+            log("  [" + name + "] FAIL: Lua execution returned null");
+            failed.incrementAndGet();
             return false;
         }
         String output = execResult.output();
@@ -1050,9 +1192,9 @@ public class BackendConformanceTest {
         if (expectedOutput != null && expectedOutput != JSON_NULL) {
             String expStr = String.valueOf(expectedOutput);
             if (!output.contains(expStr)) {
-                System.out.println("  [" + name + "] FAIL: expected output '" +
+                log("  [" + name + "] FAIL: expected output '" +
                     expStr + "', got: " + output);
-                failed++;
+                failed.incrementAndGet();
                 return false;
             }
         }
@@ -1060,18 +1202,18 @@ public class BackendConformanceTest {
         if (expectedError != null && expectedError != JSON_NULL) {
             String expErr = String.valueOf(expectedError);
             if (!output.contains("DEAL_ERROR_CODE: " + expErr)) {
-                System.out.println("  [" + name + "] FAIL: expected error '" +
+                log("  [" + name + "] FAIL: expected error '" +
                     expErr + "', got: " + output);
-                failed++;
+                failed.incrementAndGet();
                 return false;
             }
         }
 
         for (String forbidden : expectedNotOutput) {
             if (output.contains(forbidden)) {
-                System.out.println("  [" + name + "] FAIL: output must NOT "
+                log("  [" + name + "] FAIL: output must NOT "
                     + "contain '" + forbidden + "', got: " + output);
-                failed++;
+                failed.incrementAndGet();
                 return false;
             }
         }
@@ -1080,10 +1222,10 @@ public class BackendConformanceTest {
         if (expectedExitCode != null && expectedExitCode != JSON_NULL) {
             int expCode = ((Number) expectedExitCode).intValue();
             if (actualExitCode != expCode) {
-                System.out.println("  [" + name + "] FAIL: expected exit code " +
+                log("  [" + name + "] FAIL: expected exit code " +
                     expCode + ", got " + actualExitCode);
-                System.out.println("    Output: " + output);
-                failed++;
+                log("    Output: " + output);
+                failed.incrementAndGet();
                 return false;
             }
         }
@@ -1131,15 +1273,15 @@ public class BackendConformanceTest {
         JvmBackend.JvmCodegenResult res = JvmBackend.generate(
             fc.program(), fc.checkResult(), "fixture-" + name + ".deal", "Main");
         if (res.hasErrors()) {
-            System.out.println("  [" + name + "] FAIL: JVM codegen diagnostics: "
+            log("  [" + name + "] FAIL: JVM codegen diagnostics: "
                 + res.diagnostics());
-            failed++;
+            failed.incrementAndGet();
             return false;
         }
         if (!res.source().contains("class " + res.className())) {
-            System.out.println("  [" + name + "] FAIL: JVM codegen produced no '"
+            log("  [" + name + "] FAIL: JVM codegen produced no '"
                 + res.className() + "' class declaration");
-            failed++;
+            failed.incrementAndGet();
             return false;
         }
 
@@ -1152,25 +1294,27 @@ public class BackendConformanceTest {
             Path runnerFile = tmpDir.resolve("JvmConformanceRunner.java");
             Files.writeString(runnerFile, buildJvmRunner(fc.program(), res.className()));
 
-            // 2. Compile the artifact with javac.
-            ProcessBuilder pb = new ProcessBuilder("javac", "-encoding", "UTF-8",
-                moduleFile.toString(), runnerFile.toString());
-            pb.directory(tmpDir.toFile());
-            pb.redirectErrorStream(true);
-            Process p = pb.start();
-            String javacOutput = new String(p.getInputStream().readAllBytes()).trim();
-            int javacExit = p.waitFor();
-            if (javacExit != 0) {
-                System.out.println("  [" + name + "] FAIL: javac failed (exit "
-                    + javacExit + "):\n" + javacOutput);
-                failed++;
+            // 2. Compile the artifact with the javac frontend in-process
+            // (compileWithJavac — the identical passes the `javac` binary
+            // runs; ISSUE-0109 gate-time work, the single-module JVM
+            // fixtures number in the hundreds and each spawned process
+            // paid a JVM boot). Every multi-module conformance fixture
+            // (including all twelve ISSUE-0109 fixtures) still compiles
+            // with the real `javac` binary below.
+            StringBuilder javacErr = new StringBuilder();
+            boolean javacOk = compileWithJavac(tmpDir,
+                List.of(res.className() + ".java", "JvmConformanceRunner.java"),
+                javacErr);
+            if (!javacOk) {
+                log("  [" + name + "] FAIL: javac failed:\n" + javacErr);
+                failed.incrementAndGet();
                 return false;
             }
             if (!Files.exists(tmpDir.resolve(res.className() + ".class"))
                     || !Files.exists(tmpDir.resolve("JvmConformanceRunner.class"))) {
-                System.out.println("  [" + name + "] FAIL: javac exited 0 but no "
-                    + ".class artifacts were produced (JVM compilation bypassed)");
-                failed++;
+                log("  [" + name + "] FAIL: javac accepted the artifact but no "
+                    + ".class files were produced (JVM compilation bypassed)");
+                failed.incrementAndGet();
                 return false;
             }
 
@@ -1187,10 +1331,10 @@ public class BackendConformanceTest {
             return assertJvmRun(name, output, actualExitCode, expectedOutput,
                 expectedNotOutput, expectedError, expectedExitCode);
         } catch (Exception e) {
-            System.out.println("  [" + name + "] FAIL: JVM execution exception: "
+            log("  [" + name + "] FAIL: JVM execution exception: "
                 + e.getMessage());
             e.printStackTrace(System.out);
-            failed++;
+            failed.incrementAndGet();
             return false;
         } finally {
             if (tmpDir != null) {

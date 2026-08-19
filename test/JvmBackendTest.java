@@ -385,8 +385,12 @@ public class JvmBackendTest {
     private record ExecResult(String output, int exitCode) {}
 
     /**
-     * Compiles the generated artifact with javac and executes it with java in
-     * subprocesses — the same contract the conformance adapter enforces.
+     * Compiles the generated artifact with the javac frontend in-process
+     * ({@code BackendConformanceTest.compileWithJavac} — the identical
+     * javac passes the binary runs; ISSUE-0109 gate-time work, the
+     * several hundred spawn sites here each paid a full JVM boot) and
+     * executes it with {@code java} in a subprocess — artifact execution
+     * stays the same contract the conformance adapter enforces.
      */
     private static ExecResult compileAndRunJvm(String source, String name)
             throws Exception {
@@ -411,15 +415,11 @@ public class JvmBackendTest {
         Files.writeString(dir.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(f.program(), "Main"));
 
-        ProcessBuilder javac = new ProcessBuilder("javac", "-encoding", "UTF-8",
-            "Main.java", "JvmConformanceRunner.java");
-        javac.directory(dir.toFile());
-        javac.redirectErrorStream(true);
-        Process p1 = javac.start();
-        String javacOut = new String(p1.getInputStream().readAllBytes()).trim();
-        int javacExit = p1.waitFor();
-        if (javacExit != 0) {
-            throw new RuntimeException("javac failed: " + javacOut);
+        StringBuilder javacErr = new StringBuilder();
+        boolean javacOk = BackendConformanceTest.compileWithJavac(dir,
+            List.of("Main.java", "JvmConformanceRunner.java"), javacErr);
+        if (!javacOk) {
+            throw new RuntimeException("javac failed: " + javacErr);
         }
 
         ProcessBuilder java = new ProcessBuilder("java", "-cp",
@@ -440,31 +440,28 @@ public class JvmBackendTest {
     /**
      * Compiles every {@code .java} artifact in {@code dir} together with a
      * generated runner (auto-invoking the entry program's zero-arity
-     * exports) via {@code javac} + {@code java} subprocesses — the same
-     * contract the conformance adapter enforces for multi-module fixtures.
+     * exports) with the javac frontend in-process
+     * ({@code BackendConformanceTest.compileWithJavac}; ISSUE-0109
+     * gate-time work) and executes with {@code java} in a subprocess —
+     * artifact execution stays the same contract the conformance adapter
+     * enforces for multi-module fixtures.
      */
     private static ExecResult runJvmArtifacts(Path dir, ProgramNode entryProgram,
                                               String entryClass) throws Exception {
         Files.writeString(dir.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(entryProgram, entryClass));
 
-        List<String> javacArgs = new ArrayList<>();
-        javacArgs.add("javac");
-        javacArgs.add("-encoding");
-        javacArgs.add("UTF-8");
+        List<String> javaFiles = new ArrayList<>();
         try (var stream = Files.list(dir)) {
             stream.filter(p -> p.toString().endsWith(".java"))
                   .sorted()
-                  .forEach(p -> javacArgs.add(p.getFileName().toString()));
+                  .forEach(p -> javaFiles.add(p.getFileName().toString()));
         }
-        ProcessBuilder javac = new ProcessBuilder(javacArgs);
-        javac.directory(dir.toFile());
-        javac.redirectErrorStream(true);
-        Process p1 = javac.start();
-        String javacOut = new String(p1.getInputStream().readAllBytes()).trim();
-        int javacExit = p1.waitFor();
-        if (javacExit != 0) {
-            throw new RuntimeException("javac failed: " + javacOut);
+        StringBuilder javacErr = new StringBuilder();
+        boolean javacOk = BackendConformanceTest.compileWithJavac(dir,
+            javaFiles, javacErr);
+        if (!javacOk) {
+            throw new RuntimeException("javac failed: " + javacErr);
         }
 
         ProcessBuilder java = new ProcessBuilder("java", "-cp", dir.toString(),
