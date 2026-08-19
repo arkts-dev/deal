@@ -61,7 +61,20 @@ import java.util.Set;
  * multi-module compilation (ISSUE-0096): namespace imports
  * ({@code import * as alias from "./lib"}) of compiled project modules,
  * exported functions, and imported direct calls ({@code alias.fn(args)} →
- * a static call on the imported module's emitted class), and the stdlib
+ * a static call on the imported module's emitted class), imported
+ * classes and cross-module nominal identity (ISSUE-0109):
+ * {@code export class} emits the same generated nested class as a local
+ * one (the export only adds the class to the module type), imported
+ * class-typed values map to the DECLARING module's generated class
+ * ({@code Lib.$C_C} for {@code lib.C}), imported-class construction
+ * emits {@code new Lib.$C_<Name>(args)} with declared literal defaults
+ * applied inline and provided fields reordered to declaration order,
+ * imported qualified type annotations ({@code let p: lib.Point})
+ * resolve through the import alias, and a class-typed table read runs
+ * the DECLARING module's nominal-check helper ({@code Lib.$checkC(...)})
+ * whose {@code $identityOf} unwrap reports the actual module-qualified
+ * identity of a foreign instance ({@code expected instance of
+ * @modelb/Item, got @modela/Item} — E8001), and the stdlib
  * modules whose declared functions use only those prerequisite value
  * types (ISSUE-0097): {@code std/console} (already the trusted builtin),
  * {@code std/string}, {@code std/math}, and {@code std/time} — every
@@ -74,12 +87,12 @@ import java.util.Set;
  * {@code std/json} stay rejected with {@code E6000} at the import
  * statement: their only functions take or return a {@code table}, a
  * value type the slice still does not support as a function parameter
- * or return. Anything outside this scope — class exports (the module
- * ABI surface for classes is a later slice), optional/nullable/array/
+ * or return. Anything outside this scope — optional/nullable/array/
  * class/table-typed class fields, nested class declarations, table reads
- * with non-class/non-table targets, table field writes, imported
- * classes, cross-module nominal class identity, arrays of non-primitive
- * elements, nullables, nullable arrays,
+ * with non-class/non-table targets, table field writes,
+ * non-literal default expressions on imported classes (their defaults
+ * evaluate in the declaring module's scope under LuaJIT), arrays of
+ * non-primitive elements, nullables, nullable arrays,
  * arrays of nullable elements, nested (multi-dimensional) arrays, class
  * arrays, function arrays, stdlib imports other than the four supported
  * modules, declaration/host-module imports, async, host ABI,
@@ -320,10 +333,31 @@ import java.util.Set;
  * (locals, parameters, returns, field reads/writes, construction) is
  * provably typed by the JVM's static type system, which spec-v1.1
  * §JVM backend contract explicitly permits to make typed-boundary checks
- * redundant. Out of slice: optional/nullable/array/class/table-typed
- * class fields, {@code export class} (module ABI), nested class
- * declarations, table reads with primitive/nullable/array target types,
- * table field writes, cross-module classes — all E6000, never silently
+ * redundant.
+ *
+ * <p>Imported classes and cross-module nominal identity (ISSUE-0109)
+ * extend the same machinery across module boundaries: an exported class
+ * emits the same nested class and check helper as a local one, and the
+ * importing module references them through the declaring module's
+ * emitted class ({@code Lib.$C_<name>}, {@code Lib.$check<Name>}). The
+ * generated nested classes are package-private and every emitted
+ * artifact shares the default package, so those references are exactly
+ * what javac compiles. Locality is always decided from the
+ * {@code Type.Class} MODULE PATH, never the bare class name — a
+ * same-named local class never satisfies the guard for a foreign path.
+ * Imported construction applies declared literal defaults inline (a
+ * non-literal default is E6000: it evaluates in the declaring module's
+ * scope under LuaJIT). A wrong-module instance failing a nominal check
+ * is not an instance of the checking module's own {@code $Base}, so the
+ * check helper reads the actual identity through the emitted
+ * {@code $identityOf} unwrap (structural read of the spec ClassDescriptor
+ * every {@code $Base} carries) and reports
+ * "expected instance of @modelb/Item, got @modela/Item" — exactly the
+ * module-qualified identity LuaJIT's {@code actual_class} reports.
+ * Out of slice: optional/nullable/array/class/table-typed
+ * class fields, nested class declarations, table reads with
+ * primitive/nullable/array target types, table field writes,
+ * non-literal defaults on imported classes — all E6000, never silently
  * miscompiled.
  */
 public final class JvmBackend {
@@ -407,6 +441,18 @@ public final class JvmBackend {
      * import statement.
      */
     private final Map<String, String> importResolutions;
+
+    /**
+     * Imported module path → (class name → class declaration) for every
+     * compiled project module this module imports (ISSUE-0109): the
+     * imported module's {@code ClassDeclaration}s carry the field order,
+     * field shapes, and default expressions that imported-class
+     * construction needs. Supplied by {@code CompilationOrchestrator}
+     * phase 4 (the same discovery pass that builds
+     * {@link #importResolutions}); empty for the single-module harness
+     * overloads, where no imported class can exist.
+     */
+    private final Map<String, Map<String, ClassDeclaration>> importedClasses;
 
     /**
      * Stack of visible local-variable bindings (DEAL name → emitted Java
@@ -593,13 +639,16 @@ public final class JvmBackend {
 
     private JvmBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
                        String sourcePath, String modulePath,
-                       Map<String, String> importResolutions) {
+                       Map<String, String> importResolutions,
+                       Map<String, Map<String, ClassDeclaration>> importedClasses) {
         this.typeMap = typeMap;
         this.symbols = symbols;
         this.sourcePath = sourcePath;
         this.modulePath = modulePath;
         this.importResolutions = importResolutions == null
             ? Map.of() : Map.copyOf(importResolutions);
+        this.importedClasses = importedClasses == null
+            ? Map.of() : Map.copyOf(importedClasses);
         localScopes.push(new LinkedHashMap<>());
     }
 
@@ -640,8 +689,31 @@ public final class JvmBackend {
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions) {
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, Map.of());
+    }
+
+    /**
+     * Generates Java source for a checked module with the orchestrator's
+     * import resolution map and imported class declarations (ISSUE-0109).
+     *
+     * @param importResolutions raw import path → module path of the
+     *                          imported compiled module (e.g. {@code "./lib"
+     *                          → lib}); an import whose raw path is absent
+     *                          is rejected with E6000 at the import
+     *                          statement
+     * @param importedClasses   imported module path → (class name → class
+     *                          declaration); supplies the field order and
+     *                          default expressions for imported-class
+     *                          construction and the defensive locality
+     *                          guard for imported class-typed values
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            Map<String, String> importResolutions,
+                                            Map<String, Map<String, ClassDeclaration>> importedClasses) {
         JvmBackend backend = new JvmBackend(result.typeMap(), result.symbolTable(),
-            sourcePath, modulePath, importResolutions);
+            sourcePath, modulePath, importResolutions, importedClasses);
         return backend.generateProgram(program);
     }
 
@@ -799,6 +871,13 @@ public final class JvmBackend {
                 moduleFunctions.putIfAbsent(fd.name(), fd);
                 moduleFunctionIndices.putIfAbsent(fd.name(), i);
             } else if (stmt instanceof ClassDeclaration cd) {
+                moduleClasses.putIfAbsent(cd.name(), cd);
+            } else if (stmt instanceof ExportDeclaration ed
+                    && ed.declaration() instanceof ClassDeclaration cd) {
+                // ISSUE-0109: an exported class emits the same generated
+                // nested class as a local one; the export only adds it to
+                // the module type, which importers reference through the
+                // emitting module's class.
                 moduleClasses.putIfAbsent(cd.name(), cd);
             }
         }
@@ -1618,6 +1697,33 @@ public final class JvmBackend {
         emitLine("    if (v instanceof $T) return \"table\";");
         emitLine("    return v.getClass().getSimpleName();");
         emitLine("}");
+        emitLine("// The DEAL identity of any generated class instance, ACROSS modules");
+        emitLine("// (ISSUE-0109): each emitted module declares its own nested $Base,");
+        emitLine("// so a foreign module's instances are not instanceof this module's");
+        emitLine("// $Base. Every $Base carries the package-private field $identity");
+        emitLine("// holding the spec ClassDescriptor (@<modulePath>/<Name>);");
+        emitLine("// $identityOf reads it structurally so a wrong-module nominal check");
+        emitLine("// reports the actual module-qualified identity exactly like");
+        emitLine("// LuaJIT's actual_class reporting in check_type. The '$' in the");
+        emitLine("// field name is unspellable in DEAL (javaName escapes '$'), so no");
+        emitLine("// user-declared field can ever match it.");
+        emitLine("static java.lang.String $identityOf(java.lang.Object v) {");
+        emitLine("    if (v instanceof $Base b) return b.$identity;");
+        emitLine("    if (v == null) return null;");
+        emitLine("    java.lang.Class<?> k = v.getClass();");
+        emitLine("    while (k != null && k != java.lang.Object.class) {");
+        emitLine("        try {");
+        emitLine("            java.lang.reflect.Field f = k.getDeclaredField(\"$identity\");");
+        emitLine("            f.setAccessible(true);");
+        emitLine("            return java.lang.String.valueOf(f.get(v));");
+        emitLine("        } catch (java.lang.NoSuchFieldException e) {");
+        emitLine("            k = k.getSuperclass();");
+        emitLine("        } catch (java.lang.ReflectiveOperationException e) {");
+        emitLine("            return null;");
+        emitLine("        }");
+        emitLine("    }");
+        emitLine("    return null;");
+        emitLine("}");
         emitLine("// Table-typed boundary check for table reads with a table contextual");
         emitLine("// target (E8001 when the dynamic value is not a table). The name is");
         emitLine("// $check$Table — NOT $checkTable: a local class named Table emits the");
@@ -1806,8 +1912,13 @@ public final class JvmBackend {
         if (ed.declaration() instanceof FunctionDeclaration fd) {
             emitFunction(fd, true);
         } else if (ed.declaration() instanceof ClassDeclaration cd) {
-            unsupported("class exports (the module ABI surface is a later slice)",
-                cd.span());
+            // ISSUE-0109: an exported class emits the same generated
+            // nested class and nominal-check helper as a local class
+            // (spec v1.1 §Export forms: "Exporting a class exports class
+            // metadata, not a constructor" — the metadata is the class's
+            // generated Java type plus its module-qualified identity
+            // string, which importers consume directly).
+            emitClass(cd);
         } else {
             unsupported("this export form", ed.span());
         }
@@ -1876,6 +1987,31 @@ public final class JvmBackend {
         return "$check" + javaName(name);
     }
 
+    /**
+     * The emitted Java class name of the module declaring the imported
+     * class {@code cls} ({@code "lib" → "Lib"}), or {@code null} with an
+     * E6000 recorded when the module is not an imported compiled project
+     * module of this module or its class declaration is unavailable
+     * (ISSUE-0109). The module path recorded in {@code Type.Class} is
+     * the checker's declaring-module path — the same value
+     * {@link #importAliases} and the orchestrator's
+     * {@code importedClasses} map carry — so the guard is exact, never
+     * a bare-name guess.
+     */
+    private String importedClassModuleRef(Type.Class cls, Span span) {
+        String module = cls.modulePath();
+        Map<String, ClassDeclaration> decls = importedClasses.get(module);
+        if (!importAliases.containsValue(module)
+                || decls == null || !decls.containsKey(cls.name())) {
+            unsupported("values of imported class type '" + cls.name()
+                + "' from module '" + module + "' (the module is not an "
+                + "imported compiled project module of this module, or "
+                + "its class declaration is unavailable)", span);
+            return null;
+        }
+        return classNameFor(module);
+    }
+
     /** True when a checker-inferred {@code Type.Class} refers to a class
      * of THIS module — the only classes whose generated Java types and
      * nominal-check helpers exist in the emitted artifact. The checker
@@ -1884,7 +2020,8 @@ public final class JvmBackend {
      * the {@code sourcePath} in the single-module harnesses (where the
      * checker types with the source filename while codegen runs with
      * {@code Main}), or empty for the builtin {@code Error} class. Any
-     * other path is an IMPORTED class (deferred to ISSUE-0109) even when
+     * other path is an IMPORTED class (ISSUE-0109: mapped to the
+     * declaring module's emitted class) even when
      * a same-named local class exists — the bare-name
      * {@code moduleClasses} lookup alone would silently claim a foreign
      * value for the local generated class (a broken artifact or a
@@ -1895,7 +2032,8 @@ public final class JvmBackend {
     }
 
     /**
-     * Emits a module-level (non-exported) DEAL class declaration: a
+     * Emits a module-level (local or exported — ISSUE-0109) DEAL class
+     * declaration: a
      * generated nested static class carrying the declared primitive fields
      * plus a runtime nominal-check helper. Spec v1.1 classes are sealed
      * records with no methods and no constructors — the only callables in
@@ -1994,9 +2132,10 @@ public final class JvmBackend {
             + "(java.lang.Object v) {");
         indent++;
         emitLine("if (v instanceof " + gen + " b) return b;");
-        emitLine("if (v instanceof $Base) throw new DealError(\"E8001\", "
+        emitLine("java.lang.String actualIdentity = $identityOf(v);");
+        emitLine("if (actualIdentity != null) throw new DealError(\"E8001\", "
             + "\"expected instance of " + identity + ", got \" "
-            + "+ (($Base) v).$identity);");
+            + "+ actualIdentity);");
         emitLine("throw new DealError(\"E8001\", \"expected class instance, "
             + "got \" + $describe(v));");
         indent--;
@@ -2586,17 +2725,19 @@ public final class JvmBackend {
     }
 
     /**
-     * Emits a class construction ({@code new $C_<Name>(args)}). Provided
-     * field values are evaluated left-to-right in literal order (LuaJIT
-     * evaluates the provided-fields table in literal order), defaults are
-     * evaluated per construction exactly as spec v1.1 §Construction
-     * requires (inline, at the construction site — never shared). The
-     * constructor argument order is field declaration order, with provided
-     * values materialized first so a side-effecting provided value runs in
-     * literal order regardless of declaration order. The checker guarantees
-     * provided names are declared fields and required fields are present;
-     * the defensive branch only ever fires for a program the checker
-     * already rejected.
+     * Emits a class construction ({@code new $C_<Name>(args)} for a local
+     * class, {@code new <ModuleClass>.$C_<Name>(args)} for an imported
+     * class — ISSUE-0109). Provided field values are evaluated
+     * left-to-right in literal order (LuaJIT evaluates the
+     * provided-fields table in literal order), defaults are evaluated per
+     * construction exactly as spec v1.1 §Construction requires (inline,
+     * at the construction site — never shared). The constructor argument
+     * order is field declaration order, with provided values materialized
+     * first so a side-effecting provided value runs in literal order
+     * regardless of declaration order. The checker guarantees provided
+     * names are declared fields and required fields are present; the
+     * defensive branch only ever fires for a program the checker already
+     * rejected.
      */
     private String emitClassConstruction(Type.Class cls, ObjectLiteralExpr obj) {
         // Locality is decided from the Type.Class MODULE PATH, then the
@@ -2605,10 +2746,7 @@ public final class JvmBackend {
         // tagged with the LOCAL module identity — a silent
         // nominal-identity corruption).
         if (!isLocalClassType(cls)) {
-            unsupported("construction of imported class '" + cls.name()
-                + "' (imported classes / cross-module nominal identity "
-                + "are deferred to ISSUE-0109)", obj.span());
-            return "null";
+            return emitImportedClassConstruction(cls, obj);
         }
         ClassDeclaration cd = moduleClasses.get(cls.name());
         if (cd == null) {
@@ -2617,6 +2755,102 @@ public final class JvmBackend {
                 obj.span());
             return "null";
         }
+        return emitClassConstructorCall(cd, classNameForClass(cd.name()),
+            obj, true);
+    }
+
+    /**
+     * Emits construction of an IMPORTED class (ISSUE-0109):
+     * {@code new <ModuleClass>.$C_<Name>(args)} — the declaring module's
+     * generated nested class, whose constructor takes every field in
+     * declaration order (the same order the declaring module emitted).
+     * Only required-present primitive fields are in scope (the same
+     * class-shape restriction as local classes), and defaults are
+     * restricted to literal constants: a non-literal default evaluates
+     * in the DECLARING module's scope under LuaJIT (the defaults table
+     * is built there at load time), so re-emitting it inline in the
+     * importing module's scope would silently bind different
+     * identifiers — E6000, never a silent miscompile.
+     */
+    private String emitImportedClassConstruction(Type.Class cls,
+                                                 ObjectLiteralExpr obj) {
+        Map<String, ClassDeclaration> decls = importedClasses.get(cls.modulePath());
+        ClassDeclaration cd = decls == null ? null : decls.get(cls.name());
+        if (cd == null) {
+            unsupported("construction of imported class '" + cls.name()
+                + "' from module '" + cls.modulePath() + "' (its "
+                + "declaration is unavailable — the module is not an "
+                + "imported compiled project module of this module, or "
+                + "the class is not module-level)", obj.span());
+            return "null";
+        }
+        if (!importAliases.containsValue(cls.modulePath())) {
+            unsupported("construction of imported class '" + cls.name()
+                + "' from module '" + cls.modulePath() + "' (the "
+                + "declaring module is not imported)", obj.span());
+            return "null";
+        }
+        for (ClassField cf : cd.fields()) {
+            if (cf.optional()) {
+                unsupported("optional fields of imported class '"
+                    + cd.name() + "' (their reads produce nullable "
+                    + "values)", cf.span());
+                return "null";
+            }
+            if (cf.nullable()) {
+                unsupported("nullable fields of imported class '"
+                    + cd.name() + "'", cf.span());
+                return "null";
+            }
+            Type fieldType = resolveTypeNode(cf.type());
+            if (fieldType == Type.Error.INSTANCE) return "null";
+            if (!(fieldType instanceof Type.Int)
+                    && !(fieldType instanceof Type.Number)
+                    && !(fieldType instanceof Type.Boolean)
+                    && !(fieldType instanceof Type.String)) {
+                unsupported("fields of imported class '" + cd.name()
+                    + "' of type " + typeName(fieldType)
+                    + " (only primitive fields are supported)", cf.span());
+                return "null";
+            }
+        }
+        for (ClassField cf : cd.fields()) {
+            if (cf.defaultExpr().isPresent()
+                    && !(cf.defaultExpr().get() instanceof LiteralExpr)) {
+                unsupported("construction of imported class '" + cd.name()
+                    + "' whose field '" + cf.name() + "' has a "
+                    + "non-literal default (imported defaults evaluate "
+                    + "in the declaring module's scope under LuaJIT, so "
+                    + "re-emitting them in the importing module's scope "
+                    + "would bind different identifiers)",
+                    cf.defaultExpr().get().span());
+                return "null";
+            }
+        }
+        String moduleClass = classNameFor(cls.modulePath());
+        return emitClassConstructorCall(cd,
+            moduleClass + "." + classNameForClass(cd.name()), obj, false);
+    }
+
+    /**
+     * Shared constructor-call emission for local and imported class
+     * constructions (see {@link #emitClassConstruction}).
+     *
+     * @param cd            the class declaration (local or imported)
+     * @param ctorExpr      the emitted constructor reference without
+     *                      arguments ({@code "$C_Point"} or
+     *                      {@code "Lib.$C_Point"})
+     * @param obj           the object literal
+     * @param localDefaults true for a local class, whose default
+     *                      expressions were checked by this module's
+     *                      checker (types in the typeMap, boolean
+     *                      boundaries enforced); false for an imported
+     *                      class, whose defaults are literal constants
+     *                      validated by {@code emitImportedClassConstruction}
+     */
+    private String emitClassConstructorCall(ClassDeclaration cd, String ctorExpr,
+                                            ObjectLiteralExpr obj,
+                                            boolean localDefaults) {
         List<ExpressionNode> valueNodes = new ArrayList<>();
         for (Property prop : obj.properties()) valueNodes.add(prop.value());
         List<String> codes = emitOperandsInOrder(valueNodes);
@@ -2666,21 +2900,29 @@ public final class JvmBackend {
             ExpressionNode valueNode = providedNodes.get(cf.name());
             if (code == null && cf.defaultExpr().isPresent()) {
                 valueNode = cf.defaultExpr().get();
-                if (typeOf(valueNode) == Type.Error.INSTANCE) {
-                    // The checker records every default subexpression's
-                    // type (ISSUE-0095 rework); Type.Error here means the
-                    // frontend reported errors — record an honest E6000,
-                    // never emit an artifact javac would reject.
-                    unsupported("default expression of field '" + cf.name()
-                        + "' of class '" + cd.name()
-                        + "' (unresolved default-expression type)",
-                        valueNode.span());
-                    code = zeroValueFor(cf.type());
+                if (localDefaults) {
+                    if (typeOf(valueNode) == Type.Error.INSTANCE) {
+                        // The checker records every default subexpression's
+                        // type (ISSUE-0095 rework); Type.Error here means the
+                        // frontend reported errors — record an honest E6000,
+                        // never emit an artifact javac would reject.
+                        unsupported("default expression of field '" + cf.name()
+                            + "' of class '" + cd.name()
+                            + "' (unresolved default-expression type)",
+                            valueNode.span());
+                        code = zeroValueFor(cf.type());
+                    } else {
+                        code = emitExpression(valueNode);
+                    }
                 } else {
+                    // Imported defaults are literal constants (validated
+                    // by emitImportedClassConstruction); they emit
+                    // standalone and carry no nil-aware boolean shape.
                     code = emitExpression(valueNode);
                 }
             }
             if (code != null && valueNode != null
+                    && (localDefaults || providedNodes.containsKey(cf.name()))
                     && needsBooleanBoundary(valueNode, typeOf(valueNode))) {
                 code = "booleanNotNull(" + code + ")";
             }
@@ -2693,8 +2935,7 @@ public final class JvmBackend {
             }
             args.add(code);
         }
-        return "new " + classNameForClass(cd.name()) + "("
-            + String.join(", ", args) + ")";
+        return "new " + ctorExpr + "(" + String.join(", ", args) + ")";
     }
 
     /** A placeholder for the defensive missing-required-field branch (the
@@ -3966,13 +4207,18 @@ public final class JvmBackend {
             // the name-keyed lookup — a same-named local class must not
             // satisfy the guard for a foreign path (the read would run
             // the LOCAL nominal check against a lib.C value, corrupting
-            // the nominal identity).
+            // the nominal identity). An imported class (ISSUE-0109) runs
+            // the DECLARING module's nominal-check helper
+            // ({@code Lib.$checkC(...)}): its {@code instanceof} test and
+            // module-qualified identity string compare against the
+            // declaring module's generated class, so a genuine instance
+            // passes and a same-name sibling from another module reports
+            // E8001 "expected instance of @lib/C, got @other/C".
             if (!isLocalClassType(cls)) {
-                unsupported("class-typed table read for imported class '"
-                    + cls.name() + "' (imported classes / cross-module "
-                    + "nominal identity are deferred to ISSUE-0109)",
-                    mae.span());
-                return "null";
+                String importedModule = importedClassModuleRef(cls, mae.span());
+                if (importedModule == null) return "null";
+                return importedModule + "." + classCheckName(cls.name())
+                    + "(" + get + ")";
             }
             if (!moduleClasses.containsKey(cls.name())) {
                 unsupported("class-typed table read for class '"
@@ -4319,12 +4565,11 @@ public final class JvmBackend {
                 case "table" -> Type.Table.INSTANCE;
                 default -> {
                     // A local module-level class (the checker's hoisted
-                    // ClassSymbol). The builtin Error and imported classes
-                    // are out of slice: Error values cannot be produced
-                    // (throw/catch is E6000) and imported classes are a
-                    // later slice — emitting the generated class reference
-                    // without emitting the class would leave a symbol javac
-                    // rejects after the CLI reported success.
+                    // ClassSymbol). The builtin Error stays out of slice
+                    // (Error values cannot be produced — throw/catch is
+                    // E6000); imported classes resolve through QUALIFIED
+                    // annotations (alias.C, ISSUE-0109), never a bare
+                    // name.
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol
                             && moduleClasses.containsKey(nt.name())) {
@@ -4336,9 +4581,22 @@ public final class JvmBackend {
                 }
             };
             case QualifiedType qt -> {
-                unsupported("qualified type '" + qt.moduleName() + "." + qt.typeName()
-                    + "' (classes are not supported)", qt.span());
-                yield Type.Error.INSTANCE;
+                // ISSUE-0109: `alias.Class` annotations name the imported
+                // module's exported class. The alias maps through the
+                // same importAliases table every imported member call
+                // uses; the declaration must come from the orchestrator's
+                // imported-class map (stdlib aliases export no classes).
+                String module = importAliases.get(qt.moduleName());
+                Map<String, ClassDeclaration> decls =
+                    module == null ? null : importedClasses.get(module);
+                if (decls == null || !decls.containsKey(qt.typeName())) {
+                    unsupported("qualified type '" + qt.moduleName() + "."
+                        + qt.typeName() + "' (only classes of imported "
+                        + "compiled project modules are supported)",
+                        qt.span());
+                    yield Type.Error.INSTANCE;
+                }
+                yield new Type.Class(qt.typeName(), module);
             }
             case ArrayType at -> {
                 Type elem = resolveTypeNode(at.elementType());
@@ -4380,32 +4638,29 @@ public final class JvmBackend {
             }
             case Type.Table ignored -> "$T";
             case Type.Class c -> {
-                // Only LOCAL module-level classes have emitted Java
-                // types. A checker-inferred class type can name an
-                // IMPORTED class (an annotation-less declaration like
-                // `let c = lib.getC()`): emitting its generated class
-                // reference without the class would leave a symbol javac
-                // rejects after the CLI reported success. Locality is
-                // decided from the Type.Class MODULE PATH — a same-named
-                // local class must not satisfy the guard for a foreign
-                // path (lib.C would then be declared as the LOCAL
-                // $C_C and javac would reject the incompatible
-                // assignment). Imported classes / cross-module nominal
-                // identity are deferred to ISSUE-0109 — E6000, never a
-                // broken artifact.
-                if (!isLocalClassType(c)) {
-                    unsupported("values of imported class type '" + c.name()
-                        + "' (imported classes / cross-module nominal "
-                        + "identity are deferred to ISSUE-0109)", span);
-                    yield null;
+                // Locality is decided from the Type.Class MODULE PATH —
+                // a same-named local class must not satisfy the guard
+                // for a foreign path (lib.C would then be declared as
+                // the LOCAL $C_C and javac would reject the incompatible
+                // assignment). A local class maps to this module's
+                // generated nested class; an imported class (ISSUE-0109)
+                // maps to the declaring module's emitted class
+                // ({@code Lib.$C_C}): the generated nested classes are
+                // package-private, and every emitted artifact shares the
+                // default package, so the cross-module reference is
+                // exactly what javac compiles.
+                if (isLocalClassType(c)) {
+                    if (!moduleClasses.containsKey(c.name())) {
+                        unsupported("values of class type '" + c.name()
+                            + "' (only local module-level classes are "
+                            + "supported)", span);
+                        yield null;
+                    }
+                    yield classNameForClass(c.name());
                 }
-                if (!moduleClasses.containsKey(c.name())) {
-                    unsupported("values of class type '" + c.name()
-                        + "' (only local module-level classes are "
-                        + "supported)", span);
-                    yield null;
-                }
-                yield classNameForClass(c.name());
+                String importedModule = importedClassModuleRef(c, span);
+                if (importedModule == null) yield null;
+                yield importedModule + "." + classNameForClass(c.name());
             }
             case Type.Error ignored -> null;
             default -> {

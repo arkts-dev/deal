@@ -68,6 +68,15 @@ import java.util.*;
  * std/time's second-truncated nowMillis, stdlib results composing
  * across modules, a frontend E5001 compile-error gate, and a
  * multi-module fixture consuming std/string through the orchestrator
+ * pipeline), and the ISSUE-0109 imported-class / cross-module nominal
+ * identity fixtures live in
+ * {@code test/conformance/fixtures/jvm-xmod-classes-slice.json}
+ * (exported/imported classes, imported construction with literal
+ * defaults and provided-field literal-order evaluation, class values
+ * passed/returned across modules, same-name classes from different
+ * modules, and module-qualified runtime nominal-check success/failure
+ * — E8001 naming both {@code @module/Name} identities — plus a
+ * frontend E3001 gate, all through the orchestrator multi-module
  * pipeline).
  *
  * <h2>Multi-module fixtures (ISSUE-0096)</h2>
@@ -1275,28 +1284,48 @@ public class BackendConformanceTest {
             sb.append("                catch (ClassNotFoundException e) { throw new RuntimeException(e); }\n");
         }
         sb.append("        } catch (").append(className).append(".DealError e) {\n");
-        sb.append("            System.out.println(\"DEAL_ERROR_CODE: \" + e.code"
-            + " + \" \" + e.getMessage());\n");
-        sb.append("            System.exit(1);\n");
+        sb.append("            reportError(e);\n");
         sb.append("        } catch (ExceptionInInitializerError e) {\n");
         sb.append("            // Class initialization (module-level statements) threw a\n");
         sb.append("            // DEAL error wrapped in a LinkageError — whether the class\n");
         sb.append("            // was initialized by an auto-invocation or by the\n");
-        sb.append("            // Class.forName path. Unwrap it so the DEAL_ERROR_CODE\n");
-        sb.append("            // contract holds for module-load errors in every fixture.\n");
-        sb.append("            Throwable cause = e.getCause();\n");
-        sb.append("            if (cause instanceof ").append(className).append(".DealError de) {\n");
-        sb.append("                System.out.println(\"DEAL_ERROR_CODE: \" + de.code"
-            + " + \" \" + de.getMessage());\n");
-        sb.append("            } else {\n");
-        sb.append("                System.out.println(\"DEAL_ERROR_CODE: \""
-            + " + (cause == null ? e.toString() : cause.toString()));\n");
-        sb.append("            }\n");
-        sb.append("            System.exit(1);\n");
+        sb.append("            // Class.forName path. reportError unwraps it so the\n");
+        sb.append("            // DEAL_ERROR_CODE contract holds for module-load errors in\n");
+        sb.append("            // every fixture.\n");
+        sb.append("            reportError(e);\n");
         sb.append("        } catch (Throwable e) {\n");
-        sb.append("            System.out.println(\"DEAL_ERROR_CODE: \" + e.getMessage());\n");
-        sb.append("            System.exit(1);\n");
+        sb.append("            reportError(e);\n");
         sb.append("        }\n");
+        sb.append("    }\n");
+        sb.append("    // A DEAL error raised inside an IMPORTED module is that module's\n");
+        sb.append("    // own nested DealError class (each emitted module declares its\n");
+        sb.append("    // own), so it is not an instance of the entry module's DealError\n");
+        sb.append("    // and no catch above names its type. Every emitted DealError is a\n");
+        sb.append("    // RuntimeException subclass whose simple name is \"DealError\" with\n");
+        sb.append("    // a package-private String `code` field; the reflection unwrap\n");
+        sb.append("    // reports the DEAL code and message uniformly, exactly like the\n");
+        sb.append("    // LuaJIT runtime reports errors from any module (ISSUE-0109\n");
+        sb.append("    // cross-module nominal-check fixtures pin the E8001 shape).\n");
+        sb.append("    private static void reportError(Throwable e) {\n");
+        sb.append("        Throwable t = e;\n");
+        sb.append("        while (t instanceof ExceptionInInitializerError && t.getCause() != null) {\n");
+        sb.append("            t = t.getCause();\n");
+        sb.append("        }\n");
+        sb.append("        String code = null;\n");
+        sb.append("        if (\"DealError\".equals(t.getClass().getSimpleName())) {\n");
+        sb.append("            try {\n");
+        sb.append("                java.lang.reflect.Field f = t.getClass().getDeclaredField(\"code\");\n");
+        sb.append("                f.setAccessible(true);\n");
+        sb.append("                code = String.valueOf(f.get(t));\n");
+        sb.append("            } catch (ReflectiveOperationException ignored) { }\n");
+        sb.append("        }\n");
+        sb.append("        if (code != null) {\n");
+        sb.append("            System.out.println(\"DEAL_ERROR_CODE: \" + code + \" \" + t.getMessage());\n");
+        sb.append("        } else {\n");
+        sb.append("            System.out.println(\"DEAL_ERROR_CODE: \"\n");
+        sb.append("                + (t.getMessage() == null ? t.toString() : t.getMessage()));\n");
+        sb.append("        }\n");
+        sb.append("        System.exit(1);\n");
         sb.append("    }\n");
         sb.append("}\n");
         return sb.toString();

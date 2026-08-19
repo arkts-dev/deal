@@ -81,7 +81,20 @@ import java.util.Set;
  *       string-key map ({@code $T}), and a class-typed table read — the
  *       slice's one untyped boundary — runs the emitted {@code $check<C>}
  *       nominal check (E8001 for wrong-class and non-class values),</li>
- *   <li>E6000 rejection of out-of-scope constructs (class exports, optional/
+ *   <li>imported classes and cross-module nominal identity (ISSUE-0109):
+ *       {@code export class} emits the same generated nested class as a
+ *       local one (the export only adds the class to the module type),
+ *       imported-class values map to the DECLARING module's generated
+ *       class ({@code Lib.$C_C}), imported construction
+ *       ({@code new Lib.$C_Point(...)} with literal defaults applied
+ *       inline and provided fields reordered to declaration order),
+ *       class-typed table reads run the declaring module's nominal check
+ *       helper (success for a genuine instance; E8001 naming both
+ *       module-qualified identities for a same-name sibling from another
+ *       module), and a same-named local class never satisfies the
+ *       imported-class guard (locality is decided from the Type.Class
+ *       module path),</li>
+ *   <li>E6000 rejection of out-of-scope constructs (optional/
  *       nullable/array/class/table-typed class fields, nested class
  *       declarations, table reads with primitive targets, table field
  *       writes, nested/nullable/class/function arrays, for/for-of
@@ -232,7 +245,7 @@ public class JvmBackendTest {
             testShadowedInitializer();
             testParameterShadowing();
             testClassSlice();
-            testImportedClassValuesRejected();
+            testImportedClassValues();
             testUseBeforeDeclarationRejected();
             testFunctionBodyModuleFieldAccessGuards();
             testAssignmentBeforeDeclarationRejected();
@@ -642,7 +655,7 @@ public class JvmBackendTest {
         List<Case> cases = List.of(
             new Case("class declaration", """
                 export class Point {
-                  x: int;
+                  x?: int;
                 }
                 export function test(): int { return 1; }
                 """),
@@ -5083,7 +5096,7 @@ public class JvmBackendTest {
 
         writeFile("src/unsupported_main.deal", """
             export class Point {
-              x: int;
+              x?: int;
             }
             export function run(): int { return 1; }
             """);
@@ -5105,17 +5118,25 @@ public class JvmBackendTest {
             "no artifact written when the backend reports errors");
     }
 
-    /** An annotation-less local inferred from an imported module's
-     * class-typed export is E6000 (imported classes / cross-module
-     * nominal identity are deferred to ISSUE-0109): the inferred
-     * {@code Type.Class} names the IMPORTED module's class, whose
-     * generated Java type the importing module never declares — the
-     * pre-fix backend emitted {@code $C_C c = Lib.getC();} and javac
-     * rejected the artifact ("cannot find symbol: class $C_C") after the
-     * CLI reported success (ISSUE-0095 reviewer round 9). */
-    private static void testImportedClassValuesRejected() throws Exception {
-        System.out.println("-- Orchestrator: imported-class values are E6000 --");
+    /**
+     * ISSUE-0109: imported-class values, imported-class construction, and
+     * cross-module nominal identity now compile and run through the real
+     * orchestrator pipeline (module discovery → checking → per-module
+     * JvmBackend codegen → javac → java), replacing the pre-ISSUE-0109
+     * E6000 deferral. Locality is still decided from the Type.Class
+     * MODULE PATH: a same-named local class must never satisfy the guard
+     * for a foreign path, and the emitted Java type of an imported class
+     * is the DECLARING module's generated nested class ({@code Lib.$C_C}),
+     * never a local one.
+     */
+    private static void testImportedClassValues() throws Exception {
+        System.out.println("-- Orchestrator: imported-class values, construction, and nominal identity --");
 
+        // (1) An annotation-less local inferred from an imported module's
+        // class-typed export: `let c = lib.getC()` declares c as
+        // Lib.$C_C (the pre-ISSUE-0109 backend emitted `$C_C c =
+        // Lib.getC();` and javac rejected the artifact after the CLI
+        // reported success).
         writeFile("src/lib.deal", """
             class C { v: int = 0; }
             export function getC(): C { return { v: 1 }; }
@@ -5124,7 +5145,7 @@ public class JvmBackendTest {
             import * as lib from "./lib"
             export function run(): int {
               let c = lib.getC();
-              return 1;
+              return c.v + 1;
             }
             """);
 
@@ -5137,22 +5158,32 @@ public class JvmBackendTest {
             (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
-        check(!success, "JVM backend rejects imported-class values: "
+        check(success, "JVM backend supports imported-class values: "
             + orchestrator.diagnostics());
-        check(orchestrator.diagnostics().stream()
-                .anyMatch(d -> "E6000".equals(d.code())
-                    && d.message().contains("imported classes")),
-            "orchestrator reports E6000 naming imported classes: "
-                + orchestrator.diagnostics());
-        check(!Files.exists(outputDir.resolve("Entry.java")),
-            "no artifact written when the backend reports errors");
+        check(Files.exists(outputDir.resolve("Entry.java"))
+                && Files.exists(outputDir.resolve("Lib.java")),
+            "imported-class artifacts written");
+        if (success && Files.exists(outputDir.resolve("Entry.java"))) {
+            String java = Files.readString(outputDir.resolve("Entry.java"));
+            check(java.contains("Lib.$C_C c = Lib.getC();"),
+                "the inferred imported-class value declares the imported "
+                + "module's generated class type: " + java);
+            check(java.contains("return intAdd((c).v, 1L);"),
+                "the imported class field read emits a direct access fed "
+                + "into int arithmetic: " + java);
+            ExecResult exec = runJvmArtifacts(outputDir,
+                parseProgram("export function run(): int { return 1; }"),
+                "Entry");
+            check(exec.exitCode() == 0 && exec.output().contains("2"),
+                "the imported-class value reads back c.v + 1 = 2: "
+                    + exec.output());
+        }
 
-        // ISSUE-0095 reviewer round 10: locality is decided from the
-        // Type.Class MODULE PATH, never the bare class name — the pre-fix
-        // name-keyed guard let a same-named LOCAL class C satisfy the
-        // imported-class check for lib.C, emitting `$C_C c = Lib.getC();`
-        // (javac: incompatible types Lib.$C_C → Entry.$C_C) after the CLI
-        // reported "Compilation successful: 2 module(s)".
+        // (2) A same-named LOCAL class must not satisfy the imported-class
+        // guard: lib.C stays Lib.$C_C while the local C stays
+        // Entry.$C_C (the pre-fix name-keyed guard emitted `$C_C c =
+        // Lib.getC();` — javac: incompatible types Lib.$C_C → Entry.$C_C
+        // — after the CLI reported success).
         writeFile("src2/lib.deal", """
             class C { v: int = 0; }
             export function getC(): C { return { v: 9 }; }
@@ -5162,7 +5193,8 @@ public class JvmBackendTest {
             class C { v: int = 0; }
             export function run(): int {
               let c = lib.getC();
-              return 1;
+              let localC: C = { v: 4 };
+              return c.v * 10 + localC.v;
             }
             """);
 
@@ -5175,22 +5207,28 @@ public class JvmBackendTest {
             (DealConfig) null, roots2, Path.of(".").toAbsolutePath().normalize());
 
         boolean success2 = orchestrator2.compile();
-        check(!success2,
-            "a same-named local class must not satisfy the imported-class "
-            + "guard: " + orchestrator2.diagnostics());
-        check(orchestrator2.diagnostics().stream()
-                .anyMatch(d -> "E6000".equals(d.code())
-                    && d.message().contains("imported classes")),
-            "the same-named-local-class scenario reports E6000 naming "
-            + "imported classes: " + orchestrator2.diagnostics());
-        check(!Files.exists(outputDir2.resolve("Entry.java")),
-            "no artifact written for the same-named-local-class scenario");
+        check(success2, "a same-named local class stays distinct from the "
+            + "imported class: " + orchestrator2.diagnostics());
+        if (success2 && Files.exists(outputDir2.resolve("Entry.java"))) {
+            String java = Files.readString(outputDir2.resolve("Entry.java"));
+            check(java.contains("Lib.$C_C c = Lib.getC();"),
+                "the imported type references Lib.$C_C even with a local C: "
+                    + java);
+            check(java.contains("new $C_C(4L)"),
+                "the local construction keeps the local $C_C: " + java);
+            ExecResult exec = runJvmArtifacts(outputDir2,
+                parseProgram("export function run(): int { return 1; }"),
+                "Entry");
+            check(exec.exitCode() == 0 && exec.output().contains("94"),
+                "imported 9 and local 4 stay distinct: 9 * 10 + 4 = 94: "
+                    + exec.output());
+        }
 
-        // A lib.C-context object literal (`lib.takeC({ v: 9 })`) in a
-        // module that also declares its own C: the construction site must
-        // refuse the imported class type instead of tagging the literal
-        // with the LOCAL module identity (the pre-fix silent
-        // nominal-identity corruption).
+        // (3) Imported-class construction: a lib.C-context object literal
+        // (`lib.takeC({ v: 9 })`) emits `new Lib.$C_C(9L)` in the module
+        // that also declares its own C (the pre-fix silent
+        // nominal-identity corruption tagged the literal with the LOCAL
+        // module identity).
         writeFile("src3/lib.deal", """
             class C { v: int = 0; }
             export function takeC(c: C): int { return c.v; }
@@ -5212,36 +5250,43 @@ public class JvmBackendTest {
             (DealConfig) null, roots3, Path.of(".").toAbsolutePath().normalize());
 
         boolean success3 = orchestrator3.compile();
-        check(!success3,
-            "construction of an imported class type is E6000 even with a "
-            + "same-named local class: " + orchestrator3.diagnostics());
-        check(orchestrator3.diagnostics().stream()
-                .anyMatch(d -> "E6000".equals(d.code())
-                    && d.message().contains("imported classes")),
-            "the imported-class construction scenario reports E6000 naming "
-            + "imported classes: " + orchestrator3.diagnostics());
-        check(!Files.exists(outputDir3.resolve("Entry.java")),
-            "no artifact written for the imported-class construction "
-            + "scenario");
+        check(success3, "construction of an imported class type compiles: "
+            + orchestrator3.diagnostics());
+        if (success3 && Files.exists(outputDir3.resolve("Entry.java"))) {
+            String java = Files.readString(outputDir3.resolve("Entry.java"));
+            check(java.contains("new Lib.$C_C(9L)"),
+                "the imported construction emits new Lib.$C_C(...): " + java);
+            ExecResult exec = runJvmArtifacts(outputDir3,
+                parseProgram("export function run(): int { return 1; }"),
+                "Entry");
+            check(exec.exitCode() == 0 && exec.output().contains("9"),
+                "the imported construction runs to 9: " + exec.output());
+        }
 
-        // Positive control: passing an imported class VALUE straight
-        // through (`lib.takeC(lib.getC())`) never binds a local or
-        // constructs with the foreign type, so it must still compile and
-        // run — the value is produced and consumed inside lib.
+        // (4) Imported-class construction with defaulted fields: omitted
+        // fields receive their declared literal defaults inline
+        // (`new Lib.$C_Point(0L, 5L)` for `{ y: 5 }` over
+        // `x: int = 0; y: int = 0`), and a provided field whose literal
+        // order differs from declaration order lands in its declared
+        // field.
         writeFile("src4/lib.deal", """
-            class C { v: int = 0; }
-            export function getC(): C { return { v: 42 }; }
-            export function takeC(c: C): int { return c.v; }
+            export class Point {
+              x: int = 10;
+              y: int = 20;
+            }
+            export function sum(p: Point): int { return p.x + p.y; }
             """);
         writeFile("src4/entry.deal", """
             import * as lib from "./lib"
             export function run(): int {
-              return lib.takeC(lib.getC());
+              let a: lib.Point = {};
+              let b: lib.Point = { y: 5, x: 2 };
+              return a.x + a.y * 10 + lib.sum(b);
             }
             """);
 
         Path entryFile4 = tmpDir.resolve("src4/entry.deal").toAbsolutePath();
-        Path outputDir4 = tmpDir.resolve("build/imported_class_passthrough");
+        Path outputDir4 = tmpDir.resolve("build/imported_class_defaults");
         List<Path> roots4 = List.of(tmpDir.resolve("src4").toAbsolutePath());
 
         CompilationOrchestrator orchestrator4 = new CompilationOrchestrator(
@@ -5249,34 +5294,143 @@ public class JvmBackendTest {
             (DealConfig) null, roots4, Path.of(".").toAbsolutePath().normalize());
 
         boolean success4 = orchestrator4.compile();
-        check(success4, "imported class value pass-through compiles: "
-            + orchestrator4.diagnostics());
-        check(Files.exists(outputDir4.resolve("Entry.java"))
-                && Files.exists(outputDir4.resolve("Lib.java")),
-            "pass-through artifacts written");
+        check(success4, "imported construction with literal defaults "
+            + "compiles: " + orchestrator4.diagnostics());
         if (success4 && Files.exists(outputDir4.resolve("Entry.java"))) {
-            Files.writeString(outputDir4.resolve("JvmConformanceRunner.java"),
-                BackendConformanceTest.buildJvmRunner(
-                    parseProgram("""
-                        export function run(): int { return 1; }
-                        """), "Entry"));
-            ProcessBuilder javac = new ProcessBuilder("javac", "-encoding", "UTF-8",
-                "Entry.java", "Lib.java", "JvmConformanceRunner.java");
-            javac.directory(outputDir4.toFile());
-            javac.redirectErrorStream(true);
-            Process p = javac.start();
-            String javacOut = new String(p.getInputStream().readAllBytes()).trim();
-            int javacExit = p.waitFor();
-            check(javacExit == 0, "pass-through artifacts compile with javac: "
-                + javacOut);
-            ProcessBuilder javaRun = new ProcessBuilder("java", "-cp",
-                outputDir4.toString(), "JvmConformanceRunner");
-            javaRun.redirectErrorStream(true);
-            Process p2 = javaRun.start();
-            String out = new String(p2.getInputStream().readAllBytes()).trim();
-            int exit = p2.waitFor();
-            check(exit == 0 && out.contains("42"),
-                "the pass-through call runs to 42: " + out);
+            String java = Files.readString(outputDir4.resolve("Entry.java"));
+            check(java.contains("new Lib.$C_Point(10L, 20L)"),
+                "the empty literal emits every default inline: " + java);
+            check(java.contains("new Lib.$C_Point(2L, 5L)"),
+                "provided fields land in declaration order regardless of "
+                + "literal order: " + java);
+            ExecResult exec = runJvmArtifacts(outputDir4,
+                parseProgram("export function run(): int { return 1; }"),
+                "Entry");
+            check(exec.exitCode() == 0 && exec.output().contains("217"),
+                "10 + 20 * 10 + (2 + 5) = 217: " + exec.output());
+        }
+
+        // (5) Cross-module nominal runtime checks: two modules export a
+        // SAME-NAME class; an instance crossing an untyped table passes
+        // its own module's check (LibA.$checkItem succeeds) and fails the
+        // foreign module's check with E8001 naming both module-qualified
+        // identities (@src5a/Item vs @src5b/Item) — identity is
+        // module-qualified, never bare-name. The foreign check raises the
+        // IMPORTED module's DealError, which the conformance runner
+        // reports with the DEAL_ERROR_CODE contract.
+        writeFile("src5/modela.deal", """
+            export class Item { tag: string = ""; }
+            export function makeItem(tag: string): Item { return { tag: tag }; }
+            export function readItem(i: Item): string { return i.tag; }
+            """);
+        writeFile("src5/modelb.deal", """
+            export class Item { tag: string = ""; }
+            export function makeItem(tag: string): Item { return { tag: tag }; }
+            export function readItem(i: Item): string { return i.tag; }
+            """);
+        writeFile("src5/entry.deal", """
+            import * as modela from "./modela"
+            import * as modelb from "./modelb"
+            export function run(): string {
+              let holder: table = { item: modela.makeItem("from-a") };
+              let a: modela.Item = holder.item;
+              return modela.readItem(a);
+            }
+            """);
+        writeFile("src5/entry_fail.deal", """
+            import * as modela from "./modela"
+            import * as modelb from "./modelb"
+            export function run(): string {
+              let holder: table = { item: modela.makeItem("from-a") };
+              let b: modelb.Item = holder.item;
+              return modelb.readItem(b);
+            }
+            """);
+
+        Path outputDir5 = tmpDir.resolve("build/imported_nominal");
+        // Success entry: entry.deal (the orchestrator resolves only the
+        // imports each entry needs).
+        CompilationOrchestrator orchestrator5 = new CompilationOrchestrator(
+            tmpDir.resolve("src5/entry.deal").toAbsolutePath(),
+            outputDir5, false, false, false, Backend.JVM,
+            (DealConfig) null, List.of(tmpDir.resolve("src5").toAbsolutePath()),
+            Path.of(".").toAbsolutePath().normalize());
+        boolean success5 = orchestrator5.compile();
+        check(success5, "cross-module nominal check success shape compiles: "
+            + orchestrator5.diagnostics());
+        if (success5 && Files.exists(outputDir5.resolve("Entry.java"))) {
+            String java = Files.readString(outputDir5.resolve("Entry.java"));
+            check(java.contains("Modela.$checkItem(("),
+                "the imported class-typed table read emits the declaring "
+                + "module's nominal check: " + java);
+            ExecResult exec = runJvmArtifacts(outputDir5,
+                parseProgram("export function run(): string { return \"\"; }"),
+                "Entry");
+            check(exec.exitCode() == 0 && exec.output().contains("from-a"),
+                "the genuine instance passes its own module's nominal "
+                + "check: " + exec.output());
+        }
+
+        Path outputDir6 = tmpDir.resolve("build/imported_nominal_fail");
+        CompilationOrchestrator orchestrator6 = new CompilationOrchestrator(
+            tmpDir.resolve("src5/entry_fail.deal").toAbsolutePath(),
+            outputDir6, false, false, false, Backend.JVM,
+            (DealConfig) null, List.of(tmpDir.resolve("src5").toAbsolutePath()),
+            Path.of(".").toAbsolutePath().normalize());
+        boolean success6 = orchestrator6.compile();
+        check(success6, "cross-module nominal check failure shape compiles: "
+            + orchestrator6.diagnostics());
+        if (success6 && Files.exists(outputDir6.resolve("Entry_fail.java"))) {
+            ExecResult exec = runJvmArtifacts(outputDir6,
+                parseProgram("export function run(): string { return \"\"; }"),
+                "Entry_fail");
+            check(exec.exitCode() == 1,
+                "the wrong-module same-name instance fails at runtime "
+                + "(exit 1): " + exec.output());
+            check(exec.output().contains("DEAL_ERROR_CODE: E8001"),
+                "the foreign nominal check reports E8001: " + exec.output());
+            check(exec.output().contains(
+                    "expected instance of @modelb/Item, got @modela/Item"),
+                "the E8001 message names both module-qualified identities: "
+                    + exec.output());
+        }
+
+        // (6) Positive control: passing an imported class VALUE straight
+        // through (`lib.takeC(lib.getC())`) never binds a local or
+        // constructs with the foreign type, so it must compile and run —
+        // the value is produced and consumed inside lib.
+        writeFile("src6/lib.deal", """
+            class C { v: int = 0; }
+            export function getC(): C { return { v: 42 }; }
+            export function takeC(c: C): int { return c.v; }
+            """);
+        writeFile("src6/entry.deal", """
+            import * as lib from "./lib"
+            export function run(): int {
+              return lib.takeC(lib.getC());
+            }
+            """);
+
+        Path entryFile6 = tmpDir.resolve("src6/entry.deal").toAbsolutePath();
+        Path outputDir7 = tmpDir.resolve("build/imported_class_passthrough");
+        List<Path> roots6 = List.of(tmpDir.resolve("src6").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator7 = new CompilationOrchestrator(
+            entryFile6, outputDir7, false, false, false, Backend.JVM,
+            (DealConfig) null, roots6, Path.of(".").toAbsolutePath().normalize());
+
+        boolean success7 = orchestrator7.compile();
+        check(success7, "imported class value pass-through compiles: "
+            + orchestrator7.diagnostics());
+        check(Files.exists(outputDir7.resolve("Entry.java"))
+                && Files.exists(outputDir7.resolve("Lib.java")),
+            "pass-through artifacts written");
+        if (success7 && Files.exists(outputDir7.resolve("Entry.java"))) {
+            ExecResult exec = runJvmArtifacts(outputDir7,
+                parseProgram("export function run(): int { return 1; }"),
+                "Entry");
+            check(exec.exitCode() == 0 && exec.output().contains("42"),
+                "the pass-through call runs to 42: " + exec.output());
         }
     }
 

@@ -1,4 +1,4 @@
-# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice, ISSUE-0095 classes and nominal checks slice, ISSUE-0096 modules/imports/exports slice, ISSUE-0097 stdlib-boundary slice)
+# deal.codegen.jvm — JVM Backend (ISSUE-0091 skeleton, ISSUE-0092 while/template slice, ISSUE-0093 functions and direct calls slice, ISSUE-0094 primitive arrays slice, ISSUE-0095 classes and nominal checks slice, ISSUE-0096 modules/imports/exports slice, ISSUE-0097 stdlib-boundary slice, ISSUE-0109 imported classes and cross-module nominal identity slice)
 
 A small but real end-to-end JVM backend for the DEAL compiler. It walks the
 typed AST (the compiler's IR — `deal-compiler-architecture-v1`) and emits a
@@ -43,13 +43,15 @@ Supported (real semantics, spec JVM value mapping):
 | `import * as lib from "./lib"` (compiled project module, ISSUE-0096) | the import statement emits a load-time `static { <LibClass>.__init$(); }` trigger (a static-method invocation initializes the imported class per JLS §12.4.1, running its load-time statements exactly where LuaJIT runs `require` — depth-first in import order, also for unused aliases); `lib.add(a, b)` emits a static call on the imported module's emitted class (`Lib.add(a, b)`) |
 
 Out of scope (rejected with a backend `E6000` diagnostic, never silently
-miscompiled): `export class` (the module ABI surface for classes),
-optional class fields (their reads produce nullable values — ISSUE-0108),
-nullable class fields, array/class/table-typed class fields, nested
-(block/function-local) class declarations, table reads with
-primitive/nullable/array/function target types (this slice checks class and
-table targets only), table field writes, imported classes and cross-module
-nominal identity (ISSUE-0109), nullables, nullable arrays, arrays of
+miscompiled): optional class fields (their reads produce nullable values
+— ISSUE-0108), nullable class fields, array/class/table-typed class
+fields, nested (block/function-local) class declarations, table reads
+with primitive/nullable/array/function target types (this slice checks
+class and table targets only), table field writes, non-literal default
+expressions on IMPORTED classes (an imported default evaluates in the
+declaring module's scope under LuaJIT, where the defaults table is built
+at load time; only literal constants emit inline at the construction
+site — ISSUE-0109), nullables, nullable arrays, arrays of
 nullable elements, nested (multi-dimensional) arrays, class arrays,
 function arrays, function types, stdlib imports other than the four
 supported modules (`std/console`, `std/string`, `std/math`, `std/time` —
@@ -820,8 +822,8 @@ live in `test/JvmBackendTest`):
 | declaration/host-module import stays E6000 (out of slice, never silently dropped) | `JvmBackendTest.testOrchestratorJvmDeclarationImportRejected`; backend-level no-map rejection by `JvmBackendTest.testModuleImportBackendEmission` |
 | module-level alias use before its import statement is E6000 (LuaJIT fails at load; Java would silently initialize) | `JvmBackendTest.testModuleImportUseBeforeImportRejected` (direct field-initializer, direct statement, and transitive function-call shapes; the import-first shape stays clean) |
 
-Not in this slice (deferred, documented): imported classes and
-cross-module nominal identity (ISSUE-0109), stdlib modules other than
+Not in this slice (deferred, documented): non-literal default
+expressions on imported classes (ISSUE-0109), stdlib modules other than
 `std/console`, function values, async/await, host ABI, `@jsonable`.
 
 
@@ -1323,3 +1325,63 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   never through an export's return value. Every current fixture has at
   most one zero-arity export, and every cross-backend observable output
   goes through `console.log`/`console.error`.
+
+## Review evidence: imported classes and cross-module nominal identity (ISSUE-0109)
+
+Every form runs the real whole-project pipeline — `CompilationOrchestrator`
+with `Backend.JVM` (module discovery, signature extraction, dependency
+ordering, checking, per-module `JvmBackend` codegen) → `javac` over every
+emitted artifact plus a runner → `java` executing the emitted artifacts —
+in `test/conformance/fixtures/jvm-xmod-classes-slice.json` (twelve
+fixtures, JVM-only, driven by `BackendConformanceTest.runMultiModuleTestCase`;
+emission-level pins in `JvmBackendTest.testImportedClassValues`):
+
+| Form | Coverage |
+|---|---|
+| exported class consumed through an import | `jvm-xmod-class-export-import` (`export class Point` + factory; the entry annotates `let p: lib.Point`, reads fields, computes 34); `JvmBackendTest.testImportedClassValues` pins the `export class` emission path and the exported class registered in the pre-scan |
+| imported-class values (inference) | `jvm-xmod-class-export-import` / `JvmBackendTest.testImportedClassValues` (`Lib.$C_C c = Lib.getC();` — the pre-ISSUE-0109 backend emitted `$C_C c = Lib.getC();` and javac rejected the artifact after the CLI reported success) |
+| imported qualified type annotations | `let p: lib.Point` in every construction fixture; the `QualifiedType` resolution goes through the import alias to the declaring module's class (`resolveTypeNode` ISSUE-0109 branch) |
+| imported-class construction | `jvm-xmod-class-construction-defaults` (empty literal → all defaults inline; `{ y: 5, x: 2 }` → `new Lib.$C_Point(2L, 5L)` — provided fields reorder to declaration order), `jvm-xmod-class-construction-eval-order` (provided fields evaluate in literal order across the boundary: y-first, x-second), `JvmBackendTest.testImportedClassValues` emission pins (`new Lib.$C_C(9L)`, `new Lib.$C_Point(10L, 20L)`) |
+| same-named local class must not satisfy the imported-class guard | `JvmBackendTest.testImportedClassValues` scenario (2)/(3) — the local `$C_C` construction and the imported `Lib.$C_C` value stay distinct Java types and compute 94 |
+| class-typed values passed across the boundary | `jvm-xmod-class-param-pass` (entry-constructed `lib.Pair` handed to `lib.sum` → 12) |
+| class-typed values returned across the boundary | `jvm-xmod-class-return-mutate-roundtrip` (`lib.makeBox()` → entry field write → `lib.readBox` observes 12: reference identity across modules) |
+| imported-class parameters and returns on entry-local functions | `jvm-xmod-class-param-return-local-fn` (`function shift(p: lib.Point): lib.Point` mutates and returns; caller reads fields, 12) |
+| module-qualified same-name class identity | `jvm-xmod-same-name-isolation` (both `modela.Item` and `modelb.Item` bound in one entry; distinct Java types `Modela.$C_Item`/`Modelb.$C_Item`, distinct calls → a:one, b:two) |
+| runtime nominal-check success across modules | `jvm-xmod-nominal-check-success` (a genuine instance crossing an untyped table passes the declaring module's `Modela.$checkItem` and reads back from-a); emission pin `Modela.$checkItem((` in `JvmBackendTest.testImportedClassValues` |
+| runtime nominal-check failure across modules | `jvm-xmod-nominal-check-failure-same-name` (E8001 `expected instance of @modelb/Item, got @modela/Item`, exit 1 — the `$identityOf` unwrap reads the foreign `$Base`'s ClassDescriptor, matching LuaJIT's `actual_class`; the LuaJIT reference pin is the conformance suite's `modid-class-identity`), `jvm-xmod-nominal-check-failure-null` (E8001 `expected class instance, got null`) |
+| class-exporting module import load-time side effects | `jvm-xmod-class-unused-import-side-effect` (unused alias still runs `lib-class-initialized` — the import trigger is unchanged by class exports) |
+| frontend compile-error gate before any backend | `jvm-xmod-class-frontend-nominal-error` (E3001 `modela.Item` → `modelb.Item`, no artifacts) |
+
+Backend-level guarantees added by this slice:
+
+- **Locality is always the Type.Class module path.** The importing
+  module maps `Type.Class(name, modulePath)` to
+  `classNameFor(modulePath) + "." + "$C_" + javaName(name)` only when the
+  module is among `importAliases` values AND the orchestrator supplied
+  its class declarations; anything else is E6000 (`importedClassModuleRef`).
+  A bare-name lookup can never tag a foreign value with the local class's
+  identity.
+- **Imported construction validates the declaring shape.** Optional,
+  nullable, and non-primitive imported fields are E6000 (the same
+  restriction as local classes); defaults must be literal constants —
+  a non-literal default evaluates in the declaring module's scope under
+  LuaJIT (its defaults table is built there at load time), so inline
+  re-emission in the importing module's scope would silently bind
+  different identifiers.
+- **The emitted constructor reference is the declaring module's nested
+  class.** `new Lib.$C_Point(...)` resolves against the same field order
+  the declaring module emitted; every artifact shares the default package,
+  and the generated nested classes/check helpers are package-private, so
+  the cross-module references are exactly what javac compiles (verified by
+  the javac subprocess in every fixture).
+- **Cross-module nominal failure reports the real identity.** Each module
+  declares its own nested `$Base`, so a foreign instance is not
+  `instanceof` the checking module's `$Base`; the check helper reads the
+  actual identity through the emitted `$identityOf` (a structural read of
+  the `$identity` field every generated `$Base` carries — the `$` is
+  unspellable in DEAL identifiers, so no user field can collide) and
+  reports `expected instance of <expected>, got <actual>` with both
+  module-qualified descriptors. The conformance runner's `reportError`
+  unwraps any emitted module's `DealError` (each module declares its own
+  nested error class) into the uniform `DEAL_ERROR_CODE: <code> <message>`
+  contract, exactly like the LuaJIT runtime reports errors from any module.

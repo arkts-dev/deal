@@ -1045,7 +1045,14 @@ public final class CompilationOrchestrator {
             // declaration/host module reaches the backend unresolved and is
             // rejected with E6000 at the import statement — declaration and
             // host modules stay out of the JVM slice (host ABI is deferred).
+            // ISSUE-0109: the same discovery pass collects each imported
+            // module's class declarations (module path → name →
+            // declaration) so the backend can emit imported-class types,
+            // construction, and nominal checks against the declaring
+            // module's generated nested classes.
             Map<String, String> importResolutions = new HashMap<>();
+            Map<String, Map<String, ClassDeclaration>> importedClasses =
+                new HashMap<>();
             for (StatementNode stmt : info.rawAst.statements()) {
                 if (stmt instanceof ImportDeclaration imp) {
                     String resolvedSource = resolveImportPath(imp.modulePath(),
@@ -1055,13 +1062,29 @@ public final class CompilationOrchestrator {
                         if (imported != null && !imported.isDeclarationFile) {
                             importResolutions.put(imp.modulePath(),
                                 imported.modulePath);
+                            Map<String, ClassDeclaration> classes =
+                                new LinkedHashMap<>();
+                            for (StatementNode importedStmt
+                                    : imported.rawAst.statements()) {
+                                ClassDeclaration cd = null;
+                                if (importedStmt instanceof ClassDeclaration c) {
+                                    cd = c;
+                                } else if (importedStmt instanceof ExportDeclaration ed
+                                        && ed.declaration() instanceof ClassDeclaration c) {
+                                    cd = c;
+                                }
+                                if (cd != null) {
+                                    classes.putIfAbsent(cd.name(), cd);
+                                }
+                            }
+                            importedClasses.put(imported.modulePath, classes);
                         }
                     }
                 }
             }
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
-                importResolutions);
+                importResolutions, importedClasses);
             for (Diagnostic d : res.diagnostics()) {
                 diagnostics.add(d);
                 hasErrors = true;
