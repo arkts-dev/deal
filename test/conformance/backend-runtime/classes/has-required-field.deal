@@ -11,7 +11,13 @@ class User {
 export function test_has(): boolean {
   let u: User = { name: "Ada" };
   let missing: boolean = has(u.nick); // false
+  if (missing !== false) {
+    throw { code: "TEST_FAIL", message: "has() reported optional field present before assignment" };
+  }
   u.nick = "ads";
   let present: boolean = has(u.nick); // true
+  if (present !== true) {
+    throw { code: "TEST_FAIL", message: "has() reported optional field missing after assignment" };
+  }
   return !missing && present;
 }
