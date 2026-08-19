@@ -7,5 +7,9 @@ function one(x: int): int { return x; }
 
 export function test_arity(): int {
   let takesTwo: (x: int, y: int) => int = one;
-  return takesTwo(10, 20);
+  let result: int = takesTwo(10, 20);
+  if (result !== 10) {
+    throw { code: "TEST_FAIL", message: "arity-extension: extended call result mismatch" };
+  }
+  return result;
 }
