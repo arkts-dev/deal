@@ -17,3 +17,7 @@ export function test_table_write(): string {
   }
   return key;
 }
+
+export function main(): null {
+  return null;
+}

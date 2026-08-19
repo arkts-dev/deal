@@ -15,3 +15,7 @@ export function test_host_array_return_ok(): string {
   }
   return "host array return ok";
 }
+
+export function main(): null {
+  return null;
+}

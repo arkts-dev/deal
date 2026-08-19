@@ -10,3 +10,7 @@ export function test_rbrace(): string {
   }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

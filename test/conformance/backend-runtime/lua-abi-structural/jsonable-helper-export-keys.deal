@@ -15,3 +15,7 @@ export function test_abi_jsonable_helper_export_keys(): null {
   }
   throw { code: "TEST_FAIL", message: "jsonable helper export key failed" };
 }
+
+export function main(): null {
+  return null;
+}

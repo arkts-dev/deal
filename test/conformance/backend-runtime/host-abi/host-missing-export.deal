@@ -8,3 +8,7 @@ import * as host from "host/missing_export"
 export function test_host_missing_export(): string {
   return host.ping();
 }
+
+export function main(): null {
+  return null;
+}

@@ -11,3 +11,7 @@ export async function test_async_decl(): int {
   let x: int = await helper();
   return x;
 }
+
+export function main(): null {
+  return null;
+}

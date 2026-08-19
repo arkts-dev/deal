@@ -44,6 +44,7 @@ public class ModuleSystemTest {
         writeFile("src/sci_console.deal", """
             import * as console from "std/console"
             export function test(): null { console.log("hello"); }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/sci_console.deal").toAbsolutePath();
@@ -72,6 +73,7 @@ public class ModuleSystemTest {
         writeFile("src/sci_table.deal", """
             import * as tbl from "std/table"
             export function getKeys(t: table): string[] { return tbl.keys(t); }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/sci_table.deal").toAbsolutePath();
@@ -101,6 +103,7 @@ public class ModuleSystemTest {
             import * as json from "std/json"
             export function encode(t: table): string { return json.stringify(t); }
             export function decode(s: string): table { return json.parse(s); }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/sci_json.deal").toAbsolutePath();
@@ -134,6 +137,7 @@ public class ModuleSystemTest {
             export function bigger(a: int, b: int): int { return math.max(a, b); }
             export function smaller(a: int, b: int): int { return math.min(a, b); }
             export function sqRoot(x: number): number { return math.sqrt(x); }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/sci_math.deal").toAbsolutePath();
@@ -162,6 +166,7 @@ public class ModuleSystemTest {
         writeFile("src/sci_time.deal", """
             import * as time from "std/time"
             export function currentTime(): int { return time.nowMillis(); }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/sci_time.deal").toAbsolutePath();
@@ -194,6 +199,7 @@ public class ModuleSystemTest {
                 let len: int = strings.length(s);
                 return math.maxInt(len, 0);
             }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/sci_cross.deal").toAbsolutePath();
@@ -253,6 +259,7 @@ public class ModuleSystemTest {
                 let encoded: string = json.stringify(data);
                 return json.parse(encoded);
             }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/sci_jsonrt.deal").toAbsolutePath();
@@ -648,6 +655,7 @@ public class ModuleSystemTest {
             import * as B from "./diamondB"
             import * as C from "./diamondC"
             export function run(): int { return B.val() + C.val(); }
+            export function main(): null { return null; }
             """);
         writeFile("src/diamondB.deal", """
             import * as D from "./diamondD"
@@ -694,6 +702,7 @@ public class ModuleSystemTest {
         writeFile("src/ocC.deal", """
             import * as A from "./ocA"
             export function run(): int { return A.foo(10); }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/ocC.deal").toAbsolutePath();
@@ -751,6 +760,7 @@ public class ModuleSystemTest {
 
         writeFile("src/hello.deal", """
             export function greet(): string { return "hi"; }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/hello.deal").toAbsolutePath();
@@ -787,6 +797,7 @@ public class ModuleSystemTest {
         writeFile("src/main.deal", """
             import * as lib from "./lib"
             export function run(): int { return lib.add(10, 20); }
+            export function main(): null { return null; }
             """);
         writeFile("src/lib.deal", """
             export function add(a: int, b: int): int { return a + b; }
@@ -869,7 +880,8 @@ public class ModuleSystemTest {
         // exprReferencesImport must track through AwaitExpression
         writeFile("src/ai_await_main.deal", """
             import * as Lib from "./ai_await_lib"
-            async function main(): int { return await Lib.getValue(); }
+            async function getValue(): int { return await Lib.getValue(); }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/ai_await_main.deal").toAbsolutePath();
@@ -996,6 +1008,7 @@ public class ModuleSystemTest {
         writeFile("src/da.deal", """
             import * as B from "./db"
             export function foo(x: int): int { return B.get(x); }
+            export function main(): null { return null; }
             """);
         writeFile("src/db.deal", """
             import * as A from "./da"
@@ -1103,6 +1116,7 @@ public class ModuleSystemTest {
             import * as A from "./tdc2_a"
             import * as C from "./tdc2_c"
             export function test(): int { return A.callB(1) + C.callD(2); }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/tdc2_entry.deal").toAbsolutePath();
@@ -1139,6 +1153,7 @@ public class ModuleSystemTest {
         writeFile("src/sf_main.deal", """
             import * as strings from "std/string"
             export function getLen(s: string): int { return strings.length(s); }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/sf_main.deal").toAbsolutePath();
@@ -1188,6 +1203,7 @@ public class ModuleSystemTest {
             import * as P from "./cm_class"
             export function getX(p: P.Point): int { return p.x; }
             export function getY(p: P.Point): int { return p.y; }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/cm_main.deal").toAbsolutePath();
@@ -1229,6 +1245,7 @@ public class ModuleSystemTest {
             export function makeVec(): V.Vec {
                 return { x: 1, y: 2 };
             }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/cc_main.deal").toAbsolutePath();
@@ -1264,6 +1281,7 @@ public class ModuleSystemTest {
             export function checkName(obj: O.Opt): boolean {
                 return has(obj.name);
             }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/ch_main.deal").toAbsolutePath();
@@ -1292,6 +1310,7 @@ public class ModuleSystemTest {
         writeFile("src/qt_main.deal", """
             import * as D from "./qt_class"
             export function getValue(d: D.Data): int { return d.value; }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/qt_main.deal").toAbsolutePath();
@@ -1331,6 +1350,7 @@ public class ModuleSystemTest {
                 let r = R.make(42);
                 return r.value;
             }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/ce_main.deal").toAbsolutePath();
@@ -1377,6 +1397,7 @@ public class ModuleSystemTest {
         writeFile("src/runner.deal", """
             import * as C from "./calc"
             export function run(): int { return C.add(1, 2); }
+            export function main(): null { return null; }
             """);
         writeFile("src/calc.d.deal", """
             export function add(a: int, b: int): int;
@@ -1436,6 +1457,7 @@ public class ModuleSystemTest {
             import * as cfg from "host/cfg"
             import * as console from "std/console"
             export function run(): int { console.log("x"); return cfg.ping(); }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/ext_main.deal").toAbsolutePath();
@@ -1594,6 +1616,7 @@ public class ModuleSystemTest {
         writeFile("src/host_smoke.deal", """
             import * as cfg from "host/cfg"
             export function run(): int { return cfg.ping(); }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/host_smoke.deal").toAbsolutePath();
@@ -1693,6 +1716,7 @@ public class ModuleSystemTest {
             import * as cfg from "host/x\\y"
             export function echo(u: cfg.User): int { return u.port; }
             export function run(): int { return cfg.ping(); }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/backslash_smoke.deal").toAbsolutePath();
@@ -1813,6 +1837,8 @@ public class ModuleSystemTest {
             }
 
             export function run(): int { return cfg.ping(); }
+
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/jsonable_host.deal").toAbsolutePath();
@@ -1910,6 +1936,7 @@ public class ModuleSystemTest {
 
         writeFile("src/cli_test.deal", """
             export function hello(): string { return "world"; }
+            export function main(): null { return null; }
             """);
         Path entryFile = tmpDir.resolve("src/cli_test.deal").toAbsolutePath();
         Path outputDir = tmpDir.resolve("build/cli_test");
@@ -1936,6 +1963,7 @@ public class ModuleSystemTest {
             export function greet(name: string): string {
                 return "Hello, " + name;
             }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/e2e_single.deal").toAbsolutePath();
@@ -1985,6 +2013,7 @@ public class ModuleSystemTest {
         writeFile("src/e2e_main.deal", """
             import * as lib from "./e2e_lib"
             export function run(): int { return lib.add(10, 20); }
+            export function main(): null { return null; }
             """);
         writeFile("src/e2e_lib.deal", """
             export function add(a: int, b: int): int { return a + b; }
@@ -2050,6 +2079,7 @@ public class ModuleSystemTest {
         writeFile("src/e2e_std.deal", """
             import * as strings from "std/string"
             export function test_len(): int { return strings.length("hello"); }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/e2e_std.deal").toAbsolutePath();
@@ -2167,6 +2197,7 @@ public class ModuleSystemTest {
 
         writeFile("src/e2e_cli.deal", """
             export function add(a: int, b: int): int { return a + b; }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/e2e_cli.deal").toAbsolutePath();

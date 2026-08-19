@@ -21,3 +21,7 @@ export function test_jsonable_nested_arrays(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

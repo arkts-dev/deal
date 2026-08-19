@@ -11,3 +11,7 @@ export function test_nested_table_read_write(): int {
   if (result !== 7) { throw { code: "TEST_FAIL", message: "nested table read/write failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

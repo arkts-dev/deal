@@ -18,3 +18,7 @@ export function test_mutual_recursion(): boolean {
   if (!odd(9)) { throw { code: "TEST_FAIL", message: "odd failed" }; }
   return true;
 }
+
+export function main(): null {
+  return null;
+}

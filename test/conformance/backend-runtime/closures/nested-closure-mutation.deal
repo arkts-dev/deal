@@ -16,3 +16,7 @@ export function test_nested_closure_mutation(): int {
   if (result !== 9) { throw { code: "TEST_FAIL", message: "closure mutation failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

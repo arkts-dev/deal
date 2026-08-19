@@ -14,3 +14,7 @@ export function test_count(): int {
   }
   return n;
 }
+
+export function main(): null {
+  return null;
+}

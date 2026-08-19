@@ -16,3 +16,7 @@ export function test_ifelse(): int {
   }
   return x;
 }
+
+export function main(): null {
+  return null;
+}

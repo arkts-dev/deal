@@ -21,3 +21,7 @@ export function test_string_transform_helpers(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

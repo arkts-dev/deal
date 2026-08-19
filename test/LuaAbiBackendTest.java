@@ -1043,9 +1043,10 @@ public class LuaAbiBackendTest {
 
     /**
      * Descriptor emission pins (host-module-abi Verification 3c): nullable-
-     * function parameters emit the "?F" form, rest parameters emit the full
-     * array arm, function-element rest arrays emit the "..." bracket form,
-     * and nullable class returns keep the legacy "T|null" spelling.
+     * function parameters emit the "?F" form, and nullable class returns
+     * keep the legacy "T|null" spelling. DEAL v1.2 removed rest parameters,
+     * so the v1.1 rest arms ("...string[]", "...[(int)->int]") are gone:
+     * the backend emits fixed-parameter descriptors only.
      */
     @Test
     public void hostLoaderDescriptorEmissionPins() {
@@ -1055,12 +1056,13 @@ public class LuaAbiBackendTest {
             List.of(Types.nullable(
                 Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE))),
             Type.Null.INSTANCE));
-        // export function log(level: string, ...parts: string[]): null;
+        // export function log(level: string): null;
         hostExports.put("log", Types.func(List.of(Type.String.INSTANCE),
-            Types.array(Type.String.INSTANCE), Type.Null.INSTANCE));
-        // export function applyAll(prefix: string, ...fns: ((x: int) => int)[]): string;
-        hostExports.put("applyAll", Types.func(List.of(Type.String.INSTANCE),
-            Types.array(Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)),
+            Type.Null.INSTANCE));
+        // export function applyAll(prefix: string, fn: (x: int) => int): string;
+        hostExports.put("applyAll", Types.func(
+            List.of(Type.String.INSTANCE,
+                Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)),
             Type.String.INSTANCE));
         // export function find(s: string): User | null;
         hostExports.put("find", Types.func(List.of(Type.String.INSTANCE),
@@ -1072,7 +1074,7 @@ public class LuaAbiBackendTest {
         String source = "import * as cfg from \"host/cfg\"\n"
             + "export function f(): int {\n"
             + "  cfg.register(null);\n"
-            + "  cfg.log(\"a\", \"b\");\n"
+            + "  cfg.log(\"a\");\n"
             + "  return 1;\n"
             + "}\n";
         LexResult lex = new Lexer(source, "test.deal").tokenize();
@@ -1095,9 +1097,9 @@ public class LuaAbiBackendTest {
             "test.deal", Map.of(), Map.of("host/cfg", hostExports));
 
         assertThat(lua, containsString("register = \"(?(int)->int)->null\""));
-        assertThat(lua, containsString("log = \"(string,...string[])->null\""));
+        assertThat(lua, containsString("log = \"(string)->null\""));
         assertThat(lua, containsString(
-            "applyAll = \"(string,...[(int)->int])->string\""));
+            "applyAll = \"(string,(int)->int)->string\""));
         assertThat(lua, containsString(
             "find = \"(string)->@host.cfg/User|null\""));
     }

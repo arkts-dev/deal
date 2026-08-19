@@ -10,3 +10,7 @@ export function test_console_log_dynamic_nonstring(): null {
   console.log(t.value);
   return null;
 }
+
+export function main(): null {
+  return null;
+}

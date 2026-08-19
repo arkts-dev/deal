@@ -11,3 +11,7 @@ export function test_module_single_instance_state(): int {
   if (a !== 1 || b !== 2) { throw { code: "TEST_FAIL", message: "module state not shared" }; }
   return b;
 }
+
+export function main(): null {
+  return null;
+}

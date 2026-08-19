@@ -8,3 +8,7 @@ export function test_array_write_gap(): int {
   xs[4] = 99;
   return xs[4];
 }
+
+export function main(): null {
+  return null;
+}

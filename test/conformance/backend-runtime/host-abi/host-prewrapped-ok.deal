@@ -13,3 +13,7 @@ export function test_host_prewrapped_ok(): null {
   host.ping();
   return null;
 }
+
+export function main(): null {
+  return null;
+}

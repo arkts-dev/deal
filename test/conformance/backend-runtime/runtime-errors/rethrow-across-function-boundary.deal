@@ -20,3 +20,7 @@ export function test_rethrow_across_function_boundary(): null {
   outer();
   return null;
 }
+
+export function main(): null {
+  return null;
+}

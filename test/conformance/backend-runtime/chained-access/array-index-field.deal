@@ -15,3 +15,7 @@ export function test_array_index_then_field(): int {
   if (result !== 9) { throw { code: "TEST_FAIL", message: "arr[0].field lowering failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

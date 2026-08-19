@@ -11,3 +11,7 @@ export function test_precedence(): int {
   // a should be 14, b should be 20; return their sum (34)
   return a + b;
 }
+
+export function main(): null {
+  return null;
+}

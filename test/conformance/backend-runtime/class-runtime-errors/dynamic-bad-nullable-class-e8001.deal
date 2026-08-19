@@ -12,3 +12,7 @@ export function test_dynamic_bad_nullable_class(): Box | null {
   let b: Box | null = holder.item;
   return b;
 }
+
+export function main(): null {
+  return null;
+}

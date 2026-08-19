@@ -9,3 +9,7 @@ export function test_source_loop_error(): int {
   }
   return 0;
 }
+
+export function main(): null {
+  return null;
+}

@@ -7,3 +7,7 @@ export function test_number_null(): number {
   let x: number | null = null;
   return number(x);
 }
+
+export function main(): null {
+  return null;
+}

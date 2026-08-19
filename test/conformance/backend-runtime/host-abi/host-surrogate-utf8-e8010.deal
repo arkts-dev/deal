@@ -1,0 +1,17 @@
+// @spec: Runtime execution model — String boundary validation
+// @description: A host-returned string encoding a UTF-16 surrogate code point is rejected at the declared host-function boundary with E8010
+// @expected: runtime-error E8010
+// @features: modules, host-abi, string, unicode, runtime-errors
+
+import * as host from "host/bad_string"
+
+export function test_host_surrogate_utf8(): string {
+  // The raw host returns the CESU-style encoding of U+D800 — a surrogate
+  // code point, never a valid Unicode scalar value.
+  let s: string = host.surrogateString();
+  return s;
+}
+
+export function main(): null {
+  return null;
+}

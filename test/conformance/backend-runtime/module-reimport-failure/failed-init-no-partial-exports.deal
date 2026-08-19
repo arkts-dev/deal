@@ -8,3 +8,7 @@ import * as Lib from "./partial_export_lib"
 export function test_failed_init_no_partial_exports(): int {
   return Lib.value();
 }
+
+export function main(): null {
+  return null;
+}

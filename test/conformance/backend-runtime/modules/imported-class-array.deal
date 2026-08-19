@@ -11,3 +11,7 @@ export function test_imported_class_array(): int {
   if (result !== 7) { throw { code: "TEST_FAIL", message: "imported class array failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

@@ -10,3 +10,7 @@ export function test_imported_result_index_member(): int {
   if (result !== 6) { throw { code: "TEST_FAIL", message: "imported result index/member failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

@@ -12,3 +12,7 @@ export function test_double_import_shared_state(): int {
   if (a !== 1 || b !== 2) { throw { code: "TEST_FAIL", message: "double import did not share state" }; }
   return b;
 }
+
+export function main(): null {
+  return null;
+}

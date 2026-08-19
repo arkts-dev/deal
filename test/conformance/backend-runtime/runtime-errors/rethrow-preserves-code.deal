@@ -11,3 +11,7 @@ export function test_rethrow_preserves_code(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

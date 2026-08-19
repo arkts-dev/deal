@@ -8,3 +8,7 @@ import * as Lib from "./failing_init_lib"
 export function test_module_init_failure(): int {
   return Lib.value();
 }
+
+export function main(): null {
+  return null;
+}

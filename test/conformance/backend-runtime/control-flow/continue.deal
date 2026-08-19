@@ -15,3 +15,7 @@ export function test_continue(): int {
   }
   return sum;
 }
+
+export function main(): null {
+  return null;
+}

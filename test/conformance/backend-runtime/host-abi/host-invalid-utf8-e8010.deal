@@ -1,0 +1,17 @@
+// @spec: Runtime execution model — String boundary validation
+// @description: A host-returned string containing malformed UTF-8 bytes is rejected at the declared host-function boundary with E8010
+// @expected: runtime-error E8010
+// @features: modules, host-abi, string, unicode, runtime-errors
+
+import * as host from "host/bad_string"
+
+export function test_host_bad_utf8(): string {
+  // The raw host returns "a\x80b" — a stray UTF-8 continuation byte.
+  // The declared (string) boundary must reject the invalid encoding.
+  let s: string = host.badString();
+  return s;
+}
+
+export function main(): null {
+  return null;
+}

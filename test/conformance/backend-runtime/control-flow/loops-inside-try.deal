@@ -20,3 +20,7 @@ export function test_loops_inside_try(): int {
   if (total !== 6) { throw { code: "TEST_FAIL", message: "loop total mismatch" }; }
   return total;
 }
+
+export function main(): null {
+  return null;
+}

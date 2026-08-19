@@ -10,3 +10,7 @@ export function test_empty(): string {
   }
   return s;
 }
+
+export function main(): null {
+  return null;
+}

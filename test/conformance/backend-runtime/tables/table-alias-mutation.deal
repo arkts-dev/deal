@@ -11,3 +11,7 @@ export function test_table_alias_mutation(): int {
   if (result !== 9) { throw { code: "TEST_FAIL", message: "table alias mutation failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

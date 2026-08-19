@@ -424,9 +424,22 @@ public class ConformanceTest {
      */
     private static GeneratedLua generateLuaWithCompanions(Path file,
             CompanionCatalog catalog) throws Exception {
+        // The main test file is the v1.2 entry module of its own invocation:
+        // it must export a non-async main(): null and the backend invokes
+        // main() from the generated chunk.
         CompanionCatalog.Artifact mainArtifact =
-            catalog.artifactFor(file.toAbsolutePath().normalize());
+            catalog.entryArtifactFor(file.toAbsolutePath().normalize());
         if (mainArtifact == null || mainArtifact.luaSource() == null) {
+            return null;
+        }
+        boolean backendErrors = mainArtifact.backendDiagnostics().stream()
+            .anyMatch(d -> "error".equals(d.severity()));
+        if (backendErrors) {
+            for (Diagnostic d : mainArtifact.backendDiagnostics()) {
+                if ("error".equals(d.severity())) {
+                    System.out.println("    " + d);
+                }
+            }
             return null;
         }
 
@@ -644,7 +657,11 @@ public class ConformanceTest {
             "      -- Skip compiler-generated functions ($ in name)\n" +
             "      -- as they typically require arguments\n" +
             "      if not string.find(__k, \"$\", 1, true) then\n" +
-            "        __v.f()\n" +
+            "        -- The backend already invoked main() at chunk end\n" +
+            "        -- (v1.2 entry contract): never invoke it twice.\n" +
+            "        if __k ~= \"main\" then\n" +
+            "          __v.f()\n" +
+            "        end\n" +
             "      end\n" +
             "    end\n" +
             "  end\n" +
@@ -668,7 +685,11 @@ public class ConformanceTest {
             "      if type(__v) == 'table' and __v.__kind == 'function' then\n" +
             "        -- Skip compiler-generated functions ($ in name)\n" +
             "        if not string.find(__k, \"$\", 1, true) then\n" +
-            "          __v.f()\n" +
+            "          -- The backend already invoked main() at chunk end\n" +
+            "          -- (v1.2 entry contract): never invoke it twice.\n" +
+            "          if __k ~= \"main\" then\n" +
+            "            __v.f()\n" +
+            "          end\n" +
             "        end\n" +
             "      end\n" +
             "    end\n" +
@@ -775,10 +796,12 @@ public class ConformanceTest {
             Map<String, String> importResolutions,
             SymbolTable symbolTable,
             NameResolver nameResolver,
-            Set<Path> companionDependencies
+            Set<Path> companionDependencies,
+            List<Diagnostic> backendDiagnostics
         ) {}
 
         private final Map<Path, Artifact> cache = new LinkedHashMap<>();
+        private final Map<Path, Artifact> entryCache = new LinkedHashMap<>();
         private final Set<Path> inProgress = new HashSet<>();
         /** Shared host-fixture registry (host-module-abi D6). */
         private final HostRegistry hostRegistry = new HostRegistry();
@@ -791,16 +814,32 @@ public class ConformanceTest {
          * same tolerant contract production resolution has.
          */
         Artifact artifactFor(Path file) {
+            return artifactFor(file, false);
+        }
+
+        /**
+         * Compiles the main test file as the v1.2 entry module (the
+         * backend validates the exported non-async main(): null and emits
+         * the main() invocation). The entry artifact is cached separately
+         * from companion artifacts — the same file never mixes both roles
+         * in one test run.
+         */
+        Artifact entryArtifactFor(Path file) {
+            return artifactFor(file, true);
+        }
+
+        private Artifact artifactFor(Path file, boolean isEntry) {
             Path key = file.toAbsolutePath().normalize();
-            Artifact cached = cache.get(key);
+            Map<Path, Artifact> targetCache = isEntry ? entryCache : cache;
+            Artifact cached = targetCache.get(key);
             if (cached != null) return cached;
             if (inProgress.contains(key)) return null;
 
             inProgress.add(key);
             try {
-                Artifact artifact = compile(key);
+                Artifact artifact = compile(key, isEntry);
                 if (artifact != null) {
-                    cache.put(key, artifact);
+                    targetCache.put(key, artifact);
                 }
                 return artifact;
             } finally {
@@ -808,7 +847,7 @@ public class ConformanceTest {
             }
         }
 
-        private Artifact compile(Path file) {
+        private Artifact compile(Path file, boolean isEntry) {
             try {
                 String source = Files.readString(file);
                 String filename = file.toString();
@@ -876,13 +915,16 @@ public class ConformanceTest {
                     filename, symTable, nr, parseResult.program());
                 if (result.hasErrors()) return null;
 
-                String luaSource = LuaBackend.generateWithImports(
-                    parseResult.program(), result, filename, importResolutions,
+                LuaBackend backend = new LuaBackend(
+                    result.typeMap(), result.symbolTable(), filename);
+                String luaSource = backend.generateFromInstance(
+                    parseResult.program(), isEntry, importResolutions,
                     hostModules);
                 return new Artifact(luaSource,
                     Collections.unmodifiableMap(new LinkedHashMap<>(importResolutions)),
                     symTable, nr,
-                    Collections.unmodifiableSet(new LinkedHashSet<>(companionDependencies)));
+                    Collections.unmodifiableSet(new LinkedHashSet<>(companionDependencies)),
+                    backend.diagnostics());
             } catch (Exception e) {
                 return null; // mirrors today's null degradation paths
             }

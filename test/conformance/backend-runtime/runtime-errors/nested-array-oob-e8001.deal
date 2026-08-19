@@ -7,3 +7,7 @@ export function test_nested_array_oob(): int {
   let rows: int[][] = [[1], [2]];
   return rows[1][5];
 }
+
+export function main(): null {
+  return null;
+}

@@ -22,3 +22,7 @@ export function test_nested_scope_recursion(): int {
   }
   return 0;
 }
+
+export function main(): null {
+  return null;
+}

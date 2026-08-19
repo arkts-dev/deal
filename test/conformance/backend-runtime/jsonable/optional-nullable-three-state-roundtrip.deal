@@ -52,3 +52,7 @@ export function test_jsonable_optional_nullable_three_state(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

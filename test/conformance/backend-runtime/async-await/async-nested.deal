@@ -9,3 +9,7 @@ async function b(): int { return await c(); }
 export async function a(): int {
   return await b();
 }
+
+export function main(): null {
+  return null;
+}

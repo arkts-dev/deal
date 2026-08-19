@@ -9,3 +9,7 @@ export function test_abi_nested_index_chain(): int {
   if (result !== 31) { throw { code: "TEST_FAIL", message: "nested index lowering failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

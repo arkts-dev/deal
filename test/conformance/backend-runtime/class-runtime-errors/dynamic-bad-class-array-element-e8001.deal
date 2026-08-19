@@ -12,3 +12,7 @@ export function test_dynamic_bad_class_array_element(): int {
   let xs: Box[] = holder.items;
   return xs[0].value;
 }
+
+export function main(): null {
+  return null;
+}

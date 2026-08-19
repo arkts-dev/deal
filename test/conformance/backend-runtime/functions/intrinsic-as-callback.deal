@@ -14,3 +14,7 @@ export function test_intrinsic_as_callback(): number {
   }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

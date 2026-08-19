@@ -13,3 +13,7 @@ export function test_object_array_index(): int {
   if (result !== 8) { throw { code: "TEST_FAIL", message: "obj.arr[0] lowering failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

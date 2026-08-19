@@ -8,3 +8,7 @@ export function test_source_location_nested_array_oob(): int {
   let value: int = rows[0][4];
   return value;
 }
+
+export function main(): null {
+  return null;
+}

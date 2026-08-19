@@ -14,3 +14,7 @@ export function test_array_index(): int {
   }
   return value;
 }
+
+export function main(): null {
+  return null;
+}

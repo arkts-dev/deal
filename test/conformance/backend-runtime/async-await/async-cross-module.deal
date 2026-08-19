@@ -14,3 +14,7 @@ export async function test_cross_module_greet(): string {
   let s: string = await lib.greet("world");
   return s;
 }
+
+export function main(): null {
+  return null;
+}

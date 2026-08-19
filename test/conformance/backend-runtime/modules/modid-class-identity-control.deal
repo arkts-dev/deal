@@ -13,3 +13,7 @@ export function test_same_module_class_identity_roundtrip(): int {
   }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

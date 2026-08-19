@@ -12,3 +12,7 @@ export function test_import_alias_member_access(): int {
   if (x !== 2 || y !== 3) { throw { code: "TEST_FAIL", message: "import alias member access failed" }; }
   return x + y;
 }
+
+export function main(): null {
+  return null;
+}

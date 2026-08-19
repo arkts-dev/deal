@@ -13,3 +13,7 @@ export function test_closure_captures_imported_function(): int {
   if (result !== 7) { throw { code: "TEST_FAIL", message: "closure imported function failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

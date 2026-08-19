@@ -12,3 +12,7 @@ export function test_imported_recursive_callback(): int {
   if (result !== 4) { throw { code: "TEST_FAIL", message: "imported recursive callback failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

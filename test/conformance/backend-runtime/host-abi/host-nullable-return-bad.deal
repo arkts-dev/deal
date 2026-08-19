@@ -8,3 +8,7 @@ import * as host from "host/nullable_return"
 export function test_host_nullable_return_bad(): string | null {
   return host.find("__BAD__");
 }
+
+export function main(): null {
+  return null;
+}

@@ -16,3 +16,7 @@ async function level1(): int { return await level2(); }
 export async function test(): int {
   return await level1();
 }
+
+export function main(): null {
+  return null;
+}

@@ -11,3 +11,7 @@ export function test_intrinsic_arity_extension(): int {
   }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

@@ -11,3 +11,7 @@ export function test_backend_temp_name_near_collision(): int {
   if (value !== 2) { throw { code: "TEST_FAIL", message: "array value mismatch" }; }
   return __idx + value;
 }
+
+export function main(): null {
+  return null;
+}

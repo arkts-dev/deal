@@ -12,3 +12,7 @@ export function test_table_mutation_through_module(): int {
   if (result !== 13) { throw { code: "TEST_FAIL", message: "table mutation through module failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

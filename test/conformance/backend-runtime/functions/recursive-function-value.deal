@@ -14,3 +14,7 @@ export function test_recursive_function_value(): int {
   if (result !== 120) { throw { code: "TEST_FAIL", message: "factorial failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

@@ -6,3 +6,7 @@
 export function test_int_noninteger(): int {
   return int(3.7);
 }
+
+export function main(): null {
+  return null;
+}

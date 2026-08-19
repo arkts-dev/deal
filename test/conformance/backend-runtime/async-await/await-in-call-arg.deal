@@ -11,3 +11,7 @@ export async function test_await_in_call_arg(): int {
   if (result !== 3) { throw { code: "TEST_FAIL", message: "await in call arg failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

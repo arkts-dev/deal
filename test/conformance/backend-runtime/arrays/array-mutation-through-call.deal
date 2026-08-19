@@ -14,3 +14,7 @@ export function test_array_mutation_through_call(): int {
   if (xs[0] !== 11) { throw { code: "TEST_FAIL", message: "array mutation through call failed" }; }
   return xs[0];
 }
+
+export function main(): null {
+  return null;
+}

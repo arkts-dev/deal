@@ -13,3 +13,7 @@ export function test_while(): int {
   }
   return x;
 }
+
+export function main(): null {
+  return null;
+}

@@ -22,3 +22,7 @@ export function test_jsonable_optional_nullable_nested_class(): null {
   }
   throw { code: "TEST_FAIL", message: "nested value fromJson failed" };
 }
+
+export function main(): null {
+  return null;
+}

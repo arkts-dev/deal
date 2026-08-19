@@ -10,3 +10,7 @@ export function test_cross_module_class_identity(): int {
   let holder: table = { item: LibA.make(5) };
   return LibB.needBox(holder.item);
 }
+
+export function main(): null {
+  return null;
+}

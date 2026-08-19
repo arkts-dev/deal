@@ -10,3 +10,7 @@ export function test_error_inside_for_of(): int {
   }
   return 0;
 }
+
+export function main(): null {
+  return null;
+}

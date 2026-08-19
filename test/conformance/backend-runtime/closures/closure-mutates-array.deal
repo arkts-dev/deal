@@ -14,3 +14,7 @@ export function test_closure_mutates_array(): int {
   if (result !== 6) { throw { code: "TEST_FAIL", message: "closure array mutation failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

@@ -17,3 +17,7 @@ export function test_string_search_helpers(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

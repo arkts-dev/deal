@@ -22,3 +22,7 @@ export function test_direct_recursion(): int {
   }
   return 0;
 }
+
+export function main(): null {
+  return null;
+}

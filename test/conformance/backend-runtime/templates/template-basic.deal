@@ -11,3 +11,7 @@ export function test_greet(): string {
   }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

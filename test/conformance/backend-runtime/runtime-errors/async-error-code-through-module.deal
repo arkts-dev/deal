@@ -8,3 +8,7 @@ import * as Lib from "./async_error_lib"
 export async function test_async_error_code_through_module(): int {
   return await Lib.fail();
 }
+
+export function main(): null {
+  return null;
+}

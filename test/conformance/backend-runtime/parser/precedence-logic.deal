@@ -14,3 +14,7 @@ export function test_logic_prec(): int {
   }
   return 0;
 }
+
+export function main(): null {
+  return null;
+}

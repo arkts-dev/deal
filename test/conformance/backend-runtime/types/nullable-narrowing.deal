@@ -14,3 +14,7 @@ export function test_narrowing(): int {
   }
   throw { code: "TEST_FAIL", message: "nullable narrowing: null is a failing path" };
 }
+
+export function main(): null {
+  return null;
+}

@@ -16,3 +16,7 @@ export async function outer(): string {
     return e.code;
   }
 }
+
+export function main(): null {
+  return null;
+}

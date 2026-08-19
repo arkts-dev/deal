@@ -1,0 +1,7 @@
+// Host-module fixture (host-module-abi D6): declaration for the bad_string
+// host module — a host surface whose returned strings violate DEAL v1.2
+// string encoding rules (malformed UTF-8 bytes, UTF-16 surrogate code
+// points).
+
+export function badString(): string;
+export function surrogateString(): string;

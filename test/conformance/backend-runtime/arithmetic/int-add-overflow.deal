@@ -6,3 +6,7 @@
 export function test_int_add_overflow(): int {
   return 9007199254740991 + 1;
 }
+
+export function main(): null {
+  return null;
+}

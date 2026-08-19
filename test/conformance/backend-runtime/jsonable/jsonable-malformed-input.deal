@@ -10,3 +10,7 @@ export function test_jsonable_malformed_input(): null {
   if (u !== null) { throw { code: "TEST_FAIL", message: "malformed input should return null" }; }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

@@ -28,3 +28,7 @@ export function test_continue(): int {
   }
   return total;
 }
+
+export function main(): null {
+  return null;
+}

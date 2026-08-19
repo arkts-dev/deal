@@ -10,3 +10,7 @@ export function test_module_initialization_order(): int {
   if (result !== 2) { throw { code: "TEST_FAIL", message: "module initialization order failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

@@ -8,3 +8,7 @@ export function test_dynamic_nonfunction_to_function_runtime_error(): int {
   let f: (x: int) => int = t.f;
   return f(1);
 }
+
+export function main(): null {
+  return null;
+}

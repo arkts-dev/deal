@@ -15,3 +15,7 @@ export function test_closure_mutates_class_field(): int {
   if (b.value !== 5) { throw { code: "TEST_FAIL", message: "closure class field mutation failed" }; }
   return b.value;
 }
+
+export function main(): null {
+  return null;
+}

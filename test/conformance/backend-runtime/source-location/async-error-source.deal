@@ -10,3 +10,7 @@ async function failAsync(): int {
 export async function test_source_location_async_error(): int {
   return await failAsync();
 }
+
+export function main(): null {
+  return null;
+}

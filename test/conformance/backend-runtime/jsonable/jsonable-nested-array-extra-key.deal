@@ -10,3 +10,7 @@ export function test_jsonable_nested_array_extra_key_rejected(): null {
   if (p !== null) { throw { code: "TEST_FAIL", message: "nested extra key should be rejected" }; }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

@@ -11,3 +11,7 @@ export function test_generated_name_no_collision(): int {
   if (result !== 6) { throw { code: "TEST_FAIL", message: "generated name collision" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

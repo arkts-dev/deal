@@ -28,3 +28,7 @@ export function test_nested_try_runtime_error_caught(): int {
 
   return result;
 }
+
+export function main(): null {
+  return null;
+}

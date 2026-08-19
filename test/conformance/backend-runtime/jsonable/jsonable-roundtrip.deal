@@ -29,3 +29,7 @@ export function test_roundtrip(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

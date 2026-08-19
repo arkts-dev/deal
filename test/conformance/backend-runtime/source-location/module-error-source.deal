@@ -9,3 +9,7 @@ export function test_source_location_module_error(): null {
   Lib.fail();
   return null;
 }
+
+export function main(): null {
+  return null;
+}

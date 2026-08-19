@@ -10,3 +10,7 @@ export function test_int(): int {
   }
   return i;
 }
+
+export function main(): null {
+  return null;
+}

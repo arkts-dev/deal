@@ -14,3 +14,7 @@ export function test_for_closure(): int {
   }
   return f0() * 100 + f1() * 10 + f2();
 }
+
+export function main(): null {
+  return null;
+}

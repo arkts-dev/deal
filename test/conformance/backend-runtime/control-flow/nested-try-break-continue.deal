@@ -21,3 +21,7 @@ export function test_nested_try_break_continue(): int {
   if (total !== 5) { throw { code: "TEST_FAIL", message: "nested try break/continue failed" }; }
   return total;
 }
+
+export function main(): null {
+  return null;
+}

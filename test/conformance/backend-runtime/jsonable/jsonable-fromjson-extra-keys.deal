@@ -15,3 +15,7 @@ export function test_fromJson_extra_keys(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

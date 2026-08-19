@@ -18,3 +18,7 @@ export function test_class_array_values(): int {
   if (result !== 12) { throw { code: "TEST_FAIL", message: "class array mutation failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

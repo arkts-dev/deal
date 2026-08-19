@@ -51,3 +51,7 @@ export function test_optional_nullable(): null {
 
   return null;
 }
+
+export function main(): null {
+  return null;
+}

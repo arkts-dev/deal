@@ -204,6 +204,58 @@ test("check_string on number errors with E8001", function()
   assert_error(function() __rt.check_string(42) end, "E8001")
 end)
 
+test("check_string accepts multi-byte UTF-8 scalar sequences", function()
+  -- a, U+00E9, U+4E2D, U+1F600, b
+  assert(__rt.check_string("a\xC3\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80b")
+    == "a\xC3\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80b")
+end)
+
+test("check_string rejects stray continuation byte with E8001", function()
+  assert_error(function() __rt.check_string("a\x80b") end, "E8001")
+end)
+
+test("check_string rejects truncated multi-byte sequence with E8001", function()
+  assert_error(function() __rt.check_string("\xC3") end, "E8001")
+  assert_error(function() __rt.check_string("\xE4\xB8") end, "E8001")
+end)
+
+test("check_string rejects overlong encodings with E8001", function()
+  assert_error(function() __rt.check_string("\xC0\x80") end, "E8001")
+  assert_error(function() __rt.check_string("\xE0\x80\x80") end, "E8001")
+  assert_error(function() __rt.check_string("\xF0\x80\x80\x80") end, "E8001")
+end)
+
+test("check_string rejects UTF-16 surrogate code points with E8001", function()
+  assert_error(function() __rt.check_string("\xED\xA0\x80") end, "E8001")
+  assert_error(function() __rt.check_string("\xED\xBF\xBF") end, "E8001")
+end)
+
+test("check_string rejects code points above U+10FFFF with E8001", function()
+  assert_error(function() __rt.check_string("\xF4\x90\x80\x80") end, "E8001")
+end)
+
+test("utf8_next walks one Unicode scalar value per step", function()
+  local s = "a\xC3\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80b"
+  local cursor, seen = 0, {}
+  while true do
+    local next_cursor, ch = __rt.utf8_next(s, cursor)
+    if next_cursor == nil then break end
+    seen[#seen + 1] = ch
+    cursor = next_cursor
+  end
+  assert(#seen == 5, "expected 5 scalars, got " .. #seen)
+  assert(seen[1] == "a")
+  assert(seen[2] == "\xC3\xA9")
+  assert(seen[3] == "\xE4\xB8\xAD")
+  assert(seen[4] == "\xF0\x9F\x98\x80")
+  assert(seen[5] == "b")
+end)
+
+test("utf8_next raises E8001 on malformed input", function()
+  assert_error(function() __rt.utf8_next("\x80", 0) end, "E8001")
+  assert_error(function() __rt.utf8_next("\xED\xA0\x80", 0) end, "E8001")
+end)
+
 -- ==================== check_table tests ====================
 
 test("check_table({}) returns {}", function()
@@ -834,26 +886,26 @@ test("check_int on table errors with E8001", function()
   assert_error(function() __rt.check_int({}) end, "E8001")
 end)
 
--- ==================== from_lua_function rest parameter tests ====================
+-- ==================== from_lua_function legacy rest descriptor tests ====================
+-- DEAL v1.2 removed rest parameters. Legacy "...T" descriptor entries are no
+-- longer special: arity is exact and the "..." entry fails type checks like
+-- any unknown descriptor.
 
-test("from_lua_function with rest params passes", function()
+test("from_lua_function legacy rest descriptor enforces exact arity", function()
   local raw = function(sep, ...)
     local args = {...}
     return sep .. table.concat(args, sep)
   end
   local w = __rt.from_lua_function("(string,...string[])->string", raw)
-  -- First call with multiple rest args
-  local r = w.f(",", "a", "b", "c")
-  assert(r == ",a,b,c")
-  -- Second call should also work (no mutation issue)
-  local r2 = w.f("-", "x", "y")
-  assert(r2 == "-x-y")
-  -- Call with zero rest args (minimum)
-  local r3 = w.f(",")
-  assert(r3 == ",")
+  -- Extra arguments are rejected: no rest arm absorbs them (v1.2).
+  assert_error(function() w.f(",", "a", "b", "c") end, "E8010")
+  assert_error(function() w.f(",", "x", "y") end, "E8010")
+  -- The legacy "..." param descriptor itself matches no DEAL value, so even
+  -- a two-argument call fails the parameter check with E8010.
+  assert_error(function() w.f(",", "a") end, "E8010")
 end)
 
-test("from_lua_function rest param wrong type errors with E8010", function()
+test("from_lua_function legacy rest descriptor wrong type errors with E8010", function()
   local raw = function(sep, ...) return sep end
   local w = __rt.from_lua_function("(string,...int[])->string", raw)
   assert_error(function() w.f(",", 1, "x") end, "E8010")
@@ -1718,17 +1770,18 @@ test("from_lua_function nullable-function param rejects raw function with E8010"
   assert_error(function() wrapper.f(function(x) return x end) end, "E8010")
 end)
 
-test("from_lua_function rest of function elements adapts and checks per argument", function()
+test("from_lua_function legacy rest-of-function descriptor is exact-arity and never adapts extra args", function()
   local received = nil
   local wrapper = __rt.from_lua_function("(string,...[(int)->int])->string", function(sep, ...)
     received = { ... }
     return sep
   end)
   local inner = function(x) return x + 1 end
-  local r = wrapper.f(",", __rt.function_("(int)->int", inner))
-  assert(r == ",")
-  assert(type(received[1]) == "function" and received[1] == inner)
-  -- a non-wrapper rest arg raises E8010 per argument, never the internal E8001
+  -- Extra arguments raise E8010 (no rest arm); the raw function never runs.
+  assert_error(function()
+    wrapper.f(",", __rt.function_("(int)->int", inner))
+  end, "E8010")
+  assert(received == nil)
   assert_error(function()
     wrapper.f(",", function(x) return x end)
   end, "E8010")
@@ -1855,17 +1908,20 @@ test("load_host async export: real handle passes, junk raises E8010", function()
   assert_error(function() host2.fetch_bad.f() end, "E8010")
 end)
 
-test("load_host rest export calls and checks per element", function()
+test("load_host legacy rest export enforces exact arity (v1.2: no rest arm)", function()
   local host = __rt.load_host(HOST_FIXTURE, { join = "(string,...string[])->string" })
-  assert(host.join.f(",", "a", "b") == "a,b")
-  assert_error(function() host.join.f(",", 1) end, "E8010")
+  -- Extra arguments raise E8010 — nothing absorbs them (v1.2).
+  assert_error(function() host.join.f(",", "a", "b") end, "E8010")
+  -- The legacy "..." param descriptor matches no DEAL value, so the
+  -- two-argument call fails the parameter check with E8010.
+  assert_error(function() host.join.f(",", "a") end, "E8010")
 end)
 
-test("load_host rest-of-function-elements export adapts and checks per element", function()
+test("load_host legacy rest-of-function-elements export is exact-arity (v1.2)", function()
   local host = __rt.load_host(HOST_FIXTURE, { apply_rest = "(string,...[(int)->int])->int" })
   local w1 = __rt.function_("(int)->int", function(x) return x + 1 end)
   local w2 = __rt.function_("(int)->int", function(x) return x + 2 end)
-  assert(host.apply_rest.f(",", w1, w2) == 5)
+  assert_error(function() host.apply_rest.f(",", w1, w2) end, "E8010")
   assert_error(function() host.apply_rest.f(",", function(x) return x end) end, "E8010")
 end)
 

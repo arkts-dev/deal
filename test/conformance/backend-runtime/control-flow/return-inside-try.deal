@@ -19,3 +19,7 @@ export function test_return_inside_try(): int {
   }
   return 7;
 }
+
+export function main(): null {
+  return null;
+}

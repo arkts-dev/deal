@@ -8,3 +8,7 @@ export function test_array_negative_write(): int {
   xs[-1] = 99;
   return xs[0];
 }
+
+export function main(): null {
+  return null;
+}

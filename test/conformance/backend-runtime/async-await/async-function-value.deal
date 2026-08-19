@@ -11,3 +11,7 @@ export async function test_async_function_value(): int {
   if (result !== 6) { throw { code: "TEST_FAIL", message: "async function value failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

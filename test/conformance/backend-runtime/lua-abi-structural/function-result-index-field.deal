@@ -12,3 +12,7 @@ export function test_abi_function_result_index_field(): int {
   if (result !== 3) { throw { code: "TEST_FAIL", message: "function result index lowering failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

@@ -1,0 +1,26 @@
+// @spec: Control flow — For-of — Unicode scalar-value iteration
+// @description: for-of over a string yields one string containing exactly one Unicode scalar value per iteration, in order
+// @expected: runtime-ok
+// @features: for-of, string, unicode
+
+export function test_for_of_unicode(): int {
+  // a, U+00E9, U+4E2D, U+1F600, b — 5 Unicode scalar values (11 UTF-8 bytes)
+  let s: string = "aé中😀b";
+  let collected: string[] = [];
+  for (let c: string of s) {
+    collected[collected.length] = c;
+  }
+  if (collected.length !== 5) {
+    throw { code: "TEST_FAIL", message: "expected 5 scalar values" };
+  }
+  if (collected[0] !== "a") { throw { code: "TEST_FAIL", message: "scalar 0 mismatch" }; }
+  if (collected[1] !== "é") { throw { code: "TEST_FAIL", message: "scalar 1 mismatch" }; }
+  if (collected[2] !== "中") { throw { code: "TEST_FAIL", message: "scalar 2 mismatch" }; }
+  if (collected[3] !== "😀") { throw { code: "TEST_FAIL", message: "scalar 3 mismatch" }; }
+  if (collected[4] !== "b") { throw { code: "TEST_FAIL", message: "scalar 4 mismatch" }; }
+  return collected.length;
+}
+
+export function main(): null {
+  return null;
+}

@@ -13,3 +13,7 @@ export async function f(): int {
   let z: int = await c();
   return x + y + z;
 }
+
+export function main(): null {
+  return null;
+}
