@@ -6,5 +6,8 @@
 export function test_table_read(): int {
   let t: table = { x: 42 };
   let v: int = t.x; // OK: contextual target type
+  if (v !== 42) {
+    throw { code: "TEST_FAIL", message: "contextual int read mismatch" };
+  }
   return v;
 }
