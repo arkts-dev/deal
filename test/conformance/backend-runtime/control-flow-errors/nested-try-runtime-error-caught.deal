@@ -4,13 +4,27 @@
 // @features: control-flow, try, runtime-errors
 
 export function test_nested_try_runtime_error_caught(): int {
+  let innerCatchRan: boolean = false;
+  let innerCode: string = "";
+  let result: int = 0;
+  let outerCatchRan: boolean = false;
+
   try {
     try {
-      return 1 / 0;
+      result = 1 / 0;
     } catch (e) {
-      return 7;
+      innerCatchRan = true;
+      innerCode = e.code;
+      result = 7;
     }
   } catch (outer) {
-    return 99;
+    outerCatchRan = true;
+    result = 99;
   }
+
+  if (!innerCatchRan || innerCode !== "E8005" || result !== 7 || outerCatchRan) {
+    throw { code: "TEST_FAIL", message: "nested runtime error not handled by nearest inner catch with E8005 and result 7" };
+  }
+
+  return result;
 }
