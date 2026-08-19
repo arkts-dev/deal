@@ -4,5 +4,9 @@
 // @features: runtime, number, conversion
 
 export function test_number(): number {
-  return number(3);
+  let n: number = number(3);
+  if (n !== 3.0) {
+    throw { code: "TEST_FAIL", message: "number(3) did not produce number 3.0" };
+  }
+  return n;
 }

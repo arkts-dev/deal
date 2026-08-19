@@ -4,5 +4,9 @@
 // @features: runtime, int, conversion
 
 export function test_int(): int {
-  return int(3.0);
+  let i: int = int(3.0);
+  if (i !== 3) {
+    throw { code: "TEST_FAIL", message: "int(3.0) did not produce int 3" };
+  }
+  return i;
 }
