@@ -757,7 +757,19 @@ public final class CompilationOrchestrator {
                 yield hasRuntimeImportUsage(ed.declaration(), alias);
             }
             case FunctionDeclaration fd -> false;
-            case ClassDeclaration cd -> false;
+            case ClassDeclaration cd -> {
+                // DEAL v1.2: class field defaults evaluate at module
+                // initialization, so a default referencing a cyclic import
+                // creates a runtime dependency (top-level executable
+                // statements no longer exist).
+                for (ClassField field : cd.fields()) {
+                    if (field.defaultExpr().isPresent()
+                            && exprReferencesImport(field.defaultExpr().get(), alias)) {
+                        yield true;
+                    }
+                }
+                yield false;
+            }
             case ImportDeclaration id -> false;
             case DeleteStatement ds -> false;
             case BreakStatement bs -> false;

@@ -358,6 +358,8 @@ public class ModuleSystemTest {
                 "externals empty (legacy list form retired)");
             check(config.dependencies() != null, "dependencies not null");
             check(config.dependencies().items().size() == 1, "dependencies.items size");
+            check(config.languageVersion().equals("1.2"),
+                "languageVersion parses as '1.2'");
         } catch (Exception e) {
             fail("DealConfig parse: " + e.getMessage());
         }
@@ -456,8 +458,31 @@ public class ModuleSystemTest {
             check(config.moduleRoots().isEmpty(), "empty moduleRoots");
             check(config.output() == null, "null output");
             check(config.backend() == null, "null backend");
+            // Absent languageVersion assumes the current compiler version.
+            check("1.2".equals(config.languageVersion()),
+                "absent languageVersion defaults to '1.2'");
         } catch (Exception e) {
             fail("Minimal config: " + e.getMessage());
+        }
+
+        // DEAL v1.2 is not source-compatible with earlier language
+        // versions and this compiler implements no migration rules, so
+        // any declared languageVersion other than '1.2' is a
+        // configuration error (spec-v1.2: Package manifest).
+        for (String badVersion : new String[] {
+                "{\"languageVersion\": \"1.1\"}",
+                "{\"languageVersion\": \"2.0\"}",
+                "{\"languageVersion\": \"1\"}",
+                "{\"languageVersion\": \"\"}"}) {
+            try {
+                DealConfig.parse(Path.of("deal.json"), badVersion);
+                fail("Should have thrown for unsupported languageVersion: "
+                    + badVersion);
+            } catch (IllegalArgumentException e) {
+                check(e.getMessage().contains("languageVersion"),
+                    "languageVersion error message mentions 'languageVersion': "
+                        + e.getMessage());
+            }
         }
     }
 

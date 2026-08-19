@@ -1,7 +1,6 @@
 // @spec: Syntactic grammar — Statement/expression separation
 // @description: at module top level only imports, functions, classes, and exports are allowed; a top-level let is a compile-time error (v1.2)
-// @expected: known-fail compile-error any
-// @issue: ISSUE-0103
+// @expected: compile-error E1049
 // @features: parser, modules, v1.2
 
 let state: int = 1;

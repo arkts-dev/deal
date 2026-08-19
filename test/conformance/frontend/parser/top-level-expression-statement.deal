@@ -1,0 +1,7 @@
+// @spec: Syntactic grammar — v1.2 top-level module structure
+// @description: A bare top-level expression statement (call) is rejected
+// @expected: compile-error E1049
+// @features: parser, modules, top-level, v1.2
+
+function f(): null { return null; }
+f();
