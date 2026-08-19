@@ -8,5 +8,9 @@ export function test_for(): int {
   for (let i: int = 0; i < 5; i = i + 1) {
     x = x + i;
   }
-  return x; // 0+1+2+3+4 = 10
+  // 0+1+2+3+4 = 10
+  if (x !== 10) {
+    throw { code: "TEST_FAIL", message: "C-style for loop produced the wrong sum" };
+  }
+  return x;
 }

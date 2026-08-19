@@ -8,5 +8,8 @@ export function test_while(): int {
   while (x < 10) {
     x = x + 1;
   }
+  if (x !== 10) {
+    throw { code: "TEST_FAIL", message: "while loop terminated at the wrong value" };
+  }
   return x;
 }

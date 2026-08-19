@@ -9,5 +9,9 @@ export function test_break(): int {
     if (i === 5) { break; }
     found = i;
   }
-  return found; // i runs 0..4, so last is 4
+  // i runs 0..4, so last is 4
+  if (found !== 4) {
+    throw { code: "TEST_FAIL", message: "break did not exit the loop at i === 5" };
+  }
+  return found;
 }
