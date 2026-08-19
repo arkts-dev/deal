@@ -509,7 +509,7 @@
     },
     {
       "name": "jvm-arr-cmp-lhs-effect-before-read-error-parity",
-      "description": "Cross-backend parity for the plain-value-left comparison evaluation order: `mark(\"lhs\", 5) === xs[-1]` — the spec's strict left-to-right order (spec-v1.1 §Operational semantics) evaluates the left operand completely before the right read begins, so the left call prints 'lhs' and the right read's E8002 (negative index) raises afterwards. Both backends print lhs then DEAL_ERROR_CODE: E8002 and exit 1 (the pre-fix JVM ran the right read first: no 'lhs')",
+      "description": "Cross-backend parity for the plain-value-left comparison evaluation order: `mark(\"lhs\", 5) === xs[-1]` — the spec's strict left-to-right order (spec-v1.2 §Operational semantics) evaluates the left operand completely before the right read begins, so the left call prints 'lhs' and the right read's E8002 (negative index) raises afterwards. Both backends print lhs then DEAL_ERROR_CODE: E8002 and exit 1 (the pre-fix JVM ran the right read first: no 'lhs')",
       "source": "import * as console from \"std/console\"\nfunction mark(label: string, v: int): int { console.log(label); return v; }\nexport function test(): null {\n  let xs: int[] = [1];\n  if (mark(\"lhs\", 5) === xs[-1]) { console.log(\"bad\"); }\n}",
       "expectedOutput": "lhs",
       "expectedNotOutput": [
@@ -650,7 +650,7 @@
     },
     {
       "name": "jvm-arr-cmp-lhs-effect-read-order",
-      "description": "JVM-only pin for the plain-value-left comparison order against an effectful right read: `mark(\"lhs\", 5) === getArr(\"made\", xs)[mark(\"idx\", 99)]` — the JVM evaluates the left call completely first and then the right read's receiver before its index (spec-v1.1 §Operational semantics rule 1), printing lhs, made, idx and exiting 0 (the past-end read yields nil: 5 === nil is false, no E8001 at a comparison operand). LuaJIT's emitted read evaluates the index before the receiver (the documented read receiver/index order divergence), so this shape is pinned JVM-only",
+      "description": "JVM-only pin for the plain-value-left comparison order against an effectful right read: `mark(\"lhs\", 5) === getArr(\"made\", xs)[mark(\"idx\", 99)]` — the JVM evaluates the left call completely first and then the right read's receiver before its index (spec-v1.2 §Operational semantics rule 1), printing lhs, made, idx and exiting 0 (the past-end read yields nil: 5 === nil is false, no E8001 at a comparison operand). LuaJIT's emitted read evaluates the index before the receiver (the documented read receiver/index order divergence), so this shape is pinned JVM-only",
       "source": "import * as console from \"std/console\"\nfunction mark(label: string, v: int): int { console.log(label); return v; }\nfunction getArr(label: string, xs: int[]): int[] { console.log(label); return xs; }\nexport function test(): null {\n  let xs: int[] = [1];\n  if (mark(\"lhs\", 5) === getArr(\"made\", xs)[mark(\"idx\", 99)]) { console.log(\"bad\"); }\n}",
       "expectedOutput": "lhs\nmade\nidx",
       "expectedNotOutput": [

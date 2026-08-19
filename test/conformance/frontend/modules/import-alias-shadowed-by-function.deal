@@ -1,4 +1,4 @@
-// @spec: Modules — Import alias shadowing
+// @spec: Modules, declarations, standard library, and host ABI — Import alias shadowing
 // @description: A declaration that shadows an import alias is rejected
 // @expected: compile-error E2007
 // @features: modules, diagnostics

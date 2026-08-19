@@ -1,0 +1,13 @@
+// @spec: Type system — Explicit conversions
+// @description: bytes is a builtin type; bytes(length: int) allocates a zero-filled buffer; b[i] reads/writes int bytes 0..255; b.length is the compiler-resolved length intrinsic (v1.2)
+// @expected: known-fail compile-ok
+// @issue: ISSUE-0111
+// @features: bytes, types, v1.2
+
+export function bytes_probe(): bytes {
+  let b: bytes = bytes(4);
+  let n: int = b.length;
+  b[0] = 255;
+  let v: int = b[0];
+  return b;
+}

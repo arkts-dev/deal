@@ -1,4 +1,4 @@
-// @spec: Modules — Shared module instance
+// @spec: Modules, declarations, standard library, and host ABI — Shared module instance
 // @description: Two imports of one module share one initialized module instance
 // @expected: runtime-ok
 // @features: modules, initialization, mutation

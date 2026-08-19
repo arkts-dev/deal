@@ -1,0 +1,10 @@
+// @spec: Modules, declarations, standard library, and host ABI — Package manifest
+// @description: the // @deal-version file directive accepts one non-empty version value and occurs before the first non-comment token (v1.2)
+// @expected: compile-ok
+// @features: directives, modules, v1.2
+
+// @deal-version 1.2
+
+export function probe(): int {
+  return 1;
+}

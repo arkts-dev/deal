@@ -1,4 +1,4 @@
-// @spec: Modules — Error propagation through imports
+// @spec: Modules, declarations, standard library, and host ABI — Error propagation through imports
 // @description: Explicit error thrown by imported function propagates with code
 // @expected: runtime-error MODULE_EXPLICIT_FAIL
 // @features: modules, error-handling, runtime-errors

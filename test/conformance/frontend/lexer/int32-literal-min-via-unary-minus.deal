@@ -1,0 +1,8 @@
+// @spec: Lexical elements — Numeric overflow, NaN, and Infinity
+// @description: the decimal token 2147483648 as the immediate operand of unary minus produces int -2147483648 (v1.2)
+// @expected: compile-ok
+// @features: int, literals, v1.2
+
+export function int32_min(): int {
+  return -2147483648;
+}

@@ -1,4 +1,4 @@
-// @spec: Modules — Failed module initialization
+// @spec: Modules, declarations, standard library, and host ABI — Failed module initialization
 // @description: Importing the same failing module through one alias propagates init failure
 // @expected: runtime-error E8005
 // @features: modules, initialization, runtime-errors

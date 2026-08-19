@@ -1,3 +1,7 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
 // Host fixture declaration for the host-async-shape-bad conformance test.
 // The declared export is an async function, so the host implementation must
 // return a backend async operation ({__kind="async"}); the implementation

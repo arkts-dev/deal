@@ -1,3 +1,7 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
 // Host fixture declaration for the host-empty-return-bad conformance test.
 // The implementation returns zero results for a non-null declared return —
 // the wrapper's presence rule must raise E8010 on every call path,

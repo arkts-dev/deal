@@ -1,4 +1,4 @@
-// @spec: Lua backend ABI — generated identifiers and exports
+// @spec: Runtime execution model — Lua backend ABI — generated identifiers and exports
 // @description: User identifiers near generated-name prefixes do not collide with generated locals when not shadowing runtime import names
 // @expected: runtime-ok
 // @features: lua-abi, naming

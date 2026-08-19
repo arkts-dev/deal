@@ -1,4 +1,4 @@
-// @spec: Modules — Imported recursive callback
+// @spec: Modules, declarations, standard library, and host ABI — Imported recursive callback
 // @description: An imported recursive function can be passed as a callback and executed
 // @expected: runtime-ok
 // @features: modules, recursion, callbacks

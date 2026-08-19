@@ -1,4 +1,4 @@
-// @spec: Modules — Import use inside closures
+// @spec: Modules, declarations, standard library, and host ABI — Import use inside closures
 // @description: Imported module member called from closure executes correctly after module initialization
 // @expected: runtime-ok
 // @features: modules, closures, initialization

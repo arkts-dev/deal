@@ -36,7 +36,7 @@ function assertBoolean(value: boolean, message: string): null {
   return null;
 }
 
-function sumAll(...values: int[]): int {
+function sumAll(values: int[]): int {
   let total: int = 0;
   for (let value: int of values) {
     total = total + value;
@@ -205,7 +205,7 @@ export function demo_summary(): string {
   assertBoolean(tableScore > 7, "table score mismatch");
   assertBoolean(mathScore === 25, "math score mismatch");
   assertBoolean(functionScore === 97, "function score mismatch");
-  console.log("DEAL v1.1 LuaJIT demo");
+  console.log("DEAL v1.2 LuaJIT demo");
   return `${selected}|${stringsResult}|${classesResult}|${jsonResult}|${errorCode}`;
 }
 

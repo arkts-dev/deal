@@ -1,4 +1,4 @@
-// @spec: Lua backend ABI — exported names
+// @spec: Runtime execution model — Lua backend ABI — exported names
 // @description: Exported function names that are normal DEAL identifiers remain callable cross-module
 // @expected: runtime-ok
 // @features: lua-abi, modules, exports

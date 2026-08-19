@@ -1,4 +1,4 @@
-// Learn DEAL in 15 Minutes
+// Learn DEAL in 15 Minutes (DEAL v1.2)
 
 // Two dashes start a one-line comment.
 
@@ -10,7 +10,7 @@
 // -----------------------------------------------------
 
 // All variables are declared with let.
-let n: int = 42;       // int is an exact integer type.
+let n: int = 42;       // int is a signed 32-bit exact integer type.
 let x: number = 3.14;  // number is IEEE 754 double.
 let s: string = "hello";
 let b: boolean = true;
@@ -18,6 +18,12 @@ let nothing: null = null;
 
 // Types are strict — no implicit conversion.
 // let bad: int = 3.14;  // compile-time error
+
+// int values live in [-2147483648, 2147483647]; out-of-range integer
+// literals are compile-time errors, and int arithmetic raises a runtime
+// error on overflow.
+// let huge: int = 2147483648;  // compile-time error
+// let min: int = -2147483648;  // ok: unary minus over the special token
 
 // Inference works when the type is unambiguous.
 let meaning = 42;       // int
@@ -45,7 +51,8 @@ while (sum > 0) {
   sum = sum - 1;
 }
 
-// for-of over arrays and strings:
+// for-of over arrays and strings (one Unicode scalar value per string
+// iteration in v1.2):
 let xs: int[] = [1, 2, 3];
 for (let v: int of xs) {
   // v = 1, 2, 3
@@ -78,8 +85,8 @@ function add(a: int, b: int): int {
   return a + b;
 }
 
-// Rest parameters — last param, T[] type.
-function sumAll(...values: int[]): int {
+// v1.2 removed rest parameters: pass an explicit array instead.
+function sumAll(values: int[]): int {
   let total: int = 0;
   for (let i: int = 0; i < values.length; i = i + 1) {
     total = total + values[i];
@@ -117,9 +124,15 @@ async function fetch(id: int): string | null {
   return null;  // placeholder — await host calls here
 }
 
-let data: string | null = await fetch(42);
-// await only valid inside async functions
-// async call without await is a compile-time error
+async function fetchAndUse(id: int): string {
+  let data: string | null = await fetch(id);
+  if (data !== null) {
+    return data;
+  }
+  return "";
+}
+// await is only valid inside async function bodies, applied to a direct
+// async call; an async call without await is a compile-time error.
 
 // -----------------------------------------------------
 // 3. Tables.
@@ -156,7 +169,7 @@ for (let i: int = 0; i < ks.length; i = i + 1) {
 }
 
 // -----------------------------------------------------
-// 4. Arrays.
+// 4. Arrays and bytes.
 // -----------------------------------------------------
 
 // T[] is a 0-based array.
@@ -178,6 +191,12 @@ nums[0] = 99;           // ok
 // Nullable arrays:
 let mixed: (int | null)[] = [1, null, 3];
 let m: int | null = mixed[1];  // null
+
+// bytes is a DEAL-owned mutable byte buffer (v1.2):
+// let buf: bytes = bytes(16);   // zero-filled, length 16
+// buf[0] = 255;                 // writes require int values in 0..255
+// let hi: int = buf[0];         // reads yield int values in 0..255
+// let nbytes: int = buf.length; // compiler-resolved length intrinsic
 
 // -----------------------------------------------------
 // 5. Classes.
@@ -214,7 +233,7 @@ class Vector { x: number = 0.0; y: number = 0.0; }
 // let p: Point = { x: 1.0, y: 2.0 };
 // let w: Vector = p;  // error: Point is not Vector
 
-// JSON serialization with @jsonable pragma (v1.1):
+// JSON serialization with the @jsonable directive (v1.2):
 // @jsonable
 // export class User { ... }
 // Compiler generates User$fromJson(s): User | null
@@ -233,7 +252,8 @@ export class Person {
   name: string = "";
 }
 
-// Import with namespace binding:
+// Imports come first, before all other top-level declarations; at module
+// top level only imports, functions, classes, and exports are allowed.
 import * as math from "std/math";
 let f: number = math.floor(3.14);
 
@@ -241,6 +261,16 @@ let f: number = math.floor(3.14);
 // import * as lib from "./lib";
 
 // No named imports, no default export, no re-export.
+
+// When a compiler invocation selects an entry module, that module must
+// export main with the non-async signature (): null.
+// export function main(): null { return null; }
+
+// C FFI declaration files (v1.2) start with // @extern-c and may mark
+// exported classes with // @c-struct or // @c-pointer:
+// // @extern-c
+// // @c-struct
+// export class Vec2 { x: number = 0.0; y: number = 0.0; }
 
 // -----------------------------------------------------
 // 7. Error handling.
@@ -275,7 +305,7 @@ import * as json from "std/json";
 let t2: table = json.parse("{\"name\":\"Ada\"}");
 let str: string = json.stringify(t2);
 
-// string — string utilities
+// string — string utilities (Unicode scalar-value positions in v1.2)
 import * as strings from "std/string";
 let parts: string[] = strings.split("a,b,c", ",");
 
@@ -291,15 +321,12 @@ let ceil: number = m.ceil(3.2);
 import * as time from "std/time";
 let ms: int = time.nowMillis();
 
-// io
-import * as io from "std/io";
-let text: string = io.readText("/path/to/file");
-
 // conversion intrinsics — built-in, no import:
 let i: int = int(3.0);    // number → int
 let d: number = number(5); // int → number
+// let buf: bytes = bytes(8); // int → bytes (v1.2)
 
 // -----------------------------------------------------
-// The whole file is valid DEAL syntax.
+// This file demonstrates DEAL v1.2 syntax.
 // Save as learn.deal.
 // -----------------------------------------------------

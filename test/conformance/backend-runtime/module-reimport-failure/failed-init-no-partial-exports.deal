@@ -1,4 +1,4 @@
-// @spec: Modules — Failed initialization prevents usable exports
+// @spec: Modules, declarations, standard library, and host ABI — Failed initialization prevents usable exports
 // @description: Module that fails during top-level initialization does not expose a usable partial export table
 // @expected: runtime-error E8005
 // @features: modules, initialization, runtime-errors

@@ -1,0 +1,11 @@
+// @spec: C FFI declaration files — C struct classes
+// @description: a // @c-struct class field of type string is a compile-time error (v1.2 C FFI field allowlist: int, number, boolean, same-file c-pointer classes only)
+// @expected: known-fail compile-error any
+// @issue: ISSUE-0111
+// @features: c-ffi, classes, v1.2
+
+// @c-struct
+export class Vec2 {
+  x: number = 0.0;
+  label: string = "";
+}

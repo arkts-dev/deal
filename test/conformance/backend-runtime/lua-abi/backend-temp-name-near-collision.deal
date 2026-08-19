@@ -1,4 +1,4 @@
-// @spec: Lua backend ABI — internal local names
+// @spec: Runtime execution model — Lua backend ABI — internal local names
 // @description: User locals near backend temporary prefixes do not collide with generated temporaries
 // @expected: runtime-ok
 // @features: lua-abi, naming

@@ -1,3 +1,7 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
 // Host fixture declaration for the host-extra-export-ignored conformance
 // test (host-module-abi D6). The raw implementation below supplies more
 // exports than this surface declares; the loader must drop extras

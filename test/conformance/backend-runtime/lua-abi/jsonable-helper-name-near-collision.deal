@@ -1,4 +1,4 @@
-// @spec: Lua backend ABI — generated helper names
+// @spec: Runtime execution model — Lua backend ABI — generated helper names
 // @description: User identifiers near jsonable helper names do not collide with generated helper exports
 // @expected: runtime-ok
 // @features: lua-abi, jsonable, naming

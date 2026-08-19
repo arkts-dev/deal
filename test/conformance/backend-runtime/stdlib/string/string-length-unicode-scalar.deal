@@ -1,0 +1,15 @@
+// @spec: Standard library declarations — std/string.d.deal
+// @description: std/string length counts Unicode scalar values, not bytes (v1.2)
+// @expected: known-fail runtime-ok
+// @issue: ISSUE-0105
+// @features: stdlib, string, unicode, v1.2
+
+import * as strings from "std/string"
+
+export function test_string_length_unicode_scalar(): null {
+  let n: int = strings.length("é");
+  if (n !== 1) {
+    throw { code: "TEST_FAIL", message: "std/string: scalar length mismatch" };
+  }
+  return null;
+}

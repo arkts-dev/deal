@@ -1,4 +1,4 @@
-// @spec: Lexical elements — String escapes and UTF-8
+// @spec: Lexical elements — String escapes and Unicode
 // @description: String escape sequences are recognized
 // @expected: compile-ok
 // @features: lexer, strings

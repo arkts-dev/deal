@@ -1,3 +1,7 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
 // Host fixture declaration for the host-null-return-bad conformance test.
 // Same declared surface as nullreturn_ok, but the implementation returns a
 // non-sentinel value — the wrapper's sync-null check must raise E8010,

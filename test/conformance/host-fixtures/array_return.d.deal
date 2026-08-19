@@ -1,3 +1,7 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
 // Host fixture declaration for the host-array-return-ok conformance test.
 // An array declared return must wrap at load time and check the returned
 // table element-wise; the caller reads elements back in DEAL.

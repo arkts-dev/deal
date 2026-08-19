@@ -237,6 +237,20 @@ public class BackendConformanceTest {
     private static final AtomicInteger passed = new AtomicInteger();
     private static final AtomicInteger failed = new AtomicInteger();
     private static final AtomicInteger skipped = new AtomicInteger();
+    private static final AtomicInteger knownFailures = new AtomicInteger();
+    private static final AtomicInteger luajitPassed = new AtomicInteger();
+    private static final AtomicInteger luajitFailed = new AtomicInteger();
+    private static final AtomicInteger jvmPassed = new AtomicInteger();
+    private static final AtomicInteger jvmFailed = new AtomicInteger();
+    private static final Object KNOWN_FAIL_LOCK = new Object();
+    /**
+     * Known-fail cases are drained on the main thread after every worker
+     * fixture file has completed: their outcome bookkeeping snapshots the
+     * global counters, which is only race-free when no worker is
+     * mutating them.
+     */
+    private static final java.util.concurrent.ConcurrentLinkedQueue<Object[]>
+        pendingKnownFail = new java.util.concurrent.ConcurrentLinkedQueue<>();
     private static boolean luajitAvailable;
     private static boolean jvmAvailable;
 
@@ -265,7 +279,8 @@ public class BackendConformanceTest {
 
         jvmAvailable = probeJvm();
 
-        System.out.println("=== Backend Conformance Test ===");
+        System.out.println("=== Backend Conformance Test — DEAL v1.2 "
+            + "(LuaJIT + JVM backend-runtime gates) ===");
         System.out.println("LuaJIT: " + (luajitAvailable ? "available" :
             "NOT available (runtime tests will be skipped)"));
         System.out.println("JVM (javac + java): " + (jvmAvailable ? "available" :
@@ -307,11 +322,48 @@ public class BackendConformanceTest {
             pool.shutdownNow();
         }
 
+        // Known-fail cases run last, on the main thread: no worker is
+        // mutating the outcome counters while a known-fail case snapshots
+        // them, so the pass/fail bookkeeping is exact.
+        List<Object[]> knownCases = new ArrayList<>();
+        Object[] pending;
+        while ((pending = pendingKnownFail.poll()) != null) {
+            knownCases.add(pending);
+        }
+        if (!knownCases.isEmpty()) {
+            System.out.println();
+            System.out.println("--- Known-fail cases (intentionally unsupported "
+                + "DEAL v1.2 requirements, tracked per case) ---");
+            for (Object[] kf : knownCases) {
+                runKnownFailCase((String) kf[0], (Map<String, Object>) kf[1]);
+            }
+        }
+
         System.out.println();
-        System.out.println("=== Backend Conformance Summary ===");
+        System.out.println("=== Backend Conformance Summary (DEAL v1.2) ===");
         int total = passed.get() + failed.get() + skipped.get();
         System.out.println("Total: " + total + ", Passed: " + passed.get() +
-            ", Failed: " + failed.get() + ", Skipped: " + skipped.get());
+            ", Failed: " + failed.get() + ", Skipped: " + skipped.get() +
+            ", KnownFailures (tracked): " + knownFailures.get());
+        System.out.println();
+        System.out.println("=== DEAL v1.2 Backend-Runtime Gates ===");
+        int luajitTotal = luajitPassed.get() + luajitFailed.get();
+        System.out.println("  LuaJIT backend-runtime: " + luajitPassed.get()
+            + "/" + luajitTotal + " passed, " + luajitFailed.get() + " failed");
+        int jvmTotal = jvmPassed.get() + jvmFailed.get();
+        System.out.println("  JVM backend-runtime: " + jvmPassed.get()
+            + "/" + jvmTotal + " passed, " + jvmFailed.get() + " failed");
+        if (skipped.get() > 0) {
+            System.out.println("  Skips: " + skipped.get()
+                + " (toolchain-availability only — there are no unclassified skips)");
+        } else {
+            System.out.println("  Skips: 0 (zero unclassified skips)");
+        }
+        if (knownFailures.get() > 0) {
+            System.out.println("  KnownFailures: " + knownFailures.get()
+                + " (intentionally unsupported v1.2 cases; each fixture names "
+                + "its tracked follow-up issue)");
+        }
 
         if (failed.get() > 0) {
             System.exit(1);
@@ -618,8 +670,109 @@ public class BackendConformanceTest {
         return null;
     }
 
+    /**
+     * Executes one JSON test case. A case with a {@code knownFail} field
+     * documents an intentionally unsupported v1.2 requirement (the value
+     * is the tracked follow-up issue id): the normal assertions run, and
+     * <ul>
+     *   <li>when they FAIL, the requirement is still unsatisfied — the
+     *       case is recorded as a KNOWN-FAIL (non-fatal, tracked);</li>
+     *   <li>when they PASS, the tracked issue has landed — the gate FAILS
+     *       with a promotion instruction (remove the marker), so
+     *       promotion is forced.</li>
+     * </ul>
+     */
     @SuppressWarnings("unchecked")
     private static void runTestCase(String fixtureName, Map<String, Object> test) {
+        String name = jsonString(test, "name", "<unnamed>");
+        Object knownFail = test.get("knownFail");
+        if (knownFail == null || knownFail == JSON_NULL) {
+            runTestCaseInner(fixtureName, test);
+            return;
+        }
+        String issue = String.valueOf(knownFail).trim();
+        if (issue.isEmpty()) {
+            log("  [" + name + "] FAIL: invalid fixture configuration: "
+                + "'knownFail' must be a non-empty tracked follow-up issue id");
+            failed.incrementAndGet();
+            return;
+        }
+        if (!test.containsKey("backends")
+                || ((List<?>) test.get("backends")).isEmpty()) {
+            log("  [" + name + "] FAIL: invalid fixture configuration: "
+                + "a 'knownFail' case must declare non-empty 'backends'");
+            failed.incrementAndGet();
+            return;
+        }
+        // Queue for evaluation on the main thread after every worker
+        // fixture file finishes (see pendingKnownFail).
+        pendingKnownFail.add(new Object[] { fixtureName, test });
+        log("  [" + name + "] QUEUED (known-fail case; evaluated after the "
+            + "main fixture files)");
+    }
+
+    /**
+     * Executes one queued known-fail case on the main thread. The global
+     * outcome counters are only mutated by this thread at this point, so
+     * the snapshot bookkeeping is race-free: the case runs its normal
+     * assertions, and
+     * <ul>
+     *   <li>when they FAIL, the requirement is still unsatisfied — the
+     *       case is recorded as a KNOWN-FAIL (non-fatal, tracked by the
+     *       {@code knownFail} issue id);</li>
+     *   <li>when they PASS, the tracked issue has landed — the gate FAILS
+     *       with a promotion instruction (drop the marker), so promotion
+     *       is forced.</li>
+     * </ul>
+     */
+    @SuppressWarnings("unchecked")
+    private static void runKnownFailCase(String fixtureName,
+            Map<String, Object> test) {
+        String name = jsonString(test, "name", "<unnamed>");
+        String issue = String.valueOf(test.get("knownFail")).trim();
+
+        StringBuilder capture = new StringBuilder();
+        StringBuilder saved = FILE_OUTPUT.get();
+        FILE_OUTPUT.set(capture);
+        int p0 = passed.get(), f0 = failed.get(), s0 = skipped.get();
+        int lp0 = luajitPassed.get(), lf0 = luajitFailed.get();
+        int jp0 = jvmPassed.get(), jf0 = jvmFailed.get();
+        boolean stale = false;
+        try {
+            runTestCaseInner(fixtureName, test);
+            int deltaP = passed.get() - p0;
+            int deltaF = failed.get() - f0;
+            int deltaS = skipped.get() - s0;
+            passed.set(p0);
+            failed.set(f0);
+            skipped.set(s0);
+            luajitPassed.set(lp0);
+            luajitFailed.set(lf0);
+            jvmPassed.set(jp0);
+            jvmFailed.set(jf0);
+            stale = (deltaF == 0 && deltaS == 0 && deltaP > 0);
+        } finally {
+            FILE_OUTPUT.set(saved);
+        }
+        if (stale) {
+            log("  [" + name + "] FAIL (STALE knownFail marker: the "
+                + "v1.2 requirement tracked by " + issue + " now "
+                + "passes — promote the fixture: drop 'knownFail')");
+            failed.incrementAndGet();
+        } else {
+            log("  [" + name + "] KNOWN-FAIL (v1.2 not yet "
+                + "implemented; tracked by " + issue + ")");
+            for (String line : capture.toString().split("\n")) {
+                if (!line.isEmpty()) {
+                    log("      " + line);
+                }
+            }
+            knownFailures.incrementAndGet();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void runTestCaseInner(String fixtureName, Map<String, Object> test) {
         String name = jsonString(test, "name", "<unnamed>");
         String description = jsonString(test, "description", "");
         String source = jsonString(test, "source", null);
@@ -655,7 +808,17 @@ public class BackendConformanceTest {
         }
 
         if (multiModule) {
-            runMultiModuleTestCase(fixtureName, test);
+            // Multi-module fixtures are JVM-only (validated by
+            // multiModuleConfigViolation): attribute their outcome to the
+            // JVM backend-runtime gate.
+            synchronized (KNOWN_FAIL_LOCK) {
+                int p0 = passed.get(), f0 = failed.get();
+                runMultiModuleTestCase(fixtureName, test);
+                int deltaP = passed.get() - p0;
+                int deltaF = failed.get() - f0;
+                jvmPassed.addAndGet(Math.max(deltaP, 0));
+                jvmFailed.addAndGet(Math.max(deltaF, 0));
+            }
             return;
         }
 
@@ -752,8 +915,10 @@ public class BackendConformanceTest {
 
             if (appliesToLuajit) {
                 if (luajitAvailable) {
-                    if (!runLuaAssertions(name, source, expectedOutput,
-                            expectedNotOutput, expectedError, expectedExitCode)) {
+                    if (!runBackendTracked("luajit",
+                            () -> runLuaAssertions(name, source, expectedOutput,
+                                expectedNotOutput, expectedError,
+                                expectedExitCode))) {
                         return; // failure already reported
                     }
                     ranAny = true;
@@ -762,8 +927,10 @@ public class BackendConformanceTest {
 
             if (appliesToJvm) {
                 if (jvmAvailable) {
-                    if (!runJvmAssertions(name, fc, expectedOutput,
-                            expectedNotOutput, expectedError, expectedExitCode)) {
+                    if (!runBackendTracked("jvm",
+                            () -> runJvmAssertions(name, fc, expectedOutput,
+                                expectedNotOutput, expectedError,
+                                expectedExitCode))) {
                         return; // failure already reported
                     }
                     ranAny = true;
@@ -1053,6 +1220,23 @@ public class BackendConformanceTest {
      * produces no output.
      */
     @SuppressWarnings("unchecked")
+    /**
+     * Runs one backend assertion group and attributes the pass/fail
+     * outcome to the named backend gate ({@code luajit} / {@code jvm}).
+     */
+    private static boolean runBackendTracked(String backend,
+            java.util.function.BooleanSupplier task) {
+        boolean ok = task.getAsBoolean();
+        if ("luajit".equals(backend)) {
+            if (ok) luajitPassed.incrementAndGet();
+            else luajitFailed.incrementAndGet();
+        } else {
+            if (ok) jvmPassed.incrementAndGet();
+            else jvmFailed.incrementAndGet();
+        }
+        return ok;
+    }
+
     private static void runMultiModuleTestCase(String fixtureName, Map<String, Object> test) {
         String name = jsonString(test, "name", "<unnamed>");
         String description = jsonString(test, "description", "");

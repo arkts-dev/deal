@@ -1,4 +1,4 @@
-// @spec: Modules — Imported alias and member edge cases
+// @spec: Modules, declarations, standard library, and host ABI — Imported alias and member edge cases
 // @description: Imported member access and aliasing resolve to the correct runtime export
 // @expected: runtime-ok
 // @features: modules, alias, member-access

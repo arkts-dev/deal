@@ -1,4 +1,4 @@
-// @spec: Modules — Imported class arrays
+// @spec: Modules, declarations, standard library, and host ABI — Imported class arrays
 // @description: Arrays of imported class instances preserve field access across module boundaries
 // @expected: runtime-ok
 // @features: modules, classes, arrays

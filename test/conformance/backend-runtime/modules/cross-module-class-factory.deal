@@ -1,4 +1,4 @@
-// @spec: Modules — Cross-module classes
+// @spec: Modules, declarations, standard library, and host ABI — Cross-module classes
 // @description: Imported class metadata and factory function work together at runtime
 // @expected: runtime-ok
 // @features: modules, classes, imports

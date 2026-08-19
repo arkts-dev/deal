@@ -1,4 +1,4 @@
-// @spec: Lua backend ABI — mutual recursive function lowering
+// @spec: Runtime execution model — Lua backend ABI — mutual recursive function lowering
 // @description: Mutual recursion exercises predeclared Lua function wrapper bindings
 // @expected: runtime-ok
 // @features: lua-abi, recursion, structural

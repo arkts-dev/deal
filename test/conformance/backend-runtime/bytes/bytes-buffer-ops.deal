@@ -1,0 +1,28 @@
+// @spec: Bytes — Byte indexing and buffer semantics
+// @description: bytes(length) allocates a zero-filled buffer; index writes require int 0..255; reads yield int 0..255; b.length is int; assignment copies the reference (v1.2)
+// @expected: known-fail runtime-ok
+// @issue: ISSUE-0111
+// @features: bytes, runtime, v1.2
+
+export function test_bytes_buffer_ops(): null {
+  let b: bytes = bytes(4);
+  if (b.length !== 4) {
+    throw { code: "TEST_FAIL", message: "bytes: initial length mismatch" };
+  }
+  if (b[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "bytes: zero-fill mismatch" };
+  }
+  b[0] = 255;
+  b[1] = 128;
+  let hi: int = b[0];
+  let lo: int = b[1];
+  if (hi !== 255 || lo !== 128) {
+    throw { code: "TEST_FAIL", message: "bytes: byte value roundtrip mismatch" };
+  }
+  let alias: bytes = b;
+  alias[2] = 7;
+  if (b[2] !== 7) {
+    throw { code: "TEST_FAIL", message: "bytes: reference copy mismatch" };
+  }
+  return null;
+}

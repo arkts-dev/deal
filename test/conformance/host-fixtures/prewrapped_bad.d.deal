@@ -1,3 +1,7 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
 // Host fixture declaration for the host-prewrapped-bad conformance test.
 // The pre-wrapped export carries a matching sig but its .f returns junk —
 // the re-wrapped function must still enforce the sync-null return check at

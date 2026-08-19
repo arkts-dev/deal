@@ -1,4 +1,4 @@
-// @spec: Lua backend ABI — temporary-name collision
+// @spec: Runtime execution model — Lua backend ABI — temporary-name collision
 // @description: User locals resembling backend temporaries do not collide with generated index temporaries
 // @expected: runtime-ok
 // @features: lua-abi, naming, arrays, structural

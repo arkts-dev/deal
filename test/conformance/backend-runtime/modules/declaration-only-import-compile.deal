@@ -1,4 +1,4 @@
-// @spec: Modules — Declaration files
+// @spec: Modules, declarations, standard library, and host ABI — Declaration files
 // @description: Importing declaration-only module signatures is compile-time valid when not executed
 // @expected: compile-ok
 // @features: modules, declarations

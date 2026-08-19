@@ -1,4 +1,4 @@
-// @spec: Lua backend ABI — Lua reserved word field names
+// @spec: Runtime execution model — Lua backend ABI — Lua reserved word field names
 // @description: Dynamic table fields whose names are Lua reserved words remain accessible through DEAL member syntax
 // @expected: runtime-ok
 // @features: lua-abi, tables, reserved-words

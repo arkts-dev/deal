@@ -1,4 +1,4 @@
-// @spec: Modules — Runtime initialization order
+// @spec: Modules, declarations, standard library, and host ABI — Runtime initialization order
 // @description: Imported module top-level initialization happens before exported function use
 // @expected: runtime-ok
 // @features: modules, initialization

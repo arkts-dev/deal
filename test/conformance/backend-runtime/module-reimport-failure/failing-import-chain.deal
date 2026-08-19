@@ -1,4 +1,4 @@
-// @spec: Modules — Import-chain initialization failure
+// @spec: Modules, declarations, standard library, and host ABI — Import-chain initialization failure
 // @description: Failed module initialization propagates through an import chain
 // @expected: runtime-error E8005
 // @features: modules, initialization, runtime-errors

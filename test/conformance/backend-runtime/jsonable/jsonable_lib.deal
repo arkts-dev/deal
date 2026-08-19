@@ -1,3 +1,8 @@
+// @expected: companion
+// @description: Classified support module — compiled by the companion
+// catalog when a parent conformance fixture imports it. The v1.2 gate
+// (ISSUE-0107) removes unclassified skips: every .deal file carries an
+// explicit classification, and companions must keep compiling standalone.
 // @jsonable
 export class Widget {
   label: string = "";

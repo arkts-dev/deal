@@ -1,3 +1,7 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
 // Host fixture declaration for the host-prewrapped-ok conformance test.
 // Pre-wrapped exports are {__kind="function", sig, f} tables whose sig
 // equals the declared descriptor byte-for-byte. The loader validates the

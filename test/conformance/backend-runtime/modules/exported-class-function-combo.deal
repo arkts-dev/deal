@@ -1,4 +1,4 @@
-// @spec: Modules — Exported class and function combinations
+// @spec: Modules, declarations, standard library, and host ABI — Exported class and function combinations
 // @description: Imported class value produced by one export can be consumed by another export
 // @expected: runtime-ok
 // @features: modules, classes, exports

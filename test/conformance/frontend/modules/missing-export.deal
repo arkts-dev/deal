@@ -1,4 +1,4 @@
-// @spec: Modules — Missing export diagnostics
+// @spec: Modules, declarations, standard library, and host ABI — Missing export diagnostics
 // @description: Accessing a non-declared export of a module is a compile error
 // @expected: compile-error E2004
 // @features: modules, diagnostics

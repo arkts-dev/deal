@@ -1,3 +1,7 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
 // Host fixture declaration for the host-boundary-apply-function conformance
 // test. The declared parameter is a raw function type; the runtime wrapper
 // must adapt the DEAL function wrapper to a plain Lua function before the

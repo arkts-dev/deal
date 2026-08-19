@@ -1,4 +1,4 @@
-// @spec: Modules — Runtime initialization failure
+// @spec: Modules, declarations, standard library, and host ABI — Runtime initialization failure
 // @description: Imported module initialization error propagates to importer
 // @expected: runtime-error E8005
 // @features: modules, initialization, runtime-errors

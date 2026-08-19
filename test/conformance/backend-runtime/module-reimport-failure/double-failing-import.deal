@@ -1,4 +1,4 @@
-// @spec: Modules — Re-import failed module
+// @spec: Modules, declarations, standard library, and host ABI — Re-import failed module
 // @description: Two imports of the same failing module do not hide initialization failure
 // @expected: runtime-error E8005
 // @features: modules, initialization, runtime-errors

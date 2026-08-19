@@ -1,4 +1,4 @@
-// @spec: Modules — Closures returned from modules
+// @spec: Modules, declarations, standard library, and host ABI — Closures returned from modules
 // @description: A closure returned by an imported function retains its captured module-local state
 // @expected: runtime-ok
 // @features: closures, modules

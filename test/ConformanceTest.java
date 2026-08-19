@@ -16,19 +16,55 @@ import java.util.*;
 import java.util.regex.*;
 
 /**
- * Spec-centric conformance test runner for DEAL v1.1.
+ * Spec-centric conformance test runner for DEAL v1.2 (ISSUE-0107
+ * conformance promotion gate).
  *
  * <p>Discovers all .deal files under test/conformance/, parses metadata
  * header comments, compiles and/or executes each test according to its
- * @expected tag, and produces a pass/fail report with spec coverage
- * summary.</p>
+ * {@code @expected} tag, and produces a pass/fail report with spec
+ * coverage summary plus a per-gate v1.2 promotion report.</p>
+ *
+ * <h2>Classification contract (v1.2 gate)</h2>
+ *
+ * <p>Every discovered .deal file must carry an explicit classification.
+ * Unclassified skips are removed: a file without {@code @expected}, with
+ * an unknown {@code @expected} value, or with a non-v1.2 {@code @spec}
+ * reference is a configuration failure that fails the gate.</p>
+ *
+ * <ul>
+ *   <li>{@code compile-ok} / {@code compile-error CODE} — frontend-only
+ *       checks over the shared lexer/parser/name-resolution/type-checker
+ *       pipeline (backend-neutral).</li>
+ *   <li>{@code runtime-ok} / {@code runtime-error CODE} — compile plus
+ *       real LuaJIT execution through the Lua backend (backend-runtime).</li>
+ *   <li>{@code companion} — a classified support module ({@code *_lib}
+ *       fixtures) compiled by the companion catalog when a parent fixture
+ *       imports it; the gate additionally verifies it compiles standalone
+ *       so a dead companion fails loudly.</li>
+ *   <li>{@code known-fail MODE} — an intentionally unsupported v1.2 case
+ *       ("explicit failing fixture"). The runner verifies that the
+ *       requirement {@code MODE} is still NOT satisfied; a mandatory
+ *       {@code @issue} tag tracks the owning follow-up issue. When the
+ *       tracked issue lands and the fixture starts passing, the gate
+ *       FAILS with a promotion instruction (remove the marker and set the
+ *       real {@code @expected}), so promotion is forced.</li>
+ *   <li>{@code host-fixture} — reserved for
+ *       {@code test/conformance/host-fixtures/*.d.deal}; discovery skips
+ *       that subtree and a file classified this way anywhere else is a
+ *       configuration failure.</li>
+ * </ul>
  */
 public class ConformanceTest {
 
     private static int passed = 0;
     private static int failed = 0;
     private static int skipped = 0;
+    private static int knownFailures = 0;
+    private static int companions = 0;
     private static final Map<String, List<TestResult>> specGroups = new LinkedHashMap<>();
+    private static final Map<String, Integer> knownFailsByIssue = new LinkedHashMap<>();
+    private static final Map<String, int[]> phaseStats = new LinkedHashMap<>();
+    private static final List<String> classificationFailures = new ArrayList<>();
     private static boolean luajitAvailable;
 
     /**
@@ -47,17 +83,25 @@ public class ConformanceTest {
     private record TestFile(
         Path path,
         String relativePath,
+        String phase,
         String spec,
         String description,
         String expected,
-        String features
+        String features,
+        String issue
     ) {}
+
+    /** Outcome classification of one fixture in the v1.2 gate. */
+    private enum State { PASS, FAIL, SKIP, KNOWN_FAIL, COMPANION }
 
     private record TestResult(
         TestFile test,
-        boolean pass,
+        State state,
         String message
     ) {}
+
+    /** Probe result of one underlying expectation check. */
+    private record RunProbe(boolean ok, boolean environmental, String detail) {}
 
     /**
      * A companion module that has been compiled to Lua and is ready to be
@@ -83,7 +127,7 @@ public class ConformanceTest {
             luajitAvailable = false;
         }
 
-        System.out.println("=== DEAL v1.1 Conformance Test Suite ===");
+        System.out.println("=== DEAL v1.2 Conformance Test Suite ===");
         System.out.println("Root: " + conformanceRoot);
         System.out.println("LuaJIT: " + (luajitAvailable ? "available" :
             "NOT available (runtime tests will be skipped)"));
@@ -113,7 +157,7 @@ public class ConformanceTest {
 
 
     // =========================================================================
-    // Discovery
+    // Discovery and classification
     // =========================================================================
 
     private static List<TestFile> discoverTests(Path root) throws IOException {
@@ -121,9 +165,11 @@ public class ConformanceTest {
         try (var stream = Files.walk(root)) {
             stream.filter(p -> p.toString().endsWith(".deal"))
                   // Host fixture declarations (host-fixtures/*.d.deal)
-                  // carry no @expected header and are resolved on demand
-                  // by the host-fixture registry (host-module-abi D6) —
-                  // the discovery walk skips the subtree entirely.
+                  // carry the @expected: host-fixture classification and
+                  // are resolved on demand by the host-fixture registry
+                  // (host-module-abi D6) — the discovery walk skips the
+                  // subtree entirely. A host-fixture classification outside
+                  // the subtree is a configuration failure.
                   .filter(p -> {
                       Path rel = root.relativize(p);
                       return rel.getNameCount() == 0
@@ -148,8 +194,9 @@ public class ConformanceTest {
             String description = "";
             String expected = "";
             String features = "";
+            String issue = "";
 
-            int linesToScan = Math.min(lines.size(), 20);
+            int linesToScan = Math.min(lines.size(), 40);
             for (int i = 0; i < linesToScan; i++) {
                 String line = lines.get(i).trim();
                 if (line.startsWith("// @spec:")) {
@@ -160,20 +207,145 @@ public class ConformanceTest {
                     expected = line.substring("// @expected:".length()).trim();
                 } else if (line.startsWith("// @features:")) {
                     features = line.substring("// @features:".length()).trim();
+                } else if (line.startsWith("// @issue:")) {
+                    issue = line.substring("// @issue:".length()).trim();
                 }
             }
 
+            String relPath = root.relativize(file).toString();
+            String phase = relPath.contains(File.separator)
+                ? relPath.substring(0, relPath.indexOf(File.separator))
+                : "";
+
             if (expected.isEmpty()) {
-                System.err.println("WARNING: " + file + " has no @expected tag, skipping");
+                classificationFailure(file + ": no @expected tag — the v1.2 "
+                    + "gate has no unclassified skips; classify the file as a "
+                    + "test or as '@expected: companion'");
                 return null;
             }
 
-            String relPath = root.relativize(file).toString();
-            return new TestFile(file, relPath, spec, description, expected, features);
+            if (expected.equals("companion")) {
+                if (!spec.isEmpty() && !validSpecReference(spec)) {
+                    classificationFailure(file + ": companion @spec '" + spec
+                        + "' does not reference a v1.2 spec section");
+                    return null;
+                }
+                return new TestFile(file.toAbsolutePath(), relPath, phase, spec,
+                    description, expected, features, issue);
+            }
+
+            if (expected.equals("host-fixture")) {
+                classificationFailure(file + ": @expected: host-fixture is "
+                    + "reserved for test/conformance/host-fixtures/*.d.deal");
+                return null;
+            }
+
+            if (spec.isEmpty() || !validSpecReference(spec)) {
+                classificationFailure(file + ": missing or stale @spec '"
+                    + spec + "' — the v1.2 gate requires every expectation to "
+                    + "reference a v1.2 spec section");
+                return null;
+            }
+
+            if (expected.startsWith("known-fail ")) {
+                String mode = expected.substring("known-fail ".length()).trim();
+                String modeError = knownFailModeError(mode);
+                if (modeError != null) {
+                    classificationFailure(file + ": " + modeError);
+                    return null;
+                }
+                if (issue.isEmpty()) {
+                    classificationFailure(file + ": @expected: known-fail "
+                        + "requires a // @issue: <tracked follow-up issue> tag");
+                    return null;
+                }
+                return new TestFile(file.toAbsolutePath(), relPath, phase, spec,
+                    description, expected, features, issue);
+            }
+
+            if (expected.startsWith("compile-error ")
+                    || expected.startsWith("runtime-error ")) {
+                String code = expected.substring(expected.indexOf(' ') + 1).trim();
+                if (code.isEmpty() || code.equals("any")) {
+                    classificationFailure(file + ": '" + expected + "' must "
+                        + "name one specific diagnostic code (the 'any' form "
+                        + "is reserved for @expected: known-fail)");
+                    return null;
+                }
+            } else if (!expected.equals("compile-ok")
+                    && !expected.equals("runtime-ok")) {
+                classificationFailure(file + ": unknown @expected '"
+                    + expected + "' — the v1.2 gate has no unclassified skips");
+                return null;
+            }
+
+            return new TestFile(file.toAbsolutePath(), relPath, phase, spec,
+                description, expected, features, issue);
         } catch (IOException e) {
-            System.err.println("WARNING: cannot read " + file + ": " + e.getMessage());
+            classificationFailure(file + ": cannot read: " + e.getMessage());
             return null;
         }
+    }
+
+    /** Records a classification failure (unclassified-skip removal). */
+    private static void classificationFailure(String message) {
+        classificationFailures.add(message);
+        failed++;
+    }
+
+    /**
+     * The v1.2 spec sections a {@code @spec} reference may start with.
+     * Mirrors the section headings of fs/docs/spec-v1.2.md; the two
+     * project report groups ("Standard library declarations",
+     * "C FFI declaration files") are {@code ###} subsections of the
+     * modules chapter and are accepted as first components for fixture
+     * grouping.
+     */
+    private static final Set<String> SPEC_HEADINGS = Set.of(
+        "Lexical elements",
+        "Syntactic grammar",
+        "Type system",
+        "Classes",
+        "Functions",
+        "Variables",
+        "Tables",
+        "Arrays",
+        "Bytes",
+        "Control flow",
+        "Error handling",
+        "Async/Await",
+        "Modules, declarations, standard library, and host ABI",
+        "C FFI declaration files",
+        "Runtime execution model",
+        "Standard library declarations",
+        "Test suite basis",
+        "Diagnostics"
+    );
+
+    private static boolean validSpecReference(String spec) {
+        String first = spec.split(" \u2014 ", 2)[0].trim();
+        return SPEC_HEADINGS.contains(first);
+    }
+
+    /**
+     * Returns an error description when {@code mode} is not a supported
+     * known-fail mode, or {@code null} when it is.
+     */
+    private static String knownFailModeError(String mode) {
+        if (mode.equals("compile-ok") || mode.equals("runtime-ok")) {
+            return null;
+        }
+        if (mode.startsWith("compile-error ") || mode.startsWith("runtime-error ")) {
+            String code = mode.substring(mode.indexOf(' ') + 1).trim();
+            if (code.isEmpty()) {
+                return "known-fail '" + mode + "' must name a diagnostic code "
+                    + "(or 'any')";
+            }
+            return null;
+        }
+        return "unknown known-fail mode '" + mode
+            + "' (supported: compile-ok, compile-error CODE|any, "
+            + "runtime-ok, runtime-error CODE|any)";
     }
 
     // =========================================================================
@@ -185,7 +357,11 @@ public class ConformanceTest {
         String expected = test.expected();
 
         try {
-            if (expected.startsWith("compile-ok")) {
+            if (expected.equals("companion")) {
+                runCompanion(test);
+            } else if (expected.startsWith("known-fail ")) {
+                runKnownFail(test);
+            } else if (expected.startsWith("compile-ok")) {
                 runCompileOk(test);
             } else if (expected.startsWith("runtime-ok")) {
                 runRuntimeOk(test);
@@ -196,15 +372,165 @@ public class ConformanceTest {
                 String code = expected.substring("runtime-error ".length()).trim();
                 runRuntimeError(test, code);
             } else {
-                System.out.println("SKIP (unknown @expected: " + expected + ")");
-                skipped++;
-                addResult(test, false, "unknown @expected: " + expected);
+                // parseMetadata rejects unknown expectations; this branch
+                // is unreachable defense-in-depth.
+                System.out.println("FAIL (unknown @expected: " + expected + ")");
+                record(test, State.FAIL, "unknown @expected: " + expected);
             }
         } catch (Exception e) {
             System.out.println("ERROR: " + e.getMessage());
-            failed++;
-            addResult(test, false, "exception: " + e.getMessage());
+            record(test, State.FAIL, "exception: " + e.getMessage());
         }
+    }
+
+    // =========================================================================
+    // Classified support modules (companions)
+    // =========================================================================
+
+    private static void runCompanion(TestFile test) throws Exception {
+        List<Diagnostic> diags = compileCompanion(test);
+        boolean hasErrors = diags.stream().anyMatch(d -> "error".equals(d.severity()));
+        if (hasErrors) {
+            System.out.println("FAIL (companion support module does not compile)");
+            for (Diagnostic d : diags) {
+                if ("error".equals(d.severity())) {
+                    System.out.println("    " + d);
+                }
+            }
+            record(test, State.FAIL, "companion does not compile");
+        } else {
+            System.out.println("COMPANION (classified support module; compiles)");
+            record(test, State.COMPANION, "companion compiles");
+        }
+    }
+
+    /**
+     * Compiles a classified companion support module standalone. Regular
+     * {@code .deal} companions run the shared frontend pipeline
+     * (lexer/parser/name resolution/type checking). {@code .d.deal}
+     * declaration companions run the declaration-file pipeline the
+     * harness itself uses when the parent fixture imports them
+     * ({@link ConformanceModuleResolver#resolveFileModule}: lexer/parser
+     * plus {@link ExportExtractor}), because external function
+     * declarations have no body to type-check.
+     */
+    @SuppressWarnings("deprecation")
+    private static List<Diagnostic> compileCompanion(TestFile test) {
+        try {
+            String source = Files.readString(test.path());
+            String filename = test.path().toString();
+
+            LexResult lex = new Lexer(source, filename).tokenize();
+            if (lex.hasErrors()) {
+                return new ArrayList<>(lex.diagnostics());
+            }
+
+            Parser parser = new Parser(lex.tokens(), filename);
+            ParseResult parseResult = parser.parse();
+            if (parseResult.hasErrors()) {
+                return new ArrayList<>(parseResult.diagnostics());
+            }
+
+            if (filename.endsWith(".d.deal")) {
+                ExportExtractor extractor =
+                    new ExportExtractor(filename, true);
+                extractor.extract(parseResult.program());
+                return new ArrayList<>(extractor.diagnostics());
+            }
+
+            List<Diagnostic> allDiags = new ArrayList<>();
+            ConformanceModuleResolver resolver =
+                new ConformanceModuleResolver(test.path(), null);
+            NameResolver nr = new NameResolver(filename, resolver);
+            SymbolTable symTable;
+            try {
+                symTable = nr.resolve(parseResult.program());
+            } catch (Exception e) {
+                allDiags.add(Diagnostic.error("E9999", e.getMessage(), filename, 1, 1));
+                return allDiags;
+            }
+            allDiags.addAll(nr.diagnostics());
+            CheckResult result = TypeChecker.check(filename, symTable, nr,
+                parseResult.program());
+            allDiags.addAll(result.diagnostics());
+            return allDiags;
+        } catch (IOException e) {
+            return List.of(Diagnostic.error("E9999", "cannot read: " + e.getMessage(),
+                test.path().toString(), 1, 1));
+        }
+    }
+
+    // =========================================================================
+    // Intentionally unsupported v1.2 cases: explicit failing fixtures
+    // =========================================================================
+
+    private static void runKnownFail(TestFile test) throws Exception {
+        String mode = test.expected().substring("known-fail ".length()).trim();
+        RunProbe probe = probeMode(test, mode);
+        if (probe.environmental()) {
+            System.out.println("SKIP (" + probe.detail() + ")");
+            record(test, State.SKIP, probe.detail());
+            return;
+        }
+        if (probe.ok()) {
+            System.out.println("FAIL (STALE known-fail: the v1.2 requirement "
+                + "tracked by " + test.issue() + " now passes — promote the "
+                + "fixture: set '@expected: " + mode + "' and drop the "
+                + "@issue tag)");
+            record(test, State.FAIL, "stale known-fail; promote fixture");
+        } else {
+            System.out.println("KNOWN-FAIL (" + mode + " not yet satisfied; "
+                + "tracked by " + test.issue() + ")");
+            knownFailsByIssue.merge(test.issue(), 1, Integer::sum);
+            record(test, State.KNOWN_FAIL, probe.detail());
+        }
+    }
+
+    /**
+     * Executes the underlying expectation of a mode and reports whether it
+     * currently passes. Used by the known-fail classification (and the
+     * normal dispatch below): {@code ok=true} means the v1.2 requirement
+     * is satisfied today.
+     */
+    private static RunProbe probeMode(TestFile test, String mode) throws Exception {
+        if (mode.equals("compile-ok")) {
+            List<Diagnostic> diags = compileAndGetDiagnostics(test, null);
+            boolean hasErrors = diags.stream()
+                .anyMatch(d -> "error".equals(d.severity()));
+            return new RunProbe(!hasErrors, false,
+                hasErrors ? "unexpected compile errors: " + errorCodes(diags)
+                    : "compiles");
+        }
+        if (mode.equals("runtime-ok")) {
+            return probeRuntimeOk(test);
+        }
+        if (mode.startsWith("compile-error ")) {
+            String code = mode.substring("compile-error ".length()).trim();
+            List<Diagnostic> diags = compileAndGetDiagnostics(test, null);
+            boolean found = "any".equals(code)
+                ? diags.stream().anyMatch(d -> "error".equals(d.severity()))
+                : diags.stream().anyMatch(d -> "error".equals(d.severity())
+                    && code.equals(d.code()));
+            return new RunProbe(found, false,
+                found ? "produces " + code
+                    : "does not produce " + code + " (got: "
+                        + errorCodes(diags) + ")");
+        }
+        if (mode.startsWith("runtime-error ")) {
+            String code = mode.substring("runtime-error ".length()).trim();
+            return probeRuntimeError(test, code);
+        }
+        return new RunProbe(false, false, "unsupported known-fail mode: " + mode);
+    }
+
+    private static List<String> errorCodes(List<Diagnostic> diags) {
+        List<String> codes = new ArrayList<>();
+        for (Diagnostic d : diags) {
+            if ("error".equals(d.severity())) {
+                codes.add(d.code());
+            }
+        }
+        return codes;
     }
 
     // =========================================================================
@@ -221,12 +547,10 @@ public class ConformanceTest {
                     System.out.println("    " + d);
                 }
             }
-            failed++;
-            addResult(test, false, "unexpected compile errors");
+            record(test, State.FAIL, "unexpected compile errors");
         } else {
             System.out.println("OK");
-            passed++;
-            addResult(test, true, "compile ok");
+            record(test, State.PASS, "compile ok");
         }
     }
 
@@ -235,47 +559,45 @@ public class ConformanceTest {
     // =========================================================================
 
     private static void runRuntimeOk(TestFile test) throws Exception {
-        if (!luajitAvailable) {
-            System.out.println("SKIP (LuaJIT not available)");
-            skipped++;
-            addResult(test, false, "skipped: LuaJIT not available");
+        RunProbe probe = probeRuntimeOk(test);
+        if (probe.environmental()) {
+            System.out.println("SKIP (" + probe.detail() + ")");
+            record(test, State.SKIP, probe.detail());
             return;
+        }
+        if (probe.ok()) {
+            System.out.println("OK");
+            record(test, State.PASS, "runtime ok");
+        } else {
+            System.out.println("FAIL (" + probe.detail() + ")");
+            record(test, State.FAIL, probe.detail());
+        }
+    }
+
+    private static RunProbe probeRuntimeOk(TestFile test) throws Exception {
+        if (!luajitAvailable) {
+            return new RunProbe(false, true, "LuaJIT not available");
         }
 
         CompanionCatalog catalog = new CompanionCatalog();
         List<Diagnostic> diags = compileAndGetDiagnostics(test, catalog);
         boolean hasErrors = diags.stream().anyMatch(d -> "error".equals(d.severity()));
         if (hasErrors) {
-            System.out.println("FAIL (unexpected compile errors)");
-            for (Diagnostic d : diags) {
-                if ("error".equals(d.severity())) {
-                    System.out.println("    " + d);
-                }
-            }
-            failed++;
-            addResult(test, false, "unexpected compile errors");
-            return;
+            return new RunProbe(false, false,
+                "unexpected compile errors: " + errorCodes(diags));
         }
 
         // Generate Lua for the main test file and any companion modules it imports
         var generated = generateLuaWithCompanions(test.path(), catalog);
         if (generated == null) {
-            System.out.println("FAIL (codegen failed)");
-            failed++;
-            addResult(test, false, "codegen failed");
-            return;
+            return new RunProbe(false, false, "codegen failed");
         }
 
         String output = executeLua(generated.mainLua(), generated.companionModules(), false);
         if (output == null) {
-            System.out.println("FAIL (Lua execution failed)");
-            failed++;
-            addResult(test, false, "Lua execution returned null");
-        } else {
-            System.out.println("OK");
-            passed++;
-            addResult(test, true, "runtime ok");
+            return new RunProbe(false, false, "Lua execution failed");
         }
+        return new RunProbe(true, false, "runtime ok");
     }
 
     // =========================================================================
@@ -288,17 +610,12 @@ public class ConformanceTest {
             d -> "error".equals(d.severity()) && expectedCode.equals(d.code()));
         if (found) {
             System.out.println("OK (found " + expectedCode + ")");
-            passed++;
-            addResult(test, true, "found " + expectedCode);
+            record(test, State.PASS, "found " + expectedCode);
         } else {
-            List<String> gotCodes = diags.stream()
-                .filter(d -> "error".equals(d.severity()))
-                .map(Diagnostic::code)
-                .toList();
             System.out.println("FAIL (expected " + expectedCode +
-                ", got: " + gotCodes + ")");
-            failed++;
-            addResult(test, false, "expected " + expectedCode + ", got: " + gotCodes);
+                ", got: " + errorCodes(diags) + ")");
+            record(test, State.FAIL,
+                "expected " + expectedCode + ", got: " + errorCodes(diags));
         }
     }
 
@@ -307,56 +624,59 @@ public class ConformanceTest {
     // =========================================================================
 
     private static void runRuntimeError(TestFile test, String expectedCode) throws Exception {
-        if (!luajitAvailable) {
-            System.out.println("SKIP (LuaJIT not available)");
-            skipped++;
-            addResult(test, false, "skipped: LuaJIT not available");
+        RunProbe probe = probeRuntimeError(test, expectedCode);
+        if (probe.environmental()) {
+            System.out.println("SKIP (" + probe.detail() + ")");
+            record(test, State.SKIP, probe.detail());
             return;
+        }
+        if (probe.ok()) {
+            System.out.println("OK (found DEAL_ERROR_CODE: " + expectedCode + ")");
+            record(test, State.PASS, "found " + expectedCode);
+        } else {
+            System.out.println("FAIL (" + probe.detail() + ")");
+            record(test, State.FAIL, probe.detail());
+        }
+    }
+
+    private static RunProbe probeRuntimeError(TestFile test, String expectedCode) throws Exception {
+        if (!luajitAvailable) {
+            return new RunProbe(false, true, "LuaJIT not available");
         }
 
         CompanionCatalog catalog = new CompanionCatalog();
         List<Diagnostic> diags = compileAndGetDiagnostics(test, catalog);
         boolean hasErrors = diags.stream().anyMatch(d -> "error".equals(d.severity()));
         if (hasErrors) {
-            System.out.println("FAIL (unexpected compile errors for runtime-error test)");
-            for (Diagnostic d : diags) {
-                if ("error".equals(d.severity())) {
-                    System.out.println("    " + d);
-                }
-            }
-            failed++;
-            addResult(test, false, "unexpected compile errors");
-            return;
+            return new RunProbe(false, false,
+                "unexpected compile errors: " + errorCodes(diags));
         }
 
         // Generate Lua for the main test file and any companion modules it imports
         var generated = generateLuaWithCompanions(test.path(), catalog);
         if (generated == null) {
-            System.out.println("FAIL (codegen failed)");
-            failed++;
-            addResult(test, false, "codegen failed");
-            return;
+            return new RunProbe(false, false, "codegen failed");
         }
 
         String output = executeLua(generated.mainLua(), generated.companionModules(), true);
         if (output == null) {
-            System.out.println("FAIL (Lua execution returned null)");
-            failed++;
-            addResult(test, false, "Lua execution returned null");
-            return;
+            return new RunProbe(false, false, "Lua execution returned null");
+        }
+
+        if ("any".equals(expectedCode)) {
+            if (output.contains("DEAL_ERROR_CODE: ")) {
+                return new RunProbe(true, false, "found DEAL_ERROR_CODE");
+            }
+            return new RunProbe(false, false, "expected any DEAL_ERROR_CODE, got: "
+                + output.replace("\n", "\\n"));
         }
 
         String needle = "DEAL_ERROR_CODE: " + expectedCode;
         if (output.contains(needle)) {
-            System.out.println("OK (found " + needle + ")");
-            passed++;
-            addResult(test, true, "found " + expectedCode);
-        } else {
-            System.out.println("FAIL (expected " + needle + ", got: " +
-                output.replace("\n", "\\n") + ")");
-            failed++;
-            addResult(test, false, "expected " + needle + ", got: " + output);
+            return new RunProbe(true, false, "found " + expectedCode);
         }
+        return new RunProbe(false, false, "expected " + needle + ", got: "
+            + output.replace("\n", "\\n"));
     }
 
     // =========================================================================
@@ -687,10 +1007,28 @@ public class ConformanceTest {
     // Results & coverage
     // =========================================================================
 
-    private static void addResult(TestFile test, boolean pass, String message) {
+    private static void record(TestFile test, State state, String message) {
+        switch (state) {
+            case PASS -> passed++;
+            case FAIL -> failed++;
+            case SKIP -> skipped++;
+            case KNOWN_FAIL -> knownFailures++;
+            case COMPANION -> companions++;
+        }
+        int[] stats = phaseStats.computeIfAbsent(test.phase(), k -> new int[4]);
+        switch (state) {
+            case PASS -> stats[0]++;
+            case FAIL -> stats[1]++;
+            case SKIP -> stats[2]++;
+            case KNOWN_FAIL -> stats[3]++;
+            case COMPANION -> {}
+        }
+        if (state == State.COMPANION) {
+            return; // support modules carry no spec coverage of their own
+        }
         String specKey = test.spec().isEmpty() ? "(no @spec)" : test.spec();
         specGroups.computeIfAbsent(specKey, k -> new ArrayList<>())
-                  .add(new TestResult(test, pass, message));
+                  .add(new TestResult(test, state, message));
     }
 
     private static void printSummary() {
@@ -698,12 +1036,54 @@ public class ConformanceTest {
         System.out.println("=== Conformance Summary ===");
         int total = passed + failed + skipped;
         System.out.println("Total: " + total + ", Passed: " + passed +
-            ", Failed: " + failed + ", Skipped: " + skipped);
+            ", Failed: " + failed + ", Skipped: " + skipped +
+            ", KnownFailures (tracked): " + knownFailures);
+        System.out.println("Companions (classified support modules): "
+            + companions);
+
+        if (!classificationFailures.isEmpty()) {
+            System.out.println();
+            System.out.println("Classification failures (unclassified skips "
+                + "are removed by the v1.2 gate):");
+            for (String message : classificationFailures) {
+                System.out.println("  " + message);
+            }
+        }
+
+        System.out.println();
+        System.out.println("=== DEAL v1.2 Promotion Gate ===");
+        printPhaseGate("frontend",
+            "Frontend conformance (v1.2 grammar and semantics)");
+        printPhaseGate("backend-runtime",
+            "LuaJIT backend-runtime conformance (v1.2)");
+        System.out.println("  JVM backend-runtime conformance (v1.2): enforced by "
+            + "BackendConformanceTest (test/conformance/fixtures/*.json, "
+            + "backends=[\"jvm\"]) and JvmBackendTest in run_tests.sh — both "
+            + "must pass with zero unclassified skips");
+        if (knownFailsByIssue.isEmpty()) {
+            System.out.println("  Tracked v1.2 follow-up issues: none — full "
+                + "v1.2 conformance");
+        } else {
+            System.out.println("  Tracked v1.2 follow-up issues (intentionally "
+                + "unsupported cases, each with an explicit failing fixture):");
+            knownFailsByIssue.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(e -> System.out.println("    " + e.getKey() + ": "
+                    + e.getValue() + " known-fail fixture(s)"));
+        }
+    }
+
+    private static void printPhaseGate(String phase, String label) {
+        int[] stats = phaseStats.getOrDefault(phase, new int[4]);
+        int total = stats[0] + stats[1] + stats[2] + stats[3];
+        System.out.println("  " + label + ": " + stats[0] + "/" + total
+            + " passed, " + stats[1] + " failed, " + stats[2] + " skipped, "
+            + stats[3] + " known-fail (tracked)");
     }
 
     private static void printCoverageReport() {
         System.out.println();
-        System.out.println("=== Spec Coverage Report ===");
+        System.out.println("=== Spec Coverage Report (v1.2) ===");
         System.out.println();
 
         List<String> specSections = List.of(
@@ -715,13 +1095,16 @@ public class ConformanceTest {
             "Variables",
             "Tables",
             "Arrays",
+            "Bytes",
             "Control flow",
             "Error handling",
             "Async/Await",
             "Modules, declarations, standard library, and host ABI",
-            "Diagnostics",
+            "C FFI declaration files",
             "Runtime execution model",
-            "Standard library declarations"
+            "Standard library declarations",
+            "Test suite basis",
+            "Diagnostics"
         );
 
         for (String section : specSections) {
@@ -736,11 +1119,16 @@ public class ConformanceTest {
                 System.out.printf("  %-55s %s%n",
                     "\u00a7" + section, "UNCOVERED (0 tests)");
             } else {
-                long sectionPassed = sectionResults.stream().filter(r -> r.pass()).count();
+                long sectionPassed = sectionResults.stream()
+                    .filter(r -> r.state() == State.PASS).count();
+                long sectionFailed = sectionResults.stream()
+                    .filter(r -> r.state() == State.FAIL).count();
+                long sectionKnown = sectionResults.stream()
+                    .filter(r -> r.state() == State.KNOWN_FAIL).count();
                 long sectionTotal = sectionResults.size();
-                System.out.printf("  %-55s %d/%d passed%n",
-                    "\u00a7" + section, sectionPassed, sectionTotal);
-
+                System.out.printf("  %-55s %d/%d passed, %d failed, %d known-fail%n",
+                    "\u00a7" + section, sectionPassed, sectionTotal,
+                    sectionFailed, sectionKnown);
             }
         }
     }

@@ -1,4 +1,4 @@
-// @spec: Modules — Declaration-only runtime behavior
+// @spec: Modules, declarations, standard library, and host ABI — Declaration-only runtime behavior
 // @description: Calling a declaration-only import without runtime implementation is not treated as a runtime-ok test
 // @expected: compile-ok
 // @features: modules, declarations

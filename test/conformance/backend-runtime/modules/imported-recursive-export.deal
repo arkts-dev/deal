@@ -1,4 +1,4 @@
-// @spec: Modules — Exported recursive functions
+// @spec: Modules, declarations, standard library, and host ABI — Exported recursive functions
 // @description: Imported exported recursive functions execute through the module export table
 // @expected: runtime-ok
 // @features: modules, exports, recursion

@@ -1,5 +1,5 @@
 // @spec: Classes — Error class prohibition
-// @description: User-declared class Error is prohibited per v1.1 Error handling / Type system (E4006). The rule originates in Error handling but is placed in classes/ for directory consistency.
+// @description: User-declared class Error is prohibited (v1.2 Error handling / Type system, E4006): Error is a builtin nominal class type and user code must not declare a class named Error. The rule originates in Error handling but is placed in classes/ for directory consistency.
 // @expected: compile-error E4006
 // @features: classes, error-prohibition
 

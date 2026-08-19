@@ -1,4 +1,4 @@
-// @spec: Lua backend ABI — chained index lowering
+// @spec: Runtime execution model — Lua backend ABI — chained index lowering
 // @description: Function-result array indexing lowers before member access
 // @expected: runtime-ok
 // @features: lua-abi, arrays, chained-access, structural

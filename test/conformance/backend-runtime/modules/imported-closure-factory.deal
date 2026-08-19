@@ -1,4 +1,4 @@
-// @spec: Modules — Imported closure factory
+// @spec: Modules, declarations, standard library, and host ABI — Imported closure factory
 // @description: A closure returned from an imported function retains its captured binding
 // @expected: runtime-ok
 // @features: modules, closures

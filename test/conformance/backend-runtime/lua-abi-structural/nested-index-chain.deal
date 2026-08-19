@@ -1,4 +1,4 @@
-// @spec: Lua backend ABI — chained nested index lowering
+// @spec: Runtime execution model — Lua backend ABI — chained nested index lowering
 // @description: Nested array indexing lowers every index in a chained expression
 // @expected: runtime-ok
 // @features: lua-abi, arrays, chained-access, structural

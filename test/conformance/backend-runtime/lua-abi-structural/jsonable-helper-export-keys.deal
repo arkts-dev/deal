@@ -1,4 +1,4 @@
-// @spec: Lua backend ABI — jsonable helper export keys
+// @spec: Runtime execution model — Lua backend ABI — jsonable helper export keys
 // @description: @jsonable helper exports remain callable through DEAL $ helper names
 // @expected: runtime-ok
 // @features: lua-abi, jsonable, structural

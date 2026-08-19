@@ -1,4 +1,4 @@
-// @spec: Modules — Chained access over imported function results
+// @spec: Modules, declarations, standard library, and host ABI — Chained access over imported function results
 // @description: Array indexing and field access over an imported function result lowers correctly
 // @expected: runtime-ok
 // @features: modules, arrays, classes, chained-access

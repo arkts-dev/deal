@@ -1,4 +1,4 @@
-// @spec: Modules — Imported functions and closures
+// @spec: Modules, declarations, standard library, and host ABI — Imported functions and closures
 // @description: A closure can capture and call an imported function binding
 // @expected: runtime-ok
 // @features: closures, modules, imports
