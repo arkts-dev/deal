@@ -402,7 +402,7 @@ import java.util.Set;
  * shared descriptor-driven seam: {@link #typeDescriptor(Type)} is the
  * single JVM type-descriptor emitter (spec {@code RuntimeTypeDescriptor}
  * format — primitives, {@code ?T}, {@code [T]}, {@code @module/Name},
- * function and {@code async} operation types, {@code ...[T]} rest arms),
+ * function and {@code async} operation types),
  * and every untyped table-read boundary emits one call to the single
  * emitted helper {@code $check(descriptor, value)} whose branches carry
  * the exact acceptance semantics the retired per-feature helpers pinned

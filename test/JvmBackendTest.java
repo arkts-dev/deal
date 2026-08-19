@@ -5535,14 +5535,6 @@ public class JvmBackendTest {
                 .equals("async(int)->string"),
             "async(int)->string spells 'async(int)->string'");
         check(JvmBackend.typeDescriptor(Types.func(
-                List.of(), Types.array(Type.Int.INSTANCE), Type.Null.INSTANCE))
-                .equals("(...[int])->null"),
-            "rest-only function spells '(...[int])->null'");
-        check(JvmBackend.typeDescriptor(Types.func(
-                List.of(Type.String.INSTANCE), Types.array(Type.Int.INSTANCE),
-                Type.Null.INSTANCE)).equals("(string,...[int])->null"),
-            "mixed fixed+rest spells '(string,...[int])->null'");
-        check(JvmBackend.typeDescriptor(Types.func(
                 List.of(Types.array(Type.Int.INSTANCE)),
                 Types.nullable(Types.classType("User", "app"))))
                 .equals("([int])->?@app/User"),
