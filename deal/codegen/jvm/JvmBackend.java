@@ -3130,6 +3130,17 @@ public final class JvmBackend {
             if (code.startsWith("__t")) continue; // already materialized
             if (isPureAfterEmission(valueNodes.get(i))) continue;
             Type valueType = typeOf(valueNodes.get(i));
+            // A null-typed effectful provided value (an assignment like
+            // `(m = null)` whose emitted code carries the assignment
+            // TARGET's boxed Java type) materializes into an Object
+            // temporary — javaLocalType(null) is java.lang.Void and
+            // javac rejects `java.lang.Void __t0 = (m = null);`
+            // ("incompatible types: Long cannot be converted to Void")
+            // after the CLI reported success. The Object temp accepts
+            // every emitted reference and is consumed only for its
+            // evaluation effects, exactly like materializeIfEffectful's
+            // Type.Null rule (the constructor parameter coercion below
+            // re-casts it through coerceNullValueCode).
             // A nil-aware && / || provided value's emitted code is a
             // boxed java.lang.Boolean temporary (null = the Lua nil) —
             // the materialized temporary must stay boxed (a `boolean`
@@ -3137,7 +3148,9 @@ public final class JvmBackend {
             // constructor's booleanNotNull boundary could raise E8001),
             // exactly like emitOperandsInOrder's own materialization
             // below.
-            String javaType = (canYieldNil(valueNodes.get(i))
+            String javaType = valueType instanceof Type.Null
+                ? "java.lang.Object"
+                : (canYieldNil(valueNodes.get(i))
                     && !isPrimitiveArrayRead(valueNodes.get(i)))
                 ? "java.lang.Boolean"
                 : javaLocalType(valueType, valueNodes.get(i).span());
@@ -3961,11 +3974,23 @@ public final class JvmBackend {
                 if (materialized[i]) continue;
                 if (isPureAfterEmission(nodes.get(i))) continue;
                 Type t = typeOf(nodes.get(i));
+                // A null-typed effectful operand (an assignment like
+                // `(m = null)` whose emitted code carries the assignment
+                // TARGET's boxed Java type) materializes into an Object
+                // temporary — javaLocalType(null) is java.lang.Void and
+                // javac rejects `java.lang.Void __t0 = (m = null);`
+                // ("incompatible types: Long cannot be converted to
+                // Void") after the CLI reported success. The Object temp
+                // accepts every emitted reference and is consumed only
+                // for its evaluation effects, exactly like
+                // materializeIfEffectful's Type.Null rule.
                 // A nil-aware && / || operand's emitted code is a boxed
                 // java.lang.Boolean temporary (null = the Lua nil) — the
                 // materialized temporary must stay boxed (a `boolean`
                 // declaration would auto-unbox and NPE on null).
-                String javaType = (canYieldNil(nodes.get(i))
+                String javaType = t instanceof Type.Null
+                    ? "java.lang.Object"
+                    : (canYieldNil(nodes.get(i))
                         && !isPrimitiveArrayRead(nodes.get(i)))
                     ? "java.lang.Boolean"
                     : javaLocalType(t, nodes.get(i).span());

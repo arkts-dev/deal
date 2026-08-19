@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM nullable slice conformance (ISSUE-0108). Fixtures that run the real DEAL frontend (lexer \u2192 parser \u2192 name resolver \u2192 type checker) \u2192 real JvmBackend codegen \u2192 the REAL javac compiler frontend (single-module fixtures in-process via compileWithJavac; whole-project fixtures keep the javac launcher) \u2192 java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: T | null for the four primitives and local classes in locals, module fields, class fields, parameters, and returns; null-check branches (narrowing both directions, else-branch narrowing, narrowing invalidation after assignment, narrowed module fields); nullable boundary checks at the table-read untyped boundary (int | null, class | null nominal checks, array | null); nullable arrays T[] | null; arrays of nullable elements (T | null)[] for the primitives and local classes; class arrays C[] and (C | null)[]; the int()/number() nullable conversion overloads with the runtime null failure; and frontend compile-error gates (E3001 nullable-to-non-nullable read, E3001 narrowing invalidation, E3006 int === null) rejected before any backend runs.",
+  "description": "JVM nullable slice conformance (ISSUE-0108). Fixtures that run the real DEAL frontend (lexer \u2192 parser \u2192 name resolver \u2192 type checker) \u2192 real JvmBackend codegen \u2192 the REAL javac compiler frontend (single-module fixtures in-process via compileWithJavac; whole-project fixtures keep the javac launcher) \u2192 java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: T | null for the four primitives and local classes in locals, module fields, class fields, parameters, and returns; null-check branches (narrowing both directions, else-branch narrowing, narrowing invalidation after assignment, narrowed module fields); nullable boundary checks at the table-read untyped boundary (int | null, class | null nominal checks, array | null); nullable arrays T[] | null; arrays of nullable elements (T | null)[] for the primitives and local classes; class arrays C[] and (C | null)[]; the int()/number() nullable conversion overloads with the runtime null failure; the null-typed inline assignment materialization pins ((m = null) as a nullable-comparison operand, a call argument, the null === null operand, and a class-construction provided value whose sibling hoists a null-typed call — the temporary must be typed java.lang.Object, never java.lang.Void, or javac rejects the artifact after the CLI reported success); and frontend compile-error gates (E3001 nullable-to-non-nullable read, E3001 narrowing invalidation, E3006 int === null) rejected before any backend runs.",
   "tests": [
     {
       "name": "jvm-nullable-int-locals-flow",
@@ -670,6 +670,62 @@
       "description": "T | null === null keeps strict left-to-right order when the null side is a side-effecting null-typed call: mark('l',1) prints l before touch('r') prints r, then the comparison is false (8) \u2014 the left operand is materialized before the right operand's evaluation (the pre-fix lowering evaluated the materialized right operand before the inline left operand)",
       "source": "import * as console from \"std/console\"\nfunction mark(tag: string, v: int): int | null { console.log(tag); return v; }\nfunction touch(tag: string): null { console.log(tag); }\nexport function test(): int {\n  if (mark(\"l\", 1) === touch(\"r\")) { return 7; }\n  return 8;\n}\n",
       "expectedOutput": "l\nr\n8",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-null-assign-comparison-materialize",
+      "description": "A null-typed inline assignment ((m = null), m: int | null — the emitted code carries the boxed assignment target's Java type Long) as the left operand of the null === T | null comparison, followed by an operand that hoists a null-typed call (pick(2, log('x'))): the operand materialization must type the temporary java.lang.Object, never javaLocalType(null) = java.lang.Void — the pre-fix emitted java.lang.Void __t0 = (m = null); and javac rejected the artifact with 'incompatible types: Long cannot be converted to Void' after the CLI reported success. The artifact is javac-valid, log('x') prints x exactly once (once-evaluation), and null === 2 compares false",
+      "source": "import * as console from \"std/console\"\nfunction pick(x: int, y: null): int | null { return x; }\nfunction log(s: string): null { console.log(s); }\nexport function test(): boolean {\n  let m: int | null = 5;\n  let b: boolean = ((m = null) === pick(2, log(\"x\")));\n  return b;\n}\n",
+      "expectedOutput": "x\nfalse",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-null-assign-call-arg-materialize",
+      "description": "A null-typed inline assignment as a call argument preceding a hoisting argument: f((m = null), pick(2, log('x'))) — the argument materialization must type the temporary java.lang.Object (the pre-fix emitted java.lang.Void __t0 = (m = null);, rejected by javac with 'incompatible types: Long cannot be converted to Void' after the CLI reported success). f receives the DEAL null and returns the second argument: x then 2",
+      "source": "import * as console from \"std/console\"\nfunction pick(x: int, y: null): int { return x; }\nfunction log(s: string): null { console.log(s); }\nfunction f(a: int | null, b: int): int { if (a === null) { return b; } return b + 1; }\nexport function test(): int {\n  let m: int | null = 5;\n  return f((m = null), pick(2, log(\"x\")));\n}\n",
+      "expectedOutput": "x\n2",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-null-assign-null-equality-materialize",
+      "description": "The null === null comparison branch with a null-typed inline assignment against a hoisting null-typed call: (m = null) === touch('r') — the materialized assignment temporary must be java.lang.Object (the pre-fix emitted java.lang.Void __t0 = (m = null);, rejected by javac). touch prints r once, then null === null compares true",
+      "source": "import * as console from \"std/console\"\nfunction touch(s: string): null { console.log(s); }\nexport function test(): boolean {\n  let m: int | null = 5;\n  return (m = null) === touch(\"r\");\n}\n",
+      "expectedOutput": "r\ntrue",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-null-assign-class-ctor-value",
+      "description": "A null-typed inline assignment as a provided class-construction value for a nullable field: { y: (m = null) } with y: int | null — the provided-value materialization must type the temporary java.lang.Object (the pre-fix emitted java.lang.Void __t0 = (m = null);, rejected by javac after the CLI reported success) and the constructor's nullable parameter accepts the DEAL null (p.y === null reads back true → 7)",
+      "source": "class P { x: int = 0; y: int | null = null; }\nexport function test(): int {\n  let m: int | null = 5;\n  let p: P = { y: (m = null) };\n  if (p.y === null) { return 7; }\n  return 0;\n}\n",
+      "expectedOutput": "7",
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,
