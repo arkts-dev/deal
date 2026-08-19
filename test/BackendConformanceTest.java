@@ -6,6 +6,7 @@ import deal.codegen.Backend;
 import deal.codegen.jvm.JvmBackend;
 import deal.codegen.lua.LuaBackend;
 import deal.module.CompilationOrchestrator;
+import deal.module.DealConfig;
 import deal.ir.IrDumper;
 import deal.lexer.*;
 import deal.parser.*;
@@ -88,7 +89,19 @@ import javax.tools.ToolProvider;
  * modules, and module-qualified runtime nominal-check success/failure
  * — E8001 naming both {@code @module/Name} identities — plus a
  * frontend E3001 gate, all through the orchestrator multi-module
- * pipeline), and the ISSUE-0108 nullable-slice fixtures live in
+ * pipeline), the ISSUE-0100 host ABI fixtures live in
+ * {@code test/conformance/fixtures/jvm-host-abi-slice.json}
+ * (externals-gated host modules: declared export exposure, missing
+ * declared exports as load-time E8011 errors, extra host exports
+ * ignored, sync return boundary checks — E8010 wrong kinds and Java
+ * null crossing non-nullable returns, E8004 out-of-safe-range ints —
+ * nullable returns with Java null as the DEAL null sentinel, null
+ * return boundaries, host function parameter adaptation, async host
+ * operation shape checks (E8010) and completion checks (E8001 at the
+ * await site with the blocking JVM await lowering), and an E2009
+ * frontend gate — each fixture's 'hosts' map supplying a declaration
+ * path and a real host implementation class compiled with the emitted
+ * artifacts), and the ISSUE-0108 nullable-slice fixtures live in
  * {@code test/conformance/fixtures/jvm-nullable-slice.json}
  * ({@code T | null} for the four primitives and local classes in
  * locals, module fields, class fields, parameters, and returns;
@@ -471,6 +484,19 @@ public class BackendConformanceTest {
      * configuration is valid.
      */
     static String fixtureConfigViolation(Map<String, Object> test) {
+        // ISSUE-0100: 'hosts' (host modules with deal.json externals) is
+        // a multi-module concept — the single-module adapter has no
+        // project root, no deal.json, and no orchestrator, so a
+        // single-module fixture declaring hosts would silently drop them.
+        Object hosts = test.get("hosts");
+        if (hosts != null && hosts != JSON_NULL) {
+            Object source = test.get("source");
+            if (source != null && source != JSON_NULL) {
+                return "'hosts' requires the multi-module 'modules' form; "
+                    + "a single-module ('source') fixture cannot declare "
+                    + "host modules";
+            }
+        }
         Object expectedCompileError = test.get("expectedCompileError");
         if (expectedCompileError == null || expectedCompileError == JSON_NULL) {
             return null;
@@ -545,6 +571,49 @@ public class BackendConformanceTest {
             return "multi-module fixtures are JVM-only (the LuaJIT harness "
                 + "compiles single sources); 'backends' must be exactly "
                 + "[\"jvm\"], got: " + backends;
+        }
+        // ISSUE-0100: an optional 'hosts' object declares the fixture's
+        // host modules (raw import path → { declaration, java }). The
+        // declaration must be one of the 'modules' keys (a .d.deal path
+        // relative to the project root, wired through a generated
+        // deal.json externals entry), and the java source must be a
+        // non-empty host implementation the javac stage compiles together
+        // with the emitted artifacts. Bare import paths only (the spec
+        // externals map form); malformed entries fail loudly, never
+        // silently.
+        Object hosts = test.get("hosts");
+        if (hosts != null && hosts != JSON_NULL) {
+            if (!(hosts instanceof Map<?, ?> hostMap) || hostMap.isEmpty()) {
+                return "'hosts' must be a non-empty object mapping raw "
+                    + "import paths to { declaration, java } host entries";
+            }
+            for (Map.Entry<?, ?> he : hostMap.entrySet()) {
+                String importPath = String.valueOf(he.getKey());
+                if (importPath.startsWith("./") || importPath.startsWith("../")) {
+                    return "'hosts' keys are bare externals import paths "
+                        + "(the spec manifest form); got relative path '"
+                        + importPath + "'";
+                }
+                if (!(he.getValue() instanceof Map<?, ?> hostEntry)) {
+                    return "'hosts' entry '" + importPath
+                        + "' must be an object with 'declaration' and "
+                        + "'java' strings";
+                }
+                Object declaration = hostEntry.get("declaration");
+                Object java = hostEntry.get("java");
+                if (!(declaration instanceof String decl)
+                        || !(java instanceof String javaSrc)
+                        || decl.isEmpty() || javaSrc.isEmpty()) {
+                    return "'hosts' entry '" + importPath
+                        + "' must have non-empty string 'declaration' and "
+                        + "'java' fields";
+                }
+                if (!mods.containsKey(decl)) {
+                    return "'hosts' entry '" + importPath
+                        + "' declaration '" + decl
+                        + "' is not a key of 'modules'";
+                }
+            }
         }
         return null;
     }
@@ -795,6 +864,23 @@ public class BackendConformanceTest {
      */
     private static OrchestratorRun runOrchestrator(Path projectRoot, Path entryFile,
                                                     Path outputRoot) {
+        return runOrchestrator(projectRoot, entryFile, outputRoot, null);
+    }
+
+    /**
+     * Runs the multi-module pipeline with an explicit {@link
+     * CompilationOrchestrator} configuration (ISSUE-0100): fixtures that
+     * declare {@code hosts} write a {@code deal.json} whose
+     * {@code externals} map wires every host import path to its
+     * declaration file, so the orchestrator resolves, discovers, and
+     * types host modules through the production externals path (host
+     * resolution, E2009 gating, and the JVM host-module codegen map).
+     * Fixtures without hosts keep the config-less pipeline (null
+     * configuration, unchanged behavior).
+     */
+    private static OrchestratorRun runOrchestrator(Path projectRoot, Path entryFile,
+                                                    Path outputRoot,
+                                                    DealConfig config) {
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         // The global stream swap is serialized against worker flushes
         // (CONSOLE_LOCK): a parallel fixture file's output block must
@@ -814,7 +900,7 @@ public class BackendConformanceTest {
                     entryFile.toAbsolutePath().normalize(),
                     outputRoot.toAbsolutePath().normalize(),
                     false, true, false, Backend.JVM,
-                    null, List.of(projectRoot.toAbsolutePath().normalize()), null);
+                    config, List.of(projectRoot.toAbsolutePath().normalize()), null);
                 boolean success = orchestrator.compile();
                 return new OrchestratorRun(success, orchestrator.diagnostics(),
                     captured.toString(StandardCharsets.UTF_8));
@@ -973,6 +1059,12 @@ public class BackendConformanceTest {
         String entry = jsonString(test, "entry", null);
         Map<String, Object> modulesObj = (Map<String, Object>) test.get("modules");
         String expectedCompileError = jsonString(test, "expectedCompileError", null);
+        Object hostsObj = test.get("hosts");
+        @SuppressWarnings("unchecked")
+        Map<String, Map<String, String>> hosts =
+            (hostsObj != null && hostsObj != JSON_NULL)
+                ? (Map<String, Map<String, String>>) (Map<?, ?>) hostsObj
+                : Map.<String, Map<String, String>>of();
 
         Path projectRoot = null;
         try {
@@ -981,6 +1073,38 @@ public class BackendConformanceTest {
             Path entryFile = written.get(entry);
             Path outputRoot = projectRoot.resolve("out");
 
+            // ISSUE-0100: host fixtures write a real deal.json whose
+            // externals map (spec map form: import path → manifest-relative
+            // declaration) drives production host resolution, discovery,
+            // typing, and the JVM host-module codegen map. The declaration
+            // paths are relative to the project root (the manifest
+            // directory), exactly like the modules map keys.
+            DealConfig config = null;
+            if (!hosts.isEmpty()) {
+                StringBuilder dealJson = new StringBuilder();
+                dealJson.append("{\n  \"languageVersion\": \"1.1\",\n");
+                dealJson.append("  \"externals\": {\n");
+                boolean first = true;
+                for (Map.Entry<String, Map<String, String>> he
+                        : hosts.entrySet()) {
+                    if (!first) dealJson.append(",\n");
+                    first = false;
+                    dealJson.append("    \"").append(he.getKey())
+                        .append("\": { \"declaration\": \"")
+                        .append(he.getValue().get("declaration"))
+                        .append("\" }");
+                }
+                dealJson.append("\n  }\n}\n");
+                Files.writeString(projectRoot.resolve("deal.json"), dealJson);
+                config = DealConfig.load(projectRoot);
+                if (config == null) {
+                    log("  [" + name + "] FAIL: generated deal.json did "
+                        + "not load");
+                    failed.incrementAndGet();
+                    return;
+                }
+            }
+
             // ---- Frontend compile-error gate (orchestrator-based) ----
             // The whole pipeline runs; the named frontend error must appear,
             // no E6xxx backend-lowering code may appear, and no .java
@@ -988,7 +1112,8 @@ public class BackendConformanceTest {
             // parser/checker/module-discovery produces no such diagnostic
             // and the fixture fails.
             if (expectedCompileError != null) {
-                OrchestratorRun run = runOrchestrator(projectRoot, entryFile, outputRoot);
+                OrchestratorRun run = runOrchestrator(projectRoot, entryFile,
+                    outputRoot, config);
                 boolean matched = run.diagnostics().stream()
                     .anyMatch(d -> expectedCompileError.equals(d.code()));
                 boolean onlyFrontend = run.diagnostics().stream()
@@ -1038,7 +1163,8 @@ public class BackendConformanceTest {
             }
 
             // ---- Runtime fixture: the whole project must compile. ----
-            OrchestratorRun run = runOrchestrator(projectRoot, entryFile, outputRoot);
+            OrchestratorRun run = runOrchestrator(projectRoot, entryFile,
+                outputRoot, config);
             if (!run.success()) {
                 log("  [" + name + "] FAIL: orchestrator compile "
                     + "failed: " + run.diagnostics() + "\n"
@@ -1103,6 +1229,36 @@ public class BackendConformanceTest {
                     + "no '" + entryJava.getFileName() + "' artifact");
                 failed.incrementAndGet();
                 return;
+            }
+
+            // ISSUE-0100: host implementation classes. The backend derives
+            // each host module's Java class name from its module path
+            // (host/http → HostHttp, the same classNameFor rule every
+            // emitted module uses), and the runtime load check
+            // Class.forName's that name — the fixture's 'java' source
+            // therefore normally declares exactly that class. The javac
+            // stage compiles the host classes together with the emitted
+            // artifacts and the execution classpath exposes them — the
+            // harness analog of the user placing the host implementation
+            // on the compile/runtime classpath. The .java file name is
+            // derived from the class the source actually declares, so a
+            // fixture that deliberately declares a DIFFERENT class (the
+            // jvm-host-missing-host-class fixture) still compiles and
+            // exercises the runtime E8011 for an unloadable host class.
+            for (Map.Entry<String, Map<String, String>> he
+                    : hosts.entrySet()) {
+                String javaSrc = he.getValue().get("java");
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                    "(?:^|\\s)class\\s+([A-Za-z_$][A-Za-z0-9_$]*)")
+                    .matcher(javaSrc);
+                if (!m.find()) {
+                    log("  [" + name + "] FAIL: host implementation for '"
+                        + he.getKey() + "' declares no top-level class");
+                    failed.incrementAndGet();
+                    return;
+                }
+                Files.writeString(outputRoot.resolve(m.group(1) + ".java"),
+                    javaSrc);
             }
 
             // Runner: auto-invokes the entry module's zero-arity exports,

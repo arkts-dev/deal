@@ -47,7 +47,7 @@ import java.util.Set;
  * <p>Semantic slice scope (ISSUE-0091 skeleton + ISSUE-0092 slice +
  * ISSUE-0093 slice + ISSUE-0094 slice + ISSUE-0095 classes +
  * ISSUE-0096 slice + ISSUE-0097 stdlib-boundary slice + ISSUE-0108
- * nullable slice):
+ * nullable slice + ISSUE-0100 host ABI slice):
  * functions, {@code let} locals, module fields, literals,
  * int/number/boolean/string arithmetic and comparisons, {@code if}/
  * {@code else}, {@code while} loops, {@code return}, assignment, direct
@@ -110,10 +110,26 @@ import java.util.Set;
  * {@code table | null} values, nullable tables, nested
  * (multi-dimensional) arrays, function arrays, stdlib imports other
  * than the four supported
- * modules, declaration/host-module imports, async, host ABI,
- * {@code @jsonable}, for/for-of loops, break/continue, try/throw — is
- * rejected with a backend {@code E6000} diagnostic, never silently
- * miscompiled.
+ * modules, {@code @jsonable}, for/for-of loops, break/continue,
+ * try/throw — is rejected with a backend {@code E6000} diagnostic,
+ * never silently miscompiled. The ISSUE-0100 host ABI slice lifts
+ * declaration/host-module imports and async/await from that list:
+ * a host-module import (a declaration file that is not a spec stdlib
+ * module, supplied through the orchestrator's hostModules map — the
+ * same classification the LuaJIT use site builds, host-module-abi D5)
+ * emits per-alias wrapper methods whose load-time presence check raises
+ * E8011 for a missing host class or a missing declared export (extra
+ * host exports are ignored), whose sync calls runtime-check the host
+ * return against the declared descriptor (E8010 wrong kind, including
+ * Java null crossing a non-nullable boundary; E8004 out-of-safe-range
+ * int; Java null is the DEAL null sentinel for {@code T | null}), and
+ * whose async calls require a {@code java.util.concurrent.CompletableFuture}
+ * operation (E8010 otherwise) whose completion value is checked at the
+ * await site (E8001). Async function DECLARATIONS emit as plain
+ * blocking methods (the spec-permitted JVM async lowering); await of a
+ * host async call blocks on the operation. Host class exports and
+ * array/table/function-typed host parameters and returns stay E6000 at
+ * the import statement.
  *
  * <p>Stdlib calls (ISSUE-0097) emit either an inline Java-library
  * expression (plain-text {@code contains}/{@code startsWith}/
@@ -498,6 +514,33 @@ public final class JvmBackend {
     private final Map<String, Map<String, ClassDeclaration>> importedClasses;
 
     /**
+     * Raw import path → declared export map (export name → declared
+     * {@link Type}) for every host module this module imports (ISSUE-0100).
+     * Supplied by {@code CompilationOrchestrator} phase 4, exactly like the
+     * LuaJIT use site's hostModules map (host-module-abi D4/D5): imports of
+     * declaration files that are not spec stdlib modules are host modules.
+     * A raw path present here is a host import: its alias maps to a Java
+     * host module class (named {@link #classNameFor} of the raw path) whose
+     * static methods implement the declared function exports. Declaration
+     * and host-module imports previously stayed E6000 at the import
+     * statement; the host ABI slice supports declared function exports with
+     * the primitive/string/nullable parameter and return shapes below.
+     */
+    private final Map<String, Map<String, Type>> hostModules;
+
+    /**
+     * Import alias → raw import path of a host-module import
+     * ({@code http → host/http}), recorded by the pre-scan for every
+     * import present in {@link #hostModules} whose declared exports the
+     * slice supports. Member calls through the alias emit calls to the
+     * per-alias wrapper methods ({@code __host$<alias>$<fn>}); the import
+     * statement emits a {@code static { __hostLoad$<alias>(); }} block
+     * whose load-time reflection presence check raises E8011 for a missing
+     * host module class or a missing declared export.
+     */
+    private final Map<String, String> hostAliases = new LinkedHashMap<>();
+
+    /**
      * Stack of visible local-variable bindings (DEAL name → emitted Java
      * name). The bottom scope is the module scope (module-level {@code let}s,
      * recorded in declaration order — the checker resolves them
@@ -711,7 +754,8 @@ public final class JvmBackend {
     private JvmBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
                        String sourcePath, String modulePath,
                        Map<String, String> importResolutions,
-                       Map<String, Map<String, ClassDeclaration>> importedClasses) {
+                       Map<String, Map<String, ClassDeclaration>> importedClasses,
+                       Map<String, Map<String, Type>> hostModules) {
         this.typeMap = typeMap;
         this.symbols = symbols;
         this.sourcePath = sourcePath;
@@ -720,6 +764,8 @@ public final class JvmBackend {
             ? Map.of() : Map.copyOf(importResolutions);
         this.importedClasses = importedClasses == null
             ? Map.of() : Map.copyOf(importedClasses);
+        this.hostModules = hostModules == null
+            ? Map.of() : Map.copyOf(hostModules);
         localScopes.push(new LinkedHashMap<>());
         localTypeScopes.push(new LinkedHashMap<>());
     }
@@ -784,8 +830,36 @@ public final class JvmBackend {
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
                                             Map<String, Map<String, ClassDeclaration>> importedClasses) {
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, importedClasses, Map.of());
+    }
+
+    /**
+     * Generates Java source for a checked module with the orchestrator's
+     * import resolution map, imported class declarations, and host-module
+     * declarations (ISSUE-0100).
+     *
+     * @param hostModules    raw import path → declared export map
+     *                       (export name → declared {@link Type}) of the
+     *                       host modules this module imports; an import
+     *                       whose raw path is present here is a host-module
+     *                       import (declaration files that are not spec
+     *                       stdlib modules, mirroring the LuaJIT use site's
+     *                       hostModules map — host-module-abi D4/D5).
+     *                       Declared function exports with supported
+     *                       parameter/return shapes emit per-alias wrapper
+     *                       methods with load-time presence checks (E8011)
+     *                       and call-time boundary checks (E8010/E8001);
+     *                       unsupported declarations are E6000 at the
+     *                       import statement, never silently miscompiled
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            Map<String, String> importResolutions,
+                                            Map<String, Map<String, ClassDeclaration>> importedClasses,
+                                            Map<String, Map<String, Type>> hostModules) {
         JvmBackend backend = new JvmBackend(result.typeMap(), result.symbolTable(),
-            sourcePath, modulePath, importResolutions, importedClasses);
+            sourcePath, modulePath, importResolutions, importedClasses, hostModules);
         return backend.generateProgram(program);
     }
 
@@ -919,6 +993,28 @@ public final class JvmBackend {
                     importAliases.put(imp.alias(), imp.modulePath());
                     continue;
                 }
+                // ISSUE-0100 host ABI slice: an import whose raw path is a
+                // key of the orchestrator's hostModules map (a declaration
+                // file that is not a spec stdlib module — host-module-abi
+                // D5, the same classification the LuaJIT use site builds)
+                // is a host-module import. Its declared function exports
+                // emit per-alias wrapper methods with load-time presence
+                // checks and call-time boundary checks; declared exports
+                // with shapes the slice does not support (classes,
+                // arrays, tables, function values, rest parameters) are
+                // E6000 at the import statement, never silently
+                // miscompiled.
+                Map<String, Type> hostExports = hostModules.get(imp.modulePath());
+                if (hostExports != null) {
+                    if (validateHostExports(imp.modulePath(), hostExports,
+                            imp.span())) {
+                        hostAliases.put(imp.alias(), imp.modulePath());
+                        importAliases.put(imp.alias(),
+                            imp.modulePath().replace('/', '.'));
+                        importAliasStatementIndices.put(imp.alias(), i);
+                    }
+                    continue;
+                }
                 String resolved = importResolutions.get(imp.modulePath());
                 if (resolved != null) {
                     importAliases.put(imp.alias(), resolved);
@@ -932,7 +1028,8 @@ public final class JvmBackend {
                     unsupported("module imports other than compiled "
                         + "project modules and the supported stdlib "
                         + "modules (std/console, std/string, std/math, "
-                        + "std/time) ('" + imp.modulePath() + "')",
+                        + "std/time) and host modules listed in the "
+                        + "orchestrator's host-module map ('" + imp.modulePath() + "')",
                         imp.span());
                 }
             } else if (stmt instanceof VariableDeclaration vd) {
@@ -978,6 +1075,7 @@ public final class JvmBackend {
         emitLine("public final class " + className + " {");
         indent++;
         emitRuntimeSupport();
+        emitHostBindings();
 
         // Declarations (fields, functions, imports, exports) are emitted as
         // class members; every run of non-declaration module-level statements
@@ -1742,6 +1840,70 @@ public final class JvmBackend {
         emitLine("// LuaJIT runs require. The name contains '$', which DEAL identifiers");
         emitLine("// cannot contain, so it can never collide with a user function.");
         emitLine("static void __init$() {}");
+        emitLine("// ---- JVM host ABI runtime support (ISSUE-0100) ----");
+        emitLine("// Load-time presence check for one declared host export: the host");
+        emitLine("// module class's static method must exist with the descriptor-derived");
+        emitLine("// parameter classes (spec-v1.1 \u00a7Host ABI: the host module runtime");
+        emitLine("// object must expose every declared export; a missing declared export");
+        emitLine("// is a load-time error). Extra host methods are never looked up.");
+        emitLine("static java.lang.reflect.Method __hostMethod(java.lang.Class<?> h, java.lang.String module, java.lang.String name, java.lang.String desc, java.lang.Class<?>[] params) {");
+        emitLine("    try { return h.getDeclaredMethod(name, params); }");
+        emitLine("    catch (java.lang.NoSuchMethodException e) {");
+        emitLine("        throw new DealError(\"E8011\", \"host export '\" + name + \"' in module '\" + module + \"' missing or has signature mismatch: expected \" + desc);");
+        emitLine("    }");
+        emitLine("}");
+        emitLine("// Reflective invocation of a checked host export: DEAL errors the host");
+        emitLine("// raises propagate as-is; other causes surface as E8010 (the host");
+        emitLine("// boundary never leaks a raw foreign exception into DEAL code).");
+        emitLine("static java.lang.Object __hostInvoke(java.lang.reflect.Method m, java.lang.Object[] args) {");
+        emitLine("    try { return m.invoke(null, args); }");
+        emitLine("    catch (java.lang.reflect.InvocationTargetException e) {");
+        emitLine("        java.lang.Throwable c = e.getCause();");
+        emitLine("        if (c instanceof RuntimeException rr) throw rr;");
+        emitLine("        if (c instanceof Error er) throw er;");
+        emitLine("        throw new DealError(\"E8010\", \"host function raised: \" + c);");
+        emitLine("    }");
+        emitLine("    catch (java.lang.IllegalAccessException | java.lang.IllegalArgumentException e) {");
+        emitLine("        throw new DealError(\"E8010\", \"host function invocation failed: \" + e);");
+        emitLine("    }");
+        emitLine("}");
+        emitLine("// Host-boundary return check: validates the dynamic value that crossed");
+        emitLine("// the untyped host boundary against the declared return descriptor.");
+        emitLine("// Sync returns raise E8010 on a mismatch (host-module-abi D3 case 2);");
+        emitLine("// async completion values raise E8001 at the await site (the LuaJIT");
+        emitLine("// await-site completion check). Java null is the DEAL null sentinel");
+        emitLine("// (spec-v1.1 \u00a7JVM value mapping): it passes only where the declared");
+        emitLine("// descriptor permits it (?T or null), and every other context rejects");
+        emitLine("// it — the spec forbids exposing Java null as DEAL null across an");
+        emitLine("// untyped boundary without validation.");
+        emitLine("static java.lang.Object __hostCheck(java.lang.String desc, java.lang.Object v, java.lang.String fn, boolean completion) {");
+        emitLine("    java.lang.String d = desc;");
+        emitLine("    while (d.startsWith(\"?\")) {");
+        emitLine("        if (v == null) return null;");
+        emitLine("        d = d.substring(1);");
+        emitLine("    }");
+        emitLine("    switch (d) {");
+        emitLine("        case \"int\":");
+        emitLine("            if (v instanceof java.lang.Long l) return checkInt(l.longValue());");
+        emitLine("            break;");
+        emitLine("        case \"number\":");
+        emitLine("            if (v instanceof java.lang.Double dd) return dd;");
+        emitLine("            break;");
+        emitLine("        case \"boolean\":");
+        emitLine("            if (v instanceof java.lang.Boolean b) return b;");
+        emitLine("            break;");
+        emitLine("        case \"string\":");
+        emitLine("            if (v instanceof java.lang.String s) return s;");
+        emitLine("            break;");
+        emitLine("        case \"null\":");
+        emitLine("            if (v == null) return null;");
+        emitLine("            break;");
+        emitLine("        default:");
+        emitLine("            throw new DealError(\"E8001\", \"unsupported host boundary descriptor \" + desc);");
+        emitLine("    }");
+        emitLine("    if (completion) throw new DealError(\"E8001\", \"expected \" + desc + \", got \" + $describe(v));");
+        emitLine("    throw new DealError(\"E8010\", \"host function '\" + fn + \"' return value 1 type mismatch: expected \" + desc + \", got \" + $describe(v));");
+        emitLine("}");
         emitLine("// ---- DEAL classes and tables (ISSUE-0095) ----");
         emitLine("// Nominal identity base: every generated DEAL class extends $Base and");
         emitLine("// carries its spec ClassDescriptor (@<modulePath>/<Name>). The shared");
@@ -2123,6 +2285,23 @@ public final class JvmBackend {
      * modules).
      */
     private void emitImportTrigger(ImportDeclaration id) {
+        // ISSUE-0100: a host-module import emits a load-time
+        // {@code static { __hostLoad$<alias>(); }} block at the import
+        // statement's source position — the JVM analog of LuaJIT's
+        // {@code __rt.load_host("<raw path>", ...)} require. The block
+        // runs the reflection presence check for every declared export
+        // (missing host class or missing declared export → E8011, a
+        // load-time error), exactly where LuaJIT raises the load-time
+        // E8011 for a missing declared export.
+        String raw = hostAliases.get(id.alias());
+        if (raw != null) {
+            emitLine("static {");
+            indent++;
+            emitLine(hostLoadMethodName(id.alias()) + "();");
+            indent--;
+            emitLine("}");
+            return;
+        }
         String module = importAliases.get(id.alias());
         if (module == null || SUPPORTED_STDLIB_MODULES.contains(module)) {
             return; // stdlib builtins: no load-time trigger
@@ -2134,6 +2313,361 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
     }
+
+    // =========================================================================
+    // Host modules (ISSUE-0100): the JVM host ABI slice
+    // =========================================================================
+
+    /**
+     * Emits the host-module binding section once per generated class,
+     * right after the runtime support: per-alias load methods (the
+     * load-time presence checks the import triggers run), the per-export
+     * {@code java.lang.reflect.Method} static fields, and the per-export
+     * wrapper methods that DEAL member calls route through. Every emitted
+     * name starts with {@code __host} or {@code $host}, which
+     * {@link #javaName} can never produce (DEAL identifiers cannot
+     * contain {@code $}, and every underscore escapes to {@code $u}), so
+     * no user binding can collide with them.
+     */
+    private void emitHostBindings() {
+        if (hostAliases.isEmpty()) return;
+        emitLine("// ---- Host module bindings (ISSUE-0100 JVM host ABI slice) ----");
+        emitLine("// A host module is a Java class named by the module path");
+        emitLine("// (host/http -> HostHttp) whose static methods implement the");
+        emitLine("// declared function exports (spec-v1.1 §JVM value mapping:");
+        emitLine("// int -> long, number -> double, boolean -> boolean, string ->");
+        emitLine("// java.lang.String, T | null -> the boxed reference, null -> Java");
+        emitLine("// null). Return values arrive as java.lang.Object across the");
+        emitLine("// untyped host boundary and are runtime-checked against the");
+        emitLine("// declared return descriptor on every call (E8010 mismatch; the");
+        emitLine("// spec forbids exposing Java null as DEAL null without");
+        emitLine("// validation). Async exports must return a");
+        emitLine("// java.util.concurrent.CompletableFuture (E8010 otherwise); the");
+        emitLine("// await site joins it and checks the completion value (E8001).");
+        for (Map.Entry<String, String> e : hostAliases.entrySet()) {
+            String alias = e.getKey();
+            String raw = e.getValue();
+            Map<String, Type> exports = hostModules.get(raw);
+            // The Method field per export is written by the load method's
+            // presence check before any wrapper can run (the import's
+            // static block precedes every later module-level use, and
+            // function bodies run after module load).
+            for (Map.Entry<String, Type> ex : exports.entrySet()) {
+                emitLine("static java.lang.reflect.Method "
+                    + hostMethodFieldName(alias, ex.getKey()) + ";");
+            }
+            emitHostLoadMethod(alias, raw, exports);
+        }
+        for (Map.Entry<String, String> e : hostAliases.entrySet()) {
+            String alias = e.getKey();
+            String raw = e.getValue();
+            Map<String, Type> exports = hostModules.get(raw);
+            for (Map.Entry<String, Type> ex : exports.entrySet()) {
+                emitHostWrapperMethod(alias, raw, ex.getKey(),
+                    (Type.Func) ex.getValue());
+            }
+        }
+    }
+
+    /** Emitted name of the load-time presence-check method for a host
+     * import alias ({@code __hostLoad$<alias>}). */
+    private String hostLoadMethodName(String alias) {
+        return "__hostLoad$" + javaName(alias);
+    }
+
+    /** Emitted name of the cached {@code java.lang.reflect.Method} field
+     * for one declared host export ({@code $host$<alias>$<fn>$m}). */
+    private String hostMethodFieldName(String alias, String exportName) {
+        return "$host$" + javaName(alias) + "$" + javaName(exportName) + "$m";
+    }
+
+    /** Emitted name of the wrapper method for one declared host export
+     * ({@code __host$<alias>$<fn>}); DEAL calls {@code alias.fn(args)}
+     * route through it. */
+    private String hostWrapperName(String alias, String exportName) {
+        return "__host$" + javaName(alias) + "$" + javaName(exportName);
+    }
+
+    /**
+     * Emits the load-time presence-check method for one host import alias
+     * (ISSUE-0100, spec §Host ABI): the host module runtime object must
+     * expose every declared export (missing → load-time error), and extra
+     * host exports are ignored. The JVM host module object is a Java class
+     * (named {@link #classNameFor} of the module path) whose static
+     * methods are the exports: {@code Class.forName} loads it (missing
+     * class → E8011), and {@code getDeclaredMethod} with the
+     * descriptor-derived parameter classes validates each declared export
+     * (missing or signature-mismatched method → E8011). Only declared
+     * exports are ever looked up, so extra methods on the host class are
+     * structurally dropped. The cached {@code Method} values make the
+     * wrapper calls re-execute the load-time validation result without
+     * repeating the lookup.
+     */
+    private void emitHostLoadMethod(String alias, String raw,
+                                    Map<String, Type> exports) {
+        String clsName = classNameFor(raw);
+        emitLine("// Load-time validation of host module '" + raw
+            + "' (declared exports must exist; extras are ignored).");
+        emitLine("static void " + hostLoadMethodName(alias) + "() {");
+        indent++;
+        emitLine("java.lang.Class<?> __h;");
+        emitLine("try { __h = java.lang.Class.forName(\"" + clsName + "\"); }"
+            + " catch (java.lang.ClassNotFoundException e) {"
+            + " throw new DealError(\"E8011\", \"host module '" + raw
+            + "' not found (class " + clsName + ")\"); }");
+        for (Map.Entry<String, Type> ex : exports.entrySet()) {
+            Type.Func f = (Type.Func) ex.getValue();
+            StringBuilder pcs = new StringBuilder();
+            for (int i = 0; i < f.paramTypes().size(); i++) {
+                if (i > 0) pcs.append(", ");
+                pcs.append(hostParamClassLiteral(f.paramTypes().get(i)));
+            }
+            emitLine(hostMethodFieldName(alias, ex.getKey())
+                + " = __hostMethod(__h, \"" + raw + "\", "
+                + quoteJavaString(ex.getKey()) + ", "
+                + quoteJavaString(typeDescriptor(f)) + ","
+                + " new java.lang.Class[]{ "
+                + pcs + " });");
+        }
+        indent--;
+        emitLine("}");
+    }
+
+    /**
+     * Emits the wrapper method for one declared host function export
+     * (ISSUE-0100). The wrapper's Java signature is the declared DEAL
+     * signature's JVM mapping (spec §JVM value mapping), so DEAL call
+     * sites pass statically-typed arguments — the JVM backend contract
+     * permits method signatures to prove DEAL→host parameter checks
+     * redundant. The host method is invoked reflectively, which keeps the
+     * artifact independent of the host class's compile-time presence (a
+     * missing host class is a LOAD-TIME E8011, never a javac failure) and
+     * yields the host return as {@code java.lang.Object} — the untyped
+     * boundary the return check validates:
+     * <ul>
+     *   <li>sync returns: {@code __hostCheck} validates the dynamic value
+     *       against the declared return descriptor — wrong runtime kind →
+     *       E8010, Java null for a non-nullable return → E8010 (the spec's
+     *       "must not expose Java null as DEAL null without validation"),
+     *       {@code T | null} accepts Java null as the DEAL null (the JVM
+     *       null sentinel), an out-of-safe-range int → E8004;</li>
+     *   <li>async exports: the host must return a
+     *       {@code java.util.concurrent.CompletableFuture} — the backend
+     *       async operation the await lowering accepts (spec §Host ABI
+     *       and §Async/await: "A JVM backend may implement async
+     *       lowering with ... blocking calls") — anything else → E8010;
+     *       the wrapper joins it (the blocking await lowering) and checks
+     *       the completion value against the declared return descriptor →
+     *       E8001 at the await site, matching LuaJIT's await-site
+     *       completion check.</li>
+     * </ul>
+     */
+    private void emitHostWrapperMethod(String alias, String raw,
+                                       String exportName, Type.Func f) {
+        Type ret = f.returnType();
+        String javaRet = hostReturnJavaType(ret);
+        StringBuilder sig = new StringBuilder("static ").append(javaRet)
+            .append(' ').append(hostWrapperName(alias, exportName))
+            .append('(');
+        List<String> argNames = new ArrayList<>();
+        for (int i = 0; i < f.paramTypes().size(); i++) {
+            if (i > 0) sig.append(", ");
+            sig.append(hostParamJavaType(f.paramTypes().get(i)))
+                .append(" __a").append(i);
+            argNames.add("__a" + i);
+        }
+        sig.append(") {");
+        emitLine(sig.toString());
+        indent++;
+        StringBuilder args = new StringBuilder();
+        for (int i = 0; i < argNames.size(); i++) {
+            if (i > 0) args.append(", ");
+            args.append(argNames.get(i));
+        }
+        emitLine("java.lang.Object __r = __hostInvoke("
+            + hostMethodFieldName(alias, exportName)
+            + ", new java.lang.Object[]{ " + args + " });");
+        String fn = raw + "." + exportName;
+        if (f.isAsync()) {
+            // Shape check at the call site (LuaJIT's E8010 "host async
+            // function must return an async operation"), then the blocking
+            // join; a failed operation propagates DEAL errors and wraps
+            // other causes in E8010.
+            emitLine("if (!(__r instanceof java.util.concurrent.CompletableFuture))"
+                + " throw new DealError(\"E8010\", \"host async function '"
+                + fn + "' must return an async operation, got \" + $describe(__r));");
+            emitLine("java.lang.Object __v;");
+            emitLine("try { __v = ((java.util.concurrent.CompletableFuture) __r).join(); }"
+                + " catch (java.util.concurrent.CompletionException e) {"
+                + " java.lang.Throwable __c = e.getCause();"
+                + " if (__c instanceof RuntimeException rr) throw rr;"
+                + " if (__c instanceof Error er) throw er;"
+                + " throw new DealError(\"E8010\", \"host async function '"
+                + fn + "' operation failed: \" + __c); }");
+            emitLine(hostReturnStatement("__v", ret, fn, true));
+        } else {
+            emitLine(hostReturnStatement("__r", ret, fn, false));
+        }
+        indent--;
+        emitLine("}");
+    }
+
+    /**
+     * The return statement of a host wrapper: {@code null} returns run the
+     * check and return nothing (a {@code void} method), value returns cast
+     * the checked {@code __hostCheck} result to the boxed JVM mapping.
+     * {@code completion} selects the error code — E8001 at the await site
+     * for async completion values (LuaJIT's await-site check), E8010 for
+     * sync returns (host-module-abi D3 case 2).
+     */
+    private String hostReturnStatement(String valueCode, Type ret, String fn,
+                                       boolean completion) {
+        if (ret instanceof Type.Null) {
+            return "__hostCheck(\"null\", " + valueCode + ", "
+                + quoteJavaString(fn) + ", " + completion + ");";
+        }
+        String cast = switch (ret) {
+            case Type.Int ignored -> "java.lang.Long";
+            case Type.Number ignored -> "java.lang.Double";
+            case Type.Boolean ignored -> "java.lang.Boolean";
+            case Type.String ignored -> "java.lang.String";
+            case Type.Nullable n -> switch (n.inner()) {
+                case Type.Int ignored -> "java.lang.Long";
+                case Type.Number ignored -> "java.lang.Double";
+                case Type.Boolean ignored -> "java.lang.Boolean";
+                case Type.String ignored -> "java.lang.String";
+                default -> "java.lang.Object";
+            };
+            default -> "java.lang.Object";
+        };
+        return "return (" + cast + ") __hostCheck("
+            + quoteJavaString(typeDescriptor(ret)) + ", " + valueCode + ", "
+            + quoteJavaString(fn) + ", " + completion + ");";
+    }
+
+    /**
+     * Validates every declared export of a host module against the slice's
+     * supported shapes (ISSUE-0100). Supported: function exports with
+     * parameter types from int/number/boolean/string and their nullable
+     * forms, and return types from the same set plus {@code null} (sync or
+     * async). Everything else — class exports, array/table/function-typed
+     * parameters or returns, nullable-of-unsupported, rest parameters,
+     * function-typed returns — is an E6000 at the import statement, never
+     * a silently miscompiled artifact. Returns true when every declared
+     * export is supported.
+     */
+    private boolean validateHostExports(String raw, Map<String, Type> exports,
+                                        Span span) {
+        boolean ok = true;
+        for (Map.Entry<String, Type> e : exports.entrySet()) {
+            String name = e.getKey();
+            Type t = e.getValue();
+            if (t instanceof Type.Func f) {
+                if (f.restType().isPresent()) {
+                    unsupported("host export '" + name + "' of module '"
+                        + raw + "' (rest parameters are out of the JVM "
+                        + "host ABI slice)", span);
+                    ok = false;
+                }
+                for (Type pt : f.paramTypes()) {
+                    if (hostParamJavaType(pt) == null) {
+                        unsupported("host export '" + name + "' of module '"
+                            + raw + "' declares unsupported parameter type '"
+                            + typeName(pt) + "' (the JVM host ABI slice "
+                            + "supports int, number, boolean, string, and "
+                            + "their nullable forms as parameters)", span);
+                        ok = false;
+                    }
+                }
+                Type ret = f.returnType();
+                if (!hostReturnSupported(ret)) {
+                    unsupported("host export '" + name + "' of module '"
+                        + raw + "' declares unsupported return type '"
+                        + typeName(ret) + "' (the JVM host ABI slice "
+                        + "supports int, number, boolean, string, null, and "
+                        + "their nullable forms as returns)", span);
+                    ok = false;
+                }
+            } else {
+                unsupported("host export '" + name + "' of module '" + raw
+                    + "' (only function exports are in the JVM host ABI "
+                    + "slice; host class exports are not supported yet)",
+                    span);
+                ok = false;
+            }
+        }
+        return ok;
+    }
+
+    /** True when the declared return type of a host function is one the
+     * slice's return boundary checks can validate. */
+    private boolean hostReturnSupported(Type ret) {
+        if (ret instanceof Type.Null) return true;
+        if (ret instanceof Type.Nullable n) return hostReturnSupported(n.inner());
+        return switch (ret) {
+            case Type.Int ignored -> true;
+            case Type.Number ignored -> true;
+            case Type.Boolean ignored -> true;
+            case Type.String ignored -> true;
+            default -> false;
+        };
+    }
+
+    /** Java parameter type for a host function parameter of the given
+     * declared DEAL type; {@code null} when unsupported. */
+    private String hostParamJavaType(Type t) {
+        return switch (t) {
+            case Type.Int ignored -> "long";
+            case Type.Number ignored -> "double";
+            case Type.Boolean ignored -> "boolean";
+            case Type.String ignored -> "java.lang.String";
+            case Type.Nullable n -> switch (n.inner()) {
+                case Type.Int ignored -> "java.lang.Long";
+                case Type.Number ignored -> "java.lang.Double";
+                case Type.Boolean ignored -> "java.lang.Boolean";
+                case Type.String ignored -> "java.lang.String";
+                default -> null;
+            };
+            default -> null;
+        };
+    }
+
+    /** Java {@code Class} literal for a host function parameter of the
+     * given declared DEAL type (the load-time
+     * {@code getDeclaredMethod} signature check). */
+    private String hostParamClassLiteral(Type t) {
+        return switch (t) {
+            case Type.Int ignored -> "long.class";
+            case Type.Number ignored -> "double.class";
+            case Type.Boolean ignored -> "boolean.class";
+            case Type.String ignored -> "java.lang.String.class";
+            case Type.Nullable n -> switch (n.inner()) {
+                case Type.Int ignored -> "java.lang.Long.class";
+                case Type.Number ignored -> "java.lang.Double.class";
+                case Type.Boolean ignored -> "java.lang.Boolean.class";
+                case Type.String ignored -> "java.lang.String.class";
+                default -> "java.lang.Object.class";
+            };
+            default -> "java.lang.Object.class";
+        };
+    }
+
+    /** Java return type of a host wrapper method ({@code null} declares a
+     * {@code void} method, mirroring {@link #javaReturnType}). */
+    private String hostReturnJavaType(Type t) {
+        if (t instanceof Type.Null) return "void";
+        return switch (t) {
+            case Type.Nullable n -> hostParamJavaType(n);
+            default -> hostParamJavaType(t);
+        };
+    }
+
+    // Host-boundary descriptors reuse the canonical ISSUE-0110 static
+    // {@link #typeDescriptor(Type)} emitter — the spec
+    // {@code RuntimeTypeDescriptor} spelling used for load-time
+    // validation messages and the call-time dispatch inside
+    // {@code __hostCheck} (the same descriptor conventions the LuaJIT
+    // host ABI uses).
 
     // =========================================================================
     // Classes (ISSUE-0095: local classes and nominal checks)
@@ -2666,10 +3200,17 @@ public final class JvmBackend {
     }
 
     private void emitFunction(FunctionDeclaration fd, boolean exported) {
-        if (fd.isAsync()) {
-            unsupported("async functions", fd.span());
-            return;
-        }
+        // ISSUE-0100: async function declarations are supported through the
+        // blocking lowering the spec permits for JVM backends (spec-v1.1
+        // §Async operation semantics: "A JVM backend may implement async
+        // lowering with virtual threads, blocking calls, futures, or
+        // explicit state machines"). The body emits as a plain static
+        // method: every DEAL async call is awaited immediately (the checker
+        // rejects un-awaited async calls), and a host async call's wrapper
+        // blocks on the returned CompletableFuture, so the body is
+        // synchronous Java with DEAL's observable semantics. Async
+        // function EXPRESSIONS stay E6000 (function values are out of the
+        // slice).
         if (fd.restParam().isPresent()) {
             unsupported("rest parameters", fd.restParam().get().span());
             return;
@@ -3204,8 +3745,20 @@ public final class JvmBackend {
             }
             case TemplateLiteralExpr tl -> emitTemplateLiteral(tl);
             case AwaitExpression aw -> {
-                unsupported("await", aw.span());
-                yield "null";
+                // ISSUE-0100 blocking await lowering: the awaited call is a
+                // direct async function call (the checker enforces both),
+                // so emitting the callee call computes the completion value
+                // synchronously — a DEAL async function's body already
+                // blocked on ITS inner awaits and returns R directly, and a
+                // HOST async function's wrapper validated the operation
+                // shape (E8010), joined the CompletableFuture, and checked
+                // the completion value against the declared return
+                // descriptor (E8001 at this await site). No suspension
+                // point exists in the emitted Java, so the checker's
+                // after-await narrowing invalidation needs no codegen
+                // counterpart (the type map already holds the un-narrowed
+                // types here).
+                yield emitExpression(aw.callee());
             }
         };
     }
@@ -4445,10 +4998,57 @@ public final class JvmBackend {
         String module = importAliases.get(id.name());
         if (module == null) {
             unsupported("member access (only module function calls on "
-                + "imported project modules and the supported stdlib "
+                + "imported project modules, the supported stdlib "
                 + "modules — std/console output, std/string, std/math, "
-                + "std/time — are supported)", mae.span());
+                + "std/time — and host modules are supported)", mae.span());
             return "null";
+        }
+        // ISSUE-0100: a member call through a host-module alias routes to
+        // the per-alias wrapper method emitted by emitHostBindings. The
+        // wrapper runs the load-time-validated reflective call plus the
+        // declared-return boundary check; the checker already verified the
+        // export exists (E2004) and typed every argument, so the emitted
+        // static call is guaranteed to match the wrapper's signature.
+        String hostRaw = hostAliases.get(id.name());
+        if (hostRaw != null) {
+            if (currentModuleStatementIndex >= 0) {
+                Integer importIdx = importAliasStatementIndices.get(id.name());
+                if (importIdx != null && importIdx > currentModuleStatementIndex) {
+                    unsupported("module-level use of import '" + id.name()
+                        + "' before its import statement (LuaJIT loads the "
+                        + "host module at the import's source position and "
+                        + "fails at load for an earlier use; Java would "
+                        + "silently skip the load-time presence check)",
+                        mae.span());
+                    return "null";
+                }
+            }
+            Map<String, Type> exports = hostModules.get(hostRaw);
+            Type exportType = exports.get(mae.field());
+            if (!(exportType instanceof Type.Func f)) {
+                unsupported("host export '" + mae.field() + "' of module '"
+                    + hostRaw + "'", mae.span());
+                return "null";
+            }
+            // The wrapper's Java parameter types are the declared DEAL
+            // parameter types' JVM mapping (visible to this backend), so
+            // each argument routes through the same boundaryArgCode
+            // adaptation every direct call uses — including the
+            // Object-mediated coercion of null-typed assignment arguments
+            // into the wrapper parameter's Java type.
+            List<Type> argTargets = new ArrayList<>(call.args().size());
+            for (int i = 0; i < call.args().size(); i++) {
+                argTargets.add(f.paramTypes().get(i));
+            }
+            List<String> argCodes = emitOperandsInOrder(call.args(), argTargets);
+            StringBuilder sb = new StringBuilder(
+                hostWrapperName(id.name(), mae.field())).append('(');
+            for (int i = 0; i < argCodes.size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(boundaryArgCode(call.args().get(i),
+                    argCodes.get(i), f.paramTypes().get(i)));
+            }
+            return sb.append(')').toString();
         }
         if ("std/console".equals(module)) {
             String target = switch (mae.field()) {

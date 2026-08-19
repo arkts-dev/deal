@@ -288,6 +288,7 @@ public class JvmBackendTest {
             testStdlibHelperNameCollisions();
             testOrchestratorJvmStdlibImport();
             testOrchestratorJvmDeclarationImportRejected();
+            testHostAbiSlice();
             testOrchestratorJvmClassCollision();
             testModuleImports();
             testModuleClassIsolation();
@@ -727,8 +728,11 @@ public class JvmBackendTest {
                 let later: int = 1;
                 export function test(): int { return 1; }
                 """),
-            new Case("async function", """
-                export async function test(): int { return 5; }
+            new Case("async function expression", """
+                export function test(): null {
+                  let f: async () => int = async function(): int { return 5; };
+                  return null;
+                }
                 """),
             new Case("stdlib module import whose functions need table values", """
                 import * as t from "std/table"
@@ -6169,11 +6173,14 @@ public class JvmBackendTest {
         }
     }
 
-    /** An import of a DECLARATION file (a host module) stays out of the JVM
-     * slice (host ABI is deferred): the orchestrator's JVM path reports
-     * E6000 at the import statement and writes no artifact. */
+    /** ISSUE-0100: a relative (./) declaration-file import is now a HOST
+     * module on the JVM path — the same classification the LuaJIT use
+     * site applies (host-module-abi D5(4)) — so it compiles into host
+     * wrapper methods instead of the pre-slice E6000. An unsupported
+     * declared export shape (a class export) still fails E6000 at the
+     * import statement. */
     private static void testOrchestratorJvmDeclarationImportRejected() throws Exception {
-        System.out.println("-- Orchestrator: declaration-file import → E6000 --");
+        System.out.println("-- Orchestrator: declaration-file import = host module (ISSUE-0100) --");
 
         writeFile("src/hostlib.d.deal", """
             export function foo(): int;
@@ -6192,14 +6199,345 @@ public class JvmBackendTest {
             (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
-        check(!success, "declaration-file import fails the JVM compile");
-        check(orchestrator.diagnostics().stream()
+        check(success, "relative declaration-file import compiles as a "
+            + "host module: " + orchestrator.diagnostics());
+        Path entryArtifact = outputDir.resolve("Entry.java");
+        check(Files.exists(entryArtifact), "host-importing module artifact written");
+        if (Files.exists(entryArtifact)) {
+            String java = Files.readString(entryArtifact);
+            check(java.contains("__host$m$foo("),
+                "the host export emits its wrapper method");
+            check(java.contains("java.lang.Class.forName(\"Hostlib\")"),
+                "the wrapper loads the host class derived from the module path");
+            check(java.contains("__hostMethod(__h, \"./hostlib\", \"foo\", \"()->int\""),
+                "the load-time presence check names the declared export");
+        }
+
+        // Unsupported declared export shape: a host class export stays
+        // E6000 at the import statement, never silently miscompiled.
+        writeFile("src/hostlib.d.deal", """
+            export class User { name: string; }
+            """);
+        writeFile("src/entry.deal", """
+            import * as m from "./hostlib"
+            export function run(): int { return 1; }
+            """);
+        Path outputDir2 = tmpDir.resolve("build/import_decl_class");
+        CompilationOrchestrator orchestrator2 = new CompilationOrchestrator(
+            entryFile, outputDir2, false, false, false, Backend.JVM,
+            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean success2 = orchestrator2.compile();
+        check(!success2, "host class export fails the JVM compile");
+        check(orchestrator2.diagnostics().stream()
                 .anyMatch(d -> "E6000".equals(d.code())
-                    && d.message().contains("project modules")),
-            "orchestrator reports E6000 for the declaration import: "
-                + orchestrator.diagnostics());
-        check(!Files.exists(outputDir.resolve("Entry.java")),
-            "no artifact for the module with the declaration import");
+                    && d.message().contains("host class exports are not supported")),
+            "orchestrator reports E6000 for the host class export: "
+                + orchestrator2.diagnostics());
+        check(!Files.exists(outputDir2.resolve("Entry.java")),
+            "no artifact for the module with the unsupported host export");
+    }
+
+    /** ISSUE-0100 end-to-end: an externals-listed host module compiles
+     * through the real orchestrator pipeline (deal.json externals → host
+     * declaration discovery → typing → JvmBackend host bindings) and the
+     * emitted artifact runs against a real host implementation class —
+     * declared export exposure, load-time presence checks (E8011 for a
+     * missing export), the sync return boundary (E8010 for a wrong
+     * runtime kind), the async operation shape and completion checks
+     * (E8010/E8001), and the nullable/null boundary. */
+    private static void testHostAbiSlice() throws Exception {
+        System.out.println("-- Host ABI slice (ISSUE-0100) --");
+
+        writeFile("deal.json", """
+            {
+              "languageVersion": "1.1",
+              "moduleRoots": ["src"],
+              "externals": {
+                "host/log": { "declaration": "bindings/log.d.deal" }
+              }
+            }
+            """);
+        writeFile("bindings/log.d.deal", """
+            export function info(level: int, s: string): null;
+            export function add(a: int, b: int): int;
+            export function find(s: string): string | null;
+            export function value(): string;
+            export async function fetch(): string;
+            """);
+        writeFile("src/entry.deal", """
+            import * as console from "std/console"
+            import * as log from "host/log"
+            log.info(1, "hello");
+            let f: string | null = log.find("x");
+            if (f === null) { console.log("null"); } else { console.log(f); }
+            export function run(): int { return log.add(2, 3); }
+            """);
+        writeFile("HostLog.java", """
+            import java.util.concurrent.CompletableFuture;
+            public final class HostLog {
+                public static Object info(long level, String s) { return null; }
+                public static Object add(long a, long b) { return Long.valueOf(a + b); }
+                public static Object find(String s) { return s; }
+                public static Object value() { return "v"; }
+                public static Object fetch() { return CompletableFuture.completedFuture("d"); }
+            }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/host_abi");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        DealConfig config = DealConfig.load(tmpDir);
+        check(config != null, "deal.json with externals loads");
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JVM,
+            config, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean success = orchestrator.compile();
+        check(success, "externals-listed host module compiles: "
+            + orchestrator.diagnostics());
+        Path entryArtifact = outputDir.resolve("Entry.java");
+        check(Files.exists(entryArtifact), "entry artifact written");
+        if (!Files.exists(entryArtifact)) return;
+
+        String java = Files.readString(entryArtifact);
+        check(java.contains("static java.lang.reflect.Method $host$log$add$m;"),
+            "the declared export emits its cached Method field");
+        check(java.contains("java.lang.Class.forName(\"HostLog\")"),
+            "the load method loads the module-path-derived host class");
+        check(java.contains("__hostMethod(__h, \"host/log\", \"add\", \"(int,int)->int\""),
+            "the presence check carries the declared descriptor");
+        check(java.contains("static long __host$log$add(long __a0, long __a1)"),
+            "the wrapper signature maps the declared parameter types");
+        check(java.contains("__hostCheck(\"int\", __r, \"host/log.add\", false)"),
+            "the sync wrapper checks the return boundary (E8010 path)");
+        check(java.contains("__hostCheck(\"string\", __v, \"host/log.fetch\", true)"),
+            "the async wrapper checks the completion value (E8001 path)");
+        check(java.contains("static {\n        __hostLoad$log();\n    }"),
+            "the import statement emits the load-time presence-check block");
+
+        // Real execution: javac over the artifacts + host class + runner,
+        // then java. The host's load-time call, the nullable return, and
+        // the exported add run end to end.
+        Files.copy(tmpDir.resolve("HostLog.java"), outputDir.resolve("HostLog.java"));
+        Files.writeString(outputDir.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(
+                parseProgram("""
+                    export function run(): int { return 1; }
+                    """), "Entry"));
+        ProcessBuilder javac = new ProcessBuilder("javac", "-encoding", "UTF-8",
+            "Entry.java", "HostLog.java", "JvmConformanceRunner.java");
+        javac.directory(outputDir.toFile());
+        javac.redirectErrorStream(true);
+        Process p = javac.start();
+        String javacOut = new String(p.getInputStream().readAllBytes()).trim();
+        check(p.waitFor() == 0, "host artifacts compile with javac: " + javacOut);
+
+        ProcessBuilder javaRun = new ProcessBuilder("java", "-cp",
+            outputDir.toString(), "JvmConformanceRunner");
+        javaRun.redirectErrorStream(true);
+        Process p2 = javaRun.start();
+        String out = new String(p2.getInputStream().readAllBytes()).trim();
+        int exit = p2.waitFor();
+        check(exit == 0, "host fixture runs: " + out);
+        check(out.contains("x") && out.contains("5"),
+            "the nullable host return and the exported add run: " + out);
+
+        // Missing declared export: the host class lacks add → E8011 at
+        // module load, raised by the load-time presence check.
+        writeFile("HostLogMissing.java", """
+            public final class HostLog {
+                public static Object info(long level, String s) { return null; }
+                public static Object find(String s) { return s; }
+                public static Object value() { return "v"; }
+                public static Object fetch() { return java.util.concurrent.CompletableFuture.completedFuture("d"); }
+            }
+            """);
+        Path outputDir2 = tmpDir.resolve("build/host_abi_missing");
+        CompilationOrchestrator orchestrator2 = new CompilationOrchestrator(
+            entryFile, outputDir2, false, false, false, Backend.JVM,
+            config, roots, Path.of(".").toAbsolutePath().normalize());
+        check(orchestrator2.compile(), "missing-export project still compiles (the check is load-time): "
+            + orchestrator2.diagnostics());
+        Files.copy(tmpDir.resolve("HostLogMissing.java"),
+            outputDir2.resolve("HostLog.java"));
+        Files.writeString(outputDir2.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(
+                parseProgram("""
+                    export function run(): int { return 1; }
+                    """), "Entry"));
+        ProcessBuilder javac2 = new ProcessBuilder("javac", "-encoding", "UTF-8",
+            "Entry.java", "HostLog.java", "JvmConformanceRunner.java");
+        javac2.directory(outputDir2.toFile());
+        javac2.redirectErrorStream(true);
+        Process p3 = javac2.start();
+        String javacOut2 = new String(p3.getInputStream().readAllBytes()).trim();
+        check(p3.waitFor() == 0, "missing-export artifacts compile with javac: " + javacOut2);
+        ProcessBuilder javaRun2 = new ProcessBuilder("java", "-cp",
+            outputDir2.toString(), "JvmConformanceRunner");
+        javaRun2.redirectErrorStream(true);
+        Process p4 = javaRun2.start();
+        String out2 = new String(p4.getInputStream().readAllBytes()).trim();
+        int exit2 = p4.waitFor();
+        check(exit2 == 1, "missing declared export fails at load: " + out2);
+        check(out2.contains("DEAL_ERROR_CODE: E8011"),
+            "missing declared export reports E8011: " + out2);
+
+        // Bad sync return: value() returns a Long for a declared string.
+        writeFile("HostLogBad.java", """
+            public final class HostLog {
+                public static Object info(long level, String s) { return null; }
+                public static Object add(long a, long b) { return Long.valueOf(a + b); }
+                public static Object find(String s) { return s; }
+                public static Object value() { return Long.valueOf(42L); }
+                public static Object fetch() { return java.util.concurrent.CompletableFuture.completedFuture("d"); }
+            }
+            """);
+        writeFile("src/entry_bad.deal", """
+            import * as log from "host/log"
+            export function run(): string { return log.value(); }
+            """);
+        Path entryBad = tmpDir.resolve("src/entry_bad.deal").toAbsolutePath();
+        Path outputDir3 = tmpDir.resolve("build/host_abi_bad_ret");
+        CompilationOrchestrator orchestrator3 = new CompilationOrchestrator(
+            entryBad, outputDir3, false, false, false, Backend.JVM,
+            config, roots, Path.of(".").toAbsolutePath().normalize());
+        check(orchestrator3.compile(), "bad-return project compiles: "
+            + orchestrator3.diagnostics());
+        Files.copy(tmpDir.resolve("HostLogBad.java"),
+            outputDir3.resolve("HostLog.java"));
+        Files.writeString(outputDir3.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(
+                parseProgram("""
+                    export function run(): string { return "x"; }
+                    """), "Entry_bad"));
+        ProcessBuilder javac3 = new ProcessBuilder("javac", "-encoding", "UTF-8",
+            "Entry_bad.java", "HostLog.java", "JvmConformanceRunner.java");
+        javac3.directory(outputDir3.toFile());
+        javac3.redirectErrorStream(true);
+        Process p5 = javac3.start();
+        String javacOut3 = new String(p5.getInputStream().readAllBytes()).trim();
+        check(p5.waitFor() == 0, "bad-return artifacts compile with javac: " + javacOut3);
+        ProcessBuilder javaRun3 = new ProcessBuilder("java", "-cp",
+            outputDir3.toString(), "JvmConformanceRunner");
+        javaRun3.redirectErrorStream(true);
+        Process p6 = javaRun3.start();
+        String out3 = new String(p6.getInputStream().readAllBytes()).trim();
+        int exit3 = p6.waitFor();
+        check(exit3 == 1, "wrong-kind host return fails: " + out3);
+        check(out3.contains("DEAL_ERROR_CODE: E8010"),
+            "wrong-kind host return reports E8010: " + out3);
+
+        // Async: an entry that awaits the host async export, with the
+        // shape (E8010) and completion (E8001) failures.
+        writeFile("src/entry_async.deal", """
+            import * as log from "host/log"
+            export async function run(): string { return await log.fetch(); }
+            """);
+        Path entryAsync = tmpDir.resolve("src/entry_async.deal").toAbsolutePath();
+        Path outputDir4 = tmpDir.resolve("build/host_abi_async_ok");
+        CompilationOrchestrator orchestrator4 = new CompilationOrchestrator(
+            entryAsync, outputDir4, false, false, false, Backend.JVM,
+            config, roots, Path.of(".").toAbsolutePath().normalize());
+        check(orchestrator4.compile(), "async host import compiles: "
+            + orchestrator4.diagnostics());
+        Files.copy(tmpDir.resolve("HostLog.java"),
+            outputDir4.resolve("HostLog.java"));
+        Files.writeString(outputDir4.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(
+                parseProgram("""
+                    export async function run(): string { return "x"; }
+                    """), "Entry_async"));
+        ProcessBuilder javac4 = new ProcessBuilder("javac", "-encoding", "UTF-8",
+            "Entry_async.java", "HostLog.java", "JvmConformanceRunner.java");
+        javac4.directory(outputDir4.toFile());
+        javac4.redirectErrorStream(true);
+        Process p7 = javac4.start();
+        String javacOut4 = new String(p7.getInputStream().readAllBytes()).trim();
+        check(p7.waitFor() == 0, "async artifacts compile with javac: " + javacOut4);
+        ProcessBuilder javaRun4 = new ProcessBuilder("java", "-cp",
+            outputDir4.toString(), "JvmConformanceRunner");
+        javaRun4.redirectErrorStream(true);
+        Process p8 = javaRun4.start();
+        String out4 = new String(p8.getInputStream().readAllBytes()).trim();
+        int exit4 = p8.waitFor();
+        check(exit4 == 0 && out4.contains("d"),
+            "await joins the host async operation and checks the completion: "
+                + out4);
+
+        writeFile("HostLogAsyncShape.java", """
+            public final class HostLog {
+                public static Object info(long level, String s) { return null; }
+                public static Object add(long a, long b) { return Long.valueOf(a + b); }
+                public static Object find(String s) { return s; }
+                public static Object value() { return "v"; }
+                public static Object fetch() { return "not-an-operation"; }
+            }
+            """);
+        Path outputDir5 = tmpDir.resolve("build/host_abi_async_shape");
+        CompilationOrchestrator orchestrator5 = new CompilationOrchestrator(
+            entryAsync, outputDir5, false, false, false, Backend.JVM,
+            config, roots, Path.of(".").toAbsolutePath().normalize());
+        check(orchestrator5.compile(), "async shape project compiles: "
+            + orchestrator5.diagnostics());
+        Files.copy(tmpDir.resolve("HostLogAsyncShape.java"),
+            outputDir5.resolve("HostLog.java"));
+        Files.writeString(outputDir5.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(
+                parseProgram("""
+                    export async function run(): string { return "x"; }
+                    """), "Entry_async"));
+        ProcessBuilder javac5 = new ProcessBuilder("javac", "-encoding", "UTF-8",
+            "Entry_async.java", "HostLog.java", "JvmConformanceRunner.java");
+        javac5.directory(outputDir5.toFile());
+        javac5.redirectErrorStream(true);
+        Process p9 = javac5.start();
+        String javacOut5 = new String(p9.getInputStream().readAllBytes()).trim();
+        check(p9.waitFor() == 0, "async-shape artifacts compile with javac: " + javacOut5);
+        ProcessBuilder javaRun5 = new ProcessBuilder("java", "-cp",
+            outputDir5.toString(), "JvmConformanceRunner");
+        javaRun5.redirectErrorStream(true);
+        Process p10 = javaRun5.start();
+        String out5 = new String(p10.getInputStream().readAllBytes()).trim();
+        int exit5 = p10.waitFor();
+        check(exit5 == 1 && out5.contains("DEAL_ERROR_CODE: E8010"),
+            "non-operation host async return reports E8010: " + out5);
+
+        writeFile("HostLogAsyncCompletion.java", """
+            public final class HostLog {
+                public static Object info(long level, String s) { return null; }
+                public static Object add(long a, long b) { return Long.valueOf(a + b); }
+                public static Object find(String s) { return s; }
+                public static Object value() { return "v"; }
+                public static Object fetch() { return java.util.concurrent.CompletableFuture.completedFuture(Long.valueOf(7L)); }
+            }
+            """);
+        Path outputDir6 = tmpDir.resolve("build/host_abi_async_completion");
+        CompilationOrchestrator orchestrator6 = new CompilationOrchestrator(
+            entryAsync, outputDir6, false, false, false, Backend.JVM,
+            config, roots, Path.of(".").toAbsolutePath().normalize());
+        check(orchestrator6.compile(), "async completion project compiles: "
+            + orchestrator6.diagnostics());
+        Files.copy(tmpDir.resolve("HostLogAsyncCompletion.java"),
+            outputDir6.resolve("HostLog.java"));
+        Files.writeString(outputDir6.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(
+                parseProgram("""
+                    export async function run(): string { return "x"; }
+                    """), "Entry_async"));
+        ProcessBuilder javac6 = new ProcessBuilder("javac", "-encoding", "UTF-8",
+            "Entry_async.java", "HostLog.java", "JvmConformanceRunner.java");
+        javac6.directory(outputDir6.toFile());
+        javac6.redirectErrorStream(true);
+        Process p11 = javac6.start();
+        String javacOut6 = new String(p11.getInputStream().readAllBytes()).trim();
+        check(p11.waitFor() == 0, "async-completion artifacts compile with javac: " + javacOut6);
+        ProcessBuilder javaRun6 = new ProcessBuilder("java", "-cp",
+            outputDir6.toString(), "JvmConformanceRunner");
+        javaRun6.redirectErrorStream(true);
+        Process p12 = javaRun6.start();
+        String out6 = new String(p12.getInputStream().readAllBytes()).trim();
+        int exit6 = p12.waitFor();
+        check(exit6 == 1 && out6.contains("DEAL_ERROR_CODE: E8001"),
+            "wrong completion value reports E8001 at the await site: " + out6);
     }
 
     /** Parses a small DEAL snippet with the real lexer+parser for runner

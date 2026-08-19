@@ -1007,14 +1007,16 @@ public final class CompilationOrchestrator {
     }
 
     /**
-     * JVM use site (ISSUE-0091, ISSUE-0096): emits one {@code
+     * JVM use site (ISSUE-0091, ISSUE-0096, ISSUE-0100): emits one {@code
      * <ClassName>.java} module class per module, with the per-module import
      * resolution map (raw import path → imported module path) built exactly
-     * like the LuaJIT use site — only non-declaration modules are entries,
-     * so an import of a declaration/host module reaches the backend
-     * unresolved. Backend diagnostics (E6000 for out-of-slice constructs —
-     * including imports other than {@code std/console} and compiled project
-     * modules, at the import statement itself) fail the compilation with
+     * like the LuaJIT use site — only non-declaration modules are entries.
+     * Imports of declaration files that are not spec stdlib modules become
+     * HOST modules (ISSUE-0100, host-module-abi D5): their declared export
+     * map flows into the backend's hostModules parameter, which emits the
+     * load-time-validated host wrappers. Backend diagnostics (E6000 for
+     * out-of-slice constructs — including unsupported host export shapes,
+     * at the import statement itself) fail the compilation with
      * the standard diagnostic report; no artifact is written for a module
      * the backend rejects. Class names are derived from the full module
      * path ({@code app/main} → {@code AppMain}), and a collision between
@@ -1040,11 +1042,9 @@ public final class CompilationOrchestrator {
         for (ModuleInfo info : modules.values()) {
             if (info.isDeclarationFile) continue;
             // Import resolutions (ISSUE-0096): raw import path → module
-            // path of the imported COMPILED module. Declaration files are
-            // skipped above and never become entries, so an import of a
-            // declaration/host module reaches the backend unresolved and is
-            // rejected with E6000 at the import statement — declaration and
-            // host modules stay out of the JVM slice (host ABI is deferred).
+            // path of the imported COMPILED module. Declaration files
+            // become host modules (ISSUE-0100) — see the hostModules
+            // construction below — instead of the pre-slice E6000.
             // ISSUE-0109: the same discovery pass collects each imported
             // module's class declarations (module path → name →
             // declaration) so the backend can emit imported-class types,
@@ -1053,13 +1053,27 @@ public final class CompilationOrchestrator {
             Map<String, String> importResolutions = new HashMap<>();
             Map<String, Map<String, ClassDeclaration>> importedClasses =
                 new HashMap<>();
+            // ISSUE-0100 host ABI slice: imports of declaration files that
+            // are not spec stdlib modules are host modules — the same
+            // classification the LuaJIT use site builds (host-module-abi
+            // D5) — and their declared export map flows into JvmBackend.
+            Map<String, Map<String, Type>> hostModules = new HashMap<>();
             for (StatementNode stmt : info.rawAst.statements()) {
                 if (stmt instanceof ImportDeclaration imp) {
                     String resolvedSource = resolveImportPath(imp.modulePath(),
                         Path.of(info.sourcePath));
                     if (resolvedSource != null) {
                         ModuleInfo imported = modules.get(resolvedSource);
-                        if (imported != null && !imported.isDeclarationFile) {
+                        if (imported == null) {
+                            continue;
+                        }
+                        if (imported.isDeclarationFile) {
+                            if (!isSpecStdlibModuleInfo(imported)) {
+                                hostModules.put(imp.modulePath(),
+                                    imported.exports != null
+                                        ? imported.exports : Map.of());
+                            }
+                        } else {
                             importResolutions.put(imp.modulePath(),
                                 imported.modulePath);
                             Map<String, ClassDeclaration> classes =
@@ -1084,7 +1098,7 @@ public final class CompilationOrchestrator {
             }
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
-                importResolutions, importedClasses);
+                importResolutions, importedClasses, hostModules);
             for (Diagnostic d : res.diagnostics()) {
                 diagnostics.add(d);
                 hasErrors = true;
