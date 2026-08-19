@@ -9,5 +9,8 @@ export function test_sum(): int {
   for (let x: int of xs) {
     total = total + x;
   }
+  if (total !== 15) {
+    throw { code: "TEST_FAIL", message: "for-of array sum mismatch" };
+  }
   return total;
 }

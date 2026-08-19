@@ -9,6 +9,9 @@ export function test_array_count(): int {
   for (let x: int of xs) {
     n = n + 1;
   }
+  if (n !== 5) {
+    throw { code: "TEST_FAIL", message: "for-of array count mismatch" };
+  }
   return n;
 }
 
@@ -17,6 +20,9 @@ export function test_string_count(): int {
   let n: int = 0;
   for (let c: string of s) {
     n = n + 1;
+  }
+  if (n !== 5) {
+    throw { code: "TEST_FAIL", message: "for-of string byte count mismatch" };
   }
   return n;
 }

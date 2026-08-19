@@ -9,5 +9,8 @@ export function test_count(): int {
   for (let c: string of s) {
     n = n + 1;
   }
+  if (n !== 5) {
+    throw { code: "TEST_FAIL", message: "for-of string byte count mismatch" };
+  }
   return n;
 }
