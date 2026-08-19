@@ -344,7 +344,11 @@ import java.util.Set;
  * parameters (callbacks), module fields, and returns of function type
  * hold wrapper references; indirect calls dispatch through
  * {@code invoke}, including callees that are call results
- * ({@code picker()(41)} → {@code picker().invoke(41L)}). The int/number
+ * ({@code picker()(41)} → {@code __fn0 = picker(); __fn0.invoke(41L)} —
+ * the callee is materialized into a single-assignment temporary at its
+ * evaluation position, BEFORE any argument's hoisted pre-statements, so
+ * the spec's callee-first evaluation order survives argument hoisting).
+ * The int/number
  * conversion intrinsics are wrapped once per module exactly like the Lua
  * backend's top-of-chunk wrappers. Arity extension (a narrower function
  * type in a wider position — the only non-equal assignable shape) lowers
@@ -376,13 +380,17 @@ import java.util.Set;
  * uses of a not-yet-declared function are E6000 (LuaJIT reads the global
  * nil; Java would emit an illegal forward reference to the wrapper
  * field), and module-level indirect calls through function-typed fields
- * are guarded like module-level direct calls: the field's value must be
- * statically known (a bare module-function or intrinsic identifier
- * initializer and every preceding module-level assignment to it a bare
- * module-function or intrinsic identifier) and the held
- * function must not (transitively) read a later-declared field or reach
- * a later-declared function — otherwise E6000, never a silent
- * divergence. Function expressions, nested functions, and signatures
+ * are guarded like module-level direct calls: the field's value set at
+ * the call site must be statically known (a bare module-function or
+ * intrinsic identifier initializer — followed transitively through
+ * function-valued fields, with arity-adapter edges read at the call
+ * site because the adapter re-reads the inner field live on every
+ * invoke — and every preceding module-level assignment to it a bare
+ * module-function or intrinsic identifier) and every function the
+ * field may hold must not (transitively) read a later-declared field,
+ * reach a later-declared function, or use a later-declared import —
+ * otherwise E6000, never a silent divergence. Function expressions,
+ * nested functions, and signatures
  * containing arrays/classes/nullables/nested function types/rest arms/
  * async markers stay deferred to ISSUE-0110 and are rejected with
  * E6000.
@@ -776,28 +784,6 @@ public final class JvmBackend {
      * ({@link #moduleIndirectCallRisk}). */
     private final Map<String, VariableDeclaration> moduleFieldDecls =
         new LinkedHashMap<>();
-
-    /** Module-level field name → the module function whose wrapper the
-     * field's initializer holds (directly or through other
-     * function-valued fields), or {@link #INTRINSIC_FIELD_VALUE} for an
-     * intrinsic-backed field. Absent/unknown = not statically known
-     * (conservative rejection for load-time indirect calls). */
-    private final Map<String, String> moduleFieldValueFunctions =
-        new LinkedHashMap<>();
-
-    /** Sentinel value in {@link #moduleFieldValueFunctions}: the field's
-     * initializer is the int/number intrinsic wrapper (reads no fields,
-     * reaches no module functions — always safe at load). */
-    private static final String INTRINSIC_FIELD_VALUE = "\u0000intrinsic";
-
-    /** Sentinel value in {@link #moduleFieldValueFunctions}: the field's
-     * initializer value is not statically known (conservative rejection
-     * for load-time indirect calls). */
-    private static final String UNKNOWN_FIELD_VALUE = "\u0000unknown";
-
-    /** In-progress guard for the field-value fixpoint (a cycle through
-     * function-valued field initializers is treated as unknown). */
-    private final Set<String> moduleFieldValueInProgress = new HashSet<>();
 
     /** The module body in declaration order, for the load-time
      * indirect-call guards. */
@@ -1752,19 +1738,24 @@ public final class JvmBackend {
      * Returns the rejection description for a module-level indirect call
      * through the function-typed field {@code fieldName} at the current
      * module statement index, or {@code null} when the call is safe.
-     * The field's runtime value is statically known only when its
-     * initializer is (transitively) a bare module-function identifier or
-     * an intrinsic wrapper AND no module-level assignment to the field
-     * precedes the call site; every other shape is conservatively
-     * rejected. When the value IS known, the same two load-time guards as
-     * for direct module-level calls apply to the held function:
+     * The field's value set at the call site must be statically known —
+     * its initializer (followed transitively through function-valued
+     * fields, including arity-adapter edges, see
+     * {@link #collectPossibleHeldFunctions}) and every module-level
+     * assignment to it before the call site must be bare module-function
+     * or intrinsic identifiers — and every function the field may hold
+     * gets the same load-time guards as a direct module-level call:
      * <ul>
      * <li>its body must not (transitively) read a module field declared
      * at or after the call site — LuaJIT fails at load reading the nil
      * field, Java would silently read the field's default value;</li>
      * <li>it must not (transitively) reach a module function declared at
      * or after the call site — LuaJIT fails at load reading the
-     * not-yet-assigned function value, Java would hoist the method.</li>
+     * not-yet-assigned function value, Java would hoist the method;</li>
+     * <li>it must not (transitively) use an import alias declared at or
+     * after the call site — LuaJIT emits the require at the import's
+     * source position and fails at load reading the not-yet-required
+     * global, Java would silently initialize the imported class.</li>
      * </ul>
      */
     private String moduleIndirectCallRisk(String fieldName) {
@@ -1772,28 +1763,17 @@ public final class JvmBackend {
         // only when its initializer AND every module-level assignment to
         // it before the call site are bare module-function or intrinsic
         // identifiers; every other shape (a call result, an adapter
-        // expression, another function-valued field) is conservatively
-        // rejected. When the value set IS known, the same two load-time
-        // guards as for direct module-level calls apply to every function
-        // the field may hold: the JVM static field mirrors LuaJIT's
-        // load-time local (the static-initializer interleaving preserves
-        // source order and control flow), so the last executed
-        // assignment determines the value on both backends.
+        // expression, an unknown field) is conservatively rejected. When
+        // the value set IS known, the same load-time guards as for
+        // direct module-level calls apply to every function the field
+        // may hold: the JVM static field mirrors LuaJIT's load-time
+        // local (the static-initializer interleaving preserves source
+        // order and control flow), so the last executed assignment
+        // determines the value on both backends.
+        int callIndex = currentModuleStatementIndex;
         Set<String> possible = new LinkedHashSet<>();
-        boolean unknown = false;
-        String held = moduleFieldValueFunction(fieldName);
-        if (held == null) {
-            unknown = true;
-        } else if (!INTRINSIC_FIELD_VALUE.equals(held)) {
-            possible.add(held);
-        }
-        List<String> assigned = moduleLevelAssignedFunctions(fieldName,
-            currentModuleStatementIndex);
-        if (assigned == null) {
-            unknown = true;
-        } else {
-            possible.addAll(assigned);
-        }
+        boolean unknown = collectPossibleHeldFunctions(fieldName, callIndex,
+            new HashSet<>(), possible);
         if (unknown) {
             return "module-level indirect call through '" + fieldName
                 + "' whose value is not statically known (an initializer "
@@ -1801,7 +1781,7 @@ public final class JvmBackend {
                 + "intrinsic identifier)";
         }
         for (String fn : possible) {
-            String later = laterFieldRead(fn, currentModuleStatementIndex);
+            String later = laterFieldRead(fn, callIndex);
             if (later != null) {
                 return "module-level indirect call through '" + fieldName
                     + "' whose value ('" + fn + "') (transitively) reads the "
@@ -1809,7 +1789,7 @@ public final class JvmBackend {
                     + "call site (LuaJIT fails at load with a nil read; Java "
                     + "would silently read the default value)";
             }
-            String laterFn = laterFunctionCall(fn, currentModuleStatementIndex);
+            String laterFn = laterFunctionCall(fn, callIndex);
             if (laterFn != null) {
                 return "module-level indirect call through '" + fieldName
                     + "' whose value ('" + fn + "') reaches function '"
@@ -1817,6 +1797,15 @@ public final class JvmBackend {
                     + "assigns function values at their declaration point and "
                     + "fails at load with a nil read; Java hoists methods and "
                     + "would silently run)";
+            }
+            String laterImport = laterImportRead(fn, callIndex);
+            if (laterImport != null) {
+                return "module-level indirect call through '" + fieldName
+                    + "' whose value ('" + fn + "') (transitively) uses the "
+                    + "import '" + laterImport + "' declared at or after the "
+                    + "call site (LuaJIT has not run the require yet and "
+                    + "fails at load; Java would silently initialize the "
+                    + "imported class)";
             }
         }
         return null;
@@ -1941,40 +1930,107 @@ public final class JvmBackend {
     }
 
     /**
-     * The module function a function-typed field's initializer holds, or
-     * {@link #INTRINSIC_FIELD_VALUE} for an intrinsic-backed field, or
-     * {@code null} when the value is not statically known. Identifier
-     * initializers naming module functions, intrinsics, or other
-     * function-typed fields are followed (memoized, cycle-safe — a cycle
-     * is unknown and conservatively rejected).
+     * Collects into {@code possible} every module function the
+     * function-typed field {@code fieldName} may hold when it is read at
+     * load-time statement index {@code readIndex} (exclusive end of the
+     * assignment walk): the value set of its initializer at its
+     * declaration (see {@link #heldFunctionsAtDeclaration}) plus every
+     * statically-known module function assigned to the field between the
+     * declaration and {@code readIndex}. Returns true when any value is
+     * not statically known (a call result, a non-field identifier, an
+     * unknown adapter value) — the caller conservatively rejects the
+     * call. The JVM static-initializer interleaving mirrors LuaJIT's
+     * load-time execution, so every function collected here is one the
+     * field may genuinely hold at the read.
      */
-    private String moduleFieldValueFunction(String fieldName) {
-        String cached = moduleFieldValueFunctions.get(fieldName);
-        if (cached != null) return cached;
-        if (!moduleFieldValueInProgress.add(fieldName)) return null;
-        try {
-            VariableDeclaration vd = moduleFieldDecls.get(fieldName);
-            String result = null;
-            if (vd != null && vd.initializer() instanceof IdentifierExpr id) {
-                Symbol sym = symbols.resolve(id.name());
-                if (sym instanceof Symbol.FunctionSymbol
-                        && moduleFunctions.containsKey(id.name())) {
-                    result = id.name();
-                } else if (sym instanceof Symbol.IntrinsicSymbol) {
-                    result = INTRINSIC_FIELD_VALUE;
-                } else if (sym instanceof Symbol.VariableSymbol
-                        && moduleFieldIndices.containsKey(id.name())) {
-                    String inner = moduleFieldValueFunction(id.name());
-                    // A recursive unknown stays unknown (conservative).
-                    result = inner == null ? null : inner;
-                }
-            }
-            moduleFieldValueFunctions.put(fieldName,
-                result == null ? UNKNOWN_FIELD_VALUE : result);
-            return result;
-        } finally {
-            moduleFieldValueInProgress.remove(fieldName);
+    private boolean collectPossibleHeldFunctions(String fieldName,
+            int readIndex, Set<String> inProgress, Set<String> possible) {
+        if (!inProgress.add(fieldName)) {
+            // A cycle in the field-reference graph. Impossible for valid
+            // programs (module fields only reference earlier fields —
+            // forward references are rejected), but stay conservative.
+            return true;
         }
+        boolean unknown = heldFunctionsAtDeclaration(fieldName,
+            inProgress, possible);
+        List<String> assigned = moduleLevelAssignedFunctions(fieldName,
+            readIndex);
+        if (assigned == null) {
+            unknown = true;
+        } else {
+            possible.addAll(assigned);
+        }
+        inProgress.remove(fieldName);
+        return unknown;
+    }
+
+    /**
+     * The value set of {@code fieldName}'s initializer evaluated at the
+     * field's declaration position, collected into {@code possible}
+     * (true = not statically known). A bare module-function identifier
+     * holds that function; an intrinsic identifier holds the intrinsic
+     * wrapper (safe — reads no fields, reaches no module functions); an
+     * identifier naming another function-valued field reads THAT field
+     * at the position the lowering reads it: the outer field's
+     * declaration index for an equal-signature initializer (both
+     * backends read the field once at initializer time — a snapshot),
+     * or the CALL SITE ({@link #currentModuleStatementIndex}) for an
+     * arity-extension adapter over the field (LuaJIT's adapter body
+     * re-reads the binding on every invoke, and the emitted JVM adapter
+     * reads the static field live — so the inner field's assignments
+     * before the call site retarget the adapter). Any other initializer
+     * shape is unknown.
+     */
+    private boolean heldFunctionsAtDeclaration(String fieldName,
+            Set<String> inProgress, Set<String> possible) {
+        VariableDeclaration vd = moduleFieldDecls.get(fieldName);
+        if (vd == null || !(vd.initializer() instanceof IdentifierExpr id)) {
+            return true;
+        }
+        Symbol sym = symbols.resolve(id.name());
+        if (sym instanceof Symbol.FunctionSymbol
+                && moduleFunctions.containsKey(id.name())) {
+            possible.add(id.name());
+            return false;
+        }
+        if (sym instanceof Symbol.IntrinsicSymbol) {
+            return false;
+        }
+        if (sym instanceof Symbol.VariableSymbol
+                && moduleFieldIndices.containsKey(id.name())) {
+            Type declared = declaredFieldType(fieldName);
+            int innerReadIndex = isArityAdapter(typeOf(id), declared)
+                ? currentModuleStatementIndex
+                : moduleFieldIndices.get(fieldName);
+            return collectPossibleHeldFunctions(id.name(), innerReadIndex,
+                inProgress, possible);
+        }
+        return true;
+    }
+
+    /** The declared type of the module field {@code fieldName}: the
+     * checker-refined symbol type (annotated or inferred), falling back
+     * to the initializer's static type. */
+    private Type declaredFieldType(String fieldName) {
+        Symbol sym = symbols.resolve(fieldName);
+        if (sym instanceof Symbol.VariableSymbol vs && vs.type() != null) {
+            return vs.type();
+        }
+        VariableDeclaration vd = moduleFieldDecls.get(fieldName);
+        return vd != null ? typeOf(vd.initializer()) : Type.Error.INSTANCE;
+    }
+
+    /** True when assigning a value of static type {@code actual} to a
+     * function-typed position of declared type {@code target} lowers to
+     * an arity-extension adapter (the only non-equal shape
+     * {@link Types#isAssignable} admits — fewer actual parameters,
+     * identical prefix and return types) instead of a plain wrapper
+     * read. */
+    private static boolean isArityAdapter(Type actual, Type target) {
+        if (!(target instanceof Type.Func tf) || !(actual instanceof Type.Func af)) {
+            return false;
+        }
+        return Types.isAssignable(af, tf) && !Types.equals(af, tf);
     }
 
     /**
@@ -6263,12 +6319,33 @@ public final class JvmBackend {
             return sb.append(')').toString();
         }
         // Any other function-typed callee expression (a call or
-        // assignment producing a function value): emit the callee inline
-        // and dispatch through its wrapper — e.g. `picker()(41, 999)`
-        // becomes `picker().invoke(41L, 999L)`.
+        // assignment producing a function value): the callee evaluates
+        // BEFORE every argument (spec \u00a7Operational semantics rule 1 —
+        // LuaJIT evaluates the callee expression completely first), so it
+        // is materialized into a fresh effectively-final temporary
+        // declared at its evaluation position — after its own hoisted
+        // statements and BEFORE any argument's hoisted pre-statements (a
+        // hoisted side-effecting argument, an E8010-checked argument's
+        // value temporary) — and the dispatch goes through the temporary:
+        // `picker()(41, 999)` becomes `__fn0 = picker(); __fn0.invoke(41L,
+        // 999L)`, never `picker().invoke(...)` with the argument
+        // pre-statements running first. No capture is introduced (the
+        // temporary is single-assignment and effectively final).
         Type calleeType = typeOf(call.callee());
         if (calleeType instanceof Type.Func f) {
+            String shape = registerWrapperShape(f);
+            if (shape == null) {
+                unsupported("function values whose signature contains "
+                    + "arrays/classes/nullables/nested functions "
+                    + "(deferred to ISSUE-0110)", call.callee().span());
+                return "null";
+            }
             String callee = emitExpression(call.callee());
+            if (callee == null) return "null"; // diagnostic already recorded
+            String calleeTemp = nextFunctionValueTempName();
+            preStatements.add(new PreLine(shape + " " + calleeTemp + " = "
+                + callee + ";", 0));
+            preStatementsDeclareTemps = true;
             List<String> argCodes = emitOperandsInOrder(call.args(),
                 f.paramTypes());
             for (int i = 0; i < argCodes.size(); i++) {
@@ -6276,7 +6353,7 @@ public final class JvmBackend {
                     call.args().get(i), argCodes.get(i),
                     f.paramTypes().get(i)));
             }
-            return callee + ".invoke(" + String.join(", ", argCodes) + ")";
+            return calleeTemp + ".invoke(" + String.join(", ", argCodes) + ")";
         }
         unsupported("calls through non-identifier callees", call.span());
         return "null";

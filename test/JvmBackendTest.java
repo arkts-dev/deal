@@ -224,9 +224,15 @@ import java.util.Set;
  *       checks at callback/return boundaries with LuaJIT's exact message
  *       and the checked value expression evaluated FIRST
  *       (evaluate-then-check — side effects never dropped), wrapper
- *       reference equality, load-time indirect-call guards
- *       (later-declared value uses and not-statically-known field values
- *       E6000; the reassignment shape runs with LuaJIT parity), and the
+ *       reference equality, call-result-callee evaluation order (the
+ *       callee materialized into a single-assignment temporary at its
+ *       evaluation position, before any argument's hoisted
+ *       pre-statements), load-time indirect-call guards
+ *       (later-declared value uses, not-statically-known field values,
+ *       adapter live-read retargets reaching a later-declared function,
+ *       snapshot fields capturing a later-declared function, and the
+ *       indirect import hazard E6000; the reassignment and snapshot
+ *       shapes run with LuaJIT parity), and the
  *       deferred signature shapes (nested/nullable/async/rest function
  *       types, arrays of functions) rejected with E6000.</li>
  * </ul>
@@ -3591,12 +3597,21 @@ public class JvmBackendTest {
      * boundaries (matching LuaJIT's wrapper checks) with the checked
      * value expression evaluated FIRST — the marker probes pin the
      * evaluate-then-check order with module-field side effects — wrapper
-     * reference equality, the load-time indirect-call
+     * reference equality, the call-result-callee evaluation order (the
+     * callee is materialized into a single-assignment temporary at its
+     * evaluation position, BEFORE any argument's hoisted pre-statements —
+     * spec §Operational semantics rule 1: picker() raises its own E8001 /
+     * return-boundary E8010 before bump()'s negative-index read can run,
+     * and the E8002 message is pinned out), the load-time indirect-call
      * guards (a module-level value use of a later-declared function, a
      * field with a not-statically-known value, an assigned function that
-     * reaches a later-declared function — all E6000, never a Java forward
-     * reference or a silent divergence; the plain reassignment shape runs
-     * with LuaJIT parity), and the deferred signature shapes (nested function
+     * reaches a later-declared function, the adapter live-read retargeted
+     * to a later-declared function, and the snapshot field capturing a
+     * later-declared function — all E6000, never a Java forward
+     * reference or a silent divergence; the plain reassignment and
+     * snapshot-field shapes run with LuaJIT parity; the indirect
+     * import hazard is pinned in testModuleImportUseBeforeImportRejected),
+     * and the deferred signature shapes (nested function
      * types, nullable/async/rest function types, arrays of functions)
      * rejected with E6000.
      */
@@ -3777,6 +3792,90 @@ public class JvmBackendTest {
             "load-time field adapter observes the reassignment live (20): "
                 + loadFieldAdapter.output());
 
+        // A call-result callee evaluates COMPLETELY before every argument
+        // (spec §Operational semantics rule 1 — LuaJIT evaluates the
+        // callee expression first), even when a later argument hoists
+        // side-effecting pre-statements: the callee is materialized into
+        // a single-assignment temporary at its evaluation position, so
+        // picker() runs before bump()'s negative-index read. The probe
+        // pins the order with the ERROR: picker's own past-end int[] read
+        // raises E8001, and bump's E8002 message never appears (the
+        // pre-fix inline `picker().invoke(...)` form hoisted bump() first
+        // and raised E8002).
+        ExecResult calleeOrder = compileAndRunJvm("""
+            function f2(a: int, b: boolean): int { return a; }
+            function picker(): (a: int, b: boolean) => int {
+              let xs: int[] = [1];
+              let v: int = xs[99];
+              return f2;
+            }
+            function bump(): int {
+              let ys: int[] = [1];
+              return ys[-1];
+            }
+            export function test(): int {
+              let bs: boolean[] = [true];
+              return picker()(bump(), true && bs[99]);
+            }
+            """, "jvmtest-fv-callee-order");
+        check(calleeOrder.exitCode() == 1,
+            "call-result callee evaluation probe exits 1");
+        check(calleeOrder.output().contains("DEAL_ERROR_CODE: E8001"),
+            "the callee's own E8001 raises before any argument runs: "
+                + calleeOrder.output());
+        check(!calleeOrder.output().contains("negative array index"),
+            "bump() never runs before the callee: " + calleeOrder.output());
+
+        // The same callee-first order holds when the callee's return
+        // boundary raises E8010: picker() raises before bump() and the
+        // hoisted && operand are evaluated.
+        ExecResult calleeE8010 = compileAndRunJvm("""
+            function inc(x: int): int { return x + 1; }
+            function picker(): (a: int, b: boolean) => int { return inc; }
+            function bump(): int {
+              let ys: int[] = [1];
+              return ys[-1];
+            }
+            export function test(): int {
+              let bs: boolean[] = [true];
+              return picker()(bump(), true && bs[99]);
+            }
+            """, "jvmtest-fv-callee-e8010");
+        check(calleeE8010.exitCode() == 1,
+            "call-result callee E8010 probe exits 1");
+        check(calleeE8010.output().contains("DEAL_ERROR_CODE: E8010"),
+            "the callee's return-boundary E8010 raises before any argument: "
+                + calleeE8010.output());
+        check(!calleeE8010.output().contains("negative array index"),
+            "bump() never runs before the E8010 raise: "
+                + calleeE8010.output());
+
+        // Emission assertions: the callee temporary and the dispatch.
+        Frontend calleeF = compileFrontend("""
+            function add(a: int, b: int): int { return a + b; }
+            function picker(): (a: int, b: int) => int { return add; }
+            export function test(): int { return picker()(41, 1); }
+            """, "jvmtest-fv-callee-emit.deal");
+        check(calleeF.errors().isEmpty(),
+            "call-result callee emit probe frontend clean: " + calleeF.errors());
+        if (calleeF.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                calleeF.program(), calleeF.checkResult(),
+                "jvmtest-fv-callee-emit.deal", "main");
+            check(!res.hasErrors(), "call-result callee emit probe codegen "
+                + "clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains("Fn2_II_R_I __fn0 = picker();"),
+                    "the call-result callee is materialized into a temporary "
+                    + "at its evaluation position");
+                check(res.source().contains("__fn0.invoke(41L, 1L)"),
+                    "the dispatch goes through the callee temporary");
+                check(!res.source().contains("picker().invoke"),
+                    "never an inline callee whose argument pre-statements "
+                    + "would run first");
+            }
+        }
+
         // Adapter over a local/parameter that the enclosing body
         // reassigns: LuaJIT's adapter reads the binding live and observes
         // the later assignment; the JVM slice cannot emit a live capture
@@ -3926,6 +4025,26 @@ public class JvmBackendTest {
         check(loadReassign.output().contains("4"),
             "load-time reassigned field computes 4: " + loadReassign.output());
 
+        // An equal-signature field initializer snapshots the inner field's
+        // CURRENT value at the outer field's declaration (LuaJIT and the
+        // JVM static initializer both read the field once): `g1 = dbl`
+        // before `let g = g1` makes g hold dbl, so g(21) = 42. The guard's
+        // value set includes the functions assigned to g1 before g's
+        // declaration, so the safe dbl stays allowed.
+        ExecResult snapshotField = compileAndRunJvm("""
+            function inc(x: int): int { return x + 1; }
+            function dbl(x: int): int { return x * 2; }
+            let g1: (x: int) => int = inc;
+            g1 = dbl;
+            let g: (x: int) => int = g1;
+            let r: int = g(21);
+            export function test(): int { return r; }
+            """, "jvmtest-fv-snapshot-field");
+        check(snapshotField.exitCode() == 0, "snapshot field exits 0");
+        check(snapshotField.output().contains("42"),
+            "the snapshot field captured the reassigned inner field (42): "
+                + snapshotField.output());
+
         // Load-time guards: value use of a later-declared function, a
         // not-statically-known field value, and an assignment before the
         // call site — E6000, never a Java forward reference.
@@ -3949,6 +4068,26 @@ public class JvmBackendTest {
                 g = h;
                 let r: int = g();
                 function later(): int { return 1; }
+                export function test(): int { return r; }
+                """),
+            new GuardCase("adapter live-read retargeted to a later-declared function", """
+                function inc(x: int): int { return x + 1; }
+                function dbl(x: int): int { return later(x); }
+                let g: (x: int) => int = inc;
+                let h: (a: int, b: int) => int = g;
+                g = dbl;
+                let r: int = h(10, 999);
+                function later(x: int): int { return x * 2; }
+                export function test(): int { return r; }
+                """),
+            new GuardCase("snapshot field capturing a later-declared function", """
+                function inc(x: int): int { return x + 1; }
+                function dbl(x: int): int { return later(x); }
+                let g1: (x: int) => int = inc;
+                g1 = dbl;
+                let g: (x: int) => int = g1;
+                let r: int = g(21);
+                function later(x: int): int { return x * 2; }
                 export function test(): int { return r; }
                 """));
         for (GuardCase c : guards) {
@@ -7348,6 +7487,20 @@ public class JvmBackendTest {
             import * as lib from "./lib"
             let base: int = lib.value();
             export function run(): int { return base; }
+            // indirect (ISSUE-0098): a module-level indirect call through a
+            // function-typed field whose held function uses the alias, with
+            // the import declared after the call site — the load-time
+            // indirect-call guard applies the same import hazard check as
+            // the direct-call path (LuaJIT reads the not-yet-required
+            // global at load; Java would silently initialize the imported
+            // class).
+            """
+            function f(): int { return lib.value(); }
+            let g: () => int = f;
+            let r: int = g();
+            import * as lib from "./lib"
+            export function run(): int { return r; }
+ (ISSUE-0098: fix the three review findings — call-result callee evaluation order, load-time indirect import hazard, and adapter live-read value-set edges)
             """);
 
         for (String source : sources) {

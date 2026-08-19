@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM function values and wrappers slice (ISSUE-0098). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: first-class function values in typed and inferred variables, indirect calls through variables/parameters/module fields and call-result callees, callbacks with primitive/string/null signatures, returning function values, the int/number conversion intrinsics as function values (exact and arity-extended), arity-extension adapters at variable-initializer and assignment positions — module functions and intrinsics delegate directly, module fields are read LIVE on every invoke (a reassignment after creation retargets the adapter, pinned cross-backend), and never-reassigned locals/parameters snapshot (reassigned bindings and non-identifier adapter values are E6000 until ISSUE-0110, pinned in JvmBackendTest) — E8010 runtime signature checks at callback and return boundaries with the checked value expression evaluated FIRST (evaluate-then-check side-effect order pinned cross-backend), wrapper reference equality, recursion routed through the wrapper, load-time indirect calls through function-typed module fields, and six frontend compile-error gates (E3001 parameter/return signature mismatch, E5004 reverse arity, E3009/E5001 indirect-call arity/argument mismatch, E3008 non-function callee) rejected before any backend. Nine fixtures run under both backends as cross-backend parity with real luajit; two LuaJIT-only fixtures pin the reference semantics of the shapes the JVM slice conservatively rejects.",
+  "description": "JVM function values and wrappers slice (ISSUE-0098). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: first-class function values in typed and inferred variables, indirect calls through variables/parameters/module fields and call-result callees, callbacks with primitive/string/null signatures, returning function values, the int/number conversion intrinsics as function values (exact and arity-extended), arity-extension adapters at variable-initializer and assignment positions — module functions and intrinsics delegate directly, module fields are read LIVE on every invoke (a reassignment after creation retargets the adapter, pinned cross-backend), and never-reassigned locals/parameters snapshot (reassigned bindings and non-identifier adapter values are E6000 until ISSUE-0110, pinned in JvmBackendTest) — E8010 runtime signature checks at callback and return boundaries with the checked value expression evaluated FIRST (evaluate-then-check side-effect order pinned cross-backend), wrapper reference equality, recursion routed through the wrapper, load-time indirect calls through function-typed module fields, and six frontend compile-error gates (E3001 parameter/return signature mismatch, E5004 reverse arity, E3009/E5001 indirect-call arity/argument mismatch, E3008 non-function callee) rejected before any backend. Eleven fixtures run under both backends as cross-backend parity with real luajit; two LuaJIT-only fixtures pin the reference semantics of the shapes the JVM slice conservatively rejects.",
   "tests": [
     {
       "name": "jvm-fv-typed-variable-indirect-call",
@@ -503,6 +503,44 @@
       "expectedError": "E8010",
       "expectedExitCode": 1,
       "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-cross-callee-eval-order-parity",
+      "description": "Cross-backend parity (LuaJIT + JVM): a call-result callee evaluates COMPLETELY before any argument (spec §Operational semantics rule 1) even when a later argument hoists side-effecting pre-statements — picker() runs first and its past-end int[] read raises E8001 before bump()'s negative-index E8002 or the && operand's hoisted read can run, exit 1 on both backends (the pre-fix JVM hoisted bump()'s read first and raised E8002; 'negative array index' is pinned never to appear)",
+      "source": "function f2(a: int, b: boolean): int { return a; }\nfunction picker(): (a: int, b: boolean) => int {\n  let xs: int[] = [1];\n  let v: int = xs[99];\n  return f2;\n}\nfunction bump(): int {\n  let ys: int[] = [1];\n  return ys[-1];\n}\nexport function test(): int {\n  let bs: boolean[] = [true];\n  return picker()(bump(), true && bs[99]);\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "expectedNotOutput": [
+        "negative array index",
+        "DEAL_ERROR_CODE: E8002"
+      ],
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-cross-callee-e8010-order-parity",
+      "description": "Cross-backend parity (LuaJIT + JVM): a call-result callee whose return boundary raises E8010 (picker returns (int)=>int where (int,boolean)=>int is declared) evaluates and raises BEFORE any argument — the hoisted bump() negative-index read and the && operand never run, so only E8010 appears and 'negative array index' never prints, exit 1 on both backends (the pre-fix JVM hoisted bump()'s read first and raised E8002)",
+      "source": "function inc(x: int): int { return x + 1; }\nfunction picker(): (a: int, b: boolean) => int { return inc; }\nfunction bump(): int {\n  let ys: int[] = [1];\n  return ys[-1];\n}\nexport function test(): int {\n  let bs: boolean[] = [true];\n  return picker()(bump(), true && bs[99]);\n}",
+      "expectedOutput": null,
+      "expectedError": "E8010",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "expectedNotOutput": [
+        "negative array index",
+        "DEAL_ERROR_CODE: E8002"
+      ],
       "irContains": [],
       "irNotContains": [],
       "backends": [

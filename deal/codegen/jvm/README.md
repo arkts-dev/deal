@@ -890,8 +890,12 @@ fixture whose codegen or JVM execution is bypassed):
   wrapper references; `emitCall` dispatches indirect calls through
   `invoke` — for identifier callees (locals/parameters/fields) and for
   generic function-typed callee expressions (`picker()(41)` →
-  `picker().invoke(41L)`); null-returning indirect calls keep the
-  existing hoisting machinery.
+  `__fn0 = picker(); __fn0.invoke(41L)` — the callee is materialized
+  into a single-assignment temporary at its evaluation position, before
+  any argument's hoisted pre-statements, so the spec's callee-first
+  evaluation order (rule 1) survives argument hoisting, pinned by the
+  cross-backend callee-evaluation-order fixtures); null-returning
+  indirect calls keep the existing hoisting machinery.
 - **Arity extension (adapter positions)** — `emitTargeted` /
   `emitFunctionValue` / `emitArityAdapter`: a narrower function type at a
   variable initializer or an assignment (the only non-equal shape
@@ -937,26 +941,33 @@ fixture whose codegen or JVM execution is bypassed):
   equal, distinct wrappers (including distinct adapters) compare unequal
   — LuaJIT's wrapper-table identity.
 - **Load-time indirect-call guards** — `moduleIndirectCallRisk` /
-  `moduleFieldValueFunction` / `moduleLevelAssignedFunctions`: a
-  module-level (load-time) indirect call through a function-typed field
-  gets the same protection as module-level direct calls. The field's
-  value set must be statically known — its initializer (followed
-  transitively through function-valued fields, memoized and
-  cycle-safe) and every module-level assignment to it before the call
-  site must be bare module-function or intrinsic identifiers — and every
-  function the field may hold must not (transitively) read a field or
-  reach a function declared at or after the call site. Since the JVM
-  static initializers mirror LuaJIT's load-time execution (source order
-  and control flow), the last executed assignment determines the held
-  wrapper on both backends — `f = dbl; f(2)` runs 4 under real luajit
-  and under the artifact. Every not-statically-known value shape is
-  E6000 (LuaJIT fails at load with a nil read; Java would silently read
-  the initialized static field or run the hoisted method).
+  `collectPossibleHeldFunctions` / `heldFunctionsAtDeclaration` /
+  `moduleLevelAssignedFunctions`: a module-level (load-time) indirect
+  call through a function-typed field gets the same protection as
+  module-level direct calls. The field's value set at the call site must
+  be statically known — its initializer (followed transitively through
+  function-valued fields, cycle-safe; an arity-adapter edge reads the
+  inner field AT THE CALL SITE because the adapter re-reads the field
+  live on every invoke, so the inner field's assignments before the
+  call site retarget the adapter, while an equal-signature field read
+  snapshots the inner field at the outer field's declaration position,
+  so only assignments before that point count) and every module-level
+  assignment to it before the call site must be bare module-function or
+  intrinsic identifiers — and every function the field may hold must
+  not (transitively) read a field, reach a function, or use an import
+  declared at or after the call site. Since the JVM static initializers
+  mirror LuaJIT's load-time execution (source order and control flow),
+  the last executed assignment determines the held wrapper on both
+  backends — `f = dbl; f(2)` runs 4 under real luajit and under the
+  artifact. Every not-statically-known value shape is E6000 (LuaJIT
+  fails at load with a nil read; Java would silently read the
+  initialized static field, run the hoisted method, or initialize the
+  imported class).
   `walkDominanceExpr` also walks indirect callees, so a function
   declared before a function-typed field that calls through it stays
   subject to the existing later-field read/write analysis.
 - **Tests proving the slice** —
-  - `test/conformance/fixtures/jvm-function-values-slice.json` — 36
+  - `test/conformance/fixtures/jvm-function-values-slice.json` — 38
     fixtures. 19 JVM-only runtime fixtures run through the real
     frontend → real `JvmBackend` codegen → `javac` subprocess → `java`
     subprocess executing the emitted artifact (the harness fails a
@@ -975,7 +986,7 @@ fixture whose codegen or JVM execution is bypassed):
     boundary, return boundary). Six frontend compile-error gates are
     rejected before any backend (E3001 parameter/return signature
     mismatch, E5004 reverse arity, E3009/E5001 indirect-call
-    arity/argument mismatch, E3008 non-function callee). Nine fixtures
+    arity/argument mismatch, E3008 non-function callee). Eleven fixtures
     run under both backends as cross-backend parity with real luajit:
     the callback, arity-extension assignment, intrinsic function value,
     and reassignment shapes; the indirect-call boolean-argument
@@ -994,7 +1005,18 @@ fixture whose codegen or JVM execution is bypassed):
     both backends, and the return-position probe `return markF("pre",
     inc)` prints the marker and then raises E8010 on both backends
     (`expectedOutput` + `expectedError: E8010` + `expectedExitCode: 1`
-    pin the side effect around the raise; the pre-fix JVM dropped it).
+    pin the side effect around the raise; the pre-fix JVM dropped it);
+    and the two call-result-callee evaluation-order shapes — the callee
+    evaluates COMPLETELY before every argument (spec §Operational
+    semantics rule 1) even when a later argument hoists side-effecting
+    pre-statements: `picker()(bump(), true && bs[99])` raises E8001 from
+    picker's own past-end int[] read on both backends, exit 1
+    (`expectedError: E8001`, `expectedNotOutput` pins that the E8002
+    message 'negative array index' never appears — the pre-fix JVM ran
+    bump() first and raised E8002), and the E8010-at-the-callee
+    variant — a call-result callee whose return boundary raises E8010
+    raises it before any argument's evaluation on both backends
+    (`expectedError: E8010` with the E8002 message pinned out).
     Two LuaJIT-only reference fixtures pin the semantics of the shapes
     the JVM slice conservatively rejects with E6000 until ISSUE-0110:
     the reassigned-LOCAL adapter (LuaJIT's adapter reads the binding
@@ -1008,16 +1030,33 @@ fixture whose codegen or JVM execution is bypassed):
     field, indirect dispatch through `invoke`, the adapter's
     static-method delegation, the intrinsic wrapper fields, the
     local-value snapshot temporary (`__fn0 = g;` / `__fn0.invoke(p0)`)
-    for a binding the enclosing body never reassigns, and the LIVE
+    for a binding the enclosing body never reassigns, the LIVE
     module-field adapter body (`g.invoke(p0)` with no `__fn0 = g;`
-    snapshot of a field), plus javac+java execution of the
+    snapshot of a field), and the call-result callee temporary
+    (`__fn0 = picker();` / `__fn0.invoke(41L, 1L)` — the callee
+    materialized at its evaluation position before any argument), plus
+    javac+java execution of the
     typed-variable, local-adapter, module-field-adapter (with the
-    reassignment-after-creation retarget pinned to 20), and
-    load-time-indirect-call shapes; E6000 for the reassigned
+    reassignment-after-creation retarget pinned to 20),
+    load-time-indirect-call, call-result-callee-evaluation-order (the
+    callee's own E8001 raises before any argument's E8002 — the E8002
+    message is pinned out), and snapshot-field (`g1 = dbl` before `let g
+    = g1` captures dbl: `g(21)` runs 42) shapes; E6000 for the
+    reassigned
     local/parameter adapter (pinned for both shapes with frontend-clean
     probes), the call-result adapter, the load-time value use of a
-    later-declared function, a call-valued field initializer, and an
-    assignment before the call site; E6000 for the deferred signature
+    later-declared function, a call-valued field initializer, an
+    assignment before the call site, the adapter live-read retargeted
+    to a later-declared function (`g = dbl` retargets the earlier
+    adapter, dbl reaches `later` — LuaJIT fails at load, the guard
+    rejects), and the snapshot field capturing a later-declared
+    function (the same guard walks assignments to the inner field
+    before the outer field's declaration); the load-time indirect
+    import hazard (`moduleIndirectCallRisk` consults `laterImportRead`
+    exactly like the direct-call path — an indirect call of a function
+    using an import declared after the call site is E6000, pinned in
+    `testModuleImportUseBeforeImportRejected`); E6000 for the deferred
+    signature
     shapes (nested function types, nullable function types, async
     function types, rest function types, arrays of functions); and the
     E8010 callback/return checks with module-field evaluation-order
