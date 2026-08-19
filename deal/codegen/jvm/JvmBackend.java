@@ -10,9 +10,11 @@ import deal.checker.SymbolTable;
 import deal.diagnostics.DiagnosticCode;
 import deal.lexer.Diagnostic;
 import deal.types.Type;
+import deal.types.Types;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -1880,15 +1882,32 @@ public final class JvmBackend {
         emitLine("// storage analog of LuaJIT's check_array: the wrapper's typed storage");
         emitLine("// already proves every element — writes check the element type — so the");
         emitLine("// wrapper-class gate is the element-mismatch boundary). A wrong wrapper");
-        emitLine("// never reaches a raw cast.");
+        emitLine("// never reaches a raw cast. The (T | null)[] gates below additionally");
+        emitLine("// accept the plain T[] wrapper (check_array's element-wise");
+        emitLine("// check_nullable(T) validation), and the per-class (C | null)[] gate");
+        emitLine("// accepts the plain C[] wrapper with shared Object[] storage.");
         emitLine("static __IntArray $check$IntArray(java.lang.Object v) { if (v instanceof __IntArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("static __NumberArray $check$NumberArray(java.lang.Object v) { if (v instanceof __NumberArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("static __StringArray $check$StringArray(java.lang.Object v) { if (v instanceof __StringArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("static __BooleanArray $check$BooleanArray(java.lang.Object v) { if (v instanceof __BooleanArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static __IntOrNullArray $check$IntOrNullArray(java.lang.Object v) { if (v instanceof __IntOrNullArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static __NumberOrNullArray $check$NumberOrNullArray(java.lang.Object v) { if (v instanceof __NumberOrNullArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static __StringOrNullArray $check$StringOrNullArray(java.lang.Object v) { if (v instanceof __StringOrNullArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static __BooleanOrNullArray $check$BooleanOrNullArray(java.lang.Object v) { if (v instanceof __BooleanOrNullArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("// (T | null)[] gates for table reads with a (T | null)[] or");
+        emitLine("// (T | null)[] | null contextual target: the declared or-null");
+        emitLine("// wrapper passes as-is, and a plain T[] wrapper passes too —");
+        emitLine("// LuaJIT's check_array validates every element against");
+        emitLine("// check_nullable(T) and every plain T element passes, so a stored");
+        emitLine("// T[] reads back into (T | null)[]. The accepted T[] storage is");
+        emitLine("// COPIED into boxed or-null storage (O(n), mirroring check_array's");
+        emitLine("// element-wise validation — every stored long is already a valid");
+        emitLine("// int: writes run checkInt and out-of-range literals emit inline");
+        emitLine("// checkInt; the number/string/boolean elements carry their");
+        emitLine("// storage types). Anything else raises E8001. (The converted");
+        emitLine("// primitive copy is the documented storage-analog divergence from");
+        emitLine("// LuaJIT's same-table aliasing; the class-array conversion shares");
+        emitLine("// the Object[] storage instead.)");
+        emitLine("static __IntOrNullArray $check$IntOrNullArray(java.lang.Object v) { if (v instanceof __IntOrNullArray a) return a; if (v instanceof __IntArray a) { java.lang.Long[] nd = new java.lang.Long[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Long.valueOf(a.data[i]); return new __IntOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static __NumberOrNullArray $check$NumberOrNullArray(java.lang.Object v) { if (v instanceof __NumberOrNullArray a) return a; if (v instanceof __NumberArray a) { java.lang.Double[] nd = new java.lang.Double[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Double.valueOf(a.data[i]); return new __NumberOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static __StringOrNullArray $check$StringOrNullArray(java.lang.Object v) { if (v instanceof __StringOrNullArray a) return a; if (v instanceof __StringArray a) { java.lang.String[] nd = new java.lang.String[a.data.length]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); return new __StringOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static __BooleanOrNullArray $check$BooleanOrNullArray(java.lang.Object v) { if (v instanceof __BooleanOrNullArray a) return a; if (v instanceof __BooleanArray a) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Boolean.valueOf(a.data[i]); return new __BooleanOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("// int(v: int | null) / number(v: number | null) conversion intrinsics:");
         emitLine("// null fails at runtime with E8001 (runtime.lua's int_convert/");
         emitLine("// number_convert \"cannot convert null to ...\" shapes).");
@@ -2121,6 +2140,18 @@ public final class JvmBackend {
         return "$Array$" + javaName(name);
     }
 
+    /** The emitted Java name of the per-class NULLABLE-element array
+     * wrapper for DEAL class {@code name}
+     * ({@code $ArrayOrNull$<Name>}, extending {@code __RefArray} like
+     * {@link #classArrayWrapperName}). Distinct from the plain
+     * {@code C[]} wrapper so a null-containing {@code (C | null)[]}
+     * can never pass a {@code C[]}-typed boundary gate (LuaJIT's
+     * check_array rejects its null element with E8003; the JVM raises
+     * the documented storage-analog E8001 wrong-wrapper failure). */
+    private String classOrNullArrayWrapperName(String name) {
+        return "$ArrayOrNull$" + javaName(name);
+    }
+
     /** Per-class array read helper (C[] reads): negative index → E8002,
      * past the end → E8001 "expected instance of &lt;identity&gt;, got
      * null" (LuaJIT reads nil there and the read site's typed class
@@ -2306,10 +2337,18 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
 
-        // Class arrays (ISSUE-0108): C[] and (C | null)[] map to a
-        // per-class __RefArray subclass plus per-class read/write helpers
-        // carrying the nominal E8001 checks. The identity strings mirror
-        // the nominal check helper above.
+        // Class arrays (ISSUE-0108): C[] maps to a per-class __RefArray
+        // subclass ($Array$<C>) and (C | null)[] maps to a DISTINCT
+        // per-class subclass ($ArrayOrNull$<C>) so the two array types
+        // are never the same wrapper — a null-containing (C | null)[]
+        // crossing a C[]-typed boundary must fail the gate (LuaJIT's
+        // check_array raises E8003 "array element N type mismatch" on
+        // the null element; the JVM raises the documented
+        // storage-analog E8001 wrong-wrapper failure instead of letting
+        // the null element cross unvalidated). Both share the
+        // __RefArray Object[] storage and the per-class read/write
+        // helpers carrying the nominal E8001 checks. The identity
+        // strings mirror the nominal check helper above.
         emitLine("static final class " + classArrayWrapperName(cd.name())
             + " extends __RefArray {");
         indent++;
@@ -2317,8 +2356,15 @@ public final class JvmBackend {
             + "(java.lang.Object[] data) { super(data); }");
         indent--;
         emitLine("}");
+        emitLine("static final class " + classOrNullArrayWrapperName(cd.name())
+            + " extends __RefArray {");
+        indent++;
+        emitLine(classOrNullArrayWrapperName(cd.name())
+            + "(java.lang.Object[] data) { super(data); }");
+        indent--;
+        emitLine("}");
         // The per-class wrapper gate for table reads with a C[] or
-        // C[] | null contextual target: only THIS class's array wrapper
+        // C[] | null contextual target: only THIS class's ARRAY wrapper
         // passes (the wrapper's Object[] storage plus the write-time
         // nominal checks already prove every element), anything else
         // raises E8001 — a wrong-shaped dynamic value never reaches a
@@ -2329,6 +2375,28 @@ public final class JvmBackend {
         indent++;
         emitLine("if (v instanceof " + classArrayWrapperName(cd.name())
             + " a) return a;");
+        emitLine("throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
+        indent--;
+        emitLine("}");
+        // The (C | null)[] gate (table reads with a (C | null)[] or
+        // (C | null)[] | null contextual target): this class's or-null
+        // wrapper passes as-is, and a plain C[] wrapper passes too —
+        // LuaJIT's check_array validates every element against
+        // check_nullable(C) and every plain C element passes, so a
+        // stored C[] reads back into (C | null)[]. The accepted C[]
+        // wrapper shares its Object[] storage (LuaJIT returns the SAME
+        // table — later writes through the converted array alias the
+        // original, exactly like the reference). Anything else raises
+        // E8001.
+        emitLine("static " + classOrNullArrayWrapperName(cd.name())
+            + " $check" + classOrNullArrayWrapperName(cd.name())
+            + "(java.lang.Object v) {");
+        indent++;
+        emitLine("if (v instanceof " + classOrNullArrayWrapperName(cd.name())
+            + " a) return a;");
+        emitLine("if (v instanceof " + classArrayWrapperName(cd.name())
+            + " a) return new " + classOrNullArrayWrapperName(cd.name())
+            + "(a.data);");
         emitLine("throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
         indent--;
         emitLine("}");
@@ -2396,7 +2464,7 @@ public final class JvmBackend {
         // be emitted in the pre-declaration scope; only then is the
         // (disambiguated) name registered. A self-reference with no
         // enclosing binding was already rejected by emitStatement (E6000).
-        String initializer = emitExpression(vd.initializer());
+        String initializer = emitExpressionFor(vd.initializer(), declaredType);
         if (needsBooleanBoundary(vd.initializer(), declaredType)) {
             initializer = "booleanNotNull(" + initializer + ")";
         }
@@ -2618,7 +2686,7 @@ public final class JvmBackend {
             emitLine(retNullable ? "return null;" : "return;");
             return;
         }
-        String value = emitExpression(e);
+        String value = emitExpressionFor(e, currentReturnType);
         if (needsBooleanBoundary(e, currentReturnType)) {
             // The boundary keys on the DECLARED return type: a
             // nil-capable boolean result crossing into a
@@ -2899,6 +2967,50 @@ public final class JvmBackend {
     // Expressions
     // =========================================================================
 
+    /**
+     * Emits {@code e} with the read-site contextual target {@code target}
+     * when {@code e} is a direct index read (see
+     * {@link #emitIndexRead}); every other node shape emits normally — an
+     * operator or call nested between the boundary and the read consumes
+     * the read at ITS OWN typed operand position, where the element-typed
+     * read (E8001 on the past-end nil) is the correct behavior. The
+     * target only affects a DIRECT index-read child, exactly like
+     * LuaJIT's check at the consuming boundary.
+     */
+    private String emitExpressionFor(ExpressionNode e, Type target) {
+        if (e instanceof IndexExpr idx) return emitIndexRead(idx, target);
+        return emitExpression(e);
+    }
+
+    /**
+     * True when a read of {@code idx} (whose array element is the
+     * non-nullable {@code T}) is consumed at a {@code T | null} target —
+     * the read site's contextual target accepts the past-end nil
+     * (LuaJIT's check_nullable), so the read must yield the DEAL null
+     * instead of raising the element-typed E8001 (spec §Bounds and nil
+     * behavior: the read result is checked against the TARGET type).
+     */
+    private boolean isNilYieldingReadTarget(IndexExpr idx, Type target) {
+        if (!(typeOf(idx.array()) instanceof Type.Array arr)) return false;
+        Type element = arr.element();
+        if (element instanceof Type.Nullable) return false;
+        if (!(target instanceof Type.Nullable nn)) return false;
+        Type inner = nn.inner();
+        if (element instanceof Type.Class eCls) {
+            if (!(inner instanceof Type.Class tCls)) return false;
+            // Class identity by name + locality: the checker types the
+            // element with the SOURCE path while the backend resolves the
+            // annotation with the MODULE path — both name the same local
+            // class. Imported classes keep their module path in both.
+            if (!eCls.name().equals(tCls.name())) return false;
+            if (isLocalClassType(eCls) || isLocalClassType(tCls)) {
+                return true;
+            }
+            return eCls.modulePath().equals(tCls.modulePath());
+        }
+        return Types.equals(inner, element);
+    }
+
     private String emitExpression(ExpressionNode e) {
         return switch (e) {
             case LiteralExpr lit -> emitLiteral(lit);
@@ -2923,7 +3035,7 @@ public final class JvmBackend {
             }
             case AssignmentExpr ae -> emitAssignment(ae);
             case MemberAccessExpr mae -> emitMemberAccessValue(mae);
-            case IndexExpr idx -> emitIndexRead(idx);
+            case IndexExpr idx -> emitIndexRead(idx, null);
             case ArrayLiteralExpr al -> emitArrayLiteral(al);
             case ObjectLiteralExpr ol -> emitObjectLiteral(ol);
             case FunctionExpr fe -> {
@@ -3113,8 +3225,25 @@ public final class JvmBackend {
                                             ObjectLiteralExpr obj,
                                             boolean localDefaults) {
         List<ExpressionNode> valueNodes = new ArrayList<>();
-        for (Property prop : obj.properties()) valueNodes.add(prop.value());
-        List<String> codes = emitOperandsInOrder(valueNodes);
+        List<Type> valueTargets = new ArrayList<>();
+        for (Property prop : obj.properties()) {
+            valueNodes.add(prop.value());
+            // The read-site target of a provided value is the FIELD's
+            // declared type: a direct T[] read provided to a T | null
+            // field yields the DEAL null past the end (LuaJIT's
+            // check_nullable at the construction boundary). Unknown
+            // fields keep the element-typed read (the checker-gated
+            // defensive path).
+            Type fieldType = null;
+            for (ClassField cf : cd.fields()) {
+                if (cf.name().equals(prop.name())) {
+                    fieldType = classFieldDeclaredType(cd, cf);
+                    break;
+                }
+            }
+            valueTargets.add(fieldType);
+        }
+        List<String> codes = emitOperandsInOrder(valueNodes, valueTargets);
         // The constructor arguments run in field DECLARATION order, but
         // LuaJIT evaluates the provided-fields table in LITERAL order — an
         // effectful provided value whose literal position differs from its
@@ -3129,31 +3258,19 @@ public final class JvmBackend {
             String code = codes.get(i);
             if (code.startsWith("__t")) continue; // already materialized
             if (isPureAfterEmission(valueNodes.get(i))) continue;
-            Type valueType = typeOf(valueNodes.get(i));
-            // A null-typed effectful provided value (an assignment like
-            // `(m = null)` whose emitted code carries the assignment
-            // TARGET's boxed Java type) materializes into an Object
-            // temporary — javaLocalType(null) is java.lang.Void and
-            // javac rejects `java.lang.Void __t0 = (m = null);`
-            // ("incompatible types: Long cannot be converted to Void")
-            // after the CLI reported success. The Object temp accepts
-            // every emitted reference and is consumed only for its
-            // evaluation effects, exactly like materializeIfEffectful's
-            // Type.Null rule (the constructor parameter coercion below
-            // re-casts it through coerceNullValueCode).
-            // A nil-aware && / || provided value's emitted code is a
-            // boxed java.lang.Boolean temporary (null = the Lua nil) —
-            // the materialized temporary must stay boxed (a `boolean`
-            // declaration would auto-unbox and NPE on null before the
-            // constructor's booleanNotNull boundary could raise E8001),
-            // exactly like emitOperandsInOrder's own materialization
-            // below.
-            String javaType = valueType instanceof Type.Null
-                ? "java.lang.Object"
-                : (canYieldNil(valueNodes.get(i))
-                    && !isPrimitiveArrayRead(valueNodes.get(i)))
-                ? "java.lang.Boolean"
-                : javaLocalType(valueType, valueNodes.get(i).span());
+            // The temporary's Java type follows the EMITTED code shape,
+            // not just the static type: a null-typed effectful value
+            // materializes into an Object temporary (javaLocalType(null)
+            // is java.lang.Void and javac rejects
+            // `java.lang.Void __t0 = (m = null);`), a nil-yielding read
+            // (a direct T[] read at a T | null field) carries the boxed
+            // element type, and a nil-aware && / || result stays boxed
+            // (a `boolean` declaration would auto-unbox and NPE on null
+            // before the constructor's booleanNotNull boundary could
+            // raise E8001) — exactly like emitOperandsInOrder's own
+            // materialization below.
+            String javaType = materializationTempType(valueNodes.get(i),
+                valueTargets.get(i));
             if (javaType == null) continue; // diagnostic already recorded
             String temp = nextEvalTempName();
             preStatements.add(new PreLine(
@@ -3186,7 +3303,8 @@ public final class JvmBackend {
                             valueNode.span());
                         code = zeroValueFor(cf.type());
                     } else {
-                        code = emitExpression(valueNode);
+                        code = emitExpressionFor(valueNode,
+                            classFieldDeclaredType(cd, cf));
                     }
                 } else {
                     // Imported defaults are literal constants (validated
@@ -3485,7 +3603,8 @@ public final class JvmBackend {
             return emitShortCircuit(bin, op == BinaryOp.AND);
         }
 
-        // Array reads in === / !== operand positions (ISSUE-0094 rework):
+        // Array reads in === / !== operand positions (ISSUE-0094 rework,
+        // ISSUE-0108 class-array extension):
         // the read-site contract (spec §Bounds and nil behavior) applies
         // no typed boundary to a comparison operand, so LuaJIT reads nil
         // past the end and computes the comparison on the nil value
@@ -3493,10 +3612,12 @@ public final class JvmBackend {
         // true) instead of raising the boundary failure. A primitive Java
         // read cannot yield nil; the comparison position is emitted with
         // nullable boxed reads and LuaJIT's nil semantics instead of the
-        // typed read helpers (see emitArrayReadComparison).
+        // typed read helpers (see emitArrayReadComparison) — local class
+        // array reads (C[]) use the same lowering with the per-class
+        // nullable read and reference identity.
         if (op == BinaryOp.EQ || op == BinaryOp.NEQ) {
-            boolean leftRead = isPrimitiveArrayRead(bin.left());
-            boolean rightRead = isPrimitiveArrayRead(bin.right());
+            boolean leftRead = isNilCapableArrayRead(bin.left());
+            boolean rightRead = isNilCapableArrayRead(bin.right());
             if (leftRead || rightRead || canYieldNil(bin.left())
                     || canYieldNil(bin.right())) {
                 return emitArrayReadComparison(bin, op == BinaryOp.EQ);
@@ -3926,11 +4047,27 @@ public final class JvmBackend {
      * initializer cannot see a block-local declaration).
      */
     private List<String> emitOperandsInOrder(List<ExpressionNode> nodes) {
+        return emitOperandsInOrder(nodes, null);
+    }
+
+    /**
+     * {@code emitOperandsInOrder} with a per-operand read-site target
+     * type (see {@link #emitExpressionFor}): {@code targets.get(i)} is
+     * the contextual target of a DIRECT index-read operand {@code i} (a
+     * call parameter type, an assignment RHS target, an array-literal
+     * element type, a class-construction field type), or {@code null}
+     * for no nullable target. Only direct reads consume the target — an
+     * operator nested between the boundary and the read types the read
+     * at its own operand position, so the element-typed read stays.
+     */
+    private List<String> emitOperandsInOrder(List<ExpressionNode> nodes,
+                                             List<Type> targets) {
         List<String> codes = new ArrayList<>(nodes.size());
         List<Integer> hoistStarts = new ArrayList<>(nodes.size());
         for (int i = 0; i < nodes.size(); i++) {
             int before = preStatements.size();
-            codes.add(emitExpression(nodes.get(i)));
+            codes.add(emitExpressionFor(nodes.get(i),
+                targets == null ? null : targets.get(i)));
             hoistStarts.add(preStatements.size() > before ? before : -1);
         }
         // Process the hoisting operands right to left in contiguous
@@ -3973,27 +4110,11 @@ public final class JvmBackend {
             for (int i = first; i < j; i++) {
                 if (materialized[i]) continue;
                 if (isPureAfterEmission(nodes.get(i))) continue;
-                Type t = typeOf(nodes.get(i));
-                // A null-typed effectful operand (an assignment like
-                // `(m = null)` whose emitted code carries the assignment
-                // TARGET's boxed Java type) materializes into an Object
-                // temporary — javaLocalType(null) is java.lang.Void and
-                // javac rejects `java.lang.Void __t0 = (m = null);`
-                // ("incompatible types: Long cannot be converted to
-                // Void") after the CLI reported success. The Object temp
-                // accepts every emitted reference and is consumed only
-                // for its evaluation effects, exactly like
-                // materializeIfEffectful's Type.Null rule.
-                // A nil-aware && / || operand's emitted code is a boxed
-                // java.lang.Boolean temporary (null = the Lua nil) — the
-                // materialized temporary must stay boxed (a `boolean`
-                // declaration would auto-unbox and NPE on null).
-                String javaType = t instanceof Type.Null
-                    ? "java.lang.Object"
-                    : (canYieldNil(nodes.get(i))
-                        && !isPrimitiveArrayRead(nodes.get(i)))
-                    ? "java.lang.Boolean"
-                    : javaLocalType(t, nodes.get(i).span());
+                // The temporary's Java type follows the EMITTED code
+                // shape, not just the static type — see
+                // materializationTempType.
+                String javaType = materializationTempType(nodes.get(i),
+                    targets == null ? null : targets.get(i));
                 if (javaType == null) continue; // diagnostic already recorded
                 String temp = nextEvalTempName();
                 preStatements.add(insertAt++, new PreLine(
@@ -4004,6 +4125,42 @@ public final class JvmBackend {
             }
         }
         return codes;
+    }
+
+    /**
+     * The Java type of a materialized operand temporary. The temporary
+     * must match the EMITTED code shape, never just the static type:
+     * <ul>
+     * <li>a null-typed effectful operand (an assignment like
+     * {@code (m = null)} whose emitted code carries the assignment
+     * TARGET's boxed Java type) materializes into an Object temporary —
+     * {@code javaLocalType(null)} is {@code java.lang.Void} and javac
+     * rejects {@code java.lang.Void __t0 = (m = null);} after the CLI
+     * reported success;</li>
+     * <li>a nil-yielding read (a direct {@code T[]} read emitted at a
+     * {@code T | null} target) carries the boxed element type
+     * ({@code java.lang.Long} for an int read), never the unboxed
+     * storage type;</li>
+     * <li>a nil-aware {@code &&}/{@code ||} operand's emitted code is a
+     * boxed {@code java.lang.Boolean} temporary (null = the Lua nil) —
+     * a {@code boolean} declaration would auto-unbox and NPE on
+     * null.</li>
+     * </ul>
+     */
+    private String materializationTempType(ExpressionNode node,
+                                           Type target) {
+        Type t = typeOf(node);
+        if (t instanceof Type.Null) return "java.lang.Object";
+        if (node instanceof IndexExpr idx
+                && isNilYieldingReadTarget(idx, target)) {
+            Type element = ((Type.Array) typeOf(idx.array())).element();
+            String boxed = boxedArrayJavaType(element, idx.span());
+            if (boxed != null) return boxed;
+        }
+        if (canYieldNil(node) && !isPrimitiveArrayRead(node)) {
+            return "java.lang.Boolean";
+        }
+        return javaLocalType(t, node.span());
     }
 
     private String emitUnary(UnaryExpr u) {
@@ -4096,7 +4253,11 @@ public final class JvmBackend {
                     return "null";
                 }
             }
-            List<String> argCodes = emitOperandsInOrder(call.args());
+            List<Type> argTargets = new ArrayList<>(call.args().size());
+            for (int i = 0; i < call.args().size(); i++) {
+                argTargets.add(paramDeclaredType(id.name(), i));
+            }
+            List<String> argCodes = emitOperandsInOrder(call.args(), argTargets);
             StringBuilder sb = new StringBuilder(javaName(id.name())).append('(');
             for (int i = 0; i < argCodes.size(); i++) {
                 if (i > 0) sb.append(", ");
@@ -4341,14 +4502,61 @@ public final class JvmBackend {
      * boundary, so {@link #emitArrayReadComparison} boxes the read and
      * computes LuaJIT's nil-comparison semantics instead. Tables and
      * other indexable forms stay out of scope.
+     *
+     * <p>The {@code target} parameter is the read site's contextual
+     * target type — the type the IMMEDIATE consumer expects (a
+     * declaration initializer's declared type, an assignment RHS target,
+     * a call parameter, a return type, a class field, an array-literal
+     * element, a class-construction value). The spec checks the read
+     * result against the TARGET type at the read site (spec §Bounds and
+     * nil behavior — "Optional nullable arrays follow target typing"), so
+     * a past-end read of a non-nullable {@code T[]} consumed at a
+     * {@code T | null} target must YIELD the DEAL null: LuaJIT reads nil
+     * there and the target's {@code check_nullable} accepts it (the
+     * reviewer's probes: {@code let n: int | null = xs[9]} prints 11
+     * under LuaJIT while the pre-fix JVM raised the element-typed
+     * E8001). The nil-yielding boxed read (the per-class nullable read
+     * for {@code C[]}) still raises E8002 for a negative index, and a
+     * read whose target does not match exactly keeps the element-typed
+     * helper (a non-nullable target's boundary fails on the nil with
+     * E8001, which the element helper raises directly).
      */
-    private String emitIndexRead(IndexExpr idx) {
+    private String emitIndexRead(IndexExpr idx, Type target) {
         Type arrayType = typeOf(idx.array());
         if (!(arrayType instanceof Type.Array arr)) {
             unsupported("indexing of " + typeName(arrayType), idx.span());
             return "null";
         }
         Type element = arr.element();
+        if (isNilYieldingReadTarget(idx, target)) {
+            // The read site's target type is Nullable(T) for this T[]
+            // element — the target's check_nullable accepts the past-end
+            // nil, so the read yields the DEAL null instead of raising
+            // the element-typed E8001.
+            String nilHelper = null;
+            if (element instanceof Type.Class cls) {
+                // Only a LOCAL class has the per-class nullable read
+                // helper in this artifact; an imported class falls
+                // through to the element-typed chain below, which
+                // records the E6000 (imported class arrays stay out of
+                // slice) — never an unqualified helper javac would
+                // reject.
+                if (isLocalClassType(cls)
+                        && moduleClasses.containsKey(cls.name())) {
+                    nilHelper = classOrNullArrayReadName(cls.name());
+                }
+            } else {
+                nilHelper = boxedArrayReadHelper(element);
+            }
+            if (nilHelper != null) {
+                List<String> codes = emitOperandsInOrder(
+                    List.of(idx.array(), idx.index()));
+                return nilHelper + "(" + codes.get(0) + ", "
+                    + codes.get(1) + ")";
+            }
+            // Local-only class guard failed: fall through to the
+            // element-typed chain below, which records the E6000.
+        }
         String helper = null;
         if (element instanceof Type.Nullable ne) {
             // (T | null)[] reads: the boxed read yields the DEAL null
@@ -4380,7 +4588,8 @@ public final class JvmBackend {
 
     /**
      * True when {@code e} is an index read of one of the four supported
-     * primitive array types — the only in-scope read shape that can yield
+     * primitive array types — together with the local class reads of
+     * {@link #isClassArrayRead}, the in-scope read shapes that can yield
      * the LuaJIT nil past the end. Table indexing and out-of-slice
      * element types are not affected (they are E6000 elsewhere).
      */
@@ -4396,6 +4605,29 @@ public final class JvmBackend {
         if (!isPrimitiveArrayRead(e)) return false;
         return ((Type.Array) typeOf(((IndexExpr) e).array())).element()
             instanceof Type.Boolean;
+    }
+
+    /** {@code true} when {@code e} is an index read of a LOCAL class
+     * array ({@code C[]}) — the nil-capable read shape of the class
+     * slice (the same past-end nil semantics as the primitive reads;
+     * imported class arrays stay E6000 at the read). Side-effect-free:
+     * the locality guard must not record the E6000 a second time (the
+     * read emission records it once). */
+    private boolean isClassArrayRead(ExpressionNode e) {
+        if (!(e instanceof IndexExpr idx)) return false;
+        if (!(typeOf(idx.array()) instanceof Type.Array arr)) return false;
+        if (!(arr.element() instanceof Type.Class cls)) return false;
+        return isLocalClassType(cls) && moduleClasses.containsKey(cls.name());
+    }
+
+    /** {@code true} when {@code e} is an index read whose array element
+     * is a non-nullable primitive or local class — the read shapes that
+     * yield the LuaJIT nil past the end with no boundary at the read
+     * site ({@code (T | null)[]} reads yield the nil through their own
+     * nullable element type and route through the nullable comparison
+     * lowering instead). */
+    private boolean isNilCapableArrayRead(ExpressionNode e) {
+        return isPrimitiveArrayRead(e) || isClassArrayRead(e);
     }
 
     /**
@@ -4451,18 +4683,19 @@ public final class JvmBackend {
         List<String> ops = emitOperandsInOrder(
             List.of(idx.array(), idx.index()));
         String n = nextEvalTempName();
-        preStatements.add(new PreLine(arrayBoxedJavaType(element) + " " + n
-            + " = " + arrayReadBoxedHelper(element) + "(" + ops.get(0)
-            + ", " + ops.get(1) + ");", 0));
+        preStatements.add(new PreLine(boxedArrayJavaType(element, idx.span())
+            + " " + n + " = " + boxedArrayReadHelper(element)
+            + "(" + ops.get(0) + ", " + ops.get(1) + ");", 0));
         preStatementsDeclareTemps = true;
         return n;
     }
 
     /** True when a {@code ===}/{@code !==} operand carries LuaJIT nil
-     * semantics — a primitive array read past the end or a nil-aware
-     * {@code &&}/{@code ||} result (see {@link #canYieldNil}). */
+     * semantics — a primitive or local-class array read past the end or
+     * a nil-aware {@code &&}/{@code ||} result (see
+     * {@link #canYieldNil}). */
     private boolean isNilCapableOperand(ExpressionNode e) {
-        return isPrimitiveArrayRead(e) || canYieldNil(e);
+        return isNilCapableArrayRead(e) || canYieldNil(e);
     }
 
     /**
@@ -4474,7 +4707,9 @@ public final class JvmBackend {
      * reported true.
      */
     private String emitNilCapableOperand(ExpressionNode e) {
-        if (isPrimitiveArrayRead(e)) return emitBoxedReadTemp((IndexExpr) e);
+        if (isNilCapableArrayRead(e)) {
+            return emitBoxedReadTemp((IndexExpr) e);
+        }
         return emitExpression(e);
     }
 
@@ -4483,11 +4718,11 @@ public final class JvmBackend {
      * nil-capable non-read operands are boolean-typed {@code &&}/
      * {@code ||} results). */
     private Type comparisonElement(BinaryExpr bin) {
-        if (isPrimitiveArrayRead(bin.left())) {
+        if (isNilCapableArrayRead(bin.left())) {
             return ((Type.Array) typeOf(
                 ((IndexExpr) bin.left()).array())).element();
         }
-        if (isPrimitiveArrayRead(bin.right())) {
+        if (isNilCapableArrayRead(bin.right())) {
             return ((Type.Array) typeOf(
                 ((IndexExpr) bin.right()).array())).element();
         }
@@ -4496,8 +4731,9 @@ public final class JvmBackend {
 
     /**
      * Emits {@code ===}/{@code !==} where at least one operand carries
-     * LuaJIT nil semantics — a primitive array read or a nil-aware
-     * {@code &&}/{@code ||} result. The spec's read-site contract (spec
+     * LuaJIT nil semantics — a primitive or local-class array read or a
+     * nil-aware {@code &&}/{@code ||} result. The spec's read-site
+     * contract (spec
      * §Bounds and nil behavior) applies no typed boundary to a comparison
      * operand, so a read past the end must NOT raise E8001 here: LuaJIT
      * reads nil and computes the comparison on that value —
@@ -4531,8 +4767,8 @@ public final class JvmBackend {
      */
     private String emitArrayReadComparison(BinaryExpr bin, boolean eq) {
         Type element = comparisonElement(bin);
-        if (arrayReadBoxedHelper(element) == null
-                || arrayBoxedJavaType(element) == null) {
+        if (boxedArrayReadHelper(element) == null
+                || boxedArrayJavaType(element, bin.span()) == null) {
             unsupported("array comparison on " + typeName(element)
                 + " elements", bin.span());
             return "false";
@@ -4743,7 +4979,11 @@ public final class JvmBackend {
         // the initializer, which boxes unboxed primitive elements for the
         // nullable-element wrappers (java.lang.Long[]{5L, null}) and
         // upcasts class instances into __RefArray storage.
-        List<String> codes = emitOperandsInOrder(al.elements());
+        List<Type> elementTargets = new ArrayList<>(al.elements().size());
+        for (int i = 0; i < al.elements().size(); i++) {
+            elementTargets.add(arr.element());
+        }
+        List<String> codes = emitOperandsInOrder(al.elements(), elementTargets);
         StringBuilder sb = new StringBuilder("new ").append(wrapper)
             .append("(new ").append(elemJava).append("[]{");
         for (int i = 0; i < codes.size(); i++) {
@@ -4884,7 +5124,7 @@ public final class JvmBackend {
                 case Type.Number ignored -> "$check$NumberOrNullArray";
                 case Type.String ignored -> "$check$StringOrNullArray";
                 case Type.Boolean ignored -> "$check$BooleanOrNullArray";
-                case Type.Class c -> "$check" + classArrayWrapperName(c.name());
+                case Type.Class c -> "$check" + classOrNullArrayWrapperName(c.name());
                 default -> null;
             };
             case Type.Class c -> "$check" + classArrayWrapperName(c.name());
@@ -4968,8 +5208,13 @@ public final class JvmBackend {
                 return "null";
             }
             String target = mapped != null ? mapped : javaName(id.name());
-            String value = emitExpression(ae.value());
             Type targetType = declaredTypeForBinding(id.name());
+            // The read-site target for a direct index-read RHS is the
+            // assignment target's declared type: a T[] read assigned to a
+            // T | null binding yields the DEAL null past the end
+            // (LuaJIT's check_nullable at the assignment boundary), while
+            // a non-nullable target keeps the element-typed E8001 read.
+            String value = emitExpressionFor(ae.value(), targetType);
             if (needsBooleanBoundary(ae.value(), targetType)) {
                 // The boundary keys on the TARGET's declared type: a
                 // nil-capable boolean result assigned into a
@@ -5030,7 +5275,8 @@ public final class JvmBackend {
             // value in value positions (`return xs[0] = 5;`,
             // `f(xs[0] = 5)`).
             List<String> codes = emitOperandsInOrder(
-                List.of(idx.array(), idx.index(), ae.value()));
+                List.of(idx.array(), idx.index(), ae.value()),
+                Arrays.asList(null, null, indexType));
             String rhs = codes.get(2);
             if (needsBooleanBoundary(ae.value(), indexType)) {
                 rhs = "booleanNotNull(" + rhs + ")";
@@ -5059,11 +5305,17 @@ public final class JvmBackend {
                 // array-write branch handles. The emitted assignment
                 // expression keeps its DEAL value in value positions
                 // (`return p.x = 5;`, `f(p.x = 5)`).
-                List<String> codes = emitOperandsInOrder(
-                    List.of(mae.object(), ae.value()));
-                String value = codes.get(1);
                 Type fieldType = declaredFieldType(
                     (Type.Class) objType, mae.field());
+                // The read-site target for a direct index-read RHS is the
+                // declared field type (a T[] read assigned to a T | null
+                // field yields the DEAL null past the end); an imported
+                // class's unresolvable field falls back to the value's
+                // own type below, keeping the element-typed read.
+                List<String> codes = emitOperandsInOrder(
+                    List.of(mae.object(), ae.value()),
+                    Arrays.asList(null, fieldType));
+                String value = codes.get(1);
                 if (fieldType == null) fieldType = typeOf(ae.value());
                 if (needsBooleanBoundary(ae.value(), fieldType)) {
                     // Same target-type boundary rule as the identifier
@@ -5562,7 +5814,7 @@ public final class JvmBackend {
                 case Type.Number ignored -> "__NumberOrNullArray";
                 case Type.String ignored -> "__StringOrNullArray";
                 case Type.Boolean ignored -> "__BooleanOrNullArray";
-                case Type.Class c -> classArrayWrapperName(c.name());
+                case Type.Class c -> classOrNullArrayWrapperName(c.name());
                 default -> null;
             };
             case Type.Class c -> classArrayWrapperName(c.name());
@@ -5610,6 +5862,36 @@ public final class JvmBackend {
             case Type.Boolean ignored -> "java.lang.Boolean";
             default -> null;
         };
+    }
+
+    /** The nil-yielding boxed read helper for a supported primitive or
+     * local class element type: the primitive boxed helpers (null past
+     * the end, E8002 for a negative index), and the per-class
+     * {@code $classOrNullArrayRead$<C>} helper for a local class
+     * element ({@code C[]} reads in nil-accepting positions — a
+     * {@code C | null} target or a comparison operand — yield the DEAL
+     * null past the end with the same negative-index E8002). The caller
+     * gates class locality before requesting the class helper. */
+    private String boxedArrayReadHelper(Type element) {
+        String boxed = arrayReadBoxedHelper(element);
+        if (boxed != null) return boxed;
+        if (element instanceof Type.Class cls) {
+            return classOrNullArrayReadName(cls.name());
+        }
+        return null;
+    }
+
+    /** Java reference type of a nil-yielding read temporary for a
+     * supported primitive or local class element type (the boxed
+     * wrapper types; the generated class reference for a class element
+     * — all nullable, unlike the storage types). */
+    private String boxedArrayJavaType(Type element, Span span) {
+        String boxed = arrayBoxedJavaType(element);
+        if (boxed != null) return boxed;
+        if (element instanceof Type.Class cls) {
+            return localClassJavaType(cls, span);
+        }
+        return null;
     }
 
     /** Emitted write-helper method name for a supported primitive element
