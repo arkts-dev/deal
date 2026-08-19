@@ -489,7 +489,12 @@ public class BackendConformanceTest {
      * parsing a single file; the in-process frontend applies the same
      * {@code -encoding UTF-8} option and the compile directory as the
      * classpath (the subprocess form ran with the same working directory
-     * and default classpath {@code "."}). Artifact execution stays a real
+     * and default classpath {@code "."}), plus {@code -proc:none
+     * -implicit:none} (the emitted artifacts carry no annotations and
+     * every artifact file is listed explicitly, so the skipped passes
+     * never resolve anything the named set does not already compile —
+     * a pure per-task startup-cost reduction, no compile surface is
+     * lost). Artifact execution stays a real
      * {@code java} subprocess. Every multi-module conformance fixture
      * (including all twelve ISSUE-0109 fixtures) and JvmBackendTest's
      * artifact-acceptance pins keep the real {@code javac} binary.
@@ -515,10 +520,19 @@ public class BackendConformanceTest {
             Iterable<? extends JavaFileObject> units =
                 fileManager.getJavaFileObjectsFromFiles(files);
             StringWriter messages = new StringWriter();
+            // -proc:none: the emitted artifacts never carry annotations,
+            // so javac's default annotation-processor discovery pass is
+            // pure overhead (roughly a 2-3x per-task cost on JDK 25).
+            // -implicit:none: every emitted artifact file is listed
+            // explicitly in {@code javaFiles}, so implicit source lookup
+            // never resolves anything the named set does not already
+            // compile.
             List<String> options = List.of(
                 "-encoding", "UTF-8",
                 "-classpath", dir.toString(),
-                "-d", dir.toString());
+                "-d", dir.toString(),
+                "-proc:none",
+                "-implicit:none");
             Boolean ok = compiler.getTask(messages, fileManager, diagnostics,
                 options, null, units).call();
             if (!Boolean.TRUE.equals(ok)) {
@@ -1592,6 +1606,11 @@ public class BackendConformanceTest {
             javacArgs.add("javac");
             javacArgs.add("-encoding");
             javacArgs.add("UTF-8");
+            // Same fidelity-pin binary javac; -proc:none skips the
+            // annotation-processor discovery pass (no emitted artifact
+            // carries an annotation — the identical argument as the
+            // in-process compileWithJavac form).
+            javacArgs.add("-proc:none");
             try (var stream = Files.list(outputRoot)) {
                 stream.filter(p -> p.toString().endsWith(".java"))
                       .sorted()

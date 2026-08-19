@@ -7,7 +7,11 @@ mkdir -p build
 # Single compilation step: compile all source and test files at once
 # =========================================================================
 echo "=== Compiling all DEAL sources and tests ==="
-javac --release 25 -d build \
+# -proc:none: no DEAL/test source uses an annotation processor, so javac's
+# default processor-discovery pass is pure per-task startup cost (the gate
+# budget is shared with the JVM artifact suites; measured ~40% faster
+# compile under load).
+javac --release 25 -proc:none -d build \
   -cp /usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar \
   deal/ast/*.java \
   deal/types/*.java \
