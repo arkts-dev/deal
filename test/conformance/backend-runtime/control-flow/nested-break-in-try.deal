@@ -5,13 +5,22 @@
 
 export function test_nested_break(): int {
   let found: int = 0;
+  let innerCatchRan: boolean = false;
+  let outerCatchRan: boolean = false;
   for (let i: int = 0; i < 10; i = i + 1) {
     try {
       try {
         if (i === 5) { break; }
-      } catch (e2) {}
+      } catch (e2) {
+        innerCatchRan = true;
+      }
       found = i;
-    } catch (e1) {}
+    } catch (e1) {
+      outerCatchRan = true;
+    }
+  }
+  if (found !== 4 || innerCatchRan || outerCatchRan) {
+    throw { code: "TEST_FAIL", message: "nested-break-in-try terminal result or forbidden catch path mismatch" };
   }
   return found;
 }

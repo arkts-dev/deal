@@ -5,11 +5,17 @@
 
 export function test_break_in_try(): int {
   let found: int = 0;
+  let catchRan: boolean = false;
   for (let i: int = 0; i < 10; i = i + 1) {
     try {
       if (i === 5) { break; }
-    } catch (e) {}
+    } catch (e) {
+      catchRan = true;
+    }
     found = i;
+  }
+  if (found !== 4 || catchRan) {
+    throw { code: "TEST_FAIL", message: "break-in-try terminal result or forbidden catch path mismatch" };
   }
   return found;
 }

@@ -5,11 +5,17 @@
 
 export function test_continue_in_try(): int {
   let sum: int = 0;
+  let catchRan: boolean = false;
   for (let i: int = 0; i < 5; i = i + 1) {
     try {
       if (i === 2) { continue; }
-    } catch (e) {}
+    } catch (e) {
+      catchRan = true;
+    }
     sum = sum + i;
+  }
+  if (sum !== 8 || catchRan) {
+    throw { code: "TEST_FAIL", message: "continue-in-try sum or forbidden catch path mismatch" };
   }
   return sum;
 }
