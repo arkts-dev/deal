@@ -11,5 +11,20 @@ export function test_closure_capture(): int {
     fs[i] = function(): int { return x; };
     i = i + 1;
   }
-  return fs[0]() * 100 + fs[1]() * 10 + fs[2]();
+  if (fs.length !== 3) {
+    throw { code: "TEST_FAIL", message: "for-of closure array length mismatch" };
+  }
+  let r0: int = fs[0]();
+  let r1: int = fs[1]();
+  let r2: int = fs[2]();
+  if (r0 !== 1) {
+    throw { code: "TEST_FAIL", message: "for-of closure first capture mismatch" };
+  }
+  if (r1 !== 2) {
+    throw { code: "TEST_FAIL", message: "for-of closure second capture mismatch" };
+  }
+  if (r2 !== 3) {
+    throw { code: "TEST_FAIL", message: "for-of closure third capture mismatch" };
+  }
+  return r0 * 100 + r1 * 10 + r2;
 }
