@@ -460,6 +460,224 @@
       "backends": [
         "jvm"
       ]
+    },
+    {
+      "name": "jvm-nullable-null-declared-locals-flow",
+      "description": "A binding DECLARED null (let z: null) reads back as the DEAL null into every primitive nullable target: int | null, string | null, boolean | null, and number | null each observe the null side (1+2+4+8=15) \u2014 the emitted bare null literal, never the Void-typed name (the pre-fix artifact emitted java.lang.Long m = z; and javac rejected it after the CLI reported success)",
+      "source": "export function test(): int {\n  let z: null = null;\n  let m: int | null = z;\n  let s: string | null = z;\n  let b: boolean | null = z;\n  let n: number | null = z;\n  let r: int = 0;\n  if (m === null) { r = 1; }\n  if (s === null) { r = r + 2; }\n  if (b === null) { r = r + 4; }\n  if (n === null) { r = r + 8; }\n  return r;\n}\n",
+      "expectedOutput": "15",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-null-declared-params-module-fields",
+      "description": "Null-typed values flow into nullable positions from every binding shape: a null-declared local feeds a nullable call argument (take(z)), a nullable class-field write (h.i = z), and a nullable-array element write (ys[0] = z on (int | null)[]); a null-declared MODULE field reads into a nullable local (zmod); and a null-typed PARAMETER returns through a nullable return (ret(z)) \u2014 every site observes the null side (1+2+4+8+16=31). The pre-fix artifacts were rejected by javac with incompatible types: Void cannot be converted to Long at each site after the CLI reported success",
+      "source": "let zmod: null = null;\nclass Holder { i: int | null = null; }\nfunction take(m: int | null): int | null { return m; }\nfunction ret(z: null): int | null { return z; }\nexport function test(): int {\n  let z: null = null;\n  let m: int | null = take(z);\n  let h: Holder = {};\n  h.i = z;\n  let ys: (int | null)[] = [];\n  ys[0] = z;\n  let r: int = 0;\n  if (m === null) { r = 1; }\n  let hi: int | null = h.i;\n  if (hi === null) { r = r + 2; }\n  let y0: int | null = ys[0];\n  if (y0 === null) { r = r + 4; }\n  let m2: int | null = zmod;\n  if (m2 === null) { r = r + 8; }\n  let m3: int | null = ret(z);\n  if (m3 === null) { r = r + 16; }\n  return r;\n}\n",
+      "expectedOutput": "31",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-null-declared-class-array-targets",
+      "description": "A null-declared local flows into reference nullable targets: a local class target (Holder | null) and an array target (int[] | null) both observe the null side (1+2=3) \u2014 the null literal coerces to the generated class reference and the emitted array wrapper reference at the declaration boundary",
+      "source": "class Holder { i: int | null = null; }\nexport function test(): int {\n  let z: null = null;\n  let c: Holder | null = z;\n  let a: int[] | null = z;\n  let r: int = 0;\n  if (c === null) { r = 1; }\n  if (a === null) { r = r + 2; }\n  return r;\n}\n",
+      "expectedOutput": "3",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-boundary-number-accepts-int",
+      "description": "The table-read nullable boundary is check_nullable for numbers: an int value (stored as java.lang.Long) crossing into number | null passes and computes 6, exactly like runtime.lua's check_number accepting every Lua number (the pre-fix instanceof-only helper raised E8001 'expected number, got Long' where LuaJIT succeeded)",
+      "source": "export function test(): int {\n  let t: table = { v: 5 };\n  let n: number | null = t.v;\n  if (n !== null) { return 6; }\n  return 0;\n}\n",
+      "expectedOutput": "6",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-boundary-int-accepts-integral-number",
+      "description": "The table-read nullable boundary is check_nullable for ints: an integral double value (2.0, stored as java.lang.Double) crossing into int | null passes and computes 3, exactly like runtime.lua's check_int accepting an integral in-range Lua number (the pre-fix instanceof-only helper raised E8001 'expected int, got Double' where LuaJIT succeeded)",
+      "source": "export function test(): int {\n  let t: table = { v: 2.0 };\n  let n: int | null = t.v;\n  if (n !== null) { return n + 1; }\n  return 0;\n}\n",
+      "expectedOutput": "3",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-boundary-int-nonintegral-failure",
+      "description": "check_int parity for the int | null table-read boundary: a non-integral number (2.5) raises E8001 'expected int, got non-integer number' (runtime.lua's check_int), exit 1",
+      "source": "export function test(): int {\n  let t: table = { v: 2.5 };\n  let n: int | null = t.v;\n  if (n === null) { return 1; }\n  return 0;\n}\n",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-boundary-int-nan-failure",
+      "description": "check_int parity for the int | null table-read boundary: NaN (0.0 / 0.0) raises E8001 'expected int, got NaN' (runtime.lua's check_int), exit 1",
+      "source": "export function test(): int {\n  let t: table = { v: 0.0 / 0.0 };\n  let n: int | null = t.v;\n  if (n === null) { return 1; }\n  return 0;\n}\n",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-boundary-number-string-failure",
+      "description": "check_number parity for the number | null table-read boundary: a string value raises E8001 'expected number, got String' (runtime.lua's check_number), exit 1",
+      "source": "export function test(): int {\n  let t: table = { v: \"x\" };\n  let n: number | null = t.v;\n  if (n === null) { return 1; }\n  return 0;\n}\n",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-boundary-int-range-failure",
+      "description": "check_int parity for the int | null table-read boundary: an integral number beyond the int safe range (2^53 = 9007199254740992.0) raises E8004 'int out of safe range' (runtime.lua's check_int routes out-of-range values through the emitted checkInt bound), exit 1",
+      "source": "export function test(): int {\n  let t: table = { v: 9007199254740992.0 };\n  let n: int | null = t.v;\n  if (n === null) { return 1; }\n  return 0;\n}\n",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-imported-boolean-field-boundary",
+      "description": "A nil-capable boolean value (&& over a past-end boolean[] read) written to an IMPORTED class's boolean field crosses the field's typed boundary and raises E8001 'expected boolean, got null' (LuaJIT's check_boolean at the write), exit 1 \u2014 the member-assign boundary falls back to the value's type when the field's declared type is unresolvable across modules, exactly like the identifier-assignment fallback (the pre-fix emission assigned the boxed Boolean temp straight to the primitive field and raised a raw java.lang.NullPointerException)",
+      "modules": {
+        "lib.deal": "export class Box { flag: boolean = false; }\n",
+        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int {\n  let xs: boolean[] = [true];\n  let b: lib.Box = {};\n  b.flag = (xs[0] && xs[5]);\n  return 1;\n}\n"
+      },
+      "entry": "main.deal",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-imported-boolean-field-in-bounds",
+      "description": "Positive control for the imported-class member-assign boundary: an in-bounds nil-aware value (xs[0] || xs[1] = true) writes into the imported boolean field and reads back as true (7) \u2014 the fallback boundary never over-rejects a non-null value",
+      "modules": {
+        "lib.deal": "export class Box { flag: boolean = false; }\n",
+        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int {\n  let xs: boolean[] = [true];\n  let b: lib.Box = {};\n  b.flag = (xs[0] || xs[1]);\n  if (b.flag) { return 7; }\n  return 0;\n}\n"
+      },
+      "entry": "main.deal",
+      "expectedOutput": "7",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-comparison-once-eval-eq",
+      "description": "T | null === T | null evaluates each inline effectful operand exactly once in strict left-to-right order: mark('l',1) prints l, mark('r',2) prints r, and the differing values compare false (8) \u2014 the contiguous trace l,r,8 forbids the pre-fix double evaluation (the pre-fix ternary referenced each operand twice and printed l,r,l,r)",
+      "source": "import * as console from \"std/console\"\nfunction mark(tag: string, v: int): int | null { console.log(tag); return v; }\nexport function test(): int {\n  if (mark(\"l\", 1) === mark(\"r\", 2)) { return 7; }\n  return 8;\n}\n",
+      "expectedOutput": "l\nr\n8",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-comparison-once-eval-neq",
+      "description": "T | null !== T | null evaluates each inline effectful operand exactly once in strict left-to-right order: mark('l',1) prints l, mark('r',1) prints r, and the equal values compare !== false (8) \u2014 the contiguous trace pins the NEQ ternary's materialization the same way the EQ shape pins the equality form",
+      "source": "import * as console from \"std/console\"\nfunction mark(tag: string, v: int): int | null { console.log(tag); return v; }\nexport function test(): int {\n  if (mark(\"l\", 1) !== mark(\"r\", 1)) { return 7; }\n  return 8;\n}\n",
+      "expectedOutput": "l\nr\n8",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-comparison-null-side-once",
+      "description": "T | null === null evaluates the nullable operand once (l prints exactly once) and compares false (8) \u2014 the materialized left operand is never double-evaluated",
+      "source": "import * as console from \"std/console\"\nfunction mark(tag: string, v: int): int | null { console.log(tag); return v; }\nexport function test(): int {\n  if (mark(\"l\", 1) === null) { return 7; }\n  return 8;\n}\n",
+      "expectedOutput": "l\n8",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-nullable-comparison-null-side-order",
+      "description": "T | null === null keeps strict left-to-right order when the null side is a side-effecting null-typed call: mark('l',1) prints l before touch('r') prints r, then the comparison is false (8) \u2014 the left operand is materialized before the right operand's evaluation (the pre-fix lowering evaluated the materialized right operand before the inline left operand)",
+      "source": "import * as console from \"std/console\"\nfunction mark(tag: string, v: int): int | null { console.log(tag); return v; }\nfunction touch(tag: string): null { console.log(tag); }\nexport function test(): int {\n  if (mark(\"l\", 1) === touch(\"r\")) { return 7; }\n  return 8;\n}\n",
+      "expectedOutput": "l\nr\n8",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
     }
   ]
 }

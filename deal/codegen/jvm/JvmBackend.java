@@ -1864,10 +1864,14 @@ public final class JvmBackend {
         emitLine("static class __RefArray { java.lang.Object[] data; __RefArray(java.lang.Object[] data) { this.data = data; } }");
         emitLine("// Nullable boundary checks for table reads in nullable-typed contextual");
         emitLine("// targets (runtime.lua's check_nullable): null passes through as the DEAL");
-        emitLine("// null, a value of the inner type passes, anything else raises E8001");
-        emitLine("// \"expected <T>, got ...\".");
-        emitLine("static java.lang.Long $checkNullableInt(java.lang.Object v) { if (v == null) return null; if (v instanceof java.lang.Long l) return l; throw new DealError(\"E8001\", \"expected int, got \" + $describe(v)); }");
-        emitLine("static java.lang.Double $checkNullableNumber(java.lang.Object v) { if (v == null) return null; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v)); }");
+        emitLine("// null, any Lua number passes for number and any integral in-range Lua");
+        emitLine("// number passes for int (runtime.lua's check_nullable delegates to");
+        emitLine("// check_int/check_number, which accept every Lua number — a Long crosses");
+        emitLine("// into number | null and an integral in-range Double crosses into int | null,");
+        emitLine("// with NaN/infinity/non-integral becoming E8001 and out-of-safe-range becoming E8004");
+        emitLine("// exactly like check_int), anything else raises E8001 \"expected <T>, got ...\".");
+        emitLine("static java.lang.Long $checkNullableInt(java.lang.Object v) { if (v == null) return null; if (v instanceof java.lang.Long l) return checkInt(l); if (v instanceof java.lang.Double d) { if (d.isNaN()) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (d.isInfinite()) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (d % 1.0 != 0.0) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); return checkInt((long) (double) d); } throw new DealError(\"E8001\", \"expected int, got \" + $describe(v)); }");
+        emitLine("static java.lang.Double $checkNullableNumber(java.lang.Object v) { if (v == null) return null; if (v instanceof java.lang.Long l) return (double) l; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v)); }");
         emitLine("static java.lang.Boolean $checkNullableBoolean(java.lang.Object v) { if (v == null) return null; if (v instanceof java.lang.Boolean b) return b; throw new DealError(\"E8001\", \"expected boolean, got \" + $describe(v)); }");
         emitLine("static java.lang.String $checkNullableString(java.lang.Object v) { if (v == null) return null; if (v instanceof java.lang.String str) return str; throw new DealError(\"E8001\", \"expected string, got \" + $describe(v)); }");
         emitLine("// Array wrapper gates for table reads with an array-typed contextual");
@@ -3395,18 +3399,24 @@ public final class JvmBackend {
      *   <li>a narrowed-to-{@code int}/{@code number}/{@code boolean} read
      *       unboxes ({@code n.longValue()} etc. — the narrowing is sound,
      *       so the boxed value is never null there);</li>
-     *   <li>a narrowed-to-{@code null} read is the DEAL null value — the
-     *       plain {@code null} literal, which flows into {@code null}-typed
-     *       (Java {@code Void}) contexts where the bare boxed name would
-     *       not type-check;</li>
+     *   <li>a read whose checked type is {@code null} is the DEAL null
+     *       value — the plain {@code null} literal — REGARDLESS of the
+     *       declared type: a narrowed nullable read and a binding
+     *       DECLARED {@code null} ({@code let z: null}, a {@code z: null}
+     *       parameter, a {@code null} module field) both read back as
+     *       {@code null}, never as their emitted {@code java.lang.Void}
+     *       name, so they flow into every nullable target
+     *       ({@code int | null}, {@code string | null}, a class, an
+     *       array) whose Java type javac would otherwise reject
+     *       ({@code Void} cannot be converted to {@code Long});</li>
      *   <li>any other read (still nullable, or narrowed to a reference
      *       type — string/class/array) keeps the boxed reference, which
      *       already has the right Java type.</li>
      * </ul>
      */
     private String adaptNarrowedRead(String code, Type declared, Type read) {
-        if (!(declared instanceof Type.Nullable)) return code;
         if (read instanceof Type.Null) return "null";
+        if (!(declared instanceof Type.Nullable)) return code;
         return switch (read) {
             case Type.Int ignored -> code + ".longValue()";
             case Type.Number ignored -> code + ".doubleValue()";
@@ -3423,9 +3433,14 @@ public final class JvmBackend {
      * while the expression's DEAL type is {@code null} — the checker
      * lets it flow into any nullable or null target, whose Java type can
      * differ ({@code java.lang.Void}, {@code java.lang.String}, a class
-     * reference, …). The runtime value of a null-typed assignment is the
-     * DEAL null, so the Object-mediated cast is sound for every
-     * reference target and evaluates the assignment exactly once.
+     * reference, …). Every OTHER null-typed shape already emits the bare
+     * {@code null} literal (a null-typed call is hoisted into a
+     * pre-statement and a null-typed identifier read emits {@code null}
+     * via {@link #adaptNarrowedRead}), which Java accepts for every
+     * reference target — only the assignment carries a mismatched static
+     * type. The runtime value of a null-typed assignment is the DEAL
+     * null, so the Object-mediated cast is sound for every reference
+     * target and evaluates the assignment exactly once.
      */
     private String coerceNullValueCode(String code, ExpressionNode e,
                                        String targetJavaType, Span span) {
@@ -3615,13 +3630,20 @@ public final class JvmBackend {
      * operand's value is the DEAL null, and its observable side effects
      * were already hoisted into pre-statements or materialized here);
      * {@code T | null === T | null} compares the unboxed values only when
-     * both sides are non-null. The ternary form evaluates each operand
-     * exactly once, strictly left to right (Java evaluates the condition,
-     * then exactly one arm), so an inline effectful operand is never
-     * evaluated twice and never skipped — LuaJIT evaluates both operands
-     * strictly. String inners compare with {@code equals}, numeric inners
-     * unbox, and class/array inners compare by identity (LuaJIT's `==` on
-     * tables).
+     * both sides are non-null. Every operand that is NOT pure after
+     * emission (an inline call, an assignment, checked int arithmetic) is
+     * materialized into a fresh temporary first — left then right, so the
+     * evaluation order stays strict left-to-right — because the lowered
+     * comparison references each operand MORE THAN ONCE: an inline
+     * effectful operand inside the ternary would otherwise run twice in
+     * interleaved l,r,l,r order ({@code mark("l",1) === mark("r",2)}
+     * printed l r l r), diverging from LuaJIT, which evaluates each
+     * operand exactly once, strictly. The materialized form references
+     * only inert temporaries, so Java's short-circuit inside the ternary
+     * can never skip a DEAL-visible effect and never re-evaluates one
+     * (LuaJIT evaluates both {@code ===} operands strictly). String
+     * inners compare with {@code equals}, numeric inners unbox, and
+     * class/array inners compare by identity (LuaJIT's `==` on tables).
      */
     private String emitNullableComparison(BinaryExpr bin, boolean eq) {
         Type leftType = typeOf(bin.left());
@@ -3634,6 +3656,8 @@ public final class JvmBackend {
         String r = codes.get(1);
         if (leftNullable && rightNullable) {
             Type inner = ((Type.Nullable) leftType).inner();
+            l = materializeIfEffectful(l, bin.left());
+            r = materializeIfEffectful(r, bin.right());
             if (eq) {
                 return "((" + l + " == null ? (" + r + " == null) : ("
                     + r + " != null && " + nullableEq(l, r, inner) + ")))";
@@ -3644,11 +3668,18 @@ public final class JvmBackend {
         if (leftNullable) {
             // The right side is a null-typed value: its observable side
             // effects (an inline assignment) must run before the
-            // comparison — materialize it when it is not inert. The
-            // comparison itself reads only the left boxed value.
+            // comparison — materialize it when it is not inert. The left
+            // nullable operand is materialized FIRST (an inline effectful
+            // left operand must run before the right operand's
+            // materialized evaluation — LuaJIT evaluates left to right),
+            // and the comparison itself then reads only inert values.
+            l = materializeIfEffectful(l, bin.left());
             r = materializeIfEffectful(r, bin.right());
             return eq ? "(" + l + " == null)" : "(" + l + " != null)";
         }
+        // Right nullable, left null-typed: the left operand's effects (a
+        // hoisted call or an inline assignment) run before the right
+        // operand, which the comparison references exactly once.
         l = materializeIfEffectful(l, bin.left());
         return eq ? "(" + r + " == null)" : "(" + r + " != null)";
     }
@@ -5008,6 +5039,7 @@ public final class JvmBackend {
                 String value = codes.get(1);
                 Type fieldType = declaredFieldType(
                     (Type.Class) objType, mae.field());
+                if (fieldType == null) fieldType = typeOf(ae.value());
                 if (needsBooleanBoundary(ae.value(), fieldType)) {
                     // Same target-type boundary rule as the identifier
                     // branch: a `boolean | null` field stores the DEAL
