@@ -5017,6 +5017,7 @@ public class JvmBackendTest {
             }""");
         writeFile("src/jvm_main.deal", """
             import * as console from "std/console"
+            export function main(): null { return null; }
             function add(a: int, b: int): int { return a + b; }
             export function run(): int {
               console.log("jvm-orchestrator");
@@ -5076,6 +5077,7 @@ public class JvmBackendTest {
 
         writeFile("src/default_main.deal", """
             import * as console from "std/console"
+            export function main(): null { return null; }
             export function run(): null { console.log("default-lua"); }
             export function main(): null { return null; }
             """);
@@ -5103,6 +5105,7 @@ public class JvmBackendTest {
         System.out.println("-- Orchestrator: JVM backend rejects out-of-scope constructs --");
 
         writeFile("src/unsupported_main.deal", """
+            export function main(): null { return null; }
             export class Point {
               x?: int;
             }
@@ -5153,6 +5156,7 @@ public class JvmBackendTest {
             """);
         writeFile("src/entry.deal", """
             import * as lib from "./lib"
+            export function main(): null { return null; }
             export function run(): int {
               let c = lib.getC();
               return c.v + 1;
@@ -5201,6 +5205,7 @@ public class JvmBackendTest {
         writeFile("src2/entry.deal", """
             import * as lib from "./lib"
             class C { v: int = 0; }
+            export function main(): null { return null; }
             export function run(): int {
               let c = lib.getC();
               let localC: C = { v: 4 };
@@ -5246,6 +5251,7 @@ public class JvmBackendTest {
         writeFile("src3/entry.deal", """
             import * as lib from "./lib"
             class C { v: int = 0; }
+            export function main(): null { return null; }
             export function run(): int {
               return lib.takeC({ v: 9 });
             }
@@ -5288,6 +5294,7 @@ public class JvmBackendTest {
             """);
         writeFile("src4/entry.deal", """
             import * as lib from "./lib"
+            export function main(): null { return null; }
             export function run(): int {
               let a: lib.Point = {};
               let b: lib.Point = { y: 5, x: 2 };
@@ -5342,6 +5349,7 @@ public class JvmBackendTest {
         writeFile("src5/entry.deal", """
             import * as modela from "./modela"
             import * as modelb from "./modelb"
+            export function main(): null { return null; }
             export function run(): string {
               let holder: table = { item: modela.makeItem("from-a") };
               let a: modela.Item = holder.item;
@@ -5351,6 +5359,7 @@ public class JvmBackendTest {
         writeFile("src5/entry_fail.deal", """
             import * as modela from "./modela"
             import * as modelb from "./modelb"
+            export function main(): null { return null; }
             export function run(): string {
               let holder: table = { item: modela.makeItem("from-a") };
               let b: modelb.Item = holder.item;
@@ -5418,6 +5427,7 @@ public class JvmBackendTest {
             """);
         writeFile("src6/entry.deal", """
             import * as lib from "./lib"
+            export function main(): null { return null; }
             export function run(): int {
               return lib.takeC(lib.getC());
             }
@@ -5745,11 +5755,12 @@ public class JvmBackendTest {
 
         writeFile("src/other.deal", """
             import * as console from "std/console"
-            console.log("other-module-ran");
             export function unused(): int { return 1; }
+            export function announce(): null { console.log("other-module-ran"); }
             """);
         writeFile("src/entry.deal", """
             import * as m from "./other"
+            export function main(): null { return null; }
             export function run(): int { return 1; }
             """);
 
@@ -5779,8 +5790,10 @@ public class JvmBackendTest {
                 "the trigger sits in a load-time static block");
 
             // The emitted artifacts must be real: javac + java run the
-            // imported module's load-time println even though the alias is
-            // never used.
+            // imported module's init trigger even though the alias is
+            // never used (v1.2: module top level holds only declarations,
+            // so the only load-time work is the imported module's own
+            // initialization).
             Files.writeString(outputDir.resolve("JvmConformanceRunner.java"),
                 BackendConformanceTest.buildJvmRunner(
                     parseProgram("""
@@ -5803,9 +5816,9 @@ public class JvmBackendTest {
             String out = new String(p2.getInputStream().readAllBytes()).trim();
             int exit = p2.waitFor();
             check(exit == 0, "runner exits 0");
-            check(out.contains("other-module-ran"),
-                "the unused import ran the imported module's load-time "
-                + "console.log: " + out);
+            check(!out.contains("other-module-ran"),
+                "the unused import ran no load-time print (v1.2 top level "
+                + "holds only declarations): " + out);
         }
     }
 
@@ -5935,6 +5948,7 @@ public class JvmBackendTest {
         // module (the backend is the single rejection site).
         writeFile("src/table_import.deal", """
             import * as t from "std/table"
+            export function main(): null { return null; }
             export function run(): int { return 1; }
             """);
         Path entryFile = tmpDir.resolve("src/table_import.deal").toAbsolutePath();
@@ -6024,30 +6038,33 @@ public class JvmBackendTest {
             "sqrt(-1) reports the std/math.lua message: " + res.output());
     }
 
-    /** UTF-8 byte-wise semantics (the LuaJIT reference): {@code
-     * length("héllo")} is 6 bytes, {@code substring("héllo", 1, 3)} is
-     * {@code "é"} (a complete byte range), and a mid-character cut
-     * decodes as U+FFFD — the documented closest-byte-faithful reading,
-     * since {@code java.lang.String} cannot hold LuaJIT's raw partial
-     * bytes. */
+    /** Unicode scalar-value semantics (spec-v1.2): {@code
+     * length("héllo")} is 5 scalar values, {@code substring("héllo", 1, 3)}
+     * is {@code "él"} (scalar positions), and supplementary-plane
+     * characters count as ONE scalar value each (a Java code point — the
+     * UTF-16 surrogate pair is never visible as two string elements). */
     private static void testStdlibByteSemantics() throws Exception {
-        System.out.println("-- Stdlib UTF-8 byte semantics --");
+        System.out.println("-- Stdlib Unicode scalar-value semantics --");
 
         ExecResult res = compileAndRunJvm("""
             import * as str from "std/string"
             export function run(): string {
-              let bytes: int = str.length("héllo");
+              let scalars: int = str.length("héllo");
               let chars: string = str.substring("héllo", 1, 3);
               let inner: string = str.substring("héllo", 1, 2);
-              if (bytes !== 6) { return "bad-bytes"; }
-              if (chars !== "é") { return "bad-chars"; }
-              if (inner !== "�") { return "bad-inner"; }
-              return "bytes-ok";
+              let supp: int = str.length("𝄞x");
+              let first: string = str.substring("𝄞x", 0, 1);
+              if (scalars !== 5) { return "bad-scalars"; }
+              if (chars !== "él") { return "bad-chars"; }
+              if (inner !== "é") { return "bad-inner"; }
+              if (supp !== 2) { return "bad-supp"; }
+              if (first !== "𝄞") { return "bad-first"; }
+              return "scalars-ok";
             }
-            """, "stdlib-bytes");
-        check(res.exitCode() == 0, "byte-semantics run exits 0: " + res.output());
-        check(res.output().contains("bytes-ok"),
-            "byte semantics compute the LuaJIT values: " + res.output());
+            """, "stdlib-scalars");
+        check(res.exitCode() == 0, "scalar-semantics run exits 0: " + res.output());
+        check(res.output().contains("scalars-ok"),
+            "scalar-value semantics compute the v1.2 values: " + res.output());
     }
 
     /** {@code nowMillis()} reproduces LuaJIT's {@code os.time() * 1000}:
@@ -6118,6 +6135,7 @@ public class JvmBackendTest {
         writeFile("src/entry.deal", """
             import * as strings from "./strings"
             import * as math from "std/math"
+            export function main(): null { return null; }
             export function run(): int {
               let words: int = strings.wordCount("a b c");
               return math.absInt(words - 6);
@@ -6188,6 +6206,7 @@ public class JvmBackendTest {
             """);
         writeFile("src/entry.deal", """
             import * as m from "./hostlib"
+            export function main(): null { return null; }
             export function run(): int { return m.foo(); }
             """);
 
@@ -6574,6 +6593,7 @@ public class JvmBackendTest {
             """);
         writeFile("src/entry.deal", """
             import * as lib from "./lib"
+            export function main(): null { return null; }
             export function run(): int { return lib.add(10, 20); }
             """);
 
@@ -6630,6 +6650,7 @@ public class JvmBackendTest {
         writeFile("src/entry.deal", """
             import * as aCalc from "./a/calc"
             import * as bCalc from "./b/calc"
+            export function main(): null { return null; }
             export function run(): int { return aCalc.compute() * 10 + bCalc.compute(); }
             """);
 
@@ -6678,20 +6699,15 @@ public class JvmBackendTest {
         System.out.println("-- Orchestrator: sibling imports run load-time code in import order --");
 
         writeFile("src/b.deal", """
-            import * as console from "std/console"
-            console.log("b-load");
             export function plus(x: int): int { return x + 1; }
             """);
         writeFile("src/c.deal", """
-            import * as console from "std/console"
-            console.log("c-load");
             export function base(): int { return 10; }
             """);
         writeFile("src/entry.deal", """
             import * as b from "./b"
             import * as c from "./c"
-            import * as console from "std/console"
-            console.log("entry-load");
+            export function main(): null { return null; }
             export function run(): int { return b.plus(c.base()); }
             """);
 
@@ -6711,8 +6727,9 @@ public class JvmBackendTest {
         ExecResult exec = runJvmArtifacts(outputDir,
             parseProgram("export function run(): int { return 0; }"), "Entry");
         check(exec.exitCode() == 0, "artifacts run with exit 0");
-        check(exec.output().contains("b-load\nc-load\nentry-load"),
-            "load-time order is b-load, c-load, entry-load: " + exec.output());
+        check(!exec.output().contains("load"),
+            "no load-time prints in v1.2 (module top level holds only "
+            + "declarations): " + exec.output());
         check(exec.output().contains("11"),
             "b.plus(c.base()) = 11: " + exec.output());
     }
@@ -6882,7 +6899,7 @@ public class JvmBackendTest {
         writeFile("src/entry.deal", """
             import * as a from "./App"
             import * as b from "./app"
-            export function main(): int { return 3; }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
@@ -6910,6 +6927,7 @@ public class JvmBackendTest {
         System.out.println("-- Orchestrator: JVM path warns on --source-map --");
 
         writeFile("src/sm_main.deal", """
+            export function main(): null { return null; }
             export function run(): int { return 1; }
             """);
 
@@ -7029,8 +7047,8 @@ public class JvmBackendTest {
         try {
             writeFile("lua_proj/src/deal.json", "{\"backend\": \"lua\"}");
             writeFile("lua_proj/src/lua_alias_main.deal",
-                "export function run(): null {}"
-                + "\nexport function main(): null { return null; }");
+                "export function main(): null { return null; }\n"
+                + "export function run(): null {}");
             Path luaEntry = tmpDir.resolve("lua_proj/src/lua_alias_main.deal")
                 .toAbsolutePath();
             Path luaOut = tmpDir.resolve("build/lua_alias");
@@ -7053,7 +7071,8 @@ public class JvmBackendTest {
         try {
             writeFile("jvm_proj/src/deal.json", "{\"backend\": \"JVM\"}");
             writeFile("jvm_proj/src/jvm_alias_main.deal",
-                "export function run(): int { return 6 * 7; }");
+                "export function main(): null { return null; }\n"
+                + "export function run(): int { return 6 * 7; }");
             Path jvmEntry = tmpDir.resolve("jvm_proj/src/jvm_alias_main.deal")
                 .toAbsolutePath();
             Path jvmOut = tmpDir.resolve("build/jvm_alias");
@@ -7076,6 +7095,7 @@ public class JvmBackendTest {
         try {
             writeFile("src/cli_main.deal", """
                 import * as console from "std/console"
+                export function main(): null { return null; }
                 export function run(): int {
                   console.log("cli-jvm");
                   return 6 * 7;

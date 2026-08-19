@@ -18,8 +18,8 @@
     },
     {
       "name": "jvm-std-string-length",
-      "description": "std/string.length counts UTF-8 bytes like LuaJIT's #s: \"hello\" → 5, \"\" → 0, \"héllo\" → 6 (the multibyte pin — 500 only when the byte semantics hold)",
-      "source": "import * as str from \"std/string\"\nexport function test(): int {\n  let ascii: int = str.length(\"hello\");\n  let empty: int = str.length(\"\");\n  let bytes: int = str.length(\"héllo\");\n  return ascii * 100 + empty * 10 + (bytes - 6);\n}",
+      "description": "std/string.length counts Unicode scalar values (spec-v1.2): \"hello\" → 5, \"\" → 0, \"héllo\" → 5 (the multibyte pin — 500 only when the scalar-value semantics hold)",
+      "source": "import * as str from \"std/string\"\nexport function test(): int {\n  let ascii: int = str.length(\"hello\");\n  let empty: int = str.length(\"\");\n  let scalars: int = str.length(\"héllo\");\n  return ascii * 100 + empty * 10 + (scalars - 5);\n}",
       "expectedOutput": "500",
       "expectedError": null,
       "expectedExitCode": 0,
@@ -189,7 +189,7 @@
       "description": "A compiled project module consumes std/string through the real orchestrator pipeline (stdlib declaration resolution, module discovery, JVM codegen of both modules), and the imported wordCount splits 'a b c' into 3 words across the module boundary",
       "modules": {
         "lib.deal": "import * as str from \"std/string\"\nexport function wordCount(s: string): int {\n  let parts: string[] = str.split(s, \" \");\n  return parts.length;\n}",
-        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return lib.wordCount(\"a b c\"); }"
+        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int { return lib.wordCount(\"a b c\"); }"
       },
       "entry": "main.deal",
       "expectedOutput": "3",

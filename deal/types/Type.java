@@ -1,7 +1,6 @@
 package deal.types;
 
 import java.util.List;
-import java.util.Optional;
 
 /**
  * Sealed hierarchy for internal type representation used during type checking.
@@ -9,6 +8,9 @@ import java.util.Optional;
  *
  * <p>Type equality is structural identity for primitives/arrays/nullables,
  * nominal for classes, and exact match for functions (with arity extension).</p>
+ *
+ * <p>DEAL v1.2: function types have no rest parameters.  A function type is
+ * exactly an async marker, a fixed parameter list, and a return type.</p>
  */
 public sealed interface Type
     permits Type.Null,
@@ -82,28 +84,28 @@ public sealed interface Type
     }
 
     /**
-     * Function type: (T1, ..., TN, ...rest?) => R.
+     * Function type: (T1, ..., TN) => R.
      *
-     * @param paramTypes non-rest parameter types in order
-     * @param restType   rest parameter type, if any (must be an Array type)
+     * <p>DEAL v1.2: no rest parameters.  Two function types are equal iff
+     * their async markers, parameter lists, and return types match exactly.</p>
+     *
+     * @param paramTypes parameter types in order
      * @param returnType return type
      * @param isAsync    whether this function type is async
      */
     record Func(
         List<Type> paramTypes,
-        Optional<Array> restType,
         Type returnType,
         boolean isAsync
     ) implements Type {
         public Func {
             if (paramTypes == null) throw new IllegalArgumentException("paramTypes must not be null");
-            if (restType == null) throw new IllegalArgumentException("restType must not be null");
             if (returnType == null) throw new IllegalArgumentException("returnType must not be null");
         }
 
         /** Convenience constructor: sync function (isAsync = false). */
-        public Func(List<Type> paramTypes, Optional<Array> restType, Type returnType) {
-            this(paramTypes, restType, returnType, false);
+        public Func(List<Type> paramTypes, Type returnType) {
+            this(paramTypes, returnType, false);
         }
     }
 }

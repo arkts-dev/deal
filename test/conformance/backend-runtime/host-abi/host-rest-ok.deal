@@ -1,0 +1,23 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A declared array-parameter host export (the v1.2
+// replacement for the removed rest form) loads and calls through the
+// emitted array descriptor: the string[] argument is checked element-wise
+// and the joined result comes back.
+// @expected: runtime-ok
+// @features: modules, host-abi, arrays
+
+import * as host from "host/rest_join"
+
+export function test_host_rest_ok(): string {
+  let parts: string[] = ["a", "b", "c"];
+  let joined: string = host.join("-", parts);
+  if (joined !== "a-b-c") {
+    throw { code: "TEST_FAIL", message: "array-param join mismatch" };
+  }
+  let empty: string[] = [];
+  let none: string = host.join("+", empty);
+  if (none !== "") {
+    throw { code: "TEST_FAIL", message: "array-param empty mismatch" };
+  }
+  return "host array param ok";
+}

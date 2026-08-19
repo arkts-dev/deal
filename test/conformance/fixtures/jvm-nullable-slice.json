@@ -592,7 +592,7 @@
       "description": "A nil-capable boolean value (&& over a past-end boolean[] read) written to an IMPORTED class's boolean field crosses the field's typed boundary and raises E8001 'expected boolean, got null' (LuaJIT's check_boolean at the write), exit 1 \u2014 the member-assign boundary falls back to the value's type when the field's declared type is unresolvable across modules, exactly like the identifier-assignment fallback (the pre-fix emission assigned the boxed Boolean temp straight to the primitive field and raised a raw java.lang.NullPointerException)",
       "modules": {
         "lib.deal": "export class Box { flag: boolean = false; }\n",
-        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int {\n  let xs: boolean[] = [true];\n  let b: lib.Box = {};\n  b.flag = (xs[0] && xs[5]);\n  return 1;\n}\n"
+        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let xs: boolean[] = [true];\n  let b: lib.Box = {};\n  b.flag = (xs[0] && xs[5]);\n  return 1;\n}\n"
       },
       "entry": "main.deal",
       "expectedOutput": null,
@@ -610,7 +610,7 @@
       "description": "Positive control for the imported-class member-assign boundary: an in-bounds nil-aware value (xs[0] || xs[1] = true) writes into the imported boolean field and reads back as true (7) \u2014 the fallback boundary never over-rejects a non-null value",
       "modules": {
         "lib.deal": "export class Box { flag: boolean = false; }\n",
-        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int {\n  let xs: boolean[] = [true];\n  let b: lib.Box = {};\n  b.flag = (xs[0] || xs[1]);\n  if (b.flag) { return 7; }\n  return 0;\n}\n"
+        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let xs: boolean[] = [true];\n  let b: lib.Box = {};\n  b.flag = (xs[0] || xs[1]);\n  if (b.flag) { return 7; }\n  return 0;\n}\n"
       },
       "entry": "main.deal",
       "expectedOutput": "7",

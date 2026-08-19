@@ -189,6 +189,11 @@ public final class CompilationOrchestrator {
         extractSignatures();
         if (hasErrors) { printDiagnostics(); return false; }
 
+        // DEAL v1.2 selected-entry rule: the entry module must export
+        // non-async main() with signature (): null.  The backend invokes
+        // main() from that module.
+        validateEntryMain();
+
         log("Phase 2: Dependency graph and ordering");
         List<String> checkOrder = buildCheckOrder();
         if (checkOrder == null) { printDiagnostics(); return false; }
@@ -257,6 +262,18 @@ public final class CompilationOrchestrator {
             ParseResult parseResult = parser.parse();
             diagnostics.addAll(parseResult.diagnostics());
             if (parseResult.hasErrors()) {
+                hasErrors = true;
+            }
+
+            // Post-parse v1.2 module shape validation: imports precede all
+            // non-import declarations, top level holds only
+            // import/function/class/export, imports and exports are not
+            // nested statements, and implementation files have no bodyless
+            // (external) function declarations.
+            List<Diagnostic> shapeDiags = ModuleShapeValidator.validate(
+                parseResult.program(), sourcePath, isDecl);
+            diagnostics.addAll(shapeDiags);
+            if (shapeDiags.stream().anyMatch(d -> "error".equals(d.severity()))) {
                 hasErrors = true;
             }
 
@@ -374,6 +391,51 @@ public final class CompilationOrchestrator {
         long phaseElapsed = System.currentTimeMillis() - phaseStart;
         if (verbose) {
             System.out.println("  Phase 1 total: " + phaseElapsed + "ms");
+        }
+    }
+
+    /**
+     * DEAL v1.2 selected-entry rule: when a compiler invocation selects an
+     * entry module, that module must export {@code main} with non-async
+     * signature {@code (): null}; the backend invokes {@code main()} from
+     * that module.
+     *
+     * <p>Emitted diagnostics:</p>
+     * <ul>
+     *   <li>{@code E2010} — the entry module does not export {@code main}</li>
+     *   <li>{@code E2011} — {@code main} exists but is async or does not
+     *       have signature {@code (): null}</li>
+     * </ul>
+     */
+    private void validateEntryMain() {
+        ModuleInfo entry = modules.get(entryFile.toString());
+        if (entry == null) return; // discovery already reported E2003
+
+        String file = entry.sourcePath;
+        int line = 1;
+        int column = 1;
+        if (entry.rawAst != null && entry.rawAst.span() != null) {
+            line = entry.rawAst.span().startLine();
+            column = entry.rawAst.span().startColumn();
+        }
+
+        Type mainType = entry.exports != null
+            ? entry.exports.get("main") : null;
+        if (mainType == null) {
+            error(DiagnosticCode.E2010,
+                "Entry module must export 'main' with non-async signature '(): null'",
+                file, line, column);
+            return;
+        }
+
+        boolean validMain = mainType instanceof Type.Func f
+            && f.paramTypes().isEmpty()
+            && !f.isAsync()
+            && f.returnType() instanceof Type.Null;
+        if (!validMain) {
+            error(DiagnosticCode.E2011,
+                "Entry module 'main' must have non-async signature '(): null'",
+                file, line, column);
         }
     }
 
@@ -859,13 +921,13 @@ public final class CompilationOrchestrator {
 
                         // C$fromJson: (string) -> C | null
                         Type.Func fromJsonType = new Type.Func(
-                            List.of(Type.String.INSTANCE), Optional.empty(),
+                            List.of(Type.String.INSTANCE),
                             Types.nullable(clsType));
                         correctedExports.put(cd.name() + "$fromJson", fromJsonType);
 
                         // C$toJson: (C) -> string
                         Type.Func toJsonType = new Type.Func(
-                            List.of(clsType), Optional.empty(),
+                            List.of(clsType),
                             Type.String.INSTANCE);
                         correctedExports.put(cd.name() + "$toJson", toJsonType);
                     }
@@ -994,9 +1056,10 @@ public final class CompilationOrchestrator {
 
         // Use the result-returning variant to produce both the .lua file
         // and the .deal.map.json sidecar (when --source-map is active),
-        // and to surface backend diagnostics: a backend rejection (E6003
-        // rest parameters, E6004 entry contract) fails the compilation and
-        // writes no artifact, mirroring the JVM backend's
+        // and to surface backend diagnostics: a backend rejection
+        // (E6004 entry contract; rest parameters are rejected earlier by
+        // the parser with E1047) fails the compilation and writes no
+        // artifact, mirroring the JVM backend's
         // no-artifact-on-rejection contract. info.modulePath is the same
         // value seeded into NameResolver, so emitted class identity tags
         // stay byte-identical to the checker's descriptors

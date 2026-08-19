@@ -262,29 +262,24 @@ public class ParserTest {
             check(fd.name().equals("foo"), "func name");
             check(fd.params().size() == 1, "param count");
             check(fd.params().get(0).name().equals("x"), "param name");
-            check(fd.restParam().isEmpty(), "no rest param");
             check(fd.returnType() instanceof NamedType, "return type");
             check(fd.body().statements().size() == 1, "body has 1 stmt");
+            check(!fd.isExternal(), "body declaration is not external");
         }
 
-        // With rest parameter
+        // DEAL v1.2: rest parameters are rejected with E1047.
         r = parse("function sum(base: int, ...rest: int[]): int { return base; }");
-        assertNoParseErrors(r, "func with rest");
-        fd = assertInstance(r.program().statements().get(0),
-                FunctionDeclaration.class, "func with rest");
-        if (fd != null) {
-            check(fd.params().size() == 1, "param count before rest");
-            check(fd.restParam().isPresent(), "has rest param");
-            check(fd.restParam().get().name().equals("rest"), "rest param name");
-        }
+        assertParseError(r, "E1047", "rest parameter rejected with E1047");
 
-        // External declaration (semicolon body)
+        // External declaration (semicolon body) — flagged in the AST so the
+        // post-parse validator can reject it outside .d.deal files (E1051).
         r = parse("function ext(): int;");
         assertNoParseErrors(r, "external decl");
         fd = assertInstance(r.program().statements().get(0),
                 FunctionDeclaration.class, "external decl");
         if (fd != null) {
             check(fd.body().statements().isEmpty(), "external decl empty body");
+            check(fd.isExternal(), "external decl is flagged isExternal");
         }
     }
 

@@ -1509,12 +1509,12 @@ public class LuaBackendTest {
     }
 
     // =========================================================================
-    // F6 (round 6): Rest parameter code generation — function declaration
+    // F6 (round 6): Rest parameters — rejected in DEAL v1.2
     // =========================================================================
 
     static void testRestParameterFunctionDecl() {
-        System.out.println("-- Rest Parameter Function Declaration (v1.2: rejected) --");
-        CompileOutputDiag out = compileWithDiag(
+        System.out.println("-- Rest Parameter Rejected (v1.2) --");
+        CompileOutput out = compile(
             "function sum(base: int, ...rest: int[]): int {\n" +
             "  let total: int = base;\n" +
             "  for (let i: int = 0; i < 10; i = i + 1) {\n" +
@@ -1523,53 +1523,37 @@ public class LuaBackendTest {
             "  return total;\n" +
             "}"
         );
-        // DEAL v1.2 has no rest parameters: the LuaJIT backend rejects the
-        // declaration (E6003) and emits no vararg lowering.
-        boolean hasE6003 = out.codegenDiags().stream()
-            .anyMatch(d -> "E6003".equals(d.code()));
-        check(hasE6003, "rest param function decl rejected with E6003");
-        // The diagnostic must be anchored at the rest parameter's own span,
-        // i.e. the "..." token (line 1, column 25), not the declaration start.
-        var e6003 = out.codegenDiags().stream()
-            .filter(d -> "E6003".equals(d.code())).findFirst().orElse(null);
-        check(e6003 != null, "E6003 diagnostic present in codegenDiags");
-        if (e6003 != null) {
-            checkEq(e6003.line(), 1, "E6003 decl anchored at rest span line");
-            checkEq(e6003.column(), 25, "E6003 decl anchored at rest span column");
-        }
-        assertNotContains(out.lua, "function(base, ...)", "no Lua varargs header");
-        assertNotContains(out.lua, "local rest = {...}", "no rest unpacking");
-        assertNotContains(out.lua, "__rt.check_array(\"int[]\"", "no rest array check");
+        // DEAL v1.2 removed rest parameters: the parser rejects the
+        // declaration with E1047 and the backend emits no Lua varargs
+        // machinery.
+        LexResult lex = new Lexer(
+            "function sum(base: int, ...rest: int[]): int { return 1; }",
+            "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        check(parse.diagnostics().stream()
+                .anyMatch(d -> d.code().equals("E1047")),
+            "rest param function decl rejected with E1047");
     }
 
     // =========================================================================
-    // F6 (round 6): Rest parameter code generation — function expression
+    // F6 (round 6): Rest parameters in function expressions — rejected in v1.2
     // =========================================================================
 
     static void testRestParameterFunctionExpr() {
-        System.out.println("-- Rest Parameter Function Expression (v1.2: rejected) --");
-        CompileOutputDiag out = compileWithDiag(
+        System.out.println("-- Rest Parameter Function Expression Rejected (v1.2) --");
+        CompileOutput out = compile(
             "let fn: (string, ...string[]) => string =\n" +
             "  function(prefix: string, ...rest: string[]): string {\n" +
             "    return prefix;\n" +
             "  };"
         );
-        boolean hasE6003 = out.codegenDiags().stream()
-            .anyMatch(d -> "E6003".equals(d.code()));
-        check(hasE6003, "rest param function expr rejected with E6003");
-        // The diagnostic must be anchored at the rest parameter's own span,
-        // i.e. the "..." token (line 2, column 28), not the "function"
-        // keyword of the expression (line 2, column 3).
-        var e6003 = out.codegenDiags().stream()
-            .filter(d -> "E6003".equals(d.code())).findFirst().orElse(null);
-        check(e6003 != null, "E6003 diagnostic present in codegenDiags");
-        if (e6003 != null) {
-            checkEq(e6003.line(), 2, "E6003 expr anchored at rest span line");
-            checkEq(e6003.column(), 28, "E6003 expr anchored at rest span column");
-        }
-        assertNotContains(out.lua, "function(prefix, ...)", "no Lua varargs header in function expr");
-        assertNotContains(out.lua, "local rest = {...}", "no rest unpacking in function expr");
-        assertNotContains(out.lua, "__rt.check_array(\"string[]\"", "no rest array check in function expr");
+        LexResult lex = new Lexer(
+            "function(...rest: int[]): int { return 1; }", "test.deal")
+            .tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        check(parse.diagnostics().stream()
+                .anyMatch(d -> d.code().equals("E1047")),
+            "rest param function expr rejected with E1047");
     }
 
     // =========================================================================

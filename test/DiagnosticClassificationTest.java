@@ -153,6 +153,7 @@ public class DiagnosticClassificationTest {
         triggers.put("E4007",
             "// @jsonable\nexport class Foo { fn: (x: int) => null = function(x: int): null { return null; }; }");
         triggers.put("E5001", "function f(x: int): null {} f(true);");
+        triggers.put("E1047", "function f(...xs: int[]): null { return null; }");
         triggers.put("E5003",
             "function f(): int { return \"hi\"; }");
 
@@ -226,6 +227,11 @@ public class DiagnosticClassificationTest {
 
         for (int i = 1001; i <= 1004; i++) coverage.put("E" + i, "LexerTest");
         for (int i = 1005; i <= 1043; i++) coverage.put("E" + i, "ParserTest");
+        coverage.put("E1047", "ParserTest (rest parameters removed in v1.2)");
+        coverage.put("E1048", "ModuleSystemTest (import after declaration)");
+        coverage.put("E1049", "ModuleSystemTest (top-level statement)");
+        coverage.put("E1050", "ModuleSystemTest (nested import/export)");
+        coverage.put("E1051", "ModuleSystemTest (bodyless declaration in .deal)");
 
         coverage.put("E2000", "CheckerTest (break/continue)");
         coverage.put("E2001", "CheckerTest (undeclared identifier)");
@@ -237,6 +243,8 @@ public class DiagnosticClassificationTest {
         coverage.put("E2007", "CheckerTest (declaration after import)");
         coverage.put("E2008", "CheckerTest (dollar in identifier)");
         coverage.put("E2009", "ModuleSystemTest (externals gating)");
+        coverage.put("E2010", "ModuleSystemTest (entry module missing main)");
+        coverage.put("E2011", "ModuleSystemTest (entry main wrong signature)");
 
         coverage.put("E3001", "CheckerTest (type mismatch)");
         coverage.put("E3002", "CheckerTest (empty literal inference)");

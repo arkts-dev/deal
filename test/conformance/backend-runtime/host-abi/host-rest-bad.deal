@@ -1,0 +1,14 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A wrong argument type at the declared array parameter
+// (v1.2 fixed-array replacement for the removed rest form) raises E8010
+// at the host boundary — the wrapper reports the parameter mismatch, never
+// the internal E8001.
+// @expected: runtime-error E8010
+// @features: modules, host-abi, arrays, runtime-errors
+
+import * as host from "host/rest_join"
+
+export function test_host_rest_bad(): string {
+  let holder: table = { item: 5 };
+  return host.join("-", holder.item);
+}

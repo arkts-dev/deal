@@ -1,16 +1,16 @@
 package deal.ast;
 
 import java.util.List;
-import java.util.Optional;
 
 /**
- * (p1: T1, ..., pN: TN, ...rest: T[]) => R
- * Function type annotation with parameters, optional rest param, and return type.
+ * {@code (p1: T1, ..., pN: TN) => R}
+ * Function type annotation with parameters and return type.
+ *
+ * <p>DEAL v1.2: function types carry no rest parameter arm.</p>
  */
 public record FunctionType(
     Span span,
     List<FunctionTypeParam> params,
-    Optional<FunctionTypeParam> rest,
     TypeNode returnType,
     boolean isAsync
 ) implements TypeNode {}

@@ -210,6 +210,41 @@
       ]
     },
     {
+      "name": "function-type-array-param",
+      "description": "Fixed array param type in function (v1.2 \u2014 rest params removed)",
+      "source": "function sumValues(xs: int[]): null { return; }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "irContains": [
+        "param xs: [int]"
+      ],
+      "irNotContains": [
+        "..."
+      ],
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "fixed-params-mixed",
+      "description": "Mixed fixed params function (v1.2 \u2014 no rest arm)",
+      "source": "function describe(label: string, values: int[]): null { return; }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "irContains": [
+        "param values: [int]",
+        "param label: string"
+      ],
+      "irNotContains": [
+        "..."
+      ],
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
       "name": "nullable-array-param",
       "description": "Nullable array param uses ?[int] format",
       "source": "function f(a: int[] | null): null { return; }",
@@ -338,6 +373,23 @@
       ],
       "irNotContains": [
         "int[]"
+      ],
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "function-type-descriptor-fixed-array-param",
+      "description": "Function type (string,[int])->null appears in IR for fixed-param function (v1.2 \u2014 no rest arm)",
+      "source": "function describe(label: string, values: int[]): null { return; }\nlet f: (label: string, values: int[]) => null = describe;",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "irContains": [
+        "(string,[int])->null"
+      ],
+      "irNotContains": [
+        "..."
       ],
       "backends": [
         "luajit"

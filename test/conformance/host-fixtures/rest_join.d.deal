@@ -1,0 +1,6 @@
+// Host fixture declaration for the host-rest-ok/host-rest-bad conformance
+// tests. DEAL v1.2 removed rest parameters, so the join host export takes
+// a fixed array parameter; the boundary wrapper checks the array against
+// the declared string[] element type.
+
+export function join(sep: string, parts: string[]): string;

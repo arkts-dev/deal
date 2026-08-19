@@ -95,13 +95,13 @@ public final class NameResolver {
     private void seedIntrinsics() {
         // int intrinsic: (number) => int  (with intrinsic resolver for overloads)
         Type.Func intFuncType = new Type.Func(
-            List.of(Type.Number.INSTANCE), Optional.empty(), Type.Int.INSTANCE);
+            List.of(Type.Number.INSTANCE), Type.Int.INSTANCE);
         root.define("int", new Symbol.IntrinsicSymbol("int",
             intFuncType, IntrinsicResolvers.INT));
 
         // number intrinsic: (int) => number  (with intrinsic resolver for overloads)
         Type.Func numFuncType = new Type.Func(
-            List.of(Type.Int.INSTANCE), Optional.empty(), Type.Number.INSTANCE);
+            List.of(Type.Int.INSTANCE), Type.Number.INSTANCE);
         root.define("number", new Symbol.IntrinsicSymbol("number",
             numFuncType, IntrinsicResolvers.NUMBER));
 
@@ -216,13 +216,13 @@ public final class NameResolver {
             Type clsType = Types.classType(cd.name(), modulePath);
 
             Type.Func fromJsonType = new Type.Func(
-                List.of(Type.String.INSTANCE), Optional.empty(),
+                List.of(Type.String.INSTANCE),
                 Types.nullable(clsType));
             root.define(cd.name() + "$fromJson",
                 new Symbol.FunctionSymbol(cd.name() + "$fromJson", fromJsonType));
 
             Type.Func toJsonType = new Type.Func(
-                List.of(clsType), Optional.empty(),
+                List.of(clsType),
                 Type.String.INSTANCE);
             root.define(cd.name() + "$toJson",
                 new Symbol.FunctionSymbol(cd.name() + "$toJson", toJsonType));
@@ -257,10 +257,8 @@ public final class NameResolver {
         for (Parameter p : fd.params()) {
             paramTypes.add(resolveTypeNode(p.type()));
         }
-        Optional<Type.Array> restType = fd.restParam()
-            .map(rp -> (Type.Array) resolveTypeNode(rp.type()));
 
-        Type.Func ft = new Type.Func(paramTypes, restType, funcType, fd.isAsync());
+        Type.Func ft = new Type.Func(paramTypes, funcType, fd.isAsync());
         root.define(name, new Symbol.FunctionSymbol(name, ft));
     }
 
@@ -474,20 +472,7 @@ public final class NameResolver {
             currentScope.define(name, new Symbol.VariableSymbol(name, paramType, true));
         }
 
-        fe.restParam().ifPresent(rp -> {
-            String name = rp.name();
-
-            // Check for $ in rest parameter name (E2008)
-            checkNoDollar(name, rp.span());
-
-            if (paramNames.contains(name)) {
-                error(DiagnosticCode.E2002, "Duplicate parameter '" + name + "'", rp.span());
-                return;
-            }
-            paramNames.add(name);
-            Type restType = resolveTypeNode(rp.type());
-            currentScope.define(name, new Symbol.VariableSymbol(name, restType, true));
-        });
+        // DEAL v1.2: function expressions have no rest parameters.
 
         // F1: Use walkStatement(fe.body()) so the Block's scope is also recorded
         walkStatement(fe.body());
@@ -503,10 +488,8 @@ public final class NameResolver {
             for (Parameter p : fd.params()) {
                 paramTypes.add(resolveTypeNode(p.type()));
             }
-            Optional<Type.Array> restType = fd.restParam()
-                .map(rp -> (Type.Array) resolveTypeNode(rp.type()));
 
-            Type.Func ft = new Type.Func(paramTypes, restType, funcType, fd.isAsync());
+            Type.Func ft = new Type.Func(paramTypes, funcType, fd.isAsync());
             currentScope.define(fd.name(), new Symbol.FunctionSymbol(fd.name(), ft));
         }
 
@@ -530,20 +513,7 @@ public final class NameResolver {
             currentScope.define(name, new Symbol.VariableSymbol(name, paramType, true));
         }
 
-        fd.restParam().ifPresent(rp -> {
-            String name = rp.name();
-
-            // Check for $ in rest parameter name (E2008)
-            checkNoDollar(name, rp.span());
-
-            if (paramNames.contains(name)) {
-                error(DiagnosticCode.E2002, "Duplicate parameter '" + name + "'", rp.span());
-                return;
-            }
-            paramNames.add(name);
-            Type restType = resolveTypeNode(rp.type());
-            currentScope.define(name, new Symbol.VariableSymbol(name, restType, true));
-        });
+        // DEAL v1.2: function declarations have no rest parameters.
 
         walkStatement(fd.body());
         currentScope = saved;
@@ -714,20 +684,9 @@ public final class NameResolver {
                     if (pt == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
                     paramTypes.add(pt);
                 }
-                Optional<Type.Array> restType = Optional.empty();
-                if (ft.rest().isPresent()) {
-                    Type rt = resolveTypeNode(ft.rest().get().type());
-                    if (rt == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
-                    if (rt instanceof Type.Array arr) {
-                        restType = Optional.of(arr);
-                    } else {
-                        error(DiagnosticCode.E3005, "Rest parameter type must be an array type", tn.span());
-                        yield Type.Error.INSTANCE;
-                    }
-                }
                 Type ret = resolveTypeNode(ft.returnType());
                 if (ret == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
-                yield new Type.Func(paramTypes, restType, ret, ft.isAsync());
+                yield new Type.Func(paramTypes, ret, ft.isAsync());
             }
         };
     }

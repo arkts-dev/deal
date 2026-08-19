@@ -1056,13 +1056,14 @@ public class LuaAbiBackendTest {
             List.of(Types.nullable(
                 Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE))),
             Type.Null.INSTANCE));
-        // export function log(level: string): null;
-        hostExports.put("log", Types.func(List.of(Type.String.INSTANCE),
+        // export function log(level: string, parts: string[]): null;
+        hostExports.put("log", Types.func(
+            List.of(Type.String.INSTANCE, Types.array(Type.String.INSTANCE)),
             Type.Null.INSTANCE));
-        // export function applyAll(prefix: string, fn: (x: int) => int): string;
+        // export function applyAll(prefix: string, fns: ((x: int) => int)[]): string;
         hostExports.put("applyAll", Types.func(
             List.of(Type.String.INSTANCE,
-                Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)),
+                Types.array(Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE))),
             Type.String.INSTANCE));
         // export function find(s: string): User | null;
         hostExports.put("find", Types.func(List.of(Type.String.INSTANCE),
@@ -1074,7 +1075,10 @@ public class LuaAbiBackendTest {
         String source = "import * as cfg from \"host/cfg\"\n"
             + "export function f(): int {\n"
             + "  cfg.register(null);\n"
-            + "  cfg.log(\"a\");\n"
+            + "  let parts: string[] = [\"a\", \"b\"];\n"
+            + "  cfg.log(\"a\", parts);\n"
+            + "  let fns: ((x: int) => int)[] = [];\n"
+            + "  cfg.applyAll(\"p\", fns);\n"
             + "  return 1;\n"
             + "}\n";
         LexResult lex = new Lexer(source, "test.deal").tokenize();
@@ -1097,9 +1101,9 @@ public class LuaAbiBackendTest {
             "test.deal", Map.of(), Map.of("host/cfg", hostExports));
 
         assertThat(lua, containsString("register = \"(?(int)->int)->null\""));
-        assertThat(lua, containsString("log = \"(string)->null\""));
+        assertThat(lua, containsString("log = \"(string,string[])->null\""));
         assertThat(lua, containsString(
-            "applyAll = \"(string,(int)->int)->string\""));
+            "applyAll = \"(string,[(int)->int])->string\""));
         assertThat(lua, containsString(
             "find = \"(string)->@host.cfg/User|null\""));
     }
@@ -1144,8 +1148,9 @@ public class LuaAbiBackendTest {
         insertionOrder.put("User", Types.classType("User", "host.cfg"));
         insertionOrder.put("find", Types.func(List.of(Type.String.INSTANCE),
             Types.nullable(Types.classType("User", "host.cfg"))));
-        insertionOrder.put("applyAll", Types.func(List.of(Type.String.INSTANCE),
-            Types.array(Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)),
+        insertionOrder.put("applyAll", Types.func(
+            List.of(Type.String.INSTANCE,
+                Types.array(Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE))),
             Type.String.INSTANCE));
 
         // Reverse insertion order.

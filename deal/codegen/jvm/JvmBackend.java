@@ -2077,20 +2077,21 @@ public final class JvmBackend {
         emitLine("static double numberFromNullable(java.lang.Double v) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to number\"); return v; }");
         emitLine();
         emitLine("// ---- DEAL stdlib support (ISSUE-0097): std/string, std/math, std/time ----");
-        emitLine("// DEAL strings are UTF-8 byte sequences (spec-v1.1 §String escapes and UTF-8) and");
-        emitLine("// LuaJIT's stdlib operates on those bytes, so __strLength/__strSubstring/__strSplit");
-        emitLine("// operate on the UTF-8 encoding. The JVM mapping (java.lang.String) cannot hold");
-        emitLine("// invalid UTF-8: a byte-range cut inside a multi-byte character decodes as U+FFFD");
-        emitLine("// where LuaJIT would produce the raw partial bytes — the closest byte-faithful");
-        emitLine("// reading the representation allows (documented divergence). For valid UTF-8,");
-        emitLine("// byte-wise and UTF-16-wise search/replace/trim are equivalent, so contains/");
-        emitLine("// startsWith/endsWith/replace/trim match LuaJIT's plain-text byte semantics.");
-        emitLine("static long __strLength(java.lang.String s) { return (long) s.getBytes(java.nio.charset.StandardCharsets.UTF_8).length; }");
-        emitLine("// LuaJIT string.sub correction: start+1/end each clamp to [1, n] after a negative");
-        emitLine("// adjustment (pos += n+1), and start > end yields the empty string.");
+        emitLine("// DEAL v1.2: a `string` is a sequence of Unicode scalar values, and string");
+        emitLine("// lengths and positions are measured in Unicode scalar values");
+        emitLine("// (spec-v1.2 §String escapes and Unicode, §Standard library declarations).");
+        emitLine("// The JVM mapping (java.lang.String) holds UTF-16 code units, so");
+        emitLine("// __strLength/__strSubstring/__strSplit walk code points: a Java code");
+        emitLine("// point is a Unicode scalar value, including supplementary characters.");
+        emitLine("// Plain-text search/replace/trim operate on whole strings, where UTF-16-wise");
+        emitLine("// and scalar-value-wise matching coincide, so contains/startsWith/endsWith/");
+        emitLine("// replace/trim keep plain String operations.");
+        emitLine("static long __strLength(java.lang.String s) { return (long) s.codePointCount(0, s.length()); }");
+        emitLine("// LuaJIT string.sub correction on scalar-value positions: start+1/end each");
+        emitLine("// clamp to [1, n] after a negative adjustment (pos += n+1), and start > end");
+        emitLine("// yields the empty string.  n is the scalar-value count.");
         emitLine("static java.lang.String __strSubstring(java.lang.String s, long start, long end) {");
-        emitLine("    byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);");
-        emitLine("    long n = (long) b.length;");
+        emitLine("    long n = (long) s.codePointCount(0, s.length());");
         emitLine("    long st = start + 1L;");
         emitLine("    if (st < 0L) st += n + 1L;");
         emitLine("    if (st < 1L) st = 1L;");
@@ -2098,21 +2099,29 @@ public final class JvmBackend {
         emitLine("    if (en < 0L) en += n + 1L;");
         emitLine("    if (en > n) en = n;");
         emitLine("    if (st > en) return \"\";");
-        emitLine("    return new java.lang.String(b, (int) (st - 1L), (int) (en - st + 1L), java.nio.charset.StandardCharsets.UTF_8);");
+        emitLine("    int stIdx = s.offsetByCodePoints(0, (int) (st - 1L));");
+        emitLine("    int enIdx = s.offsetByCodePoints(0, (int) en);");
+        emitLine("    return s.substring(stIdx, enIdx);");
         emitLine("}");
         emitLine("// Plain-text replace of every occurrence; an empty old returns s unchanged");
         emitLine("// (LuaJIT guards before gsub, which cannot match an empty pattern).");
         emitLine("static java.lang.String __strReplace(java.lang.String s, java.lang.String old, java.lang.String to) { return old.isEmpty() ? s : s.replace(old, to); }");
         emitLine("// Plain-text split with LuaJIT's semantics: an empty s yields the empty array");
-        emitLine("// (whatever the separator); an empty separator splits into individual bytes");
-        emitLine("// (LuaJIT iterates i = 1..#s and takes s:sub(i, i)); otherwise every occurrence");
-        emitLine("// of sep delimits a part, with the trailing remainder (even empty) appended.");
+        emitLine("// (whatever the separator); an empty separator splits into individual Unicode");
+        emitLine("// scalar values (one `string` per code point, in order); otherwise every");
+        emitLine("// occurrence of sep delimits a part, with the trailing remainder (even");
+        emitLine("// empty) appended.");
         emitLine("static __StringArray __strSplit(java.lang.String s, java.lang.String sep) {");
         emitLine("    java.util.ArrayList<java.lang.String> parts = new java.util.ArrayList<>();");
         emitLine("    if (s.isEmpty()) return new __StringArray(parts.toArray(new java.lang.String[0]));");
         emitLine("    if (sep.isEmpty()) {");
-        emitLine("        byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);");
-        emitLine("        for (byte value : b) parts.add(new java.lang.String(new byte[] { value }, java.nio.charset.StandardCharsets.UTF_8));");
+        emitLine("        int i = 0;");
+        emitLine("        while (i < s.length()) {");
+        emitLine("            int cp = s.codePointAt(i);");
+        emitLine("            int end = i + java.lang.Character.charCount(cp);");
+        emitLine("            parts.add(s.substring(i, end));");
+        emitLine("            i = end;");
+        emitLine("        }");
         emitLine("        return new __StringArray(parts.toArray(new java.lang.String[0]));");
         emitLine("    }");
         emitLine("    int start = 0;");
@@ -2551,10 +2560,10 @@ public final class JvmBackend {
      * parameter types from int/number/boolean/string and their nullable
      * forms, and return types from the same set plus {@code null} (sync or
      * async). Everything else — class exports, array/table/function-typed
-     * parameters or returns, nullable-of-unsupported, rest parameters,
-     * function-typed returns — is an E6000 at the import statement, never
-     * a silently miscompiled artifact. Returns true when every declared
-     * export is supported.
+     * parameters or returns, nullable-of-unsupported, function-typed
+     * returns — is an E6000 at the import statement, never a silently
+     * miscompiled artifact. Returns true when every declared export is
+     * supported.
      */
     private boolean validateHostExports(String raw, Map<String, Type> exports,
                                         Span span) {
@@ -2563,12 +2572,6 @@ public final class JvmBackend {
             String name = e.getKey();
             Type t = e.getValue();
             if (t instanceof Type.Func f) {
-                if (f.restType().isPresent()) {
-                    unsupported("host export '" + name + "' of module '"
-                        + raw + "' (rest parameters are out of the JVM "
-                        + "host ABI slice)", span);
-                    ok = false;
-                }
                 for (Type pt : f.paramTypes()) {
                     if (hostParamJavaType(pt) == null) {
                         unsupported("host export '" + name + "' of module '"
@@ -2710,8 +2713,8 @@ public final class JvmBackend {
      * {@code ?T} nullables, {@code [T]} arrays, {@code @module/Name}
      * classes (bare name only for an empty module path — the same
      * spelling {@code IrDumper} produces), {@code (params)->ret} function
-     * types with the {@code async} prefix and {@code ...[T]} rest arms,
-     * and the primitive/table/Error forms.
+     * types with the {@code async} prefix, and the primitive/table/Error
+     * forms (DEAL v1.2 has no rest parameters).
      */
     public static String typeDescriptor(Type t) {
         if (t == null) return "null";
@@ -2738,10 +2741,6 @@ public final class JvmBackend {
                 for (int i = 0; i < f.paramTypes().size(); i++) {
                     if (i > 0) sb.append(",");
                     sb.append(typeDescriptor(f.paramTypes().get(i)));
-                }
-                if (f.restType().isPresent()) {
-                    if (!f.paramTypes().isEmpty()) sb.append(",");
-                    sb.append("...").append(typeDescriptor(f.restType().get()));
                 }
                 sb.append(")->").append(typeDescriptor(f.returnType()));
                 yield sb.toString();
@@ -3211,10 +3210,6 @@ public final class JvmBackend {
         // synchronous Java with DEAL's observable semantics. Async
         // function EXPRESSIONS stay E6000 (function values are out of the
         // slice).
-        if (fd.restParam().isPresent()) {
-            unsupported("rest parameters", fd.restParam().get().span());
-            return;
-        }
         if (!moduleLevel) {
             unsupported("nested function declarations", fd.span());
             return;

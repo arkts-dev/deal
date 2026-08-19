@@ -96,13 +96,13 @@ public final class ExportExtractor {
 
                 // C$fromJson: (string) -> C | null
                 Type.Func fromJsonType = new Type.Func(
-                    List.of(Type.String.INSTANCE), Optional.empty(),
+                    List.of(Type.String.INSTANCE),
                     Types.nullable(clsType));
                 exports.put(cd.name() + "$fromJson", fromJsonType);
 
                 // C$toJson: (C) -> string
                 Type.Func toJsonType = new Type.Func(
-                    List.of(clsType), Optional.empty(),
+                    List.of(clsType),
                     Type.String.INSTANCE);
                 exports.put(cd.name() + "$toJson", toJsonType);
             }
@@ -149,10 +149,8 @@ public final class ExportExtractor {
         for (Parameter p : fd.params()) {
             paramTypes.add(resolveTypeNodeSimple(p.type(), classMap));
         }
-        Optional<Type.Array> restType = fd.restParam()
-            .map(rp -> (Type.Array) resolveTypeNodeSimple(rp.type(), classMap));
 
-        return new Type.Func(paramTypes, restType, retType, fd.isAsync());
+        return new Type.Func(paramTypes, retType, fd.isAsync());
     }
 
     /**
@@ -194,9 +192,7 @@ public final class ExportExtractor {
                     pts.add(resolveTypeNodeSimple(ftp.type(), classMap));
                 }
                 Type ret = resolveTypeNodeSimple(ft.returnType(), classMap);
-                Optional<Type.Array> rest = ft.rest()
-                    .map(r -> (Type.Array) resolveTypeNodeSimple(r.type(), classMap));
-                yield new Type.Func(pts, rest, ret, ft.isAsync());
+                yield new Type.Func(pts, ret, ft.isAsync());
             }
         };
     }

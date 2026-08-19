@@ -355,6 +355,8 @@ public class CheckerTest {
         testForOfTypeCheck_arrayCorrect();
         testForOfTypeCheck_stringCorrect();
         testForOfTypeCheck_nonIterable();
+        testV12StringTypeFacingChecks();
+        testV12FunctionTypeRestRejected();
         testForOfTypeCheck_tableIterable();
         testForOfTypeCheck_arrayWrongVarType();
         testForOfTypeCheck_stringWrongVarType();
@@ -1605,6 +1607,64 @@ public class CheckerTest {
             "number(true) should reject boolean with E5001, got: " + diags);
     }
     // =========================================================================
+    // DEAL v1.2: string Unicode scalar-value type-facing checks (ISSUE-0104)
+    // =========================================================================
+
+    /**
+     * v1.2 string semantics in type-facing checks: a `string` is a
+     * Unicode scalar-value sequence, so `.length` is not a
+     * compiler-resolved intrinsic on strings (only arrays/bytes have it —
+     * string lengths come from stdlib string.length), for-of over a
+     * string yields one `string` per scalar value per iteration, and
+     * template interpolation still requires string.
+     */
+    static void testV12StringTypeFacingChecks() {
+        System.out.println("-- v1.2 string Unicode scalar-value type-facing checks --");
+
+        CheckerOutput out = checkProgram(
+            "function f(s: string): null { let n: int = s.length; return null; }"
+        );
+        assertError(out, "E3003", "string .length is not an intrinsic");
+
+        out = checkProgram(
+            "function f(s: string): null {\n" +
+            "  for (let c: int of s) { }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E3015", "for-of over string requires string loop var");
+
+        out = checkProgram(
+            "function f(s: string): int {\n" +
+            "  let n: int = 0;\n" +
+            "  for (let c: string of s) { n = n + 1; }\n" +
+            "  return n;\n" +
+            "}"
+        );
+        assertNoErrors(out, "for-of over string with string loop var");
+
+        out = checkProgram("let n: int = 1; let s: string = `x${n}`;");
+        assertError(out, "E3016", "template interpolation of int is not string");
+    }
+
+    // =========================================================================
+    // DEAL v1.2: function types carry no rest arm (ISSUE-0104)
+    // =========================================================================
+
+    /** A function TYPE annotation using the removed rest arm is E1047. */
+    static void testV12FunctionTypeRestRejected() {
+        System.out.println("-- v1.2 function type rest arm rejected (E1047) --");
+
+        CheckerOutput out = checkProgram(
+            "function f(): null {\n" +
+            "  let g: (a: int, ...rest: int[]) => null = null;\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(out, "E1047", "function type rest arm rejected");
+    }
+
+    // =========================================================================
     // ISSUE-0042: coroutine import now fails with E2003
     // =========================================================================
 
@@ -1923,14 +1983,17 @@ public class CheckerTest {
     // ISSUE-0041: Additional dollar prohibition tests
     // =========================================================================
 
-    /** Test that dollar in rest parameter name produces E2008. */
+    /**
+     * DEAL v1.2: rest parameters were removed from the language; a rest
+     * parameter — dollar in the name or not — is rejected with E1047.
+     */
     static void testE2008_dollarInRestParam() {
-        System.out.println("-- ISSUE-0041: dollar in rest parameter (E2008) --");
+        System.out.println("-- ISSUE-0041: dollar in rest parameter (E1047 in v1.2) --");
 
         CheckerOutput out = checkProgram(
             "function f(a: int, ...rest$param: int[]): null { return null; }"
         );
-        assertError(out, "E2008", "dollar in rest parameter name produces E2008");
+        assertError(out, "E1047", "rest parameter rejected with E1047 in v1.2");
     }
 
     /** Test that dollar in for-loop variable name produces E2008. */
@@ -2226,11 +2289,11 @@ public class CheckerTest {
         Map<String, Type> exports = new HashMap<>();
         exports.put("Foreign", Types.classType("Foreign", "./foreign"));
         exports.put("Foreign$fromJson",
-            new Type.Func(List.of(Type.String.INSTANCE), Optional.empty(),
+            new Type.Func(List.of(Type.String.INSTANCE),
                 Types.nullable(Types.classType("Foreign", "./foreign"))));
         exports.put("Foreign$toJson",
             new Type.Func(List.of(Types.classType("Foreign", "./foreign")),
-                Optional.empty(), Type.String.INSTANCE));
+                Type.String.INSTANCE));
         resolver.register("./foreign", exports);
 
         CheckerOutput out = checkProgramWithModule(

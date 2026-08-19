@@ -113,6 +113,21 @@ public enum DiagnosticCode {
     /** @jsonable directive is only valid on 'export class'. */
     E1043(Phase.FRONTEND, "Invalid @jsonable directive placement"),
 
+    /** Rest parameters are not supported in DEAL v1.2. */
+    E1047(Phase.FRONTEND, "Rest parameters are not supported in DEAL v1.2"),
+
+    /** Import declaration after a non-import top-level declaration. */
+    E1048(Phase.FRONTEND, "Import declarations must precede all other top-level declarations"),
+
+    /** Statement that is not a top-level declaration at module top level. */
+    E1049(Phase.FRONTEND, "Only imports, functions, classes, and exports are allowed at module top level"),
+
+    /** Import or export in a nested (block) context. */
+    E1050(Phase.FRONTEND, "'import' and 'export' are only allowed at module top level"),
+
+    /** Bodyless (external) function declaration in an implementation file. */
+    E1051(Phase.FRONTEND, "Function declarations in implementation files must have a body"),
+
     // =========================================================================
     // E2xxx — name resolution and module resolution (FRONTEND)
     // =========================================================================
@@ -137,6 +152,12 @@ public enum DiagnosticCode {
     E2008(Phase.FRONTEND, "User-declared identifiers must not contain '$'"),
     /** Import of external host module not declared in deal.json externals. */
     E2009(Phase.FRONTEND, "Import of external host module not declared in deal.json externals"),
+
+    /** Entry module does not export 'main'. */
+    E2010(Phase.FRONTEND, "Entry module must export 'main'"),
+
+    /** Entry module 'main' has the wrong signature. */
+    E2011(Phase.FRONTEND, "Entry module 'main' must have non-async signature '(): null'"),
 
     // =========================================================================
     // E3xxx — type checking (FRONTEND)

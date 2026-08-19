@@ -654,6 +654,7 @@ public class ModuleSystemTest {
         writeFile("src/diamondA.deal", """
             import * as B from "./diamondB"
             import * as C from "./diamondC"
+            export function main(): null { return null; }
             export function run(): int { return B.val() + C.val(); }
             export function main(): null { return null; }
             """);
@@ -701,6 +702,7 @@ public class ModuleSystemTest {
             """);
         writeFile("src/ocC.deal", """
             import * as A from "./ocA"
+            export function main(): null { return null; }
             export function run(): int { return A.foo(10); }
             export function main(): null { return null; }
             """);
@@ -759,6 +761,7 @@ public class ModuleSystemTest {
         System.out.println("-- Single Module Compilation --");
 
         writeFile("src/hello.deal", """
+            export function main(): null { return null; }
             export function greet(): string { return "hi"; }
             export function main(): null { return null; }
             """);
@@ -796,6 +799,7 @@ public class ModuleSystemTest {
 
         writeFile("src/main.deal", """
             import * as lib from "./lib"
+            export function main(): null { return null; }
             export function run(): int { return lib.add(10, 20); }
             export function main(): null { return null; }
             """);
@@ -880,8 +884,8 @@ public class ModuleSystemTest {
         // exprReferencesImport must track through AwaitExpression
         writeFile("src/ai_await_main.deal", """
             import * as Lib from "./ai_await_lib"
-            async function getValue(): int { return await Lib.getValue(); }
             export function main(): null { return null; }
+            async function worker(): int { return await Lib.getValue(); }
             """);
 
         Path entryFile = tmpDir.resolve("src/ai_await_main.deal").toAbsolutePath();
@@ -971,6 +975,7 @@ public class ModuleSystemTest {
         // But a.deal's top-level expression creates a runtime dependency cycle
         writeFile("src/rta.deal", """
             import * as B from "./rtb"
+            export function main(): null { return null; }
             let x: int = B.getValue();
             export function foo(): int { return 42; }
             """);
@@ -987,13 +992,17 @@ public class ModuleSystemTest {
             entryFile, outputDir, false, null, moduleRoots, null);
 
         boolean success = orchestrator.compile();
-        check(!success, "Circular runtime import should fail");
+        check(!success, "Top-level executable statement should fail in v1.2");
 
         List<Diagnostic> diags = orchestrator.diagnostics();
-        boolean hasCycleError = diags.stream().anyMatch(
+        // v1.2: the top-level `let` is rejected as a module-shape error
+        // before any cycle analysis (E1049).  Runtime import cycles can no
+        // longer be constructed from source because module top level holds
+        // only declarations.
+        boolean hasShapeError = diags.stream().anyMatch(
             d -> "error".equals(d.severity())
-                && "E2005".equals(d.code()));
-        check(hasCycleError, "Has E2005 circular import error diagnostic");
+                && "E1049".equals(d.code()));
+        check(hasShapeError, "Has E1049 top-level statement diagnostic");
     }
 
     // =========================================================================
@@ -1007,6 +1016,7 @@ public class ModuleSystemTest {
         // No top-level runtime expressions reference the cyclic import.
         writeFile("src/da.deal", """
             import * as B from "./db"
+            export function main(): null { return null; }
             export function foo(x: int): int { return B.get(x); }
             export function main(): null { return null; }
             """);
@@ -1065,6 +1075,7 @@ public class ModuleSystemTest {
         writeFile("src/tdc_entry.deal", """
             import * as A from "./tdc_a"
             import * as X from "./tdc_x"
+            export function main(): null { return null; }
             export function test(): int { return A.callB(1); }
             """);
 
@@ -1076,12 +1087,14 @@ public class ModuleSystemTest {
             entryFile, outputDir, false, null, moduleRoots, null);
 
         boolean success = orchestrator.compile();
-        check(!success, "Two disconnected cycles (one runtime): compilation should fail");
+        check(!success, "Two disconnected cycles (top-level statement): compilation should fail");
 
         List<Diagnostic> diags = orchestrator.diagnostics();
-        boolean hasE2005 = diags.stream().anyMatch(
-            d -> "E2005".equals(d.code()) && "error".equals(d.severity()));
-        check(hasE2005, "Two disconnected cycles: should have E2005 for runtime cycle");
+        // v1.2: the top-level `let` in tdc_x.deal is an E1049 module-shape
+        // error; no E2005 cycle analysis can fire on v1.2 sources.
+        boolean hasE1049 = diags.stream().anyMatch(
+            d -> "E1049".equals(d.code()) && "error".equals(d.severity()));
+        check(hasE1049, "Two disconnected cycles: E1049 for top-level statement");
     }
 
     // =========================================================================
@@ -1115,6 +1128,7 @@ public class ModuleSystemTest {
         writeFile("src/tdc2_entry.deal", """
             import * as A from "./tdc2_a"
             import * as C from "./tdc2_c"
+            export function main(): null { return null; }
             export function test(): int { return A.callB(1) + C.callD(2); }
             export function main(): null { return null; }
             """);
@@ -1152,6 +1166,7 @@ public class ModuleSystemTest {
 
         writeFile("src/sf_main.deal", """
             import * as strings from "std/string"
+            export function main(): null { return null; }
             export function getLen(s: string): int { return strings.length(s); }
             export function main(): null { return null; }
             """);
@@ -1201,6 +1216,7 @@ public class ModuleSystemTest {
 
         writeFile("src/cm_main.deal", """
             import * as P from "./cm_class"
+            export function main(): null { return null; }
             export function getX(p: P.Point): int { return p.x; }
             export function getY(p: P.Point): int { return p.y; }
             export function main(): null { return null; }
@@ -1242,6 +1258,7 @@ public class ModuleSystemTest {
 
         writeFile("src/cc_main.deal", """
             import * as V from "./cc_class"
+            export function main(): null { return null; }
             export function makeVec(): V.Vec {
                 return { x: 1, y: 2 };
             }
@@ -1278,6 +1295,7 @@ public class ModuleSystemTest {
 
         writeFile("src/ch_main.deal", """
             import * as O from "./ch_class"
+            export function main(): null { return null; }
             export function checkName(obj: O.Opt): boolean {
                 return has(obj.name);
             }
@@ -1309,6 +1327,7 @@ public class ModuleSystemTest {
 
         writeFile("src/qt_main.deal", """
             import * as D from "./qt_class"
+            export function main(): null { return null; }
             export function getValue(d: D.Data): int { return d.value; }
             export function main(): null { return null; }
             """);
@@ -1345,6 +1364,7 @@ public class ModuleSystemTest {
 
         writeFile("src/ce_main.deal", """
             import * as R from "./ce_class"
+            export function main(): null { return null; }
             export function getValue(r: R.Result): int { return r.value; }
             export function makeAndGet(): int {
                 let r = R.make(42);
@@ -1396,6 +1416,7 @@ public class ModuleSystemTest {
 
         writeFile("src/runner.deal", """
             import * as C from "./calc"
+            export function main(): null { return null; }
             export function run(): int { return C.add(1, 2); }
             export function main(): null { return null; }
             """);
@@ -1456,6 +1477,7 @@ public class ModuleSystemTest {
         writeFile("src/ext_main.deal", """
             import * as cfg from "host/cfg"
             import * as console from "std/console"
+            export function main(): null { return null; }
             export function run(): int { console.log("x"); return cfg.ping(); }
             export function main(): null { return null; }
             """);
@@ -1615,6 +1637,7 @@ public class ModuleSystemTest {
             """);
         writeFile("src/host_smoke.deal", """
             import * as cfg from "host/cfg"
+            export function main(): null { return null; }
             export function run(): int { return cfg.ping(); }
             export function main(): null { return null; }
             """);
@@ -1714,6 +1737,7 @@ public class ModuleSystemTest {
         // externals key byte-for-byte — the reviewer-probe scenario.
         writeFile("src/backslash_smoke.deal", """
             import * as cfg from "host/x\\y"
+            export function main(): null { return null; }
             export function echo(u: cfg.User): int { return u.port; }
             export function run(): int { return cfg.ping(); }
             export function main(): null { return null; }
@@ -1836,6 +1860,7 @@ public class ModuleSystemTest {
                 name: string = "";
             }
 
+            export function main(): null { return null; }
             export function run(): int { return cfg.ping(); }
 
             export function main(): null { return null; }
@@ -1935,6 +1960,7 @@ public class ModuleSystemTest {
         check(exitCode == 1, "Nonexistent entry -> exit 1");
 
         writeFile("src/cli_test.deal", """
+            export function main(): null { return null; }
             export function hello(): string { return "world"; }
             export function main(): null { return null; }
             """);
@@ -1960,6 +1986,7 @@ public class ModuleSystemTest {
         }
 
         writeFile("src/e2e_single.deal", """
+            export function main(): null { return null; }
             export function greet(name: string): string {
                 return "Hello, " + name;
             }
@@ -2012,6 +2039,7 @@ public class ModuleSystemTest {
 
         writeFile("src/e2e_main.deal", """
             import * as lib from "./e2e_lib"
+            export function main(): null { return null; }
             export function run(): int { return lib.add(10, 20); }
             export function main(): null { return null; }
             """);
@@ -2196,6 +2224,7 @@ public class ModuleSystemTest {
         }
 
         writeFile("src/e2e_cli.deal", """
+            export function main(): null { return null; }
             export function add(a: int, b: int): int { return a + b; }
             export function main(): null { return null; }
             """);
@@ -2248,6 +2277,145 @@ public class ModuleSystemTest {
         }
     }
 
+
+    // =========================================================================
+    // DEAL v1.2 module shape validation and selected-entry main() rules
+    // (ISSUE-0104)
+    // =========================================================================
+
+    /** Parses a source and runs the post-parse ModuleShapeValidator. */
+    private static List<Diagnostic> shapeDiags(String source, boolean isDeclFile) {
+        LexResult lex = new Lexer(source, isDeclFile ? "t.d.deal" : "t.deal")
+            .tokenize();
+        ParseResult parse = new Parser(lex.tokens(),
+            isDeclFile ? "t.d.deal" : "t.deal").parse();
+        return ModuleShapeValidator.validate(parse.program(),
+            isDeclFile ? "t.d.deal" : "t.deal", isDeclFile);
+    }
+
+    private static void testModuleShapeValidV12() {
+        System.out.println("-- v1.2 module shape: imports first + main() compiles --");
+        List<Diagnostic> diags = shapeDiags("""
+            import * as lib from "./lib"
+            export function main(): null { return null; }
+            export class Point { x: number = 0.0; }
+            function helper(): int { return 1; }
+            """, false);
+        check(diags.isEmpty(), "v1.2-conformant module has no shape diagnostics");
+    }
+
+    private static void testModuleShapeImportAfterDeclaration() {
+        System.out.println("-- v1.2 module shape: import after declaration (E1048) --");
+        List<Diagnostic> diags = shapeDiags("""
+            export function main(): null { return null; }
+            import * as lib from "./lib"
+            """, false);
+        check(diags.stream().anyMatch(d -> "E1048".equals(d.code())
+                && "error".equals(d.severity())),
+            "import after declaration produces E1048");
+    }
+
+    private static void testModuleShapeTopLevelStatement() {
+        System.out.println("-- v1.2 module shape: top-level statement (E1049) --");
+        List<Diagnostic> diags = shapeDiags("""
+            let x: int = 1;
+            export function main(): null { return null; }
+            """, false);
+        check(diags.stream().anyMatch(d -> "E1049".equals(d.code())
+                && "error".equals(d.severity())),
+            "top-level let produces E1049");
+    }
+
+    private static void testModuleShapeNestedExportAndImport() {
+        System.out.println("-- v1.2 module shape: nested import/export (E1050) --");
+        List<Diagnostic> diags = shapeDiags("""
+            export function main(): null {
+              export function inner(): null { return null; }
+              return null;
+            }
+            """, false);
+        check(diags.stream().anyMatch(d -> "E1050".equals(d.code())
+                && "error".equals(d.severity())),
+            "nested export produces E1050");
+
+        diags = shapeDiags("""
+            export function main(): null {
+              import * as lib from "./lib"
+              return null;
+            }
+            """, false);
+        check(diags.stream().anyMatch(d -> "E1050".equals(d.code())
+                && "error".equals(d.severity())),
+            "nested import produces E1050");
+    }
+
+    private static void testModuleShapeBodylessInImplementation() {
+        System.out.println("-- v1.2 module shape: bodyless declaration in .deal (E1051) --");
+        List<Diagnostic> diags = shapeDiags(
+            "export function main(): null;\n", false);
+        check(diags.stream().anyMatch(d -> "E1051".equals(d.code())
+                && "error".equals(d.severity())),
+            "bodyless function in .deal produces E1051");
+
+        // .d.deal files may declare external functions.
+        diags = shapeDiags(
+            "export function add(a: int, b: int): int;\n", true);
+        check(diags.isEmpty(), ".d.deal external declaration is accepted");
+    }
+
+    /** Compiles one entry module and returns orchestrator diagnostics. */
+    private static List<Diagnostic> compileEntry(String name, String source)
+            throws Exception {
+        writeFile("src/" + name + ".deal", source);
+        Path entryFile = tmpDir.resolve("src/" + name + ".deal")
+            .toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/" + name);
+        List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, moduleRoots, null);
+        orchestrator.compile();
+        return orchestrator.diagnostics();
+    }
+
+    private static void testEntryMainValidation() throws Exception {
+        System.out.println("-- v1.2 selected-entry main() validation --");
+
+        // Missing main → E2010.
+        List<Diagnostic> diags = compileEntry("em_missing",
+            "export function run(): int { return 1; }\n");
+        check(diags.stream().anyMatch(d -> "E2010".equals(d.code())
+                && "error".equals(d.severity())),
+            "entry without main produces E2010");
+
+        // Wrong parameter shape → E2011.
+        diags = compileEntry("em_params",
+            "export function main(x: int): null { return null; }\n");
+        check(diags.stream().anyMatch(d -> "E2011".equals(d.code())
+                && "error".equals(d.severity())),
+            "main(x: int) produces E2011");
+
+        // Wrong return type → E2011.
+        diags = compileEntry("em_return",
+            "export function main(): int { return 1; }\n");
+        check(diags.stream().anyMatch(d -> "E2011".equals(d.code())
+                && "error".equals(d.severity())),
+            "main(): int produces E2011");
+
+        // Async main → E2011.
+        diags = compileEntry("em_async",
+            "export async function main(): null { return null; }\n");
+        check(diags.stream().anyMatch(d -> "E2011".equals(d.code())
+                && "error".equals(d.severity())),
+            "async main produces E2011");
+
+        // Correct shape → no E2010/E2011.
+        diags = compileEntry("em_ok",
+            "export function main(): null { return null; }\n");
+        check(diags.stream().noneMatch(d -> "E2010".equals(d.code())
+                || "E2011".equals(d.code())),
+            "main(): null produces no entry diagnostics");
+    }
+
     // =========================================================================
     // Main
     // =========================================================================
@@ -2265,6 +2433,12 @@ public class ModuleSystemTest {
             testDeclarationFileBodyValidation();
             testDeclarationFileLetStmt();
             testModuleResolution();
+            testModuleShapeValidV12();
+            testModuleShapeImportAfterDeclaration();
+            testModuleShapeTopLevelStatement();
+            testModuleShapeNestedExportAndImport();
+            testModuleShapeBodylessInImplementation();
+            testEntryMainValidation();
             testTopologicalSortDiamond();
             testModuleOutsideCycle();
             testSingleModuleCompilation();

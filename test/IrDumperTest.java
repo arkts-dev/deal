@@ -248,9 +248,10 @@ public class IrDumperTest {
             new Span("test.deal", 2, 3, 2, 23), errorCall);
         FunctionDeclaration fd = new FunctionDeclaration(
             new Span("test.deal", 1, 1, 3, 2), "f",
-            List.of(), Optional.empty(),
+            List.of(),
             new NamedType(new Span("test.deal", 1, 19, 1, 22), "null"),
-            new Block(new Span("test.deal", 1, 24, 3, 2), List.of(throwStmt)), false);
+            new Block(new Span("test.deal", 1, 24, 3, 2), List.of(throwStmt)),
+            false, false);
         ProgramNode prog = new ProgramNode(span, List.of(fd));
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
@@ -358,9 +359,9 @@ public class IrDumperTest {
             "x", new NamedType(new Span("test.d.deal", 1, 1, 1, 1), "string"));
         FunctionDeclaration fd = new FunctionDeclaration(
             new Span("test.d.deal", 1, 1, 1, 30),
-            "log", List.of(p1), Optional.empty(),
+            "log", List.of(p1),
             new NamedType(new Span("test.d.deal", 1, 1, 1, 1), "null"),
-            null, false);
+            null, false, true);
         ExportDeclaration exp = new ExportDeclaration(
             new Span("test.d.deal", 1, 1, 1, 30), fd);
         ProgramNode prog = new ProgramNode(span, List.of(exp));
@@ -639,10 +640,10 @@ public class IrDumperTest {
             Optional.of(lit42));
         FunctionDeclaration gDecl = new FunctionDeclaration(
             new Span("test.deal", 2, 1, 3, 2), "g",
-            List.of(), Optional.empty(),
+            List.of(),
             new NamedType(new Span("test.deal", 2, 17, 2, 17), "int"),
             new Block(new Span("test.deal", 2, 22, 3, 2), List.of(gReturn)),
-            true);  // isAsync = true
+            true, false);  // isAsync = true
 
         // await g() — the await expression wrapping the call
         IdentifierExpr gId = new IdentifierExpr(
@@ -656,10 +657,10 @@ public class IrDumperTest {
             Optional.of(awaitExpr));
         FunctionDeclaration fDecl = new FunctionDeclaration(
             new Span("test.deal", 4, 1, 5, 1), "f",
-            List.of(), Optional.empty(),
+            List.of(),
             new NamedType(new Span("test.deal", 4, 16, 4, 16), "int"),
             new Block(new Span("test.deal", 4, 22, 5, 1), List.of(fReturn)),
-            true);  // isAsync = true
+            true, false);  // isAsync = true
 
         ProgramNode prog = new ProgramNode(span, List.of(gDecl, fDecl));
 
@@ -699,24 +700,25 @@ public class IrDumperTest {
 
 
     /**
-     * Tests that rest parameter types in the spec type descriptor use
-     * {@code ...[T]} format (e.g., {@code ...[int]}) rather than
-     * {@code ...T} (e.g., {@code ...int}).
+     * Tests that DEAL v1.2 function descriptors carry no rest arm: a fixed
+     * array parameter renders as {@code [int]} inside the parameter list
+     * and no {@code ...} arm is emitted.
      */
     static void testRestParamSpecTypeDescriptor() {
-        System.out.print("  testRestParamSpecTypeDescriptor... ");
-        // Build a synthetic function with a rest param: function g(a: int, ...b: int[]): null
+        System.out.print("  testFixedArrayParamSpecTypeDescriptor... ");
+        // Build a function with a fixed array parameter: function g(a: int, b: int[]): null
         Span span = new Span("test.deal", 1, 1, 1, 30);
         Span gSpan = new Span("test.deal", 1, 1, 1, 30);
         FunctionDeclaration fd = new FunctionDeclaration(
             gSpan, "g",
-            List.of(new Parameter(new Span("test.deal", 1, 15, 1, 20),
-                "a", new NamedType(new Span("test.deal", 1, 18, 1, 20), "int"))),
-            Optional.of(new Parameter(new Span("test.deal", 1, 23, 1, 31),
-                "b", new ArrayType(new Span("test.deal", 1, 28, 1, 31),
-                    new NamedType(new Span("test.deal", 1, 28, 1, 30), "int")))),
+            List.of(
+                new Parameter(new Span("test.deal", 1, 15, 1, 20),
+                    "a", new NamedType(new Span("test.deal", 1, 18, 1, 20), "int")),
+                new Parameter(new Span("test.deal", 1, 22, 1, 31),
+                    "b", new ArrayType(new Span("test.deal", 1, 26, 1, 31),
+                        new NamedType(new Span("test.deal", 1, 26, 1, 28), "int")))),
             new NamedType(new Span("test.deal", 1, 35, 1, 38), "null"),
-            new Block(new Span("test.deal", 1, 39, 1, 41), List.of()), false);
+            new Block(new Span("test.deal", 1, 39, 1, 41), List.of()), false, false);
 
         // Create an identifier reference to g
         IdentifierExpr gId = new IdentifierExpr(
@@ -727,10 +729,9 @@ public class IrDumperTest {
 
         ProgramNode prog = new ProgramNode(span, List.of(fd, var));
 
-        // Build the function type with rest param: (int, ...[int]) -> null
+        // Fixed params only: (int, [int]) -> null
         Type.Func funcType = Types.func(
-            List.of(Type.Int.INSTANCE),
-            new Type.Array(Type.Int.INSTANCE),
+            List.of(Type.Int.INSTANCE, new Type.Array(Type.Int.INSTANCE)),
             Type.Null.INSTANCE);
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
@@ -744,9 +745,9 @@ public class IrDumperTest {
 
         String ir = IrDumper.dump(prog, result, "test");
 
-        // The function identifier type should be (int,...[int])->null
-        assertContains(ir, "...[int]", "rest param uses ...[T] format");
-        assertNotContains(ir, "...int)", "does NOT use ...int format (missing brackets)");
+        // The function identifier type is (int,[int])->null — no rest arm.
+        assertContains(ir, "(int,[int])->null", "fixed params use (int,[int])->null");
+        assertNotContains(ir, "...", "no rest arm in v1.2 descriptors");
 
         System.out.println("OK");
     }

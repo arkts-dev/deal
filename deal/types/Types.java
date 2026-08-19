@@ -2,11 +2,13 @@ package deal.types;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
 /**
  * Static utility methods for working with internal {@link Type} values:
  * canonicalization, type equality, and arity extension checks.
+ *
+ * <p>DEAL v1.2: function types carry no rest parameter.  Function-type
+ * equality is exact: async marker, parameter list, and return type.</p>
  */
 public final class Types {
 
@@ -43,10 +45,8 @@ public final class Types {
             List<Type> canonParams = f.paramTypes().stream()
                 .map(Types::canonicalize)
                 .toList();
-            Optional<Type.Array> canonRest = f.restType()
-                .map(r -> (Type.Array) canonicalize(r));
             Type canonRet = canonicalize(f.returnType());
-            return new Type.Func(canonParams, canonRest, canonRet, f.isAsync());
+            return new Type.Func(canonParams, canonRet, f.isAsync());
         }
         return type;
     }
@@ -63,8 +63,7 @@ public final class Types {
      *   <li>Array: equal element types</li>
      *   <li>Nullable: equal inner types</li>
      *   <li>Class: same name AND same modulePath (nominal)</li>
-     *   <li>Function: equal paramTypes, equal restType, equal returnType,
-     *       AND equal isAsync</li>
+     *   <li>Function: equal paramTypes, equal returnType, AND equal isAsync</li>
      * </ul>
      */
     public static boolean equals(Type a, Type b) {
@@ -104,12 +103,6 @@ public final class Types {
                     if (!equals(fa.paramTypes().get(i), fb.paramTypes().get(i)))
                         yield false;
                 }
-                if (fa.restType().isPresent() != fb.restType().isPresent())
-                    yield false;
-                if (fa.restType().isPresent()) {
-                    if (!equals(fa.restType().get(), fb.restType().get()))
-                        yield false;
-                }
                 yield true;
             }
         };
@@ -127,8 +120,8 @@ public final class Types {
      * {@code (T1, T2) => R} (actual has fewer params than target).
      * The reverse is NOT allowed.
      *
-     * <p>Rest parameters do NOT participate in arity extension.
-     * If either function has a rest parameter, only exact equality applies.</p>
+     * <p>DEAL v1.2: function types have no rest parameters, so every
+     * arity-extension comparison is against fixed parameter lists.</p>
      *
      * <p>Return types must match exactly.
      * Async/sync mismatch is rejected.</p>
@@ -147,13 +140,6 @@ public final class Types {
 
         // Return types must match exactly
         if (!equals(actual.returnType(), target.returnType())) return false;
-
-        // Rest parameters do NOT participate in arity extension.
-        // If either function has a rest param, only exact equality is allowed
-        // (which would have been caught by the equals check above).
-        if (actual.restType().isPresent() || target.restType().isPresent()) {
-            return false;
-        }
 
         // Arity extension: actual can have FEWER params than target
         // (T1) => R is assignable to (T1, T2) => R
@@ -201,28 +187,16 @@ public final class Types {
         return new Type.Class(name, modulePath);
     }
 
-    /** Make a Function type without rest param. */
-    public static Type.Func func(List<Type> paramTypes, Type returnType) {
-        return (Type.Func) canonicalize(
-            new Type.Func(List.copyOf(paramTypes), Optional.empty(), returnType));
-    }
-
-    /** Make a Function type with rest param. */
-    public static Type.Func func(List<Type> paramTypes, Type.Array restType, Type returnType) {
-        return (Type.Func) canonicalize(
-            new Type.Func(List.copyOf(paramTypes), Optional.of(restType), returnType));
-    }
-
-    /** Make a Function type without rest param, with isAsync. */
+    /** Make a Function type, with isAsync. */
     public static Type.Func func(List<Type> paramTypes, Type returnType, boolean isAsync) {
         return (Type.Func) canonicalize(
-            new Type.Func(List.copyOf(paramTypes), Optional.empty(), returnType, isAsync));
+            new Type.Func(List.copyOf(paramTypes), returnType, isAsync));
     }
 
-    /** Make a Function type with rest param, with isAsync. */
-    public static Type.Func func(List<Type> paramTypes, Type.Array restType, Type returnType, boolean isAsync) {
+    /** Make a sync Function type. */
+    public static Type.Func func(List<Type> paramTypes, Type returnType) {
         return (Type.Func) canonicalize(
-            new Type.Func(List.copyOf(paramTypes), Optional.of(restType), returnType, isAsync));
+            new Type.Func(List.copyOf(paramTypes), returnType));
     }
 
     // =========================================================================

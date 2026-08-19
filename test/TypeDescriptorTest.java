@@ -24,7 +24,7 @@ import java.util.regex.*;
  *       per the spec grammar.</li>
  *   <li>For compilable DEAL types, the IR dump produces the expected
  *       spec-format descriptor string (not the legacy format).</li>
- *   <li>Special edge cases: class module paths, rest params, function types,
+ *   <li>Special edge cases: class module paths, function types,
  *       async function descriptors.</li>
  * </ul>
  */
@@ -192,25 +192,15 @@ public class TypeDescriptorTest {
         if (pos >= s.length() || s.charAt(pos) != '(') return null;
         pos++;
 
-        // Parse parameter list (comma-separated RuntimeTypeDescriptors or ...ArrayDescriptor)
+        // Parse parameter list (comma-separated RuntimeTypeDescriptors).
+        // DEAL v1.2: no rest arm — a `...` here fails the grammar.
         List<String> params = new ArrayList<>();
         if (pos < s.length() && s.charAt(pos) != ')') {
             while (true) {
-                // Try rest param: ... ArrayDescriptor
-                if (s.startsWith("...", pos)) {
-                    int restStart = pos + 3;
-                    // After ..., must have [type]
-                    if (restStart >= s.length() || s.charAt(restStart) != '[') return null;
-                    Result inner = parseRuntimeTypeDescriptor(s, restStart);
-                    if (inner == null) return null;
-                    params.add("rest(" + inner.tree + ")");
-                    pos = inner.pos;
-                } else {
-                    Result param = parseRuntimeTypeDescriptor(s, pos);
-                    if (param == null) return null;
-                    params.add(param.tree);
-                    pos = param.pos;
-                }
+                Result param = parseRuntimeTypeDescriptor(s, pos);
+                if (param == null) return null;
+                params.add(param.tree);
+                pos = param.pos;
 
                 if (pos < s.length() && s.charAt(pos) == ',') {
                     pos++;
@@ -464,26 +454,25 @@ public class TypeDescriptorTest {
     }
 
     // =========================================================================
-    // Test 9: Rest param descriptors
+    // Test 9: Array parameter descriptor (v1.2 — no rest params)
     // =========================================================================
 
     static void testRestParamDescriptors() throws Exception {
-        System.out.print("  testRestParamDescriptors... ");
+        System.out.print("  testArrayParamDescriptors... ");
         Span span = new Span("test.deal", 1, 1, 1, 30);
-        Parameter restParam = new Parameter(
-            new Span("test.deal", 1, 20, 1, 35),
+        Parameter values = new Parameter(
+            new Span("test.deal", 1, 17, 1, 32),
             "values",
-            new ArrayType(new Span("test.deal", 1, 30, 1, 35),
-                new NamedType(new Span("test.deal", 1, 30, 1, 32), "int")));
+            new ArrayType(new Span("test.deal", 1, 27, 1, 32),
+                new NamedType(new Span("test.deal", 1, 27, 1, 29), "int")));
         FunctionDeclaration fd = new FunctionDeclaration(
             new Span("test.deal", 1, 1, 1, 40), "sum",
-            List.of(),
-            Optional.of(restParam),
+            List.of(values),
             new NamedType(new Span("test.deal", 1, 38, 1, 40), "int"),
             new Block(new Span("test.deal", 1, 42, 2, 2),
                 List.of(new ReturnStatement(new Span("test.deal", 2, 3, 2, 15),
                     Optional.of(new LiteralExpr(new Span("test.deal", 2, 10, 2, 10),
-                        new LiteralValue.IntLiteral(0)))))), false);
+                        new LiteralValue.IntLiteral(0)))))), false, false);
 
         IdentifierExpr sumId = new IdentifierExpr(
             new Span("test.deal", 3, 1, 3, 4), "sum");
@@ -494,8 +483,7 @@ public class TypeDescriptorTest {
         ProgramNode prog = new ProgramNode(span, List.of(fd, var));
 
         Type.Func funcType = Types.func(
-            List.of(),
-            new Type.Array(Type.Int.INSTANCE),
+            List.of(new Type.Array(Type.Int.INSTANCE)),
             Type.Int.INSTANCE);
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
@@ -510,8 +498,8 @@ public class TypeDescriptorTest {
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
         String ir = IrDumper.dump(prog, result, "test");
-        assertContains(ir, "...[int]", "rest param uses ...[T] format");
-        assertNotContains(ir, "...int)", "no bare ...int format");
+        assertContains(ir, "([int])->int", "array param uses [int] descriptor");
+        assertNotContains(ir, "...", "no rest arm in v1.2 descriptors");
         System.out.println("OK");
     }
 
@@ -555,27 +543,26 @@ public class TypeDescriptorTest {
     }
 
     // =========================================================================
-    // Test 12: Mixed fixed + rest descriptor
+    // Test 12: Mixed fixed params descriptor (v1.2 — no rest arm)
     // =========================================================================
 
     static void testMixedFixedRestDescriptor() throws Exception {
-        System.out.print("  testMixedFixedRestDescriptor... ");
+        System.out.print("  testMixedFixedParamsDescriptor... ");
         Span span = new Span("test.deal", 1, 1, 1, 30);
         Parameter sep = new Parameter(new Span("test.deal", 1, 17, 1, 27),
             "sep", new NamedType(new Span("test.deal", 1, 21, 1, 26), "string"));
-        Parameter restParam = new Parameter(
+        Parameter values = new Parameter(
             new Span("test.deal", 1, 30, 1, 45),
             "values",
             new ArrayType(new Span("test.deal", 1, 39, 1, 45),
                 new NamedType(new Span("test.deal", 1, 39, 1, 44), "int")));
         FunctionDeclaration fd = new FunctionDeclaration(
             new Span("test.deal", 1, 1, 1, 50), "describe",
-            List.of(sep),
-            Optional.of(restParam),
+            List.of(sep, values),
             new NamedType(new Span("test.deal", 1, 48, 1, 50), "null"),
             new Block(new Span("test.deal", 1, 52, 2, 2),
                 List.of(new ReturnStatement(new Span("test.deal", 2, 3, 2, 15),
-                    Optional.empty()))), false);
+                    Optional.empty()))), false, false);
 
         IdentifierExpr descId = new IdentifierExpr(
             new Span("test.deal", 3, 1, 3, 8), "describe");
@@ -586,8 +573,7 @@ public class TypeDescriptorTest {
         ProgramNode prog = new ProgramNode(span, List.of(fd, var));
 
         Type.Func funcType = Types.func(
-            List.of(Type.String.INSTANCE),
-            new Type.Array(Type.Int.INSTANCE),
+            List.of(Type.String.INSTANCE, new Type.Array(Type.Int.INSTANCE)),
             Type.Null.INSTANCE);
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
@@ -600,39 +586,44 @@ public class TypeDescriptorTest {
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
         String ir = IrDumper.dump(prog, result, "test");
-        assertContains(ir, "(string,...[int])->null", "critical edge case (string,...[int])->null");
+        assertContains(ir, "(string,[int])->null", "fixed params descriptor (string,[int])->null");
+        assertNotContains(ir, "...", "no rest arm in v1.2 descriptors");
         System.out.println("OK");
     }
 
     // =========================================================================
-    // Test 13: Rest-only descriptor
+    // Test 13: Zero-param descriptor (v1.2 — no rest-only functions)
     // =========================================================================
 
     static void testRestOnlyDescriptor() throws Exception {
-        System.out.print("  testRestOnlyDescriptor... ");
+        System.out.print("  testZeroParamDescriptor... ");
         Span span = new Span("test.deal", 1, 1, 1, 30);
-        Parameter restParam = new Parameter(
-            new Span("test.deal", 1, 20, 1, 35),
-            "values",
-            new ArrayType(new Span("test.deal", 1, 30, 1, 35),
-                new NamedType(new Span("test.deal", 1, 30, 1, 32), "int")));
         FunctionDeclaration fd = new FunctionDeclaration(
             new Span("test.deal", 1, 1, 1, 40), "sum2",
             List.of(),
-            Optional.of(restParam),
             new NamedType(new Span("test.deal", 1, 38, 1, 40), "null"),
-            new Block(new Span("test.deal", 1, 42, 2, 2), List.of()), false);
+            new Block(new Span("test.deal", 1, 42, 2, 2), List.of()), false, false);
 
-        ProgramNode prog = new ProgramNode(span, List.of(fd));
+        IdentifierExpr sumId = new IdentifierExpr(
+            new Span("test.deal", 3, 1, 3, 5), "sum2");
+        VariableDeclaration var = new VariableDeclaration(
+            new Span("test.deal", 3, 1, 3, 5), "g",
+            Optional.empty(), sumId);
 
+        ProgramNode prog = new ProgramNode(span, List.of(fd, var));
+
+        Type.Func funcType = Types.func(List.of(), Type.Null.INSTANCE);
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
+        typeMap.put(sumId, funcType);
+        typeMap.put(var.initializer(), funcType);
         SymbolTable st = new SymbolTable();
-        st.define("sum2", new Symbol.FunctionSymbol("sum2",
-            Types.func(List.of(), new Type.Array(Type.Int.INSTANCE), Type.Null.INSTANCE)));
+        st.define("sum2", new Symbol.FunctionSymbol("sum2", funcType));
+        st.define("g", new Symbol.VariableSymbol("g", funcType, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
         String ir = IrDumper.dump(prog, result, "test");
-        assertContains(ir, "rest param values: [int]", "rest param declaration uses [int]");
+        assertContains(ir, "()->null", "zero-param function uses ()->null");
+        assertNotContains(ir, "rest param", "no rest-param IR node in v1.2");
         System.out.println("OK");
     }
 
@@ -754,12 +745,12 @@ public class TypeDescriptorTest {
             new NamedType(new Span("test.deal", 1, 19, 1, 21), "int"));
         FunctionDeclaration fd = new FunctionDeclaration(
             new Span("test.deal", 1, 1, 1, 35), "fetch",
-            List.of(param), Optional.empty(),
+            List.of(param),
             new NamedType(new Span("test.deal", 1, 33, 1, 35), "int"),
             new Block(new Span("test.deal", 1, 37, 2, 2),
                 List.of(new ReturnStatement(new Span("test.deal", 2, 3, 2, 15),
                     Optional.of(new LiteralExpr(new Span("test.deal", 2, 10, 2, 10),
-                        new LiteralValue.IntLiteral(42)))))), false);
+                        new LiteralValue.IntLiteral(42)))))), false, false);
 
         IdentifierExpr id = new IdentifierExpr(new Span("test.deal", 3, 1, 3, 6), "fetch");
         VariableDeclaration var = new VariableDeclaration(
@@ -771,7 +762,7 @@ public class TypeDescriptorTest {
         // Build async func type: async(int)->string
         Type.Array retArr = new Type.Array(Type.String.INSTANCE);
         Type.Func funcType = new Type.Func(
-            List.of(Type.Int.INSTANCE), Optional.empty(), Type.String.INSTANCE, true);
+            List.of(Type.Int.INSTANCE), Type.String.INSTANCE, true);
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
         typeMap.put(id, funcType);

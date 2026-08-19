@@ -130,10 +130,6 @@ public final class IrDumper implements Visitor<String> {
                     if (i > 0) sb.append(",");
                     sb.append(specTypeDescriptor(f.paramTypes().get(i)));
                 }
-                if (f.restType().isPresent()) {
-                    if (!f.paramTypes().isEmpty()) sb.append(",");
-                    sb.append("...").append(specTypeDescriptor(f.restType().get()));
-                }
                 sb.append(")->").append(specTypeDescriptor(f.returnType()));
                 yield sb.toString();
             }
@@ -158,10 +154,6 @@ public final class IrDumper implements Visitor<String> {
                 for (int i = 0; i < ft.params().size(); i++) {
                     if (i > 0) sb.append(",");
                     sb.append(typeNodeToSpecDescriptor(ft.params().get(i).type()));
-                }
-                if (ft.rest().isPresent()) {
-                    if (!ft.params().isEmpty()) sb.append(",");
-                    sb.append("...").append(typeNodeToSpecDescriptor(ft.rest().get().type()));
                 }
                 sb.append(")->").append(typeNodeToSpecDescriptor(ft.returnType()));
                 yield sb.toString();
@@ -381,9 +373,6 @@ public final class IrDumper implements Visitor<String> {
         for (Parameter param : node.params()) {
             sb.append(visitParam(param));
         }
-        if (node.restParam().isPresent()) {
-            sb.append(visitRestParam(node.restParam().get()));
-        }
         if (node.body() != null) {
             sb.append(indent()).append("body\n");
             pushIndent();
@@ -414,16 +403,6 @@ public final class IrDumper implements Visitor<String> {
             .append(": ").append(typeDesc)
             .append(" ").append(spanStr(param.span())).append("\n");
         sb.append(indent()).append("  ").append(boundary("param-entry")).append("\n");
-        return sb.toString();
-    }
-
-    private String visitRestParam(Parameter param) {
-        StringBuilder sb = new StringBuilder();
-        String typeDesc = typeNodeToSpecDescriptor(param.type());
-        sb.append(indent()).append("rest param ").append(param.name())
-            .append(": ").append(typeDesc)
-            .append(" ").append(spanStr(param.span())).append("\n");
-        sb.append(indent()).append("  ").append(boundary("rest-construct")).append("\n");
         return sb.toString();
     }
 
@@ -835,9 +814,6 @@ public final class IrDumper implements Visitor<String> {
         for (Parameter param : node.params()) {
             sb.append(visitParam(param));
         }
-        if (node.restParam().isPresent()) {
-            sb.append(visitRestParam(node.restParam().get()));
-        }
         if (node.body() != null) {
             sb.append(indent()).append("body\n");
             pushIndent();
@@ -950,9 +926,6 @@ public final class IrDumper implements Visitor<String> {
         pushIndent();
         for (FunctionTypeParam p : node.params()) {
             sb.append(dispatchTypeNode(p.type()));
-        }
-        if (node.rest().isPresent()) {
-            sb.append(dispatchTypeNode(node.rest().get().type()));
         }
         sb.append(dispatchTypeNode(node.returnType()));
         popIndent();

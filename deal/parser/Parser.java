@@ -235,10 +235,13 @@ public final class Parser {
         if (returnType == null) { synchronize(); return null; }
 
         Block body;
+        boolean isExternal = false;
         if (peek().type() == TokenType.LBRACE) {
             body = parseBlock();
         } else if (match(TokenType.SEMICOLON)) {
+            // External function declaration (declaration files only).
             body = new Block(spanOf(previous()), List.of());
+            isExternal = true;
         } else {
             error(DiagnosticCode.E1012, "Expected '{' for function body", peek());
             body = emptyBlock();
@@ -247,7 +250,7 @@ public final class Parser {
 
         Span sp = spanBetween(startToken, previousOrCurrent());
         return new FunctionDeclaration(sp, nameToken.lexeme(),
-                paramResult.params, paramResult.restParam, returnType, body, isAsync);
+                paramResult.params, returnType, body, isAsync, isExternal);
     }
 
     // -- VariableDeclaration --
@@ -575,18 +578,24 @@ public final class Parser {
         Token lparen = advance();  // consumes LPAREN (or whatever if not a function type)
 
         List<FunctionTypeParam> params = new ArrayList<>();
-        Optional<FunctionTypeParam> rest = Optional.empty();
 
         if (peek().type() != TokenType.RPAREN) {
             if (peek().type() == TokenType.ELLIPSIS) {
-                rest = Optional.ofNullable(parseFunctionTypeRest());
+                // DEAL v1.2: function types have no rest arm.
+                error(DiagnosticCode.E1047,
+                    "Rest parameters are not supported in DEAL v1.2 (function types carry no rest arm)",
+                    peek());
+                skipRestArmTokens();
             } else {
                 FunctionTypeParam first = parseFunctionTypeParam();
                 if (first != null) params.add(first);
 
                 while (match(TokenType.COMMA) && peek().type() != TokenType.RPAREN) {
                     if (peek().type() == TokenType.ELLIPSIS) {
-                        rest = Optional.ofNullable(parseFunctionTypeRest());
+                        error(DiagnosticCode.E1047,
+                            "Rest parameters are not supported in DEAL v1.2 (function types carry no rest arm)",
+                            peek());
+                        skipRestArmTokens();
                         break;
                     }
                     FunctionTypeParam param = parseFunctionTypeParam();
@@ -611,7 +620,7 @@ public final class Parser {
         }
 
         return new FunctionType(spanBetween(lparen, previousOrCurrent()),
-                List.copyOf(params), rest, returnType, isAsync);
+                List.copyOf(params), returnType, isAsync);
     }
 
     private FunctionTypeParam parseFunctionTypeParam() {
@@ -630,21 +639,17 @@ public final class Parser {
                 nameToken.lexeme(), type);
     }
 
-    private FunctionTypeParam parseFunctionTypeRest() {
-        Token ellipsis = advance();
-        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1029,
-                "Expected rest parameter name");
-        if (nameToken == null) return null;
-
-        if (!match(TokenType.COLON)) {
-            error(DiagnosticCode.E1008, "Expected ':' after rest parameter name", peek());
-            return null;
+    /**
+     * Recovery after an E1047 rest-arm rejection inside a function type:
+     * consume the ellipsis, the (optional) parameter name, the ':' and the
+     * type so the caller can resume at the expected ')'.
+     */
+    private void skipRestArmTokens() {
+        advance();  // ELLIPSIS
+        if (match(TokenType.IDENTIFIER)) {
+            match(TokenType.COLON);
+            parseType();
         }
-        TypeNode type = parseType();
-        if (type == null) return null;
-
-        return new FunctionTypeParam(spanBetween(ellipsis, previousOrCurrent()),
-                nameToken.lexeme(), type);
     }
 
     private TypeNode parseNullableType() {
@@ -763,20 +768,21 @@ public final class Parser {
     // Parameter list parsing
     // =======================================================================
 
-    private record ParamListResult(List<Parameter> params, Optional<Parameter> restParam) {}
+    private record ParamListResult(List<Parameter> params) {}
 
     private ParamListResult parseParameterList() {
         List<Parameter> params = new ArrayList<>();
-        Optional<Parameter> restParam = Optional.empty();
 
         if (peek().type() == TokenType.RPAREN) {
-            return new ParamListResult(params, restParam);
+            return new ParamListResult(params);
         }
 
         if (peek().type() == TokenType.ELLIPSIS) {
-            Parameter rest = parseRestParameter();
-            if (rest != null) restParam = Optional.of(rest);
-            return new ParamListResult(params, restParam);
+            // DEAL v1.2: rest parameters were removed from the language.
+            error(DiagnosticCode.E1047,
+                "Rest parameters are not supported in DEAL v1.2", peek());
+            skipRestParameterTokens();
+            return new ParamListResult(params);
         }
 
         Parameter first = parseParameter();
@@ -785,8 +791,9 @@ public final class Parser {
         while (match(TokenType.COMMA)) {
             if (peek().type() == TokenType.RPAREN) break;
             if (peek().type() == TokenType.ELLIPSIS) {
-                Parameter rest = parseRestParameter();
-                if (rest != null) restParam = Optional.of(rest);
+                error(DiagnosticCode.E1047,
+                    "Rest parameters are not supported in DEAL v1.2", peek());
+                skipRestParameterTokens();
                 break;
             }
             Parameter param = parseParameter();
@@ -794,7 +801,7 @@ public final class Parser {
             else break;
         }
 
-        return new ParamListResult(params, restParam);
+        return new ParamListResult(params);
     }
 
     private Parameter parseParameter() {
@@ -812,20 +819,17 @@ public final class Parser {
                 nameToken.lexeme(), type);
     }
 
-    private Parameter parseRestParameter() {
-        Token ellipsis = advance();
-        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1029, "Expected rest parameter name");
-        if (nameToken == null) return null;
-
-        if (!match(TokenType.COLON)) {
-            error(DiagnosticCode.E1008, "Expected ':' after rest parameter name", peek());
-            return null;
+    /**
+     * Recovery after an E1047 rest-parameter rejection inside a parameter
+     * list: consume the ellipsis, the (optional) parameter name, the ':'
+     * and the type so the caller can resume at the expected ')'.
+     */
+    private void skipRestParameterTokens() {
+        advance();  // ELLIPSIS
+        if (match(TokenType.IDENTIFIER)) {
+            match(TokenType.COLON);
+            parseType();
         }
-        TypeNode type = parseType();
-        if (type == null) return null;
-
-        return new Parameter(spanBetween(ellipsis, previousOrCurrent()),
-                nameToken.lexeme(), type);
     }
 
     // =======================================================================
@@ -1419,7 +1423,7 @@ public final class Parser {
         }
 
         Span sp = spanBetween(startToken, previousOrCurrent());
-        return new FunctionExpr(sp, paramResult.params, paramResult.restParam, returnType, body, isAsync);
+        return new FunctionExpr(sp, paramResult.params, returnType, body, isAsync);
     }
 
     private ExpressionNode parseArrayLiteral() {

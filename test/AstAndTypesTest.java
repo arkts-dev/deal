@@ -301,8 +301,8 @@ public class AstAndTypesTest {
         check(classDecl instanceof StatementNode, "ClassDeclaration is StatementNode");
 
         FunctionDeclaration funcDecl = new FunctionDeclaration(span, "f",
-            List.of(param), Optional.empty(),
-            new NamedType(span, "int"), emptyBlock, false);
+            List.of(param),
+            new NamedType(span, "int"), emptyBlock, false, false);
         check(funcDecl.name().equals("f"), "FunctionDeclaration");
         check(funcDecl instanceof StatementNode, "FunctionDeclaration is StatementNode");
 
@@ -427,7 +427,7 @@ public class AstAndTypesTest {
         check(obj instanceof ExpressionNode, "ObjectLiteralExpr is ExpressionNode");
 
         FunctionExpr funcExpr = new FunctionExpr(span, List.of(),
-            Optional.empty(), new NamedType(span, "null"), emptyBlock, false);
+            new NamedType(span, "null"), emptyBlock, false);
         check(funcExpr instanceof ExpressionNode, "FunctionExpr is ExpressionNode");
 
         HasExpr has = new HasExpr(span, id, "optField");
@@ -470,7 +470,7 @@ public class AstAndTypesTest {
 
         FunctionTypeParam ftp = new FunctionTypeParam(span, "p", namedType);
         deal.ast.FunctionType funcType = new deal.ast.FunctionType(span,
-            List.of(ftp), Optional.empty(), namedType, false);
+            List.of(ftp), namedType, false);
         check(funcType.params().size() == 1, "FunctionType with 1 param");
         check(funcType instanceof TypeNode, "FunctionType is TypeNode");
 
@@ -565,13 +565,7 @@ public class AstAndTypesTest {
         check(f1.paramTypes().size() == 1, "func (int)=>boolean param count");
         check(f1.paramTypes().get(0) == Type.Int.INSTANCE, "func (int)=>boolean param type");
         check(f1.returnType() == Type.Boolean.INSTANCE, "func (int)=>boolean return type");
-        check(f1.restType().isEmpty(), "func (int)=>boolean no rest");
-
-        // Rule 13: function type with rest
-        Type.Array strArr = Types.array(Type.String.INSTANCE);
-        Type.Func f2 = Types.func(List.of(Type.Int.INSTANCE), strArr, Type.Boolean.INSTANCE);
-        check(f2.restType().isPresent(), "func (int,...string[])=>boolean has rest");
-        check(Types.equals(f2.restType().get(), strArr), "func rest type matches");
+        // DEAL v1.2: function types carry no rest arm.
 
         // Class type
         Type.Class cls = Types.classType("User", "main");
@@ -644,11 +638,6 @@ public class AstAndTypesTest {
         Type.Func f4 = Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE);
         check(!Types.equals(f1, f4), "(int)=>boolean != (int)=>int");
 
-        // Function with rest
-        Type.Array strArr = Types.array(Type.String.INSTANCE);
-        Type.Func f5 = Types.func(List.of(Type.Int.INSTANCE), strArr, Type.Boolean.INSTANCE);
-        Type.Func f6 = Types.func(List.of(Type.Int.INSTANCE), strArr, Type.Boolean.INSTANCE);
-        check(Types.equals(f5, f6), "(int,...string[])=>boolean == (int,...string[])=>boolean");
 
         // Null-safe
         check(!Types.equals(null, Type.Int.INSTANCE), "null != int");
@@ -693,14 +682,6 @@ public class AstAndTypesTest {
         Type.Func f1p = Types.func(List.of(Type.Number.INSTANCE), Type.Boolean.INSTANCE);
         check(!Types.isAssignable(f1p, f2), "param type mismatch: number vs int");
 
-        // Rest params: must match exactly
-        Type.Array strArr = Types.array(Type.String.INSTANCE);
-        Type.Func fRest = Types.func(List.of(Type.Int.INSTANCE), strArr, Type.Boolean.INSTANCE);
-        Type.Func fRest2 = Types.func(List.of(Type.Int.INSTANCE, Type.Int.INSTANCE), strArr, Type.Boolean.INSTANCE);
-        check(!Types.isAssignable(fRest, fRest2),
-            "rest params don't participate in arity extension");
-        check(Types.isAssignable(fRest, fRest),
-            "rest param func assignable to itself");
     }
 
     // -----------------------------------------------------------------------

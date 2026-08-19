@@ -1761,7 +1761,7 @@ public class BackendConformanceTest {
             if (stmt instanceof ExportDeclaration ed
                     && ed.declaration() instanceof FunctionDeclaration fd) {
                 String fn = JvmBackend.javaName(fd.name());
-                if (fd.params().isEmpty() && fd.restParam().isEmpty()) {
+                if (fd.params().isEmpty()) {
                     any = true;
                     if (isNullReturnType(fd.returnType())) {
                         sb.append("            ").append(className).append('.')

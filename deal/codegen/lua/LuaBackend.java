@@ -280,7 +280,7 @@ public final class LuaBackend implements Visitor<Void> {
     /**
      * The generated Lua source together with the backend diagnostics
      * produced during generation. Production callers merge the diagnostics
-     * into the compilation report so backend rejections (E6003/E6004) fail
+     * into the compilation report so backend rejections (E6004) fail
      * the compilation instead of being silently dropped.
      */
     public record GenerationResult(String lua, List<Diagnostic> diagnostics) {}
@@ -749,7 +749,6 @@ public final class LuaBackend implements Visitor<Void> {
             return ft != null
                 && !ft.isAsync()
                 && ft.paramTypes().isEmpty()
-                && ft.restType().isEmpty()
                 && ft.returnType() instanceof Type.Null;
         }
         return false;
@@ -924,12 +923,6 @@ public final class LuaBackend implements Visitor<Void> {
                     if (i > 0) sb.append(",");
                     sb.append(typeDescriptor(f.paramTypes().get(i)));
                 }
-                // DEAL v1.2 removed rest parameters: the descriptor has no
-                // rest arm. A Func value that still carries a restType
-                // (frontend accepts it until the v1.2 hard break lands)
-                // emits the fixed-parameter descriptor; its declaration
-                // site already failed with E6003, so no valid program
-                // reaches this fallback.
                 sb.append(")->").append(typeDescriptor(f.returnType()));
                 yield sb.toString();
             }
@@ -1165,18 +1158,7 @@ public final class LuaBackend implements Visitor<Void> {
             mainDeclSpan = node.span();
         }
 
-        // DEAL v1.2 has no rest parameters. The LuaJIT backend does not
-        // lower them: a declaration using one is a backend error (E6003).
-        // The frontend v1.2 hard break (rest-parameter rejection) is
-        // owned by the frontend issue; until it lands, the backend rejects
-        // rest declarations here.
-        node.restParam().ifPresent(rest ->
-            addDiagnostic(DiagnosticCode.E6003,
-                "rest parameters are not part of DEAL v1.2; "
-                    + "declare an explicit array parameter instead",
-                rest.span()));
-
-        // Build parameter list (fixed parameters only — no vararg header).
+        // DEAL v1.2: fixed parameter list only (no rest parameters).
         StringBuilder paramList = new StringBuilder();
         for (int i = 0; i < node.params().size(); i++) {
             if (i > 0) paramList.append(", ");
@@ -2250,15 +2232,7 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     private String emitFunctionExpr(FunctionExpr fe) {
-        // DEAL v1.2 has no rest parameters: a function expression using one
-        // is rejected (E6003) and never lowered.
-        fe.restParam().ifPresent(rest ->
-            addDiagnostic(DiagnosticCode.E6003,
-                "rest parameters are not part of DEAL v1.2; "
-                    + "declare an explicit array parameter instead",
-                rest.span()));
-
-        // Build parameter list (fixed parameters only — no vararg header).
+        // DEAL v1.2: fixed parameter list only (no rest parameters).
         StringBuilder paramList = new StringBuilder();
         for (int i = 0; i < fe.params().size(); i++) {
             if (i > 0) paramList.append(", ");
@@ -2991,14 +2965,7 @@ public final class LuaBackend implements Visitor<Void> {
                 }
                 Type ret = resolveTypeNode(ft.returnType());
                 if (ret == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
-                if (ft.rest().isPresent()) {
-                    Type rest = resolveTypeNode(ft.rest().get().type());
-                    if (rest instanceof Type.Array ra) {
-                        yield new Type.Func(paramTypes, Optional.of(ra), ret, ft.isAsync());
-                    }
-                    yield Type.Error.INSTANCE;
-                }
-                yield new Type.Func(paramTypes, Optional.empty(), ret, ft.isAsync());
+                yield new Type.Func(paramTypes, ret, ft.isAsync());
             }
         };
     }

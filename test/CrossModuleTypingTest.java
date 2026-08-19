@@ -170,14 +170,14 @@ public class CrossModuleTypingTest {
             "Child", childType,
             "MaybeChild", maybeChildType,
             "Parent$fromJson", new Type.Func(List.of(Type.String.INSTANCE),
-                Optional.empty(), Types.nullable(parentType)),
+                Types.nullable(parentType)),
             "Parent$toJson", new Type.Func(List.of(parentType),
-                Optional.empty(), Type.String.INSTANCE),
+                Type.String.INSTANCE),
             "MaybeChild$fromJson", new Type.Func(List.of(Type.String.INSTANCE),
-                Optional.empty(), Types.nullable(maybeChildType)),
+                Types.nullable(maybeChildType)),
             "makeParent", new Type.Func(
                 List.of(Type.Int.INSTANCE, Type.Int.INSTANCE),
-                Optional.empty(), parentType)));
+                parentType)));
         return resolver;
     }
 

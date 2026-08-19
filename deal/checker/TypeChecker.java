@@ -614,6 +614,9 @@ public final class TypeChecker {
                     fos.span());
             }
         } else if (iterableType instanceof Type.String) {
+            // DEAL v1.2: strings are Unicode scalar-value sequences; for-of
+            // yields one `string` containing exactly one Unicode scalar
+            // value per iteration, so the loop variable must be `string`.
             if (!(varType instanceof Type.String)) {
                 error(DiagnosticCode.E3015,
                     "For-of over string requires loop variable type string, got "
@@ -988,13 +991,6 @@ public final class TypeChecker {
             Type savedExpected = expectedType;
             if (paramTypesForContext != null && i < paramTypesForContext.size()) {
                 expectedType = paramTypesForContext.get(i);
-            } else if (paramTypesForContext != null && i >= paramTypesForContext.size()
-                    && hasRestParam(call)) {
-                // Rest parameter: use the element type
-                Type restElem = getRestElementType(call);
-                if (restElem != null) {
-                    expectedType = restElem;
-                }
             }
             argTypes.add(checkExpression(arg));
             expectedType = savedExpected;
@@ -1034,11 +1030,7 @@ public final class TypeChecker {
         if (call.callee() instanceof IdentifierExpr id) {
             Symbol sym = currentScope.resolve(id.name());
             if (sym instanceof Symbol.FunctionSymbol fs) {
-                List<Type> pts = new ArrayList<>(fs.funcType().paramTypes());
-                if (fs.funcType().restType().isPresent()) {
-                    pts.add(fs.funcType().restType().get().element());
-                }
-                return pts;
+                return new ArrayList<>(fs.funcType().paramTypes());
             }
             if (sym instanceof Symbol.IntrinsicSymbol is) {
                 if (is.type() instanceof Type.Func ft) {
@@ -1048,66 +1040,22 @@ public final class TypeChecker {
         }
         Type calleeType = typeMap.get(call.callee());
         if (calleeType instanceof Type.Func ft) {
-            List<Type> pts = new ArrayList<>(ft.paramTypes());
-            if (ft.restType().isPresent()) {
-                pts.add(ft.restType().get().element());
-            }
-            return pts;
+            return new ArrayList<>(ft.paramTypes());
         }
         calleeType = checkExpression(call.callee());
         if (calleeType instanceof Type.Func ft) {
-            List<Type> pts = new ArrayList<>(ft.paramTypes());
-            if (ft.restType().isPresent()) {
-                pts.add(ft.restType().get().element());
-            }
-            return pts;
-        }
-        return null;
-    }
-
-    private boolean hasRestParam(CallExpr call) {
-        if (call.callee() instanceof IdentifierExpr id) {
-            Symbol sym = currentScope.resolve(id.name());
-            if (sym instanceof Symbol.FunctionSymbol fs) {
-                return fs.funcType().restType().isPresent();
-            }
-        }
-        Type calleeType = typeMap.get(call.callee());
-        if (calleeType instanceof Type.Func ft) {
-            return ft.restType().isPresent();
-        }
-        return false;
-    }
-
-    private Type getRestElementType(CallExpr call) {
-        if (call.callee() instanceof IdentifierExpr id) {
-            Symbol sym = currentScope.resolve(id.name());
-            if (sym instanceof Symbol.FunctionSymbol fs
-                    && fs.funcType().restType().isPresent()) {
-                return fs.funcType().restType().get().element();
-            }
-        }
-        Type calleeType = typeMap.get(call.callee());
-        if (calleeType instanceof Type.Func ft && ft.restType().isPresent()) {
-            return ft.restType().get().element();
+            return new ArrayList<>(ft.paramTypes());
         }
         return null;
     }
 
     private Type checkFunctionCall(CallExpr call, Type.Func funcType, List<Type> argTypes) {
         int paramCount = funcType.paramTypes().size();
-        boolean hasRest = funcType.restType().isPresent();
 
-        if (!hasRest && argTypes.size() != paramCount) {
+        // DEAL v1.2: fixed arity only — function types carry no rest arm.
+        if (argTypes.size() != paramCount) {
             error(DiagnosticCode.E3009,
                 "Function argument count mismatch: expected " + paramCount
-                + ", got " + argTypes.size(),
-                call.span());
-            return Type.Error.INSTANCE;
-        }
-        if (hasRest && argTypes.size() < paramCount) {
-            error(DiagnosticCode.E3009,
-                "Function argument count mismatch: expected at least " + paramCount
                 + ", got " + argTypes.size(),
                 call.span());
             return Type.Error.INSTANCE;
@@ -1126,22 +1074,6 @@ public final class TypeChecker {
             }
         }
 
-        if (hasRest) {
-            Type.Array restArr = funcType.restType().get();
-            Type restElemType = restArr.element();
-            for (int i = paramCount; i < argTypes.size(); i++) {
-                Type argType = argTypes.get(i);
-                if (argType == Type.Error.INSTANCE) continue;
-                if (!isAssignable(restElemType, argType)) {
-                    error(DiagnosticCode.E5001,
-                        "Rest argument type mismatch at position " + (i + 1)
-                        + ": expected " + typeName(restElemType)
-                        + ", got " + typeName(argType),
-                        call.args().get(i).span());
-                }
-            }
-        }
-
         return funcType.returnType();
     }
 
@@ -1155,7 +1087,10 @@ public final class TypeChecker {
 
         String field = mae.field();
 
-        // Array length intrinsic
+        // `length` intrinsic property (v1.2: arrays and bytes only — a
+        // `string` is a Unicode scalar-value sequence and has no `.length`;
+        // string lengths are stdlib `string.length(s)` measured in scalar
+        // values).
         if (objType instanceof Type.Array && field.equals("length")) {
             return Type.Int.INSTANCE;
         }
@@ -1411,10 +1346,8 @@ public final class TypeChecker {
         for (Parameter p : fe.params()) {
             paramTypes.add(nameResolver.resolveTypeNode(p.type()));
         }
-        Optional<Type.Array> restType = fe.restParam()
-            .map(rp -> (Type.Array) nameResolver.resolveTypeNode(rp.type()));
         Type returnType = nameResolver.resolveTypeNode(fe.returnType());
-        Type.Func funcType = new Type.Func(paramTypes, restType, returnType, fe.isAsync());
+        Type.Func funcType = new Type.Func(paramTypes, returnType, fe.isAsync());
 
         // F1: Check if Pass 1 recorded a scope for this function expression.
         // If so, use it instead of creating a fresh scope — this ensures
@@ -1437,15 +1370,6 @@ public final class TypeChecker {
                 Type pt = nameResolver.resolveTypeNode(p.type());
                 currentScope.define(p.name(), new Symbol.VariableSymbol(p.name(), pt, true));
             }
-            fe.restParam().ifPresent(rp -> {
-                if (paramNames.contains(rp.name())) {
-                    error(DiagnosticCode.E2002, "Duplicate parameter '" + rp.name() + "'", rp.span());
-                    return;
-                }
-                paramNames.add(rp.name());
-                Type rt = nameResolver.resolveTypeNode(rp.type());
-                currentScope.define(rp.name(), new Symbol.VariableSymbol(rp.name(), rt, true));
-            });
         }
 
         Type savedReturnType = currentReturnType;
@@ -1627,7 +1551,6 @@ public final class TypeChecker {
      * match. This should emit E5004 instead of E3001.
      */
     private static boolean isReverseArity(Type.Func actual, Type.Func target) {
-        if (actual.restType().isPresent() || target.restType().isPresent()) return false;
         if (!Types.equals(actual.returnType(), target.returnType())) return false;
         int actualCount = actual.paramTypes().size();
         int targetCount = target.paramTypes().size();

@@ -7,7 +7,7 @@
       "description": "A module exports a class and a factory returning it; the entry annotates the value with the imported qualified type lib.Point, reads its fields, and computes 3 * 10 + 4 = 34 -- the exported class emits the same generated nested class as a local one and the importer references Lib.$C_Point",
       "modules": {
         "lib.deal": "export class Point {\n  x: int = 0;\n  y: int = 0;\n}\nexport function make(x: int, y: int): Point { return { x: x, y: y }; }",
-        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int {\n  let p: lib.Point = lib.make(3, 4);\n  return p.x * 10 + p.y;\n}"
+        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let p: lib.Point = lib.make(3, 4);\n  return p.x * 10 + p.y;\n}"
       },
       "entry": "main.deal",
       "expectedOutput": "34",
@@ -28,7 +28,7 @@
       "description": "The entry constructs an imported class directly: the empty literal receives every declared default inline, a partial literal receives defaults for omitted fields, and provided fields land in declaration order regardless of literal order (10 + 20*10 + (2+5) = 217)",
       "modules": {
         "lib.deal": "export class Point {\n  x: int = 10;\n  y: int = 20;\n}\nexport function sum(p: Point): int { return p.x + p.y; }",
-        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int {\n  let a: lib.Point = {};\n  let b: lib.Point = { y: 5, x: 2 };\n  return a.x + a.y * 10 + lib.sum(b);\n}"
+        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let a: lib.Point = {};\n  let b: lib.Point = { y: 5, x: 2 };\n  return a.x + a.y * 10 + lib.sum(b);\n}"
       },
       "entry": "main.deal",
       "expectedOutput": "217",
@@ -49,7 +49,7 @@
       "description": "Provided-field evaluation order crosses the module boundary in literal order: mark runs y-first before x-second even though the constructor argument order is x then y, and the sum reads 2 + 5 = 7 (spec sec.Construction provided-fields evaluation)",
       "modules": {
         "lib.deal": "export class Pt {\n  x: int = 0;\n  y: int = 0;\n}\nexport function sum(p: Pt): int { return p.x + p.y; }",
-        "main.deal": "import * as lib from \"./lib\"\nimport * as console from \"std/console\"\nfunction mark(v: int, label: string): int { console.log(label); return v; }\nexport function run(): int {\n  let p: lib.Pt = { y: mark(5, \"y-first\"), x: mark(2, \"x-second\") };\n  return lib.sum(p);\n}"
+        "main.deal": "import * as lib from \"./lib\"\nimport * as console from \"std/console\"\nexport function main(): null { return null; }\n\nfunction mark(v: int, label: string): int { console.log(label); return v; }\nexport function run(): int {\n  let p: lib.Pt = { y: mark(5, \"y-first\"), x: mark(2, \"x-second\") };\n  return lib.sum(p);\n}"
       },
       "entry": "main.deal",
       "expectedOutput": "y-first\nx-second\n7",
@@ -67,7 +67,7 @@
       "description": "A class-typed value passed as a parameter across the module boundary: the entry constructs an imported class and hands it to the declaring module's function, which reads both fields (lib.sum(p) = 12)",
       "modules": {
         "lib.deal": "export class Pair {\n  left: int = 0;\n  right: int = 0;\n}\nexport function sum(p: Pair): int { return p.left + p.right; }",
-        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int {\n  let p: lib.Pair = { left: 5, right: 7 };\n  return lib.sum(p);\n}"
+        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let p: lib.Pair = { left: 5, right: 7 };\n  return lib.sum(p);\n}"
       },
       "entry": "main.deal",
       "expectedOutput": "12",
@@ -88,7 +88,7 @@
       "description": "A class value returned across the module boundary is mutated in the entry and passed back: the write is visible to the declaring module (7 + 5 = 12), pinning reference identity across the boundary",
       "modules": {
         "lib.deal": "export class Box {\n  value: int = 0;\n}\nexport function makeBox(): Box { return { value: 7 }; }\nexport function readBox(b: Box): int { return b.value; }",
-        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int {\n  let b: lib.Box = lib.makeBox();\n  b.value = b.value + 5;\n  return lib.readBox(b);\n}"
+        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let b: lib.Box = lib.makeBox();\n  b.value = b.value + 5;\n  return lib.readBox(b);\n}"
       },
       "entry": "main.deal",
       "expectedOutput": "12",
@@ -109,7 +109,7 @@
       "modules": {
         "modela.deal": "export class Item {\n  tag: string = \"\";\n}\nexport function tag(i: Item): string { return \"a:\" + i.tag; }",
         "modelb.deal": "export class Item {\n  tag: string = \"\";\n}\nexport function tag(i: Item): string { return \"b:\" + i.tag; }",
-        "main.deal": "import * as modela from \"./modela\"\nimport * as modelb from \"./modelb\"\nimport * as console from \"std/console\"\nexport function run(): null {\n  let a: modela.Item = { tag: \"one\" };\n  let b: modelb.Item = { tag: \"two\" };\n  console.log(modela.tag(a));\n  console.log(modelb.tag(b));\n}"
+        "main.deal": "import * as modela from \"./modela\"\nimport * as modelb from \"./modelb\"\nimport * as console from \"std/console\"\nexport function main(): null { return null; }\n\nexport function run(): null {\n  let a: modela.Item = { tag: \"one\" };\n  let b: modelb.Item = { tag: \"two\" };\n  console.log(modela.tag(a));\n  console.log(modelb.tag(b));\n}"
       },
       "entry": "main.deal",
       "expectedOutput": "a:one\nb:two",
@@ -129,7 +129,7 @@
       "description": "A genuine instance crossing the slice's untyped boundary (a table field read in an imported-class contextual target) passes the declaring module's runtime nominal check and its field reads back (from-a)",
       "modules": {
         "modela.deal": "export class Item {\n  tag: string = \"\";\n}\nexport function makeItem(tag: string): Item { return { tag: tag }; }\nexport function readItem(i: Item): string { return i.tag; }",
-        "main.deal": "import * as modela from \"./modela\"\nexport function run(): string {\n  let holder: table = { item: modela.makeItem(\"from-a\") };\n  let a: modela.Item = holder.item;\n  return modela.readItem(a);\n}"
+        "main.deal": "import * as modela from \"./modela\"\nexport function main(): null { return null; }\n\nexport function run(): string {\n  let holder: table = { item: modela.makeItem(\"from-a\") };\n  let a: modela.Item = holder.item;\n  return modela.readItem(a);\n}"
       },
       "entry": "main.deal",
       "expectedOutput": "from-a",
@@ -148,7 +148,7 @@
       "modules": {
         "modela.deal": "export class Item {\n  tag: string = \"\";\n}\nexport function makeItem(tag: string): Item { return { tag: tag }; }\nexport function readItem(i: Item): string { return i.tag; }",
         "modelb.deal": "export class Item {\n  tag: string = \"\";\n}\nexport function makeItem(tag: string): Item { return { tag: tag }; }\nexport function readItem(i: Item): string { return i.tag; }",
-        "main.deal": "import * as modela from \"./modela\"\nimport * as modelb from \"./modelb\"\nexport function run(): string {\n  let holder: table = { item: modela.makeItem(\"from-a\") };\n  let b: modelb.Item = holder.item;\n  return modelb.readItem(b);\n}"
+        "main.deal": "import * as modela from \"./modela\"\nimport * as modelb from \"./modelb\"\nexport function main(): null { return null; }\n\nexport function run(): string {\n  let holder: table = { item: modela.makeItem(\"from-a\") };\n  let b: modelb.Item = holder.item;\n  return modelb.readItem(b);\n}"
       },
       "entry": "main.deal",
       "expectedOutput": "expected instance of @modelb/Item, got @modela/Item",
@@ -166,7 +166,7 @@
       "description": "A null value crossing an imported-class typed table boundary fails the declaring module's nominal check with E8001 'expected class instance, got null' and exit 1 (the same shape the local-class slice pins for same-module checks)",
       "modules": {
         "modela.deal": "export class Item {\n  tag: string = \"\";\n}\nexport function readItem(i: Item): string { return i.tag; }",
-        "main.deal": "import * as modela from \"./modela\"\nexport function run(): string {\n  let holder: table = { item: null };\n  let a: modela.Item = holder.item;\n  return modela.readItem(a);\n}"
+        "main.deal": "import * as modela from \"./modela\"\nexport function main(): null { return null; }\n\nexport function run(): string {\n  let holder: table = { item: null };\n  let a: modela.Item = holder.item;\n  return modela.readItem(a);\n}"
       },
       "entry": "main.deal",
       "expectedOutput": "expected class instance, got null",
@@ -181,16 +181,16 @@
     },
     {
       "name": "jvm-xmod-class-unused-import-side-effect",
-      "description": "An import of a class-exporting module whose alias is never used still runs the imported module's load-time side effects (lib-class-initialized prints before the entry's own result), because the import trigger initializes the imported class exactly where LuaJIT runs require",
+      "description": "v1.2: module top level holds only declarations, so the An import of a class-exporting module whose alias is never used still runs the imported module's load-time side effects (lib-class-initialized prints before the entry's own result), because the import trigger initializes the imported class exactly where LuaJIT runs require",
       "modules": {
         "lib.deal": "import * as console from \"std/console\"\nconsole.log(\"lib-class-initialized\");\nexport class Marker {\n  id: int = 0;\n}",
         "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return 1; }"
       },
       "entry": "main.deal",
-      "expectedOutput": "lib-class-initialized\n1",
+      "expectedOutput": null,
       "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
       "irContains": [],
       "irNotContains": [],
       "backends": [
@@ -203,7 +203,7 @@
       "modules": {
         "modela.deal": "export class Item {\n  tag: string = \"\";\n}\nexport function makeItem(tag: string): Item { return { tag: tag }; }",
         "modelb.deal": "export class Item {\n  tag: string = \"\";\n}",
-        "main.deal": "import * as modela from \"./modela\"\nimport * as modelb from \"./modelb\"\nexport function run(): null {\n  let b: modelb.Item = modela.makeItem(\"x\");\n}"
+        "main.deal": "import * as modela from \"./modela\"\nimport * as modelb from \"./modelb\"\nexport function main(): null { return null; }\n\nexport function run(): null {\n  let b: modelb.Item = modela.makeItem(\"x\");\n}"
       },
       "entry": "main.deal",
       "expectedOutput": null,
@@ -221,7 +221,7 @@
       "description": "An entry-local function declares an imported-class parameter and return type: shift(p: lib.Point): lib.Point mutates and returns the value, and the caller reads the returned instance's fields (shifted x=4, sum=8, 8+4=12) \u2014 class-typed values pass and return through MAIN-side functions too, not only through the declaring module's",
       "modules": {
         "lib.deal": "export class Point {\n  x: int = 0;\n  y: int = 0;\n}\nexport function sum(p: Point): int { return p.x + p.y; }",
-        "main.deal": "import * as lib from \"./lib\"\nfunction shift(p: lib.Point): lib.Point {\n  p.x = p.x + 1;\n  return p;\n}\nexport function run(): int {\n  let p: lib.Point = { x: 3, y: 4 };\n  let q: lib.Point = shift(p);\n  return lib.sum(q) + q.y;\n}"
+        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nfunction shift(p: lib.Point): lib.Point {\n  p.x = p.x + 1;\n  return p;\n}\nexport function run(): int {\n  let p: lib.Point = { x: 3, y: 4 };\n  let q: lib.Point = shift(p);\n  return lib.sum(q) + q.y;\n}"
       },
       "entry": "main.deal",
       "expectedOutput": "12",

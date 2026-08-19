@@ -13,13 +13,18 @@ format (`T[]`, `T|null`) is accepted by `runtime.lua` for backward
 compatibility but is not the canonical format. ISSUE-0082 cycle 3 narrows
 the legacy dialect: `typeDescriptor` emits the spec prefix forms for
 function-involving nullables and arrays (`?(int)->int`, `[(int)->int]`,
-`[?(int)->int]`) and the full-array rest arm (`...T[]`), while every other
-nullable/array keeps the legacy `T|null`/`T[]` spelling. `runtime.lua`
-parses with order P: `?T` prefix → async strip + function branch → `|null`
-end-anchored suffix → `[]` suffix → `[T]` prefix → class → primitives →
-bare class name, so no emitted descriptor is ambiguous between
-`Nullable(Func)` and `Func(ret=Nullable)` or between `Array(Func)`-family
-and `Func(ret=Array)`-family.
+`[?(int)->int]`), while every other nullable/array keeps the legacy
+`T|null`/`T[]` spelling. `runtime.lua` parses with order P: `?T` prefix →
+async strip + function branch → `|null` end-anchored suffix → `[]` suffix →
+`[T]` prefix → class → primitives → bare class name, so no emitted
+descriptor is ambiguous between `Nullable(Func)` and `Func(ret=Nullable)`
+or between `Array(Func)`-family and `Func(ret=Array)`-family.
+
+**DEAL v1.2**: rest parameters were removed from the language
+(spec-v1.2 §Types and §Runtime type descriptor format), so the function
+descriptor carries no rest arm: `ParamDescriptor ::= RuntimeTypeDescriptor`
+only.  The legacy `...` rest rows and the `...T[]` emission dialect are
+retired with v1.1.
 
 ---
 
@@ -31,7 +36,7 @@ and `Func(ret=Array)`-family.
 | `boolean` | Lua boolean | `boolean` (primitive) | |
 | `int` | Lua number in `[-(2^53-1), 2^53-1]` | `long` (primitive) | Runtime-checked for safe integer range |
 | `number` | Lua number (IEEE 754 double) | `double` (primitive) | |
-| `string` | Lua string (UTF-8 byte sequence) | `java.lang.String` | |
+| `string` | Lua string containing valid UTF-8 (spec-v1.2: a DEAL `string` is a Unicode scalar-value sequence; values crossing untrusted or backend-native boundaries must reject invalid encodings) | `java.lang.String` with no unpaired surrogate code units | |
 | `table` | Lua table with string keys | `DealTable` runtime object | Dynamic key-value container |
 
 ## Builtin class types
@@ -87,15 +92,6 @@ and `Func(ret=Array)`-family.
 | `([int])->int` | Wrapper table `{__kind="function", sig="...", f}` | `DealFunction` wrapper | Array param |
 | `(?int)->int` | Wrapper table `{__kind="function", sig="...", f}` | `DealFunction` wrapper | Nullable param |
 
-## Rest parameter types
-
-| DEAL Type Descriptor (spec format) | LuaJIT Representation | JVM Representation | Notes |
-|---|---|---|---|
-| `(...[int])->null` | Wrapper table with rest handling | `DealFunction` with varargs | Rest-only function. Cycle 3: `typeDescriptor` emits the legacy-dialect equivalent `...int[]`; the runtime wrapper accepts both `...T[]` and `...[T]` via `array_element_descriptor` |
-| `(string,...[int])->null` | Wrapper table with rest handling | `DealFunction` with varargs | Mixed fixed+rest (emitted as `(string,...int[])->null`) |
-| `(int,...[string])->null` | Wrapper table with rest handling | `DealFunction` with varargs | Fixed int + rest string (emitted as `(int,...string[])->null`) |
-| `(...[(int)->int])->null` | Wrapper table with rest handling | `DealFunction` with varargs | Rest of function elements (cycle 3: emitted as `...[(int)->int]` — the full array descriptor; the bare `...T` rest form is retired, and a pre-wrapped host sig using it fails the loader identity check with E8011) |
-
 ## Async function types
 
 | DEAL Type Descriptor (spec format) | LuaJIT Representation | JVM Representation | Notes |
@@ -103,8 +99,6 @@ and `Func(ret=Array)`-family.
 | `async()->null` | Coroutine-based wrapper | `DealAsyncFunction` wrapper | [specified, not yet implemented] |
 | `async(int)->string` | Coroutine-based wrapper | `DealAsyncFunction` wrapper | [specified, not yet implemented] |
 | `async(int,int)->int` | Coroutine-based wrapper | `DealAsyncFunction` wrapper | [specified, not yet implemented] |
-| `async(...[int])->null` | Coroutine-based wrapper | `DealAsyncFunction` wrapper | [specified, not yet implemented] |
-| `async(string,...[int])->null` | Coroutine-based wrapper | `DealAsyncFunction` wrapper | [specified, not yet implemented] |
 
 ## Edge cases
 
@@ -158,17 +152,15 @@ ParamDescriptorList ::=
 
 ParamDescriptor ::=
     RuntimeTypeDescriptor
-    | "..." ArrayDescriptor
 ```
 
 **Constraints**:
 - `NullableDescriptor` inner type must not be `null` and must not be another `NullableDescriptor`.
-- `ParamDescriptor` with `...` requires `ArrayDescriptor` (not a bare primitive).
 - `AsyncMarker` is only valid immediately before a `FunctionDescriptor`.
 
 **Notes**:
 - Parsing drift (ISSUE-0082, cycle 3): `runtime.lua`'s `parse_descriptor` adopts order P — `?T` prefix → async strip + function branch → `|null` end-anchored suffix → `[]` suffix → `[T]` prefix → class → primitives → bare class name. Any future descriptor form must keep (a) the top-level arrow recognized before suffix stripping and (b) the `?`/`[T]` prefixes recognized before the function branch, or function descriptors with nullable/array returns and function-involving arrays regress. Emission must never conflate `Nullable(Func)` with `Func(ret=Nullable)` or `Array(Func)`-family with `Func(ret=Array)`-family — the `?F`/`[...]` emission invariants are the guard.
-- Rest-arm drift (ISSUE-0082, cycle 3): the rest arm must remain a full array descriptor (`...T[]` legacy / `...[T]` spec) — the wrapper extracts the element via `array_element_descriptor`; emitting the bare `...T` form would regress every rest-param host call.
+- Rest-arm removal (DEAL v1.2): function descriptors have no rest arm.  A descriptor containing `...` fails to parse; the v1.1 `...T[]` / `...[T]` dialect is retired with the language feature it described.
 - Hand-written `?T[]` family (cycle 4): under order P `?` binds first, so `?string[]`/`?int[]` read `Nullable(Array(T))`; `Array(Nullable(T))` is spelled `T|null[]` (legacy dialect, emitted) / `[?T]` (spec). No producer emits `?T[]`.
 - Nested nullables (cycle 6): the `??T` family has no parsing rule and needs none — `Type.Nullable` construction rejects Nullable inners (`deal/types/Type.java:66-68`) and the checker reports E3005, so no producer can emit it; `frontend/types/chained-nullable-e3005.deal` guards the constructor invariant.
 - The `Error` builtin class is a nominal type with special runtime representation; it is not a primitive but is handled as a standalone builtin in the descriptor grammar.
