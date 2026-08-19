@@ -9,10 +9,13 @@ export function test_logic_prec(): int {
   let a: boolean = true || false && false;
   // (true || false) && false = true && false = false
   let b: boolean = (true || false) && false;
-  if (a && !b) {
-    return 1;
+  if (a !== true) {
+    throw { code: "TEST_FAIL", message: "logical precedence: true || false && false should be true" };
   }
-  return 0;
+  if (b !== false) {
+    throw { code: "TEST_FAIL", message: "logical precedence: (true || false) && false should be false" };
+  }
+  return 1;
 }
 
 export function main(): null {
