@@ -656,7 +656,6 @@ public class ModuleSystemTest {
             import * as C from "./diamondC"
             export function main(): null { return null; }
             export function run(): int { return B.val() + C.val(); }
-            export function main(): null { return null; }
             """);
         writeFile("src/diamondB.deal", """
             import * as D from "./diamondD"
@@ -704,7 +703,6 @@ public class ModuleSystemTest {
             import * as A from "./ocA"
             export function main(): null { return null; }
             export function run(): int { return A.foo(10); }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/ocC.deal").toAbsolutePath();
@@ -763,7 +761,6 @@ public class ModuleSystemTest {
         writeFile("src/hello.deal", """
             export function main(): null { return null; }
             export function greet(): string { return "hi"; }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/hello.deal").toAbsolutePath();
@@ -801,7 +798,6 @@ public class ModuleSystemTest {
             import * as lib from "./lib"
             export function main(): null { return null; }
             export function run(): int { return lib.add(10, 20); }
-            export function main(): null { return null; }
             """);
         writeFile("src/lib.deal", """
             export function add(a: int, b: int): int { return a + b; }
@@ -1018,7 +1014,6 @@ public class ModuleSystemTest {
             import * as B from "./db"
             export function main(): null { return null; }
             export function foo(x: int): int { return B.get(x); }
-            export function main(): null { return null; }
             """);
         writeFile("src/db.deal", """
             import * as A from "./da"
@@ -1130,7 +1125,6 @@ public class ModuleSystemTest {
             import * as C from "./tdc2_c"
             export function main(): null { return null; }
             export function test(): int { return A.callB(1) + C.callD(2); }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/tdc2_entry.deal").toAbsolutePath();
@@ -1168,7 +1162,6 @@ public class ModuleSystemTest {
             import * as strings from "std/string"
             export function main(): null { return null; }
             export function getLen(s: string): int { return strings.length(s); }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/sf_main.deal").toAbsolutePath();
@@ -1219,7 +1212,6 @@ public class ModuleSystemTest {
             export function main(): null { return null; }
             export function getX(p: P.Point): int { return p.x; }
             export function getY(p: P.Point): int { return p.y; }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/cm_main.deal").toAbsolutePath();
@@ -1262,7 +1254,6 @@ public class ModuleSystemTest {
             export function makeVec(): V.Vec {
                 return { x: 1, y: 2 };
             }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/cc_main.deal").toAbsolutePath();
@@ -1299,7 +1290,6 @@ public class ModuleSystemTest {
             export function checkName(obj: O.Opt): boolean {
                 return has(obj.name);
             }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/ch_main.deal").toAbsolutePath();
@@ -1329,7 +1319,6 @@ public class ModuleSystemTest {
             import * as D from "./qt_class"
             export function main(): null { return null; }
             export function getValue(d: D.Data): int { return d.value; }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/qt_main.deal").toAbsolutePath();
@@ -1370,7 +1359,6 @@ public class ModuleSystemTest {
                 let r = R.make(42);
                 return r.value;
             }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/ce_main.deal").toAbsolutePath();
@@ -1418,7 +1406,6 @@ public class ModuleSystemTest {
             import * as C from "./calc"
             export function main(): null { return null; }
             export function run(): int { return C.add(1, 2); }
-            export function main(): null { return null; }
             """);
         writeFile("src/calc.d.deal", """
             export function add(a: int, b: int): int;
@@ -1479,7 +1466,6 @@ public class ModuleSystemTest {
             import * as console from "std/console"
             export function main(): null { return null; }
             export function run(): int { console.log("x"); return cfg.ping(); }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/ext_main.deal").toAbsolutePath();
@@ -1639,7 +1625,6 @@ public class ModuleSystemTest {
             import * as cfg from "host/cfg"
             export function main(): null { return null; }
             export function run(): int { return cfg.ping(); }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/host_smoke.deal").toAbsolutePath();
@@ -1740,7 +1725,6 @@ public class ModuleSystemTest {
             export function main(): null { return null; }
             export function echo(u: cfg.User): int { return u.port; }
             export function run(): int { return cfg.ping(); }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/backslash_smoke.deal").toAbsolutePath();
@@ -1853,17 +1837,13 @@ public class ModuleSystemTest {
         // module load.
         writeFile("src/jsonable_host.deal", """
             import * as cfg from "host/x\\y"
-
             // @jsonable
             export class Wrapper {
                 u: cfg.User | null = null;
                 name: string = "";
             }
-
             export function main(): null { return null; }
             export function run(): int { return cfg.ping(); }
-
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/jsonable_host.deal").toAbsolutePath();
@@ -1962,7 +1942,6 @@ public class ModuleSystemTest {
         writeFile("src/cli_test.deal", """
             export function main(): null { return null; }
             export function hello(): string { return "world"; }
-            export function main(): null { return null; }
             """);
         Path entryFile = tmpDir.resolve("src/cli_test.deal").toAbsolutePath();
         Path outputDir = tmpDir.resolve("build/cli_test");
@@ -1990,7 +1969,6 @@ public class ModuleSystemTest {
             export function greet(name: string): string {
                 return "Hello, " + name;
             }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/e2e_single.deal").toAbsolutePath();
@@ -2041,7 +2019,6 @@ public class ModuleSystemTest {
             import * as lib from "./e2e_lib"
             export function main(): null { return null; }
             export function run(): int { return lib.add(10, 20); }
-            export function main(): null { return null; }
             """);
         writeFile("src/e2e_lib.deal", """
             export function add(a: int, b: int): int { return a + b; }
@@ -2226,7 +2203,6 @@ public class ModuleSystemTest {
         writeFile("src/e2e_cli.deal", """
             export function main(): null { return null; }
             export function add(a: int, b: int): int { return a + b; }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/e2e_cli.deal").toAbsolutePath();

@@ -5079,7 +5079,6 @@ public class JvmBackendTest {
             import * as console from "std/console"
             export function main(): null { return null; }
             export function run(): null { console.log("default-lua"); }
-            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/default_main.deal").toAbsolutePath();
@@ -7104,7 +7103,6 @@ public class JvmBackendTest {
                   console.log("cli-jvm");
                   return 6 * 7;
                 }
-                export function main(): null { return null; }
                 """);
 
             Path entry = tmpDir.resolve("src/cli_main.deal").toAbsolutePath();

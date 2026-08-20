@@ -12,3 +12,7 @@ export function test_host_rest_bad(): string {
   let holder: table = { item: 5 };
   return host.join("-", holder.item);
 }
+
+export function main(): null {
+  return null;
+}

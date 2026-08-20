@@ -21,3 +21,7 @@ export function test_host_rest_ok(): string {
   }
   return "host array param ok";
 }
+
+export function main(): null {
+  return null;
+}
