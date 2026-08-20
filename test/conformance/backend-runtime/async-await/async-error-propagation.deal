@@ -9,12 +9,30 @@ async function inner(): int {
 }
 
 export async function outer(): string {
+  let intendedCatchRan: boolean = false;
+  let fallbackCatchRan: boolean = false;
+  let normalRan: boolean = false;
+  let intendedCode: string = "";
+  let fallbackCode: string = "";
+
   try {
-    let _: int = await inner();
-    return "no error";
-  } catch (e) {
-    return e.code;
+    try {
+      let _: int = await inner();
+      normalRan = true;
+    } catch (e) {
+      intendedCatchRan = true;
+      intendedCode = e.code;
+    }
+  } catch (outerErr) {
+    fallbackCatchRan = true;
+    fallbackCode = outerErr.code;
   }
+
+  if (!intendedCatchRan || fallbackCatchRan || normalRan || intendedCode !== "E_INNER" || fallbackCode !== "") {
+    throw { code: "TEST_FAIL", message: "awaited E_INNER must be caught only by the caller catch with no normal or fallback path" };
+  }
+
+  return "E_INNER";
 }
 
 export function main(): null {
