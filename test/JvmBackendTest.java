@@ -215,14 +215,13 @@ import java.util.Set;
  *       wrapper instance fields, indirect-call dispatch through
  *       {@code invoke}, intrinsic function-value wrappers, arity-extension
  *       adapters at variable/assignment positions (static-method
- *       delegation for module functions, LIVE static-field delegation for
- *       module fields — a reassignment retargets the adapter — and
- *       effectively-final snapshot temporaries for locals/parameters the
- *       enclosing body never reassigns; reassigned locals/parameters and
- *       non-identifier adapter values are E6000 until ISSUE-0110 — never
- *       a lambda, never a silent divergence), E8010 runtime signature
- *       checks at callback/return boundaries with LuaJIT's exact message
- *       and the checked value expression evaluated FIRST
+ *       delegation for module functions and effectively-final snapshot
+ *       temporaries for locals/parameters the enclosing body never
+ *       reassigns; reassigned locals/parameters and non-identifier
+ *       adapter values are E6000 until ISSUE-0110 — never a lambda,
+ *       never a silent divergence), E8010 runtime signature checks at
+ *       callback/return boundaries with LuaJIT's exact message and the
+ *       checked value expression evaluated FIRST
  *       (evaluate-then-check — side effects never dropped; a check
  *       operand's VALUE lowers to an actual-shape temporary while the
  *       raising construction stays INLINE at the argument position, so
@@ -234,36 +233,24 @@ import java.util.Set;
  *       reference equality, call-result-callee evaluation order (the
  *       callee materialized into a single-assignment temporary at its
  *       evaluation position, before any argument's hoisted
- *       pre-statements), load-time indirect-call guards
- *       (later-declared value uses, not-statically-known field values,
- *       adapter live-read retargets reaching a later-declared function,
- *       snapshot fields capturing a later-declared function, the
- *       indirect import hazard E6000, module-level calls executed
- *       before the guarded call treated as potential assignment sources
- *       — a load-time-called function body assigning the field and a
- *       sibling indirect call whose field may hold an assigning
- *       function are E6000 — and the inverse: a load-time-called
- *       function whose body invokes a function value is E6000 at the
- *       direct-call site and through the indirect-call guard; the
- *       reassignment and snapshot shapes run with LuaJIT parity), and the
- *       deferred signature shapes (nested/nullable/async/rest function
- *       types, arrays of functions, and function equality/inequality
- *       over array-/class-/nullable-parameter signatures) rejected with
- *       E6000; module-level indirect calls through NON-identifier
- *       callees (a call-result or assignment-produced function value —
- *       the produced value is not statically known to the load-time
- *       guard: LuaJIT fails at load when the produced function reads or
- *       reaches a not-yet-declared value, Java would read the
- *       uninitialized static wrapper field or run the hoisted method)
- *       rejected with E6000; and cross-module function values (a
- *       Func-typed argument to an imported module call — including the
- *       arity-extension/E8010-boundary shape — and an imported call
- *       result with Func static type) rejected with E6000 and no entry
- *       artifact by the orchestrator
- *       ({@code testCrossModuleFunctionValuesRejected} — the
- *       per-module wrapper classes cannot cross a module boundary, so
- *       the pre-fix emissions were artifacts javac rejected after the
- *       CLI reported success).</li>
+ *       pre-statements), the deferred signature shapes
+ *       (nested/nullable/async function types, arrays of functions, and
+ *       function equality/inequality over array-/class-/nullable-
+ *       parameter signatures) rejected with E6000, and cross-module
+ *       function values (a Func-typed argument to an imported module
+ *       call — including the arity-extension/E8010-boundary shape — and
+ *       an imported call result with Func static type) rejected with
+ *       E6000 and no entry artifact by the orchestrator
+ *       ({@code testCrossModuleFunctionValuesRejected} — the per-module
+ *       wrapper classes cannot cross a module boundary, so the pre-fix
+ *       emissions were artifacts javac rejected after the CLI reported
+ *       success). Every v1.1 module-field/load-time shape — the LIVE
+ *       static-field-delegation adapter, the load-time indirect-call
+ *       guards, the module-level call-result callee hazards, and the
+ *       rest function-type arm — is a v1.2 frontend grammar gate
+ *       (E1049/E1047) pinned in {@code testFunctionValues}: the v1.2
+ *       module top level holds only declarations, so those shapes no
+ *       longer reach a backend.</li>
  * </ul>
  *
  * <p>The end-to-end JVM conformance fixtures live in
@@ -3615,61 +3602,45 @@ public class JvmBackendTest {
      * the per-declaration wrapper instance fields, indirect-call
      * dispatch through {@code invoke}, the int/number intrinsic wrapper
      * fields, and the arity-extension adapter shapes (static-method
-     * delegation for module functions, LIVE static-field delegation for
-     * module fields — the adapter body re-reads the field on every
-     * invoke, so a reassignment after creation retargets it exactly like
-     * LuaJIT — and effectively-final snapshot temporaries for
-     * locals/parameters the enclosing body never reassigns; a
-     * reassigned local/parameter and any non-identifier adapter value —
-     * which LuaJIT reads live / re-evaluates per invoke — are E6000
-     * until ISSUE-0110, never a lambda, never a silent divergence). Also
-     * covered: E8010 runtime signature checks at callback and return
-     * boundaries (matching LuaJIT's wrapper checks) with the checked
-     * value expression evaluated FIRST — the marker probes pin the
-     * evaluate-then-check order with module-field side effects, and a
-     * later materialized nil-yielding `(int | null)[]` read keeps its
+     * delegation for module functions and effectively-final snapshot
+     * temporaries for locals/parameters the enclosing body never
+     * reassigns; a reassigned local/parameter and any non-identifier
+     * adapter value — which LuaJIT reads live / re-evaluates per invoke —
+     * are E6000 until ISSUE-0110, never a lambda, never a silent
+     * divergence). Also covered: E8010 runtime signature checks at
+     * callback and return boundaries (matching LuaJIT's wrapper checks)
+     * with the checked value expression evaluated FIRST — the marker
+     * probes pin the evaluate-then-check order with console markers (the
+     * v1.2 grammar removed the v1.1 module-field counter), and a later
+     * materialized nil-yielding {@code (int | null)[]} read keeps its
      * boxed Java shape (never a primitive-temp unboxing NPE) — wrapper
      * reference equality, the call-result-callee evaluation order (the
      * callee is materialized into a single-assignment temporary at its
      * evaluation position, BEFORE any argument's hoisted pre-statements —
      * spec §Operational semantics rule 1: picker() raises its own E8001 /
      * return-boundary E8010 before bump()'s negative-index read can run,
-     * and the E8002 message is pinned out), the load-time indirect-call
-     * guards (a module-level value use of a later-declared function, a
-     * field with a not-statically-known value, an assigned function that
-     * reaches a later-declared function, the adapter live-read retargeted
-     * to a later-declared function, and the snapshot field capturing a
-     * later-declared function — all E6000, never a Java forward
-     * reference or a silent divergence — including assignments hidden
-     * in table-literal property values, assignments evaluated earlier
-     * within the call's own top-level statement, and assignments inside
-     * the call's enclosing while/if/block body, which the assignment
-     * scans (object-literal property values, array-literal elements,
-     * index operands, and the call statement itself) must all observe —
-     * the plain reassignment and snapshot-field shapes run with LuaJIT
-     * parity; the indirect import hazard is pinned in
-     * testModuleImportUseBeforeImportRejected), the module-level calls
-     * executed before a guarded indirect call as potential assignment
-     * sources — a load-time-called function body that assigns the field
-     * (`set()` assigns `g = a` before `g(2)`; LuaJIT executes the
-     * assignment at load and fails when the held `a` reaches the
-     * later-declared `b` — the walk observes the assignment and rejects),
-     * a sibling indirect call whose field may hold an assigning function
-     * (the static value superset of `h` includes `setG`, which assigns
-     * `g`), and a sibling call-result indirect call (the invoked body
-     * cannot be analyzed) — and the inverse shape: a load-time-called
-     * function whose body (transitively) INVOKES a function value is
-     * rejected at the direct-call site and through the indirect-call
-     * guard (`run()` calling `g(2)`, and a held function invoking
-     * another field — the invoked wrapper's value is not statically
-     * known to the load-time guards, so the held function's hazards
-     * cannot be checked; LuaJIT fails at load when the invoked function
-     * reaches a not-yet-declared value), the reassigned
-     * local/parameter adapter E6000 also fires when the reassignment is
-     * hidden in a table-literal property value, and the deferred
-     * signature shapes (nested function
-     * types, nullable/async/rest function types, arrays of functions)
-     * rejected with E6000.
+     * and the E8002 message is pinned out), the reassigned
+     * local/parameter adapter E6000 (also firing when the reassignment
+     * is hidden in a table-literal property value), and the deferred
+     * signature shapes (nested function types, nullable/async function
+     * types, arrays of functions) rejected with E6000. Every v1.1
+     * module-field/load-time shape — the field adapter with LIVE static
+     * -field delegation, the load-time indirect-call guards (a
+     * module-level value use of a later-declared function, a field with
+     * a not-statically-known value, an assigned function reaching a
+     * later-declared function, the adapter live-read retargeted to a
+     * later-declared function, the snapshot field capturing a
+     * later-declared function, table-literal-hidden assignments,
+     * same-statement assignments, load-time-called function bodies as
+     * assignment and indirect-call sources, and the module-level
+     * call-result callee hazards), the clean load-time indirect-call /
+     * reassignment / snapshot-field shapes, and the rest function-type
+     * arm — is a v1.2 frontend grammar gate (E1049/E1047) pinned here
+     * instead: the v1.2 module top level holds only declarations, so
+     * those shapes no longer reach a backend. The in-function shapes run
+     * cross-backend with LuaJIT parity, and the removed module-level
+     * shapes are E1049-gated in
+     * {@code test/conformance/fixtures/jvm-function-values-slice.json}.
      */
     private static void testFunctionValues() throws Exception {
         System.out.println("-- Function values and wrappers (ISSUE-0098) --");
@@ -3716,13 +3687,82 @@ public class JvmBackendTest {
                 check(src.contains("f.invoke(1L, 2L)"),
                     "indirect call dispatches through invoke");
                 check(src.contains(
-                    "Fn2_II_R_I g = new Fn2_II_R_I() { @Override long invoke(long p0, long p1) { return inc(p0); } };"),
-                    "arity adapter delegates to the static method, dropping p1");
+                    "Fn2_II_R_I g = new Fn2_II_R_I() { @Override long invoke(long p0, long p1) { return Main.inc(p0); } };"),
+                    "arity adapter delegates to the qualified static method, dropping p1");
+                check(src.contains(
+                        "static final Fn2_II_R_I add$fn = new Fn2_II_R_I() {")
+                    && src.contains(
+                        "long invoke(long p0, long p1) { return Main.add(p0, p1); }"),
+                    "declaration wrapper delegates to the qualified static method");
                 check(src.contains("static final Fn1_N_R_I _int$fn = new Fn1_N_R_I() {")
                     && src.contains("static final Fn1_I_R_N _number$fn = new Fn1_I_R_N() {"),
                     "intrinsic function-value wrappers emitted");
                 check(!src.contains(" -> "),
                     "no lambda is emitted (descriptor strings may carry the arrow glyph)");
+            }
+        }
+
+        // Review finding (MR-0081, review 0009): a DEAL function named
+        // `invoke` — the wrapper classes' dispatch method — must work as
+        // a direct value, a callback, and an arity-adapted value without
+        // recursion (the pre-fix wrapper body called the bare name, which
+        // resolved to the anonymous class's OWN invoke: infinite
+        // recursion) or javac failure (the arity-adapter body called the
+        // bare name with the overlapping-prefix arguments, which javac
+        // rejected against the adapter's own wider invoke). The same
+        // qualification covers `descriptor` — the wrapper classes'
+        // descriptor field, which the pre-fix body shadowed into a
+        // "cannot find symbol" javac failure.
+        ExecResult invokeName = compileAndRunJvm("""
+            function invoke(x: int): int { return x + 1; }
+            function apply(f: (x: int) => int, v: int): int { return f(v); }
+            export function test(): int {
+              let f: (x: int) => int = invoke;
+              let g: (a: int, b: int) => int = invoke;
+              return f(41) + g(0, 999) + apply(invoke, 0);
+            }
+            """, "jvmtest-fv-invoke-name");
+        check(invokeName.exitCode() == 0,
+            "a function named invoke exits 0 (no recursion): " + invokeName.output());
+        check(invokeName.output().contains("44"),
+            "invoke as a direct value (42), arity-adapted value (1), and "
+            + "callback (1) computes 44: " + invokeName.output());
+        ExecResult descriptorName = compileAndRunJvm("""
+            function descriptor(x: int): int { return x * 2; }
+            export function test(): int {
+              let f: (a: int, b: int) => int = descriptor;
+              return f(21, 999);
+            }
+            """, "jvmtest-fv-descriptor-name");
+        check(descriptorName.exitCode() == 0,
+            "a function named descriptor exits 0: " + descriptorName.output());
+        check(descriptorName.output().contains("42"),
+            "descriptor as an arity-adapted value computes 42: "
+                + descriptorName.output());
+        Frontend invokeF = compileFrontend("""
+            function invoke(x: int): int { return x + 1; }
+            export function test(): int {
+              let f: (x: int) => int = invoke;
+              let g: (a: int, b: int) => int = invoke;
+              return f(41) + g(0, 999);
+            }
+            """, "jvmtest-fv-invoke-name-emit.deal");
+        check(invokeF.errors().isEmpty(),
+            "invoke-name emission probe frontend clean: " + invokeF.errors());
+        if (invokeF.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                invokeF.program(), invokeF.checkResult(),
+                "jvmtest-fv-invoke-name-emit.deal", "main");
+            check(!res.hasErrors(), "invoke-name emission probe codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains("return Main.invoke(p0);"),
+                    "the declaration wrapper delegates to the qualified static invoke");
+                check(res.source().contains(
+                        "Fn2_II_R_I g = new Fn2_II_R_I() { @Override long invoke(long p0, long p1) { return Main.invoke(p0); } };"),
+                    "the arity adapter delegates to the qualified static invoke");
+                check(!res.source().contains("return invoke(p0);"),
+                    "never a bare invoke call recursing into the wrapper's own invoke");
             }
         }
 
@@ -3786,25 +3826,13 @@ public class JvmBackendTest {
                 "E6000 for the call-result adapter: " + res.diagnostics());
         }
 
-        // Adapter over a module field: the adapter body reads the static
-        // field LIVE on every invoke — exactly like LuaJIT's adapter body
-        // re-reading the chunk-local binding — so reassigning the field
-        // after the adapter's creation retargets the adapter (dbl(10) =
-        // 20, never a stale inc snapshot of 11).
-        ExecResult fieldAdapter = compileAndRunJvm("""
-            function inc(x: int): int { return x + 1; }
-            function dbl(x: int): int { return x * 2; }
-            let g: (x: int) => int = inc;
-            export function test(): int {
-              let h: (a: int, b: int) => int = g;
-              g = dbl;
-              return h(10, 999);
-            }
-            """, "jvmtest-fv-field-adapter");
-        check(fieldAdapter.exitCode() == 0, "field adapter exits 0");
-        check(fieldAdapter.output().contains("20"),
-            "field adapter observes the reassignment live (20): "
-                + fieldAdapter.output());
+        // v1.2 grammar gate: module fields were removed, so the
+        // module-field adapter shape (the adapter body reading the static
+        // field LIVE on every invoke — LuaJIT's adapter re-reads the
+        // chunk-local binding, so a reassignment after creation retargets
+        // it) is a frontend parse error (E1049) before any backend. The
+        // in-function local-adapter coverage above and the reassigned
+        // local/parameter E6000 cases below keep the adapter semantics.
         Frontend fieldF = compileFrontend("""
             function inc(x: int): int { return x + 1; }
             let g: (x: int) => int = inc;
@@ -3813,27 +3841,15 @@ public class JvmBackendTest {
               return h(41, 999);
             }
             """, "jvmtest-fv-field-adapter-emit.deal");
-        check(fieldF.errors().isEmpty(),
-            "field adapter emit probe frontend clean: " + fieldF.errors());
-        if (fieldF.errors().isEmpty()) {
-            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                fieldF.program(), fieldF.checkResult(),
-                "jvmtest-fv-field-adapter-emit.deal", "main");
-            check(!res.hasErrors(), "field adapter emit probe codegen clean: "
-                + res.diagnostics());
-            if (!res.hasErrors()) {
-                check(res.source().contains("g.invoke(p0)"),
-                    "adapter body reads the static field live on every invoke");
-                check(!res.source().contains("__fn0 = g;"),
-                    "no creation-time snapshot of the field");
-            }
-        }
+        check(fieldF.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
+            "module-field adapter shape rejected with E1049: "
+                + fieldF.errors());
 
-        // The load-time variant: the module-level adapter body reads the
-        // static field live, so a load-time reassignment between the
-        // adapter's creation and the indirect call retargets it exactly
-        // like LuaJIT's load-time execution (h(10, 999) = 20).
-        ExecResult loadFieldAdapter = compileAndRunJvm("""
+        // v1.2 grammar gate: the load-time variant of the field adapter
+        // (module-level wrapper fields, a load-time reassignment, and a
+        // load-time indirect call) is a frontend parse error (E1049)
+        // before any backend — module top level holds only declarations.
+        Frontend loadFieldAdapter = compileFrontend("""
             function inc(x: int): int { return x + 1; }
             function dbl(x: int): int { return x * 2; }
             let g: (x: int) => int = inc;
@@ -3841,12 +3857,11 @@ public class JvmBackendTest {
             g = dbl;
             let r: int = h(10, 999);
             export function test(): int { return r; }
-            """, "jvmtest-fv-load-field-adapter");
-        check(loadFieldAdapter.exitCode() == 0,
-            "load-time field adapter exits 0");
-        check(loadFieldAdapter.output().contains("20"),
-            "load-time field adapter observes the reassignment live (20): "
-                + loadFieldAdapter.output());
+            """, "jvmtest-fv-load-field-adapter.deal");
+        check(loadFieldAdapter.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "load-time field adapter shape rejected with E1049: "
+                + loadFieldAdapter.errors());
 
         // A call-result callee evaluates COMPLETELY before every argument
         // (spec §Operational semantics rule 1 — LuaJIT evaluates the
@@ -4115,29 +4130,35 @@ public class JvmBackendTest {
         // The checked value expression is evaluated BEFORE E8010 raises
         // (spec §Operational semantics rule 2 / strict return-value
         // evaluation — LuaJIT's evaluate-then-check order). The callback
-        // probe pins the ORDER with a module-field counter: the marker
-        // prints only when markF ran before markI, and the broken
-        // snapshot-check wrapper never ran markF at all.
+        // probe pins the ORDER with console markers (the v1.2 grammar
+        // removed the v1.1 module-field counter): the checked argument's
+        // value expression prints "pre" and the later argument's value
+        // prints "post" — both must appear in order before E8010, and
+        // the pre-fix snapshot-check wrapper ran neither.
         ExecResult cbEval = compileAndRunJvm("""
             import * as console from "std/console"
-            let order: int = 0;
             function inc(x: int): int { return x + 1; }
             function markF(tag: string, f: (x: int) => int): (x: int) => int {
-              if (tag === "pre") { order = order + 1; }
+              if (tag === "pre") { console.log("f2-e8010-callback-eval-order-pre"); }
               return f;
             }
             function markI(tag: string, v: int): int {
-              if (tag === "post") {
-                if (order === 1) { console.log("f2-e8010-callback-eval-order-ok"); }
-              }
+              if (tag === "post") { console.log("f2-e8010-callback-eval-order-post"); }
               return v;
             }
             function take(f: (a: int, b: string) => int, v: int): int { return f(v, "ignored"); }
             export function test(): int { return take(markF("pre", inc), markI("post", 1)); }
             """, "jvmtest-fv-cb-eval");
         check(cbEval.exitCode() == 1, "callback E8010 evaluation probe exits 1");
-        check(cbEval.output().contains("f2-e8010-callback-eval-order-ok"),
-            "the checked argument is evaluated before E8010 raises: "
+        check(cbEval.output().contains("f2-e8010-callback-eval-order-pre"),
+            "the checked argument's value expression runs before E8010 raises: "
+                + cbEval.output());
+        check(cbEval.output().contains("f2-e8010-callback-eval-order-post"),
+            "the later argument's value expression runs before E8010 raises: "
+                + cbEval.output());
+        check(cbEval.output().indexOf("f2-e8010-callback-eval-order-pre")
+                < cbEval.output().indexOf("f2-e8010-callback-eval-order-post"),
+            "checked-value marker precedes the later argument's marker: "
                 + cbEval.output());
         check(cbEval.output().contains("DEAL_ERROR_CODE: E8010"),
             "the callback E8010 still raises: " + cbEval.output());
@@ -4162,42 +4183,29 @@ public class JvmBackendTest {
         check(retEval.output().contains("DEAL_ERROR_CODE: E8010"),
             "the return E8010 still raises: " + retEval.output());
 
-        // The load-time clean shape: an indirect call through a
-        // function-typed module field whose value is statically known.
-        ExecResult loadCall = compileAndRunJvm("""
+        // v1.2 grammar gate: module fields were removed, so the
+        // load-time clean shapes — an indirect call through a
+        // function-typed module field whose value is statically known, a
+        // load-time field reassignment before the call site, and an
+        // equal-signature field snapshot — are frontend parse errors
+        // (E1049) before any backend. Their semantics live on only in
+        // the in-function local shapes above.
+        List<String> loadFieldShapes = List.of(
+            """
             function noop42(): int { return 42; }
             let g: () => int = noop42;
             let r: int = g();
             export function test(): int { return r; }
-            """, "jvmtest-fv-load-call");
-        check(loadCall.exitCode() == 0, "load-time indirect call exits 0");
-        check(loadCall.output().contains("42"),
-            "load-time indirect call computes 42: " + loadCall.output());
-
-        // A module-level reassignment of the function-typed field before
-        // the call site is allowed when every assigned value is a bare
-        // module-function identifier: the JVM static initializer mirrors
-        // LuaJIT's load-time execution, so the last assignment determines
-        // the value on both backends (dbl(2) = 4).
-        ExecResult loadReassign = compileAndRunJvm("""
+            """,
+            """
             function inc(x: int): int { return x + 1; }
             function dbl(x: int): int { return x * 2; }
             let f: (x: int) => int = inc;
             f = dbl;
             let r: int = f(2);
             export function test(): int { return r; }
-            """, "jvmtest-fv-load-reassign");
-        check(loadReassign.exitCode() == 0, "load-time reassigned field exits 0");
-        check(loadReassign.output().contains("4"),
-            "load-time reassigned field computes 4: " + loadReassign.output());
-
-        // An equal-signature field initializer snapshots the inner field's
-        // CURRENT value at the outer field's declaration (LuaJIT and the
-        // JVM static initializer both read the field once): `g1 = dbl`
-        // before `let g = g1` makes g hold dbl, so g(21) = 42. The guard's
-        // value set includes the functions assigned to g1 before g's
-        // declaration, so the safe dbl stays allowed.
-        ExecResult snapshotField = compileAndRunJvm("""
+            """,
+            """
             function inc(x: int): int { return x + 1; }
             function dbl(x: int): int { return x * 2; }
             let g1: (x: int) => int = inc;
@@ -4205,15 +4213,23 @@ public class JvmBackendTest {
             let g: (x: int) => int = g1;
             let r: int = g(21);
             export function test(): int { return r; }
-            """, "jvmtest-fv-snapshot-field");
-        check(snapshotField.exitCode() == 0, "snapshot field exits 0");
-        check(snapshotField.output().contains("42"),
-            "the snapshot field captured the reassigned inner field (42): "
-                + snapshotField.output());
+            """);
+        for (String shape : loadFieldShapes) {
+            Frontend lf = compileFrontend(shape, "jvmtest-fv-load-shape.deal");
+            check(lf.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
+                "load-time field shape rejected with E1049: " + lf.errors());
+        }
 
-        // Load-time guards: value use of a later-declared function, a
-        // not-statically-known field value, and an assignment before the
-        // call site — E6000, never a Java forward reference.
+        // v1.2 grammar gate: every load-time guard shape (value use of a
+        // later-declared function, a not-statically-known field value, an
+        // assignment before the call site, and the load-time-called
+        // function-body and call-result callee shapes) rests on
+        // module-level executable statements, which the v1.2 grammar
+        // removes — E1049 before any backend, never a Java forward
+        // reference or a silently diverging load-time execution. The
+        // in-function live-read value-set edges keep their E6000
+        // coverage (the reassigned local/parameter adapter and the
+        // call-result adapter cases above).
         record GuardCase(String what, String source) {}
         List<GuardCase> guards = List.of(
             new GuardCase("value use of a later-declared function", """
@@ -4375,16 +4391,9 @@ public class JvmBackendTest {
                 """));
         for (GuardCase c : guards) {
             Frontend gf = compileFrontend(c.source, "jvmtest-fv-guard.deal");
-            if (!gf.errors().isEmpty()) {
-                fail("frontend must accept the guarded function-value case '"
-                    + c.what() + "' (the backend rejects it): " + gf.errors());
-                continue;
-            }
-            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                gf.program(), gf.checkResult(), "jvmtest-fv-guard.deal", "main");
-            check(res.hasErrors(), "backend rejects " + c.what());
-            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 for " + c.what() + ": " + res.diagnostics());
+            check(gf.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
+                "load-time guard shape '" + c.what()
+                    + "' rejected with E1049: " + gf.errors());
         }
 
         // Deferred signature shapes → E6000 (ISSUE-0110).
@@ -4408,13 +4417,6 @@ public class JvmBackendTest {
                 async function fetch(x: int): int { return x; }
                 export function test(): int {
                   let f: async (x: int) => int = fetch;
-                  return 1;
-                }
-                """),
-            new DeferredCase("rest function type", """
-                function join(a: int, ...xs: int[]): int { return 1; }
-                export function test(): int {
-                  let f: (a: int, ...xs: int[]) => int = join;
                   return 1;
                 }
                 """),
@@ -4463,6 +4465,21 @@ public class JvmBackendTest {
             check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
                 "E6000 for " + c.what() + ": " + res.diagnostics());
         }
+
+        // v1.2 grammar gate: rest parameters and rest function-type arms
+        // were removed from the language, so the v1.1 rest function-type
+        // shape is a frontend parse error (E1047) before any backend —
+        // the deferred-signature E6000 surface for rest arms no longer
+        // exists.
+        Frontend restShape = compileFrontend("""
+            function join(a: int, ...xs: int[]): int { return 1; }
+            export function test(): int {
+              let f: (a: int, ...xs: int[]) => int = join;
+              return 1;
+            }
+            """, "jvmtest-fv-deferred-rest.deal");
+        check(restShape.errors().stream().anyMatch(d -> "E1047".equals(d.code())),
+            "rest function-type shape rejected with E1047: " + restShape.errors());
     }
 
     /**
@@ -4491,16 +4508,19 @@ public class JvmBackendTest {
                 "export function apply(f: (x: int) => int, v: int): int { return f(v); }\n",
                 "import * as lib from \"./lib\"\n"
                     + "function inc(x: int): int { return x + 1; }\n"
+                    + "export function main(): null { return null; }\n"
                     + "export function test(): int { return lib.apply(inc, 41); }\n"),
             new XmodCase("arity-extension argument (E8010 boundary)",
                 "export function apply2(f: (a: int, b: string) => int, v: int): int { return f(v, \"i\"); }\n",
                 "import * as lib from \"./lib\"\n"
                     + "function inc(x: int): int { return x + 1; }\n"
+                    + "export function main(): null { return null; }\n"
                     + "export function test(): int { return lib.apply2(inc, 41); }\n"),
             new XmodCase("returned function value",
                 "export function picker(): (x: int) => int { return inc; }\n"
                     + "function inc(x: int): int { return x + 1; }\n",
                 "import * as lib from \"./lib\"\n"
+                    + "export function main(): null { return null; }\n"
                     + "export function test(): int {\n"
                     + "  let f: (x: int) => int = lib.picker();\n"
                     + "  return f(41);\n"
@@ -4509,6 +4529,7 @@ public class JvmBackendTest {
                 "export function picker(): (x: int) => int { return inc; }\n"
                     + "function inc(x: int): int { return x + 1; }\n",
                 "import * as lib from \"./lib\"\n"
+                    + "export function main(): null { return null; }\n"
                     + "export function test(): int { return lib.picker()(41); }\n"));
 
         for (XmodCase c : cases) {
@@ -7877,6 +7898,7 @@ public class JvmBackendTest {
             import * as lib from "./lib"
             let base: int = lib.value();
             export function run(): int { return base; }
+            """,
             // indirect (ISSUE-0098): a module-level indirect call through a
             // function-typed field whose held function uses the alias, with
             // the import declared after the call site — the load-time
@@ -7890,7 +7912,6 @@ public class JvmBackendTest {
             let r: int = g();
             import * as lib from "./lib"
             export function run(): int { return r; }
- (ISSUE-0098: fix the three review findings — call-result callee evaluation order, load-time indirect import hazard, and adapter live-read value-set edges)
             """);
 
         for (String source : sources) {

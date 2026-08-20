@@ -123,32 +123,39 @@ import javax.tools.ToolProvider;
  * the ISSUE-0098 function-values/wrappers fixtures live in
  * {@code test/conformance/fixtures/jvm-function-values-slice.json}
  * (typed/inferred function-value variables, indirect calls through
- * variables/parameters/module fields and call-result callees,
- * callbacks, returned function values, the int/number intrinsics as
- * function values, arity-extension adapters at variable/assignment
- * positions — including LIVE module-field delegation with reassignment
- * parity — E8010 runtime signature checks at callback/return
- * boundaries with the checked value expression evaluated first
- * (evaluate-then-check side-effect order pinned cross-backend),
- * wrapper reference equality, load-time indirect calls, six frontend
- * signature/indirect-call compile-error gates, four multi-module
- * backend-rejection fixtures pinning the E6000 rejection of
- * cross-module function-value flow (callback-in, arity-extension
+ * variables/parameters and call-result callees, callbacks, returned
+ * function values, the int/number intrinsics as function values,
+ * arity-extension adapters at variable/assignment positions, E8010
+ * runtime signature checks at callback/return boundaries with the
+ * checked value expression evaluated first (evaluate-then-check
+ * side-effect order pinned cross-backend), wrapper reference equality,
+ * wrapper-name collisions (a function named {@code invoke} or
+ * {@code descriptor} — the wrapper classes' dispatch-method and
+ * descriptor-field names — delegating through the module-class-qualified
+ * static member, review 0009), eight frontend signature/indirect-call
+ * compile-error gates (including the E1049 gates of the v1.1
+ * module-field load-time shapes the v1.2 module shape removed), four
+ * multi-module backend-rejection fixtures pinning the E6000 rejection
+ * of cross-module function-value flow (callback-in, arity-extension
  * argument/E8010 boundary, return-out, and call-result callee — the
  * per-module wrapper classes cannot cross a module boundary, so the
  * pre-fix emissions were artifacts javac rejected after the CLI
- * reported success; the rejected entry module writes no artifact),
- * twelve cross-backend parity fixtures, and six LuaJIT-only reference
- * fixtures pinning the reassigned-local adapter, the side-effecting
- * call-result adapter, the two load-time guard shapes (a
- * load-time-called function body assigning the field before the
- * indirect call, and a load-time-called function body containing the
- * indirect call — LuaJIT's module load fails with a raw upvalue error),
- * and the two module-level call-result callee shapes (the produced
- * function declared after the call site — E8001 'expected function' at
- * load — and the produced function reaching a later-declared function —
- * a raw upvalue load error) that the JVM slice conservatively rejects
- * with E6000 until ISSUE-0110).
+ * reported success; the rejected entry module writes no artifact, and
+ * every entry exports the v1.2 selected-entry non-async
+ * {@code main(): null}), ten cross-backend parity fixtures (plus two
+ * cross-backend E1049 grammar gates of the v1.1 live
+ * field-adapter shapes), and six LuaJIT-only fixtures: two runtime
+ * reference pins for the in-function shapes the JVM slice
+ * conservatively rejects with E6000 until ISSUE-0110 (the
+ * reassigned-local adapter and the side-effecting call-result adapter,
+ * re-evaluated per invoke — pinned with console markers since the v1.2
+ * grammar removed the module-field counter), and four E1049 grammar
+ * gates of the v1.1 load-time shapes (a load-time-called function body
+ * assigning the field before the indirect call, a load-time-called
+ * function body containing the indirect call, and the two module-level
+ * call-result callee shapes — LuaJIT's v1.1 E8001 'expected function'
+ * and raw upvalue load failures) that the v1.2 module shape removes
+ * before any backend.
  *
  * <h2>Multi-module fixtures (ISSUE-0096)</h2>
  *
@@ -1436,7 +1443,7 @@ public class BackendConformanceTest {
                             + "' (codegen ran for the rejected module): "
                             + run.capturedOutput());
                         failed.incrementAndGet();
-                        return;
+                        return false;
                     }
                 } else {
                     boolean artifactWritten = Files.isDirectory(outputRoot);
@@ -1451,7 +1458,7 @@ public class BackendConformanceTest {
                             + "gate produced .java artifacts (codegen ran): "
                             + run.capturedOutput());
                         failed.incrementAndGet();
-                        return;
+                        return false;
                     }
                 }
                 log("  [" + name + "] OK — "

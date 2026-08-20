@@ -1150,6 +1150,22 @@ public final class JvmBackend {
      * genuine DEAL identifier can never collide with a translated reserved
      * word.
      */
+    /**
+     * The module-class-qualified reference to a static member (method or
+     * field) of this module's emitted class. Every static delegation
+     * inside an anonymous wrapper/adapter class body goes through this
+     * helper: an UNQUALIFIED name resolves against the anonymous class
+     * first, so a DEAL function named {@code invoke} recursed into the
+     * wrapper's own invoke method (a stack overflow at runtime) and a
+     * function named {@code descriptor} — or a field read of that name —
+     * collided with the wrapper shape class's descriptor field (a javac
+     * failure after the CLI reported success). Qualification pins the
+     * call to the module's static method/field, whatever the DEAL name.
+     */
+    private String qualifiedStatic(String member) {
+        return classNameFor(modulePath) + "." + member;
+    }
+
     public static String javaName(String dealIdentifier) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < dealIdentifier.length(); i++) {
@@ -4706,9 +4722,9 @@ public final class JvmBackend {
             }
             inv.append(") { ");
             if (returnType instanceof Type.Null) {
-                inv.append(javaFn).append("(");
+                inv.append(qualifiedStatic(javaFn)).append("(");
             } else {
-                inv.append("return ").append(javaFn).append("(");
+                inv.append("return ").append(qualifiedStatic(javaFn)).append("(");
             }
             for (int i = 0; i < funcType.paramTypes().size(); i++) {
                 if (i > 0) inv.append(", ");
@@ -6705,7 +6721,7 @@ public final class JvmBackend {
             Symbol sym = symbols.resolve(id.name());
             if (mapped == null && sym instanceof Symbol.FunctionSymbol
                     && moduleFunctions.containsKey(id.name())) {
-                inner = javaName(id.name()) + "("
+                inner = qualifiedStatic(javaName(id.name())) + "("
                     + overlappingAdapterArgs(actual.paramTypes().size()) + ")";
             } else if (mapped == null && sym instanceof Symbol.IntrinsicSymbol) {
                 inner = switch (id.name()) {
@@ -6723,7 +6739,8 @@ public final class JvmBackend {
                 // field LIVE on every invoke — exactly like LuaJIT's
                 // adapter body re-reading the binding — so a reassignment
                 // after the adapter's creation retargets the adapter.
-                inner = (mapped != null ? mapped : javaName(id.name()))
+                inner = (mapped != null ? mapped
+                        : qualifiedStatic(javaName(id.name())))
                     + ".invoke("
                     + overlappingAdapterArgs(actual.paramTypes().size()) + ")";
             } else if (mapped != null) {

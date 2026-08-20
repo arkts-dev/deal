@@ -30,7 +30,7 @@ Supported (real semantics, spec JVM value mapping):
 | `class C { ... }` | a generated nested static class `$C_<name>` extending the emitted `$Base` identity holder (spec-v1.2 §Classes: nominal record, no methods, no constructors — the only callables are the module functions above). Object-literal construction in a class-typed context emits `new $C_<name>(args)` with declaration-order constructor arguments: provided field values evaluate left-to-right in literal order and defaults are evaluated per construction (spec §Construction). Required-present primitive fields (`int`/`number`/`boolean`/`string`) and required-present nullable primitive/class fields (`f: T | null`, defaulting to the DEAL null) are supported; field reads/writes emit direct accesses (ISSUE-0108 adds the nullable forms) |
 | `table` | a minimal ordered string-key map (`$T` over `java.lang.LinkedHashMap<String,Object>`), emitted for the slice's one untyped boundary: a table field read in a contextual target type. Class-typed reads run the runtime nominal check (`$check<C>` — `instanceof` plus the identity string, E8001 "expected instance of @mod/C, got …" for a wrong-class value, "expected class instance" for a non-class value, mirroring LuaJIT's `__rt.check_type` class branch); table-typed reads run the fixed `$check$Table` helper (the extra raw `$` keeps it collision-free against a local class named `Table`, whose nominal-check helper spells `$checkTable`). Table literals chain `put` calls in literal order. Every other class-typed boundary (locals, parameters, returns, field reads/writes, construction) is provably typed by the JVM's static type system, which spec-v1.2 §JVM backend contract explicitly permits to make typed-boundary checks redundant |
 | object literals | class construction when the contextual target is a class type (the checker's `checkClassConstruction`), a table literal otherwise (`table` target or no target) |
-| function values (ISSUE-0098) | per-signature abstract wrapper classes (`Fn2_II_R_I` for `(int,int)->int`) with the spec-convention descriptor string and an `invoke` method in the JVM value mapping, plus a per-declaration wrapper instance field (`add$fn`) whose invoke delegates to the static method; typed/inferred variables, callbacks, module fields, and returns of function type hold wrapper references; indirect calls dispatch through `invoke` (callee-of-a-call included — module-level call-result callees are E6000: the produced value is not statically known to the load-time guard); the `int`/`number` intrinsics are first-class wrapper values; arity extension lowers to delegating adapters at variable-initializer/assignment positions and to the LuaJIT-matching E8010 signature check at callback-argument/return positions; function equality is wrapper reference identity; cross-module function values (Func-typed arguments to imported calls and imported call results with Func static type) are E6000 — the wrapper classes are emitted per module, so they cannot cross a module boundary |
+| function values (ISSUE-0098) | per-signature abstract wrapper classes (`Fn2_II_R_I` for `(int,int)->int`) with the spec-convention descriptor string and an `invoke` method in the JVM value mapping, plus a per-declaration wrapper instance field (`add$fn`) whose invoke delegates to the static method through the module-class-QUALIFIED reference (`Main.add(p0, p1)` — review 0009: a DEAL function named `invoke` or `descriptor` must not collide with the wrapper's own dispatch method / descriptor field); typed/inferred variables, callbacks, and returns of function type hold wrapper references (function-typed module fields and every other module-level shape are a v1.2 E1049 grammar error and never reach a backend); indirect calls dispatch through `invoke` (callee-of-a-call included); the `int`/`number` intrinsics are first-class wrapper values; arity extension lowers to delegating adapters at variable-initializer/assignment positions and to the LuaJIT-matching E8010 signature check at callback-argument/return positions; function equality is wrapper reference identity; cross-module function values (Func-typed arguments to imported calls and imported call results with Func static type) are E6000 — the wrapper classes are emitted per module, so they cannot cross a module boundary |
 | `let` locals / module fields | locals (shadowing disambiguated `$n`) / `static` fields |
 | `if`/`else if`/`else`, `return`, assignment, direct calls | plain Java control flow |
 | `while` loops | plain Java `while` with the condition routed through the emitted `loopCond` identity helper (javac never sees a constant-expression condition — JLS §14.21 keeps `while (false)` bodies and statements after `while (true)` reachable); the condition re-evaluates on every iteration, with hoisted null-typed side effects running inside the loop before each condition test; module-level while loops run in the load-time `static` initializer in source order and reject any `return` in their body with E6000 |
@@ -880,18 +880,23 @@ fixture whose codegen or JVM execution is bypassed):
   descriptor string (the same text the Lua backend stores in its runtime
   function wrappers) and an `invoke` method with the JVM-mapped
   signature. `emitFunction` emits the per-declaration wrapper instance
-  field (`add$fn`) at the declaration's source position, so load-time
-  reads of a later-declared function's wrapper are illegal Java forward
-  references and are rejected (E6000) exactly where LuaJIT reads the
-  global nil. The `int`/`number` intrinsic wrapper fields
+  field (`add$fn`) at the declaration's source position and the
+  anonymous invoke body delegates to the static method through the
+  module-class-QUALIFIED reference (`Main.add(p0, p1)`), never a bare
+  name — review 0009: a DEAL function named `invoke` recursed into the
+  wrapper's own invoke (a stack overflow) and a function named
+  `descriptor` collided with the wrapper shape class's descriptor field
+  (a javac failure) when the delegation was unqualified. The
+  `int`/`number` intrinsic wrapper fields
   (`_int$fn`/`_number$fn`) are emitted with the runtime support, like the
   Lua backend's top-of-chunk wrappers. Both names are unreachable from
   `javaName` (user identifiers cannot contain `$`; `_` escapes to `$u`).
 - **Value positions** — `emitIdentifier` maps function/intrinsic value
   uses to the wrapper fields; `javaLocalType(Type.Func)` maps function
   types to the wrapper class name, so typed/inferred variables,
-  parameters (callbacks), module fields, and return types all hold
-  wrapper references; `emitCall` dispatches indirect calls through
+  parameters (callbacks), and return types all hold wrapper references
+  (function-typed module fields are a v1.2 grammar error — E1049 — and
+  no longer reach a backend); `emitCall` dispatches indirect calls through
   `invoke` — for identifier callees (locals/parameters/fields) and for
   generic function-typed callee expressions (`picker()(41)` →
   `__fn0 = picker(); __fn0.invoke(41L)` — the callee is materialized
@@ -907,11 +912,13 @@ fixture whose codegen or JVM execution is bypassed):
   of the target wrapper class whose invoke accepts the target parameters
   and drops the extra ones — the JVM form of the Lua backend's
   `__rt.function_` adapter. The delegation target never needs a capture:
-  a module function delegates to its static method, an intrinsic to its
-  conversion helper, a module field to its static field read LIVE on
-  every invoke (LuaJIT's adapter body re-reads the chunk-local binding,
-  so a field reassigned after the adapter's creation retargets the
-  adapter — pinned by the reassignment parity fixtures), and a
+  a module function delegates to its module-class-qualified static
+  method, an intrinsic to its conversion helper, a module field to its
+  module-class-qualified static field read LIVE on every invoke
+  (LuaJIT's adapter body re-reads the chunk-local binding, so a field
+  reassigned after the adapter's creation retargets the adapter — the
+  v1.1 shape is pinned by the E1049 grammar-gate parity fixtures, since
+  the v1.2 module shape removed module fields), and a
   local/parameter to a fresh effectively-final `__fn<n>` snapshot
   temporary only when the enclosing function body never reassigns it
   (the binding's value is then stable, so the snapshot equals LuaJIT's
@@ -951,9 +958,15 @@ fixture whose codegen or JVM execution is bypassed):
   parameter or return) are E6000 there — `emitFunction` never emits the
   `$fn` field for those shapes, and referencing it would be an artifact
   javac rejects after the CLI reported success.
-- **Load-time indirect-call guards** — `moduleIndirectCallRisk` /
-  `collectPossibleHeldFunctions` / `heldFunctionsAtDeclaration` /
-  `moduleLevelAssignedFunctions`: a module-level (load-time) indirect
+- **Load-time indirect-call guards** — the whole module-level guard
+  surface is now behind the v1.2 grammar gate (E1049: module top level
+  holds only declarations), so the v1.1 load-time shapes below no
+  longer reach a backend; the machinery stays documented because the
+  backend's static-initializer emission still follows source order and
+  the gates are pinned as E1049 rejections in the tests.
+  `moduleIndirectCallRisk` / `collectPossibleHeldFunctions` /
+  `heldFunctionsAtDeclaration` / `moduleLevelAssignedFunctions`: a
+  module-level (load-time) indirect
   call through a function-typed field gets the same protection as
   module-level direct calls. The field's value set at the call site must
   be statically known — its initializer (followed transitively through
@@ -1024,68 +1037,77 @@ fixture whose codegen or JVM execution is bypassed):
   wrapper field (a bare NullPointerException) or run the hoisted method
   (conservative until ISSUE-0110).
 - **Tests proving the slice** —
-  - `test/conformance/fixtures/jvm-function-values-slice.json` — 47
-    fixtures. 19 JVM-only runtime fixtures run through the real
-    frontend → real `JvmBackend` codegen → `javac` subprocess → `java`
-    subprocess executing the emitted artifact (the harness fails a
-    fixture whose codegen or JVM execution is bypassed): typed and
-    inferred function-value variables with indirect calls, a callback
-    through a function-typed parameter, a mixed boolean/string callback
-    signature, returning a function value invoked through a call-result
-    callee, arity-extension adapters at a variable initializer and at a
-    reassignment, the int/number intrinsics as function values (exact
-    and arity-extended, plus an E8001 propagation through the intrinsic
-    wrapper), null signatures (`() => null` and `(null) => int`),
-    load-time indirect calls through function-typed module fields
-    (plain wrapper, adapter, and the reassignment shape), recursion routed through the stored
-    wrapper, wrapper reference equality, a two-level callback chain,
-    and the two E8010 runtime signature-check fixtures (callback
-    boundary, return boundary). Six frontend compile-error gates are
-    rejected before any backend (E3001 parameter/return signature
-    mismatch, E5004 reverse arity, E3009/E5001 indirect-call
-    arity/argument mismatch, E3008 non-function callee). Four
+  - `test/conformance/fixtures/jvm-function-values-slice.json` — 49
+    fixtures, migrated to the v1.2 module shape. 19 JVM-only runtime
+    fixtures run through the real frontend → real `JvmBackend` codegen
+    → `javac` subprocess → `java` subprocess executing the emitted
+    artifact (the harness fails a fixture whose codegen or JVM execution
+    is bypassed): typed and inferred function-value variables with
+    indirect calls, a callback through a function-typed parameter, a
+    mixed boolean/string callback signature, returning a function value
+    invoked through a call-result callee, arity-extension adapters at a
+    variable initializer and at a reassignment, the int/number
+    intrinsics as function values (exact and arity-extended, plus an
+    E8001 propagation through the intrinsic wrapper), null signatures
+    (`() => null` and `(null) => int`), recursion routed through the
+    stored wrapper, wrapper reference equality, a two-level callback
+    chain, the two E8010 runtime signature-check fixtures (callback
+    boundary, return boundary), and the two wrapper-name collision
+    fixtures — a function named `invoke` (the wrapper classes' dispatch
+    method) as a direct value + arity-adapted value + callback computing
+    44, and a function named `descriptor` (the wrapper classes'
+    descriptor field) as an arity-adapted value computing 42 — both
+    through the module-class-QUALIFIED static delegation (review 0009:
+    the pre-fix bare name recursed into the anonymous wrapper's own
+    invoke / collided with the descriptor field and javac rejected the
+    artifact). Eight frontend compile-error gates are rejected before
+    any backend (E3001 parameter/return signature mismatch, E5004
+    reverse arity, E3009/E5001 indirect-call arity/argument mismatch,
+    E3008 non-function callee, and the two E1049 gates of the v1.1
+    module-field load-time shapes — the load-time indirect call through
+    function-typed module fields and the load-time field reassignment
+    before the call site — which the v1.2 module shape removed). Four
     multi-module backend-rejection fixtures pin the E6000 rejection of
     cross-module function-value flow through the real orchestrator
     pipeline — a callback passed INTO an imported module call
     (equal-signature), the arity-extension argument shape whose
     parameter-boundary E8010 the member-call path cannot emit, a
     function value RETURNED from an imported module call, and an
-    imported call result used as a call-result callee — each with
-    `expectedCompileError: E6000`, exit 1, and the pin that the
+    imported call result used as a call-result callee — each entry
+    module exports the v1.2 selected-entry non-async `main(): null`,
+    each has `expectedCompileError: E6000`, and the pin that the
     REJECTED entry module writes no artifact (the per-module wrapper
     classes cannot cross a module boundary, so the pre-fix emissions
     `Lib.apply(inc$fn, 41L)`, `Fn1_I_R_I f = Lib.picker();`, and
     `Fn1_I_R_I __fn0 = Lib.picker();` were artifacts javac rejected
-    after the CLI reported success). Twelve fixtures
-    run under both backends as cross-backend parity with real luajit:
-    the callback, arity-extension assignment, intrinsic function value,
-    and reassignment shapes; the indirect-call boolean-argument
-    boundary (a past-end boolean[] read's nil passed through && as the
-    argument of an indirect call fails E8001, exit 1 on both backends —
-    the JVM converts the boxed temporary with booleanNotNull at the
-    argument position, LuaJIT's check_boolean(nil) raises at callee
-    entry); the live module-field adapter delegation — the
-    adapter-then-reassign shape (`let h: (a,b)=>int = g; g = dbl;
-    h(10, 999)` computes 20 on BOTH backends, never a stale snapshot)
-    and its load-time variant (`expectedOutput` markers print only when
-    the live read is observed); and the two E8010 evaluate-then-check
-    ordering shapes — the callback-argument probe
-    `take(markF("pre", inc), markI("post", 1))` prints the marker only
-    when markF ran before markI and then still raises E8010, exit 1, on
-    both backends, and the return-position probe `return markF("pre",
-    inc)` prints the marker and then raises E8010 on both backends
+    after the CLI reported success). Ten fixtures run under both
+    backends as cross-backend parity with real luajit: the callback,
+    arity-extension assignment, intrinsic function value, and
+    reassignment shapes; the indirect-call boolean-argument boundary (a
+    past-end boolean[] read's nil passed through && as the argument of
+    an indirect call fails E8001, exit 1 on both backends — the JVM
+    converts the boxed temporary with booleanNotNull at the argument
+    position, LuaJIT's check_boolean(nil) raises at callee entry); the
+    two E8010 evaluate-then-check ordering shapes — the
+    callback-argument probe `take(markF("pre", inc), markI("post", 1))`
+    prints the checked argument's pre marker and the later argument's
+    post marker, in order, and then still raises E8010, exit 1, on both
+    backends (`expectedOutput` pins both console markers around the
+    raise — the v1.2 grammar removed the v1.1 module-field counter —
+    and the pre-fix JVM dropped the checked value's side effect
+    entirely), and the return-position probe `return markF("pre", inc)`
+    prints the marker and then raises E8010 on both backends
     (`expectedOutput` + `expectedError: E8010` + `expectedExitCode: 1`
-    pin the side effect around the raise; the pre-fix JVM dropped it);
-    the two-mismatched-arguments shape — `apply2(inc, pickZero())` with
-    TWO arity-mismatched function-valued arguments whose later value
-    expression is impure prints pickZero's marker (both value
-    expressions evaluate left to right) and then raises E8010 with the
-    FIRST parameter's descriptor (`expectedNotOutput` pins 'got
-    ()->int' — the second parameter's check never raises — and the
-    harness's javac step pins that the emitted artifact is valid Java:
-    the pre-fix JVM materialized the later operand's raising
-    construction into an actual-shape temporary and javac rejected the
-    artifact after the CLI reported success);
+    pin the side effect around the raise); the two-mismatched-arguments
+    shape — `apply2(inc, pickZero())` with TWO arity-mismatched
+    function-valued arguments whose later value expression is impure
+    prints pickZero's marker (both value expressions evaluate left to
+    right) and then raises E8010 with the FIRST parameter's descriptor
+    (`expectedNotOutput` pins 'got ()->int' — the second parameter's
+    check never raises — and the harness's javac step pins that the
+    emitted artifact is valid Java: the pre-fix JVM materialized the
+    later operand's raising construction into an actual-shape temporary
+    and javac rejected the artifact after the CLI reported success);
     and the two call-result-callee evaluation-order shapes — the callee
     evaluates COMPLETELY before every argument (spec §Operational
     semantics rule 1) even when a later argument hoists side-effecting
@@ -1093,130 +1115,96 @@ fixture whose codegen or JVM execution is bypassed):
     picker's own past-end int[] read on both backends, exit 1
     (`expectedError: E8001`, `expectedNotOutput` pins that the E8002
     message 'negative array index' never appears — the pre-fix JVM ran
-    bump() first and raised E8002), and the E8010-at-the-callee
-    variant — a call-result callee whose return boundary raises E8010
-    raises it before any argument's evaluation on both backends
-    (`expectedError: E8010` with the E8002 message pinned out).
-    Six LuaJIT-only reference fixtures pin the semantics of the shapes
-    the JVM slice conservatively rejects with E6000 until ISSUE-0110:
-    the reassigned-LOCAL adapter (LuaJIT's adapter reads the binding
-    live, so `f = dbl` retargets the earlier adapter and `h(10, 999)`
-    computes 20), the side-effecting call-result adapter (LuaJIT
-    re-evaluates `picker()` on EVERY invoke — two invokes run it twice,
-    so `h(10,999) + h(10,999) + count === 68`, never the 67 of a
-    creation-time-only evaluation), and the two load-time guard shapes —
-    a load-time-called function body assigning the field before the
-    indirect call (`set()` assigns `g = a`, then `g(2)` invokes `a`,
-    whose body reads the not-yet-assigned `b` — LuaJIT's module load
-    fails with the raw error `attempt to index upvalue 'b' (a nil
-    value)`, exit 1, and the success marker never prints) and a
-    load-time-called function body CONTAINING the indirect call
-    (`run()` calling `g(2)` after the retarget — the same raw load
-    failure under LuaJIT) — both pinned with `expectedOutput` on the
-    upvalue error text, `expectedExitCode: 1`, and `expectedNotOutput`
-    on the success marker; and the two module-level call-result callee
-    shapes — `let r: int = picker()(2);` where picker returns the
-    wrapper of a function declared AFTER the call site (LuaJIT's load
-    fails with the E8001 'expected function' return check — the
-    not-yet-assigned chunk-local is nil — exit 1, pinned with
-    `expectedError: E8001` + `expectedExitCode: 1` + `expectedNotOutput`
-    on the marker; the pre-fix JVM emitted `r = picker().invoke(2L)` in
-    the static initializer and crashed with a bare
-    NullPointerException/ExceptionInInitializerError), and
-    `let r: int = picker()(2);` where picker returns a function whose
-    body CALLS a later-declared function (LuaJIT's load fails with the
-    raw error `attempt to index upvalue 'laterFn' (a nil value)`, exit
-    1; the pre-fix JVM silently ran the hoisted method) — both pinned
-    with the load failure as `expectedOutput`/`expectedError`,
-    `expectedExitCode: 1`, and `expectedNotOutput` on the success
-    marker.
+    bump() first and raised E8002), and the E8010-at-the-callee variant
+    — a call-result callee whose return boundary raises E8010 raises it
+    before any argument's evaluation on both backends (`expectedError:
+    E8010` with the E8002 message pinned out). Two more cross-backend
+    E1049 grammar gates pin the v1.1 module-field shapes the v1.2
+    module shape removed — the live field-adapter delegation (the
+    adapter re-reads the function-typed module field live on every
+    invoke, so `g = dbl` retargets the earlier adapter and `h(10, 999)`
+    computes 20 on both backends, never a stale snapshot) and its
+    load-time variant — each now an E1049 module-shape error before any
+    backend. Two LuaJIT-only reference fixtures pin the semantics of the
+    in-function shapes the JVM slice conservatively rejects with E6000
+    until ISSUE-0110: the reassigned-LOCAL adapter (LuaJIT's adapter
+    reads the binding live, so `f = dbl` retargets the earlier adapter
+    and `h(10, 999)` computes 20) and the side-effecting call-result
+    adapter (LuaJIT re-evaluates `picker()` on EVERY invoke — two
+    invokes print the picked marker twice and compute 33 + 33 = 66,
+    never a single creation-time-only evaluation — pinned with console
+    markers because the v1.2 grammar removed the v1.1 module-field
+    counter). Four LuaJIT-only E1049 grammar gates pin the v1.1
+    load-time shapes the v1.2 module shape removed — a load-time-called
+    function body assigning the field before the indirect call, a
+    load-time-called function body CONTAINING the indirect call, and the
+    two module-level call-result callee shapes (the produced function
+    declared after the call site — LuaJIT's E8001 'expected function' at
+    load — and the produced function reaching a later-declared function
+    — LuaJIT's raw upvalue load error) — each now an E1049 module-shape
+    error before any backend instead of the v1.1 LuaJIT load failure.
   - `test/JvmBackendTest.testFunctionValues` — emission assertions for
     the wrapper class, the descriptor string, the wrapper instance
     field, indirect dispatch through `invoke`, the adapter's
-    static-method delegation, the intrinsic wrapper fields, the
+    module-class-qualified static delegation (`Main.inc(p0)`, never a
+    bare name), the declaration wrapper's qualified delegation
+    (`Main.add(p0, p1)`), the intrinsic wrapper fields, the
     local-value snapshot temporary (`__fn0 = g;` / `__fn0.invoke(p0)`)
-    for a binding the enclosing body never reassigns, the LIVE
-    module-field adapter body (`g.invoke(p0)` with no `__fn0 = g;`
-    snapshot of a field), and the call-result callee temporary
-    (`__fn0 = picker();` / `__fn0.invoke(41L, 1L)` — the callee
-    materialized at its evaluation position before any argument), plus
-    javac+java execution of the
-    typed-variable, local-adapter, module-field-adapter (with the
-    reassignment-after-creation retarget pinned to 20),
-    load-time-indirect-call, call-result-callee-evaluation-order (the
-    callee's own E8001 raises before any argument's E8002 — the E8002
-    message is pinned out), and snapshot-field (`g1 = dbl` before `let g
-    = g1` captures dbl: `g(21)` runs 42) shapes; E6000 for the
-    reassigned
-    local/parameter adapter (pinned for the direct-assignment shapes
-    and the reassignment hidden in a table-literal property value —
-    `let t = { x: (g = dbl) }` still counts — with frontend-clean
-    probes), the call-result adapter, the load-time value use of a
-    later-declared function, a call-valued field initializer, an
-    assignment before the call site, the adapter live-read retargeted
-    to a later-declared function (`g = dbl` retargets the earlier
-    adapter, dbl reaches `later` — LuaJIT fails at load, the guard
-    rejects), and the snapshot field capturing a later-declared
-    function (the same guard walks assignments to the inner field
-    before the outer field's declaration); the hidden-assignment guards
-    (a table-literal-hidden field assignment before a load-time indirect
-    call, an assignment evaluated earlier within the call's own
-    statement — `let r: int = side(g = one) + g();` — and an assignment
-    inside the call's enclosing while body — all E6000 where LuaJIT
-    fails at load and the pre-fix walk silently ran the hoisted
-    method); the load-time-called-body guards — a module-level call
-    executed before the guarded indirect call is a potential assignment
-    source: `set()` assigning `g = a` before `g(2)` is E6000 (the walk
-    scans the called body's transitive assigned fields), a sibling
-    indirect call whose field may hold an assigning function is E6000
-    (the static value superset of `h` includes `setG`, which assigns
-    `g`), and a sibling call-result indirect call is E6000 (the invoked
-    body cannot be analyzed) — and the inverse shape: a load-time-called
-    function whose body (transitively) INVOKES a function value is E6000
-    at the direct-call site (`run()` calling `g(2)`) and through the
-    indirect-call guard (a held function invoking another field — all
-    frontend-clean probes, LuaJIT's load fails with a raw upvalue error
-    in each shape); the load-time indirect
-    import hazard (`moduleIndirectCallRisk` consults `laterImportRead`
-    exactly like the direct-call path — an indirect call of a function
-    using an import declared after the call site is E6000, pinned in
-    `testModuleImportUseBeforeImportRejected`); E6000 for module-level
-    indirect calls through NON-identifier callees (a call-result or
-    assignment-produced function value — the produced value is not
-    statically known to the load-time guard: LuaJIT fails at load when
-    the produced function reads or reaches a not-yet-declared value,
-    Java would read the uninitialized static wrapper field or run the
-    hoisted method — pinned for the later-declared-callee shape, the
-    produced-function-reaches-a-later-function shape, and the
-    assignment-produced-callee shape, all frontend-clean probes); E6000
-    for the deferred signature
-    shapes (nested function types, nullable function types, async
-    function types, rest function types, arrays of functions); and the
-    E8010 callback/return checks with module-field evaluation-order
-    probes asserting the checked value expression runs before the raise
-    (the marker prints and `DEAL_ERROR_CODE: E8010` follows); the
-    two-mismatched-arguments probe pins the split check-operand shape
-    (`Fn1_I_R_I __fn0 = inc$fn;` / `Fn0_R_I __fn1 = pickZero();` value
-    temps with ACTUAL shapes, both raising constructions INLINE in the
-    call argument list in parameter order, and no materialization temp
-    ever holding a raising construction — the pre-fix
-    `Fn0_R_I __t0 = new Fn2_IS_R_I() {…}` shape javac rejected) plus
-    javac+java execution asserting the first parameter's descriptor
-    raises and the second's never prints. `testCrossModuleFunctionValuesRejected`
-    runs the four cross-module shapes through the real orchestrator
-    pipeline (callback-in, arity-extension argument/E8010 boundary,
-    return-out, call-result callee) and pins E6000 with no entry
-    artifact for each — the per-module wrapper classes cannot cross a
-    module boundary, so the pre-fix emissions were artifacts javac
-    rejected after the CLI reported success (and the member-call path
-    silently skipped the LuaJIT parameter-boundary E8010 check). The
-    no-lambda assertions across the suite now target the lambda arrow
-    form `" -> "` — wrapper descriptor strings legitimately carry the
-    arrow glyph without spaces.
+    for a binding the enclosing body never reassigns, and the
+    call-result callee temporary (`__fn0 = picker();` /
+    `__fn0.invoke(41L, 1L)` — the callee materialized at its evaluation
+    position before any argument), plus javac+java execution of the
+    typed-variable, local-adapter, invoke-name (direct value +
+    arity-adapted + callback = 44), descriptor-name, and
+    call-result-callee-evaluation-order (the callee's own E8001 raises
+    before any argument's E8002 — the E8002 message is pinned out)
+    shapes; E6000 for the reassigned local/parameter adapter (pinned for
+    the direct-assignment shapes and the reassignment hidden in a
+    table-literal property value — `let t = { x: (g = dbl) }` still
+    counts — with frontend-clean probes), the call-result adapter, and
+    the deferred signature shapes (nested function types, nullable
+    function types, async function types, arrays of functions); the
+    v1.2 grammar gates of every removed module-level shape — the
+    module-field adapter (the LIVE static-field-delegation body `g.
+    invoke(p0)` is no longer reachable: E1049), the load-time clean
+    shapes (indirect call, reassignment, snapshot field), the load-time
+    indirect-call guards (later-declared value use, call-valued field
+    initializer, assignment before the call site, adapter live-read
+    retarget, snapshot field capturing a later-declared function,
+    table-literal-hidden and same-statement assignments, while-body
+    assignment, load-time-called-body assignment and indirect-call
+    sources, sibling assignment-holding and call-result indirect calls,
+    and the module-level call-result callee hazards) — each asserted as
+    an E1049 frontend rejection — and the rest function-type arm
+    asserted as E1047; the E8010 callback/return checks with
+    console-marker evaluation-order probes asserting the checked value
+    expression runs before the raise (the markers print and
+    `DEAL_ERROR_CODE: E8010` follows); the two-mismatched-arguments
+    probe pins the split check-operand shape (`Fn1_I_R_I __fn0 =
+    inc$fn;` / `Fn0_R_I __fn1 = pickZero();` value temps with ACTUAL
+    shapes, both raising constructions INLINE in the call argument list
+    in parameter order, and no materialization temp ever holding a
+    raising construction — the pre-fix `Fn0_R_I __t0 = new
+    Fn2_IS_R_I() {…}` shape javac rejected) plus javac+java execution
+    asserting the first parameter's descriptor raises and the second's
+    never prints. `testCrossModuleFunctionValuesRejected` runs the four
+    cross-module shapes through the real orchestrator pipeline
+    (callback-in, arity-extension argument/E8010 boundary, return-out,
+    call-result callee) — each entry exports the v1.2 selected-entry
+    non-async `main(): null` — and pins E6000 with no entry artifact
+    for each — the per-module wrapper classes cannot cross a module
+    boundary, so the pre-fix emissions were artifacts javac rejected
+    after the CLI reported success (and the member-call path silently
+    skipped the LuaJIT parameter-boundary E8010 check). The no-lambda
+    assertions across the suite now target the lambda arrow form
+    `" -> "` — wrapper descriptor strings legitimately carry the arrow
+    glyph without spaces.
 - **Deferred to ISSUE-0110 (documented, not silent)** — function
   expressions, nested function declarations, and function signatures
-  containing arrays, classes, nullables, nested function types, rest
-  arms, or async markers are rejected with E6000. Cross-module function
+  containing arrays, classes, nullables, nested function types, or
+  async markers are rejected with E6000 (rest parameters and rest
+  function-type arms are a v1.2 parser error — E1047 — and never reach
+  a backend). Cross-module function
   values are E6000 as well: the per-signature wrapper classes are
   emitted per module as nested classes, so a Func-typed argument to an
   imported module call (a callback, an arity-extension adapter value,
@@ -1309,7 +1297,7 @@ markers — plain first-class function values landed in ISSUE-0098),
 host class exports (E6000 at the import — the fixture-list item
 "host class export where supported" is not yet supported), host
 parameters/returns of array/class/table/function type (E6000 at the
-import), `@jsonable`. (ISSUE-0098: rebase fixups — restore the semicolon lost in the ISSUE-0096 conflict resolution, correct the fixture counts in the README review evidence (36 fixtures: 19 JVM-only runtime, 6 frontend gates, 9 cross-backend parity, 2 LuaJIT-only reference), and align the post-rebase documentation with the merged canonical slices (function values no longer wholesale-deferred in the ISSUE-0096 section, imported classes landed via ISSUE-0109, tables landed via ISSUE-0095, function-typed class fields stay E6000))
+import), `@jsonable`.
 
 
 - **Tests proving both** —

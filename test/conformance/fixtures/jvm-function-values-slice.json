@@ -1,10 +1,10 @@
 {
   "version": "1.0",
-  "description": "JVM function values and wrappers slice (ISSUE-0098). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: first-class function values in typed and inferred variables, indirect calls through variables/parameters/module fields and call-result callees, callbacks with primitive/string/null signatures, returning function values, the int/number conversion intrinsics as function values (exact and arity-extended), arity-extension adapters at variable-initializer and assignment positions — module functions and intrinsics delegate directly, module fields are read LIVE on every invoke (a reassignment after creation retargets the adapter, pinned cross-backend), and never-reassigned locals/parameters snapshot (reassigned bindings and non-identifier adapter values are E6000 until ISSUE-0110, pinned in JvmBackendTest) — E8010 runtime signature checks at callback and return boundaries with the checked value expression evaluated FIRST (evaluate-then-check side-effect order pinned cross-backend), wrapper reference equality, recursion routed through the wrapper, load-time indirect calls through function-typed module fields, and six frontend compile-error gates (E3001 parameter/return signature mismatch, E5004 reverse arity, E3009/E5001 indirect-call arity/argument mismatch, E3008 non-function callee) rejected before any backend. Twelve fixtures run under both backends as cross-backend parity with real luajit. Four multi-module fixtures pin the E6000 backend rejection of cross-module function-value flow (callback-in, arity-extension argument/E8010 boundary, return-out, and call-result callee — the per-module wrapper classes cannot cross a module boundary, so the pre-fix emissions were artifacts javac rejected after the CLI reported success; the rejected entry module writes no artifact). Six LuaJIT-only fixtures pin the reference semantics of the shapes the JVM slice conservatively rejects — the reassigned-local and side-effecting call-result adapters, the two load-time guard shapes (a module-level-called function body assigning the field before the indirect call, and a load-time-called function body containing the indirect call) that fail the LuaJIT module load with a raw upvalue error, and the two module-level call-result callee shapes (the produced function declared after the call site — E8001 'expected function' at load — and the produced function reaching a later-declared function — a raw upvalue load error) that the pre-fix JVM silently misran (a bare NullPointerException or a silently hoisted method).",
+  "description": "JVM function values and wrappers slice (ISSUE-0098), migrated to the v1.2 module shape. JVM-only fixtures run the real DEAL frontend (lexer \u2192 parser \u2192 name resolver \u2192 type checker) \u2192 real JvmBackend codegen \u2192 javac subprocess \u2192 java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). Covered forms: first-class function values in typed and inferred variables, indirect calls through variables/parameters/module fields and call-result callees, callbacks with primitive/string/null signatures, returning function values, the int/number conversion intrinsics as function values (exact and arity-extended), arity-extension adapters at variable-initializer and assignment positions \u2014 module functions and intrinsics delegate through the module-class-QUALIFIED static call, and never-reassigned locals/parameters snapshot (reassigned bindings and non-identifier adapter values are E6000 until ISSUE-0110, pinned in JvmBackendTest) \u2014 E8010 runtime signature checks at callback and return boundaries with the checked value expression evaluated FIRST (evaluate-then-check side-effect order pinned cross-backend), wrapper reference equality, recursion routed through the wrapper, wrapper-name collisions (a function named invoke or descriptor delegates through the qualified static member \u2014 never a recursion into the wrapper's own invoke or a javac failure on the descriptor field), and six frontend compile-error gates (E3001 parameter/return signature mismatch, E5004 reverse arity, E3009/E5001 indirect-call arity/argument mismatch, E3008 non-function callee) rejected before any backend. Ten fixtures run under both backends as cross-backend parity with real luajit. Four multi-module fixtures pin the E6000 backend rejection of cross-module function-value flow (callback-in, arity-extension argument/E8010 boundary, return-out, and call-result callee \u2014 the per-module wrapper classes cannot cross a module boundary, so the pre-fix emissions were artifacts javac rejected after the CLI reported success; each entry module exports non-async main(): null per the v1.2 selected-entry rule, and the rejected entry module writes no artifact). The v1.1 module-level/load-time shapes \u2014 module-field load-time indirect calls and reassignment, the live field-adapter reassignment parity pair, and the four LuaJIT load-time reference pins (load-time-called function-body assignment/indirect-call, module-level call-result callees) \u2014 are v1.2 grammar gates (E1049): the v1.2 module top level holds only declarations, so those shapes are rejected before any backend. Two LuaJIT-only fixtures pin the reference semantics of the in-function shapes the JVM slice conservatively rejects with E6000 (the reassigned-local and side-effecting call-result adapters \u2014 the call-result pin now re-evaluates picker() per invoke with console markers, since the v1.2 grammar removed the v1.1 module-field counter).",
   "tests": [
     {
       "name": "jvm-fv-typed-variable-indirect-call",
-      "description": "First-class function value: a function declaration assigned to a typed variable of its exact signature and called indirectly through the variable (f(20, 22) = 42) — the call dispatches through the emitted wrapper's invoke, not a direct static call",
+      "description": "First-class function value: a function declaration assigned to a typed variable of its exact signature and called indirectly through the variable (f(20, 22) = 42) \u2014 the call dispatches through the emitted wrapper's invoke, not a direct static call",
       "source": "function add(a: int, b: int): int { return a + b; }\nexport function test(): int {\n  let f: (a: int, b: int) => int = add;\n  return f(20, 22);\n}",
       "expectedOutput": "42",
       "expectedError": null,
@@ -70,7 +70,7 @@
     },
     {
       "name": "jvm-fv-return-function-value",
-      "description": "Returning a function value: picker() returns the wrapped inc and the result is invoked immediately (picker()(41) = 42) — the callee is a call expression, dispatched through the returned wrapper",
+      "description": "Returning a function value: picker() returns the wrapped inc and the result is invoked immediately (picker()(41) = 42) \u2014 the callee is a call expression, dispatched through the returned wrapper",
       "source": "function inc(x: int): int { return x + 1; }\nfunction picker(): (x: int) => int { return inc; }\nexport function test(): int { return picker()(41); }",
       "expectedOutput": "42",
       "expectedError": null,
@@ -181,12 +181,12 @@
     },
     {
       "name": "jvm-fv-module-field-loadtime-call",
-      "description": "Module-level (load-time) indirect calls through function-typed module fields: the field holding the plain () => int wrapper, the field holding the arity-extension adapter, and the field holding the int intrinsic wrapper are all invoked inside the static initializer (42 + inc-adapter(41, 999) + int(40.0) = 124)",
+      "description": "v1.2 grammar gate: module top level holds only declarations, so the v1.1 module-field load-time indirect-call shape (function-typed module fields invoked inside the static initializer, including the arity-extension adapter and the int intrinsic wrapper) is rejected with E1049 before any backend codegen",
       "source": "function noop42(): int { return 42; }\nfunction inc(x: int): int { return x + 1; }\nlet g: () => int = noop42;\nlet h: (a: int, b: int) => int = inc;\nlet ci: (n: number) => int = int;\nlet r: int = g() + h(41, 999) + ci(40.0);\nexport function test(): int { return r; }",
-      "expectedOutput": "124",
+      "expectedOutput": null,
       "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
       "irContains": [],
       "irNotContains": [],
       "backends": [
@@ -195,12 +195,12 @@
     },
     {
       "name": "jvm-fv-module-field-reassign-loadtime",
-      "description": "Module-level reassignment of a function-typed field before a load-time indirect call: the JVM static initializer mirrors LuaJIT's load-time execution, so the last assignment determines the held wrapper on both backends (f = dbl; f(2) = 4)",
+      "description": "v1.2 grammar gate: module top level holds only declarations, so the v1.1 module-level reassignment of a function-typed field before a load-time indirect call is rejected with E1049 before any backend codegen",
       "source": "function inc(x: int): int { return x + 1; }\nfunction dbl(x: int): int { return x * 2; }\nlet f: (x: int) => int = inc;\nf = dbl;\nlet r: int = f(2);\nexport function test(): int { return r; }",
-      "expectedOutput": "4",
+      "expectedOutput": null,
       "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
       "irContains": [],
       "irNotContains": [],
       "backends": [
@@ -293,7 +293,7 @@
     },
     {
       "name": "jvm-fv-frontend-sig-param-type",
-      "description": "Signature failure (parameter types): (string)=>int is not assignable to an (int)=>int variable — the frontend type checker rejects with E3001 before any backend runs",
+      "description": "Signature failure (parameter types): (string)=>int is not assignable to an (int)=>int variable \u2014 the frontend type checker rejects with E3001 before any backend runs",
       "source": "function g(s: string): int { return 1; }\nexport function test(): int {\n  let f: (x: int) => int = g;\n  return f(1);\n}",
       "expectedOutput": null,
       "expectedError": null,
@@ -307,7 +307,7 @@
     },
     {
       "name": "jvm-fv-frontend-sig-return-type",
-      "description": "Signature failure (return type): () => string is not assignable to an () => int variable — E3001 before any backend runs",
+      "description": "Signature failure (return type): () => string is not assignable to an () => int variable \u2014 E3001 before any backend runs",
       "source": "function g(): string { return \"x\"; }\nexport function test(): int {\n  let f: () => int = g;\n  return f();\n}",
       "expectedOutput": null,
       "expectedError": null,
@@ -321,7 +321,7 @@
     },
     {
       "name": "jvm-fv-frontend-sig-reverse-arity",
-      "description": "Signature failure (reverse arity): (int)=>int is not assignable to an () => int variable (actual has MORE parameters than the target) — the frontend rejects with the dedicated E5004 reverse-arity diagnostic before any backend runs",
+      "description": "Signature failure (reverse arity): (int)=>int is not assignable to an () => int variable (actual has MORE parameters than the target) \u2014 the frontend rejects with the dedicated E5004 reverse-arity diagnostic before any backend runs",
       "source": "function g(a: int): int { return a; }\nexport function test(): int {\n  let f: () => int = g;\n  return f();\n}",
       "expectedOutput": null,
       "expectedError": null,
@@ -437,7 +437,7 @@
     },
     {
       "name": "jvm-fv-cross-boolean-boundary-parity",
-      "description": "Cross-backend parity (LuaJIT + JVM): an indirect call through an inferred function-typed variable applies the same typed boolean boundary as a direct call — a past-end boolean[] read's nil passed through && as the boolean argument fails the parameter boundary with E8001, exit 1 on both backends (the JVM converts the boxed temporary with booleanNotNull at the argument position: E8001 \"expected boolean, got null\"; LuaJIT's check_boolean(nil) at callee entry).",
+      "description": "Cross-backend parity (LuaJIT + JVM): an indirect call through an inferred function-typed variable applies the same typed boolean boundary as a direct call \u2014 a past-end boolean[] read's nil passed through && as the boolean argument fails the parameter boundary with E8001, exit 1 on both backends (the JVM converts the boxed temporary with booleanNotNull at the argument position: E8001 \"expected boolean, got null\"; LuaJIT's check_boolean(nil) at callee entry).",
       "source": "function flag(b: boolean): string { return \"flag\"; }\nexport function test(): string {\n  let f = flag;\n  let bs: boolean[] = [true];\n  return f(true && bs[99]);\n}",
       "expectedOutput": null,
       "expectedError": "E8001",
@@ -452,12 +452,12 @@
     },
     {
       "name": "jvm-fv-cross-field-adapter-reassign-parity",
-      "description": "Cross-backend parity (LuaJIT + JVM): an arity-extension adapter over a function-typed MODULE FIELD reads the binding live on every invoke on both backends, so reassigning the field after the adapter's creation retargets the adapter (g = dbl; h(10, 999) = 20 — never a stale 11)",
+      "description": "v1.2 grammar gate (both backends): this fixture pins v1.1 module-level field behavior \u2014 module fields were removed, so the field-adapter live-read shape (an arity-extension adapter over a function-typed module field re-reads the binding live on every invoke on both backends, so reassigning the field after the adapter's creation retargets it: h(10, 999) = 20) is an E1049 module-shape error before any backend. Runs under both backends; LuaJIT is the reference behavior",
       "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction dbl(x: int): int { return x * 2; }\nlet g: (x: int) => int = inc;\nexport function test(): null {\n  let h: (a: int, b: int) => int = g;\n  g = dbl;\n  if (h(10, 999) === 20) { console.log(\"jvm-fv-cross-field-adapter-ok\"); }\n}",
-      "expectedOutput": "jvm-fv-cross-field-adapter-ok",
+      "expectedOutput": null,
       "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
       "irContains": [],
       "irNotContains": [],
       "backends": [
@@ -467,12 +467,12 @@
     },
     {
       "name": "jvm-fv-cross-loadtime-field-adapter-parity",
-      "description": "Cross-backend parity (LuaJIT + JVM): the load-time variant — a module-level adapter over a function-typed module field is created in the static initializer, the field is reassigned at load, and the adapter's later invoke reads the field live on both backends (h(10, 999) = 20)",
+      "description": "v1.2 grammar gate (both backends): this fixture pins v1.1 module-level field behavior \u2014 module fields were removed, so the load-time field-adapter shape (a module-level adapter over a function-typed module field created in the static initializer, the field reassigned at load, and the adapter's later invoke reading the field live: h(10, 999) = 20) is an E1049 module-shape error before any backend. Runs under both backends; LuaJIT is the reference behavior",
       "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction dbl(x: int): int { return x * 2; }\nlet g: (x: int) => int = inc;\nlet h: (a: int, b: int) => int = g;\ng = dbl;\nlet r: int = h(10, 999);\nexport function test(): null {\n  if (r === 20) { console.log(\"jvm-fv-cross-loadtime-field-adapter-ok\"); }\n}",
-      "expectedOutput": "jvm-fv-cross-loadtime-field-adapter-ok",
+      "expectedOutput": null,
       "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
       "irContains": [],
       "irNotContains": [],
       "backends": [
@@ -482,9 +482,9 @@
     },
     {
       "name": "jvm-fv-cross-e8010-callback-eval-order",
-      "description": "Cross-backend parity (LuaJIT + JVM): at an E8010 callback-parameter check position the argument value expression is evaluated before the check raises — the marker prints only when markF(\"pre\", inc) ran before markI(\"post\", 1) (spec §Operational semantics rule 2), and the E8010 still follows on both backends (exit 1)",
-      "source": "import * as console from \"std/console\"\nlet order: int = 0;\nfunction inc(x: int): int { return x + 1; }\nfunction markF(tag: string, f: (x: int) => int): (x: int) => int {\n  if (tag === \"pre\") { order = order + 1; }\n  return f;\n}\nfunction markI(tag: string, v: int): int {\n  if (tag === \"post\") {\n    if (order === 1) { console.log(\"jvm-fv-cross-e8010-callback-eval-order-ok\"); }\n  }\n  return v;\n}\nfunction take(f: (a: int, b: string) => int, v: int): int { return f(v, \"ignored\"); }\nexport function test(): int { return take(markF(\"pre\", inc), markI(\"post\", 1)); }",
-      "expectedOutput": "jvm-fv-cross-e8010-callback-eval-order-ok",
+      "description": "Cross-backend parity (LuaJIT + JVM): at an E8010 callback-parameter check position the argument value expressions are evaluated before the check raises \u2014 the checked argument's value expression prints its pre marker and the later argument's value prints its post marker, in that order, before the E8010 (spec \u00a7Operational semantics rule 2), and the E8010 still follows on both backends (exit 1). The v1.2 grammar removed the v1.1 module-field counter, so the order is pinned with console markers",
+      "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction markF(tag: string, f: (x: int) => int): (x: int) => int {\n  if (tag === \"pre\") { console.log(\"jvm-fv-cross-e8010-callback-eval-order-pre\"); }\n  return f;\n}\nfunction markI(tag: string, v: int): int {\n  if (tag === \"post\") { console.log(\"jvm-fv-cross-e8010-callback-eval-order-post\"); }\n  return v;\n}\nfunction take(f: (a: int, b: string) => int, v: int): int { return f(v, \"ignored\"); }\nexport function test(): int { return take(markF(\"pre\", inc), markI(\"post\", 1)); }",
+      "expectedOutput": "jvm-fv-cross-e8010-callback-eval-order-pre\njvm-fv-cross-e8010-callback-eval-order-post",
       "expectedError": "E8010",
       "expectedExitCode": 1,
       "expectedCompileError": null,
@@ -497,7 +497,7 @@
     },
     {
       "name": "jvm-fv-cross-e8010-return-eval",
-      "description": "Cross-backend parity (LuaJIT + JVM): at an E8010 return-boundary check position the returned value expression is evaluated before the check raises — markF logs its marker and only then does the E8010 fire on both backends (exit 1); the pre-fix JVM dropped the side effect entirely",
+      "description": "Cross-backend parity (LuaJIT + JVM): at an E8010 return-boundary check position the returned value expression is evaluated before the check raises \u2014 markF logs its marker and only then does the E8010 fire on both backends (exit 1); the pre-fix JVM dropped the side effect entirely",
       "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction markF(tag: string, f: (x: int) => int): (x: int) => int {\n  if (tag === \"pre\") { console.log(\"jvm-fv-cross-e8010-return-eval-ok\"); }\n  return f;\n}\nfunction picker(): (a: int, b: int) => int { return markF(\"pre\", inc); }\nexport function test(): int {\n  let f: (a: int, b: int) => int = picker();\n  return f(41, 999);\n}",
       "expectedOutput": "jvm-fv-cross-e8010-return-eval-ok",
       "expectedError": "E8010",
@@ -512,7 +512,7 @@
     },
     {
       "name": "jvm-fv-cross-e8010-two-mismatched-args",
-      "description": "Cross-backend parity (LuaJIT + JVM): one call with TWO arity-mismatched function-valued arguments whose later value expression is impure (pickZero logs before returning) — both value expressions evaluate left to right (the marker prints) and only then does the FIRST parameter's boundary check raise E8010 with the first parameter's descriptor (the message carries 'got (int)->int'); the second parameter's descriptor ('got ()->int') is pinned never to print, and the emitted artifact must be valid Java — the pre-fix JVM materialized the later operand's raising construction into an ACTUAL-shape temporary ('Fn0_R_I __t0 = new Fn2_IS_R_I() {…}'), which the harness's javac step rejects ('incompatible types') and which would have raised the second parameter's check before the first's",
+      "description": "Cross-backend parity (LuaJIT + JVM): one call with TWO arity-mismatched function-valued arguments whose later value expression is impure (pickZero logs before returning) \u2014 both value expressions evaluate left to right (the marker prints) and only then does the FIRST parameter's boundary check raise E8010 with the first parameter's descriptor (the message carries 'got (int)->int'); the second parameter's descriptor ('got ()->int') is pinned never to print, and the emitted artifact must be valid Java \u2014 the pre-fix JVM materialized the later operand's raising construction into an ACTUAL-shape temporary ('Fn0_R_I __t0 = new Fn2_IS_R_I() {\u2026}'), which the harness's javac step rejects ('incompatible types') and which would have raised the second parameter's check before the first's",
       "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction pickZero(): () => int {\n  console.log(\"jvm-fv-cross-e8010-two-mismatched-args-ok\");\n  return zero;\n}\nfunction zero(): int { return 0; }\nfunction apply2(f: (a: int, b: string) => int, g: (a: int, b: string) => int): int { return f(1, \"s\"); }\nexport function test(): int { return apply2(inc, pickZero()); }",
       "expectedOutput": "jvm-fv-cross-e8010-two-mismatched-args-ok",
       "expectedNotOutput": [
@@ -530,7 +530,7 @@
     },
     {
       "name": "jvm-fv-cross-callee-eval-order-parity",
-      "description": "Cross-backend parity (LuaJIT + JVM): a call-result callee evaluates COMPLETELY before any argument (spec §Operational semantics rule 1) even when a later argument hoists side-effecting pre-statements — picker() runs first and its past-end int[] read raises E8001 before bump()'s negative-index E8002 or the && operand's hoisted read can run, exit 1 on both backends (the pre-fix JVM hoisted bump()'s read first and raised E8002; 'negative array index' is pinned never to appear)",
+      "description": "Cross-backend parity (LuaJIT + JVM): a call-result callee evaluates COMPLETELY before any argument (spec \u00a7Operational semantics rule 1) even when a later argument hoists side-effecting pre-statements \u2014 picker() runs first and its past-end int[] read raises E8001 before bump()'s negative-index E8002 or the && operand's hoisted read can run, exit 1 on both backends (the pre-fix JVM hoisted bump()'s read first and raised E8002; 'negative array index' is pinned never to appear)",
       "source": "function f2(a: int, b: boolean): int { return a; }\nfunction picker(): (a: int, b: boolean) => int {\n  let xs: int[] = [1];\n  let v: int = xs[99];\n  return f2;\n}\nfunction bump(): int {\n  let ys: int[] = [1];\n  return ys[-1];\n}\nexport function test(): int {\n  let bs: boolean[] = [true];\n  return picker()(bump(), true && bs[99]);\n}",
       "expectedOutput": null,
       "expectedError": "E8001",
@@ -549,7 +549,7 @@
     },
     {
       "name": "jvm-fv-cross-callee-e8010-order-parity",
-      "description": "Cross-backend parity (LuaJIT + JVM): a call-result callee whose return boundary raises E8010 (picker returns (int)=>int where (int,boolean)=>int is declared) evaluates and raises BEFORE any argument — the hoisted bump() negative-index read and the && operand never run, so only E8010 appears and 'negative array index' never prints, exit 1 on both backends (the pre-fix JVM hoisted bump()'s read first and raised E8002)",
+      "description": "Cross-backend parity (LuaJIT + JVM): a call-result callee whose return boundary raises E8010 (picker returns (int)=>int where (int,boolean)=>int is declared) evaluates and raises BEFORE any argument \u2014 the hoisted bump() negative-index read and the && operand never run, so only E8010 appears and 'negative array index' never prints, exit 1 on both backends (the pre-fix JVM hoisted bump()'s read first and raised E8002)",
       "source": "function inc(x: int): int { return x + 1; }\nfunction picker(): (a: int, b: boolean) => int { return inc; }\nfunction bump(): int {\n  let ys: int[] = [1];\n  return ys[-1];\n}\nexport function test(): int {\n  let bs: boolean[] = [true];\n  return picker()(bump(), true && bs[99]);\n}",
       "expectedOutput": null,
       "expectedError": "E8010",
@@ -582,9 +582,9 @@
     },
     {
       "name": "jvm-fv-lua-ref-callresult-adapter",
-      "description": "LuaJIT reference semantics for the side-effecting call-result adapter shape that the JVM slice conservatively rejects with E6000 (pinned in JvmBackendTest.testFunctionValues): LuaJIT's adapter re-evaluates picker() on EVERY invoke — two invokes run picker twice (count reaches 2), so 33 + 33 + 2 = 68; a creation-time-only evaluation would compute 67",
-      "source": "import * as console from \"std/console\"\nlet count: int = 0;\nfunction thirty3(x: int): int { return 33; }\nfunction picker(): (x: int) => int { count = count + 1; return thirty3; }\nexport function test(): null {\n  let h: (a: int, b: int) => int = picker();\n  if (h(10, 999) + h(10, 999) + count === 68) { console.log(\"jvm-fv-lua-ref-callresult-adapter-ok\"); }\n}",
-      "expectedOutput": "jvm-fv-lua-ref-callresult-adapter-ok",
+      "description": "LuaJIT reference semantics for the side-effecting call-result adapter shape that the JVM slice conservatively rejects with E6000 (pinned in JvmBackendTest.testFunctionValues): LuaJIT's adapter re-evaluates picker() on EVERY invoke \u2014 two invokes run picker twice, printing the marker twice \u2014 and the two invokes compute 33 + 33 = 66; a creation-time-only evaluation would print the marker once (the v1.2 grammar removed the v1.1 module-field counter, so the re-evaluation is pinned with console markers)",
+      "source": "import * as console from \"std/console\"\nfunction thirty3(x: int): int { return 33; }\nfunction picker(): (x: int) => int { console.log(\"picked\"); return thirty3; }\nexport function test(): null {\n  let h: (a: int, b: int) => int = picker();\n  if (h(10, 999) + h(10, 999) === 66) { console.log(\"jvm-fv-lua-ref-callresult-adapter-ok\"); }\n}",
+      "expectedOutput": "picked\npicked\njvm-fv-lua-ref-callresult-adapter-ok",
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,
@@ -596,44 +596,40 @@
     },
     {
       "name": "jvm-fv-lua-ref-loadtime-body-assignment",
-      "description": "LuaJIT reference semantics for the load-time shape the JVM slice conservatively rejects with E6000 (pinned in JvmBackendTest.testFunctionValues): a module-level call of set() before the indirect call executes the assignment g = a at load time, so the later g(2) invokes a — whose body reads the not-yet-assigned b — and the module load fails with a raw Lua error instead of running test(); the JVM value-set walk observes the assignment inside the load-time-called body and rejects with E6000 instead of silently running the hoisted method",
+      "description": "v1.2 grammar gate: this fixture pinned LuaJIT's v1.1 load-time semantics for a load-time-called function body assigning a function-typed module field before an indirect call (LuaJIT executes the assignment at load and fails with a raw upvalue error when the held function reaches a later-declared function; the JVM slice conservatively rejected the shape with E6000). Module-level executable statements were removed, so the shape is an E1049 module-shape error before any backend. LuaJIT is the reference behavior",
       "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction a(): int { return b(); }\nlet g: (x: int) => int = inc;\nfunction set(): null { g = a; }\nset();\nlet r: int = g(2);\nfunction b(): int { return 42; }\nexport function test(): null {\n  console.log(\"jvm-fv-lua-ref-loadtime-body-assignment-ok\");\n}",
-      "expectedOutput": "attempt to index upvalue 'b' (a nil value)",
+      "expectedOutput": null,
       "expectedError": null,
-      "expectedExitCode": 1,
-      "expectedCompileError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
       "irContains": [],
       "irNotContains": [],
-      "expectedNotOutput": [
-        "jvm-fv-lua-ref-loadtime-body-assignment-ok"
-      ],
+      "expectedNotOutput": [],
       "backends": [
         "luajit"
       ]
     },
     {
       "name": "jvm-fv-lua-ref-loadtime-indirect-call-body",
-      "description": "LuaJIT reference semantics for the load-time shape the JVM slice conservatively rejects with E6000 (pinned in JvmBackendTest.testFunctionValues): run() invoked at load time contains the indirect call g(2); g was retargeted to a by the earlier load-time set(), so the invoked a reads the not-yet-assigned b and the module load fails with a raw Lua error instead of running test(); the JVM rejects the load-time call of run() with E6000 (the invoked wrapper's value is not statically known to the load-time guards) instead of silently running the hoisted method",
+      "description": "v1.2 grammar gate: this fixture pinned LuaJIT's v1.1 load-time semantics for a load-time-called function body containing an indirect call through a function-typed module field (LuaJIT fails at load with a raw upvalue error when the held function reaches a later-declared function; the JVM slice conservatively rejected the shape with E6000). Module-level executable statements were removed, so the shape is an E1049 module-shape error before any backend. LuaJIT is the reference behavior",
       "source": "import * as console from \"std/console\"\nfunction inc(x: int): int { return x + 1; }\nfunction a(): int { return b(); }\nlet g: (x: int) => int = inc;\nfunction set(): null { g = a; }\nset();\nfunction run(): int { return g(2); }\nlet r: int = run();\nfunction b(): int { return 42; }\nexport function test(): null {\n  console.log(\"jvm-fv-lua-ref-loadtime-indirect-call-body-ok\");\n}",
-      "expectedOutput": "attempt to index upvalue 'b' (a nil value)",
+      "expectedOutput": null,
       "expectedError": null,
-      "expectedExitCode": 1,
-      "expectedCompileError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
       "irContains": [],
       "irNotContains": [],
-      "expectedNotOutput": [
-        "jvm-fv-lua-ref-loadtime-indirect-call-body-ok"
-      ],
+      "expectedNotOutput": [],
       "backends": [
         "luajit"
       ]
     },
     {
       "name": "jvm-fv-xmod-callback-arg-e6000",
-      "description": "Multi-module backend-rejection gate: a callback passed INTO an imported project module's function-typed parameter — the per-module wrapper classes cannot cross a module boundary (Main.Fn1_I_R_I is not Lib.Fn1_I_R_I), so the pre-fix emission 'Lib.apply(inc$fn, 41L)' was an artifact javac rejected after the CLI reported success. The orchestrator pipeline now reports E6000, exits non-zero, and the rejected entry module writes no artifact (the clean imported module may still be written by the orchestrator's two-pass design).",
+      "description": "Multi-module backend-rejection gate: a callback passed INTO an imported project module's function-typed parameter \u2014 the per-module wrapper classes cannot cross a module boundary (Main.Fn1_I_R_I is not Lib.Fn1_I_R_I), so the pre-fix emission 'Lib.apply(inc$fn, 41L)' was an artifact javac rejected after the CLI reported success. The orchestrator pipeline now reports E6000, exits non-zero, and the rejected entry module writes no artifact (the clean imported module may still be written by the orchestrator's two-pass design). \u2014 the v1.2 selected-entry rule requires the entry module to export non-async main(): null, which the fixture satisfies before the backend rejection",
       "modules": {
         "lib.deal": "export function apply(f: (x: int) => int, v: int): int { return f(v); }",
-        "main.deal": "import * as lib from \"./lib\"\nfunction inc(x: int): int { return x + 1; }\nexport function test(): int { return lib.apply(inc, 41); }"
+        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\nfunction inc(x: int): int { return x + 1; }\nexport function test(): int { return lib.apply(inc, 41); }"
       },
       "entry": "main.deal",
       "expectedOutput": null,
@@ -648,10 +644,10 @@
     },
     {
       "name": "jvm-fv-xmod-arity-extension-arg-e6000",
-      "description": "Multi-module backend-rejection gate: the E8010-boundary shape — (x:int)=>int passed to an imported (a:int,b:string)=>int parameter compiles (arity extension) but the member-call path has no function parameter targets, so the parameter-boundary E8010 the same-module path emits would be silently dropped and the artifact would still be javac-rejected (Main.Fn1_I_R_I vs Lib.Fn2_IS_R_I). E6000, exit 1, no entry artifact.",
+      "description": "Multi-module backend-rejection gate: the E8010-boundary shape \u2014 (x:int)=>int passed to an imported (a:int,b:string)=>int parameter compiles (arity extension) but the member-call path has no function parameter targets, so the parameter-boundary E8010 the same-module path emits would be silently dropped and the artifact would still be javac-rejected (Main.Fn1_I_R_I vs Lib.Fn2_IS_R_I). E6000, exit 1, no entry artifact. \u2014 the v1.2 selected-entry rule requires the entry module to export non-async main(): null, which the fixture satisfies before the backend rejection",
       "modules": {
         "lib.deal": "export function apply2(f: (a: int, b: string) => int, v: int): int { return f(v, \"i\"); }",
-        "main.deal": "import * as lib from \"./lib\"\nfunction inc(x: int): int { return x + 1; }\nexport function test(): int { return lib.apply2(inc, 41); }"
+        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\nfunction inc(x: int): int { return x + 1; }\nexport function test(): int { return lib.apply2(inc, 41); }"
       },
       "entry": "main.deal",
       "expectedOutput": null,
@@ -666,10 +662,10 @@
     },
     {
       "name": "jvm-fv-xmod-return-out-e6000",
-      "description": "Multi-module backend-rejection gate: a function value RETURNED from an imported module call and stored in a typed variable — 'Fn1_I_R_I f = Lib.picker();' is the pre-fix javac-rejected shape (Lib.Fn1_I_R_I cannot be converted to Main.Fn1_I_R_I). E6000, exit 1, no entry artifact.",
+      "description": "Multi-module backend-rejection gate: a function value RETURNED from an imported module call and stored in a typed variable \u2014 'Fn1_I_R_I f = Lib.picker();' is the pre-fix javac-rejected shape (Lib.Fn1_I_R_I cannot be converted to Main.Fn1_I_R_I). E6000, exit 1, no entry artifact. \u2014 the v1.2 selected-entry rule requires the entry module to export non-async main(): null, which the fixture satisfies before the backend rejection",
       "modules": {
         "lib.deal": "export function picker(): (x: int) => int { return inc; }\nfunction inc(x: int): int { return x + 1; }",
-        "main.deal": "import * as lib from \"./lib\"\nexport function test(): int {\n  let f: (x: int) => int = lib.picker();\n  return f(41);\n}"
+        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\nexport function test(): int {\n  let f: (x: int) => int = lib.picker();\n  return f(41);\n}"
       },
       "entry": "main.deal",
       "expectedOutput": null,
@@ -684,10 +680,10 @@
     },
     {
       "name": "jvm-fv-xmod-callresult-callee-e6000",
-      "description": "Multi-module backend-rejection gate: an imported call result used as a call-result callee (lib.picker()(41)) — the pre-fix emission typed the callee temporary with the CALLER module's wrapper class against the DEFINING module's return type and javac rejected the artifact. E6000, exit 1, no entry artifact.",
+      "description": "Multi-module backend-rejection gate: an imported call result used as a call-result callee (lib.picker()(41)) \u2014 the pre-fix emission typed the callee temporary with the CALLER module's wrapper class against the DEFINING module's return type and javac rejected the artifact. E6000, exit 1, no entry artifact. \u2014 the v1.2 selected-entry rule requires the entry module to export non-async main(): null, which the fixture satisfies before the backend rejection",
       "modules": {
         "lib.deal": "export function picker(): (x: int) => int { return inc; }\nfunction inc(x: int): int { return x + 1; }",
-        "main.deal": "import * as lib from \"./lib\"\nexport function test(): int { return lib.picker()(41); }"
+        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\nexport function test(): int { return lib.picker()(41); }"
       },
       "entry": "main.deal",
       "expectedOutput": null,
@@ -702,36 +698,63 @@
     },
     {
       "name": "jvm-fv-lua-ref-loadtime-callresult-later-callee",
-      "description": "LuaJIT reference semantics for the module-level call-result callee shape the JVM slice conservatively rejects with E6000 (pinned in JvmBackendTest.testFunctionValues): picker() returns the wrapper of a function declared AFTER the call site, so the load-time call picker()(2) reads the not-yet-assigned chunk-local function value and the return boundary fails with E8001 'expected function' — the module load fails before test() runs. The JVM emitted 'r = picker().invoke(2L)' in the static initializer and crashed with a bare NullPointerException/ExceptionInInitializerError; the fixed slice reports E6000 before emitting anything.",
+      "description": "v1.2 grammar gate: this fixture pinned LuaJIT's v1.1 load-time semantics for a module-level call-result callee whose produced function is declared after the call site (LuaJIT reads the not-yet-declared chunk-local at load and fails with E8001 'expected function'; the JVM slice conservatively rejected the shape with E6000). Module-level executable statements were removed, so the shape is an E1049 module-shape error before any backend. LuaJIT is the reference behavior",
       "source": "import * as console from \"std/console\"\nfunction picker(): (x: int) => int { return inc; }\nlet r: int = picker()(2);\nfunction inc(x: int): int { return x + 1; }\nexport function test(): null {\n  console.log(\"jvm-fv-lua-ref-loadtime-callresult-later-ok\");\n}",
       "expectedOutput": null,
-      "expectedError": "E8001",
-      "expectedExitCode": 1,
-      "expectedCompileError": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
       "irContains": [],
       "irNotContains": [],
-      "expectedNotOutput": [
-        "jvm-fv-lua-ref-loadtime-callresult-later-ok"
-      ],
+      "expectedNotOutput": [],
       "backends": [
         "luajit"
       ]
     },
     {
       "name": "jvm-fv-lua-ref-loadtime-callresult-reaches-later",
-      "description": "LuaJIT reference semantics for the module-level call-result callee shape the JVM slice conservatively rejects with E6000 (pinned in JvmBackendTest.testFunctionValues): picker() returns mid, and mid's body CALLS the later-declared laterFn — the load-time call picker()(2) therefore reaches the not-yet-assigned chunk-local and the module load fails with the raw error 'attempt to index upvalue laterFn (a nil value)', exit 1, before test() runs. The JVM hoisted the method and silently ran it (RESULT: 42); the fixed slice reports E6000 before emitting anything.",
+      "description": "v1.2 grammar gate: this fixture pinned LuaJIT's v1.1 load-time semantics for a module-level call-result callee whose produced function reaches a later-declared function (a raw upvalue load error; the JVM slice conservatively rejected the shape with E6000). Module-level executable statements were removed, so the shape is an E1049 module-shape error before any backend. LuaJIT is the reference behavior",
       "source": "import * as console from \"std/console\"\nfunction mid(x: int): int { return laterFn(); }\nfunction picker(): (x: int) => int { return mid; }\nlet r: int = picker()(2);\nfunction laterFn(): int { return 42; }\nexport function test(): null {\n  console.log(\"jvm-fv-lua-ref-loadtime-callresult-reaches-later-ok\");\n}",
-      "expectedOutput": "attempt to index upvalue 'laterFn' (a nil value)",
+      "expectedOutput": null,
       "expectedError": null,
-      "expectedExitCode": 1,
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
+      "irContains": [],
+      "irNotContains": [],
+      "expectedNotOutput": [],
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "jvm-fv-invoke-name-collision",
+      "description": "Review 0009 (MR-0081): a DEAL function named `invoke` \u2014 the emitted wrapper classes' dispatch method name \u2014 works as a direct value, an arity-adapted value, and a callback without recursion or javac failure: the declaration wrapper and the arity adapter delegate to the module-class-QUALIFIED static method (Main.invoke(p0)), never to a bare `invoke` that would resolve to the anonymous wrapper's own invoke (f(41) + g(0, 999) + apply(invoke, 0) = 42 + 1 + 1 = 44)",
+      "source": "function invoke(x: int): int { return x + 1; }\nfunction apply(f: (x: int) => int, v: int): int { return f(v); }\nexport function test(): int {\n  let f: (x: int) => int = invoke;\n  let g: (a: int, b: int) => int = invoke;\n  return f(41) + g(0, 999) + apply(invoke, 0);\n}",
+      "expectedOutput": "44",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "(int)->int",
+        "(int,int)->int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-fv-descriptor-name-collision",
+      "description": "Review 0009 companion: a DEAL function named `descriptor` \u2014 the emitted wrapper classes' descriptor field name \u2014 works as an arity-adapted value without a javac failure: the adapter's delegation is module-class-qualified, so the bare name never resolves to the wrapper shape class's descriptor field (f(21, 999) = 42)",
+      "source": "function descriptor(x: int): int { return x * 2; }\nexport function test(): int {\n  let f: (a: int, b: int) => int = descriptor;\n  return f(21, 999);\n}",
+      "expectedOutput": "42",
+      "expectedError": null,
+      "expectedExitCode": 0,
       "expectedCompileError": null,
       "irContains": [],
       "irNotContains": [],
-      "expectedNotOutput": [
-        "jvm-fv-lua-ref-loadtime-callresult-reaches-later-ok"
-      ],
       "backends": [
-        "luajit"
+        "jvm"
       ]
     }
   ]
