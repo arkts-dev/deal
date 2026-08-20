@@ -8,10 +8,30 @@ async function b(): int { return 2; }
 async function c(): int { return 3; }
 
 export async function f(): int {
+  let stage: int = 0;
   let x: int = await a();
+  if (x !== 1) {
+    throw { code: "TEST_FAIL", message: "first awaited completion mismatch" };
+  }
+  stage = stage + 1;
   let y: int = await b();
+  if (y !== 2) {
+    throw { code: "TEST_FAIL", message: "second awaited completion mismatch" };
+  }
+  stage = stage + 1;
   let z: int = await c();
-  return x + y + z;
+  if (z !== 3) {
+    throw { code: "TEST_FAIL", message: "third awaited completion mismatch" };
+  }
+  stage = stage + 1;
+  if (stage !== 3) {
+    throw { code: "TEST_FAIL", message: "multiple awaits stage sequence mismatch" };
+  }
+  let sum: int = x + y + z;
+  if (sum !== 6) {
+    throw { code: "TEST_FAIL", message: "multiple awaits sum mismatch" };
+  }
+  return sum;
 }
 
 export function main(): null {

@@ -12,8 +12,20 @@ async function triple(x: int): int {
 }
 
 export async function test_multiple_await(): int {
+  let stage: int = 0;
   let a: int = await double(10);
+  if (a !== 20) {
+    throw { code: "TEST_FAIL", message: "first awaited completion mismatch" };
+  }
+  stage = stage + 1;
   let b: int = await triple(a);
+  if (b !== 60) {
+    throw { code: "TEST_FAIL", message: "second awaited completion mismatch" };
+  }
+  stage = stage + 1;
+  if (stage !== 2) {
+    throw { code: "TEST_FAIL", message: "multiple await stage sequence mismatch" };
+  }
   return b;
 }
 
