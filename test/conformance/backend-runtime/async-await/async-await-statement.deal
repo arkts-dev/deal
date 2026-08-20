@@ -3,10 +3,26 @@
 // @expected: runtime-ok
 // @features: async, await, runtime
 
-async function g(): int { return 42; }
-
 export async function f(): int {
+  let completionState: int = 0;
+  let completionCount: int = 0;
+
+  async function g(): int {
+    let result: int = 42;
+    completionState = result;
+    completionCount = completionCount + 1;
+    return result;
+  }
+
   await g();
+
+  if (completionState !== 42) {
+    throw { code: "TEST_FAIL", message: "discarded await completion state mismatch" };
+  }
+  if (completionCount !== 1) {
+    throw { code: "TEST_FAIL", message: "discarded await invocation count mismatch" };
+  }
+
   return 0;
 }
 
