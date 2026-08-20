@@ -1308,16 +1308,17 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
 
 - The normative spec for this backend is `docs/spec-v1.2.md` (§JVM value
   mapping / §JVM backend contract) — the ISSUE-0107 promotion gate made
-  v1.2 the only language spec. The remaining divergences are tracked,
-  never silent: the v1.2 frontend hard break (rejecting module-level
-  statements, imports after declarations, and rest parameters —
-  ISSUE-0103), signed 32-bit `int` and `bytes` (ISSUE-0111), and Unicode
-  scalar-value strings (ISSUE-0105/ISSUE-0106) are pinned by explicit
-  failing fixtures (`test/conformance/frontend/…`,
-  `test/conformance/backend-runtime/…`, and
-  `test/conformance/fixtures/jvm-v1.2-known-fail.json`). Until those land,
-  the backend keeps its v1.1-era emission (module-level load-time
-  statements, ±(2^53-1) `int`, UTF-8/byte string semantics), and the
+  v1.2 the only language spec. The v1.2 frontend hard break (rejecting
+  module-level statements, imports after declarations, and rest
+  parameters — E1047/E1048/E1049/E1050/E1051) and the Unicode
+  scalar-value string surface (code-point length/substring/split/ordering
+  helpers) have landed; their fixtures pass, and the
+  `jvm-unicode-scalar-string-length` case was promoted out of the
+  known-fail gate. The remaining divergence is tracked, never silent:
+  signed 32-bit `int` and `bytes` (ISSUE-0111) are pinned by explicit
+  failing fixtures (`test/conformance/backend-runtime/…` and
+  `test/conformance/fixtures/jvm-v1.2-known-fail.json`). Until those
+  land, the backend keeps its ±(2^53-1) `int` emission, and the
   conformance harness records each case as a classified known-failure.
 - Multi-module JVM projects support compiled project modules only
   (ISSUE-0096): a namespace import of a compiled module runs its load-time

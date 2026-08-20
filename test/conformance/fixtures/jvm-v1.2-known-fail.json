@@ -31,8 +31,7 @@
       "description": "v1.2 strings are Unicode scalar values: std/string.length(\"é\") is 1, not the UTF-8 byte count 2",
       "source": "import * as strings from \"std/string\"\nexport function test(): int {\n  return strings.length(\"é\");\n}",
       "expectedOutput": "1",
-      "backends": ["jvm"],
-      "knownFail": "ISSUE-0106"
+      "backends": ["jvm"]
     }
   ]
 }
