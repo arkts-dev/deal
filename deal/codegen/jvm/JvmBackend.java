@@ -7068,6 +7068,14 @@ public final class JvmBackend {
                 }
                 yield found;
             }
+            // An await's callee is a direct async call: its argument
+            // positions are value positions exactly like any other
+            // call's, so an assignment hidden inside one (`apply(g =
+            // two, 1)`) reassigns the binding exactly like a bare
+            // statement assignment — the adapter's snapshot would
+            // silently go stale if the scan missed it (ISSUE-0099).
+            case AwaitExpression aw ->
+                exprAssignsLocal(aw.callee(), locals, name);
             case MemberAccessExpr mae ->
                 exprAssignsLocal(mae.object(), locals, name);
             case IndexExpr idx -> exprAssignsLocal(idx.array(), locals, name)

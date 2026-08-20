@@ -2406,9 +2406,20 @@ public final class LuaBackend implements Visitor<Void> {
         }
 
         sb.append(bodyIndent).append("return ");
-        sb.append(emitCheckExpr(
-            valueLua + ".f(" + buildOverlappingArgs(valueFunc.paramTypes().size()) + ")",
-            targetFunc.returnType(), span));
+        String innerCall = valueLua + ".f("
+            + buildOverlappingArgs(valueFunc.paramTypes().size()) + ")";
+        if (targetFunc.isAsync()) {
+            // An async adapter returns the inner async operation handle
+            // untouched: the declared return type is enforced at the
+            // await site once the runtime resumes the awaiting
+            // coroutine with the completion value (mirroring the
+            // __rt.from_lua_function async dispatch rule). Checking the
+            // handle here would raise E8001 against the operation table
+            // before the inner operation ever completes (ISSUE-0099).
+            sb.append(innerCall);
+        } else {
+            sb.append(emitCheckExpr(innerCall, targetFunc.returnType(), span));
+        }
         sb.append("\n");
         sb.append("  ".repeat(indent)).append("end)");
         return sb.toString();

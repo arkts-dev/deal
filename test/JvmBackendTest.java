@@ -6191,6 +6191,41 @@ public class JvmBackendTest {
             "await f(1, 2) drops the extra argument and computes 1: "
                 + arity.output());
 
+        // Reassigned-binding guard descends into awaited calls: an
+        // assignment hidden in an awaited call's argument list
+        // (`apply(g = two, 1)`) reassigns the binding exactly like a
+        // bare statement assignment, so the adapter over `g` must not
+        // silently snapshot it. LuaJIT's adapter reads the binding live
+        // on every invoke — pinned by the LuaJIT-only reference fixture
+        // jvm-async-lua-ref-reassigned-adapter (the retargeted adapter
+        // computes 11) — and the JVM slice cannot emit a live capture
+        // of a reassigned binding: E6000, never a silent divergence.
+        Frontend hidden = compileFrontend("""
+            async function one(x: int): int { return x; }
+            async function two(x: int): int { return x + 10; }
+            async function apply(cb: async (x: int) => int, v: int): int { return await cb(v); }
+            export async function test(): int {
+              let g: async (x: int) => int = one;
+              let h: async (x: int, y: int) => int = g;
+              await apply(g = two, 1);
+              return await h(1, 2);
+            }
+            """, "jvmtest-async-reassigned.deal");
+        check(hidden.errors().isEmpty(),
+            "frontend accepts the awaited-argument-hidden reassignment: "
+                + hidden.errors());
+        if (hidden.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult hiddenRes = JvmBackend.generate(
+                hidden.program(), hidden.checkResult(),
+                "jvmtest-async-reassigned.deal", "main");
+            check(hiddenRes.hasErrors(),
+                "backend rejects the awaited-argument-hidden reassignment");
+            check(hiddenRes.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for the awaited-argument-hidden reassignment: "
+                    + hiddenRes.diagnostics());
+        }
+
         // Deferred shapes stay E6000: async function expressions and
         // non-representable async signatures (array parameters).
         Frontend expr = compileFrontend("""

@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM async/await slice (ISSUE-0099), rebased onto the v1.2 canonical: JVM-only fixtures that run the real DEAL frontend (lexer \u2192 parser \u2192 module-shape validation \u2192 name resolver \u2192 type checker) \u2192 real JvmBackend codegen \u2192 javac \u2192 java executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). The slice uses spec-v1.2's permitted JVM blocking-call lowering: an async function compiles to a plain static method returning its declared type; `await E` evaluates the direct call and applies the declared-return-type completion check at the await site (int completions route through checkInt \u2014 E8004; number/string/boolean/null completions are proven by the emitted Java types, which \u00a7JVM backend contract permits). Async function values reuse the ISSUE-0098 wrapper machinery unchanged \u2014 the per-signature wrapper shape class and per-declaration wrapper field cover async markers, and awaited indirect calls dispatch through invoke. Covered forms: async returns, await in value positions (let initializers, return positions, nested call arguments, if conditions), await in discard positions, completion success (value paths, the int safe-range boundary, null completions) and completion failure (an awaited operation completing by raising E8005, propagating through one and two await levels), direct calls with primitive/string/boolean/null signatures, async function values (typed locals, callback parameters, reassigned local bindings), imported async direct calls through the orchestrator multi-module pipeline (the entry module exporting the v1.2 selected-entry non-async main(): null), and three frontend compile-error gates (E3012 await outside async, E3013 await on a sync call, E3014 async call without await) rejected before any backend runs.",
+  "description": "JVM async/await slice (ISSUE-0099), rebased onto the v1.2 canonical: JVM-only fixtures that run the real DEAL frontend (lexer \u2192 parser \u2192 module-shape validation \u2192 name resolver \u2192 type checker) \u2192 real JvmBackend codegen \u2192 javac \u2192 java executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). The slice uses spec-v1.2's permitted JVM blocking-call lowering: an async function compiles to a plain static method returning its declared type; `await E` evaluates the direct call and applies the declared-return-type completion check at the await site (int completions route through checkInt \u2014 E8004; number/string/boolean/null completions are proven by the emitted Java types, which \u00a7JVM backend contract permits). Async function values reuse the ISSUE-0098 wrapper machinery unchanged \u2014 the per-signature wrapper shape class and per-declaration wrapper field cover async markers, and awaited indirect calls dispatch through invoke. Covered forms: async returns, await in value positions (let initializers, return positions, nested call arguments, if conditions), await in discard positions, completion success (value paths, the int safe-range boundary, null completions) and completion failure (an awaited operation completing by raising E8005, propagating through one and two await levels), direct calls with primitive/string/boolean/null signatures, async function values (typed locals, callback parameters, reassigned local bindings), imported async direct calls through the orchestrator multi-module pipeline (the entry module exporting the v1.2 selected-entry non-async main(): null), and three frontend compile-error gates (E3012 await outside async, E3013 await on a sync call, E3014 async call without await) rejected before any backend runs. The JVM guard over reassigned async function-typed locals/parameters descends into awaited calls: an assignment hidden in an awaited call's argument list is a real reassignment, so the adapter over the binding is rejected with E6000 (never a silent snapshot) and the live-read semantics are pinned by one LuaJIT-only reference fixture (the retargeted async adapter computes 11; the async adapter returns the inner operation handle and the completion check stays at the await site).",
   "tests": [
     {
       "name": "jvm-async-direct-await",
@@ -278,6 +278,23 @@
       "irNotContains": [],
       "backends": [
         "jvm"
+      ]
+    },
+    {
+      "name": "jvm-async-lua-ref-reassigned-adapter",
+      "description": "LuaJIT reference semantics for the reassigned-local adapter shape hidden in an awaited call's argument list that the JVM slice conservatively rejects with E6000 (pinned in JvmBackendTest.testAsyncSlice): LuaJIT's adapter reads the binding live on every invoke, so g = two retargets the earlier async arity-extension adapter (await h(1, 2) = 11). The argument-hidden assignment form (apply(g = two, 1)) is not Lua-emittable \u2014 Lua has no assignment expressions in a call argument list \u2014 so the reference source uses the statement reassignment exactly like the sync sibling jvm-fv-lua-ref-reassigned-adapter, and the async adapter returns the inner operation handle with the completion check at the await site",
+      "source": "import * as console from \"std/console\"\nasync function one(x: int): int { return x; }\nasync function two(x: int): int { return x + 10; }\nasync function apply(cb: async (x: int) => int, v: int): int { return await cb(v); }\nexport async function test(): int {\n  let g: async (x: int) => int = one;\n  let h: async (x: int, y: int) => int = g;\n  g = two;\n  await apply(g, 1);\n  let r: int = await h(1, 2);\n  if (r === 11) { console.log(\"jvm-async-lua-ref-reassigned-adapter-ok\"); }\n  return 0;\n}",
+      "expectedOutput": "jvm-async-lua-ref-reassigned-adapter-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "async function one: int",
+        "await : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit"
       ]
     }
   ]

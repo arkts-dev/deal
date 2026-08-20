@@ -246,10 +246,10 @@ Every supported async/await form, with the test covering it. All
 fixture evidence runs through the real frontend → real `JvmBackend`
 codegen → `javac` subprocess → `java` subprocess executing the emitted
 artifact (`test/conformance/fixtures/jvm-async-slice.json`, 13 runtime
-+ 3 frontend-gate JVM-only fixtures; `test/BackendConformanceTest`
-fails a fixture whose parser/checker/module-discovery yields no
-compile, whose codegen leaves no `.java` artifact, or whose JVM
-execution is bypassed):
++ 3 frontend-gate JVM-only fixtures + 1 LuaJIT-only reference
+fixture; `test/BackendConformanceTest` fails a fixture whose
+parser/checker/module-discovery yields no compile, whose codegen
+leaves no `.java` artifact, or whose JVM execution is bypassed):
 
 | Async/await form (spec-v1.2 §Async operation semantics / §Function values, calls, and wrappers) | Test covering it |
 |---|---|
@@ -265,6 +265,8 @@ execution is bypassed):
 | async function as a value in a typed local; awaited indirect call through the wrapper (`invoke`) | `jvm-async-function-value`; `JvmBackendTest.testAsyncSlice` (`Fn0_R_I f = value$fn;`, `checkInt(f.invoke())`) |
 | callback parameter of async function type; the declared function value passes in and dispatches | `jvm-async-function-value-callback`; `JvmBackendTest.testAsyncSlice` (`checkInt(cb.invoke(v))`) |
 | reassigned local binding of async function type; each awaited indirect call dispatches through the current value | `jvm-async-function-value-local-reassign` |
+| the reassigned-binding guard descends into awaited calls — an assignment hidden in an awaited call's argument list (`apply(g = two, 1)`) is a real reassignment, so the adapter over the binding is rejected with E6000, never a silently stale snapshot | `JvmBackendTest.testAsyncSlice` |
+| LuaJIT reference for the retargeted async adapter: the adapter reads the binding live on every invoke (`g = two` retargets `h`, `await h(1, 2)` = 11); the async adapter returns the inner operation handle and the completion check stays at the await site | `jvm-async-lua-ref-reassigned-adapter` |
 | imported async direct calls through the real orchestrator pipeline (module discovery → checking → per-module codegen → javac → java) | `jvm-async-multi-module` (entry module exporting the v1.2 selected-entry non-async `main(): null`) |
 | arity extension of an async signature inherits the ISSUE-0098 adapter (extra parameters dropped) | `JvmBackendTest.testAsyncSlice` |
 | async function expressions stay E6000 (deferred) | `JvmBackendTest.testUnsupportedConstructsRejected` ("async function expression" case); `JvmBackendTest.testAsyncSlice` |
