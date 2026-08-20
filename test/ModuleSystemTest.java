@@ -1027,6 +1027,47 @@ public class ModuleSystemTest {
     }
 
     // =========================================================================
+    // Circular Import: Class field default referencing the cycle (E2005)
+    // =========================================================================
+
+    /**
+     * DEAL v1.2 evaluates class field defaults at module initialization,
+     * so a default expression that references a cyclic import creates a
+     * runtime initialization dependency and must be rejected with E2005
+     * — even though the cycle looks "declaration-only" at statement level.
+     */
+    private static void testCircularImportClassFieldDefault() throws Exception {
+        System.out.println("-- Circular Import: Class Field Default (runtime dep) --");
+
+        writeFile("src/cfda.deal", """
+            import * as B from \"./cfdb\"
+            export function main(): null { return null; }
+            export class Holder {
+              seed: int = B.get(1);
+            }
+            """);
+        writeFile("src/cfdb.deal", """
+            import * as A from \"./cfda\"
+            export function get(x: int): int { return x + 1; }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/cfda.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/lua_cycle_cfd");
+        List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, moduleRoots, null);
+
+        boolean success = orchestrator.compile();
+        check(!success, "Class-field-default cycle must fail in v1.2");
+
+        List<Diagnostic> diags = orchestrator.diagnostics();
+        boolean hasE2005 = diags.stream().anyMatch(
+            d -> "E2005".equals(d.code()));
+        check(hasE2005, "Class-field-default cycle: E2005 diagnostic");
+    }
+
+    // =========================================================================
     // Circular Import: Declaration-only (allowed)
     // =========================================================================
 
@@ -2582,6 +2623,7 @@ public class ModuleSystemTest {
             testCrossModuleAsyncCallWithoutAwait_E3014();
             testCircularImportRuntime();
             testCircularImportDeclarationOnly();
+            testCircularImportClassFieldDefault();
             testTwoDisconnectedCyclesOneRuntime();
             testTwoDisconnectedCyclesBothDecl();
             testStdlibFallbackAfterDdeal();
