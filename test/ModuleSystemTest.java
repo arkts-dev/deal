@@ -2420,7 +2420,8 @@ public class ModuleSystemTest {
             "orchestrator rejects nested export in function expression with E1050");
     }
 
-    private static void testModuleShapeBodylessInImplementation() {
+    private static void testModuleShapeBodylessInImplementation()
+            throws Exception {
         System.out.println("-- v1.2 module shape: bodyless declaration in .deal (E1051) --");
         List<Diagnostic> diags = shapeDiags(
             "export function main(): null;\n", false);
@@ -2432,6 +2433,66 @@ public class ModuleSystemTest {
         diags = shapeDiags(
             "export function add(a: int, b: int): int;\n", true);
         check(diags.isEmpty(), ".d.deal external declaration is accepted");
+
+        // A bodyless declaration nested inside a function body is external
+        // too: implementation files must reject it with E1051 instead of
+        // silently dropping the declared signature.
+        diags = shapeDiags("""
+            export function main(): null {
+              function g(): null;
+              let n: null = g();
+              return n;
+            }
+            """, false);
+        check(diags.stream().anyMatch(d -> "E1051".equals(d.code())
+                && "error".equals(d.severity())),
+            "nested bodyless function in a function body produces E1051");
+
+        // A bodyless declaration nested inside a class-field-default
+        // function expression is reached through the expression walk.
+        diags = shapeDiags("""
+            class C { f: (() => null) = function(): null { function g(): null; return null; }; }
+            export function main(): null { return null; }
+            """, false);
+        check(diags.stream().anyMatch(d -> "E1051".equals(d.code())
+                && "error".equals(d.severity())),
+            "nested bodyless function in a class-field-default function expression produces E1051");
+
+        // Declaration files may nest external declarations; only the
+        // implementation-file gate is threaded into the nested walk.
+        diags = shapeDiags("""
+            export function add(a: int, b: int): int {
+              function helper(): int;
+              return helper();
+            }
+            """, true);
+        check(diags.isEmpty(),
+            "nested bodyless function in .d.deal is accepted");
+
+        // Bodied nested declarations stay valid in implementation files.
+        diags = shapeDiags("""
+            export function main(): null {
+              function g(): null { return null; }
+              let f = function(): null { function h(): null { return null; } return null; };
+              return null;
+            }
+            """, false);
+        check(diags.isEmpty(),
+            "bodied nested declarations produce no shape diagnostics");
+
+        // End to end: the orchestrator must reject the module that
+        // previously compiled cleanly with a dropped signature.
+        List<Diagnostic> orchestratorDiags = compileEntry(
+            "nested_bodyless", """
+            export function main(): null {
+              function g(): null;
+              let n: null = g();
+              return n;
+            }
+            """);
+        check(orchestratorDiags.stream().anyMatch(d -> "E1051".equals(d.code())
+                && "error".equals(d.severity())),
+            "orchestrator rejects nested bodyless declaration with E1051");
     }
 
     /** Compiles one entry module and returns orchestrator diagnostics. */
