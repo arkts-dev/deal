@@ -4,11 +4,23 @@
 // @features: async, nullable, runtime
 
 export async function f_null(): string | null {
-  return null;
+  let result: string | null = null;
+  if (result !== null) {
+    throw { code: "TEST_FAIL", message: "async nullable f_null: expected exact null completion" };
+  }
+  return result;
 }
 
 export async function f_value(): string | null {
-  return "hello";
+  let result: string | null = "hello";
+  if (result !== null) {
+    if (result !== "hello") {
+      throw { code: "TEST_FAIL", message: "async nullable f_value: expected non-null string 'hello'" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "async nullable f_value: expected non-null string completion" };
+  }
+  return result;
 }
 
 export function main(): null {
