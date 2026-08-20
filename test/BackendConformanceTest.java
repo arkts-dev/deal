@@ -490,11 +490,12 @@ public class BackendConformanceTest {
      * {@code -encoding UTF-8} option and the compile directory as the
      * classpath (the subprocess form ran with the same working directory
      * and default classpath {@code "."}), plus {@code -proc:none
-     * -implicit:none} (the emitted artifacts carry no annotations and
-     * every artifact file is listed explicitly, so the skipped passes
-     * never resolve anything the named set does not already compile —
-     * a pure per-task startup-cost reduction, no compile surface is
-     * lost). Artifact execution stays a real
+     * -implicit:none -g:none} (the emitted artifacts carry no
+     * annotations, every artifact file is listed explicitly, and no
+     * fixture or pin consumes javac debug info, so the skipped passes
+     * never resolve or observe anything the named set does not already
+     * compile — a pure per-task startup-cost reduction, no compile
+     * surface is lost). Artifact execution stays a real
      * {@code java} subprocess. Every multi-module conformance fixture
      * (including all twelve ISSUE-0109 fixtures) and JvmBackendTest's
      * artifact-acceptance pins keep the real {@code javac} binary.
@@ -532,7 +533,11 @@ public class BackendConformanceTest {
                 "-classpath", dir.toString(),
                 "-d", dir.toString(),
                 "-proc:none",
-                "-implicit:none");
+                "-implicit:none",
+                // No JVM fixture or artifact pin consumes javac debug
+                // info (line-number tables are never asserted), so skip
+                // that generation pass as well — pure per-task cost.
+                "-g:none");
             Boolean ok = compiler.getTask(messages, fileManager, diagnostics,
                 options, null, units).call();
             if (!Boolean.TRUE.equals(ok)) {
