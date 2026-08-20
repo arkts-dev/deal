@@ -200,7 +200,7 @@ public class ParserTest {
         // @deal-version file directive value validation (DEAL v1.2)
         testDealVersionDirectives();
 
-                System.out.println();
+        System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
             System.exit(1);
