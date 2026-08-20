@@ -9,3 +9,7 @@ export function test_chained_access_type_error(): int {
   let result: int = inner.value;
   return result;
 }
+
+export function main(): null {
+  return null;
+}

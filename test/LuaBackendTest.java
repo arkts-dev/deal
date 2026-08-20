@@ -32,6 +32,15 @@ public class LuaBackendTest {
         System.err.println("FAIL: " + message);
     }
 
+    private static void checkEq(int actual, int expected, String message) {
+        if (actual == expected) { passed++; }
+        else {
+            failed++;
+            System.err.println("FAIL: " + message
+                + " (expected " + expected + ", got " + actual + ")");
+        }
+    }
+
     // =========================================================================
     // Helpers
     // =========================================================================
@@ -77,6 +86,42 @@ public class LuaBackendTest {
      */
     private static CompileOutputDiag compileWithDiag(String source) {
         return compileWithDiag(source, "test.deal");
+    }
+
+    /**
+     * Compile DEAL source as the selected ENTRY module of the invocation
+     * (v1.2 entry contract active), capturing backend diagnostics.
+     */
+    private static CompileOutputDiag compileEntry(String source) {
+        return compileEntry(source, "test.deal");
+    }
+
+    private static CompileOutputDiag compileEntry(String source, String filename) {
+        LexResult lex = new Lexer(source, filename).tokenize();
+        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver(filename, resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+
+        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
+
+        CheckResult result;
+        if (diags.stream().noneMatch(d -> "error".equals(d.severity()))) {
+            result = TypeChecker.check(filename, symTable, nr, parse.program());
+            diags.addAll(result.diagnostics());
+            if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
+                return new CompileOutputDiag(null, result, parse.program(), List.of());
+            }
+        } else {
+            return new CompileOutputDiag(null,
+                new CheckResult(Map.of(), symTable, diags), parse.program(), List.of());
+        }
+
+        LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable(), filename);
+        String lua = backend.generateFromInstance(parse.program(), true);
+        List<Diagnostic> codegenDiags = backend.diagnostics();
+        return new CompileOutputDiag(lua, result, parse.program(), codegenDiags);
     }
 
     private static CompileOutputDiag compileWithDiag(String source, String filename) {
@@ -299,6 +344,14 @@ public class LuaBackendTest {
         testForOfStringSingleEvaluation();
         testForOfBreakCodegen();
         testForOfContinueCodegen();
+
+        // v1.2 entry contract tests
+        testEntryMainInvocation();
+        testEntryMainMissingE6004();
+        testEntryMainWrongSignatureE6004();
+        testEntryMainAsyncE6004();
+        testEntryMainNotExportedE6004();
+        testNonEntryNoMainInvocation();
 
         // ISSUE-0054: Async/await codegen tests
         testAsyncFunctionCodegen();
@@ -1460,8 +1513,8 @@ public class LuaBackendTest {
     // =========================================================================
 
     static void testRestParameterFunctionDecl() {
-        System.out.println("-- Rest Parameter Function Declaration (F6 round 6) --");
-        CompileOutput out = compile(
+        System.out.println("-- Rest Parameter Function Declaration (v1.2: rejected) --");
+        CompileOutputDiag out = compileWithDiag(
             "function sum(base: int, ...rest: int[]): int {\n" +
             "  let total: int = base;\n" +
             "  for (let i: int = 0; i < 10; i = i + 1) {\n" +
@@ -1470,11 +1523,23 @@ public class LuaBackendTest {
             "  return total;\n" +
             "}"
         );
-        assertNoErrors(out, "rest param function decl");
-        assertContains(out.lua, "function(base, ...)", "Lua varargs ... in param list");
-        assertContains(out.lua, "local rest = {...}", "rest unpacking");
-        assertContains(out.lua, "__rt.check_array(\"int[]\"", "rest array check");
-        assertNotContains(out.lua, "function(base, rest)", "rest param name not in Lua param list");
+        // DEAL v1.2 has no rest parameters: the LuaJIT backend rejects the
+        // declaration (E6003) and emits no vararg lowering.
+        boolean hasE6003 = out.codegenDiags().stream()
+            .anyMatch(d -> "E6003".equals(d.code()));
+        check(hasE6003, "rest param function decl rejected with E6003");
+        // The diagnostic must be anchored at the rest parameter's own span,
+        // i.e. the "..." token (line 1, column 25), not the declaration start.
+        var e6003 = out.codegenDiags().stream()
+            .filter(d -> "E6003".equals(d.code())).findFirst().orElse(null);
+        check(e6003 != null, "E6003 diagnostic present in codegenDiags");
+        if (e6003 != null) {
+            checkEq(e6003.line(), 1, "E6003 decl anchored at rest span line");
+            checkEq(e6003.column(), 25, "E6003 decl anchored at rest span column");
+        }
+        assertNotContains(out.lua, "function(base, ...)", "no Lua varargs header");
+        assertNotContains(out.lua, "local rest = {...}", "no rest unpacking");
+        assertNotContains(out.lua, "__rt.check_array(\"int[]\"", "no rest array check");
     }
 
     // =========================================================================
@@ -1482,17 +1547,29 @@ public class LuaBackendTest {
     // =========================================================================
 
     static void testRestParameterFunctionExpr() {
-        System.out.println("-- Rest Parameter Function Expression (F6 round 6) --");
-        CompileOutput out = compile(
+        System.out.println("-- Rest Parameter Function Expression (v1.2: rejected) --");
+        CompileOutputDiag out = compileWithDiag(
             "let fn: (string, ...string[]) => string =\n" +
             "  function(prefix: string, ...rest: string[]): string {\n" +
             "    return prefix;\n" +
             "  };"
         );
-        assertNoErrors(out, "rest param function expr");
-        assertContains(out.lua, "function(prefix, ...)", "Lua varargs ... in function expr param list");
-        assertContains(out.lua, "local rest = {...}", "rest unpacking in function expr");
-        assertContains(out.lua, "__rt.check_array(\"string[]\"", "rest array check in function expr");
+        boolean hasE6003 = out.codegenDiags().stream()
+            .anyMatch(d -> "E6003".equals(d.code()));
+        check(hasE6003, "rest param function expr rejected with E6003");
+        // The diagnostic must be anchored at the rest parameter's own span,
+        // i.e. the "..." token (line 2, column 28), not the "function"
+        // keyword of the expression (line 2, column 3).
+        var e6003 = out.codegenDiags().stream()
+            .filter(d -> "E6003".equals(d.code())).findFirst().orElse(null);
+        check(e6003 != null, "E6003 diagnostic present in codegenDiags");
+        if (e6003 != null) {
+            checkEq(e6003.line(), 2, "E6003 expr anchored at rest span line");
+            checkEq(e6003.column(), 28, "E6003 expr anchored at rest span column");
+        }
+        assertNotContains(out.lua, "function(prefix, ...)", "no Lua varargs header in function expr");
+        assertNotContains(out.lua, "local rest = {...}", "no rest unpacking in function expr");
+        assertNotContains(out.lua, "__rt.check_array(\"string[]\"", "no rest array check in function expr");
     }
 
     // =========================================================================
@@ -1784,15 +1861,18 @@ public class LuaBackendTest {
     }
 
     static void testForOfStringCodegen() {
-        System.out.println("-- For-Of String Codegen --");
+        System.out.println("-- For-Of String Codegen (v1.2 Unicode scalar values) --");
         CompileOutput out = compile(
             "function count(s: string): int { let n: int = 0; for (let c: string of s) { n = n + 1; } return n; }");
         assertNoErrors(out, "for-of string");
-        assertContains(out.lua, "string.sub(", "string.sub for char iteration");
-        assertContains(out.lua, "__iterable", "hoisted iterable local");
+        // v1.2 iterates one Unicode scalar value per step via
+        // __rt.utf8_next — never byte positions (no string.sub, no #length).
+        assertContains(out.lua, "__rt.utf8_next(", "utf8_next for scalar iteration");
+        assertNotContains(out.lua, "string.sub(", "no byte-based string.sub iteration");
+        assertNotContains(out.lua, "#__iterable", "no byte-length iteration bound");
         assertContains(out.lua, "local __iterable = ", "iterable hoisting");
-        assertContains(out.lua, "#__iterable", "length check on hoisted local");
-        assertContains(out.lua, "string.sub(__iterable, __i, __i)", "sub uses hoisted local");
+        assertContains(out.lua, "while true do", "scalar iteration loop");
+        assertContains(out.lua, "if __n == nil then break end", "iteration terminator");
         assertContains(out.lua, "::__continue_", "continue label");
         check(isValidLua(out.lua), "valid Lua");
     }
@@ -1836,6 +1916,73 @@ public class LuaBackendTest {
         assertContains(out.lua, "ipairs(", "ipairs loop");
         // goto before ::label:: is valid in LuaJIT
         check(isValidLua(out.lua), "valid Lua");
+    }
+
+    // =========================================================================
+    // v1.2 entry contract: exported non-async main(): null + backend invocation
+    // =========================================================================
+
+    static void testEntryMainInvocation() {
+        System.out.println("-- Entry Module: backend invokes exported main() --");
+        CompileOutputDiag out = compileEntry(
+            "export function main(): null { return null; }\n"
+            + "export function helper(): int { return 1; }");
+        boolean hasE6004 = out.codegenDiags().stream()
+            .anyMatch(d -> "E6004".equals(d.code()));
+        check(!hasE6004, "valid main emits no E6004");
+        assertContains(out.lua, "exports.main = main", "main exported");
+        assertContains(out.lua, "exports.main.f()", "backend invokes main() from the module");
+        check(isValidLua(out.lua), "valid Lua");
+    }
+
+    static void testEntryMainMissingE6004() {
+        System.out.println("-- Entry Module: missing main → E6004 --");
+        CompileOutputDiag out = compileEntry(
+            "export function helper(): int { return 1; }");
+        boolean hasE6004 = out.codegenDiags().stream()
+            .anyMatch(d -> "E6004".equals(d.code()));
+        check(hasE6004, "missing main rejected with E6004");
+        assertNotContains(out.lua, "exports.main.f()", "no invocation emitted for invalid entry");
+    }
+
+    static void testEntryMainWrongSignatureE6004() {
+        System.out.println("-- Entry Module: main with parameters → E6004 --");
+        CompileOutputDiag out = compileEntry(
+            "export function main(x: int): null { return null; }");
+        boolean hasE6004 = out.codegenDiags().stream()
+            .anyMatch(d -> "E6004".equals(d.code()));
+        check(hasE6004, "parameterized main rejected with E6004");
+        assertNotContains(out.lua, "exports.main.f()", "no invocation emitted for invalid entry");
+    }
+
+    static void testEntryMainAsyncE6004() {
+        System.out.println("-- Entry Module: async main → E6004 --");
+        CompileOutputDiag out = compileEntry(
+            "export async function main(): null { return null; }");
+        boolean hasE6004 = out.codegenDiags().stream()
+            .anyMatch(d -> "E6004".equals(d.code()));
+        check(hasE6004, "async main rejected with E6004");
+        assertNotContains(out.lua, "exports.main.f()", "no invocation emitted for invalid entry");
+    }
+
+    static void testEntryMainNotExportedE6004() {
+        System.out.println("-- Entry Module: non-exported main → E6004 --");
+        CompileOutputDiag out = compileEntry(
+            "function main(): null { return null; }\n"
+            + "export function helper(): int { return 1; }");
+        boolean hasE6004 = out.codegenDiags().stream()
+            .anyMatch(d -> "E6004".equals(d.code()));
+        check(hasE6004, "non-exported main rejected with E6004");
+        assertNotContains(out.lua, "exports.main.f()", "no invocation emitted for invalid entry");
+    }
+
+    static void testNonEntryNoMainInvocation() {
+        System.out.println("-- Non-entry Module: no main invocation emitted --");
+        CompileOutput out = compile(
+            "export function helper(): int { return 1; }");
+        assertNoErrors(out, "non-entry module");
+        assertNotContains(out.lua, "exports.main.f()", "non-entry module never invokes main");
+        assertContains(out.lua, "return exports", "exports return");
     }
     // =========================================================================
     // ISSUE-0054: Async/await codegen tests

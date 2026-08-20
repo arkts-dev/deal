@@ -12,3 +12,7 @@ export function test_function_result_index_member(): int {
   if (result !== 11) { throw { code: "TEST_FAIL", message: "function result index/member failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

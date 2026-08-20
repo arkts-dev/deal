@@ -10,3 +10,7 @@ export function test_export_name_runtime_key(): int {
   if (result !== 8) { throw { code: "TEST_FAIL", message: "export runtime key failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

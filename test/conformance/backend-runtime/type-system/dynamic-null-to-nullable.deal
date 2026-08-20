@@ -9,3 +9,7 @@ export function test_dynamic_null_to_nullable(): null {
   if (x !== null) { throw { code: "TEST_FAIL", message: "dynamic null nullable mismatch" }; }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

@@ -19,3 +19,7 @@ export function test_continue_in_try(): int {
   }
   return sum;
 }
+
+export function main(): null {
+  return null;
+}

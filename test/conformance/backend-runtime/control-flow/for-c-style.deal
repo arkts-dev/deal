@@ -14,3 +14,7 @@ export function test_for(): int {
   }
   return x;
 }
+
+export function main(): null {
+  return null;
+}

@@ -12,3 +12,7 @@ export function test_array_alias_mutation(): int {
   if (result !== 14) { throw { code: "TEST_FAIL", message: "array alias mutation failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

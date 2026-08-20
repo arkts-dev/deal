@@ -9,3 +9,7 @@ export function test_nested_array_index_chain(): int {
   if (result !== 3) { throw { code: "TEST_FAIL", message: "arr[0][1] lowering failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

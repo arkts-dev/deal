@@ -9,3 +9,7 @@ export function test_runtime_type_mismatch(): int {
   let t: table = { value: "not-int" };
   return needInt(t.value);
 }
+
+export function main(): null {
+  return null;
+}

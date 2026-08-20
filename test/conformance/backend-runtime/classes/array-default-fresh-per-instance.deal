@@ -16,3 +16,7 @@ export function test_array_default_is_fresh(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

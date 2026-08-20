@@ -8,3 +8,7 @@ import * as host from "host/bad_return"
 export function test_host_bad_return(): int {
   return host.getNumber();
 }
+
+export function main(): null {
+  return null;
+}

@@ -8,3 +8,7 @@ async function g(): int { return 42; }
 export async function f(): int {
   return await g();
 }
+
+export function main(): null {
+  return null;
+}

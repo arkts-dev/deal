@@ -9,3 +9,7 @@ export async function test_async_expr(): int {
   };
   return await f();
 }
+
+export function main(): null {
+  return null;
+}

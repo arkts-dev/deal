@@ -9,3 +9,7 @@ export function test_dynamic_to_int_param_runtime_error(): int {
   let t: table = { value: "bad" };
   return needInt(t.value);
 }
+
+export function main(): null {
+  return null;
+}

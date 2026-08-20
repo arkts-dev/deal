@@ -11,3 +11,7 @@ export function test_exported_class_function_combo(): int {
   if (result !== 14) { throw { code: "TEST_FAIL", message: "exported class/function combo failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

@@ -13,3 +13,7 @@ export function test_host_nullable_function_param_bad(): int {
   let holder: table = { cb: badFn };
   return host.register(holder.cb);
 }
+
+export function main(): null {
+  return null;
+}

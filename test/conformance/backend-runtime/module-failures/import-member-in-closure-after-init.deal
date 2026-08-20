@@ -11,3 +11,7 @@ export function test_import_member_in_closure_after_init(): int {
   if (result !== 3) { throw { code: "TEST_FAIL", message: "import member in closure failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

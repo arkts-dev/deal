@@ -12,3 +12,7 @@ export function test_closure_returned_from_module(): int {
   if (a !== 11 || b !== 12) { throw { code: "TEST_FAIL", message: "module closure state failed" }; }
   return b;
 }
+
+export function main(): null {
+  return null;
+}

@@ -9,3 +9,7 @@ import * as B from "./failing_once_lib"
 export function test_double_failing_import(): int {
   return A.value() + B.value();
 }
+
+export function main(): null {
+  return null;
+}

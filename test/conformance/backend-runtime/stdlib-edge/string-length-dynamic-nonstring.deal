@@ -9,3 +9,7 @@ export function test_string_length_dynamic_nonstring(): int {
   let t: table = { value: 123 };
   return str.length(t.value);
 }
+
+export function main(): null {
+  return null;
+}

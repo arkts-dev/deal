@@ -14,3 +14,7 @@ export function test_closure_import_capture(): int {
   if (result !== 12) { throw { code: "TEST_FAIL", message: "closure import capture failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

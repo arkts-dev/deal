@@ -8,3 +8,7 @@ import * as Bad from "./failing_once_lib"
 export function test_single_failing_import(): int {
   return Bad.value();
 }
+
+export function main(): null {
+  return null;
+}

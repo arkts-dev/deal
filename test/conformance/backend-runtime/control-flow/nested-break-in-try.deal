@@ -24,3 +24,7 @@ export function test_nested_break(): int {
   }
   return found;
 }
+
+export function main(): null {
+  return null;
+}

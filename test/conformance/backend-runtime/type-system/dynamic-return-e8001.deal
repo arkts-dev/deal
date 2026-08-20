@@ -7,3 +7,7 @@ export function test_dynamic_return_runtime_error(): int {
   let t: table = { value: "bad" };
   return t.value;
 }
+
+export function main(): null {
+  return null;
+}

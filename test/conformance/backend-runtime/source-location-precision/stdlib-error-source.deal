@@ -9,3 +9,7 @@ export function test_source_stdlib_error(): int {
   let holder: table = { value: 10 };
   return str.length(holder.value);
 }
+
+export function main(): null {
+  return null;
+}

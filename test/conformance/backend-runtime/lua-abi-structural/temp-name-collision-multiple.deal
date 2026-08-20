@@ -11,3 +11,7 @@ export function test_abi_multiple_temp_name_near_collision(): int {
   if (result !== 310) { throw { code: "TEST_FAIL", message: "temp collision failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

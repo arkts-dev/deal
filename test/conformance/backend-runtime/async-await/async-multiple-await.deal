@@ -16,3 +16,7 @@ export async function test_multiple_await(): int {
   let b: int = await triple(a);
   return b;
 }
+
+export function main(): null {
+  return null;
+}

@@ -17,3 +17,7 @@ export function test_jsonable_helper_name_near_collision(): null {
   }
   throw { code: "TEST_FAIL", message: "fromJson failed" };
 }
+
+export function main(): null {
+  return null;
+}

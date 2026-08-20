@@ -5,7 +5,7 @@
 
 import * as host from "host/presence"
 
-export function main(): string {
+export function test_export_presence(): string {
   let pong: string = host.ping();
   if (pong !== "pong") {
     throw { code: "TEST_FAIL", message: "host.ping returned unexpected value" };
@@ -17,4 +17,9 @@ export function main(): string {
   }
 
   return "host export presence ok";
+}
+
+
+export function main(): null {
+  return null;
 }

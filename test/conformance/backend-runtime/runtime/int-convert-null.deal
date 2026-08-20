@@ -7,3 +7,7 @@ export function test_int_null(): int {
   let x: int | null = null;
   return int(x);
 }
+
+export function main(): null {
+  return null;
+}

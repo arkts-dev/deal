@@ -17,3 +17,7 @@ export function test_table_default_is_fresh(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

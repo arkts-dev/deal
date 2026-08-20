@@ -10,3 +10,7 @@ export function test_time_now_millis_positive(): int {
   if (now <= 0) { throw { code: "TEST_FAIL", message: "time.nowMillis not positive" }; }
   return now;
 }
+
+export function main(): null {
+  return null;
+}

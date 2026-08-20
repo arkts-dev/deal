@@ -8,3 +8,7 @@ export function test_int_infinity(): int {
   let zero: number = 0.0;
   return int(one / zero);
 }
+
+export function main(): null {
+  return null;
+}

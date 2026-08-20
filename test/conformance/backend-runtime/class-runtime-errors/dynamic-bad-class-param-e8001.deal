@@ -12,3 +12,7 @@ export function test_dynamic_bad_class_param(): int {
   let holder: table = { item: json.parse("{\"value\":\"bad\"}") };
   return needBox(holder.item);
 }
+
+export function main(): null {
+  return null;
+}

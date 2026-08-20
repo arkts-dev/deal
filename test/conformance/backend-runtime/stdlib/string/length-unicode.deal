@@ -1,0 +1,25 @@
+// @spec: Standard library declarations — std/string.d.deal
+// @description: std/string length counts Unicode scalar values, not UTF-8 bytes
+// @expected: runtime-ok
+// @features: stdlib, string, unicode
+
+import * as str from "std/string";
+
+export function test_string_length_unicode(): null {
+  // a, U+00E9, U+4E2D, U+1F600, b — 5 scalar values, 11 bytes
+  let s: string = "aé中😀b";
+  if (str.length(s) !== 5) {
+    throw { code: "TEST_FAIL", message: "expected scalar length 5" };
+  }
+  if (str.length("") !== 0) {
+    throw { code: "TEST_FAIL", message: "empty string must have length 0" };
+  }
+  if (str.length("ascii") !== 5) {
+    throw { code: "TEST_FAIL", message: "ascii length mismatch" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

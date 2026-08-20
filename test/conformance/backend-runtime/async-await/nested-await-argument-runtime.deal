@@ -13,3 +13,7 @@ export async function test_nested_await_argument(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

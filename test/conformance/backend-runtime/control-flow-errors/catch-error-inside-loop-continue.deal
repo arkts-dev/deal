@@ -16,3 +16,7 @@ export function test_catch_error_inside_loop_continue(): int {
   if (total !== 12) { throw { code: "TEST_FAIL", message: "catch inside loop failed" }; }
   return total;
 }
+
+export function main(): null {
+  return null;
+}

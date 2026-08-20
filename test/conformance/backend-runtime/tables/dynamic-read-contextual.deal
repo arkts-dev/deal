@@ -11,3 +11,7 @@ export function test_table_read(): int {
   }
   return v;
 }
+
+export function main(): null {
+  return null;
+}

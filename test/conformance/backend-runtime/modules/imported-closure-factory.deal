@@ -11,3 +11,7 @@ export function test_imported_closure_factory(): int {
   if (result !== 15) { throw { code: "TEST_FAIL", message: "imported closure factory failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

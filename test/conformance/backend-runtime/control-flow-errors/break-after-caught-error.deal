@@ -16,3 +16,7 @@ export function test_break_after_caught_error(): int {
   if (total !== 5) { throw { code: "TEST_FAIL", message: "break after caught error failed" }; }
   return total;
 }
+
+export function main(): null {
+  return null;
+}

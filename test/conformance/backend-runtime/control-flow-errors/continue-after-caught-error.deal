@@ -16,3 +16,7 @@ export function test_continue_after_caught_error(): int {
   if (total !== 2) { throw { code: "TEST_FAIL", message: "continue after caught error failed" }; }
   return total;
 }
+
+export function main(): null {
+  return null;
+}

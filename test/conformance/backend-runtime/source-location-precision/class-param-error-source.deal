@@ -12,3 +12,7 @@ export function test_source_class_param_error(): int {
   let holder: table = { item: json.parse("{\"value\":\"bad\"}") };
   return needBox(holder.item);
 }
+
+export function main(): null {
+  return null;
+}

@@ -11,3 +11,7 @@ export async function test_await_returning_array_indexed(): int {
   if (result !== 9) { throw { code: "TEST_FAIL", message: "await array index failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

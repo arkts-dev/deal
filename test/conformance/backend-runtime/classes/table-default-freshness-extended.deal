@@ -15,3 +15,7 @@ export function test_table_default_freshness_extended(): null {
   if (count !== null) { throw { code: "TEST_FAIL", message: "table default shared" }; }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

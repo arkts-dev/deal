@@ -13,3 +13,7 @@ export function test_arity(): int {
   }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

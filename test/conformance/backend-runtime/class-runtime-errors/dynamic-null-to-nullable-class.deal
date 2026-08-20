@@ -11,3 +11,7 @@ export function test_dynamic_null_to_nullable_class(): null {
   if (b !== null) { throw { code: "TEST_FAIL", message: "nullable class null mismatch" }; }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

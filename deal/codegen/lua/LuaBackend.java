@@ -86,6 +86,16 @@ public final class LuaBackend implements Visitor<Void> {
     // and update expressions are remapped to "_name" (the outer counter).
     private String forLoopShadowVar = null;
 
+    // v1.2 entry contract: when true, this module is the selected entry
+    // module of the compiler invocation. The entry module must export a
+    // non-async main() with signature (): null, and the backend invokes
+    // main() from the module after the export table is built.
+    private boolean entryModule = false;
+
+    // Span of the last visited declaration named "main", used to anchor
+    // the E6004 entry-contract diagnostic at the declaration itself.
+    private Span mainDeclSpan = null;
+
     // Module-scope flag: true while walking statements at Lua chunk scope.
     // Module-level class artifacts are emitted into the __deal namespace
     // table; classes declared inside functions or control-flow constructs
@@ -248,18 +258,58 @@ public final class LuaBackend implements Visitor<Void> {
                                               String sourcePath, String modulePath,
                                               Map<String, String> importResolutions,
                                               Map<String, Map<String, Type>> hostModules) {
+        return generateWithImports(program, result, sourcePath, modulePath,
+            importResolutions, hostModules, false);
+    }
+
+    /**
+     * Entry variant: {@code entryModule} selects this module as the
+     * compiler invocation's entry module. The entry contract (export a
+     * non-async {@code main(): null}; backend invokes {@code main()} from
+     * the module) applies only when the flag is set.
+     */
+    public static String generateWithImports(ProgramNode program, CheckResult result,
+                                              String sourcePath, String modulePath,
+                                              Map<String, String> importResolutions,
+                                              Map<String, Map<String, Type>> hostModules,
+                                              boolean entryModule) {
+        return generateResult(program, result, sourcePath, modulePath,
+            importResolutions, hostModules, entryModule, null).lua();
+    }
+
+    /**
+     * The generated Lua source together with the backend diagnostics
+     * produced during generation. Production callers merge the diagnostics
+     * into the compilation report so backend rejections (E6003/E6004) fail
+     * the compilation instead of being silently dropped.
+     */
+    public record GenerationResult(String lua, List<Diagnostic> diagnostics) {}
+
+    /**
+     * Shared generation core: builds a backend instance, generates the
+     * chunk (header, statements, deferred @jsonable code, exports, and —
+     * for the entry module — the main() invocation), and returns the
+     * source with the backend diagnostics.
+     */
+    private static GenerationResult generateResult(ProgramNode program,
+            CheckResult result, String sourcePath, String modulePath,
+            Map<String, String> importResolutions,
+            Map<String, Map<String, Type>> hostModules, boolean entryModule,
+            SourceMapGenerator smg) {
         LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable());
         backend.sourceFilePath = sourcePath;
         backend.modulePath = modulePath;
         backend.importResolutions = Map.copyOf(importResolutions);
         backend.hostModules = Map.copyOf(hostModules);
+        backend.entryModule = entryModule;
+        backend.sourceMapGenerator = smg;
         backend.emitHeader();
         backend.emitLine("");
 
         backend.walkStatements(program.statements());
         backend.emitJsonableCode();
         backend.emitExports();
-        return backend.out.toString();
+        return new GenerationResult(backend.out.toString(), backend.diagnostics());
     }
 
     /**
@@ -309,19 +359,23 @@ public final class LuaBackend implements Visitor<Void> {
                                                 Map<String, String> importResolutions,
                                                 Map<String, Map<String, Type>> hostModules,
                                                 SourceMapGenerator smg) {
-        LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable());
-        backend.sourceFilePath = sourcePath;
-        backend.modulePath = modulePath;
-        backend.importResolutions = Map.copyOf(importResolutions);
-        backend.hostModules = Map.copyOf(hostModules);
-        backend.sourceMapGenerator = smg;
-        backend.emitHeader();
-        backend.emitLine("");
+        return generateWithSourceMap(program, result, sourcePath, modulePath,
+            importResolutions, hostModules, smg, false);
+    }
 
-        backend.walkStatements(program.statements());
-        backend.emitJsonableCode();
-        backend.emitExports();
-        return backend.out.toString();
+    /**
+     * Source-map entry variant (see
+     * {@link #generateWithImports(ProgramNode, CheckResult, String, String,
+     * Map, Map, boolean)} for the entry contract).
+     */
+    public static String generateWithSourceMap(ProgramNode program, CheckResult result,
+                                                String sourcePath, String modulePath,
+                                                Map<String, String> importResolutions,
+                                                Map<String, Map<String, Type>> hostModules,
+                                                SourceMapGenerator smg,
+                                                boolean entryModule) {
+        return generateResult(program, result, sourcePath, modulePath,
+            importResolutions, hostModules, entryModule, smg).lua();
     }
 
     /**
@@ -416,14 +470,36 @@ public final class LuaBackend implements Visitor<Void> {
                                        Map<String, String> importResolutions,
                                        Map<String, Map<String, Type>> hostModules)
                                        throws IOException {
+        generateToFile(program, result, sourcePath, modulePath, outputRoot,
+            outputPath, emitSourceMap, importResolutions, hostModules, false);
+    }
+
+    /**
+     * File-writing entry variant: additionally returns the generated
+     * source and backend diagnostics via {@link GenerationResult}, and
+     * writes no artifact when the backend rejected the module (error
+     * diagnostics), mirroring the JVM backend's no-artifact-on-rejection
+     * contract. {@code entryModule} selects the v1.2 entry contract (see
+     * {@link #generateWithImports(ProgramNode, CheckResult, String, String,
+     * Map, Map, boolean)}).
+     */
+    public static GenerationResult generateToFile(ProgramNode program,
+                                       CheckResult result,
+                                       String sourcePath, String modulePath,
+                                       Path outputRoot, Path outputPath,
+                                       boolean emitSourceMap,
+                                       Map<String, String> importResolutions,
+                                       Map<String, Map<String, Type>> hostModules,
+                                       boolean entryModule)
+                                       throws IOException {
         SourceMapGenerator smg = emitSourceMap ? new SourceMapGenerator() : null;
-        String luaSource;
-        if (smg != null) {
-            luaSource = generateWithSourceMap(program, result, sourcePath,
-                modulePath, importResolutions, hostModules, smg);
-        } else {
-            luaSource = generateWithImports(program, result, sourcePath,
-                modulePath, importResolutions, hostModules);
+        GenerationResult gen = generateResult(program, result, sourcePath,
+            modulePath, importResolutions, hostModules, entryModule, smg);
+        String luaSource = gen.lua();
+        boolean hasErrors = gen.diagnostics().stream()
+            .anyMatch(d -> "error".equals(d.severity()));
+        if (hasErrors) {
+            return gen;
         }
 
         Files.createDirectories(outputPath.getParent());
@@ -479,6 +555,7 @@ public final class LuaBackend implements Visitor<Void> {
                 }
             }
         }
+        return gen;
     }
 
     public List<Diagnostic> diagnostics() {
@@ -512,11 +589,30 @@ public final class LuaBackend implements Visitor<Void> {
      * Generate Lua source using this instance (for tests that need diagnostics).
      */
     public String generateFromInstance(ProgramNode program) {
+        return generateFromInstance(program, false);
+    }
+
+    /**
+     * Instance generation with the v1.2 entry contract selectable (see
+     * {@link #generateWithImports(ProgramNode, CheckResult, String, String,
+     * Map, Map, boolean)}).
+     */
+    public String generateFromInstance(ProgramNode program, boolean entryModule,
+            Map<String, String> importResolutions,
+            Map<String, Map<String, Type>> hostModules) {
+        this.importResolutions = Map.copyOf(importResolutions);
+        this.hostModules = Map.copyOf(hostModules);
+        return generateFromInstance(program, entryModule);
+    }
+
+    public String generateFromInstance(ProgramNode program, boolean entryModule) {
         moduleScope = true;
         nestedClassDeclCount.clear();
         nestedClassDeclFrames.clear();
         lastChunkVisibleClassDecl.clear();
         classExportKeyOwners.clear();
+        mainDeclSpan = null;
+        this.entryModule = entryModule;
         emitHeader();
         emitLine("");
         walkStatements(program.statements());
@@ -609,7 +705,54 @@ public final class LuaBackend implements Visitor<Void> {
             }
             emitLine(LuaAbi.exportAssignment(key, value));
         }
+        if (entryModule) {
+            emitEntryMainInvocation();
+        }
         emitLine("return exports");
+    }
+
+    /**
+     * v1.2 entry contract: the selected entry module must export a
+     * non-async {@code main} with signature {@code (): null}; the backend
+     * invokes {@code main()} from that module once the export table is
+     * built. A violation is a compile-time error (E6004), anchored at the
+     * main declaration when one exists.
+     */
+    private void emitEntryMainInvocation() {
+        boolean valid = exportedValues.containsKey("main")
+            && entryMainIsValid();
+        if (!valid) {
+            String message = "entry module must export non-async main(): null; "
+                + "found "
+                + (exportedValues.containsKey("main")
+                    ? "main with a different signature or an async marker"
+                    : "no main export");
+            if (mainDeclSpan != null) {
+                addDiagnostic(DiagnosticCode.E6004, message, mainDeclSpan);
+            } else {
+                addDiagnostic(DiagnosticCode.E6004, message,
+                    Span.synthetic(sourceFilePath));
+            }
+            return;
+        }
+        emitLine("exports.main.f()");
+    }
+
+    /**
+     * True when the exported {@code main} declaration resolves to a
+     * function symbol with a non-async {@code (): null} signature.
+     */
+    private boolean entryMainIsValid() {
+        Symbol sym = symbols.resolve("main");
+        if (sym instanceof Symbol.FunctionSymbol fs) {
+            Type.Func ft = fs.funcType();
+            return ft != null
+                && !ft.isAsync()
+                && ft.paramTypes().isEmpty()
+                && ft.restType().isEmpty()
+                && ft.returnType() instanceof Type.Null;
+        }
+        return false;
     }
 
     /**
@@ -781,13 +924,12 @@ public final class LuaBackend implements Visitor<Void> {
                     if (i > 0) sb.append(",");
                     sb.append(typeDescriptor(f.paramTypes().get(i)));
                 }
-                if (f.restType().isPresent()) {
-                    if (!f.paramTypes().isEmpty()) sb.append(",");
-                    // Rest arm: the full array descriptor in typeDescriptor's dialect
-                    // ("...string[]", "...[(int)->int]" for function elements), per
-                    // ParamDescriptor := "..." ArrayDescriptor.
-                    sb.append("...").append(typeDescriptor(f.restType().get()));
-                }
+                // DEAL v1.2 removed rest parameters: the descriptor has no
+                // rest arm. A Func value that still carries a restType
+                // (frontend accepts it until the v1.2 hard break lands)
+                // emits the fixed-parameter descriptor; its declaration
+                // site already failed with E6003, so no valid program
+                // reaches this fallback.
                 sb.append(")->").append(typeDescriptor(f.returnType()));
                 yield sb.toString();
             }
@@ -1019,16 +1161,26 @@ public final class LuaBackend implements Visitor<Void> {
         String name = node.name();
         Type.Func funcType = getFunctionType(name);
 
-        // Build parameter list. Rest params use Lua "..." in the function header.
+        if ("main".equals(name)) {
+            mainDeclSpan = node.span();
+        }
+
+        // DEAL v1.2 has no rest parameters. The LuaJIT backend does not
+        // lower them: a declaration using one is a backend error (E6003).
+        // The frontend v1.2 hard break (rest-parameter rejection) is
+        // owned by the frontend issue; until it lands, the backend rejects
+        // rest declarations here.
+        node.restParam().ifPresent(rest ->
+            addDiagnostic(DiagnosticCode.E6003,
+                "rest parameters are not part of DEAL v1.2; "
+                    + "declare an explicit array parameter instead",
+                rest.span()));
+
+        // Build parameter list (fixed parameters only — no vararg header).
         StringBuilder paramList = new StringBuilder();
         for (int i = 0; i < node.params().size(); i++) {
             if (i > 0) paramList.append(", ");
             paramList.append(node.params().get(i).name());
-        }
-        boolean hasRest = node.restParam().isPresent();
-        if (hasRest) {
-            if (!node.params().isEmpty()) paramList.append(", ");
-            paramList.append("...");
         }
 
         String sig = funcType != null ? quotedTypeDescriptor(funcType) : "\"()\"";
@@ -1040,18 +1192,6 @@ public final class LuaBackend implements Visitor<Void> {
         boolean savedModuleScope = moduleScope;
         moduleScope = false;
         pushNestedClassFrame();
-
-        // Emit rest parameter unpacking: local <name> = {...}
-        if (hasRest) {
-            Parameter rest = node.restParam().get();
-            emitLine("local " + rest.name() + " = {...}");
-            Type restType = resolveTypeNode(rest.type());
-            if (restType instanceof Type.Array arr) {
-                emitLine("__rt.check_array(" + quotedTypeDescriptor(arr)
-                    + ", " + rest.name() + ", "
-                    + spanArgs(rest.type().span()) + ")");
-            }
-        }
 
         for (Parameter param : node.params()) {
             Type paramType = resolveTypeNode(param.type());
@@ -1387,11 +1527,18 @@ public final class LuaBackend implements Visitor<Void> {
         if (iterableType instanceof Type.Array) {
             emitLine("for __i, " + varName + " in ipairs(" + iterableExpr + ") do");
         } else {
-            // D17: Hoist iterable expression to local for single evaluation
+            // v1.2 string iteration: one Unicode scalar value per step.
+            // Hoist the iterable expression to a local for single
+            // evaluation (D17), then walk scalar values with
+            // __rt.utf8_next — never byte indices.
             emitLine("local __iterable = " + iterableExpr);
-            emitLine("for __i = 1, #__iterable do");
+            emitLine("local __i = 0");
+            emitLine("while true do");
             indent++;
-            emitLine("local " + varName + " = string.sub(__iterable, __i, __i)");
+            emitLine("local __n, __ch = __rt.utf8_next(__iterable, __i)");
+            emitLine("if __n == nil then break end");
+            emitLine("__i = __n");
+            emitLine("local " + varName + " = __ch");
             indent--;
         }
 
@@ -1399,7 +1546,7 @@ public final class LuaBackend implements Visitor<Void> {
         visit(node.body());
         emitLine("::" + loopLabel + "::");
         indent--;
-        emitLine("end");  // for
+        emitLine("end");  // for / while
 
         indent--;
         emitLine("end");  // do
@@ -2103,16 +2250,19 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     private String emitFunctionExpr(FunctionExpr fe) {
-        // Build parameter list. Rest params use Lua "..." in the function header.
+        // DEAL v1.2 has no rest parameters: a function expression using one
+        // is rejected (E6003) and never lowered.
+        fe.restParam().ifPresent(rest ->
+            addDiagnostic(DiagnosticCode.E6003,
+                "rest parameters are not part of DEAL v1.2; "
+                    + "declare an explicit array parameter instead",
+                rest.span()));
+
+        // Build parameter list (fixed parameters only — no vararg header).
         StringBuilder paramList = new StringBuilder();
         for (int i = 0; i < fe.params().size(); i++) {
             if (i > 0) paramList.append(", ");
             paramList.append(fe.params().get(i).name());
-        }
-        boolean hasRest = fe.restParam().isPresent();
-        if (hasRest) {
-            if (!fe.params().isEmpty()) paramList.append(", ");
-            paramList.append("...");
         }
 
         Type funcType = typeOf(fe);
@@ -2131,18 +2281,6 @@ public final class LuaBackend implements Visitor<Void> {
             moduleScope = false;
             pushNestedClassFrame();
             indent = 1;
-
-            // Emit rest parameter unpacking: local <name> = {...}
-            if (hasRest) {
-                Parameter rest = fe.restParam().get();
-                emitLine("local " + rest.name() + " = {...}");
-                Type restType = resolveTypeNode(rest.type());
-                if (restType instanceof Type.Array arr) {
-                    emitLine("__rt.check_array(" + quotedTypeDescriptor(arr)
-                        + ", " + rest.name() + ", "
-                        + spanArgs(rest.type().span()) + ")");
-                }
-            }
 
             for (Parameter param : fe.params()) {
                 Type paramType = resolveTypeNode(param.type());

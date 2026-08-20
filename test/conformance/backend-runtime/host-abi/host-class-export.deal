@@ -35,3 +35,7 @@ export function test_host_class_export(): string {
   }
   return "host class export ok";
 }
+
+export function main(): null {
+  return null;
+}

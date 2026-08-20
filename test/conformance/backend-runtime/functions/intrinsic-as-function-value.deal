@@ -11,3 +11,7 @@ export function test_intrinsic_as_function_value(): int {
   }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

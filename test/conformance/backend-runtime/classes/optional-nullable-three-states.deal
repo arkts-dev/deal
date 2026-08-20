@@ -25,3 +25,7 @@ export function test_optional_nullable_states(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

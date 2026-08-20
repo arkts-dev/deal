@@ -14,3 +14,7 @@ export function test_nan_equality(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

@@ -26,3 +26,7 @@ export function test_string_count(): int {
   }
   return n;
 }
+
+export function main(): null {
+  return null;
+}

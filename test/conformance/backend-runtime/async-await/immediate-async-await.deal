@@ -14,3 +14,7 @@ export async function test_immediate_async(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

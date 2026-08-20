@@ -10,3 +10,7 @@ export function test_lua_reserved_word_table_fields(): int {
   if (a + b !== 9) { throw { code: "TEST_FAIL", message: "reserved word table fields failed" }; }
   return a + b;
 }
+
+export function main(): null {
+  return null;
+}

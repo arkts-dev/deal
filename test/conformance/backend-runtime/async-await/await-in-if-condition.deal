@@ -9,3 +9,7 @@ export async function test_await_in_if_condition(): int {
   if (await yes()) { return 1; }
   return 0;
 }
+
+export function main(): null {
+  return null;
+}

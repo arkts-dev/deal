@@ -8,3 +8,7 @@ import * as Lib from "./imported_async_source_lib"
 export async function test_source_imported_async_error(): int {
   return await Lib.fail();
 }
+
+export function main(): null {
+  return null;
+}

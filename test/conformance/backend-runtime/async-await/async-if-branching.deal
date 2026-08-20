@@ -13,3 +13,7 @@ export async function f(): int {
     return await g(0);
   }
 }
+
+export function main(): null {
+  return null;
+}

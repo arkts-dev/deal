@@ -12,3 +12,7 @@ export function test_host_null_return_ok(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

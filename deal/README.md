@@ -35,6 +35,10 @@ See `runtime-library-design` wiki page for the full API contract.
 
 - `check_null(v)`, `check_boolean(v)`, `check_int(v)`, `check_number(v)`,
   `check_string(v)`, `check_table(v)`, `check_coroutine(v)`
+- v1.2: `check_string(v)` validates that the Lua string is well-formed
+  UTF-8 encoding a sequence of Unicode scalar values (malformed byte
+  sequences raise E8001); `utf8_valid(s)` and `utf8_next(s, i)` expose
+  the scalar-value walk used by string for-of iteration and std/string
 - `check_nullable(inner_descriptor, v)` — treats `nil` and `__NULL` as null
 - `check_array(array_descriptor, v)` — validates each element
 - `check_type(descriptor, v)` — dispatches by type descriptor string

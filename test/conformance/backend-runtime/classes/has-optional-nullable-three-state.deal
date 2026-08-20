@@ -26,3 +26,7 @@ export function test_has_optional_nullable(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

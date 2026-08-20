@@ -26,3 +26,7 @@ export function test_call_template(): string {
   }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

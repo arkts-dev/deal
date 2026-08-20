@@ -28,3 +28,7 @@ export function test_closure_capture(): int {
   }
   return r0 * 100 + r1 * 10 + r2;
 }
+
+export function main(): null {
+  return null;
+}

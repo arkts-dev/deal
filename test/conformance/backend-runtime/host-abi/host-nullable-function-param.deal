@@ -20,3 +20,7 @@ export function test_host_nullable_function_param(): int {
   }
   return withFn;
 }
+
+export function main(): null {
+  return null;
+}

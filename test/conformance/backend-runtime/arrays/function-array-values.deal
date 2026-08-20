@@ -13,3 +13,7 @@ export function test_function_array_values(): int {
   if (result !== 9) { throw { code: "TEST_FAIL", message: "function array failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

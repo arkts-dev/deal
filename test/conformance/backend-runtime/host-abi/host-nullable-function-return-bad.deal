@@ -9,3 +9,7 @@ export function test_host_nullable_function_return_bad(): null {
   let cb: ((x: int) => int) | null = host.getCallback("bad");
   return null;
 }
+
+export function main(): null {
+  return null;
+}

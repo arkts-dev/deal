@@ -18,3 +18,7 @@ export async function test_awaited_error_catch(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

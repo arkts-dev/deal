@@ -6,3 +6,7 @@
 export function test_int_pow_negative(): int {
   return 2 ** -1;
 }
+
+export function main(): null {
+  return null;
+}

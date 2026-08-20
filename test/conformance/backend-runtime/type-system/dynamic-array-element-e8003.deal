@@ -10,3 +10,7 @@ export function test_dynamic_array_element_runtime_error(): int {
   let xs: int[] = t.values;
   return xs[0];
 }
+
+export function main(): null {
+  return null;
+}

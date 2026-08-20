@@ -6,3 +6,7 @@
 export function test_div_zero_error(): int {
   return 10 / 0;
 }
+
+export function main(): null {
+  return null;
+}

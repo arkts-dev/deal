@@ -13,3 +13,7 @@ export function test_abi_direct_recursion_predeclare(): int {
   if (result !== 10) { throw { code: "TEST_FAIL", message: "direct recursion ABI failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

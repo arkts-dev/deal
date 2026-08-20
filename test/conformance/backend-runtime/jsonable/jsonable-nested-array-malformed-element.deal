@@ -10,3 +10,7 @@ export function test_jsonable_nested_array_malformed_element(): null {
   if (p !== null) { throw { code: "TEST_FAIL", message: "malformed nested element should be rejected" }; }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

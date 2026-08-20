@@ -12,3 +12,7 @@ export function test_host_extra_export_ignored(): string {
   }
   return "host extra export ignored ok";
 }
+
+export function main(): null {
+  return null;
+}

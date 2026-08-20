@@ -10,3 +10,7 @@ export async function test_async_import_await(): int {
   if (result !== 5) { throw { code: "TEST_FAIL", message: "async import await failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

@@ -13,3 +13,7 @@ export async function test_multiple_await_state(): int {
   if (x !== 3) { throw { code: "TEST_FAIL", message: "await state failed" }; }
   return x;
 }
+
+export function main(): null {
+  return null;
+}

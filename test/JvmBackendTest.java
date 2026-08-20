@@ -5077,6 +5077,7 @@ public class JvmBackendTest {
         writeFile("src/default_main.deal", """
             import * as console from "std/console"
             export function run(): null { console.log("default-lua"); }
+            export function main(): null { return null; }
             """);
 
         Path entryFile = tmpDir.resolve("src/default_main.deal").toAbsolutePath();
@@ -7028,7 +7029,8 @@ public class JvmBackendTest {
         try {
             writeFile("lua_proj/src/deal.json", "{\"backend\": \"lua\"}");
             writeFile("lua_proj/src/lua_alias_main.deal",
-                "export function run(): null {}");
+                "export function run(): null {}"
+                + "\nexport function main(): null { return null; }");
             Path luaEntry = tmpDir.resolve("lua_proj/src/lua_alias_main.deal")
                 .toAbsolutePath();
             Path luaOut = tmpDir.resolve("build/lua_alias");
@@ -7078,6 +7080,7 @@ public class JvmBackendTest {
                   console.log("cli-jvm");
                   return 6 * 7;
                 }
+                export function main(): null { return null; }
                 """);
 
             Path entry = tmpDir.resolve("src/cli_main.deal").toAbsolutePath();

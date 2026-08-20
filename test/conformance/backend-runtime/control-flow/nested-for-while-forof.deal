@@ -18,3 +18,7 @@ export function test_nested_loop_mix(): int {
   if (total !== 24) { throw { code: "TEST_FAIL", message: "nested loop mix failed" }; }
   return total;
 }
+
+export function main(): null {
+  return null;
+}

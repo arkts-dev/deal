@@ -11,3 +11,7 @@ export async function test_imported_async_function_value(): int {
   if (result !== 7) { throw { code: "TEST_FAIL", message: "imported async function value failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

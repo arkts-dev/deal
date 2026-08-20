@@ -6,3 +6,7 @@
 export async function test_no_await(): int {
   return 42;
 }
+
+export function main(): null {
+  return null;
+}

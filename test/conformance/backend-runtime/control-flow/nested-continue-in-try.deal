@@ -24,3 +24,7 @@ export function test_nested_continue(): int {
   }
   return sum;
 }
+
+export function main(): null {
+  return null;
+}

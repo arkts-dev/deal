@@ -10,3 +10,7 @@ export function test_for_closure_array(): int {
   }
   return fs[0]() * 100 + fs[1]() * 10 + fs[2]();
 }
+
+export function main(): null {
+  return null;
+}

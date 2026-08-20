@@ -9,3 +9,7 @@ export function test_table_keys_dynamic_nontable(): string[] {
   let t: table = { value: 1 };
   return tables.keys(t.value);
 }
+
+export function main(): null {
+  return null;
+}

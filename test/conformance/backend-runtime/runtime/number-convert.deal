@@ -10,3 +10,7 @@ export function test_number(): number {
   }
   return n;
 }
+
+export function main(): null {
+  return null;
+}

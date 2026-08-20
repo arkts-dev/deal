@@ -9,3 +9,7 @@ export function test_imported_function_explicit_error(): null {
   Lib.fail();
   return null;
 }
+
+export function main(): null {
+  return null;
+}

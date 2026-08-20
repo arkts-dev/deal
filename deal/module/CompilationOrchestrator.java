@@ -984,22 +984,35 @@ public final class CompilationOrchestrator {
         Path outputPath = outputRoot.resolve(filePath);
         Files.createDirectories(outputPath.getParent());
 
-        if (sourceMap) {
-            // Use generateToFile with emitSourceMap=true and the resolved
-            // import map to produce both the .lua file and the .deal.map.json
-            // sidecar.  importResolutions are required so that multi-module
-            // projects compile correctly when --source-map is active.
-            // info.modulePath is the same value seeded into NameResolver,
-            // so emitted class identity tags stay byte-identical to the
-            // checker's descriptors (runtime-class-identity D2(0)).
-            LuaBackend.generateToFile(info.rawAst, info.checkResult,
-                info.sourcePath, info.modulePath, outputRoot, outputPath, true,
-                importResolutions, hostModules);
-        } else {
-            String luaSource = LuaBackend.generateWithImports(
-                info.rawAst, info.checkResult, info.sourcePath,
-                info.modulePath, importResolutions, hostModules);
-            Files.writeString(outputPath, luaSource);
+        // v1.2 entry contract: the selected entry module must export a
+        // non-async main(): null and the backend invokes main() from that
+        // module. Only the LuaJIT entry module gets the entry treatment
+        // here — the JVM backend owns its own entry handling (JVM work is
+        // out of scope for this slice).
+        boolean isEntry = Path.of(info.sourcePath).toAbsolutePath().normalize()
+            .equals(entryFile.toAbsolutePath().normalize());
+
+        // Use the result-returning variant to produce both the .lua file
+        // and the .deal.map.json sidecar (when --source-map is active),
+        // and to surface backend diagnostics: a backend rejection (E6003
+        // rest parameters, E6004 entry contract) fails the compilation and
+        // writes no artifact, mirroring the JVM backend's
+        // no-artifact-on-rejection contract. info.modulePath is the same
+        // value seeded into NameResolver, so emitted class identity tags
+        // stay byte-identical to the checker's descriptors
+        // (runtime-class-identity D2(0)).
+        LuaBackend.GenerationResult gen = LuaBackend.generateToFile(
+            info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
+            outputRoot, outputPath, sourceMap, importResolutions, hostModules,
+            isEntry);
+        diagnostics.addAll(gen.diagnostics());
+        boolean backendError = gen.diagnostics().stream()
+            .anyMatch(d -> "error".equals(d.severity()));
+        if (backendError) {
+            hasErrors = true;
+            log("  LuaJIT backend rejected " + info.modulePath + ": "
+                + gen.diagnostics());
+            return;
         }
 
         long modElapsed = System.currentTimeMillis() - modStart;

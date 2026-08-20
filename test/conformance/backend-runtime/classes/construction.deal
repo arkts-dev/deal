@@ -29,3 +29,7 @@ export function test_construct(): string {
   }
   return u.name;
 }
+
+export function main(): null {
+  return null;
+}

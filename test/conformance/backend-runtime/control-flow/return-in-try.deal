@@ -23,3 +23,7 @@ export function test_return_in_try_loop(): int {
   }
   return 5;
 }
+
+export function main(): null {
+  return null;
+}

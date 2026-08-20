@@ -12,3 +12,7 @@ export function test_console_log(): null {
   }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

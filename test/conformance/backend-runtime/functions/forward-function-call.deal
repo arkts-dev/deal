@@ -16,3 +16,7 @@ export function test_forward_call(): int {
   if (result !== 7) { throw { code: "TEST_FAIL", message: "forward call failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

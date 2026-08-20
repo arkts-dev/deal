@@ -9,3 +9,7 @@ export function test_declaration_only_not_executed(): int {
   let f: () => int = Decl.declaredOnly;
   return 1;
 }
+
+export function main(): null {
+  return null;
+}

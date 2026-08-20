@@ -8,3 +8,7 @@ export function test_table_dynamic_read_runtime_error(): int {
   let result: int = t.value;
   return result;
 }
+
+export function main(): null {
+  return null;
+}

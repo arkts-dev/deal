@@ -16,3 +16,7 @@ export function test_has_delete_optional_nullable(): null {
   if (!has(item.tag)) { throw { code: "TEST_FAIL", message: "tag should be present after write" }; }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

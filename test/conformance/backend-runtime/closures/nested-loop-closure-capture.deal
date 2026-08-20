@@ -17,3 +17,7 @@ export function test_nested_loop_closure_capture(): int {
   if (result !== 22) { throw { code: "TEST_FAIL", message: "nested loop closure capture failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

@@ -8,3 +8,7 @@ export function test_int_nan(): int {
   let n: number = z / z;
   return int(n);
 }
+
+export function main(): null {
+  return null;
+}

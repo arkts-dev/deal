@@ -6,3 +6,7 @@
 export function test_int_fraction(): int {
   return int(3.5);
 }
+
+export function main(): null {
+  return null;
+}

@@ -10,3 +10,7 @@ export function test_table_delete_dynamic_field(): null {
   if (v !== null) { throw { code: "TEST_FAIL", message: "deleted table field still present" }; }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

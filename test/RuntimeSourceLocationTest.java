@@ -191,12 +191,13 @@ public class RuntimeSourceLocationTest {
             return null;
         }
 
-        // Run with pcall wrapper
+        // Run with pcall wrapper. The v1.2 backend invokes main() from the
+        // entry module at chunk end, so loading the module already runs
+        // main(); the wrapper only needs the guarded require.
         String wrapper =
             "package.path = '" + outputDir.toString().replace("\\", "/") + "/?.lua;' .. package.path\n" +
             "local ok, err = pcall(function()\n" +
-            "  local mod = require(\"" + mainModuleName + "\")\n" +
-            "  if mod.main ~= nil then mod.main.f() end\n" +
+            "  require(\"" + mainModuleName + "\")\n" +
             "end)\n" +
             "if not ok then\n" +
             "  if type(err) == 'table' then\n" +
@@ -513,8 +514,9 @@ public class RuntimeSourceLocationTest {
         // file name, not main.deal's.
         String mainSource =
             "import * as lib from \"./lib\";\n" +      // line 1
-            "export function main(): int {\n" +         // line 2
-            "  return lib.div(10, 0);\n" +               // line 3
+            "export function main(): null {\n" +        // line 2 (v1.2 entry signature)
+            "  let _: int = lib.div(10, 0);\n" +         // line 3
+            "  return null;\n" +                         // line 4
             "}\n";
 
         String importedSource =

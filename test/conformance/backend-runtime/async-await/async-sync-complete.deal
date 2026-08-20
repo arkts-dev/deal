@@ -6,3 +6,7 @@
 export async function f(): int {
   return 5;
 }
+
+export function main(): null {
+  return null;
+}

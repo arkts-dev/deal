@@ -10,3 +10,7 @@ export function test_imported_recursive_export(): int {
   if (result !== 8) { throw { code: "TEST_FAIL", message: "imported recursive export failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

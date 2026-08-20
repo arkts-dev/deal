@@ -10,3 +10,7 @@ export function test_nested_array_mutation(): int {
   if (result !== 10) { throw { code: "TEST_FAIL", message: "nested array mutation failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

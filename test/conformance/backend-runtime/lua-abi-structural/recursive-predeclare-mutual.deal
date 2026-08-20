@@ -18,3 +18,7 @@ export function test_abi_mutual_recursion_predeclare(): int {
   if (result !== 5) { throw { code: "TEST_FAIL", message: "mutual recursion ABI failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

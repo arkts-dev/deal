@@ -17,3 +17,7 @@ export function test_table_null_and_delete(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}

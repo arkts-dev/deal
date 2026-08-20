@@ -23,3 +23,7 @@ export function test_nullable_function_array_values(): int {
   }
   throw { code: "TEST_FAIL", message: "first element was not the function" };
 }
+
+export function main(): null {
+  return null;
+}

@@ -12,3 +12,7 @@ export function test_loop_closure_sum(): int {
   if (total !== 6) { throw { code: "TEST_FAIL", message: "loop closure binding failed" }; }
   return total;
 }
+
+export function main(): null {
+  return null;
+}

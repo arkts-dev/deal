@@ -13,3 +13,7 @@ export function test_shared_closure_binding(): int {
   if (result !== 2) { throw { code: "TEST_FAIL", message: "shared closure binding failed" }; }
   return result;
 }
+
+export function main(): null {
+  return null;
+}

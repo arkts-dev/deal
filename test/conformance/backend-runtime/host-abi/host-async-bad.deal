@@ -9,3 +9,7 @@ export async function test_host_async_bad(): string {
   let fetched: string = await host.fetchValue();
   return fetched;
 }
+
+export function main(): null {
+  return null;
+}

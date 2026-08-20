@@ -146,6 +146,49 @@ test("string.substring with non-int raises error", function()
   assert(type(err) == "table", "error should be a table")
 end)
 
+-- ----- Unicode scalar-value length / substring (v1.2) -----
+
+test("string.length counts Unicode scalar values, not bytes", function()
+  -- a, U+00E9 (2 bytes), U+4E2D (3 bytes), U+1F600 (4 bytes), b: 5 scalars, 11 bytes
+  local s = "a\xC3\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80b"
+  assert(#s == 11)
+  assert(strings.length.f(s) == 5)
+end)
+
+test("string.substring positions are Unicode scalar values", function()
+  -- a, U+00E9, U+4E2D, U+1F600, b — 5 scalars
+  local s = "a\xC3\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80b"
+  assert(strings.substring.f(s, 0, 5) == s)
+  assert(strings.substring.f(s, 0, 1) == "a")
+  assert(strings.substring.f(s, 1, 2) == "\xC3\xA9")
+  assert(strings.substring.f(s, 2, 3) == "\xE4\xB8\xAD")
+  assert(strings.substring.f(s, 3, 4) == "\xF0\x9F\x98\x80")
+  assert(strings.substring.f(s, 4, 5) == "b")
+  assert(strings.substring.f(s, 1, 4) == "\xC3\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80")
+  assert(strings.substring.f(s, 2, 2) == "")
+  assert(strings.substring.f(s, 5, 10) == "")
+end)
+
+test("string.substring clamps out-of-range end at the scalar boundary", function()
+  local s = "\xC3\xA9\xE4\xB8\xAD"
+  assert(strings.substring.f(s, 0, 99) == s)
+  assert(strings.substring.f(s, 1, 99) == "\xE4\xB8\xAD")
+end)
+
+test("string.split with empty separator splits into Unicode scalar values", function()
+  local s = "a\xC3\xA9\xF0\x9F\x98\x80"
+  local parts = strings.split.f(s, "")
+  assert(#parts == 3, "expected 3 scalars, got " .. #parts)
+  assert(parts[1] == "a")
+  assert(parts[2] == "\xC3\xA9")
+  assert(parts[3] == "\xF0\x9F\x98\x80")
+end)
+
+test("string.length rejects malformed UTF-8 with E8001 (v1.2 boundary rule)", function()
+  assert_error(function() strings.length.f("\xC3") end, "E8001")
+  assert_error(function() strings.substring.f("\xED\xA0\x80", 0, 1) end, "E8001")
+end)
+
 -- ----- contains -----
 
 test("string.contains returns true when part found", function()

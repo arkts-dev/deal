@@ -1,5 +1,6 @@
--- DEAL Standard Library: std/string — v1.0
--- Provides string manipulation functions per v1.0 spec.
+-- DEAL Standard Library: std/string — v1.2
+-- Provides string manipulation functions per the v1.2 spec.
+-- String lengths and positions are measured in Unicode scalar values.
 
 local __rt = require("deal.runtime")
 
@@ -20,23 +21,47 @@ local function escape_replacement(s)
 end
 
 --- length(s: string): int
--- Returns the number of characters (bytes) in the string.
+-- Returns the number of Unicode scalar values in the string (v1.2).
 stringlib.length = __rt.function_("(string)->int", function(s)
   __rt.check_string(s)
-  return __rt.check_int(#s)
+  local count = 0
+  local cursor = 0
+  while true do
+    local next_cursor = __rt.utf8_next(s, cursor)
+    if next_cursor == nil then break end
+    count = count + 1
+    cursor = next_cursor
+  end
+  return __rt.check_int(count)
 end)
 
 --- substring(s: string, start: int, end: int): string
--- Returns the substring from start (0-based, inclusive) to end (exclusive).
--- Delegates to Lua string.sub with 1-based translation.
+-- Returns the substring from start (0-based, inclusive) to end (exclusive),
+-- with positions measured in Unicode scalar values (v1.2).
+-- start > end, start beyond the string, or end <= 0 produce the empty
+-- string; out-of-range end clamps to the string end.
 stringlib.substring = __rt.function_("(string,int,int)->string", function(s, start, end_)
   __rt.check_string(s)
   __rt.check_int(start)
   __rt.check_int(end_)
-  -- Lua string.sub uses 1-based indexing and inclusive end.
-  -- DEAL uses 0-based with exclusive end.
-  -- Convert: Lua sub(s, start+1, end)
-  return __rt.check_string(string.sub(s, start + 1, end_))
+  -- Walk scalar values to translate scalar positions to byte offsets.
+  local cursor = 0
+  local pos = 0
+  while pos < start do
+    local next_cursor = __rt.utf8_next(s, cursor)
+    if next_cursor == nil then break end
+    cursor = next_cursor
+    pos = pos + 1
+  end
+  local byte_start = cursor + 1
+  while pos < end_ do
+    local next_cursor = __rt.utf8_next(s, cursor)
+    if next_cursor == nil then break end
+    cursor = next_cursor
+    pos = pos + 1
+  end
+  local byte_end = cursor
+  return __rt.check_string(string.sub(s, byte_start, byte_end))
 end)
 
 --- contains(s: string, part: string): boolean
@@ -108,9 +133,13 @@ stringlib.split = __rt.function_("(string,string)->string[]", function(s, sep)
   end
 
   if sep == "" then
-    -- Split into individual characters
-    for i = 1, #s do
-      result[#result + 1] = s:sub(i, i)
+    -- Split into individual Unicode scalar values (v1.2).
+    local cursor = 0
+    while true do
+      local next_cursor, ch = __rt.utf8_next(s, cursor)
+      if next_cursor == nil then break end
+      result[#result + 1] = ch
+      cursor = next_cursor
     end
     return result
   end

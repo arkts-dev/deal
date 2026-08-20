@@ -1,4 +1,4 @@
--- DEAL Runtime Library v0.8
+-- DEAL Runtime Library v1.2 (LuaJIT backend)
 -- Provides type checks, integer arithmetic, class construction, function wrapping,
 -- and async/await infrastructure.
 -- Loaded by every generated Lua module via require("deal.runtime").
@@ -88,9 +88,128 @@ function __rt.check_number(v, file, line, column)
   return v
 end
 
+-- ===== Unicode scalar-value string support (v1.2) =====
+
+--- Validate that a Lua string is well-formed UTF-8 encoding a sequence of
+-- Unicode scalar values: no truncated sequences, no stray continuation
+-- bytes, no overlong encodings, no UTF-16 surrogate code points
+-- (U+D800..U+DFFF), and no values above U+10FFFF.
+function __rt.utf8_valid(s)
+  local n = #s
+  local i = 1
+  while i <= n do
+    local b1 = string.byte(s, i)
+    local len
+    if b1 < 0x80 then
+      len = 1
+    elseif b1 >= 0xC2 and b1 <= 0xDF then
+      len = 2
+    elseif b1 >= 0xE0 and b1 <= 0xEF then
+      len = 3
+    elseif b1 >= 0xF0 and b1 <= 0xF4 then
+      len = 4
+    else
+      return false
+    end
+    if i + len - 1 > n then
+      return false
+    end
+    if len >= 2 then
+      local b2 = string.byte(s, i + 1)
+      if b2 == nil or b2 < 0x80 or b2 > 0xBF then return false end
+      if len == 3 then
+        local b3 = string.byte(s, i + 2)
+        if b3 == nil or b3 < 0x80 or b3 > 0xBF then return false end
+        if b1 == 0xE0 and b2 < 0xA0 then return false end  -- overlong
+        if b1 == 0xED and b2 > 0x9F then return false end  -- surrogate U+D800..U+DFFF
+      end
+      if len == 4 then
+        local b3 = string.byte(s, i + 2)
+        local b4 = string.byte(s, i + 3)
+        if b3 == nil or b3 < 0x80 or b3 > 0xBF then return false end
+        if b4 == nil or b4 < 0x80 or b4 > 0xBF then return false end
+        if b1 == 0xF0 and b2 < 0x90 then return false end  -- overlong
+        if b1 == 0xF4 and b2 > 0x8F then return false end  -- > U+10FFFF
+      end
+    end
+    i = i + len
+  end
+  return true
+end
+
+--- Advance one Unicode scalar value.
+-- @param s string  a valid UTF-8 string
+-- @param i number  0-based byte offset of the last consumed byte
+-- @return next cursor (byte offset of the last byte of this scalar) and the
+--         scalar value as a one-scalar string; nil when the string is
+--         exhausted. Malformed UTF-8 raises E8001 (defensive — boundaries
+--         validate strings with check_string before iteration).
+function __rt.utf8_next(s, i)
+  local n = #s
+  local p = i + 1
+  if p > n then
+    return nil
+  end
+  local b1 = string.byte(s, p)
+  local len
+  if b1 < 0x80 then
+    len = 1
+  elseif b1 >= 0xC2 and b1 <= 0xDF then
+    len = 2
+  elseif b1 >= 0xE0 and b1 <= 0xEF then
+    len = 3
+  elseif b1 >= 0xF0 and b1 <= 0xF4 then
+    len = 4
+  else
+    error(__rt._err("E8001", "expected string, got invalid UTF-8 encoding", nil, nil, nil, "string", "invalid UTF-8 string"))
+  end
+  if p + len - 1 > n then
+    error(__rt._err("E8001", "expected string, got truncated UTF-8 sequence", nil, nil, nil, "string", "invalid UTF-8 string"))
+  end
+  local b2, b3, b4
+  if len >= 2 then
+    b2 = string.byte(s, p + 1)
+    if b2 < 0x80 or b2 > 0xBF then
+      error(__rt._err("E8001", "expected string, got invalid UTF-8 continuation byte", nil, nil, nil, "string", "invalid UTF-8 string"))
+    end
+  end
+  if len >= 3 then
+    b3 = string.byte(s, p + 2)
+    if b3 < 0x80 or b3 > 0xBF then
+      error(__rt._err("E8001", "expected string, got invalid UTF-8 continuation byte", nil, nil, nil, "string", "invalid UTF-8 string"))
+    end
+    if b1 == 0xE0 and b2 < 0xA0 then
+      error(__rt._err("E8001", "expected string, got overlong UTF-8 encoding", nil, nil, nil, "string", "invalid UTF-8 string"))
+    end
+    if b1 == 0xED and b2 > 0x9F then
+      error(__rt._err("E8001", "expected string, got UTF-16 surrogate code point", nil, nil, nil, "string", "invalid UTF-8 string"))
+    end
+  end
+  if len == 4 then
+    b3 = string.byte(s, p + 2)
+    b4 = string.byte(s, p + 3)
+    if b3 < 0x80 or b3 > 0xBF or b4 < 0x80 or b4 > 0xBF then
+      error(__rt._err("E8001", "expected string, got invalid UTF-8 continuation byte", nil, nil, nil, "string", "invalid UTF-8 string"))
+    end
+    if b1 == 0xF0 and b2 < 0x90 then
+      error(__rt._err("E8001", "expected string, got overlong UTF-8 encoding", nil, nil, nil, "string", "invalid UTF-8 string"))
+    end
+    if b1 == 0xF4 and b2 > 0x8F then
+      error(__rt._err("E8001", "expected string, got code point above U+10FFFF", nil, nil, nil, "string", "invalid UTF-8 string"))
+    end
+  end
+  return p + len - 1, string.sub(s, p, p + len - 1)
+end
+
 function __rt.check_string(v, file, line, column)
   if type(v) ~= "string" then
     error(__rt._err("E8001", "expected string", file, line, column, "string", type(v)))
+  end
+  -- v1.2 boundary rule: strings accepted from untrusted or backend-native
+  -- boundaries must reject invalid encodings (malformed UTF-8 byte
+  -- sequences).
+  if not __rt.utf8_valid(v) then
+    error(__rt._err("E8001", "expected string, got invalid UTF-8 encoding", file, line, column, "string", "invalid UTF-8 string"))
   end
   return v
 end
@@ -445,8 +564,12 @@ end
 --
 -- Function-typed parameters are adapted with __rt.as_lua_function before the
 -- raw call, so hosts receive plain Lua functions; __NULL (and nil) arguments
--- on nullable-function parameters pass through unadapted. Rest arguments with
--- function element descriptors are adapted the same way.
+-- on nullable-function parameters pass through unadapted.
+--
+-- DEAL v1.2 has no rest parameters: the parameter list is exact. A legacy
+-- "...T" descriptor entry is not special — it parses as an unknown
+-- (class-name fallback) descriptor and fails type checks like any unknown
+-- descriptor.
 function __rt.from_lua_function(sig, raw_f)
   if type(raw_f) ~= "function" then
     error(__rt._err("E8001", "expected function, got " .. type(raw_f), nil, nil, nil, "function", type(raw_f)))
@@ -463,27 +586,13 @@ function __rt.from_lua_function(sig, raw_f)
 
   return __rt.function_(sig, function(...)
     local nargs = select("#", ...)
-    local has_rest = false
-    local rest_descriptor = nil
-
-    -- Check if last param is a rest parameter ("...T[]" legacy or "...[T]"
-    -- spec form). array_element_descriptor accepts both dialects.
     local required_params = #param_descriptors
-    if required_params > 0 then
-      local last = param_descriptors[required_params]
-      if last:sub(1, 3) == "..." then
-        has_rest = true
-        rest_descriptor = __rt.array_element_descriptor(last:sub(4))  -- extract the element descriptor from the rest array descriptor
-        required_params = required_params - 1
-      end
-    end
 
-    -- Check minimum arg count
+    -- v1.2 exact arity: no rest parameters exist.
     if nargs < required_params then
       error(__rt._err("E8010", "expected at least " .. required_params .. " arguments, got " .. nargs, nil, nil, nil, nil, nil))
     end
-    -- Check maximum arg count (no rest means exact match)
-    if not has_rest and nargs > required_params then
+    if nargs > required_params then
       error(__rt._err("E8010", "expected " .. required_params .. " arguments, got " .. nargs, nil, nil, nil, nil, nil))
     end
 
@@ -494,17 +603,6 @@ function __rt.from_lua_function(sig, raw_f)
       local ok, err = pcall(__rt.check_type, param_desc, arg)
       if not ok then
         error(__rt._err("E8010", "parameter " .. i .. " type mismatch: " .. tostring(err), nil, nil, nil, param_desc, type(arg)))
-      end
-    end
-
-    -- Check rest parameters (if any)
-    if has_rest and rest_descriptor then
-      for i = required_params + 1, nargs do
-        local arg = select(i, ...)
-        local ok, err = pcall(__rt.check_type, rest_descriptor, arg)
-        if not ok then
-          error(__rt._err("E8010", "rest parameter " .. i .. " type mismatch: " .. tostring(err), nil, nil, nil, rest_descriptor, type(arg)))
-        end
       end
     end
 
@@ -522,20 +620,6 @@ function __rt.from_lua_function(sig, raw_f)
         end
       end
       adapted[i] = arg
-    end
-    if has_rest and rest_descriptor and is_function_type(rest_descriptor) then
-      for i = required_params + 1, nargs do
-        local arg = select(i, ...)
-        if arg ~= nil and arg ~= __rt.__NULL then
-          arg = __rt.as_lua_function(arg)
-        end
-        adapted[i] = arg
-        needs_adapt = true
-      end
-    else
-      for i = required_params + 1, nargs do
-        adapted[i] = select(i, ...)
-      end
     end
 
     -- Call the raw function

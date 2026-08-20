@@ -9,3 +9,7 @@ export function test_host_empty_return_bad(): null {
   host.ping();
   return null;
 }
+
+export function main(): null {
+  return null;
+}

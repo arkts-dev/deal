@@ -9,3 +9,7 @@ export function test_source_closure_error(): int {
   };
   return f();
 }
+
+export function main(): null {
+  return null;
+}

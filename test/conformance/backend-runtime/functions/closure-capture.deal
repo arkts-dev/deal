@@ -11,3 +11,7 @@ export function test_closure(): int {
   x = 2;
   return f(); // should return 2
 }
+
+export function main(): null {
+  return null;
+}

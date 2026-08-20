@@ -17,3 +17,7 @@ export function test_jsonable_minimal_nested_class_array_access(): null {
   }
   throw { code: "TEST_FAIL", message: "fromJson failed" };
 }
+
+export function main(): null {
+  return null;
+}

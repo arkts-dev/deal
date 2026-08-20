@@ -14,3 +14,7 @@ export function test_sum(): int {
   }
   return total;
 }
+
+export function main(): null {
+  return null;
+}

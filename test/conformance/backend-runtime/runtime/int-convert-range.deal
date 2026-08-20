@@ -6,3 +6,7 @@
 export function test_int_range(): int {
   return int(1e308);
 }
+
+export function main(): null {
+  return null;
+}

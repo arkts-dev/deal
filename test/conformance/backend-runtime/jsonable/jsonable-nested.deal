@@ -37,3 +37,7 @@ export function test_nested(): null {
   }
   return null;
 }
+
+export function main(): null {
+  return null;
+}
