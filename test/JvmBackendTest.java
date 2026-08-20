@@ -729,18 +729,6 @@ public class JvmBackendTest {
 
         record Case(String what, String source) {}
         List<Case> cases = List.of(
-            new Case("class declaration", """
-                export class Point {
-                  x?: int;
-                }
-                export function test(): int { return 1; }
-                """),
-            new Case("nested array type", """
-                export function test(): int {
-                  let rows: int[][] = [[1, 2], [3, 4]];
-                  return rows[0][1];
-                }
-                """),
             new Case("array of nullable table elements", """
                 export function test(): null {
                   let xs: (table | null)[] = [];
@@ -750,36 +738,6 @@ public class JvmBackendTest {
                 export function test(): null {
                   let t: table | null = null;
                 }
-                """),
-            new Case("array of function elements", """
-                function add1(x: int): int { return x + 1; }
-                export function test(): int {
-                  let fs: ((x: int) => int)[] = [add1];
-                  return fs[0](3);
-                }
-                """),
-            new Case("table field read with a primitive target type", """
-                export function test(): int {
-                  let t: table = { item: 5 };
-                  let n: int = t.item;
-                  return n;
-                }
-                """),
-            new Case("table field assignment", """
-                export function test(): int {
-                  let t: table = { item: 5 };
-                  t.item = 6;
-                  return 1;
-                }
-                """),
-            new Case("optional class field", """
-                class Point { x?: int; }
-                export function test(): int { return 1; }
-                """),
-            new Case("class-typed class field", """
-                class Inner { v: int = 0; }
-                class Outer { inner: Inner = {}; }
-                export function test(): int { return 1; }
                 """),
             new Case("nested class declaration", """
                 export function test(): int {
@@ -793,10 +751,6 @@ public class JvmBackendTest {
                   return null;
                 }
                 """),
-            new Case("stdlib module import whose functions need table values", """
-                import * as t from "std/table"
-                export function test(): int { return 1; }
-                """),
             new Case("unused stdlib module import whose functions need table values", """
                 import * as j from "std/json"
                 export function test(): int { return 1; }
@@ -805,16 +759,9 @@ public class JvmBackendTest {
                 import * as m from "./other"
                 export function test(): int { return 1; }
                 """),
-            new Case("nullable function type", """
-                export function test(): null {
-                  let f: (() => int) | null = null;
-                }
-                """),
-            new Case("throw", """
-                export function test(): null {
-                  throw { code: "E_TEST", message: "x" };
-                  return;
-                }
+            new Case("function-typed class field", """
+                class Holder { cb: (x: int) => int; }
+                export function test(): int { return 1; }
                 """),
             new Case("self-referential initializer", """
                 export function test(): int {
@@ -848,6 +795,71 @@ public class JvmBackendTest {
             check(res.hasErrors(), "backend rejects " + c.what());
             check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
                 "E6000 diagnostic for " + c.what() + ": " + res.diagnostics());
+        }
+
+        // ISSUE-0102: the shapes this slice promoted out of the E6000
+        // rejection list now compile (each generates an artifact the
+        // runtime fixtures above also execute through javac + java).
+        List<Case> promoted = List.of(
+            new Case("optional class field", """
+                class Point { x?: int; }
+                export function test(): int { return 1; }
+                """),
+            new Case("nested array type", """
+                export function test(): int {
+                  let rows: int[][] = [[1, 2], [3, 4]];
+                  return rows[0][1];
+                }
+                """),
+            new Case("array of function elements", """
+                function add1(x: int): int { return x + 1; }
+                export function test(): int {
+                  let fs: ((x: int) => int)[] = [add1];
+                  return fs[0](3);
+                }
+                """),
+            new Case("table field read with a primitive target type", """
+                export function test(): int {
+                  let t: table = { item: 5 };
+                  let n: int = t.item;
+                  return n;
+                }
+                """),
+            new Case("table field assignment", """
+                export function test(): int {
+                  let t: table = { item: 5 };
+                  t.item = 6;
+                  return 1;
+                }
+                """),
+            new Case("class-typed class field", """
+                class Inner { v: int = 0; }
+                class Outer { inner: Inner = {}; }
+                export function test(): int { return 1; }
+                """),
+            new Case("stdlib module import whose functions take table values", """
+                import * as t from "std/table"
+                export function test(): int { return 1; }
+                """),
+            new Case("throw", """
+                export function test(): null {
+                  throw { code: "E_TEST", message: "x" };
+                  return;
+                }
+                """)
+        );
+        for (Case c : promoted) {
+            Frontend f = compileFrontend(c.source, "jvmtest-unsupported.deal");
+            if (!f.errors().isEmpty()) {
+                fail("frontend must accept promoted case '" + c.what()
+                    + "': " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res =
+                JvmBackend.generate(f.program(), f.checkResult(),
+                    "jvmtest-unsupported.deal", "main");
+            check(!res.hasErrors(),
+                "backend now accepts " + c.what() + ": " + res.diagnostics());
         }
     }
 
@@ -2200,15 +2212,35 @@ public class JvmBackendTest {
 
         record Case(String what, String source) {}
         List<Case> cases = List.of(
+            new Case("array of nullable table elements", """
+                export function test(): null {
+                  let xs: (table | null)[] = [];
+                }
+                """)
+        );
+
+        for (Case c : cases) {
+            Frontend f = compileFrontend(c.source, "jvmtest-unsupported-arr.deal");
+            if (!f.errors().isEmpty()) {
+                fail("frontend must accept unsupported array case '" + c.what()
+                    + "' (the backend rejects it): " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-unsupported-arr.deal", "main");
+            check(res.hasErrors(), "backend rejects " + c.what());
+            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 diagnostic for " + c.what() + ": " + res.diagnostics());
+        }
+
+        // ISSUE-0102: nested arrays, function arrays, and table
+        // reads/writes promoted out of the E6000 rejection list.
+        List<Case> promoted = List.of(
             new Case("nested array literal", """
                 export function test(): int {
                   let rows: int[][] = [[1, 2], [3, 4]];
                   return rows[0][1];
-                }
-                """),
-            new Case("array of nullable table elements", """
-                export function test(): null {
-                  let xs: (table | null)[] = [];
                 }
                 """),
             new Case("array of function elements", """
@@ -2231,20 +2263,18 @@ public class JvmBackendTest {
                 }
                 """)
         );
-
-        for (Case c : cases) {
+        for (Case c : promoted) {
             Frontend f = compileFrontend(c.source, "jvmtest-unsupported-arr.deal");
             if (!f.errors().isEmpty()) {
-                fail("frontend must accept unsupported array case '" + c.what()
-                    + "' (the backend rejects it): " + f.errors());
+                fail("frontend must accept promoted array case '" + c.what()
+                    + "': " + f.errors());
                 continue;
             }
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
                 f.program(), f.checkResult(),
                 "jvmtest-unsupported-arr.deal", "main");
-            check(res.hasErrors(), "backend rejects " + c.what());
-            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 diagnostic for " + c.what() + ": " + res.diagnostics());
+            check(!res.hasErrors(),
+                "backend now accepts " + c.what() + ": " + res.diagnostics());
         }
     }
 
@@ -2498,24 +2528,25 @@ public class JvmBackendTest {
             "ASCII for-of concatenates in order: " + ascii.output());
 
         // Array for-of stays rejected with E6000 (documented slice boundary).
-        Frontend arr = compileFrontend("""
+        // ISSUE-0102: array for-of promoted out of the E6000 slice
+        // boundary — it iterates the wrapper storage in index order with
+        // a fresh per-iteration binding (spec-v1.2 §For-of).
+        ExecResult arrRun = compileAndRunJvm("""
             import * as console from "std/console"
             export function test(): null {
               let xs: int[] = [1, 2, 3];
+              let total: int = 0;
               for (let x: int of xs) {
-                console.log("never");
+                total = total + x;
               }
+              if (total !== 6) { console.log("bad-sum"); return; }
+              console.log("array-forof-ok");
             }
-            """, "jvmtest-forof-array.deal");
-        check(arr.errors().isEmpty(), "array for-of frontend clean: " + arr.errors());
-        if (arr.errors().isEmpty()) {
-            JvmBackend.JvmCodegenResult arrRes = JvmBackend.generate(
-                arr.program(), arr.checkResult(), "jvmtest-forof-array.deal", "main");
-            check(arrRes.hasErrors() && arrRes.diagnostics().stream()
-                    .anyMatch(d -> "E6000".equals(d.code())),
-                "array for-of is E6000 (documented slice boundary): "
-                    + arrRes.diagnostics());
-        }
+            """, "jvmtest-forof-array");
+        check(arrRun.exitCode() == 0,
+            "array for-of runs through javac + java: " + arrRun.output());
+        check(arrRun.output().contains("array-forof-ok"),
+            "array for-of sums its elements: " + arrRun.output());
     }
 
     /**
@@ -3272,7 +3303,7 @@ public class JvmBackendTest {
             "a class named like the error helper stays collision-free");
         check(java.contains("new $C_Point(1L, 5L)"),
             "construction fills declaration-order defaults around provided fields");
-        check(java.contains("new $T().put(\"item\", p)"),
+        check(java.contains("new $DealRt.Table().put(\"item\", p)"),
             "table literal chains put calls");
         check(java.contains("$check(\"@Main/Point\", (holder).get(\"item\"))"),
             "class-typed table read runs the shared seam with the spec "
@@ -3679,7 +3710,7 @@ public class JvmBackendTest {
                 + res.diagnostics());
             if (!res.hasErrors()) {
                 String src = res.source();
-                check(src.contains("static abstract class Fn2_II_R_I {"),
+                check(src.contains("static abstract class Fn2_II_R_I implements $FnValue {"),
                     "per-signature wrapper class emitted");
                 check(src.contains(
                     "final java.lang.String descriptor = \"(int,int)->int\";"),
@@ -4401,33 +4432,19 @@ public class JvmBackendTest {
         // Deferred signature shapes → E6000 (ISSUE-0110).
         record DeferredCase(String what, String source) {}
         List<DeferredCase> deferred = List.of(
-            new DeferredCase("nested function type", """
-                function inc(x: int): int { return x + 1; }
-                export function test(): int {
-                  let h: (x: int) => (y: int) => int = function(x: int): (y: int) => int { return inc; };
-                  return 1;
-                }
-                """),
-            new DeferredCase("nullable function type", """
-                function inc(x: int): int { return x + 1; }
-                export function test(): int {
-                  let f: ((x: int) => int) | null = inc;
-                  return 1;
-                }
-                """),
-            new DeferredCase("array of functions", """
-                function inc(x: int): int { return x + 1; }
-                export function test(): int {
-                  let fs: ((x: int) => int)[] = [inc];
-                  return 1;
-                }
-                """),
-            // Function equality/inequality over deferred signature shapes:
-            // the value use reaches emitIdentifier's FunctionSymbol branch
-            // without a typed function-value boundary in between, and the
-            // wrapper field emitFunction gates on does not exist for these
-            // signatures — E6000, never an artifact javac rejects after
-            // the CLI reported success.
+            // The four former deferred cases — async function types
+            // (ISSUE-0099), nested and nullable function types, and
+            // arrays of functions (ISSUE-0102) — are promoted out of
+            // this list: async function-type bindings run through the
+            // ISSUE-0099 wrapper machinery (testAsyncSlice), and the
+            // ISSUE-0102 promoted block below pins the other three.
+            // Function equality/inequality over deferred signature
+            // shapes: the value use reaches emitIdentifier's
+            // FunctionSymbol branch without a typed function-value
+            // boundary in between, and the wrapper field emitFunction
+            // gates on does not exist for these signatures — E6000,
+            // never an artifact javac rejects after the CLI reported
+            // success.
             new DeferredCase(
                 "function equality with array-parameter signatures", """
                 function f(xs: int[]): int { return xs[0]; }
@@ -4459,6 +4476,37 @@ public class JvmBackendTest {
             check(res.hasErrors(), "backend rejects " + c.what());
             check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
                 "E6000 for " + c.what() + ": " + res.diagnostics());
+        }
+
+        // ISSUE-0102: nested and nullable function types promoted out of
+        // the deferred list — they now emit wrapper shapes.
+        List<DeferredCase> promoted = List.of(
+            new DeferredCase("nested function type", """
+                function inc(x: int): int { return x + 1; }
+                export function test(): int {
+                  let h: (x: int) => (y: int) => int = function(x: int): (y: int) => int { return inc; };
+                  return 1;
+                }
+                """),
+            new DeferredCase("nullable function type", """
+                function inc(x: int): int { return x + 1; }
+                export function test(): int {
+                  let f: ((x: int) => int) | null = inc;
+                  return 1;
+                }
+                """));
+        for (DeferredCase c : promoted) {
+            Frontend df = compileFrontend(c.source, "jvmtest-fv-promoted.deal");
+            if (!df.errors().isEmpty()) {
+                fail("frontend must accept the promoted case '" + c.what()
+                    + "': " + df.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                df.program(), df.checkResult(), "jvmtest-fv-promoted.deal",
+                "main");
+            check(!res.hasErrors(),
+                "backend now accepts " + c.what() + ": " + res.diagnostics());
         }
 
         // v1.2 grammar gate: rest parameters and rest function-type arms
@@ -6037,10 +6085,16 @@ public class JvmBackendTest {
     private static void testOrchestratorJvmRejectsUnsupported() throws Exception {
         System.out.println("-- Orchestrator: JVM backend rejects out-of-scope constructs --");
 
+        // ISSUE-0102: optional class fields (x?: int) are now supported
+        // — the rejection pin moves to a still-out-of-scope shape (a
+        // function-typed class field).
         writeFile("src/unsupported_main.deal", """
             export function main(): null { return null; }
             export class Point {
               x?: int;
+            }
+            export class CallbackHolder {
+              cb: (x: int) => int;
             }
             export function run(): int { return 1; }
             """);
@@ -6054,12 +6108,36 @@ public class JvmBackendTest {
             (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
-        check(!success, "JVM backend rejects class declarations");
+        check(!success, "JVM backend rejects function-typed class fields");
         check(orchestrator.diagnostics().stream()
                 .anyMatch(d -> "E6000".equals(d.code())),
             "orchestrator reports E6000: " + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("Unsupported_main.java")),
             "no artifact written when the backend reports errors");
+
+        // The optional-field class alone now compiles through the
+        // orchestrator (ISSUE-0102 promotion of optional class fields).
+        writeFile("src/optional_main.deal", """
+            export function main(): null { return null; }
+            export class Point {
+              x?: int;
+            }
+            export function run(): int { return 1; }
+            """);
+        Path optionalEntry = tmpDir.resolve("src/optional_main.deal")
+            .toAbsolutePath();
+        Path optionalOut = tmpDir.resolve("build/optional_supported");
+        CompilationOrchestrator optionalOrchestrator =
+            new CompilationOrchestrator(
+                optionalEntry, optionalOut, false, false, false,
+                Backend.JVM, (DealConfig) null, roots,
+                Path.of(".").toAbsolutePath().normalize());
+        boolean optionalSuccess = optionalOrchestrator.compile();
+        check(optionalSuccess,
+            "optional class fields compile through the orchestrator: "
+                + optionalOrchestrator.diagnostics());
+        check(Files.exists(optionalOut.resolve("Optional_main.java")),
+            "optional-class-field module writes its artifact");
     }
 
     // =========================================================================
@@ -6862,15 +6940,6 @@ public class JvmBackendTest {
                 export function test(): null {
                   let xs: (table | null)[] = [];
                 }
-                """),
-            new Gate("optional class field", """
-                class Point { x?: int; }
-                export function test(): int { return 1; }
-                """),
-            new Gate("class-typed class field", """
-                class Inner { v: int = 0; }
-                class Outer { inner: Inner = {}; }
-                export function test(): int { return 1; }
                 """)
         );
         for (Gate g : gates) {
@@ -6886,6 +6955,34 @@ public class JvmBackendTest {
             check(res.hasErrors(), "backend rejects " + g.what());
             check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
                 "E6000 diagnostic for " + g.what() + ": " + res.diagnostics());
+        }
+
+        // ISSUE-0102: optional and class-typed class fields promoted out
+        // of the E6000 gate — they now compile (and run through the
+        // class fixtures above).
+        List<Gate> promoted = List.of(
+            new Gate("optional class field", """
+                class Point { x?: int; }
+                export function test(): int { return 1; }
+                """),
+            new Gate("class-typed class field", """
+                class Inner { v: int = 0; }
+                class Outer { inner: Inner = {}; }
+                export function test(): int { return 1; }
+                """)
+        );
+        for (Gate g : promoted) {
+            Frontend f = compileFrontend(g.source(), "jvmtest-nullable-gate.deal");
+            if (!f.errors().isEmpty()) {
+                fail("frontend must accept promoted gate '" + g.what()
+                    + "': " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-nullable-gate.deal", "main");
+            check(!res.hasErrors(),
+                "backend now accepts " + g.what() + ": " + res.diagnostics());
         }
     }
 
@@ -7086,6 +7183,16 @@ public class JvmBackendTest {
             }
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(f.program(),
                 f.checkResult(), "jvmtest-stdlib-boundary.deal", "main");
+            if (c.module().equals("std/table")) {
+                // ISSUE-0102: std/table.keys now executes — tables map as
+                // first-class values, so the import compiles (the emitted
+                // artifact carries the __tableKeys helper).
+                check(!res.hasErrors(),
+                    "backend accepts " + c.what() + ": " + res.diagnostics());
+                check(res.source().contains("__tableKeys"),
+                    "std/table import emits the keys helper");
+                continue;
+            }
             check(res.hasErrors(), "backend rejects " + c.what());
             check(res.diagnostics().stream().anyMatch(d ->
                     "E6000".equals(d.code())
@@ -7096,10 +7203,10 @@ public class JvmBackendTest {
         }
 
         // The orchestrator's JVM path reports the same E6000 at the import
-        // statement and writes no artifact for the std/table-importing
+        // statement and writes no artifact for the std/json-importing
         // module (the backend is the single rejection site).
         writeFile("src/table_import.deal", """
-            import * as t from "std/table"
+            import * as j from "std/json"
             export function main(): null { return null; }
             export function run(): int { return 1; }
             """);
@@ -7110,13 +7217,13 @@ public class JvmBackendTest {
             entryFile, outputDir, false, false, false, Backend.JVM,
             (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
         boolean success = orchestrator.compile();
-        check(!success, "orchestrator JVM path rejects std/table imports");
+        check(!success, "orchestrator JVM path rejects std/json imports");
         check(orchestrator.diagnostics().stream().anyMatch(d ->
                 "E6000".equals(d.code()) && d.message().contains("table values")),
             "orchestrator reports the table boundary: "
                 + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("Table_import.java")),
-            "no artifact written for the std/table-importing module");
+            "no artifact written for the std/json-importing module");
     }
 
     /** Real stdlib execution through the emitted artifact: every supported
