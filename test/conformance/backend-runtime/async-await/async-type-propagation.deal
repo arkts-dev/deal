@@ -13,11 +13,17 @@ async function stringFn(): string {
 
 export async function test_int_propagation(): int {
   let x: int = await intFn();
+  if (x !== 42) {
+    throw { code: "TEST_FAIL", message: "awaited int type propagation mismatch: expected 42" };
+  }
   return x;
 }
 
 export async function test_string_propagation(): string {
   let s: string = await stringFn();
+  if (s !== "hello") {
+    throw { code: "TEST_FAIL", message: "awaited string type propagation mismatch: expected hello" };
+  }
   return s;
 }
 
