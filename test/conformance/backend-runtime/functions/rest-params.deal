@@ -4,36 +4,6 @@
 // @expected: compile-error E1047
 // @features: functions, rest
 
-function sum(...values: int[]): int {
-  if (values.length !== 5) {
-    throw { code: "TEST_FAIL", message: "rest-params: rest array length mismatch" };
-  }
-  if (values[0] !== 1) {
-    throw { code: "TEST_FAIL", message: "rest-params: rest index 0 mismatch" };
-  }
-  if (values[1] !== 2) {
-    throw { code: "TEST_FAIL", message: "rest-params: rest index 1 mismatch" };
-  }
-  if (values[2] !== 3) {
-    throw { code: "TEST_FAIL", message: "rest-params: rest index 2 mismatch" };
-  }
-  if (values[3] !== 4) {
-    throw { code: "TEST_FAIL", message: "rest-params: rest index 3 mismatch" };
-  }
-  if (values[4] !== 5) {
-    throw { code: "TEST_FAIL", message: "rest-params: rest index 4 mismatch" };
-  }
-  let total: int = 0;
-  for (let i: int = 0; i < values.length; i = i + 1) {
-    total = total + values[i];
-  }
-  return total;
-}
-
-export function test_rest(): int {
-  let total: int = sum(1, 2, 3, 4, 5);
-  if (total !== 15) {
-    throw { code: "TEST_FAIL", message: "rest-params: computed total mismatch" };
-  }
-  return total;
+export function sum(...values: int[]): int {
+  return values.length;
 }
