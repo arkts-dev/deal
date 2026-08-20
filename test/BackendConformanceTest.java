@@ -166,6 +166,41 @@ import javax.tools.ToolProvider;
  * and raw upvalue load failures) that the v1.2 module shape removes
  * before any backend.
  *
+ * the @jsonable fixtures live in
+ * {@code test/conformance/fixtures/jvm-jsonable-slice.json}
+ * (the generated {@code C$fromJson}/{@code C$toJson} helpers: simple
+ * toJson→fromJson roundtrips, fromJson defaults for omitted keys,
+ * required no-default fields (the reference defaults table: the
+ * primitive zeroes, a FRESH empty table for a {@code table} field and
+ * a FRESH empty array for an array field — never Java null — and a
+ * required class-typed field's absent key as a fromJson validation
+ * failure returning the DEAL null), nested object fields, primitive
+ * and class array fields, nullable
+ * fields including {@code T[] | null}, the optional-nullable three
+ * states (missing omits the key, explicit null emits
+ * {@code "field": null}, a value emits the value) with {@code has()}
+ * presence — also for optional-with-default, optional-nullable nested
+ * class, and cross-module optional fields, where the Missing sentinel
+ * is always the declaring module's — table fields mapping JSON objects
+ * to string-keyed {@code $DealRt.Table} data (nested JSON arrays become array-mode
+ * tables and roundtrip byte-identically) with the objects-only fromJson
+ * and finite-acyclic toJson E8001 validations, extra-key/malformed-
+ * JSON/type-mismatch validation returning the DEAL null, the toJson
+ * E8001 NaN rejection, unpaired UTF-16 surrogate rejection in decoded
+ * JSON strings (lone high/low surrogates in string fields and
+ * table-field leaves are parse failures → the DEAL null, LuaJIT
+ * `std/json.lua` parity), invalid JSON number spellings (leading
+ * zeros, a decimal point without a fraction digit, an exponent
+ * without fraction digits, and a missing integer part are parse
+ * failures → the DEAL null for typed fields and table-field leaves,
+ * strict RFC 8259 grammar before `Double.parseDouble`, LuaJIT
+ * `std/json.lua` parity), cross-module helper calls with a nested
+ * imported-class field whose deserialized instance carries its
+ * declaring module's nominal identity, the same-name sibling identity
+ * E8001 failure naming both module-qualified identities, and an E4007
+ * frontend compile-error gate rejected before any backend).
+ *
+ *
  * <h2>Multi-module fixtures (ISSUE-0096)</h2>
  *
  * <p>A fixture may replace {@code source} with a {@code modules} object
@@ -261,8 +296,8 @@ import javax.tools.ToolProvider;
  *   <li>generates Java source with the real {@link JvmBackend} (a bypassed
  *       codegen produces no artifact);</li>
  *   <li>compiles the module class together with a small runner class with
- *       {@code javac} in a subprocess (a missing {@code .class} fails the
- *       fixture);</li>
+ *       the javac frontend in-process ({@link #compileWithJavac}; a
+ *       missing {@code .class} fails the fixture);</li>
  *   <li>executes the artifact with {@code java} in a subprocess; the runner
  *       auto-invokes the zero-arity exported functions in declaration order
  *       and prints non-null results to stdout, so {@code expectedOutput}
@@ -1308,7 +1343,7 @@ public class BackendConformanceTest {
 
     /**
      * The real multi-module JVM path (ISSUE-0096): orchestrator compile of
-     * every module → IR dump assertions → {@code javac} over every emitted
+     * every module → IR dump assertions → javac over every emitted
      * {@code .java} artifact plus a runner → {@code java} execution of the
      * emitted artifacts → stdout/error/exit-code assertions. Every stage
      * must genuinely run: a bypassed parser/checker/module-discovery
@@ -1327,6 +1362,15 @@ public class BackendConformanceTest {
      * clean imported modules' artifacts, so the artifact pin targets the
      * entry) — never an artifact javac rejects after the CLI reported
      * success.
+     *
+     * <p>Every multi-module fixture compiles its artifact set with the
+     * real {@code javac} binary unconditionally (a
+     * {@code ProcessBuilder("javac", ...)} — there is no per-fixture
+     * opt-in; single-module fixtures use the javac frontend in-process
+     * via {@link #compileWithJavac}). Both forms apply the same
+     * {@code -encoding UTF-8} and {@code -proc:none} options, compile
+     * the identical artifact-set shape, and verify the produced
+     * {@code .class} artifacts.
      */
     /**
      * Runs one backend assertion group and attributes the pass/fail
@@ -1773,9 +1817,9 @@ public class BackendConformanceTest {
 
     /**
      * The real JVM path: DEAL frontend (already done) → {@link JvmBackend}
-     * codegen → {@code javac} subprocess → {@code java} subprocess → assert.
-     * Every stage must genuinely run: a bypassed codegen leaves no artifact
-     * for {@code javac}, and a bypassed JVM execution produces no output.
+     * codegen → javac (in-process frontend) → {@code java} subprocess →
+     * assert. Every stage must genuinely run: a bypassed codegen leaves no
+     * artifact for javac, and a bypassed JVM execution produces no output.
      */
     private static boolean runJvmAssertions(String name, FrontendCompile fc,
                                             Object expectedOutput,

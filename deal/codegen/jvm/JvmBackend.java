@@ -47,7 +47,8 @@ import java.util.Set;
  * <p>Semantic slice scope (ISSUE-0091 skeleton + ISSUE-0092 slice +
  * ISSUE-0093 slice + ISSUE-0094 slice + ISSUE-0095 classes +
  * ISSUE-0096 slice + ISSUE-0097 stdlib-boundary slice + ISSUE-0108
- * nullable slice + ISSUE-0100 host ABI slice):
+ * nullable slice + ISSUE-0100 host ABI slice + the @jsonable slice
+ * (JSON serialization)):
  * functions, {@code let} locals, module fields, literals,
  * int/number/boolean/string arithmetic and comparisons, {@code if}/
  * {@code else}, {@code while} loops, {@code return}, assignment, direct
@@ -101,7 +102,7 @@ import java.util.Set;
  * {@code os.time() * 1000}), plus {@code std/table.keys}
  * (ISSUE-0102 — tables now map as first-class values).
  * {@code std/json} stays rejected with {@code E6000} at the import
- * statement (the @jsonable/std-json JVM slice owns it).
+ * statement (the @jsonable slice embeds its own JSON runtime instead).
  *
  * <p>ISSUE-0102 (the JVM conformance promotion gate) lifts the
  * remaining imperative surface: C-style {@code for} loops (plain and
@@ -127,11 +128,49 @@ import java.util.Set;
  * or the standalone adapter), so table values cross module boundaries
  * with shared identity. Anything outside this scope — nested class
  * declarations, {@code table | null} values, nullable tables, arrays of
- * table elements, {@code @jsonable}, async/await, cross-module
+ * table elements, async/await, cross-module
  * function-value flow (the per-module wrapper classes cannot cross a
  * module boundary), stdlib imports other than the five supported
  * modules — is rejected with a backend {@code E6000} diagnostic, never
- * silently miscompiled. The ISSUE-0100 host ABI
+ * silently miscompiled.
+ *
+ * <p>The @jsonable slice (JSON serialization) extends the class
+ * surface: an exported {@code // @jsonable} class emits the spec's
+ * generated {@code C$fromJson}/{@code C$toJson} module exports plus a
+ * per-class field-descriptor table and the recursive
+ * {@code $toJsonValue}/{@code $fromJsonValue} helpers on the generated
+ * nested class — JSON parse/stringify run through emitted runtime
+ * support ({@code __jsonParse}/{@code __jsonStringify}, mirroring
+ * {@code std/json.lua}'s escaping and NaN/Infinity E8001 rejection),
+ * field values validate per declared type (null on any
+ * parse/validation failure — the public export never throws, even on
+ * hostile deep-nesting input: the emitted parser converts its
+ * StackOverflowError to the DEAL null like LuaJIT's
+ * {@code pcall(__json_parse, s)}, the table-value conversion carries a
+ * bounded depth guard, and the public {@code C$fromJson} wrapper
+ * converts the guard throw and the nested-class recursion exhaustion
+ * to the DEAL null), defaults evaluate inline per call, nullable
+ * fields preserve the DEAL null, array fields (primitive,
+ * nullable-element, and local-class element) roundtrip element-wise,
+ * nested class fields recurse through the declaring module's
+ * generated helpers (local or imported — the deserialized instance
+ * carries the declaring module's module-qualified nominal identity),
+ * optional fields keep their three states (absent / present null /
+ * present value) through the Missing-sentinel storage and {@code
+ * has()} presence checks, table fields map JSON objects to the shared
+ * {@code $DealRt.Table} data (nested JSON arrays become array-mode
+ * tables) with finite-acyclic JSON-shape validation in toJson, and
+ * {@code std/json} imports stay E6000 (the helpers embed the JSON
+ * runtime instead). Anything outside this scope — optional table
+ * fields of @jsonable classes (their reads yield {@code table | null}),
+ * nested class declarations, non-literal default expressions on
+ * imported classes (their defaults evaluate in the declaring module's
+ * scope under LuaJIT), arrays of non-primitive non-class elements,
+ * {@code table | null} values, nullable tables, nested
+ * (multi-dimensional) array fields, function-typed fields, stdlib
+ * imports other than the five supported modules — is rejected with a
+ * backend {@code E6000} diagnostic, never silently miscompiled. The
+ * ISSUE-0100 host ABI
  * slice lifts declaration/host-module imports and async/await from
  * that list: a host-module import (a declaration file that is not a
  * spec stdlib module, supplied through the orchestrator's hostModules
@@ -489,7 +528,8 @@ import java.util.Set;
  * module functions the earlier slices already support. The only in-slice
  * untyped boundary is the DEAL table ({@code table} read in a contextual
  * target type — the checker types such reads with the expected target),
- * so tables emit a minimal ordered string-key map ({@code $T}) and a
+ * so tables emit a minimal ordered string-key map (the shared
+ * {@code $DealRt.Table} class) and a
  * class-typed table read is the one site where a runtime nominal check
  * cannot be proven redundant: {@code $check<C>} verifies the value is a
  * {@code C} instance and raises E8001 otherwise (mirroring LuaJIT's
@@ -891,6 +931,12 @@ public final class JvmBackend {
      */
     private final List<String> classCheckBranches = new ArrayList<>();
 
+    /** Module-level @jsonable class declarations, in declaration order
+     * (the JSON serialization slice). Registered in the pre-scan; drives
+     * the conditional emission of the JSON runtime support and the
+     * per-class generated {@code C$fromJson}/{@code C$toJson} helpers. */
+    private final List<ClassDeclaration> jsonableClasses = new ArrayList<>();
+
     /** Module-level variable declarations by name (the AST nodes), for
      * the load-time indirect-call value analysis
      * ({@link #moduleIndirectCallRisk}). */
@@ -1036,6 +1082,17 @@ public final class JvmBackend {
      * an indirect callee) is an expression that is not a bare
      * module-function/intrinsic identifier and cannot be analyzed. */
     private static final String UNKNOWN_HELD_VALUE = "<expression>";
+
+    /** Maximum nesting depth the emitted {@code __jsonTableValue}
+     * conversion recurses into (spec §JSON serialization fromJson):
+     * past this bound the conversion throws, and the public
+     * {@code C$fromJson} wrapper converts the throw to the DEAL null —
+     * a deterministic guard against hostile deep-nesting stack
+     * exhaustion instead of relying on a StackOverflowError at the
+     * recursion limit. 512 levels of emitted conversion frames stay far
+     * below the default JVM thread stack even with per-level iterator
+     * frames. */
+    private static final int JSON_TABLE_DEPTH_LIMIT = 512;
 
     /** Statement index of the module-level statement currently being
      * emitted ({@code -1} inside function bodies). Used to detect
@@ -1418,6 +1475,7 @@ public final class JvmBackend {
                 // the module type, which importers reference through the
                 // emitting module's class.
                 moduleClasses.putIfAbsent(cd.name(), cd);
+                if (cd.isJsonable()) jsonableClasses.add(cd);
             }
         }
         this.moduleStatements = List.copyOf(statements);
@@ -1445,6 +1503,9 @@ public final class JvmBackend {
         indent++;
         emitRuntimeSupport();
         emitHostBindings();
+        if (!jsonableClasses.isEmpty()) {
+            emitJsonRuntimeSupport();
+        }
 
         // Function-wrapper shape classes are accumulated while statements
         // are emitted and spliced here, after the runtime support: the
@@ -3700,12 +3761,21 @@ public final class JvmBackend {
         emitLine("class $DealRt {");
         emitLine("    static final class Table {");
         emitLine("        private final java.util.LinkedHashMap<java.lang.String, java.lang.Object> entries = new java.util.LinkedHashMap<>();");
-        emitLine("        Table() {}");
+        emitLine("        // Array-mode support (the @jsonable slice): non-null when the");
+        emitLine("        // table is array-shaped (a 1-based element sequence) — the");
+        emitLine("        // slice maps nested JSON arrays to array-mode tables so");
+        emitLine("        // string-keyed reads and re-serialization keep the JSON");
+        emitLine("        // array shape (DEAL cannot spell integer keys).");
+        emitLine("        private final java.util.ArrayList<java.lang.Object> array;");
+        emitLine("        Table() { this.array = null; }");
+        emitLine("        Table(java.util.ArrayList<java.lang.Object> array) { this.array = array; }");
         emitLine("        Table put(java.lang.String k, java.lang.Object v) { entries.put(k, v); return this; }");
         emitLine("        java.lang.Object get(java.lang.String k) { return entries.get(k); }");
         emitLine("        java.lang.Object remove(java.lang.String k) { return entries.remove(k); }");
         emitLine("        boolean has(java.lang.String k) { return entries.containsKey(k); }");
         emitLine("        java.lang.String[] keys() { return entries.keySet().toArray(new java.lang.String[0]); }");
+        emitLine("        java.util.ArrayList<java.lang.Object> $array() { return array; }");
+        emitLine("        java.util.LinkedHashMap<java.lang.String, java.lang.Object> $entries() { return entries; }");
         emitLine("    }");
         emitLine("}");
     }
@@ -4661,8 +4731,8 @@ public final class JvmBackend {
     /**
      * Emits a module-level (local or exported — ISSUE-0109) DEAL class
      * declaration: a
-     * generated nested static class carrying the declared primitive fields
-     * plus a runtime nominal-check helper. Spec v1.1 classes are sealed
+     * generated nested static class carrying the declared fields plus a
+     * runtime nominal-check helper. Spec v1.1 classes are sealed
      * records with no methods and no constructors — the only callables in
      * the module are the functions the earlier slices emit, so a class body
      * contributes no method surface. Required-present primitive
@@ -4670,13 +4740,19 @@ public final class JvmBackend {
      * with defaults) and required-present nullable primitive/class
      * fields ({@code f: T | null}, defaulting to the DEAL null) are in
      * scope; optional fields (nullable reads and presence checks), and
-     * array/class/table-typed (non-nullable) fields are E6000.
+     * array/class/table-typed (non-nullable) fields are E6000 — except
+     * on an {@code @jsonable} class, where the JSON serialization slice
+     * additionally supports optional fields (Missing-sentinel storage
+     * with {@code has()} presence checks), table fields (JSON-object
+     * data as {@code $DealRt.Table} values, including array-mode tables for nested
+     * JSON arrays), array, nested-class (local or imported), and
+     * {@code null}-typed fields, and emits the per-class
+     * {@code $jsonFields} descriptor plus the {@code $toJsonValue}/
+     * {@code $fromJsonValue} helpers and the public
+     * {@code C$fromJson}/{@code C$toJson} exports.
      */
     private void emitClass(ClassDeclaration cd) {
-        if (cd.isJsonable()) {
-            unsupported("@jsonable classes", cd.span());
-            return;
-        }
+        boolean jsonable = cd.isJsonable();
         String gen = classNameForClass(cd.name());
         String identity = classIdentity(cd.name());
         // A default expression reading a module field declared AFTER the
@@ -4705,10 +4781,71 @@ public final class JvmBackend {
         List<String> fieldTypes = new ArrayList<>();
         List<String> fieldNames = new ArrayList<>();
         List<Boolean> fieldOptionalFlags = new ArrayList<>();
+        List<Type> fieldResolved = new ArrayList<>();
         for (ClassField cf : cd.fields()) {
             Type fieldType = resolveTypeNode(cf.type());
             if (fieldType == Type.Error.INSTANCE) return;
-            if (cf.optional()) {
+            if (jsonable) {
+                // @jsonable field support (the JSON serialization
+                // slice): the prior-slice value types plus their array,
+                // nested class, table, and nullable forms. resolveTypeNode
+                // and javaArrayElementType already gate the array element
+                // support (nested arrays, function arrays, imported-class
+                // element arrays stay E6000). An OPTIONAL field stores its
+                // boxed value (or the DEAL null) in a java.lang.Object
+                // slot guarded by the module's Missing sentinel
+                // ($MISSING) — the spec's Missing-sentinel
+                // representation, which keeps the three states of
+                // {@code f?: T | null} distinguishable.
+                if (!isJvmJsonableFieldType(fieldType)) {
+                    unsupported("@jsonable class fields of type "
+                        + typeName(fieldType) + " (the JVM slice supports "
+                        + "null, boolean, int, number, string, table, "
+                        + "array, class, and nullable fields)", cf.span());
+                    return;
+                }
+                if (fieldType instanceof Type.Table) {
+                    if (cf.optional()) {
+                        // An OPTIONAL table field is rejected with an
+                        // honest E6000: its read yields `table | null`,
+                        // a value shape the slice keeps out of its typed
+                        // positions (the ISSUE-0108 boundary, pinned by
+                        // the nullable-table gate). The pre-fix emission
+                        // stored the field as the table class and later
+                        // passed the Missing sentinel into that slot,
+                        // leaving an artifact javac rejected ('Object
+                        // cannot be converted to the table class') after
+                        // the CLI reported success — never that.
+                        unsupported("optional table fields of @jsonable class '"
+                            + cd.name() + "' (the read of '" + cf.name()
+                            + "' yields `table | null`, which stays out of "
+                            + "the slice's typed positions)", cf.span());
+                        return;
+                    }
+                    // A plain table field stores the shared
+                    // $DealRt.Table reference and maps JSON objects to
+                    // string-keyed table data. The nullable table forms
+                    // (`table | null`, optional or not) fall through to
+                    // the general E6000 gates below: a `table | null`
+                    // VALUE cannot flow through the slice's typed
+                    // positions (the ISSUE-0108 boundary).
+                    fieldTypes.add("$DealRt.Table");
+                    fieldNames.add(javaName(cf.name()));
+                    fieldResolved.add(fieldType);
+                    fieldOptionalFlags.add(false);
+                    continue;
+                }
+                if (cf.optional()) {
+                    Type inner = fieldType instanceof Type.Nullable nn
+                        ? nn.inner() : fieldType;
+                    if (nullableJavaType(inner, cf.span()) == null) return;
+                    fieldTypes.add("java.lang.Object");
+                    fieldNames.add(javaName(cf.name()));
+                    fieldResolved.add(fieldType);
+                    fieldOptionalFlags.add(false);
+                    continue;
+                }
+            } else if (cf.optional()) {
                 // Optional field (ISSUE-0102): reads produce the
                 // declared type | null (the checker wraps it), the Java
                 // representation is the boxed/nullable reference of the
@@ -4730,9 +4867,9 @@ public final class JvmBackend {
                 fieldTypes.add(javaType);
                 fieldNames.add(javaName(cf.name()));
                 fieldOptionalFlags.add(true);
+                fieldResolved.add(fieldType);
                 continue;
-            }
-            if (cf.nullable()) {
+            } else if (cf.nullable()) {
                 // f: T | null — required-present nullable field
                 // (ISSUE-0108). The parser keeps the WHOLE `T | null`
                 // annotation as the field's type node and sets the
@@ -4778,6 +4915,7 @@ public final class JvmBackend {
             fieldTypes.add(javaType);
             fieldNames.add(javaName(cf.name()));
             fieldOptionalFlags.add(false);
+            fieldResolved.add(fieldType);
         }
 
         emitLine("// DEAL class " + cd.name() + " — identity " + identity);
@@ -4815,6 +4953,11 @@ public final class JvmBackend {
         }
         indent--;
         emitLine("}");
+        if (jsonable) {
+            emitJsonableFieldDescriptor(cd, fieldResolved);
+            emitJsonableToJsonValue(cd, gen, fieldResolved);
+            emitJsonableFromJsonValue(cd, gen, fieldTypes, fieldResolved);
+        }
         indent--;
         emitLine("}");
 
@@ -4950,6 +5093,1062 @@ public final class JvmBackend {
         emitLine("return null;");
         indent--;
         emitLine("}");
+        if (jsonable) {
+            emitJsonablePublicHelpers(cd, gen);
+        }
+    }
+
+    // =========================================================================
+    // @jsonable class helpers (JSON serialization slice)
+    // =========================================================================
+
+    /**
+     * True when a resolved field type of an @jsonable class is supported by
+     * the JVM slice: the prior-slice value types ({@code null}, {@code
+     * boolean}, {@code int}, {@code number}, {@code string}, class) plus
+     * their nullable, array, and nested-class forms. Array ELEMENT support
+     * (nested arrays, function arrays, imported-class element arrays) was
+     * already gated by {@code resolveTypeNode} → {@code
+     * javaArrayElementType}; table-typed fields stay out of slice (their
+     * JSON-object mapping and untyped JSON-shaped table data are a later
+     * slice).
+     */
+    private boolean isJvmJsonableFieldType(Type t) {
+        return switch (t) {
+            case Type.Null ignored -> true;
+            case Type.Boolean ignored -> true;
+            case Type.Int ignored -> true;
+            case Type.Number ignored -> true;
+            case Type.String ignored -> true;
+            case Type.Table ignored -> true;
+            case Type.Class ignored -> true;
+            case Type.Nullable n -> isJvmJsonableFieldType(n.inner());
+            case Type.Array a -> isJvmJsonableFieldType(a.element());
+            default -> false; // function
+        };
+    }
+
+    /** The jtype descriptor string of a resolved jsonable field type
+     * (the same vocabulary as the Lua backend's {@code C_fields}
+     * descriptor tables — {@code jsonable-v1.1}). */
+    private String jsonFieldJType(Type t) {
+        return switch (t) {
+            case Type.Null ignored -> "null";
+            case Type.Boolean ignored -> "boolean";
+            case Type.Int ignored -> "int";
+            case Type.Number ignored -> "number";
+            case Type.String ignored -> "string";
+            case Type.Nullable n -> jsonFieldJType(n.inner());
+            case Type.Array ignored -> "array";
+            case Type.Table ignored -> "table";
+            case Type.Class ignored -> "class";
+            default -> "unknown";
+        };
+    }
+
+    /** The emitted generated-class reference of a resolved class type
+     * ({@code $C_<C>} for a local class, {@code Lib.$C_<C>} for an
+     * imported one) — the same reference {@link #javaLocalType} emits. */
+    private String jsonClassRef(Type.Class c, Span span) {
+        if (isLocalClassType(c)) {
+            if (!moduleClasses.containsKey(c.name())) {
+                unsupported("values of class type '" + c.name()
+                    + "' (only local module-level classes are supported)",
+                    span);
+                return null;
+            }
+            return classNameForClass(c.name());
+        }
+        String importedModule = importedClassModuleRef(c, span);
+        if (importedModule == null) return null;
+        return importedModule + "." + classNameForClass(c.name());
+    }
+
+    /** The Missing-sentinel reference for a class whose generated helpers
+     * this module emits — always this module's {@code $MISSING}
+     * (imported-class construction of optional fields stays E6000, so no
+     * reachable site needs the declaring module's sentinel spelled
+     * cross-module). */
+    private String jsonableMissingRef(ClassDeclaration cd) {
+        return "$MISSING";
+    }
+
+    /** The ClassDeclaration behind a class type — a local module-level
+     * class or an imported compiled-module class — or {@code null} when
+     * the class is unknown (checker-gated unreachable). The jsonable
+     * optional-field sites (has()/reads/writes/delete) branch on the
+     * result: @jsonable classes use Missing-sentinel storage, every
+     * other class uses the ISSUE-0102 boxed slot plus the presence
+     * flag. */
+    private ClassDeclaration classDeclFor(Type.Class cls) {
+        if (isLocalClassType(cls)) {
+            return moduleClasses.get(cls.name());
+        }
+        Map<String, ClassDeclaration> decls =
+            importedClasses.get(cls.modulePath());
+        return decls == null ? null : decls.get(cls.name());
+    }
+
+    /** The declared field of a class type — local module-level classes
+     * plus imported compiled-module classes — or {@code null} when the
+     * class or field is unknown (checker-gated unreachable). */
+    private ClassField backendClassField(Type.Class cls, String fieldName) {
+        ClassDeclaration cd;
+        if (isLocalClassType(cls)) {
+            cd = moduleClasses.get(cls.name());
+        } else {
+            Map<String, ClassDeclaration> decls =
+                importedClasses.get(cls.modulePath());
+            cd = decls == null ? null : decls.get(cls.name());
+        }
+        if (cd == null) return null;
+        for (ClassField cf : cd.fields()) {
+            if (cf.name().equals(fieldName)) return cf;
+        }
+        return null;
+    }
+
+    /** Emits the per-class {@code $jsonFields} descriptor table
+     * ({name, jtype, optional, nullable} rows) inside the generated nested
+     * class. The descriptors drive {@code $fromJsonValue}'s extra-key
+     * validation (a key is accepted only when a descriptor names it). */
+    private void emitJsonableFieldDescriptor(ClassDeclaration cd,
+                                             List<Type> types) {
+        emitLine("// @jsonable field descriptors: {name, jtype, optional, nullable}.");
+        emitLine("static final java.lang.String[][] $jsonFields = new java.lang.String[][] {");
+        indent++;
+        for (int i = 0; i < types.size(); i++) {
+            ClassField cf = cd.fields().get(i);
+            Type t = types.get(i);
+            String comma = i < types.size() - 1 ? "," : "";
+            emitLine("new java.lang.String[]{" + quoteJavaString(cf.name())
+                + ", " + quoteJavaString(jsonFieldJType(t))
+                + ", " + (cf.optional() ? "\"true\"" : "\"false\"")
+                + ", " + (cf.nullable() ? "\"true\"" : "\"false\"")
+                + "}" + comma);
+        }
+        indent--;
+        emitLine("};");
+    }
+
+    /** Emits the per-class {@code $toJsonValue} field serializer inside
+     * the generated nested class: a LinkedHashMap of declared-field JSON
+     * values in declaration order (optional fields are out of slice, so
+     * nothing is ever omitted), preserving the DEAL null for nullable
+     * fields. */
+    private void emitJsonableToJsonValue(ClassDeclaration cd, String gen,
+                                         List<Type> types) {
+        emitLine("// @jsonable toJson field serialization (declared-field order).");
+        emitLine("static java.util.LinkedHashMap<java.lang.String, java.lang.Object> $toJsonValue("
+            + gen + " v) {");
+        indent++;
+        emitLine("java.util.LinkedHashMap<java.lang.String, java.lang.Object> out = new java.util.LinkedHashMap<>();");
+        for (int i = 0; i < types.size(); i++) {
+            ClassField cf = cd.fields().get(i);
+            emitToJsonField(cf, types.get(i), "v." + javaName(cf.name()), i);
+        }
+        emitLine("return out;");
+        indent--;
+        emitLine("}");
+    }
+
+    /** Emits the serialization lines of one declared field. An optional
+     * field's {@code valueCode} is its Object storage reference: the
+     * Missing sentinel skips the key entirely (absent state), the DEAL
+     * null serializes as JSON null (present-null state), and any other
+     * value serializes per the inner type. */
+    private void emitToJsonField(ClassField cf, Type t, String valueCode,
+                                 int idx) {
+        String name = quoteJavaString(cf.name());
+        boolean optional = cf.optional();
+        if (optional) {
+            emitLine("if (" + valueCode + " != $MISSING) {");
+            indent++;
+        }
+        switch (t) {
+            case Type.Int ignored ->
+                emitLine(optional
+                    ? "out.put(" + name + ", " + valueCode + ");"
+                    : "out.put(" + name + ", java.lang.Long.valueOf(" + valueCode + "));");
+            case Type.Number ignored ->
+                emitLine(optional
+                    ? "out.put(" + name + ", " + valueCode + ");"
+                    : "out.put(" + name + ", java.lang.Double.valueOf(" + valueCode + "));");
+            case Type.Boolean ignored ->
+                emitLine(optional
+                    ? "out.put(" + name + ", " + valueCode + ");"
+                    : "out.put(" + name + ", java.lang.Boolean.valueOf(" + valueCode + "));");
+            case Type.String ignored ->
+                emitLine("out.put(" + name + ", " + valueCode + ");");
+            case Type.Null ignored ->
+                emitLine("out.put(" + name + ", null);");
+            case Type.Table ignored ->
+                emitLine("out.put(" + name + ", " + valueCode + ");");
+            case Type.Class c -> {
+                String ref = jsonClassRef(c, cf.span());
+                if (optional) {
+                    emitLine("out.put(" + name + ", " + valueCode
+                        + " == null ? null : " + ref + ".$toJsonValue(("
+                        + ref + ") " + valueCode + "));");
+                } else {
+                    emitLine("out.put(" + name + ", " + ref + ".$toJsonValue("
+                        + valueCode + "));");
+                }
+            }
+            case Type.Nullable nn -> {
+                if (nn.inner() instanceof Type.Array a) {
+                    emitToJsonArrayField(cf.name(),
+                        optional ? castJsonValueCode(valueCode, a) : valueCode,
+                        a.element(), idx, true);
+                } else if (nn.inner() instanceof Type.Class c) {
+                    String ref = jsonClassRef(c, cf.span());
+                    emitLine("out.put(" + name + ", " + valueCode
+                        + " == null ? null : " + ref + ".$toJsonValue(("
+                        + ref + ") " + valueCode + "));");
+                } else {
+                    // Boxed primitive / string / table reference: put
+                    // directly (a table value encodes through
+                    // __jsonAppend's $DealRt.Table branch).
+                    emitLine("out.put(" + name + ", " + valueCode + ");");
+                }
+            }
+            case Type.Array a ->
+                emitToJsonArrayField(cf.name(),
+                    optional ? castJsonValueCode(valueCode, a) : valueCode,
+                    a.element(), idx, false);
+            default ->
+                emitLine("out.put(" + name + ", null);");
+        }
+        if (optional) {
+            indent--;
+            emitLine("}");
+        }
+    }
+
+    /** The array-field value code for an OPTIONAL field: the Object
+     * storage slot cast to the emitted array wrapper reference (the
+     * present value is never the DEAL null for the non-nullable array
+     * form; the nullable-outer form null-checks before iterating). */
+    private String castJsonValueCode(String valueCode, Type.Array a) {
+        return "((" + arrayWrapperName(a.element()) + ") " + valueCode + ")";
+    }
+
+    /** Emits the array-field serialization lines: converts the emitted
+     * wrapper's storage array into a JSON List of boxed/nested values.
+     * {@code nullableOuter} handles a {@code T[] | null} field (the DEAL
+     * null serializes as JSON null). */
+    private void emitToJsonArrayField(String fieldName, String valueCode,
+                                      Type elem, int idx,
+                                      boolean nullableOuter) {
+        String arrVar = "arr" + idx;
+        String eVar = "e" + idx;
+        String iterType = jsonArrayIterType(elem);
+        emitLine("java.util.ArrayList<java.lang.Object> " + arrVar
+            + (nullableOuter ? " = null;" : " = new java.util.ArrayList<>();"));
+        if (nullableOuter) {
+            emitLine("if (" + valueCode + " != null) {");
+            indent++;
+            emitLine(arrVar + " = new java.util.ArrayList<>();");
+        }
+        emitLine("for (" + iterType + " " + eVar + " : " + valueCode
+            + ".data) {");
+        indent++;
+        emitToJsonArrayElement(elem, arrVar, eVar, idx);
+        indent--;
+        emitLine("}");
+        if (nullableOuter) {
+            indent--;
+            emitLine("}");
+        }
+        emitLine("out.put(" + quoteJavaString(fieldName) + ", " + arrVar + ");");
+    }
+
+    /** Java iteration type of an array wrapper's {@code .data} storage. */
+    private String jsonArrayIterType(Type elem) {
+        return switch (elem) {
+            case Type.Int ignored -> "long";
+            case Type.Number ignored -> "double";
+            case Type.Boolean ignored -> "boolean";
+            case Type.String ignored -> "java.lang.String";
+            case Type.Nullable ne -> switch (ne.inner()) {
+                case Type.Int ignored -> "java.lang.Long";
+                case Type.Number ignored -> "java.lang.Double";
+                case Type.Boolean ignored -> "java.lang.Boolean";
+                case Type.String ignored -> "java.lang.String";
+                default -> "java.lang.Object";
+            };
+            case Type.Class ignored -> "java.lang.Object";
+            default -> "java.lang.Object";
+        };
+    }
+
+    /** Emits the one-element JSON conversion inside a toJson array loop. */
+    private void emitToJsonArrayElement(Type elem, String arrVar,
+                                        String eVar, int idx) {
+        switch (elem) {
+            case Type.Int ignored ->
+                emitLine(arrVar + ".add(java.lang.Long.valueOf(" + eVar + "));");
+            case Type.Number ignored ->
+                emitLine(arrVar + ".add(java.lang.Double.valueOf(" + eVar + "));");
+            case Type.Boolean ignored ->
+                emitLine(arrVar + ".add(java.lang.Boolean.valueOf(" + eVar + "));");
+            case Type.String ignored ->
+                emitLine(arrVar + ".add(" + eVar + ");");
+            case Type.Nullable ne -> {
+                if (ne.inner() instanceof Type.Class c) {
+                    String ref = jsonClassRef(c, Span.synthetic(modulePath));
+                    emitLine(arrVar + ".add(" + eVar + " == null ? null : "
+                        + ref + ".$toJsonValue((" + ref + ") " + eVar + "));");
+                } else {
+                    emitLine(arrVar + ".add(" + eVar + ");");
+                }
+            }
+            case Type.Class c -> {
+                String ref = jsonClassRef(c, Span.synthetic(modulePath));
+                emitLine(arrVar + ".add(" + ref + ".$toJsonValue((" + ref
+                    + ") " + eVar + "));");
+            }
+            default -> emitLine(arrVar + ".add(null);");
+        }
+    }
+
+    /** Emits the per-class {@code $fromJsonValue} validator inside the
+     * generated nested class: validates the parsed JSON object against the
+     * {@code $jsonFields} descriptors, applies defaults (evaluated inline
+     * per call — the same per-construction default freshness the
+     * constructor path implements), and returns the DEAL null on ANY
+     * validation failure. The table-value depth guard
+     * ({@link #JSON_TABLE_DEPTH_LIMIT}) and the nested-class recursion
+     * exhaustion propagate to the PUBLIC {@code C$fromJson} wrapper,
+     * which converts both shapes to the DEAL null — the public
+     * never-throw contract holds, the internal helper stays a plain
+     * validator. */
+    private void emitJsonableFromJsonValue(ClassDeclaration cd, String gen,
+                                           List<String> fieldTypes,
+                                           List<Type> types) {
+        emitLine("// @jsonable fromJson validation (declared-field order; null on any");
+        emitLine("// validation failure — the public C$fromJson wrapper converts");
+        emitLine("// the depth-guard and stack-exhaustion shapes to the DEAL");
+        emitLine("// null too, so the export never throws).");
+        emitLine("static " + gen + " $fromJsonValue(java.lang.Object raw) {");
+        indent++;
+        emitLine("if (!(raw instanceof java.util.Map<?, ?> m)) return null;");
+        emitLine("for (java.util.Map.Entry<?, ?> e : m.entrySet()) {");
+        indent++;
+        emitLine("java.lang.String key = java.lang.String.valueOf(e.getKey());");
+        emitLine("boolean known = false;");
+        emitLine("for (java.lang.String[] f : $jsonFields) { if (key.equals(f[0])) { known = true; break; } }");
+        emitLine("if (!known) return null;");
+        indent--;
+        emitLine("}");
+        // Defaults first, in declared-field order (LuaJIT's defaults-then-
+        // overlay model); each default evaluates inline at the call. An
+        // optional field starts ABSENT ($MISSING) — or present with its
+        // inline-evaluated default when one is declared (LuaJIT keeps the
+        // defaults-table entry for optional-with-default fields, exactly
+        // like construction).
+        for (int i = 0; i < types.size(); i++) {
+            ClassField cf = cd.fields().get(i);
+            String defaultCode;
+            if (cf.optional() && cf.defaultExpr().isEmpty()) {
+                defaultCode = jsonableMissingRef(cd);
+            } else if (cf.defaultExpr().isPresent()) {
+                ExpressionNode def = cf.defaultExpr().get();
+                if (typeOf(def) == Type.Error.INSTANCE) {
+                    // The checker records every default subexpression's
+                    // type; Type.Error here means the frontend reported
+                    // errors — record an honest E6000, never emit an
+                    // artifact javac would reject.
+                    unsupported("default expression of field '" + cf.name()
+                        + "' of class '" + cd.name()
+                        + "' (unresolved default-expression type)",
+                        def.span());
+                    defaultCode = zeroValueFor(cf.type());
+                } else {
+                    defaultCode = emitExpressionFor(def,
+                        classFieldDeclaredType(cd, cf));
+                }
+                Type declaredType = classFieldDeclaredType(cd, cf);
+                if (declaredType != null
+                        && needsBooleanBoundary(def, declaredType)) {
+                    defaultCode = "booleanNotNull(" + defaultCode + ")";
+                }
+                String fieldJava = declaredType == null ? null
+                    : javaLocalType(declaredType, cf.span());
+                defaultCode = coerceNullValueCode(defaultCode, def,
+                    fieldJava, def.span());
+            } else {
+                // Required field with NO declared default: the reference
+                // defaults table (LuaBackend.defaultValueForTypeNode)
+                // applies the per-type zeroes — 0 / 0.0 / false / "" for
+                // the primitives (zeroValueFor), a FRESH empty $DealRt.Table for a
+                // table field, and a FRESH empty wrapper for an array
+                // field (the spec's per-construction freshness). A Java
+                // null in those slots would let the DEAL null cross a
+                // non-nullable table/array boundary and crash the first
+                // read with a raw NPE (the reviewed defect). A required
+                // CLASS-typed field's {} placeholder has no Java value at
+                // the typed slot; its absent key is a fromJson validation
+                // failure (the guard right after this loop — the null
+                // placeholder below stays unreachable past it).
+                Type ft = types.get(i);
+                if (ft instanceof Type.Table) {
+                    defaultCode = "new $DealRt.Table()";
+                } else if (ft instanceof Type.Array a) {
+                    defaultCode = "new " + arrayWrapperName(a.element())
+                        + "(new " + jsonArrayStorageType(a.element()) + "[0])";
+                } else {
+                    defaultCode = zeroValueFor(cf.type());
+                }
+            }
+            if (!preStatements.isEmpty()) flushPreStatements();
+            emitLine(fieldTypes.get(i) + " f" + i + " = " + defaultCode + ";");
+        }
+        flushPreStatements(); // defensive: empty at a statement boundary
+        // Required class-typed fields with NO declared default: the
+        // reference defaults table holds a raw {} placeholder (a plain
+        // Lua table, never a class instance) which the typed Java field
+        // slot cannot represent — Java null there would silently cross
+        // the non-nullable class boundary (the reviewed defect: a raw
+        // NPE or a silent null read where LuaJIT's check_type raises
+        // E8001 at the typed read). A present key overlays a validated
+        // nested instance below, so only the ABSENT key fails: a fromJson
+        // validation failure (the DEAL null, the spec's never-throw
+        // contract). The guard evaluates after every default so
+        // default-expression side effects keep LuaJIT's
+        // defaults-then-overlay order.
+        for (int i = 0; i < types.size(); i++) {
+            ClassField cf = cd.fields().get(i);
+            if (!cf.optional() && cf.defaultExpr().isEmpty()
+                    && types.get(i) instanceof Type.Class) {
+                emitLine("if (!m.containsKey(" + quoteJavaString(cf.name())
+                    + ")) return null;");
+            }
+        }
+        // Overlay the present keys with validated values.
+        for (int i = 0; i < types.size(); i++) {
+            ClassField cf = cd.fields().get(i);
+            emitFromJsonOverlay(cf, types.get(i), "f" + i, i);
+        }
+        // Optional fields whose overlay stayed absent keep $MISSING —
+        // their three states (absent / present null / present value) are
+        // exactly the storage states the constructor receives.
+        StringBuilder args = new StringBuilder("new " + gen + "(");
+        for (int i = 0; i < types.size(); i++) {
+            if (i > 0) args.append(", ");
+            args.append("f").append(i);
+        }
+        emitLine("return " + args + ");");
+        indent--;
+        emitLine("}");
+    }
+
+    /** Emits the present-key overlay lines of one field: validates the raw
+     * JSON value and assigns the converted value (or returns null). */
+    private void emitFromJsonOverlay(ClassField cf, Type t,
+                                     String targetVar, int idx) {
+        emitLine("if (m.containsKey(" + quoteJavaString(cf.name()) + ")) {");
+        indent++;
+        emitLine("java.lang.Object fv" + idx + " = m.get("
+            + quoteJavaString(cf.name()) + ");");
+        if (t instanceof Type.Null) {
+            emitLine("if (fv" + idx + " != null) return null;");
+        } else if (t instanceof Type.Nullable nn) {
+            emitLine("if (fv" + idx + " != null) {");
+            indent++;
+            emitJsonConvert(nn.inner(), "fv" + idx, targetVar, idx, true);
+            indent--;
+            emitLine("} else {");
+            indent++;
+            emitLine(targetVar + " = null;");
+            indent--;
+            emitLine("}");
+        } else {
+            emitJsonConvert(t, "fv" + idx, targetVar, idx, false);
+        }
+        indent--;
+        emitLine("}");
+    }
+
+    /** Emits the validation + assignment lines converting a raw JSON value
+     * ({@code rawVar}) into {@code targetVar} (a declared field local or an
+     * array slot). {@code boxed} selects the boxed reference assignment for
+     * nullable fields (primitives stay boxed there). Every conversion
+     * returns null from {@code $fromJsonValue} on a type mismatch. */
+    private void emitJsonConvert(Type t, String rawVar, String targetVar,
+                                 int idx, boolean boxed) {
+        switch (t) {
+            case Type.Int ignored -> {
+                emitLine("java.lang.Long cv" + idx + " = __jsonInt(" + rawVar + ");");
+                emitLine("if (cv" + idx + " == null) return null;");
+                emitLine(targetVar + " = " + (boxed ? "cv" + idx
+                    : "cv" + idx + ".longValue()") + ";");
+            }
+            case Type.Number ignored -> {
+                emitLine("java.lang.Double cv" + idx + " = __jsonNumber(" + rawVar + ");");
+                emitLine("if (cv" + idx + " == null) return null;");
+                emitLine(targetVar + " = " + (boxed ? "cv" + idx
+                    : "cv" + idx + ".doubleValue()") + ";");
+            }
+            case Type.Boolean ignored -> {
+                emitLine("java.lang.Boolean cv" + idx + " = __jsonBoolean(" + rawVar + ");");
+                emitLine("if (cv" + idx + " == null) return null;");
+                emitLine(targetVar + " = " + (boxed ? "cv" + idx
+                    : "cv" + idx + ".booleanValue()") + ";");
+            }
+            case Type.String ignored -> {
+                emitLine("java.lang.String cv" + idx + " = __jsonString(" + rawVar + ");");
+                emitLine("if (cv" + idx + " == null) return null;");
+                emitLine(targetVar + " = cv" + idx + ";");
+            }
+            case Type.Table ignored -> {
+                // The spec's table-field contract: fromJson accepts ONLY
+                // a JSON object and maps it to a DEAL table holding
+                // untyped JSON-shaped data (nested objects as string-keyed
+                // $DealRt.Table tables, nested arrays as array-mode $DealRt.Table tables,
+                // leaves as-is). Any other JSON value is a validation
+                // failure.
+                emitLine("if (!(" + rawVar + " instanceof java.util.Map<?, ?> tm" + idx + ")) return null;");
+                emitLine(targetVar + " = ($DealRt.Table) __jsonTableValue(" + rawVar + ", 0);");
+            }
+            case Type.Class c -> {
+                String ref = jsonClassRef(c, Span.synthetic(modulePath));
+                emitLine(ref + " cv" + idx + " = " + ref
+                    + ".$fromJsonValue(" + rawVar + ");");
+                emitLine("if (cv" + idx + " == null) return null;");
+                emitLine(targetVar + " = cv" + idx + ";");
+            }
+            case Type.Array a -> {
+                String storage = jsonArrayStorageType(a.element());
+                emitLine("if (!(" + rawVar + " instanceof java.util.List<?> l" + idx + ")) return null;");
+                emitLine(storage + "[] a" + idx + " = new " + storage
+                    + "[l" + idx + ".size()];");
+                emitLine("int i" + idx + " = 0;");
+                emitLine("for (java.lang.Object e" + idx + " : l" + idx + ") {");
+                indent++;
+                emitJsonArrayElementConvert(a.element(), idx);
+                indent--;
+                emitLine("}");
+                emitLine(targetVar + " = new " + arrayWrapperName(a.element())
+                    + "(a" + idx + ");");
+            }
+            default -> {
+                unsupported("@jsonable value conversion of type "
+                    + typeName(t), Span.synthetic(modulePath));
+                emitLine(targetVar + " = null;");
+            }
+        }
+    }
+
+    /** Java storage type of a jsonable array's element array. */
+    private String jsonArrayStorageType(Type elem) {
+        return switch (elem) {
+            case Type.Int ignored -> "long";
+            case Type.Number ignored -> "double";
+            case Type.Boolean ignored -> "boolean";
+            case Type.String ignored -> "java.lang.String";
+            case Type.Nullable ne -> switch (ne.inner()) {
+                case Type.Int ignored -> "java.lang.Long";
+                case Type.Number ignored -> "java.lang.Double";
+                case Type.Boolean ignored -> "java.lang.Boolean";
+                case Type.String ignored -> "java.lang.String";
+                default -> "java.lang.Object";
+            };
+            case Type.Class ignored -> "java.lang.Object";
+            default -> "java.lang.Object";
+        };
+    }
+
+    /** Emits the per-element conversion of a jsonable array (storage
+     * {@code a<idx>}, index {@code i<idx>}, element {@code e<idx>}). */
+    private void emitJsonArrayElementConvert(Type elem, int idx) {
+        if (elem instanceof Type.Nullable nn) {
+            emitLine(jsonBoxedType(nn.inner(), idx) + " el" + idx + " = null;");
+            emitLine("if (e" + idx + " != null) {");
+            indent++;
+            emitJsonConvert(nn.inner(), "e" + idx, "el" + idx, idx, true);
+            indent--;
+            emitLine("}");
+            emitLine("a" + idx + "[i" + idx + "++] = el" + idx + ";");
+            return;
+        }
+        emitJsonConvert(elem, "e" + idx, "a" + idx + "[i" + idx + "++]",
+            idx, false);
+    }
+
+    /** Java boxed type of a nullable-element array element local. */
+    private String jsonBoxedType(Type inner, int idx) {
+        return switch (inner) {
+            case Type.Int ignored -> "java.lang.Long";
+            case Type.Number ignored -> "java.lang.Double";
+            case Type.Boolean ignored -> "java.lang.Boolean";
+            case Type.String ignored -> "java.lang.String";
+            case Type.Class c -> {
+                String ref = jsonClassRef(c, Span.synthetic(modulePath));
+                yield ref == null ? "java.lang.Object" : ref;
+            }
+            default -> "java.lang.Object";
+        };
+    }
+
+    /** Emits the module-level public {@code C$fromJson}/{@code C$toJson}
+     * exports (spec §JSON serialization). The Java names are the
+     * {@link #javaName} translations of the DEAL names — exactly what
+     * {@link #emitCall} and {@link #emitMemberAccessCall} emit for
+     * {@code C$fromJson(...)} / {@code Lib.C$fromJson(...)} call sites —
+     * so same-module and cross-module calls bind to these methods. */
+    private void emitJsonablePublicHelpers(ClassDeclaration cd, String gen) {
+        String fromJson = javaName(cd.name() + "$fromJson");
+        String toJson = javaName(cd.name() + "$toJson");
+        emitLine("// @jsonable generated exports (spec §JSON serialization):");
+        emitLine("// " + cd.name() + "$fromJson(s) — parse + validate; the DEAL null on");
+        emitLine("// any parse/validation failure, never a throw. The wrapper");
+        emitLine("// converts the two exhaustion shapes to the DEAL null:");
+        emitLine("// the table-value depth guard's RuntimeException (past "
+            + JSON_TABLE_DEPTH_LIMIT + " nesting levels) and the");
+        emitLine("// StackOverflowError of the nested-class $fromJsonValue");
+        emitLine("// recursion over deeply nested JSON objects.");
+        emitLine("public static " + gen + " " + fromJson
+            + "(java.lang.String s) {");
+        indent++;
+        emitLine("try { return " + gen + ".$fromJsonValue(__jsonParse(s)); }");
+        emitLine("catch (java.lang.RuntimeException e) { return null; }");
+        emitLine("catch (java.lang.StackOverflowError e) { return null; }");
+        indent--;
+        emitLine("}");
+        emitLine("// " + cd.name() + "$toJson(v) — serialize to a JSON string.");
+        emitLine("public static java.lang.String " + toJson + "(" + gen
+            + " v) {");
+        indent++;
+        emitLine("return __jsonStringify(" + gen + ".$toJsonValue(v));");
+        indent--;
+        emitLine("}");
+    }
+
+    /**
+     * Emits the @jsonable JSON runtime support: a minimal strict JSON
+     * parser ({@code __jsonParse}: LinkedHashMaps for objects, ArrayLists
+     * for arrays, Double/Boolean/String leaves, the DEAL null for JSON
+     * null and parse failure alike), a JSON stringifier ({@code
+     * __jsonStringify}, E8001 for non-finite numbers — std/json.lua's
+     * NaN/Infinity rejection), and the per-type value validators ({@code
+     * __jsonInt} etc. — null on a type mismatch, the fromJson
+     * validation-failure contract). Emitted only when the module declares
+     * at least one @jsonable class; every name carries the {@code __}
+     * prefix, unreachable from {@link #javaName}.
+     */
+    private void emitJsonRuntimeSupport() {
+        emitLine("// ---- @jsonable JSON runtime support ----");
+        emitLine("// The per-module Missing sentinel: an optional class field whose");
+        emitLine("// storage holds this reference is ABSENT (the spec's Missing");
+        emitLine("// sentinel representation). Distinct from the DEAL null, so");
+        emitLine("// optional-nullable fields keep their three states.");
+        emitLine("static final java.lang.Object $MISSING = new java.lang.Object();");
+        emitLine("// Minimal strict JSON parser: LinkedHashMap for objects, ArrayList");
+        emitLine("// for arrays, Double for numbers, Boolean, String, and null for");
+        emitLine("// JSON null. Parse failure returns null (the DEAL null of the");
+        emitLine("// C$fromJson contract — never a throw).");
+        emitLine("static java.lang.Object __jsonParse(java.lang.String s) {");
+        indent++;
+        emitLine("try { __JsonParser p = new __JsonParser(s); java.lang.Object v = p.parseValue(); p.skipWs(); return p.atEnd() ? v : null; }");
+        emitLine("catch (java.lang.RuntimeException e) { return null; }");
+        emitLine("// Deeply nested JSON (hostile ~10 KB payloads) overflows the");
+        emitLine("// recursive parser's stack: the StackOverflowError converts to");
+        emitLine("// the DEAL null exactly like LuaJIT's pcall(__json_parse, s)");
+        emitLine("// converts its stack exhaustion — C$fromJson never throws.");
+        emitLine("catch (java.lang.StackOverflowError e) { return null; }");
+        indent--;
+        emitLine("}");
+        emitLine("static final class __JsonParser {");
+        indent++;
+        emitLine("final java.lang.String s;");
+        emitLine("int i = 0;");
+        emitLine("__JsonParser(java.lang.String s) { this.s = s; }");
+        emitLine("boolean atEnd() { return i >= s.length(); }");
+        emitLine("char peek() { if (i >= s.length()) throw new java.lang.RuntimeException(\"unexpected end of JSON input\"); return s.charAt(i); }");
+        emitLine("void expect(char c) { if (peek() != c) throw new java.lang.RuntimeException(\"unexpected character in JSON input\"); i++; }");
+        emitLine("void skipWs() { while (i < s.length()) { char c = s.charAt(i); if (c != ' ' && c != '\\t' && c != '\\n' && c != '\\r') return; i++; } }");
+        emitLine("java.lang.Object parseValue() {");
+        indent++;
+        emitLine("skipWs();");
+        emitLine("char c = peek();");
+        emitLine("if (c == '{') return parseObject();");
+        emitLine("if (c == '[') return parseArray();");
+        emitLine("if (c == '\"') return parseString();");
+        emitLine("if (c == 't') { expect('t'); expect('r'); expect('u'); expect('e'); return java.lang.Boolean.TRUE; }");
+        emitLine("if (c == 'f') { expect('f'); expect('a'); expect('l'); expect('s'); expect('e'); return java.lang.Boolean.FALSE; }");
+        emitLine("if (c == 'n') { expect('n'); expect('u'); expect('l'); expect('l'); return null; }");
+        emitLine("if (c == '-' || (c >= '0' && c <= '9')) return parseNumber();");
+        emitLine("throw new java.lang.RuntimeException(\"unexpected character in JSON input\");");
+        indent--;
+        emitLine("}");
+        emitLine("java.util.LinkedHashMap<java.lang.String, java.lang.Object> parseObject() {");
+        indent++;
+        emitLine("expect('{');");
+        emitLine("java.util.LinkedHashMap<java.lang.String, java.lang.Object> m = new java.util.LinkedHashMap<>();");
+        emitLine("skipWs();");
+        emitLine("if (peek() == '}') { i++; return m; }");
+        emitLine("while (true) {");
+        indent++;
+        emitLine("skipWs();");
+        emitLine("java.lang.String k = parseString();");
+        emitLine("skipWs();");
+        emitLine("expect(':');");
+        emitLine("m.put(k, parseValue());");
+        emitLine("skipWs();");
+        emitLine("char c = peek();");
+        emitLine("if (c == ',') { i++; continue; }");
+        emitLine("if (c == '}') { i++; return m; }");
+        emitLine("throw new java.lang.RuntimeException(\"unexpected character in JSON object\");");
+        indent--;
+        emitLine("}");
+        indent--;
+        emitLine("}");
+        emitLine("java.util.ArrayList<java.lang.Object> parseArray() {");
+        indent++;
+        emitLine("expect('[');");
+        emitLine("java.util.ArrayList<java.lang.Object> list = new java.util.ArrayList<>();");
+        emitLine("skipWs();");
+        emitLine("if (peek() == ']') { i++; return list; }");
+        emitLine("while (true) {");
+        indent++;
+        emitLine("list.add(parseValue());");
+        emitLine("skipWs();");
+        emitLine("char c = peek();");
+        emitLine("if (c == ',') { i++; continue; }");
+        emitLine("if (c == ']') { i++; return list; }");
+        emitLine("throw new java.lang.RuntimeException(\"unexpected character in JSON array\");");
+        indent--;
+        emitLine("}");
+        indent--;
+        emitLine("}");
+        emitLine("java.lang.String parseString() {");
+        indent++;
+        emitLine("expect('\"');");
+        emitLine("java.lang.StringBuilder sb = new java.lang.StringBuilder();");
+        emitLine("while (true) {");
+        indent++;
+        emitLine("char c = peek();");
+        emitLine("if (c == '\"') { i++; java.lang.String out = sb.toString();"
+            + " if (__hasUnpairedSurrogate(out)) throw new java.lang.RuntimeException(\"unpaired UTF-16 surrogate code unit in JSON string\");"
+            + " return out; }");
+        emitLine("// spec-v1.2 \u00a7Lexical elements: JSON strings entering the"
+            + " DEAL string boundary must carry no unpaired UTF-16"
+            + " surrogate code units \u2014 a lone 0xD800 / 0xDC00 escape"
+            + " (or a raw lone surrogate) is a parse failure (the DEAL"
+            + " null), exactly like LuaJIT's std/json.lua decoder error"
+            + " inside pcall(__json_parse, s).");
+        emitLine("if (c != '\\\\') { sb.append(c); i++; continue; }");
+        emitLine("i++;");
+        emitLine("char e = peek();");
+        emitLine("switch (e) {");
+        indent++;
+        emitLine("case '\"': sb.append('\"'); i++; break;");
+        emitLine("case '\\\\': sb.append('\\\\'); i++; break;");
+        emitLine("case '/': sb.append('/'); i++; break;");
+        emitLine("case 'b': sb.append('\\b'); i++; break;");
+        emitLine("case 'f': sb.append('\\f'); i++; break;");
+        emitLine("case 'n': sb.append('\\n'); i++; break;");
+        emitLine("case 'r': sb.append('\\r'); i++; break;");
+        emitLine("case 't': sb.append('\\t'); i++; break;");
+        emitLine("case 'u': {");
+        indent++;
+        emitLine("i++;");
+        emitLine("if (i + 4 > s.length()) throw new java.lang.RuntimeException(\"bad \\\\u escape\");");
+        emitLine("int code = 0;");
+        emitLine("for (int j = 0; j < 4; j++) { int d = java.lang.Character.digit(s.charAt(i + j), 16); if (d < 0) throw new java.lang.RuntimeException(\"bad \\\\u escape\"); code = code * 16 + d; }");
+        emitLine("i += 4;");
+        emitLine("sb.append((char) code);");
+        emitLine("break;");
+        indent--;
+        emitLine("}");
+        emitLine("default: throw new java.lang.RuntimeException(\"bad escape in JSON string\");");
+        indent--;
+        emitLine("}");
+        indent--;
+        emitLine("}");
+        indent--;
+        emitLine("}");
+        emitLine("java.lang.Double parseNumber() {");
+        indent++;
+        emitLine("int start = i;");
+        emitLine("if (peek() == '-') i++;");
+        emitLine("// spec-v1.2 \u00a7JSON serialization: the strict RFC 8259 number");
+        emitLine("// grammar, exactly the checks of fs/std/json.lua's parse_number.");
+        emitLine("// Invalid spellings are parse failures (the DEAL null via the");
+        emitLine("// __jsonParse catch), never a permissive Double.parseDouble");
+        emitLine("// acceptance: a leading zero (01, -01, 00), a decimal point");
+        emitLine("// without a fraction digit (1.), an exponent without digits");
+        emitLine("// (1.e2, 1e), a sign without digits (1e+), and a missing");
+        emitLine("// integer part (-.5) all reject exactly like the LuaJIT");
+        emitLine("// reference's parse_error inside pcall(__json_parse, s).");
+        emitLine("if (i < s.length() && s.charAt(i) == '0') { i++; }");
+        emitLine("else {");
+        indent++;
+        emitLine("if (i >= s.length() || s.charAt(i) < '1' || s.charAt(i) > '9') throw new java.lang.RuntimeException(\"bad JSON number\");");
+        emitLine("i++;");
+        emitLine("while (i < s.length()) { char c = s.charAt(i); if (c >= '0' && c <= '9') i++; else break; }");
+        indent--;
+        emitLine("}");
+        emitLine("if (i < s.length() && s.charAt(i) == '.') {");
+        indent++;
+        emitLine("i++;");
+        emitLine("if (i >= s.length() || s.charAt(i) < '0' || s.charAt(i) > '9') throw new java.lang.RuntimeException(\"bad JSON number\");");
+        emitLine("while (i < s.length()) { char c = s.charAt(i); if (c >= '0' && c <= '9') i++; else break; }");
+        indent--;
+        emitLine("}");
+        emitLine("if (i < s.length() && (s.charAt(i) == 'e' || s.charAt(i) == 'E')) {");
+        indent++;
+        emitLine("i++;");
+        emitLine("if (i < s.length() && (s.charAt(i) == '+' || s.charAt(i) == '-')) i++;");
+        emitLine("if (i >= s.length() || s.charAt(i) < '0' || s.charAt(i) > '9') throw new java.lang.RuntimeException(\"bad JSON number\");");
+        emitLine("while (i < s.length()) { char c = s.charAt(i); if (c >= '0' && c <= '9') i++; else break; }");
+        indent--;
+        emitLine("}");
+        emitLine("java.lang.String num = s.substring(start, i);");
+        emitLine("try { return java.lang.Double.valueOf(java.lang.Double.parseDouble(num)); } catch (java.lang.NumberFormatException e) { throw new java.lang.RuntimeException(\"bad JSON number\"); }");
+        indent--;
+        emitLine("}");
+        indent--;
+        emitLine("}");
+        emitLine("// Untyped JSON-shaped table data conversion (spec §JSON");
+        emitLine("// serialization): a parsed JSON object becomes a string-keyed $DealRt.Table,");
+        emitLine("// a parsed JSON array becomes an array-mode $DealRt.Table (DEAL tables are");
+        emitLine("// string-keyed, so the array shape is preserved in the wrapper),");
+        emitLine("// nested structures recurse, and leaves pass through. Integral");
+        emitLine("// parsed numbers become Long so re-serialization prints \"1\"");
+        emitLine("// exactly like LuaJIT's %.17g (\"1\"), never \"1.0\".");
+        emitLine("// The bounded depth guard keeps hostile deep nesting from");
+        emitLine("// exhausting the JVM stack: past " + JSON_TABLE_DEPTH_LIMIT);
+        emitLine("// levels the conversion throws, and the public C$fromJson");
+        emitLine("// wrapper converts the throw to the DEAL null (the spec's");
+        emitLine("// fromJson parse/validation-failure contract) — a deterministic");
+        emitLine("// guard instead of relying on a StackOverflowError at the");
+        emitLine("// recursion limit.");
+        emitLine("static java.lang.Object __jsonTableValue(java.lang.Object raw, int depth) {");
+        indent++;
+        emitLine("if (depth > " + JSON_TABLE_DEPTH_LIMIT + ") throw new java.lang.RuntimeException(\"JSON nesting too deep\");");
+        emitLine("if (raw instanceof java.util.Map<?, ?> m) {");
+        indent++;
+        emitLine("$DealRt.Table t = new $DealRt.Table();");
+        emitLine("for (java.util.Map.Entry<?, ?> e : m.entrySet()) { t.put(java.lang.String.valueOf(e.getKey()), __jsonTableValue(e.getValue(), depth + 1)); }");
+        emitLine("return t;");
+        indent--;
+        emitLine("}");
+        emitLine("if (raw instanceof java.util.List<?> l) {");
+        indent++;
+        emitLine("java.util.ArrayList<java.lang.Object> arr = new java.util.ArrayList<>();");
+        emitLine("for (java.lang.Object e : l) { arr.add(__jsonTableValue(e, depth + 1)); }");
+        emitLine("return new $DealRt.Table(arr);");
+        indent--;
+        emitLine("}");
+        emitLine("if (raw instanceof java.lang.Double d) {");
+        indent++;
+        emitLine("if (d.doubleValue() == java.lang.Math.floor(d.doubleValue()) && !java.lang.Double.isInfinite(d.doubleValue())");
+        indent++;
+        emitLine("        && d.doubleValue() >= -9007199254740991.0 && d.doubleValue() <= 9007199254740991.0) { return java.lang.Long.valueOf(d.longValue()); }");
+        indent--;
+        emitLine("return d;");
+        indent--;
+        emitLine("}");
+        emitLine("return raw;");
+        indent--;
+        emitLine("}");
+        emitLine("// JSON stringify (std/json.lua contract): null, Boolean, String, Long");
+        emitLine("// (int fields), Number (number fields), List (array fields), Map");
+        emitLine("// (nested class fields), $DealRt.Table table values (string-keyed objects and");
+        emitLine("// array-mode tables), and the emitted primitive-array wrappers");
+        emitLine("// (DEAL arrays stored in tables are JSON-shaped array values).");
+        emitLine("// NaN/Infinity raise E8001 exactly like std/json.lua's encode_value");
+        emitLine("// rejection; a cycle or any other value raises E8001 (the spec's");
+        emitLine("// finite-acyclic JSON-shape validation).");
+        emitLine("static java.lang.String __jsonStringify(java.lang.Object v) {");
+        indent++;
+        emitLine("java.lang.StringBuilder sb = new java.lang.StringBuilder();");
+        emitLine("__jsonAppend(sb, v, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));");
+        emitLine("return sb.toString();");
+        indent--;
+        emitLine("}");
+        emitLine("static void __jsonAppend(java.lang.StringBuilder sb, java.lang.Object v, java.util.Set<java.lang.Object> stack) {");
+        indent++;
+        emitLine("if (v == null) { sb.append(\"null\"); return; }");
+        emitLine("if (v instanceof java.lang.Boolean b) { sb.append(b.booleanValue() ? \"true\" : \"false\"); return; }");
+        emitLine("if (v instanceof java.lang.String s) { sb.append(__jsonQuote(s)); return; }");
+        emitLine("if (v instanceof java.lang.Long l) { sb.append(l.toString()); return; }");
+        emitLine("if (v instanceof java.lang.Number n) {");
+        indent++;
+        emitLine("double d = n.doubleValue();");
+        emitLine("if (java.lang.Double.isNaN(d)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\");");
+        emitLine("if (java.lang.Double.isInfinite(d)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\");");
+        emitLine("sb.append(java.lang.Double.toString(d));");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof java.util.List<?> list) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (java.lang.Object e : list) { if (!first) sb.append(','); first = false; __jsonAppend(sb, e, stack); }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof java.util.Map<?, ?> map) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('{');");
+        emitLine("boolean first = true;");
+        emitLine("for (java.util.Map.Entry<?, ?> e : map.entrySet()) { if (!first) sb.append(','); first = false; sb.append(__jsonQuote(java.lang.String.valueOf(e.getKey()))); sb.append(':'); __jsonAppend(sb, e.getValue(), stack); }");
+        emitLine("sb.append('}');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof $DealRt.Table t) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("java.util.ArrayList<java.lang.Object> arr = t.$array();");
+        emitLine("if (arr != null) {");
+        indent++;
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (java.lang.Object e : arr) { if (!first) sb.append(','); first = false; __jsonAppend(sb, e, stack); }");
+        emitLine("sb.append(']');");
+        indent--;
+        emitLine("} else {");
+        indent++;
+        emitLine("sb.append('{');");
+        emitLine("boolean first = true;");
+        emitLine("for (java.util.Map.Entry<java.lang.String, java.lang.Object> e : t.$entries().entrySet()) { if (!first) sb.append(','); first = false; sb.append(__jsonQuote(e.getKey())); sb.append(':'); __jsonAppend(sb, e.getValue(), stack); }");
+        emitLine("sb.append('}');");
+        indent--;
+        emitLine("}");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof __IntArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (long e : a.data) { if (!first) sb.append(','); first = false; sb.append(java.lang.Long.toString(e)); }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof __NumberArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (double e : a.data) { if (!first) sb.append(','); first = false; if (java.lang.Double.isNaN(e)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\"); if (java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\"); sb.append(java.lang.Double.toString(e)); }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof __StringArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (java.lang.String e : a.data) { if (!first) sb.append(','); first = false; sb.append(__jsonQuote(e)); }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof __BooleanArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (boolean e : a.data) { if (!first) sb.append(','); first = false; sb.append(e ? \"true\" : \"false\"); }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof __IntOrNullArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (java.lang.Long e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append(e.toString()); } }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof __NumberOrNullArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (java.lang.Double e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { if (java.lang.Double.isNaN(e)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\"); if (java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\"); sb.append(java.lang.Double.toString(e)); } }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof __StringOrNullArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (java.lang.String e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append(__jsonQuote(e)); } }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof __BooleanOrNullArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (java.lang.Boolean e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append(e.booleanValue() ? \"true\" : \"false\"); } }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        indent--;
+        emitLine("}");
+        emitLine("static java.lang.String __jsonQuote(java.lang.String s) {");
+        indent++;
+        emitLine("java.lang.StringBuilder sb = new java.lang.StringBuilder(\"\\\"\");");
+        emitLine("for (int i = 0; i < s.length(); i++) {");
+        indent++;
+        emitLine("char c = s.charAt(i);");
+        emitLine("switch (c) {");
+        indent++;
+        emitLine("case '\"': sb.append(\"\\\\\\\"\"); break;");
+        emitLine("case '\\\\': sb.append(\"\\\\\\\\\"); break;");
+        emitLine("case '\\b': sb.append(\"\\\\b\"); break;");
+        emitLine("case '\\f': sb.append(\"\\\\f\"); break;");
+        emitLine("case '\\n': sb.append(\"\\\\n\"); break;");
+        emitLine("case '\\r': sb.append(\"\\\\r\"); break;");
+        emitLine("case '\\t': sb.append(\"\\\\t\"); break;");
+        emitLine("default: if (c < 0x20) sb.append(java.lang.String.format(java.util.Locale.ROOT, \"\\\\u%04x\", (int) c)); else sb.append(c);");
+        indent--;
+        emitLine("}");
+        indent--;
+        emitLine("}");
+        emitLine("return sb.append('\"').toString();");
+        indent--;
+        emitLine("}");
+        emitLine("// fromJson field-value validators: null on a type mismatch (the");
+        emitLine("// fromJson validation-failure contract — never a throw).");
+        emitLine("static java.lang.Long __jsonInt(java.lang.Object v) { if (!(v instanceof java.lang.Number)) return null; double d = ((java.lang.Number) v).doubleValue(); if (d != java.lang.Math.floor(d) || d > 9007199254740991.0 || d < -9007199254740991.0) return null; return java.lang.Long.valueOf((long) d); }");
+        emitLine("static java.lang.Double __jsonNumber(java.lang.Object v) { return (v instanceof java.lang.Number) ? java.lang.Double.valueOf(((java.lang.Number) v).doubleValue()) : null; }");
+        emitLine("static java.lang.String __jsonString(java.lang.Object v) { return (v instanceof java.lang.String) ? (java.lang.String) v : null; }");
+        emitLine("static java.lang.Boolean __jsonBoolean(java.lang.Object v) { return (v instanceof java.lang.Boolean) ? (java.lang.Boolean) v : null; }");
     }
 
     private void emitVariable(VariableDeclaration vd) {
@@ -6446,10 +7645,30 @@ public final class JvmBackend {
                     obj = temp;
                 }
                 flushPreStatements();
-                emitLine("((" + javaType + ") " + obj + ")." + f
-                    + " = null;");
-                emitLine("((" + javaType + ") " + obj + ")." + f
-                    + "$present = false;");
+                ClassDeclaration cd = classDeclFor(cls);
+                if (cd != null && cd.isJsonable()) {
+                    // An optional @jsonable field delete restores the
+                    // ABSENT state: the slot stores the Missing sentinel
+                    // (the DECLARING module's sentinel for an imported
+                    // class — the cross-module sentinel identity, never
+                    // this module's).
+                    String sentinel;
+                    if (isLocalClassType(cls)) {
+                        sentinel = "$MISSING";
+                    } else {
+                        String importedModule = importedClassModuleRef(cls,
+                            ds.span());
+                        if (importedModule == null) return;
+                        sentinel = importedModule + ".$MISSING";
+                    }
+                    emitLine("((" + javaType + ") " + obj + ")." + f
+                        + " = " + sentinel + ";");
+                } else {
+                    emitLine("((" + javaType + ") " + obj + ")." + f
+                        + " = null;");
+                    emitLine("((" + javaType + ") " + obj + ")." + f
+                        + "$present = false;");
+                }
                 return;
             }
             unsupported("delete of " + typeName(objType)
@@ -6983,6 +8202,48 @@ public final class JvmBackend {
         for (ClassField cf : cd.fields()) {
             String code = provided.get(cf.name());
             ExpressionNode valueNode = providedNodes.get(cf.name());
+            if (cf.optional() && cd.isJsonable()) {
+                // An optional field of an @jsonable class contributes ONE
+                // Object argument: the
+                // provided value (the DEAL null for an explicit null),
+                // the inline-evaluated default when one is declared, or
+                // the Missing sentinel for an omitted no-default field.
+                // The three states stay distinguishable: absent is the
+                // sentinel reference, present-null is the DEAL null.
+                if (code == null && cf.defaultExpr().isPresent()) {
+                    valueNode = cf.defaultExpr().get();
+                    if (localDefaults) {
+                        if (typeOf(valueNode) == Type.Error.INSTANCE) {
+                            unsupported("default expression of field '"
+                                + cf.name() + "' of class '" + cd.name()
+                                + "' (unresolved default-expression type)",
+                                valueNode.span());
+                            code = zeroValueFor(cf.type());
+                        } else {
+                            code = emitExpressionFor(valueNode,
+                                classFieldDeclaredType(cd, cf));
+                        }
+                    } else {
+                        code = emitExpression(valueNode);
+                    }
+                }
+                if (code != null && valueNode != null
+                        && (localDefaults
+                            || providedNodes.containsKey(cf.name()))
+                        && needsBooleanBoundary(valueNode,
+                            classFieldDeclaredType(cd, cf))) {
+                    code = "booleanNotNull(" + code + ")";
+                }
+                if (code == null) {
+                    // Omitted, no default: the Missing sentinel.
+                    code = jsonableMissingRef(cd);
+                } else if (valueNode != null) {
+                    code = coerceNullValueCode(code, valueNode,
+                        "java.lang.Object", valueNode.span());
+                }
+                args.add(code);
+                continue;
+            }
             if (code == null && cf.defaultExpr().isPresent()) {
                 valueNode = cf.defaultExpr().get();
                 if (localDefaults) {
@@ -7058,7 +8319,11 @@ public final class JvmBackend {
                 case "int" -> "0L";
                 case "number" -> "0.0";
                 case "boolean" -> "false";
-                case "string" -> "";
+                // The two-character quoted Java literal — the bare empty
+                // string here once emitted `java.lang.String f = ;`
+                // (an artifact javac rejected after the CLI reported
+                // success).
+                case "string" -> "\"\"";
                 default -> "null";
             };
         }
@@ -7066,7 +8331,7 @@ public final class JvmBackend {
     }
 
     /**
-     * Emits a table literal as {@code new $T().put(k1, v1).put(k2, v2)}.
+     * Emits a table literal as {@code new $DealRt.Table().put(k1, v1).put(k2, v2)}.
      * Property values evaluate left-to-right in literal order (chained
      * {@code put} calls: each target evaluates before the next value
      * argument), with the hoisting machinery preserving order when a value
@@ -8625,6 +9890,22 @@ public final class JvmBackend {
                 unsupported("calls through non-function values", call.span());
                 return "null";
             }
+            if (currentModuleStatementIndex >= 0
+                    && !moduleFunctions.containsKey(id.name())) {
+                // The only FunctionSymbols outside moduleFunctions are the
+                // compiler-generated @jsonable helpers (C$fromJson /
+                // C$toJson): LuaJIT assigns them at the END of the module
+                // chunk (its deferred @jsonable pass), so a load-time
+                // call reads the not-yet-assigned local and fails with a
+                // nil read, while Java hoists methods and would silently
+                // run.
+                unsupported("module-level call of the compiler-generated "
+                    + "helper '" + id.name() + "' (LuaJIT assigns the "
+                    + "@jsonable helpers at the end of the module chunk, "
+                    + "so a load-time call reads nil and fails; Java "
+                    + "would silently run the hoisted method)", call.span());
+                return "null";
+            }
             // Module-level call to a module function whose body
             // (transitively) reads a module field declared later than the
             // call site: LuaJIT fails at load for such reads (the field is
@@ -9107,6 +10388,58 @@ public final class JvmBackend {
             + quoteJavaString(mae.field()) + ", " + boxed + ")" + unbox;
     }
 
+    /**
+     * has() — an optional class field's presence. A NON-@jsonable
+     * class stores the ISSUE-0102 boxed slot plus a {@code
+     * <name>$present} flag; an @jsonable class stores the Missing
+     * sentinel, so presence is the sentinel inequality (the DEAL null
+     * is PRESENT — only the sentinel is absent). The checker
+     * restricts has() to optional class fields (E4005); the receiver
+     * materializes into a temporary when it is not pure after
+     * emission, so an effectful receiver evaluates exactly once.
+     */
+    private String emitHas(HasExpr he) {
+        Type objType = typeOf(he.object());
+        if (objType instanceof Type.Class cls
+                && !isBuiltinErrorType(cls)) {
+            ClassField cf = backendClassField(cls, he.field());
+            if (cf == null || !cf.optional()) {
+                unsupported("has() on a non-optional field", he.span());
+                return "false";
+            }
+            String obj = emitExpression(he.object());
+            String clsRef = javaLocalType(cls, he.span());
+            if (clsRef == null) return "false";
+            String recv;
+            if (isPureAfterEmission(he.object())) {
+                recv = "(" + obj + ")";
+            } else {
+                String tmp = nextEvalTempName();
+                preStatements.add(new PreLine(clsRef + " " + tmp
+                    + " = " + obj + ";", 0));
+                recv = tmp;
+            }
+            ClassDeclaration cd = classDeclFor(cls);
+            if (cd != null && cd.isJsonable()) {
+                String sentinel;
+                if (isLocalClassType(cls)) {
+                    sentinel = "$MISSING";
+                } else {
+                    String importedModule = importedClassModuleRef(cls,
+                        he.span());
+                    if (importedModule == null) return "false";
+                    sentinel = importedModule + ".$MISSING";
+                }
+                return "(" + recv + "." + javaName(he.field())
+                    + " != " + sentinel + ")";
+            }
+            return "((" + clsRef + ") " + recv + ")."
+                + javaName(he.field()) + "$present";
+        }
+        unsupported("has() on a non-class optional field", he.span());
+        return "false";
+    }
+
     private String emitMemberAccessValue(MemberAccessExpr mae) {
         Type objType = typeOf(mae.object());
         if (objType instanceof Type.Array && "length".equals(mae.field())) {
@@ -9128,7 +10461,53 @@ public final class JvmBackend {
             unsupported("Error member other than code/message", mae.span());
             return "null";
         }
-        if (objType instanceof Type.Class) {
+        if (objType instanceof Type.Class cls) {
+            ClassField cf = backendClassField(cls, mae.field());
+            if (cf != null && cf.optional()) {
+                // An optional class field read yields T | null: absent
+                // reads as the DEAL null, present values read boxed
+                // (the checker already typed the read as Nullable(T)).
+                // The receiver materializes into a temporary when it is
+                // not pure after emission, so an effectful receiver
+                // evaluates exactly once (the same single-evaluation
+                // convention the constructor and operand
+                // materializations follow).
+                String obj = emitExpression(mae.object());
+                String readJava = javaLocalType(typeOf(mae), mae.span());
+                if (readJava == null) return "null";
+                String clsRef = javaLocalType(cls, mae.span());
+                if (clsRef == null) return "null";
+                String recv;
+                if (isPureAfterEmission(mae.object())) {
+                    recv = "(" + obj + ")";
+                } else {
+                    String tmp = nextEvalTempName();
+                    preStatements.add(new PreLine(clsRef + " " + tmp
+                        + " = " + obj + ";", 0));
+                    recv = tmp;
+                }
+                ClassDeclaration cd = classDeclFor(cls);
+                if (cd != null && cd.isJsonable()) {
+                    // Missing-sentinel storage: absent is the sentinel,
+                    // the DEAL null is present — absent reads as the
+                    // DEAL null, present values cast from the Object
+                    // slot.
+                    String sentinel;
+                    if (isLocalClassType(cls)) {
+                        sentinel = "$MISSING";
+                    } else {
+                        String importedModule = importedClassModuleRef(cls,
+                            mae.span());
+                        if (importedModule == null) return "null";
+                        sentinel = importedModule + ".$MISSING";
+                    }
+                    return "(" + recv + "." + javaName(mae.field())
+                        + " == " + sentinel + " ? null : (" + readJava
+                        + ") " + recv + "." + javaName(mae.field()) + ")";
+                }
+                // ISSUE-0102 boxed slot: absent is Java null already.
+                return "(" + recv + ")." + javaName(mae.field());
+            }
             String obj = emitExpression(mae.object());
             return "(" + obj + ")." + javaName(mae.field());
         }
@@ -9821,25 +11200,6 @@ public final class JvmBackend {
         return "null";
     }
 
-    /**
-     * has() (ISSUE-0102): reads the optional class field's presence
-     * flag. The checker restricts has() to optional class fields
-     * (E4005), so the flag always exists in the generated class.
-     */
-    private String emitHas(HasExpr he) {
-        Type objType = typeOf(he.object());
-        if (objType instanceof Type.Class cls
-                && !isBuiltinErrorType(cls)) {
-            String obj = emitExpression(he.object());
-            String javaType = javaLocalType(objType, he.span());
-            if (javaType == null) return "false";
-            return "((" + javaType + ") " + obj + ")."
-                + javaName(he.field()) + "$present";
-        }
-        unsupported("has() on a non-class optional field", he.span());
-        return "false";
-    }
-
     private String emitIntrinsicCall(String name, CallExpr call) {
         if (call.args().size() != 1) {
             // Checker enforces arity; defensive backend diagnostic.
@@ -10024,6 +11384,32 @@ public final class JvmBackend {
                 return emitTableWrite(mae, ae.value());
             }
             if (objType instanceof Type.Class) {
+                Type.Class ccls = (Type.Class) objType;
+                ClassField wcf = backendClassField(ccls, mae.field());
+                if (wcf != null && wcf.optional()) {
+                    ClassDeclaration wcd = classDeclFor(ccls);
+                    if (wcd != null && wcd.isJsonable()) {
+                        // A write to an OPTIONAL @jsonable class field
+                        // stores the boxed value (the DEAL null for an
+                        // explicit null) — the presence state is
+                        // implicit: the stored value is never the
+                        // Missing sentinel, so the field reads present
+                        // afterwards.
+                        List<String> codes = emitOperandsInOrder(
+                            List.of(mae.object(), ae.value()),
+                            Arrays.asList(null, typeOf(mae)));
+                        String value = codes.get(1);
+                        if (needsBooleanBoundary(ae.value(),
+                                declaredFieldType(ccls, mae.field()))) {
+                            value = "booleanNotNull(" + value + ")";
+                        }
+                        value = coerceNullValueCode(value, ae.value(),
+                            "java.lang.Object", ae.span());
+                        return "(" + codes.get(0) + ")."
+                            + javaName(mae.field()) + " = " + value;
+                    }
+                }
+
                 // A declared class field write (spec-v1.2 §Class assignment
                 // semantics): the checker guarantees the field is declared
                 // and the value matches its type. Spec §Operational
@@ -10589,7 +11975,22 @@ public final class JvmBackend {
             case Type.Number ignored -> "java.lang.Double";
             case Type.Boolean ignored -> "java.lang.Boolean";
             case Type.String ignored -> "java.lang.String";
-            case Type.Class c -> localClassJavaType(c, span);
+            case Type.Class c -> {
+                // A nullable imported class (C | null where C is declared
+                // by an imported module) maps to the DECLARING module's
+                // generated nested class — the same reference the
+                // non-nullable imported-class path emits (ISSUE-0109).
+                // The @jsonable slice depends on this: the spec's
+                // generated {@code C$fromJson} returns {@code C | null},
+                // and an imported class's helper returns the imported
+                // nullable class reference here.
+                if (isLocalClassType(c)) {
+                    yield localClassJavaType(c, span);
+                }
+                String importedModule = importedClassModuleRef(c, span);
+                if (importedModule == null) yield null;
+                yield importedModule + "." + classNameForClass(c.name());
+            }
             case Type.Array a -> {
                 if (javaArrayElementType(a.element(), span) == null) {
                     yield null;

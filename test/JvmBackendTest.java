@@ -79,7 +79,8 @@ import java.util.Set;
  *       object-literal construction applies defaults per construction with
  *       provided fields evaluated left-to-right, primitive field
  *       reads/writes emit direct accesses, tables emit a minimal ordered
- *       string-key map ({@code $T}), and a class-typed table read — the
+ *       string-key map (the shared {@code $DealRt.Table} class),
+ *       and a class-typed table read — the
  *       slice's one untyped boundary — runs the emitted {@code $check<C>}
  *       nominal check (E8001 for wrong-class and non-class values),</li>
  *   <li>imported classes and cross-module nominal identity (ISSUE-0109):
@@ -105,6 +106,30 @@ import java.util.Set;
  *       and the {@code int()}/{@code number()} nullable conversion
  *       overloads — all compiled and executed with {@code javac} +
  *       {@code java},</li>
+ *   <li>the @jsonable slice (JSON serialization): the generated
+ *       {@code C$fromJson}/{@code C$toJson} module exports (translated
+ *       with {@code javaName} — {@code User$dfromJson} — exactly what
+ *       the same-module and imported call sites emit), the per-class
+ *       {@code $jsonFields} descriptor table, fromJson validation
+ *       (extra keys, malformed JSON, type mismatches → the DEAL null,
+ *       never a throw — including hostile deep-nesting input, where
+ *       the emitted parser converts its StackOverflowError to the DEAL
+ *       null and the table-value conversion carries a bounded depth
+ *       guard), toJson serialization with std/json.lua's
+ *       E8001 NaN/Infinity rejection, defaults applied inline,
+ *       required no-default fields (the reference defaults table:
+ *       the primitive zeroes, a fresh empty table/array per call —
+ *       never Java null — and a required class-typed field's absent
+ *       key as a fromJson validation failure), nullable/array/
+ *       nested-class/optional/table-typed fields
+ *       (the three optional-nullable states through the Missing
+ *       sentinel with {@code has()} presence, JSON-shaped table data
+ *       including array-mode tables), and the slice boundaries
+ *       (optional/table-typed fields on NON-jsonable classes,
+ *       optional table fields of @jsonable classes — their reads
+ *       yield {@code table | null} — and module-level helper calls —
+ *       E6000/E1049), runtime cases
+ *       compiled and executed with {@code javac} + {@code java},</li>
  *   <li>E6000 rejection of out-of-scope constructs (optional/
  *       array/class/table-typed (non-nullable) class fields, nested class
  *       declarations, table reads with primitive (non-nullable) targets,
@@ -305,6 +330,7 @@ public class JvmBackendTest {
             testSharedCheckSeam();
             testNullableSlice();
             testAsyncSlice();
+            testJsonableSlice();
             testImportedClassValues();
             testFunctionValues();
             testCrossModuleFunctionValuesRejected();
@@ -6893,6 +6919,667 @@ public class JvmBackendTest {
                 .anyMatch(d -> "E1049".equals(d.code())),
             "module-level function-value read rejected with E1049: "
                 + late.errors());
+    }
+    // @jsonable slice (JSON serialization)
+    // =========================================================================
+
+    /**
+     * The @jsonable slice: the generated {@code C$fromJson}/
+     * {@code C$toJson} helpers, the per-class {@code $jsonFields}
+     * descriptor table, fromJson/toJson validation semantics (null on
+     * extra keys / malformed JSON / type mismatches / unpaired UTF-16
+     * surrogate code units in decoded JSON strings, and invalid JSON
+     * number spellings (leading zeros, a decimal point without a
+     * fraction digit, a sign/digit-starved exponent, a missing integer
+     * part — parse failures returning the DEAL null, RFC 8259 /
+     * std/json.lua parity) — never a throw; E8001 for a NaN number
+     * field in toJson; required no-default fields applying the
+     * reference defaults table — the primitive zeroes, a fresh empty
+     * table/array per call, never Java null, and a required
+     * class-typed field's absent key as a fromJson validation
+     * failure), and the slice boundaries
+     * — optional/table-typed @jsonable fields, non-jsonable
+     * array/class fields, and module-level calls of the generated
+     * helpers stay E6000. Every runtime case compiles the emitted
+     * artifact with javac and executes it with java; the same surface
+     * runs through the BackendConformanceTest adapter in
+     * {@code test/conformance/fixtures/jvm-jsonable-slice.json}.
+     */
+    private static void testJsonableSlice() throws Exception {
+        System.out.println("-- @jsonable slice: generated helpers, descriptors, validation, boundaries --");
+
+        ExecResult roundtrip = compileAndRunJvm("""
+            // @jsonable
+            export class User {
+              name: string = "";
+              age: int = 0;
+            }
+            export function test(): string {
+              let u: User = { name: "Ada", age: 30 };
+              let json: string = User$toJson(u);
+              let u2: User | null = User$fromJson(json);
+              if (u2 !== null) {
+                if (u2.name !== "Ada" || u2.age !== 30) { return "bad"; }
+                return "ok";
+              }
+              return "null";
+            }
+            """, "jsonable-roundtrip");
+        check(roundtrip.exitCode() == 0, "jsonable roundtrip exits 0: "
+            + roundtrip.output());
+        check(roundtrip.output().contains("ok"), "jsonable roundtrip ok: "
+            + roundtrip.output());
+
+        // Extra keys, malformed JSON, type mismatches, and a non-object
+        // top-level value all return the DEAL null.
+        ExecResult failures = compileAndRunJvm("""
+            // @jsonable
+            export class User {
+              name: string = "";
+              age: int = 0;
+            }
+            export function test(): int {
+              let a: User | null = User$fromJson("{\\"name\\":\\"Ada\\",\\"extra\\":1}");
+              if (a === null) {
+                let b: User | null = User$fromJson("{oops");
+                if (b === null) {
+                  let c: User | null = User$fromJson("{\\"name\\":\\"Ada\\",\\"age\\":2.5}");
+                  if (c === null) {
+                    let d: User | null = User$fromJson("[1,2]");
+                    if (d === null) { return 1; }
+                    return 0;
+                  }
+                  return 0;
+                }
+                return 0;
+              }
+              return 0;
+            }
+            """, "jsonable-failures");
+        check(failures.exitCode() == 0, "jsonable failures exit 0: "
+            + failures.output());
+        check(failures.output().contains("1"), "jsonable failures return 1: "
+            + failures.output());
+
+        // A NaN number field raises E8001 in toJson (std/json.lua parity).
+        ExecResult nan = compileAndRunJvm("""
+            // @jsonable
+            export class Metric {
+              value: number = 0.0;
+            }
+            export function test(): string {
+              let m: Metric = { value: 0.0 / 0.0 };
+              return Metric$toJson(m);
+            }
+            """, "jsonable-nan");
+        check(nan.output().contains("DEAL_ERROR_CODE: E8001"),
+            "toJson of a NaN number field raises E8001: " + nan.output());
+
+        // Emission pins: the artifact carries the descriptor table, the
+        // translated helper names, and the JSON runtime — and a module
+        // without @jsonable classes emits none of it.
+        String source = """
+            // @jsonable
+            export class User {
+              name: string = "";
+              age: int = 0;
+            }
+            export function test(): int { return 1; }
+            """;
+        Frontend f = compileFrontend(source, "jvmtest-jsonable-pin.deal");
+        check(f.errors().isEmpty(), "jsonable pin frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-jsonable-pin.deal", "Main");
+            check(!res.hasErrors(), "jsonable pin codegen clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains(
+                        "new java.lang.String[]{\"name\", \"string\", \"false\", \"false\"}"),
+                    "the field descriptor rows carry {name, jtype, optional, nullable}");
+                check(java.contains("public static $C_User User$dfromJson(java.lang.String s)"),
+                    "the generated fromJson export uses the javaName translation");
+                check(java.contains("return __jsonStringify($C_User.$toJsonValue(v));"),
+                    "the generated toJson export stringifies the field serializer");
+                check(java.contains("static java.lang.Object __jsonParse("),
+                    "the JSON parser is emitted for a module with @jsonable classes");
+                check(java.contains("static final java.lang.String[][] $jsonFields"),
+                    "the per-class $jsonFields descriptor is emitted");
+                check(java.contains(
+                        "catch (java.lang.StackOverflowError e) { return null; }"),
+                    "the JSON parser converts deep-nesting stack exhaustion "
+                    + "to the DEAL null");
+                check(java.contains(
+                        "try { return $C_User.$fromJsonValue(__jsonParse(s)); }"),
+                    "the public fromJson export wraps the conversion so the "
+                    + "exhaustion shapes never escape it");
+                check(java.contains("static java.lang.Object __jsonTableValue"
+                        + "(java.lang.Object raw, int depth) {"),
+                    "the table-value conversion carries the bounded depth "
+                    + "parameter");
+                check(java.contains("if (depth > 512) throw new "
+                        + "java.lang.RuntimeException(\"JSON nesting too "
+                        + "deep\");"),
+                    "the table-value conversion carries the bounded depth "
+                    + "guard");
+                check(java.contains("if (__hasUnpairedSurrogate(out)) throw "
+                        + "new java.lang.RuntimeException(\"unpaired "
+                        + "UTF-16 surrogate code unit in JSON string\");"),
+                    "the JSON string parser rejects unpaired UTF-16 "
+                    + "surrogate code units");
+                check(java.contains("the strict RFC 8259 number"),
+                    "the JSON number parser validates the strict RFC "
+                    + "8259 number grammar");
+                check(java.contains(
+                        "if (i < s.length() && s.charAt(i) == '0') { i++; }"),
+                    "the JSON number parser rejects leading zeros");
+                check(java.contains("if (i >= s.length() || s.charAt(i) < '0' "
+                        + "|| s.charAt(i) > '9') throw new "
+                        + "java.lang.RuntimeException(\"bad JSON "
+                        + "number\");"),
+                    "the JSON number parser requires digits after the "
+                    + "decimal point and the exponent");
+            }
+        }
+        Frontend plain = compileFrontend("""
+            export function test(): int { return 1; }
+            """, "jvmtest-jsonable-plain.deal");
+        check(plain.errors().isEmpty(), "plain module frontend clean");
+        if (plain.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                plain.program(), plain.checkResult(), "jvmtest-jsonable-plain.deal", "Main");
+            check(!res.source().contains("__jsonParse"),
+                "a module without @jsonable classes emits no JSON runtime support");
+        }
+
+        // Runtime coverage for the optional and table field forms:
+        // the three optional-nullable states (absent / present null /
+        // present value with has() presence), the optional-with-default
+        // form, table fields with nested objects, and nested JSON arrays
+        // as array-mode tables.
+        ExecResult optional = compileAndRunJvm("""
+            // @jsonable
+            export class User {
+              name: string = "";
+              nick?: string | null;
+            }
+            export function test(): string {
+              let m: User = { name: "A" };
+              let mj: string = User$toJson(m);
+              let m2: User | null = User$fromJson(mj);
+              if (m2 !== null) {
+                if (has(m2.nick)) { return "has-missing"; }
+              } else { return "m2"; }
+              let n: User = { name: "B", nick: null };
+              let nj: string = User$toJson(n);
+              if (nj !== "{\\\"name\\\":\\\"B\\\",\\\"nick\\\":null}") { return "nj"; }
+              let n2: User | null = User$fromJson(nj);
+              if (n2 !== null) {
+                if (!has(n2.nick) || n2.nick !== null) { return "n2"; }
+              } else { return "n2null"; }
+              let v: User = { name: "C", nick: "cee" };
+              let v2: User | null = User$fromJson(User$toJson(v));
+              if (v2 !== null) {
+                if (!has(v2.nick)) { return "no-has"; }
+                let nick: string | null = v2.nick;
+                if (nick !== null) {
+                  if (nick !== "cee") { return "bad"; }
+                } else { return "nick-null"; }
+              } else { return "v2null"; }
+              return "ok";
+            }
+            """, "jsonable-optional");
+        check(optional.exitCode() == 0 && optional.output().contains("ok"),
+            "optional three-state roundtrip: " + optional.output());
+
+        ExecResult table = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): string {
+              let w: Wrap = { data: { nested: { inner: "x" } } };
+              let json: string = Wrap$toJson(w);
+              let w2: Wrap | null = Wrap$fromJson(json);
+              if (w2 !== null) {
+                let nested: table = w2.data.nested;
+                let inner: string = nested.inner;
+                if (inner !== "x") { return "inner"; }
+                return "ok";
+              }
+              return "null";
+            }
+            """, "jsonable-table");
+        check(table.exitCode() == 0 && table.output().contains("ok"),
+            "table field roundtrip: " + table.output());
+
+        ExecResult tableArrays = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): string {
+              let w: Wrap | null = Wrap$fromJson("{\\\"data\\\":{\\\"values\\\":[[1,2],[3,4]]}}");
+              if (w !== null) {
+                let values: table = w.data.values;
+                let json: string = Wrap$toJson(w);
+                if (json !== "{\\\"data\\\":{\\\"values\\\":[[1,2],[3,4]]}}") { return "json"; }
+                return "ok";
+              }
+              return "null";
+            }
+            """, "jsonable-table-arrays");
+        check(tableArrays.exitCode() == 0
+                && tableArrays.output().contains("ok"),
+            "table field nested JSON arrays roundtrip: "
+                + tableArrays.output());
+
+        // Hostile deep-nesting pins: the fromJson export must return the
+        // DEAL null on deeply nested JSON instead of crashing the
+        // program. A ~20 KB payload of 20000 nested '[' ... ']' exhausts
+        // the emitted parser's stack — the emitted parser converts its
+        // StackOverflowError to the DEAL null exactly like LuaJIT's
+        // pcall(__json_parse, s). Deep-but-parsable nesting inside a
+        // table field (600 nested objects past the 512-level guard)
+        // exercises the bounded depth guard of the table-value
+        // conversion. Both shapes pin exit 0 and the DEAL null.
+        ExecResult deepArrays = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): string {
+              let s: string = "{\\\"data\\\":";
+              let i: int = 0;
+              while (i < 20000) { s = s + "["; i = i + 1; }
+              i = 0;
+              while (i < 20000) { s = s + "]"; i = i + 1; }
+              s = s + "}";
+              let w: Wrap | null = Wrap$fromJson(s);
+              if (w !== null) { return "not-null"; }
+              return "ok";
+            }
+            """, "jsonable-deep-arrays");
+        check(deepArrays.exitCode() == 0 && deepArrays.output().contains("ok"),
+            "deeply nested JSON arrays return the DEAL null instead of "
+            + "crashing the program: " + deepArrays.output());
+
+        ExecResult deepTable = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): string {
+              let s: string = "{\\\"data\\\":";
+              let i: int = 0;
+              while (i < 600) { s = s + "{\\\"k\\\":"; i = i + 1; }
+              s = s + "{\\\"k\\\":[1]}";
+              i = 0;
+              while (i < 600) { s = s + "}"; i = i + 1; }
+              s = s + "}";
+              let w: Wrap | null = Wrap$fromJson(s);
+              if (w !== null) { return "not-null"; }
+              return "ok";
+            }
+            """, "jsonable-deep-table-guard");
+        check(deepTable.exitCode() == 0 && deepTable.output().contains("ok"),
+            "the table-value depth guard converts deep nesting to the "
+            + "DEAL null: " + deepTable.output());
+
+        // Unpaired UTF-16 surrogate pin (reviewed defect): the JSON
+        // parser's backslash-u escape decoding must reject lone
+        // surrogates — a lone high (0xD800) or low (0xDC00) surrogate
+        // in a string field or a table-field string leaf is a parse
+        // failure returning the DEAL null exactly like LuaJIT's
+        // std/json.lua decoder error inside pcall(__json_parse, s) —
+        // while a valid high+low pair decodes and reads back. The
+        // escape text is built with Java concatenation after the text
+        // block via placeholder replacement: a raw backslash-u-D800 in
+        // Java source would be a Java unicode escape (a lone surrogate
+        // in the test source itself).
+        ExecResult surrogates = compileAndRunJvm("""
+            // @jsonable
+            export class User {
+              name: string = "";
+            }
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): string {
+              let hi: User | null = User$fromJson("{\\"name\\":\\"<LONE_HIGH>\\"}");
+              if (hi !== null) { return "hi-accepted"; }
+              let lo: User | null = User$fromJson("{\\"name\\":\\"<LONE_LOW>\\"}");
+              if (lo !== null) { return "lo-accepted"; }
+              let pair: User | null = User$fromJson("{\\"name\\":\\"<VALID_PAIR>\\"}");
+              if (pair !== null) {
+                if (pair.name !== "<PAIR_EMOJI>") { return "pair-bad"; }
+              } else { return "pair-null"; }
+              let leaf: Wrap | null = Wrap$fromJson("{\\"data\\":{\\"leaf\\":\\"<LONE_HIGH>\\"}}");
+              if (leaf !== null) { return "leaf-accepted"; }
+              return "ok";
+            }
+            """.replace("<LONE_HIGH>", "\\" + "uD800")
+                .replace("<LONE_LOW>", "\\" + "uDC00")
+                .replace("<VALID_PAIR>", "\\" + "uD83D" + "\\" + "uDE00")
+                .replace("<PAIR_EMOJI>", "\uD83D\uDE00"),
+            "jsonable-unpaired-surrogates");
+        check(surrogates.exitCode() == 0
+                && surrogates.output().contains("ok"),
+            "lone UTF-16 surrogates in JSON strings return the DEAL null "
+            + "while a valid surrogate pair decodes: " + surrogates.output());
+
+        // Invalid JSON number spellings (reviewed defect): the emitted
+        // parser must validate the strict RFC 8259 number grammar
+        // before Double.parseDouble. A leading zero (01, -01, 00), a
+        // decimal point without a fraction digit (1.), an exponent
+        // without fraction digits (1.e2, 5.e+2), an exponent or sign
+        // without digits (1e, 1e+), and a missing integer part (-.5)
+        // are parse failures returning the DEAL null for a typed field
+        // and for a table-field leaf — exactly like LuaJIT's
+        // std/json.lua parse_error inside pcall(__json_parse, s) —
+        // while valid spellings (0, 42, 2.5, -0.5, 1e2, 1.5e-2, and a
+        // plain table-leaf number) still parse and read back, never an
+        // over-rejection.
+        ExecResult numbers = compileAndRunJvm("""
+            // @jsonable
+            export class P {
+              age: int = 0;
+              score: number = 0.0;
+            }
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): string {
+              let a: P | null = P$fromJson("{\\"age\\":01}");
+              if (a !== null) { return "01"; }
+              let b: P | null = P$fromJson("{\\"age\\":-01}");
+              if (b !== null) { return "-01"; }
+              let c: P | null = P$fromJson("{\\"score\\":00}");
+              if (c !== null) { return "00"; }
+              let d: P | null = P$fromJson("{\\"score\\":1.}");
+              if (d !== null) { return "1."; }
+              let e: P | null = P$fromJson("{\\"score\\":1.e2}");
+              if (e !== null) { return "1.e2"; }
+              let f: P | null = P$fromJson("{\\"score\\":5.e+2}");
+              if (f !== null) { return "5.e+2"; }
+              let g: P | null = P$fromJson("{\\"score\\":-.5}");
+              if (g !== null) { return "-.5"; }
+              let h: P | null = P$fromJson("{\\"score\\":1e}");
+              if (h !== null) { return "1e"; }
+              let i: P | null = P$fromJson("{\\"score\\":1e+}");
+              if (i !== null) { return "1e+"; }
+              let t: Wrap | null = Wrap$fromJson("{\\"data\\":{\\"n\\":01}}");
+              if (t !== null) { return "table-01"; }
+              let t2: Wrap | null = Wrap$fromJson("{\\"data\\":{\\"n\\":-01}}");
+              if (t2 !== null) { return "table--01"; }
+              let t3: Wrap | null = Wrap$fromJson("{\\"data\\":{\\"n\\":1.}}");
+              if (t3 !== null) { return "table-1."; }
+              let t4: Wrap | null = Wrap$fromJson("{\\"data\\":{\\"n\\":1.e2}}");
+              if (t4 !== null) { return "table-1.e2"; }
+              let t5: Wrap | null = Wrap$fromJson("{\\"data\\":{\\"n\\":-.5}}");
+              if (t5 !== null) { return "table--.5"; }
+              let ok: P | null = P$fromJson("{\\"age\\":42,\\"score\\":2.5}");
+              if (ok !== null) {
+                if (ok.age !== 42) { return "age"; }
+                if (ok.score !== 2.5) { return "score"; }
+              } else {
+                return "ok-null";
+              }
+              let forms: P | null = P$fromJson("{\\"age\\":0,\\"score\\":-0.5}");
+              if (forms !== null) {
+                if (forms.age !== 0) { return "zero"; }
+                if (forms.score !== -0.5) { return "neg"; }
+              } else {
+                return "forms-null";
+              }
+              let expo: P | null = P$fromJson("{\\"age\\":0,\\"score\\":1.5e-2}");
+              if (expo !== null) {
+                if (expo.score !== 0.015) { return "expo"; }
+              } else {
+                return "expo-null";
+              }
+              let e2: P | null = P$fromJson("{\\"age\\":0,\\"score\\":1e2}");
+              if (e2 !== null) {
+                if (e2.score !== 100.0) { return "e2"; }
+              } else {
+                return "e2-null";
+              }
+              let tv: Wrap | null = Wrap$fromJson("{\\"data\\":{\\"n\\":10}}");
+              if (tv === null) { return "table-10-null"; }
+              return "ok";
+            }
+            """, "jsonable-number-grammar");
+        check(numbers.exitCode() == 0 && numbers.output().contains("ok"),
+            "invalid JSON number spellings return the DEAL null while "
+            + "valid spellings parse: " + numbers.output());
+
+        // Required no-default fields (the reviewed defect): the
+        // reference defaults table (LuaBackend.defaultValueForTypeNode)
+        // applies the per-type zeroes — 0 / 0.0 / false / "" — and a
+        // FRESH empty table/array per call. The pre-fix emission stored
+        // Java null into the non-nullable $DealRt.Table/__IntArray/$C
+        // slots, so
+        // fromJson("{}") produced toJson {"data":null} and the first
+        // table read crashed with a raw NullPointerException
+        // (LuaJIT: {"data":{}}, {} for arrays, and a DEAL-null read).
+        ExecResult nodefault = compileAndRunJvm("""
+            // @jsonable
+            export class Child {
+              x: int = 1;
+            }
+            // @jsonable
+            export class Raw {
+              i: int;
+              n: number;
+              b: boolean;
+              s: string;
+              data: table;
+              xs: int[];
+            }
+            // @jsonable
+            export class Holder {
+              c: Child;
+              i: int;
+            }
+            export function test(): string {
+              let w: Raw | null = Raw$fromJson("{}");
+              if (w !== null) {
+                if (w.i !== 0) { return "i"; }
+                if (w.n !== 0.0) { return "n"; }
+                if (w.b !== false) { return "b"; }
+                if (w.s !== "") { return "s"; }
+                let j: string = Raw$toJson(w);
+                if (j !== "{\\"i\\":0,\\"n\\":0.0,\\"b\\":false,\\"s\\":\\"\\",\\"data\\":{},\\"xs\\":[]}") { return "j:" + j; }
+                let t: table = w.data;
+                let miss: string | null = t.missing;
+                if (miss !== null) { return "miss"; }
+                if (w.xs.length !== 0) { return "len"; }
+                let n0: int | null = w.xs[0];
+                if (n0 !== null) { return "n0"; }
+                w.xs[w.xs.length] = 7;
+                let w2: Raw | null = Raw$fromJson("{}");
+                if (w2 !== null) {
+                  if (w2.xs.length !== 0) { return "shared"; }
+                  let j2: string = Raw$toJson(w2);
+                  if (j2 !== j) { return "j2"; }
+                } else {
+                  return "w2-null";
+                }
+                // A required CLASS-typed field with no declared default:
+                // the reference defaults-table {} placeholder (a plain
+                // Lua table, never a class instance) has no Java value
+                // at the typed slot — an absent key is a fromJson
+                // validation failure (the DEAL null), never Java null
+                // crossing the non-nullable class boundary (the pre-fix
+                // JVM silently read null at a typed read where LuaJIT
+                // raises E8001).
+                let h: Holder | null = Holder$fromJson("{}");
+                if (h !== null) { return "h-not-null"; }
+                let h2: Holder | null = Holder$fromJson("{\\"c\\":{\\"x\\":9}}");
+                if (h2 !== null) {
+                  if (h2.c.x !== 9) { return "x"; }
+                  if (h2.i !== 0) { return "i"; }
+                  let hj: string = Holder$toJson(h2);
+                  if (hj !== "{\\"c\\":{\\"x\\":9},\\"i\\":0}") { return "hj:" + hj; }
+                  return "ok";
+                }
+                return "h2-null";
+              }
+              return "w-null";
+            }
+            """, "jsonable-required-nodefault");
+        check(nodefault.exitCode() == 0
+                && nodefault.output().contains("ok"),
+            "required no-default fromJson fields apply the reference "
+            + "defaults (fresh {}/[] and the primitive zeroes), a "
+            + "missing-key table/array read yields the DEAL null never "
+            + "a raw NPE, and a required no-default class field's absent "
+            + "key is a fromJson validation failure: " + nodefault.output());
+
+        // Emission pins for the same shapes: the fresh table/array
+        // defaults and the class-field absent-key validation-failure
+        // guard.
+        Frontend nodefaultPin = compileFrontend("""
+            // @jsonable
+            export class Child {
+              x: int = 1;
+            }
+            // @jsonable
+            export class Wrap {
+              data: table;
+              xs: int[];
+              c: Child;
+            }
+            export function test(): int { return 1; }
+            """, "jvmtest-jsonable-nodefault-pin.deal");
+        check(nodefaultPin.errors().isEmpty(),
+            "no-default pin frontend clean: " + nodefaultPin.errors());
+        if (nodefaultPin.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                nodefaultPin.program(), nodefaultPin.checkResult(),
+                "jvmtest-jsonable-nodefault-pin.deal", "Main");
+            check(!res.hasErrors(), "no-default pin codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains("$DealRt.Table f0 = new $DealRt.Table();"),
+                    "a required no-default table field defaults to a "
+                    + "fresh empty $DealRt.Table (never Java null)");
+                check(java.contains(
+                        "__IntArray f1 = new __IntArray(new long[0]);"),
+                    "a required no-default array field defaults to a "
+                    + "fresh empty wrapper (never Java null)");
+                check(java.contains(
+                        "if (!m.containsKey(\"c\")) return null;"),
+                    "a required no-default class field's absent key is "
+                    + "a fromJson validation failure (the placeholder "
+                    + "never crosses the typed boundary)");
+            }
+        }
+
+        // Slice boundaries: non-jsonable array/class fields and the
+        // @jsonable optional-table form are E6000 — never silently
+        // miscompiled. The optional-table gate pins the reviewed
+        // defect: the pre-fix emission stored `data?: table` as the
+        // table class and
+        // later passed the Missing sentinel into that slot, leaving an
+        // artifact javac rejected ('Object cannot be converted to the
+        // table class')
+        // after the CLI reported success — the field's read yields
+        // `table | null`, a value shape the slice keeps out of its
+        // typed positions. A module-level (load-time) call of a
+        // generated helper is a v1.2 E1049 module-shape gate: the v1.2
+        // module top level holds only declarations, so the v1.1
+        // load-time shape (LuaJIT reads the helper's not-yet-assigned
+        // chunk local and fails; Java would silently run the hoisted
+        // method) is rejected before any backend.
+        record Gate(String what, String source) {}
+        // ISSUE-0102 lifted the NON-jsonable class surface: array,
+        // table, and optional fields on non-@jsonable classes compile
+        // and run (boxed slots plus $present flags). The @jsonable
+        // slice keeps its own Missing-sentinel storage for optional
+        // fields — these forms stay accepted alongside it.
+        List<Gate> accepted = List.of(
+            new Gate("array field of a non-jsonable class", """
+                class Plain { v: int = 0; }
+                class Outer { xs: Plain[] = []; }
+                export function test(): int { return 1; }
+                """),
+            new Gate("table field of a non-jsonable class", """
+                class Plain { v: int = 0; }
+                class Outer { meta: table = {}; }
+                export function test(): int { return 1; }
+                """),
+            new Gate("optional field of a non-jsonable class", """
+                class Plain { v?: int; }
+                export function test(): int { return 1; }
+                """)
+        );
+        for (Gate g : accepted) {
+            Frontend fg = compileFrontend(g.source(), "jvmtest-jsonable-gate.deal");
+            if (!fg.errors().isEmpty()) {
+                fail("frontend must accept '" + g.what() + "': "
+                    + fg.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                fg.program(), fg.checkResult(), "jvmtest-jsonable-gate.deal", "Main");
+            check(!res.hasErrors(), "backend accepts " + g.what() + ": "
+                + res.diagnostics());
+        }
+        List<Gate> gates = List.of(
+            new Gate("optional table field of an @jsonable class", """
+                // @jsonable
+                export class Wrap {
+                  data?: table;
+                }
+                export function test(): int { return 1; }
+                """),
+            new Gate("nullable table field of an @jsonable class", """
+                // @jsonable
+                export class Wrap {
+                  data: table | null = null;
+                }
+                export function test(): int { return 1; }
+                """),
+            new Gate("optional nullable table field of an @jsonable class", """
+                // @jsonable
+                export class Wrap {
+                  data?: table | null;
+                }
+                export function test(): int { return 1; }
+                """)
+        );
+        for (Gate g : gates) {
+            Frontend fg = compileFrontend(g.source(), "jvmtest-jsonable-gate.deal");
+            if (!fg.errors().isEmpty()) {
+                fail("frontend must accept '" + g.what() + "' (the backend rejects it): "
+                    + fg.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                fg.program(), fg.checkResult(), "jvmtest-jsonable-gate.deal", "Main");
+            check(res.hasErrors(), "backend rejects " + g.what());
+            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 diagnostic for " + g.what() + ": " + res.diagnostics());
+        }
+
+        // The v1.2 module-shape gate for a load-time call of a generated
+        // helper: the v1.2 module top level holds only declarations, so
+        // the v1.1 load-time shape is E1049 before any backend runs.
+        Frontend mod = compileFrontend("""
+            // @jsonable
+            export class User {
+              name: string = "";
+            }
+            let u: User | null = User$fromJson("{}");
+            export function test(): int { return 1; }
+            """, "jvmtest-jsonable-module-shape.deal");
+        check(mod.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
+            "the v1.2 module top level rejects a load-time call of the "
+            + "generated helper with E1049: " + mod.errors());
     }
 
     /**

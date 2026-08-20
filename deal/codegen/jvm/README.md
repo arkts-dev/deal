@@ -58,7 +58,7 @@ inline at the construction site — ISSUE-0109), `table | null` values,
 arrays of table elements, stdlib imports other than the five
 supported modules (`std/console`, `std/string`, `std/math`, `std/time`,
 `std/table` — `std/json` stays E6000 at the import statement, used or
-unused), `@jsonable`, and cross-module function values — a Func-typed
+unused), and cross-module function values — a Func-typed
 argument to an imported project-module call and an imported call
 result with Func static type are E6000 because the per-module wrapper
 classes cannot cross a module boundary (never an artifact javac
@@ -67,7 +67,14 @@ annotations over int/number/boolean/string/null signatures are fully
 supported, sync and async (ISSUE-0099 lifts the async marker into the
 same wrapper machinery — see "Async/await slice" below); function
 signatures containing arrays, classes, or nullables stay deferred to
-ISSUE-0110.
+ISSUE-0110. The @jsonable slice (see "Review evidence: @jsonable"
+below) lifts the class surface for `// @jsonable` exported classes
+(the generated `C$fromJson`/`C$toJson` helpers, optional fields with
+Missing-sentinel storage, table fields, and nested class fields);
+@jsonable-specific E6000 boundaries — optional table fields (their
+reads yield `table | null`), nested (multi-dimensional) array fields,
+function-typed fields, arrays of non-primitive non-class elements —
+are documented there.
 
 ## ISSUE-0102 — JVM conformance promotion slice
 
@@ -1377,13 +1384,16 @@ fixture whose codegen or JVM execution is bypassed):
   warning when `--source-map` is requested (the JVM path produces no
   sidecars). The conformance use site is
   `test/BackendConformanceTest.runJvmAssertions()` (single-module
-  fixtures): real `JvmBackend` codegen → `javac` subprocess (asserts
-  `.class` artifacts exist) → `java` subprocess → asserts
-  stdout/error/exit code; multi-module fixtures (ISSUE-0096) go through
+  fixtures): real `JvmBackend` codegen → javac (the in-process
+  frontend via `compileWithJavac`, asserting `.class` artifacts exist)
+  → `java` subprocess → asserts stdout/error/exit code; multi-module
+  fixtures (ISSUE-0096) go through
   `test/BackendConformanceTest.runMultiModuleTestCase()` instead: real
   `CompilationOrchestrator` compile (module discovery, signatures,
-  ordering, checking, per-module JvmBackend codegen) → `javac` over every
-  emitted artifact plus a runner → `java` execution → asserts.
+  ordering, checking, per-module JvmBackend codegen) → javac over every
+  emitted artifact plus a runner (always the real `javac` binary —
+  a `ProcessBuilder("javac", ...)`; there is no per-fixture opt-in) →
+  `java` execution → asserts.
 
 ## Review evidence: module/import/export forms (ISSUE-0096)
 
@@ -1426,7 +1436,7 @@ function values in ISSUE-0099),
 host class exports (E6000 at the import — the fixture-list item
 "host class export where supported" is not yet supported), host
 parameters/returns of array/class/table/function type (E6000 at the
-import), `@jsonable`.
+import).
 
 
 - **Tests proving both** —
@@ -2011,3 +2021,120 @@ Backend-level guarantees added by this slice:
   unwraps any emitted module's `DealError` (each module declares its own
   nested error class) into the uniform `DEAL_ERROR_CODE: <code> <message>`
   contract, exactly like the LuaJIT runtime reports errors from any module.
+
+## Review evidence: @jsonable (JSON serialization)
+
+Every form runs the real pipeline — the frontend (lexer → parser → name
+resolver → type checker) plus `JvmBackend` codegen → `javac` over the
+emitted artifact plus a runner → `java` executing the emitted artifact —
+in `test/conformance/fixtures/jvm-jsonable-slice.json` (thirty
+fixtures, JVM-only, driven by `BackendConformanceTest`; twenty-eight
+runtime — twenty-five single-module plus the three cross-module
+fixtures — plus one frontend compile-error gate and one backend
+E6000-rejection gate; the four multi-module entries export the v1.2
+selected-entry non-async `main(): null` and run the whole-project
+`CompilationOrchestrator` pipeline; every multi-module fixture
+compiles its artifact set with the real `javac` binary
+unconditionally, single-module fixtures use the in-process javac
+frontend) and the unit-level
+pins in `JvmBackendTest.testJsonableSlice`:
+
+| Form | Coverage |
+|---|---|
+| generated `C$fromJson` / `C$toJson` module exports | emitted as `public static $C_<C> <C>$dfromJson(java.lang.String s)` / `public static java.lang.String <C>$dtoJson($C_<C> v)` — the `javaName` translations of the DEAL names, exactly what the call sites emit (`User$fromJson(...)` → `User$dfromJson(...)`, `Lib.Widget$fromJson(...)` → `Lib.Widget$dfromJson(...)`); pinned by `JvmBackendTest.testJsonableSlice` emission assertions |
+| simple roundtrip | `jvm-jsonable-simple-roundtrip` (name/age/active/score through toJson → fromJson, field-equal), `JvmBackendTest.testJsonableSlice` |
+| fromJson defaults for omitted keys | `jvm-jsonable-fromjson-defaults` (`{"name":"Ada"}` and `{}` → declared defaults; defaults evaluate inline per call — the spec's per-construction default freshness) |
+| required no-default fields | `jvm-jsonable-required-nodefault-defaults` (a required field WITHOUT a declared default applies the reference defaults table: the primitive zeroes `0`/`0.0`/`false`/`""`, a FRESH empty shared `$DealRt.Table` for `data: table` — toJson emits `{}`, a missing-key read yields the DEAL null — and a FRESH empty array for `xs: int[]` — toJson emits `[]`, `.length` reads 0, a past-end nullable read yields the DEAL null, and per-call freshness keeps a mutated instance's array separate from the next fromJson; the pre-fix emission stored Java null in the `$DealRt.Table`/`__IntArray` slots and the first table read crashed with a raw `NullPointerException`), `jvm-jsonable-required-class-field-nodefault` (a required class-typed field WITHOUT a declared default: the reference defaults-table `{}` placeholder is a plain Lua table, never a class instance, so the typed Java slot cannot represent it — an ABSENT key is a fromJson validation failure returning the DEAL null, never Java null crossing the non-nullable class boundary (the pre-fix JVM silently read null at a typed read where LuaJIT's `check_type` raises E8001), while a PRESENT key deserializes the nested instance normally and the sibling primitive fields keep the reference zeroes), plus the `JvmBackendTest.testJsonableSlice` runtime pin (both shapes, byte-exact toJson) and the emission assertions (`$DealRt.Table f0 = new $DealRt.Table();`, `__IntArray f1 = new __IntArray(new long[0]);`, and the `if (!m.containsKey("c")) return null;` validation-failure guard emitted after every default so default-expression side effects keep LuaJIT's defaults-then-overlay order) |
+| nested object fields | `jvm-jsonable-nested-object-fields` (`home: Address = {}` recurses through `$C_Address.$toJsonValue`/`$fromJsonValue`), the smoke shape also covers `JvmBackendTest.testJsonableSlice` |
+| array fields | `jvm-jsonable-array-fields` (`int[]`, `string[]`, `boolean[]` element-wise roundtrip), `jvm-jsonable-nullable-array-field` (`int[] \| null` — both the populated and JSON-null states) |
+| class-array fields | `jvm-jsonable-class-array-fields` (`points: Point[]` — nested object elements deserialize through `$C_Point.$fromJsonValue`) |
+| nullable fields | `jvm-jsonable-nullable-fields` (`string \| null`, `int \| null`, `number \| null`, `boolean \| null` — explicit JSON null and non-null values, toJson emits `"field": null`) |
+| optional-nullable nested class fields | `jvm-jsonable-optional-nullable-class` (`child?: Child | null` — present null and nested values recurse through the nested `$fromJsonValue`/`$toJsonValue` helpers, the missing state omits the key) |
+| optional-nullable three states | `jvm-jsonable-optional-three-state` (missing omits the key, explicit null emits `"field": null`, a value emits the value — byte-pinned JSON for all three states; `has()` reports presence, reads yield `string \| null`), `JvmBackendTest.testJsonableSlice` |
+| optional fields with defaults and writes | `jvm-jsonable-optional-default-and-write` (`debug?: boolean = false` starts present with its inline default at construction and fromJson, an assignment makes the field present, toJson emits the present default) |
+| cross-module optional fields | `jvm-jsonable-cross-module-optional` (the imported `Lib.User$fromJson` deserializes into the DECLARING module's Missing-sentinel states — `has()` and nullable reads of the imported instance distinguish absent / present null / present value across the module boundary, so the sentinel reference is always the declaring module's `Lib.$MISSING`) |
+| table fields | `jvm-jsonable-table-field-roundtrip` (`data: table = {}` maps a JSON object to a string-keyed `$DealRt.Table` — nested objects become nested tables, string-keyed reads cross the table boundary after fromJson), `JvmBackendTest.testJsonableSlice` |
+| table fields with nested JSON arrays | `jvm-jsonable-table-nested-arrays` (fromJson maps nested JSON arrays to array-mode `$DealRt.Table` tables and toJson re-emits the byte-identical array shape; a table-typed read crosses the boundary), `JvmBackendTest.testJsonableSlice` |
+| table-field validation failures | `jvm-jsonable-table-fromjson-non-object-rejected` (an array, a number, a string, and null for a table field all fail with the DEAL null — the spec's objects-only fromJson contract), `jvm-jsonable-table-tojson-non-json-rejected` (a class instance inside the table is not a JSON leaf — E8001, exit 1, the spec's finite-acyclic JSON-shape toJson contract) |
+| extra-key rejection | `jvm-jsonable-extra-key-rejected` (`{"name":"Ada","extra":1}` → the DEAL null; the `$jsonFields` descriptor table drives the key validation) |
+| malformed JSON | `jvm-jsonable-invalid-json-returns-null` (`{bad json`, `not json at all` → the DEAL null, no throw) |
+| unpaired UTF-16 surrogates in JSON strings | `jvm-jsonable-unpaired-surrogate-returns-null` (a lone high `0xD800` and lone low `0xDC00` decoded from JSON `\uXXXX` escapes in a string field, and a lone surrogate in a table-field string leaf, are parse failures → the DEAL null; the emitted parser scans every decoded JSON string with the ISSUE-0106 `__hasUnpairedSurrogate` helper and `__jsonParse`'s catch converts the throw — exit 0, never a throw, exactly like LuaJIT's `std/json.lua` decoder error inside `pcall(__json_parse, s)`), plus the `JvmBackendTest.testJsonableSlice` runtime pin (both lone shapes plus a valid high+low `0xD83D 0xDE00` pair that still decodes and reads back — no over-rejection) and the emission assertion of the `parseString` scan |
+| type-mismatch failure | `jvm-jsonable-type-mismatch-failure` (fractional int `3.5`, wrong-typed string `42`, non-object class value → the DEAL null), plus the out-of-safe-range int gate in `__jsonInt` |
+| toJson NaN rejection | `jvm-jsonable-tojson-nan-error` (`0.0/0.0` number field → E8001 `cannot encode NaN as JSON`, exit 1 — std/json.lua's encode rejection; `Infinity` rejects the same way) |
+| cross-module helpers | `jvm-jsonable-cross-module-roundtrip` (`Lib.Widget$fromJson`/`Lib.Widget$toJson` imported calls; a nested `widget: Lib.Widget = {}` field recurses through the declaring module's generated helpers; a table-read boundary re-validates the deserialized instance's module-qualified nominal identity). Every multi-module fixture compiles its artifact set with the real `javac` binary unconditionally (no per-fixture opt-in exists), so this fixture's cross-module artifact set is pinned under the binary the production pipeline uses |
+| module-qualified nominal identity in roundtrips | `jvm-jsonable-cross-module-identity-failure` (a `@lib/Item` instance read through a local `Item`-typed boundary fails with E8001 `expected instance of @main/Item, got @lib/Item`, exit 1 — the deserialized nested instance carries its declaring module's identity, never the importing module's) |
+| frontend compile-error gate before any backend | `jvm-jsonable-non-jsonable-field-rejected` (a `@jsonable` field of a class without generated JSON functions is E4007; no `.java` artifact is written) |
+| slice boundaries stay E6000 | `JvmBackendTest.testJsonableSlice` gates: an optional table field of an @jsonable class (`data?: table` — its read yields `table | null`, a value shape the slice keeps out of its typed positions; the pre-fix emission stored the field as the table class and later passed the Missing sentinel into that slot, leaving an artifact javac rejected with 'incompatible types: Object cannot be converted to the table class' after the CLI reported success) — rejected with E6000, never silently miscompiled, and `jvm-jsonable-optional-table-rejected` pins the same gate through the real orchestrator (the rejected entry writes no artifact). Non-jsonable classes keep the ISSUE-0102 optional/array/class/table field support (boxed slots plus `$present` flags) unchanged — @jsonable classes use Missing-sentinel storage, so the optional-field sites (`has()`, reads, writes, `delete`) branch on the class's jsonable marker. A module-level (load-time) call of a generated helper is now a v1.2 E1049 module-shape gate: the v1.2 module top level holds only declarations, so the v1.1 load-time shape (LuaJIT reads the helper's not-yet-assigned chunk local and fails; Java would silently run the hoisted method) is rejected before any backend (pinned by the same test) |
+| invalid JSON number spellings | `jvm-jsonable-invalid-number-spellings-return-null` (a leading zero `01`/`-01`, a decimal point without a fraction digit `1.`, an exponent without fraction digits `1.e2`, and a missing integer part `-.5` are parse failures → the DEAL null for a typed field and for a table-field string-keyed leaf — the emitted parser validates the strict RFC 8259 number grammar before `Double.parseDouble`, exactly the checks of `fs/std/json.lua`'s `parse_number` (`invalid number: leading zero not allowed` / `expected digit after decimal point`) whose parse_error the LuaJIT reference converts to the DEAL null inside `pcall(__json_parse, s)`, exit 0, never a throw; valid spellings (`42`, `2.5`, a plain table-leaf number) still parse — no over-rejection), plus the `JvmBackendTest.testJsonableSlice` runtime pin (nine invalid spellings — `01`, `-01`, `00`, `1.`, `1.e2`, `5.e+2`, `-.5`, `1e`, `1e+` — across the typed field and the table leaf, the reviewed five on both surfaces, and valid spellings `0`, `-0.5`, `1.5e-2`, `1e2` reading back) and the emission assertions of the strict grammar (the leading-zero and required-digit guards) |
+| hostile deep-nesting input returns the DEAL null | `jvm-jsonable-deep-nesting-returns-null` (a ~20 KB payload of 20000 nested `[` … `]` built at runtime: the emitted parser converts its StackOverflowError to the DEAL null exactly like LuaJIT's `pcall(__json_parse, s)` — exit 0, never an uncaught stack trace), `jvm-jsonable-table-depth-guard` (600 nested JSON objects inside a table field, past the emitted 512-level guard: the table-value conversion's bounded depth guard throws and the public `C$fromJson` wrapper converts the throw to the DEAL null — deterministic on any thread-stack size, unlike relying on a StackOverflowError at the recursion limit), and `JvmBackendTest.testJsonableSlice` runtime pins plus emission assertions (`catch (java.lang.StackOverflowError e) { return null; }` in `__jsonParse`, the `try { return ….$fromJsonValue(__jsonParse(s)); }` wrapper, the `__jsonTableValue(raw, depth)` depth parameter, and the `if (depth > 512) throw` guard) |
+
+Backend-level guarantees added by this slice:
+
+- **Field descriptors are emitted and consumed.** Each generated nested
+  class carries `static final java.lang.String[][] $jsonFields` with
+  `{name, jtype, optional, nullable}` rows (the Lua backend's `C_fields`
+  vocabulary); `$fromJsonValue` validates every incoming key against the
+  descriptor names — a key no descriptor names fails the parse with null.
+- **fromJson never throws.** `__jsonParse` returns null on any parse
+  failure — including the StackOverflowError of hostile deep-nesting
+  input, converted exactly like LuaJIT's `pcall(__json_parse, s)` —
+  and every per-type validator (`__jsonInt`/`__jsonNumber`/
+  `__jsonString`/`__jsonBoolean`) returns null on a type mismatch; the
+  per-class `$fromJsonValue` propagates the null — extra keys, malformed
+  input, wrong-typed values, unpaired UTF-16 surrogates decoded from
+  JSON `\uXXXX` escapes (the emitted parser's `parseString` scans every
+  decoded string with the ISSUE-0106 `__hasUnpairedSurrogate` helper —
+  the one string boundary the pre-fix JSON parser skipped — and
+  `__jsonParse`'s catch converts the throw), invalid JSON number
+  spellings (the emitted parser's `parseNumber` validates the strict
+  RFC 8259 grammar — leading zeros, a decimal point without a fraction
+  digit, a sign/digit-starved exponent, a missing integer part — before
+  `Double.parseDouble`, and `__jsonParse`'s catch converts the throw),
+  and nested-class validation
+  failures all produce the DEAL null. The table-value conversion
+  carries a bounded
+  depth guard (512 levels) whose throw, like the nested-class
+  `$fromJsonValue` recursion exhaustion, is converted to the DEAL null
+  by the public `C$fromJson` wrapper's `try`/`catch` — the export never
+  throws on any input.
+- **toJson enforces the std/json.lua contract.** `__jsonAppend` raises
+  E8001 for NaN/Infinity exactly like `std/json.lua`'s `encode_value`
+  rejection; `__jsonQuote` mirrors its escaping (control characters as
+  `\u00XX`, the `\" \\ \b \f \n \r \t` family).
+- **The JVM static type system proves the typed boundaries.** `$toJson(v)`
+  takes the generated class reference, so the nominal parameter check is
+  provably redundant (spec §JVM backend contract); the int safe range is
+  still enforced at runtime in `__jsonInt` (E8001-shaped validation
+  failure, matching the fromJson null contract).
+- **Nested helpers route through the declaring module.** A class-typed
+  field of an imported class emits `Lib.$C_<C>.$fromJsonValue` /
+  `$toJsonValue` — the same package-private nested-class reference every
+  ISSUE-0109 site uses — so a deserialized nested instance is a genuine
+  instance of the declaring module's generated class and carries its
+  module-qualified `@<module>/<C>` identity (pinned by the table-read
+  nominal check in `jvm-jsonable-cross-module-roundtrip`).
+- **The JSON runtime is emitted only when needed.** A module without
+  `@jsonable` classes emits no `__jsonParse`/`__jsonStringify` support
+  (pinned by `JvmBackendTest.testJsonableSlice`); every helper name uses
+  the `__` prefix, unreachable from `javaName`.
+- **Optional fields use the spec's Missing-sentinel representation.**
+  An optional field's storage is a single `java.lang.Object` slot: the
+  module's `$MISSING` sentinel reference marks absence, the DEAL null
+  marks the present-null state, and any other value is the boxed present
+  value — so `f?: T | null` keeps its three states without a separate
+  presence bit, reads evaluate the receiver once (a non-pure receiver
+  materializes into a temporary), and `has()` is the sentinel
+  comparison. Optional-with-default fields start present with the
+  inline-evaluated default, exactly like LuaJIT's defaults table.
+- **Table fields carry untyped JSON-shaped `$T` data.** fromJson accepts
+  only a JSON object and builds string-keyed `$T` tables recursively
+  (`__jsonTableValue(raw, depth)` with the 512-level bounded depth
+  guard: nested objects as `$T`, nested arrays as
+  array-mode `$T` tables whose `$array()` sequence preserves the JSON
+  array shape — DEAL cannot spell integer keys — and integral parsed
+  numbers as `Long` so re-serialization prints `1` like LuaJIT's
+  `%.17g`); toJson validates the finite-acyclic JSON shape (`$T`
+  objects, array-mode tables, the emitted primitive-array wrappers, and
+  null/boolean/int/number/string leaves — a cycle, a class instance, or
+  anything else raises E8001) and encodes it through the same escaping
+  and NaN/Infinity rejection as the typed fields.

@@ -4,8 +4,25 @@ set -e
 mkdir -p build
 
 # =========================================================================
-# Single compilation step: compile all source and test files at once
+# Single compilation step: compile all source and test files at once.
+# Incremental: when every .java source under deal/ and test/ is older
+# than the recorded build stamp (and this script itself has not changed
+# since the stamp), reuse the build/ classes. The stamp is updated after
+# every successful full compile, so repeated gate runs on an unchanged
+# tree skip the recompilation while a fresh checkout or any touched
+# source still compiles everything.
 # =========================================================================
+STAMP="build/.deal-build-stamp"
+NEEDS_BUILD=0
+if [ ! -f "$STAMP" ]; then
+  NEEDS_BUILD=1
+elif [ run_tests.sh -nt "$STAMP" ]; then
+  NEEDS_BUILD=1
+elif [ -n "$(find deal test -name '*.java' -newer "$STAMP" -print -quit)" ]; then
+  NEEDS_BUILD=1
+fi
+
+if [ "$NEEDS_BUILD" = "1" ]; then
 echo "=== Compiling all DEAL sources and tests ==="
 # -proc:none: no DEAL/test source uses an annotation processor, so javac's
 # default processor-discovery pass is pure per-task startup cost (the gate
@@ -49,6 +66,10 @@ javac --release 25 -proc:none -d build \
   test/LuaAbiTest.java \
   test/LuaAbiBackendTest.java \
   test/CrossModuleTypingTest.java
+  touch "$STAMP"
+else
+  echo "=== DEAL sources and tests unchanged since the last build; reusing build/ ==="
+fi
 
 # =========================================================================
 # Run all tests
