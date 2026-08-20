@@ -111,6 +111,7 @@ public class LexerTest {
         testAsyncTokenizesAsKeyword();
         testAwaitTokenizesAsKeyword();
         testDirectiveComments();
+        testDealVersionDirectives();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -1225,8 +1226,9 @@ public class LexerTest {
             "@jsonable at EOF: only EOF token, got " + tokens.size());
         check(tokens.get(0).type() == TokenType.EOF,
             "@jsonable at EOF: token is EOF");
-        check(tokens.get(0).directives().isEmpty(),
-            "EOF token has no directives");
+        check(tokens.get(0).directives().size() == 1
+                && tokens.get(0).directives().get(0).equals("@jsonable"),
+            "EOF token carries the trailing @jsonable directive");
 
         // --- @jsonable with leading whitespace on comment line ---
         r = tokenize("//   @jsonable  \nexport class G {}");
@@ -1278,6 +1280,62 @@ public class LexerTest {
         check(expBetween.directives().size() == 2,
             "@jsonable with intervening comment: 2 directives accumulated, got "
                 + expBetween.directives().size());
+    }
+
+    // =========================================================================
+    // @deal-version directive tests (DEAL v1.2 file directives)
+    // =========================================================================
+
+    static void testDealVersionDirectives() {
+        System.out.println("-- @deal-version Directive Tests --");
+
+        // --- @deal-version before the first non-comment token attaches ---
+        LexResult r = tokenize("// @deal-version 1.2\nexport class C {}");
+        assertNoDiagnostics(r.diagnostics(), "@deal-version before first token");
+        List<Token> tokens = r.tokens();
+        Token exp = tokens.get(0);
+        check(exp.type() == TokenType.EXPORT,
+            "@deal-version: first token is EXPORT");
+        check(exp.directives().size() == 1
+                && exp.directives().get(0).equals("@deal-version 1.2"),
+            "EXPORT token carries the @deal-version directive");
+
+        // --- @deal-version at end of file with no following token ---
+        // spec-v1.2: the directive must occur before the first non-comment
+        // token; a file with no non-comment token satisfies that vacuously
+        // (Program ::= ImportDeclaration* TopLevelDeclaration* allows an
+        // empty module).  The pending directive attaches to the EOF token
+        // so the parser still validates its value; no E1052 is emitted.
+        r = tokenize("// @deal-version 1.2");
+        assertNoDiagnostics(r.diagnostics(), "@deal-version alone at EOF");
+        tokens = r.tokens();
+        check(tokens.size() == 1,
+            "@deal-version alone at EOF: only EOF token, got " + tokens.size());
+        check(tokens.get(0).type() == TokenType.EOF,
+            "@deal-version alone at EOF: token is EOF");
+        check(tokens.get(0).directives().size() == 1
+                && tokens.get(0).directives().get(0).equals("@deal-version 1.2"),
+            "EOF token carries the trailing @deal-version directive");
+
+        // --- @deal-version after a non-comment token is misplaced ---
+        // The placement error is reported exactly once, at the directive
+        // site; the pending directive still attaches to the EOF token so
+        // the parser can validate its value without a duplicate E1052.
+        r = tokenize("class A { x: int = 0; }\n// @deal-version 1.2");
+        assertDiagnosticCode(r.diagnostics(), "E1052",
+            "@deal-version after a declaration");
+        check(r.diagnostics().stream()
+                .filter(d -> d.code().equals("E1052")).count() == 1,
+            "@deal-version after a declaration: exactly one E1052, got "
+                + r.diagnostics().stream()
+                    .filter(d -> d.code().equals("E1052")).count());
+        tokens = r.tokens();
+        Token eof = tokens.get(tokens.size() - 1);
+        check(eof.type() == TokenType.EOF,
+            "@deal-version after a declaration: last token is EOF");
+        check(eof.directives().size() == 1
+                && eof.directives().get(0).equals("@deal-version 1.2"),
+            "EOF token carries the misplaced @deal-version directive");
     }
 
 }

@@ -358,6 +358,8 @@ public class ModuleSystemTest {
                 "externals empty (legacy list form retired)");
             check(config.dependencies() != null, "dependencies not null");
             check(config.dependencies().items().size() == 1, "dependencies.items size");
+            check(config.languageVersion().equals("1.2"),
+                "languageVersion parses as '1.2'");
         } catch (Exception e) {
             fail("DealConfig parse: " + e.getMessage());
         }
@@ -456,8 +458,31 @@ public class ModuleSystemTest {
             check(config.moduleRoots().isEmpty(), "empty moduleRoots");
             check(config.output() == null, "null output");
             check(config.backend() == null, "null backend");
+            // Absent languageVersion assumes the current compiler version.
+            check("1.2".equals(config.languageVersion()),
+                "absent languageVersion defaults to '1.2'");
         } catch (Exception e) {
             fail("Minimal config: " + e.getMessage());
+        }
+
+        // DEAL v1.2 is not source-compatible with earlier language
+        // versions and this compiler implements no migration rules, so
+        // any declared languageVersion other than '1.2' is a
+        // configuration error (spec-v1.2: Package manifest).
+        for (String badVersion : new String[] {
+                "{\"languageVersion\": \"1.1\"}",
+                "{\"languageVersion\": \"2.0\"}",
+                "{\"languageVersion\": \"1\"}",
+                "{\"languageVersion\": \"\"}"}) {
+            try {
+                DealConfig.parse(Path.of("deal.json"), badVersion);
+                fail("Should have thrown for unsupported languageVersion: "
+                    + badVersion);
+            } catch (IllegalArgumentException e) {
+                check(e.getMessage().contains("languageVersion"),
+                    "languageVersion error message mentions 'languageVersion': "
+                        + e.getMessage());
+            }
         }
     }
 
@@ -999,6 +1024,47 @@ public class ModuleSystemTest {
             d -> "error".equals(d.severity())
                 && "E1049".equals(d.code()));
         check(hasShapeError, "Has E1049 top-level statement diagnostic");
+    }
+
+    // =========================================================================
+    // Circular Import: Class field default referencing the cycle (E2005)
+    // =========================================================================
+
+    /**
+     * DEAL v1.2 evaluates class field defaults at module initialization,
+     * so a default expression that references a cyclic import creates a
+     * runtime initialization dependency and must be rejected with E2005
+     * — even though the cycle looks "declaration-only" at statement level.
+     */
+    private static void testCircularImportClassFieldDefault() throws Exception {
+        System.out.println("-- Circular Import: Class Field Default (runtime dep) --");
+
+        writeFile("src/cfda.deal", """
+            import * as B from \"./cfdb\"
+            export function main(): null { return null; }
+            export class Holder {
+              seed: int = B.get(1);
+            }
+            """);
+        writeFile("src/cfdb.deal", """
+            import * as A from \"./cfda\"
+            export function get(x: int): int { return x + 1; }
+            """);
+
+        Path entryFile = tmpDir.resolve("src/cfda.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/lua_cycle_cfd");
+        List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, null, moduleRoots, null);
+
+        boolean success = orchestrator.compile();
+        check(!success, "Class-field-default cycle must fail in v1.2");
+
+        List<Diagnostic> diags = orchestrator.diagnostics();
+        boolean hasE2005 = diags.stream().anyMatch(
+            d -> "E2005".equals(d.code()));
+        check(hasE2005, "Class-field-default cycle: E2005 diagnostic");
     }
 
     // =========================================================================
@@ -2557,6 +2623,7 @@ public class ModuleSystemTest {
             testCrossModuleAsyncCallWithoutAwait_E3014();
             testCircularImportRuntime();
             testCircularImportDeclarationOnly();
+            testCircularImportClassFieldDefault();
             testTwoDisconnectedCyclesOneRuntime();
             testTwoDisconnectedCyclesBothDecl();
             testStdlibFallbackAfterDdeal();

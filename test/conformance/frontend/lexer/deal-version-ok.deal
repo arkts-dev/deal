@@ -1,0 +1,9 @@
+// @spec: Lexical elements — v1.2 @deal-version file directive
+// @description: A valid @deal-version 1.2 file directive before the first non-comment token compiles
+// @expected: compile-ok
+// @features: lexer, directives, deal-version, v1.2
+
+// @deal-version 1.2
+export class Shape {
+  value: int = 0;
+}

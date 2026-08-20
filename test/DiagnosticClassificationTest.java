@@ -161,6 +161,14 @@ public class DiagnosticClassificationTest {
             "// @jsonable\nexport class Foo { fn: (x: int) => null = function(x: int): null { return null; }; }");
         triggers.put("E5001", "function f(x: int): null {} f(true);");
         triggers.put("E1047", "function f(...xs: int[]): null { return null; }");
+        triggers.put("E1052",
+            "class A { x: int = 0; }\n// @deal-version 1.2\n");
+        triggers.put("E1053",
+            "// @deal-version 1.2\n// @deal-version 1.2\nclass A { x: int = 0; }\n");
+        triggers.put("E1054",
+            "// @deal-version\nclass A { x: int = 0; }\n");
+        triggers.put("E1055",
+            "// @deal-version 1.1\nclass A { x: int = 0; }\n");
         triggers.put("E5003",
             "function f(): int { return \"hi\"; }");
 
@@ -239,6 +247,10 @@ public class DiagnosticClassificationTest {
         coverage.put("E1049", "ModuleSystemTest (top-level statement)");
         coverage.put("E1050", "ModuleSystemTest (nested import/export)");
         coverage.put("E1051", "ModuleSystemTest (bodyless declaration in .deal)");
+        coverage.put("E1052", "LexerTest (@deal-version placement)");
+        coverage.put("E1053", "LexerTest (@deal-version duplicate)");
+        coverage.put("E1054", "LexerTest (@deal-version argument)");
+        coverage.put("E1055", "ParserTest (@deal-version value)");
 
         coverage.put("E2000", "CheckerTest (break/continue)");
         coverage.put("E2001", "CheckerTest (undeclared identifier)");

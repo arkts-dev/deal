@@ -197,12 +197,47 @@ public class ParserTest {
         testExportAsyncFunction();
         testAsyncExprStatement();
 
+        // @deal-version file directive value validation (DEAL v1.2)
+        testDealVersionDirectives();
+
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
             System.exit(1);
         }
     }
+
+    // =========================================================================
+    // @deal-version file directive value validation (DEAL v1.2)
+    // =========================================================================
+
+    static void testDealVersionDirectives() {
+        System.out.println("-- @deal-version Directive Value Tests --");
+
+        // A valid 1.2 file directive compiles without diagnostics.
+        ParseResult r = parse("// @deal-version 1.2\nexport function probe(): null { return null; }");
+        assertNoParseErrors(r, "@deal-version 1.2 accepted");
+
+        // Older language versions are rejected: DEAL v1.2 is not
+        // source-compatible with earlier versions (E1055).
+        r = parse("// @deal-version 1.1\nclass A { x: int = 0; }");
+        assertParseError(r, "E1055", "@deal-version 1.1 rejected");
+
+        // Newer major versions are rejected (E1055).
+        r = parse("// @deal-version 2.0\nclass A { x: int = 0; }");
+        assertParseError(r, "E1055", "@deal-version 2.0 rejected");
+
+        // A trailing directive with no following declaration still
+        // validates its value (E1055).
+        r = parse("// @deal-version 1.1");
+        assertParseError(r, "E1055", "trailing @deal-version 1.1 rejected");
+
+        // A trailing valid directive produces no diagnostics.
+        r = parse("// @deal-version 1.2");
+        assertNoParseErrors(r, "trailing @deal-version 1.2 accepted");
+
+    }
+
 
     // =========================================================================
     // Statement form tests

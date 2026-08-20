@@ -5,6 +5,7 @@ import deal.checker.*;
 import deal.codegen.lua.LuaBackend;
 import deal.lexer.*;
 import deal.module.ExportExtractor;
+import deal.module.ModuleShapeValidator;
 import deal.module.StdlibModuleResolver;
 import deal.parser.*;
 import deal.types.Type;
@@ -438,6 +439,18 @@ public class ConformanceTest {
                 return new ArrayList<>(extractor.diagnostics());
             }
 
+            // DEAL v1.2 module shape gate (spec-v1.2: Syntactic grammar —
+            // Statement/expression separation): imports must precede all
+            // top-level declarations (E1048), the module top level allows
+            // only imports/functions/classes/exports (E1049), imports and
+            // exports are not statements (E1050), and implementation files
+            // have no bodyless function declarations (E1051).
+            List<Diagnostic> shapeDiags = ModuleShapeValidator.validate(
+                parseResult.program(), filename, false);
+            if (shapeDiags.stream().anyMatch(d -> "error".equals(d.severity()))) {
+                return new ArrayList<>(shapeDiags);
+            }
+
             List<Diagnostic> allDiags = new ArrayList<>();
             ConformanceModuleResolver resolver =
                 new ConformanceModuleResolver(test.path(), null);
@@ -699,6 +712,21 @@ public class ConformanceTest {
         ParseResult parseResult = parser.parse();
         allDiags.addAll(parseResult.diagnostics());
         if (parseResult.hasErrors()) {
+            return allDiags;
+        }
+
+        // DEAL v1.2 module shape gate (spec-v1.2: Syntactic grammar —
+        // Statement/expression separation): imports must precede all
+        // top-level declarations (E1048), the module top level allows
+        // only imports/functions/classes/exports (E1049), imports and
+        // exports are not statements (E1050), and implementation files
+        // have no bodyless function declarations (E1051).  This mirrors
+        // the post-parse pass CompilationOrchestrator runs for every
+        // production module.
+        List<Diagnostic> shapeDiags = ModuleShapeValidator.validate(
+            parseResult.program(), filename, false);
+        allDiags.addAll(shapeDiags);
+        if (shapeDiags.stream().anyMatch(d -> "error".equals(d.severity()))) {
             return allDiags;
         }
 

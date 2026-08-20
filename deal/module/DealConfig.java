@@ -23,6 +23,7 @@ public final class DealConfig {
     private final List<String> moduleRoots;
     private final String output;
     private final String backend;
+    private final String languageVersion;
     private final List<String> permissions;
     private final Limits limits;
     private final Map<String, String> externals;
@@ -30,12 +31,14 @@ public final class DealConfig {
     private final Path configFile;
 
     private DealConfig(Path configFile, List<String> moduleRoots, String output,
-                       String backend, List<String> permissions, Limits limits,
+                       String backend, String languageVersion,
+                       List<String> permissions, Limits limits,
                        Map<String, String> externals, Dependencies dependencies) {
         this.configFile = configFile;
         this.moduleRoots = moduleRoots;
         this.output = output;
         this.backend = backend;
+        this.languageVersion = languageVersion;
         this.permissions = permissions;
         this.limits = limits;
         this.externals = externals;
@@ -61,6 +64,7 @@ public final class DealConfig {
         List<String> moduleRoots = root.getStringList("moduleRoots");
         String output = root.getString("output");
         String backend = root.getString("backend");
+        String languageVersion = parseLanguageVersion(root.getString("languageVersion"));
         List<String> permissions = root.getStringList("permissions");
         Limits limits = Limits.fromJson(root.getObject("limits"));
         Map<String, String> externals = parseExternals(root);
@@ -83,12 +87,41 @@ public final class DealConfig {
         }
 
         return new DealConfig(configFile, moduleRoots, output, backend,
-            permissions, limits, externals, dependencies);
+            languageVersion, permissions, limits, externals, dependencies);
     }
 
     public List<String> moduleRoots() { return moduleRoots; }
     public String output() { return output; }
     public String backend() { return backend; }
+    /**
+     * The project language version.  Absent manifests assume the current
+     * compiler version {@code "1.2"}.  DEAL v1.2 is not source-compatible
+     * with earlier language versions and this compiler implements no
+     * migration rules, so any other declared value is a configuration
+     * error (spec-v1.2: Package manifest / Declaration metadata versioning).
+     */
+    public String languageVersion() { return languageVersion; }
+
+    /**
+     * Validates the {@code languageVersion} manifest field: only
+     * {@code "1.2"} is supported by this compiler; anything else —
+     * including older versions like {@code "1.1"} and newer major
+     * versions — is a configuration error.
+     */
+    private static String parseLanguageVersion(String languageVersion) {
+        if (languageVersion == null) {
+            return "1.2";
+        }
+        String trimmed = languageVersion.trim();
+        if (!"1.2".equals(trimmed)) {
+            throw new IllegalArgumentException(
+                "deal.json: unsupported languageVersion '" + languageVersion
+                    + "'. DEAL v1.2 is not source-compatible with earlier"
+                    + " language versions; this compiler supports only"
+                    + " languageVersion '1.2'");
+        }
+        return "1.2";
+    }
     public List<String> permissions() { return permissions; }
     public Limits limits() { return limits; }
     /**

@@ -1,0 +1,9 @@
+// @spec: Syntactic grammar — v1.2 import placement
+// @description: import declarations are only valid at module top level; an import inside a function body is rejected (imports are not statements)
+// @expected: compile-error E1050
+// @features: parser, modules, import, v1.2
+
+function outer(): int {
+  import * as m from "./nonexistent";
+  return 0;
+}

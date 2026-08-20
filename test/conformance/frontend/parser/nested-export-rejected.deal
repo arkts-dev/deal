@@ -1,7 +1,6 @@
 // @spec: Syntactic grammar — Statement/expression separation
 // @description: imports and exports are not statements; a nested export is a compile-time error (v1.2)
-// @expected: known-fail compile-error any
-// @issue: ISSUE-0103
+// @expected: compile-error E1050
 // @features: parser, modules, v1.2
 
 export function probe(): null {

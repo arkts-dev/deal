@@ -1,7 +1,6 @@
 // @spec: Syntactic grammar — Statement/expression separation
 // @description: an import after a non-import top-level declaration is a compile-time error (v1.2 import-prefix modules)
-// @expected: known-fail compile-error any
-// @issue: ISSUE-0103
+// @expected: compile-error E1048
 // @features: parser, modules, v1.2
 
 export function probe(): int {

@@ -128,6 +128,18 @@ public enum DiagnosticCode {
     /** Bodyless (external) function declaration in an implementation file. */
     E1051(Phase.FRONTEND, "Function declarations in implementation files must have a body"),
 
+    /** @deal-version must occur before the first non-comment token. */
+    E1052(Phase.FRONTEND, "@deal-version must occur before the first non-comment token"),
+
+    /** Each file directive may occur at most once. */
+    E1053(Phase.FRONTEND, "Duplicate @deal-version directive"),
+
+    /** @deal-version must have exactly one non-empty version argument. */
+    E1054(Phase.FRONTEND, "@deal-version requires exactly one non-empty version argument"),
+
+    /** Unsupported DEAL version. */
+    E1055(Phase.FRONTEND, "Unsupported DEAL version"),
+
     // =========================================================================
     // E2xxx — name resolution and module resolution (FRONTEND)
     // =========================================================================

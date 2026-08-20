@@ -72,6 +72,12 @@ public final class Lexer {
     /** Pending compiler directives accumulated from comment lines (D1). */
     private final List<String> pendingDirectives = new ArrayList<>();
 
+    /** True once at least one non-comment token has been produced. */
+    private boolean anyNonCommentToken = false;
+
+    /** True when a {@code @deal-version} directive has already been seen. */
+    private boolean dealVersionDirectiveSeen = false;
+
     /**
      * Creates a new lexer for the given source text.
      *
@@ -106,9 +112,18 @@ public final class Lexer {
         }
 
         // Emit EOF token at the current position.
-        // Pending directives are discarded (EOF is synthetic and cannot carry them).
-        pendingDirectives.clear();
-        tokens.add(new Token(TokenType.EOF, "", line, column, 0));
+        // Directives that were never consumed by a following token (a
+        // trailing comment line or a file containing only comments)
+        // attach to the EOF token so the parser still validates their
+        // values.  Placement is enforced at directive inspection time,
+        // not here: a directive with no preceding non-comment token
+        // satisfies "before the first non-comment token" vacuously.
+        Token eof = new Token(TokenType.EOF, "", line, column, 0);
+        if (!pendingDirectives.isEmpty()) {
+            eof = eof.withDirectives(List.copyOf(pendingDirectives));
+            pendingDirectives.clear();
+        }
+        tokens.add(eof);
 
         return new LexResult(List.copyOf(tokens), List.copyOf(diagnostics));
     }
@@ -149,6 +164,10 @@ public final class Lexer {
         if (token != null && !pendingDirectives.isEmpty()) {
             token = token.withDirectives(List.copyOf(pendingDirectives));
             pendingDirectives.clear();
+        }
+
+        if (token != null) {
+            anyNonCommentToken = true;
         }
 
         return token;
@@ -241,10 +260,20 @@ public final class Lexer {
      * recognized compiler directives.  Recognized directives are added
      * to {@link #pendingDirectives}.
      *
+     * <p>DEAL v1.2 recognizes exactly five directive names:
+     * {@code deal-version}, {@code jsonable}, {@code extern-c},
+     * {@code c-struct}, and {@code c-pointer}.  {@code @deal-version} is
+     * a file directive: it must occur before the first non-comment token
+     * (E1052), may occur at most once (E1053), and accepts exactly one
+     * non-empty version argument (E1054).  The other recognized names
+     * keep the v1.1 attachment behavior (bare {@code @name} directive on
+     * the following token).  Names outside the recognized set remain
+     * ordinary comments; rejecting them is tracked separately
+     * (ISSUE-0111).</p>
+     *
      * <p>The inspection peeks at the source without consuming characters
-     * (non-destructive lookahead).  Only {@code @jsonable} is recognized
-     * in v1.1.  The mechanism is extensible to additional directives
-     * by adding entries to a known set.</p>
+     * (non-destructive lookahead); the comment body itself is consumed by
+     * {@link #skipLineComment()} afterwards.</p>
      */
     private void inspectDirective() {
         int peekPos = pos;
@@ -264,29 +293,93 @@ public final class Lexer {
             return;
         }
 
-        // Check for @jsonable (exact match)
-        String directive = "@jsonable";
-        if (peekPos + directive.length() <= source.length()) {
-            boolean match = true;
-            for (int i = 0; i < directive.length(); i++) {
-                if (source.charAt(peekPos + i) != directive.charAt(i)) {
-                    match = false;
-                    break;
+        // Read the directive name: [a-zA-Z0-9-]+
+        int nameStart = peekPos + 1;
+        int nameEnd = nameStart;
+        while (nameEnd < source.length() && isDirectiveNameChar(source.charAt(nameEnd))) {
+            nameEnd++;
+        }
+        if (nameEnd == nameStart) {
+            // '@' with no name does not match CompilerDirectiveComment.
+            return;
+        }
+        String name = source.substring(nameStart, nameEnd);
+
+        // Read the argument: everything up to the line terminator, with
+        // surrounding horizontal whitespace trimmed.
+        String argument = readDirectiveArgument(nameEnd);
+
+        int directiveLine = line;
+        int directiveCol = column + (nameStart - pos) - 1;
+
+        switch (name) {
+            case "deal-version" -> {
+                if (dealVersionDirectiveSeen) {
+                    error(DiagnosticCode.E1053,
+                        "Duplicate @deal-version directive (each file directive may occur at most once)",
+                        directiveLine, directiveCol);
+                }
+                dealVersionDirectiveSeen = true;
+                if (anyNonCommentToken) {
+                    error(DiagnosticCode.E1052,
+                        "@deal-version must occur before the first non-comment token",
+                        directiveLine, directiveCol);
+                }
+                if (argument.isEmpty()) {
+                    error(DiagnosticCode.E1054,
+                        "@deal-version requires exactly one non-empty version argument",
+                        directiveLine, directiveCol);
+                } else if (hasInternalWhitespace(argument)) {
+                    error(DiagnosticCode.E1054,
+                        "@deal-version requires exactly one non-empty version argument, got: '"
+                            + argument + "'",
+                        directiveLine, directiveCol);
+                } else {
+                    pendingDirectives.add("@deal-version " + argument);
                 }
             }
-            if (match) {
-                // Ensure word boundary after the directive:
-                // whitespace, newline, carriage return, or EOF
-                int afterPos = peekPos + directive.length();
-                if (afterPos >= source.length()
-                        || source.charAt(afterPos) == ' '
-                        || source.charAt(afterPos) == '\t'
-                        || source.charAt(afterPos) == '\n'
-                        || source.charAt(afterPos) == '\r') {
-                    pendingDirectives.add("@jsonable");
-                }
+            case "jsonable", "extern-c", "c-struct", "c-pointer" -> {
+                // v1.1-compatible attachment: the bare directive name
+                // attaches to the following token; any trailing text is
+                // not part of the directive.
+                pendingDirectives.add("@" + name);
+            }
+            default -> {
+                // v1.1-compatible: an unrecognized directive name stays
+                // an ordinary comment.  Rejecting it with E1056 is the
+                // tracked follow-up ISSUE-0111.
             }
         }
+    }
+
+    private static boolean isDirectiveNameChar(char c) {
+        return (c >= 'a' && c <= 'z')
+            || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9')
+            || c == '-';
+    }
+
+    /**
+     * Reads the directive argument starting at the given position: the
+     * substring up to the line terminator or EOF with surrounding
+     * horizontal whitespace trimmed.  Does not consume source characters.
+     */
+    private String readDirectiveArgument(int start) {
+        int end = start;
+        while (end < source.length()) {
+            char c = source.charAt(end);
+            if (c == '\n' || c == '\r') break;
+            end++;
+        }
+        return source.substring(start, end).trim();
+    }
+
+    private static boolean hasInternalWhitespace(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == ' ' || c == '\t') return true;
+        }
+        return false;
     }
 
     /**

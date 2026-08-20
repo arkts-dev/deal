@@ -1,0 +1,7 @@
+// @spec: Lexical elements — v1.2 @deal-version file directive
+// @description: @deal-version accepts exactly one version value; extra words are rejected
+// @expected: compile-error E1054
+// @features: lexer, directives, deal-version, v1.2
+
+// @deal-version 1.2 extra
+class A { x: int = 0; }

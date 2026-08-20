@@ -56,6 +56,7 @@ public final class Parser {
     // =======================================================================
 
     public ParseResult parse() {
+        validateFileVersionDirectives();
         List<StatementNode> statements = new ArrayList<>();
 
         while (!isAtEnd()) {
@@ -78,6 +79,49 @@ public final class Parser {
 
         ProgramNode program = new ProgramNode(progSpan, List.copyOf(statements));
         return new ParseResult(program, List.copyOf(diagnostics));
+    }
+
+    // =======================================================================
+    // File directive validation
+    // =======================================================================
+
+    /**
+     * Validates the {@code @deal-version} file directive VALUE across the
+     * token stream.  The lexer already enforces the directive shape
+     * (single argument, placement before the first non-comment token, at
+     * most once); this pass enforces version compatibility.
+     *
+     * <p>DEAL v1.2 is not source-compatible with earlier language
+     * versions, and minor-version migrations may only be performed by
+     * explicit compiler migration rules (spec-v1.2: Declaration metadata
+     * versioning).  This compiler implements exactly DEAL v1.2, so every
+     * declared version other than {@code 1.2} is a compile-time error
+     * (E1055) — this includes older versions ({@code 1.0}, {@code 1.1})
+     * and newer major versions ({@code 2.0}+).</p>
+     */
+    private void validateFileVersionDirectives() {
+        for (Token token : tokens) {
+            for (String directive : token.directives()) {
+                if (!directive.equals("@deal-version")
+                        && !directive.startsWith("@deal-version ")) {
+                    continue;
+                }
+                String value = directive.equals("@deal-version")
+                    ? "" : directive.substring("@deal-version ".length()).trim();
+                if (value.isEmpty()) {
+                    // Shape error already reported by the lexer.
+                    continue;
+                }
+                if (!"1.2".equals(value)) {
+                    error(DiagnosticCode.E1055,
+                        "Unsupported DEAL version '" + value
+                            + "': DEAL v1.2 is not source-compatible with"
+                            + " earlier language versions and this compiler"
+                            + " supports only '1.2'",
+                        token);
+                }
+            }
+        }
     }
 
     // =======================================================================
