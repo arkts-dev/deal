@@ -98,22 +98,40 @@ import java.util.Set;
  * {@code length}/{@code substring}/{@code split} (ISSUE-0106),
  * {@code sqrt} of a negative number → {@code E8001},
  * {@code nowMillis()} → second-truncated epoch milliseconds like
- * {@code os.time() * 1000}). {@code std/table} and
- * {@code std/json} stay rejected with {@code E6000} at the import
- * statement: their only functions take or return a {@code table}, a
- * value type the slice still does not support as a function parameter
- * or return. Anything outside this scope — optional/array/class/
- * table-typed (non-nullable) class fields, nested class declarations,
- * table reads with primitive (non-nullable)/function target types,
- * table field writes, non-literal default expressions on imported
- * classes (their defaults evaluate in the declaring module's scope
- * under LuaJIT), arrays of non-primitive non-class elements,
- * {@code table | null} values, nullable tables, nested
- * (multi-dimensional) arrays, function arrays, stdlib imports other
- * than the four supported
- * modules, {@code @jsonable}, array for-of loops, for loops,
- * break/continue, try/throw — is rejected with a backend {@code E6000}
- * diagnostic, never silently miscompiled. The ISSUE-0100 host ABI
+ * {@code os.time() * 1000}), plus {@code std/table.keys}
+ * (ISSUE-0102 — tables now map as first-class values).
+ * {@code std/json} stays rejected with {@code E6000} at the import
+ * statement (the @jsonable/std-json JVM slice owns it).
+ *
+ * <p>ISSUE-0102 (the JVM conformance promotion gate) lifts the
+ * remaining imperative surface: C-style {@code for} loops (plain and
+ * hoisted-condition forms with per-iteration closure cells for the
+ * loop variable), array {@code for-of} (one fresh binding per
+ * iteration), {@code break}/{@code continue} (label-routed through the
+ * transformed loop forms), {@code try}/{@code catch}/{@code throw} with
+ * the builtin {@code Error} reified as the emitted {@code DealError}
+ * (DEAL Error values map to {@code RuntimeException}, so caught errors
+ * unify across module boundaries; {@code .code}/{@code .message} reads
+ * dispatch through the reflective unwrap), {@code delete} and
+ * {@code has()} for table fields and optional class fields (presence
+ * flags), table field writes (the generic {@code $tPut}) and
+ * primitive/function-typed table reads (the shared {@code $check}
+ * seam), non-nullable array/table/class class fields with
+ * per-construction fresh defaults, nested primitive arrays, function
+ * arrays (including nullable elements), function expressions and
+ * block-level functions with closure capture (captured bindings lower
+ * to {@code final} cells; per-iteration loop bindings capture fresh
+ * cells), nested and nullable function signature types, and
+ * imported-class arrays ({@code Lib.Point[]}). Tables map to the SHARED
+ * {@code $DealRt.Table} class (declared by the entry module's artifact
+ * or the standalone adapter), so table values cross module boundaries
+ * with shared identity. Anything outside this scope — nested class
+ * declarations, {@code table | null} values, nullable tables, arrays of
+ * table elements, {@code @jsonable}, async/await, cross-module
+ * function-value flow (the per-module wrapper classes cannot cross a
+ * module boundary), stdlib imports other than the five supported
+ * modules — is rejected with a backend {@code E6000} diagnostic, never
+ * silently miscompiled. The ISSUE-0100 host ABI
  * slice lifts declaration/host-module imports and async/await from
  * that list: a host-module import (a declaration file that is not a
  * spec stdlib module, supplied through the orchestrator's hostModules
@@ -568,8 +586,16 @@ public final class JvmBackend {
     private final String sourcePath;
     private final String modulePath;
     private final boolean isEntry;
+
+    /** True when this artifact must carry the shared $DealRt table
+     * class (the orchestrator's selected entry module or the standalone
+     * single-module adapter). */
+    private final boolean emitSharedTable;
     private final List<Diagnostic> diagnostics = new ArrayList<>();
-    private final StringBuilder out = new StringBuilder();
+    /** The generated Java source accumulator. Swapped to a temporary
+     * buffer while an inline function-expression body emits (ISSUE-0102),
+     * so it cannot be final. */
+    private StringBuilder out = new StringBuilder();
     private int indent = 0;
 
     /**
@@ -596,7 +622,7 @@ public final class JvmBackend {
      * {@code std/math}, and {@code std/time} join it.
      */
     private static final Set<String> SUPPORTED_STDLIB_MODULES = Set.of(
-        "std/console", "std/string", "std/math", "std/time");
+        "std/console", "std/string", "std/math", "std/time", "std/table");
 
     /**
      * The spec-listed stdlib modules whose only functions take or return
@@ -607,7 +633,7 @@ public final class JvmBackend {
      * no JVM equivalent.
      */
     private static final Set<String> TABLE_BOUNDARY_STDLIB_MODULES = Set.of(
-        "std/table", "std/json");
+        "std/json");
 
     /**
      * Raw import path → module path of the imported compiled module
@@ -782,6 +808,53 @@ public final class JvmBackend {
      * unique name; the {@code __} prefix is unreachable from
      * {@link #javaName}. */
     private int forOfCounter = 0;
+
+    /** Counter for transformed-loop continue labels ({@code cont$0}, …).
+     * Unreachable from {@link #javaName} for the same reason as the other
+     * generated names. */
+    private int loopLabelCounter = 0;
+
+    /**
+     * Per-function closure-capture state (ISSUE-0102): DEAL names of the
+     * current function's locals/parameters that a nested function
+     * (function expression or block-level function declaration) captures.
+     * A captured binding lowers to a {@code final <T>[] <name>$c = { v }}
+     * cell at its declaration; every read and write of the binding —
+     * in the enclosing function body AND in every nested function body —
+     * routes through {@code <name>$c[0]}, so nested functions observe
+     * mutations exactly like LuaJIT's shared upvalues. Pushed and popped
+     * per function in {@link #emitFunction}.
+     */
+    private final Deque<Set<String>> capturedNamesStack = new ArrayDeque<>();
+
+    /**
+     * Emitted Java names currently cell-ified for closure capture
+     * ({@code x$c} for the mapped binding {@code x}). Kept in sync with
+     * {@link #capturedNamesStack}: {@link #declareLocal} registers the
+     * mapped name when the declared DEAL name is captured by a nested
+     * function, and {@link #localJavaName} routes reads/writes through
+     * the cell.
+     */
+    private final Deque<Set<String>> capturedMappedStack = new ArrayDeque<>();
+
+    /**
+     * Per-loop continue label ({@code null} when a plain Java
+     * {@code continue} targets the nearest loop correctly). The
+     * transformed for/while forms re-place the loop update inside the
+     * body, so a DEAL {@code continue} must jump past the body to the
+     * update — emitted as {@code break <label>;} on the labeled body
+     * block. The checker rejects break/continue outside a loop (E2000),
+     * so the stack is never empty at a break/continue emission.
+     */
+    private final Deque<String> loopContinueLabels = new java.util.LinkedList<>();
+
+    /**
+     * Emitted Java names whose reads temporarily bypass closure-cell
+     * routing (the transformed/captured for-loop HEADER reads the plain
+     * loop variable — its per-iteration cell is declared inside the
+     * body).
+     */
+    private final Set<String> plainReadNames = new HashSet<>();
 
     /** Module-level function declarations by name (exports included), in
      * declaration order. */
@@ -984,12 +1057,13 @@ public final class JvmBackend {
                        Map<String, String> importResolutions,
                        Map<String, Map<String, ClassDeclaration>> importedClasses,
                        Map<String, Map<String, Type>> hostModules,
-                       boolean isEntry) {
+                       boolean isEntry, boolean emitSharedTable) {
         this.typeMap = typeMap;
         this.symbols = symbols;
         this.sourcePath = sourcePath;
         this.modulePath = modulePath;
         this.isEntry = isEntry;
+        this.emitSharedTable = emitSharedTable;
         this.importResolutions = importResolutions == null
             ? Map.of() : Map.copyOf(importResolutions);
         this.importedClasses = importedClasses == null
@@ -1060,8 +1134,12 @@ public final class JvmBackend {
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
                                             Map<String, Map<String, ClassDeclaration>> importedClasses) {
+        // The single-module conformance adapter is a standalone compiled
+        // module: it is not an entry (no main gate, no JVM entry point)
+        // but its artifact must be self-contained, so it emits the
+        // shared $DealRt table class (ISSUE-0102).
         return generate(program, result, sourcePath, modulePath,
-            importResolutions, importedClasses, Map.of(), false);
+            importResolutions, importedClasses, Map.of(), false, true);
     }
 
     /**
@@ -1108,9 +1186,29 @@ public final class JvmBackend {
                                             Map<String, Map<String, ClassDeclaration>> importedClasses,
                                             Map<String, Map<String, Type>> hostModules,
                                             boolean isEntry) {
+        // The orchestrator's per-module path: only the selected ENTRY
+        // module emits the shared table class (one per compiled project).
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, importedClasses, hostModules, isEntry,
+            isEntry);
+    }
+
+    /**
+     * Full generate entry: {@code isEntry} gates the v1.2 entry surface
+     * (E6004 main check, the JVM entry point), {@code emitSharedTable}
+     * gates the shared {@code $DealRt} table class (the orchestrator's
+     * selected entry module and the standalone single-module adapter).
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            Map<String, String> importResolutions,
+                                            Map<String, Map<String, ClassDeclaration>> importedClasses,
+                                            Map<String, Map<String, Type>> hostModules,
+                                            boolean isEntry,
+                                            boolean emitSharedTable) {
         JvmBackend backend = new JvmBackend(result.typeMap(), result.symbolTable(),
             sourcePath, modulePath, importResolutions, importedClasses,
-            hostModules, isEntry);
+            hostModules, isEntry, emitSharedTable);
         return backend.generateProgram(program);
     }
 
@@ -1417,8 +1515,22 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
 
+        // ISSUE-0102: the entry module's artifact also declares the
+        // SHARED runtime table class (a package-private top-level class
+        // in the same file — every emitted artifact lives in the
+        // default package, so all modules reference the one class and
+        // table values cross module boundaries with shared identity).
+        // The name starts with $, which classNameFor can never produce
+        // (sanitizeSegment maps $ to _), so no module class can collide.
+        if (emitSharedTable) {
+            emitSharedTableClass();
+        }
+
         if (wrapperClasses.length() > 0) {
             out.insert(wrapperInsertion, wrapperClasses.toString());
+        }
+        if (arrayHelpers.length() > 0) {
+            out.insert(wrapperInsertion, arrayHelpers.toString());
         }
 
         return new JvmCodegenResult(className, out.toString(), diagnostics);
@@ -1508,6 +1620,11 @@ public final class JvmBackend {
                 yield found;
             }
             case WhileStatement ws -> containsModuleReturn(ws.body());
+            case ForStatement fs -> containsModuleReturn(fs.body());
+            case ForOfStatement fos -> containsModuleReturn(fos.body());
+            case TryStatement ts -> containsModuleReturn(ts.tryBlock())
+                || containsModuleReturn(ts.catchBlock());
+            case ThrowStatement ts -> false;
             default -> false;
         };
     }
@@ -3299,25 +3416,38 @@ public final class JvmBackend {
         emitLine("    final java.lang.String $identity;");
         emitLine("    $Base(java.lang.String identity) { this.$identity = identity; }");
         emitLine("}");
-        emitLine("// Minimal DEAL table: ordered string-key map over java.lang.Object");
-        emitLine("// values. Tables are the only untyped boundary of this slice — a table");
-        emitLine("// field read in a class-typed contextual target is where the runtime");
-        emitLine("// nominal check must run (the read is Object-typed, so no static proof");
-        emitLine("// exists). Property values box: DEAL ints are Long, numbers Double,");
-        emitLine("// booleans Boolean, strings String, classes the generated class");
-        emitLine("// instances, nested tables $T.");
-        emitLine("static final class $T {");
-        emitLine("    private final java.util.LinkedHashMap<java.lang.String, java.lang.Object> entries = new java.util.LinkedHashMap<>();");
-        emitLine("    $T() {}");
-        emitLine("    $T put(java.lang.String k, java.lang.Object v) { entries.put(k, v); return this; }");
-        emitLine("    java.lang.Object get(java.lang.String k) { return entries.get(k); }");
+        emitLine("// Minimal DEAL table: the shared $DealRt.Table class (emitted by the");
+        emitLine("// entry module's artifact — every module references the same class, so");
+        emitLine("// table values cross module boundaries with shared identity). Property");
+        emitLine("// values box: DEAL ints are Long, numbers Double, booleans Boolean,");
+        emitLine("// strings String, classes the generated class instances, nested tables");
+        emitLine("// $DealRt.Table.");
+        emitLine("// ISSUE-0102 table field writes: $tPut stores the value and");
+        emitLine("// returns it (generic, so an expression-position write keeps");
+        emitLine("// its DEAL value); $tRemove deletes a dynamic key. DEAL table");
+        emitLine("// keys are strings; the call site's key expression is");
+        emitLine("// string-typed, so the cast is a defensive static proof.");
+        emitLine("static <V> V $tPut($DealRt.Table t, java.lang.String k, V v) { t.put(k, v); return v; }");
+        emitLine("static void $tRemove($DealRt.Table t, java.lang.Object k) { t.remove((java.lang.String) k); }");
+        emitLine("static __StringArray __tableKeys($DealRt.Table t) { return new __StringArray(t.keys()); }");
+        emitLine("// ISSUE-0102 Error support: unwrap the DEAL code of any");
+        emitLine("// RuntimeException whose class is an emitted module's nested");
+        emitLine("// DealError (each module declares its own, so no shared type");
+        emitLine("// exists). Mirrors the runner's reportError unwrap.");
+        emitLine("static java.lang.String __errorCode(java.lang.Object e) {");
+        emitLine("    if (e == null || !\"DealError\".equals(e.getClass().getSimpleName())) return null;");
+        emitLine("    try {");
+        emitLine("        java.lang.reflect.Field f = e.getClass().getDeclaredField(\"code\");");
+        emitLine("        f.setAccessible(true);");
+        emitLine("        return java.lang.String.valueOf(f.get(e));");
+        emitLine("    } catch (java.lang.ReflectiveOperationException ex) { return null; }");
         emitLine("}");
         emitLine("// Human-readable DEAL identity of a dynamic value for E8001 messages");
         emitLine("// (mirrors LuaJIT's actual_class reporting in check_type).");
         emitLine("static java.lang.String $describe(java.lang.Object v) {");
         emitLine("    if (v instanceof $Base b) return b.$identity;");
         emitLine("    if (v == null) return \"null\";");
-        emitLine("    if (v instanceof $T) return \"table\";");
+        emitLine("    if (v instanceof $DealRt.Table) return \"table\";");
         emitLine("    return v.getClass().getSimpleName();");
         emitLine("}");
         emitLine("// The DEAL identity of any generated class instance, ACROSS modules");
@@ -3357,6 +3487,11 @@ public final class JvmBackend {
         emitLine("// wrapper's initializer throw constant (JLS requires an instance");
         emitLine("// initializer to be able to complete normally).");
         emitLine("static boolean checkSig(java.lang.String expected, java.lang.String actual) { return expected.equals(actual); }");
+        emitLine("// ISSUE-0102: every function-value wrapper implements $FnValue so");
+        emitLine("// the shared seam's function-descriptor branch can validate a");
+        emitLine("// dynamically read function value against its runtime");
+        emitLine("// descriptor.");
+        emitLine("interface $FnValue { java.lang.String descriptor(); }");
         emitLine();
         // ---- DEAL JVM function values (ISSUE-0098 slice) ----
         // The int / number conversion intrinsics are first-class function
@@ -3551,6 +3686,30 @@ public final class JvmBackend {
         emitLine();
     }
 
+    /** Emits the shared DEAL table runtime class (ISSUE-0102) — one
+     * top-level package-private class per compiled project, declared by
+     * the entry module's artifact. The ordered string-key map is the
+     * JVM form of the Lua backend's table. */
+    private void emitSharedTableClass() {
+        emitLine("// Shared DEAL table runtime class (ISSUE-0102): one per compiled");
+        emitLine("// project, declared by the entry module's artifact. Every module");
+        emitLine("// references the SAME class, so table values cross module");
+        emitLine("// boundaries with shared identity — exactly like LuaJIT's");
+        emitLine("// single table type. The $ in the name is unreachable from");
+        emitLine("// classNameFor (sanitizeSegment maps $ to _).");
+        emitLine("class $DealRt {");
+        emitLine("    static final class Table {");
+        emitLine("        private final java.util.LinkedHashMap<java.lang.String, java.lang.Object> entries = new java.util.LinkedHashMap<>();");
+        emitLine("        Table() {}");
+        emitLine("        Table put(java.lang.String k, java.lang.Object v) { entries.put(k, v); return this; }");
+        emitLine("        java.lang.Object get(java.lang.String k) { return entries.get(k); }");
+        emitLine("        java.lang.Object remove(java.lang.String k) { return entries.remove(k); }");
+        emitLine("        boolean has(java.lang.String k) { return entries.containsKey(k); }");
+        emitLine("        java.lang.String[] keys() { return entries.keySet().toArray(new java.lang.String[0]); }");
+        emitLine("    }");
+        emitLine("}");
+    }
+
     /**
      * Emits the single shared descriptor-driven runtime-check seam
      * (ISSUE-0110) at the end of the generated class (after the module
@@ -3617,7 +3776,7 @@ public final class JvmBackend {
         emitLine("descriptor = descriptor.substring(1);");
         indent--;
         emitLine("}");
-        emitLine("if (descriptor.equals(\"table\")) { if (v instanceof $T t) return t; throw new DealError(\"E8001\", \"expected table, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"table\")) { if (v instanceof $DealRt.Table t) return t; throw new DealError(\"E8001\", \"expected table, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"boolean\")) { if (v instanceof java.lang.Boolean b) return b; throw new DealError(\"E8001\", \"expected boolean, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"string\")) { if (v instanceof java.lang.String s) { if (__hasUnpairedSurrogate(s)) throw new DealError(\"E8001\", \"expected string, got string with unpaired surrogate code units\"); return s; } throw new DealError(\"E8001\", \"expected string, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"int\")) { if (v instanceof java.lang.Long l) return checkInt(l); if (v instanceof java.lang.Double d) { if (d.isNaN()) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (d.isInfinite()) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (d % 1.0 != 0.0) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); return checkInt((long) (double) d); } throw new DealError(\"E8001\", \"expected int, got \" + $describe(v)); }");
@@ -3630,6 +3789,12 @@ public final class JvmBackend {
         emitLine("if (descriptor.equals(\"[?number]\")) { if (v instanceof __NumberOrNullArray a) return a; if (v instanceof __NumberArray a) { java.lang.Double[] nd = new java.lang.Double[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Double.valueOf(a.data[i]); return new __NumberOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"[?string]\")) { if (v instanceof __StringOrNullArray a) return a; if (v instanceof __StringArray a) { java.lang.String[] nd = new java.lang.String[a.data.length]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); return new __StringOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"[?boolean]\")) { if (v instanceof __BooleanOrNullArray a) return a; if (v instanceof __BooleanArray a) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Boolean.valueOf(a.data[i]); return new __BooleanOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("if (descriptor.startsWith(\"(\") || descriptor.startsWith(\"async(\")) {");
+        indent++;
+        emitLine("if (v instanceof $FnValue f && f.descriptor().equals(descriptor)) return v;");
+        emitLine("throw new DealError(\"E8001\", \"expected \" + descriptor + \", got \" + $describe(v));");
+        indent--;
+        emitLine("}");
         for (String branch : classCheckBranches) {
             emitLine(branch);
         }
@@ -3660,9 +3825,11 @@ public final class JvmBackend {
             StringBuilder body = new StringBuilder();
             body.append("// DEAL function-value wrapper for descriptor ")
                 .append(quoteJavaString(fnDescriptor(f))).append("\n");
-            body.append("static abstract class ").append(name).append(" {\n");
+            body.append("static abstract class ").append(name)
+                .append(" implements $FnValue {\n");
             body.append("    final java.lang.String descriptor = ")
                 .append(quoteJavaString(fnDescriptor(f))).append(";\n");
+            body.append("    public java.lang.String descriptor() { return descriptor; }\n");
             body.append("    abstract ").append(javaReturnType(f.returnType(), null))
                 .append(" invoke(");
             for (int i = 0; i < f.paramTypes().size(); i++) {
@@ -3692,16 +3859,30 @@ public final class JvmBackend {
         } else {
             sb.append('_');
             for (Type p : f.paramTypes()) {
-                Character c = fnShapeLetter(p);
-                if (c == null) return null;
-                sb.append(c);
+                String seg = fnShapeSegment(p);
+                if (seg == null) return null;
+                sb.append(seg);
             }
             sb.append("_R_");
         }
-        Character rc = fnShapeLetter(f.returnType());
+        String rc = fnShapeSegment(f.returnType());
         if (rc == null) return null;
         sb.append(rc);
         return sb.toString();
+    }
+
+    /** One signature-shape segment: the single-letter code for a
+     * primitive, or the nested function shape's full wrapper name for a
+     * function type (ISSUE-0102 — nested function types now emit). */
+    private static String fnShapeSegment(Type t) {
+        Character c = fnShapeLetter(t);
+        if (c != null) return c.toString();
+        if (t instanceof Type.Func nested) {
+            String nestedName = fnShapeName(nested);
+            if (nestedName == null) return null;
+            return "F" + nestedName;
+        }
+        return null;
     }
 
     /** The one-letter signature-shape code ({@code B/I/N/S/V} for
@@ -3741,6 +3922,7 @@ public final class JvmBackend {
             case Type.Boolean ignored -> "boolean";
             case Type.String ignored -> "string";
             case Type.Null ignored -> "null";
+            case Type.Func nested -> fnDescriptor(nested);
             default -> "?";
         };
     }
@@ -3782,13 +3964,13 @@ public final class JvmBackend {
                     + "or blocks", cd.span());
             }
             case WhileStatement ws -> emitWhile(ws);
-            case ForStatement fs -> unsupported("for loops", fs.span());
+            case ForStatement fs -> emitFor(fs);
             case ForOfStatement fos -> emitForOf(fos);
-            case BreakStatement bs -> unsupported("break", bs.span());
-            case ContinueStatement cs -> unsupported("continue", cs.span());
-            case DeleteStatement ds -> unsupported("delete", ds.span());
-            case TryStatement ts -> unsupported("try/catch", ts.span());
-            case ThrowStatement th -> unsupported("throw", th.span());
+            case BreakStatement bs -> emitBreak(bs);
+            case ContinueStatement cs -> emitContinue(cs);
+            case DeleteStatement ds -> emitDelete(ds);
+            case TryStatement ts -> emitTry(ts);
+            case ThrowStatement th -> emitThrow(th);
         }
     }
 
@@ -4368,6 +4550,50 @@ public final class JvmBackend {
      * The {@code $Array$} prefix is unreachable from {@link #javaName}
      * output for the same reason as {@code $C_} (every user {@code $}
      * escapes to {@code $d}). */
+    /**
+     * ISSUE-0102: the emitted wrapper class name for an array of an
+     * IMPORTED class — the declaring module's per-class array wrapper
+     * ({@code Lib.$Array$C}), or {@code null} when the class is not an
+     * imported compiled project module's class (the caller records the
+     * E6000).
+     */
+    private String importedArrayWrapperName(Type.Class c) {
+        String module = c.modulePath();
+        Map<String, ClassDeclaration> decls = importedClasses.get(module);
+        if (!importAliases.containsValue(module)
+                || decls == null || !decls.containsKey(c.name())) {
+            return null;
+        }
+        return classNameFor(module) + "." + classArrayWrapperName(c.name());
+    }
+
+    /**
+     * The emitted read/write helper reference for a class array element
+     * ({@code read} → {@code $read$C}, {@code readOrNull} →
+     * {@code $readOrNull$C}, {@code write} → {@code $write$C},
+     * {@code writeOrNull} → {@code $writeOrNull$C}), qualified by the
+     * declaring module's class for an imported class (ISSUE-0109).
+     */
+    private String classArrayHelper(Type.Class cls, String kind, Span span) {
+        if (isLocalClassType(cls)) {
+            if (localClassJavaType(cls, span) == null) return null;
+            return switch (kind) {
+                case "read" -> classArrayReadName(cls.name());
+                case "readOrNull" -> classOrNullArrayReadName(cls.name());
+                case "write" -> classArrayWriteName(cls.name());
+                default -> classOrNullArrayWriteName(cls.name());
+            };
+        }
+        String moduleRef = importedClassModuleRef(cls, span);
+        if (moduleRef == null) return null;
+        return moduleRef + "." + switch (kind) {
+            case "read" -> classArrayReadName(cls.name());
+            case "readOrNull" -> classOrNullArrayReadName(cls.name());
+            case "write" -> classArrayWriteName(cls.name());
+            default -> classOrNullArrayWriteName(cls.name());
+        };
+    }
+
     private String classArrayWrapperName(String name) {
         return "$Array$" + javaName(name);
     }
@@ -4478,14 +4704,34 @@ public final class JvmBackend {
         }
         List<String> fieldTypes = new ArrayList<>();
         List<String> fieldNames = new ArrayList<>();
+        List<Boolean> fieldOptionalFlags = new ArrayList<>();
         for (ClassField cf : cd.fields()) {
-            if (cf.optional()) {
-                unsupported("optional class fields (their reads produce "
-                    + "nullable values and presence checks)", cf.span());
-                return;
-            }
             Type fieldType = resolveTypeNode(cf.type());
             if (fieldType == Type.Error.INSTANCE) return;
+            if (cf.optional()) {
+                // Optional field (ISSUE-0102): reads produce the
+                // declared type | null (the checker wraps it), the Java
+                // representation is the boxed/nullable reference of the
+                // inner type plus a <name>$present flag for has().
+                // Inner types: the four primitives (boxed), string,
+                // local classes, arrays, and tables.
+                Type inner = fieldType;
+                if (fieldType instanceof Type.Nullable nn) {
+                    inner = nn.inner();
+                }
+                String javaType = switch (inner) {
+                    case Type.Int ignored -> "java.lang.Long";
+                    case Type.Number ignored -> "java.lang.Double";
+                    case Type.Boolean ignored -> "java.lang.Boolean";
+                    case Type.String ignored -> "java.lang.String";
+                    default -> javaLocalType(inner, cf.span());
+                };
+                if (javaType == null) return;
+                fieldTypes.add(javaType);
+                fieldNames.add(javaName(cf.name()));
+                fieldOptionalFlags.add(true);
+                continue;
+            }
             if (cf.nullable()) {
                 // f: T | null — required-present nullable field
                 // (ISSUE-0108). The parser keeps the WHOLE `T | null`
@@ -4515,16 +4761,23 @@ public final class JvmBackend {
             } else if (!(fieldType instanceof Type.Int)
                     && !(fieldType instanceof Type.Number)
                     && !(fieldType instanceof Type.Boolean)
-                    && !(fieldType instanceof Type.String)) {
+                    && !(fieldType instanceof Type.String)
+                    && !(fieldType instanceof Type.Table)
+                    && !(fieldType instanceof Type.Array)
+                    && !(fieldType instanceof Type.Class cls
+                        && isLocalClassType(cls)
+                        && !isBuiltinErrorType(cls))) {
                 unsupported("class fields of type " + typeName(fieldType)
-                    + " (only primitive fields and nullable primitive/"
-                    + "class fields are supported)", cf.span());
+                    + " (only primitive fields, nullable primitive/"
+                    + "class fields, and local array/table/class fields"
+                    + " are supported)", cf.span());
                 return;
             }
             String javaType = javaLocalType(fieldType, cf.span());
             if (javaType == null) return;
             fieldTypes.add(javaType);
             fieldNames.add(javaName(cf.name()));
+            fieldOptionalFlags.add(false);
         }
 
         emitLine("// DEAL class " + cd.name() + " — identity " + identity);
@@ -4532,23 +4785,55 @@ public final class JvmBackend {
         indent++;
         for (int i = 0; i < fieldNames.size(); i++) {
             emitLine(fieldTypes.get(i) + " " + fieldNames.get(i) + ";");
+            if (fieldOptionalFlags.get(i)) {
+                // Presence flag for has()/delete (ISSUE-0102). The $ in
+                // the name is unreachable from javaName (DEAL identifiers
+                // cannot contain $), so no user field can collide.
+                emitLine("boolean " + fieldNames.get(i) + "$present;");
+            }
         }
         StringBuilder params = new StringBuilder();
         for (int i = 0; i < fieldNames.size(); i++) {
             if (i > 0) params.append(", ");
             params.append(fieldTypes.get(i)).append(' ')
                 .append(fieldNames.get(i));
+            if (fieldOptionalFlags.get(i)) {
+                params.append(", boolean ").append(fieldNames.get(i))
+                    .append("$present");
+            }
         }
         emitLine(gen + "(" + params + ") {");
         indent++;
         emitLine("super(" + quoteJavaString(identity) + ");");
-        for (String fieldName : fieldNames) {
-            emitLine("this." + fieldName + " = " + fieldName + ";");
+        for (int i = 0; i < fieldNames.size(); i++) {
+            emitLine("this." + fieldNames.get(i) + " = " + fieldNames.get(i)
+                + ";");
+            if (fieldOptionalFlags.get(i)) {
+                emitLine("this." + fieldNames.get(i) + "$present = "
+                    + fieldNames.get(i) + "$present;");
+            }
         }
         indent--;
         emitLine("}");
         indent--;
         emitLine("}");
+
+        // ISSUE-0102: per-optional-field write helpers — the assignment
+        // keeps its DEAL value in value positions and always sets the
+        // presence flag.
+        for (int i = 0; i < fieldNames.size(); i++) {
+            if (fieldOptionalFlags.get(i)) {
+                emitLine("static <V> V __optSet$" + gen + "$"
+                    + fieldNames.get(i) + "(" + gen + " obj, V v) {");
+                indent++;
+                emitLine("obj." + fieldNames.get(i) + " = ("
+                    + fieldTypes.get(i) + ") v;");
+                emitLine("obj." + fieldNames.get(i) + "$present = true;");
+                emitLine("return v;");
+                indent--;
+                emitLine("}");
+            }
+        }
 
         // The runtime nominal check now lives in the shared
         // descriptor-driven seam (ISSUE-0110): this class appends its
@@ -4689,6 +4974,15 @@ public final class JvmBackend {
             javaType, vd.span());
         String visibility = moduleLevel ? "static " : "";
         String javaVar = declareLocal(vd.name(), declaredType);
+        // ISSUE-0102 closure capture: a captured local lowers to a
+        // final cell array at the declaration; every read/write routes
+        // through <var>$c[0] (localJavaName). Module-level fields are
+        // static and never cell-ified (nested functions reference them
+        // directly — shared by construction).
+        boolean cell = !moduleLevel && isCapturedMapped(javaVar);
+        if (cell) {
+            javaType = javaType + "[]";
+        }
         if (moduleLevel) {
             if (preStatementsDeclareTemps) {
                 // The initializer references a temporary declared by the
@@ -4723,7 +5017,367 @@ public final class JvmBackend {
             // initializer's RHS binds to the enclosing variable).
             flushPreStatements();
         }
-        emitLine(visibility + javaType + " " + javaVar + " = " + initializer + ";");
+        if (cell) {
+            emitLine(visibility + "final " + javaType + " " + javaVar
+                + "$c = { " + initializer + " };");
+        } else {
+            emitLine(visibility + javaType + " " + javaVar + " = "
+                + initializer + ";");
+        }
+    }
+
+    /** True when {@code mapped} is a cell-ified binding of the current
+     * function (ISSUE-0102 closure capture). */
+    private boolean isCapturedMapped(String mapped) {
+        for (Set<String> frame : capturedMappedStack) {
+            if (frame.contains(mapped)) return true;
+        }
+        return false;
+    }
+
+    // =========================================================================
+    // Closure capture analysis (ISSUE-0102)
+    // =========================================================================
+
+    /**
+     * Collects every name a {@code let}/{@code for (let)}/{@code for-of}
+     * variable or block-level function DECLARES anywhere inside
+     * {@code stmts} (recursively through blocks, if/while/for/try bodies
+     * — not through function bodies, which own their declarations).
+     */
+    private void collectLocalDeclarations(List<StatementNode> stmts,
+            Set<String> out) {
+        for (StatementNode stmt : stmts) {
+            switch (stmt) {
+                case VariableDeclaration vd -> out.add(vd.name());
+                case Block b -> collectLocalDeclarations(b.statements(), out);
+                case IfStatement is -> {
+                    collectLocalDeclarations(is.thenBlock().statements(), out);
+                    if (is.elseBranch().isPresent()) {
+                        switch (is.elseBranch().get()) {
+                            case Either.Left<IfStatement, Block> left ->
+                                collectLocalDeclarations(
+                                    List.of(left.value()), out);
+                            case Either.Right<IfStatement, Block> right ->
+                                collectLocalDeclarations(
+                                    right.value().statements(), out);
+                        }
+                    }
+                }
+                case WhileStatement ws ->
+                    collectLocalDeclarations(ws.body().statements(), out);
+                case ForStatement fs -> {
+                    if (fs.init().isPresent()
+                            && fs.init().get() instanceof ForInit.VarDecl vd) {
+                        out.add(vd.decl().name());
+                    }
+                    collectLocalDeclarations(fs.body().statements(), out);
+                }
+                case ForOfStatement fos -> {
+                    out.add(fos.varName());
+                    collectLocalDeclarations(fos.body().statements(), out);
+                }
+                case TryStatement ts -> {
+                    // The catch variable DECLARES a binding (the checker
+                    // scopes it to the catch block): nested functions
+                    // inside the catch block that read or write it must
+                    // mark it captured so emitTry cell-ifies it exactly
+                    // like a local or parameter.
+                    out.add(ts.catchVar());
+                    collectLocalDeclarations(ts.tryBlock().statements(), out);
+                    collectLocalDeclarations(ts.catchBlock().statements(), out);
+                }
+                case FunctionDeclaration fd -> out.add(fd.name());
+                default -> { }
+            }
+        }
+    }
+
+    /**
+     * Walks {@code stmts} for nested functions (function expressions and
+     * block-level function declarations, at ANY depth — through
+     * expressions and nested bodies) and adds to {@code captured} every
+     * identifier they reference that {@code visibleDeclared} names. The
+     * analysis is a conservative superset: a shadowed same-named binding
+     * may be cell-ified too, which changes no observable behavior.
+     */
+    private void walkNestedFunctions(List<StatementNode> stmts,
+            Set<String> visibleDeclared, Set<String> captured) {
+        for (StatementNode stmt : stmts) {
+            switch (stmt) {
+                case VariableDeclaration vd ->
+                    walkExprNestedFunctions(vd.initializer(), visibleDeclared,
+                        captured);
+                case ExpressionStatement es ->
+                    walkExprNestedFunctions(es.expr(), visibleDeclared,
+                        captured);
+                case ReturnStatement rs -> {
+                    if (rs.expr().isPresent()) {
+                        walkExprNestedFunctions(rs.expr().get(),
+                            visibleDeclared, captured);
+                    }
+                }
+                case ThrowStatement ts ->
+                    walkExprNestedFunctions(ts.expr(), visibleDeclared,
+                        captured);
+                case DeleteStatement ds ->
+                    walkExprNestedFunctions(ds.target(), visibleDeclared,
+                        captured);
+                case Block b ->
+                    walkNestedFunctions(b.statements(), visibleDeclared,
+                        captured);
+                case IfStatement is -> {
+                    walkExprNestedFunctions(is.condition(), visibleDeclared,
+                        captured);
+                    walkNestedFunctions(is.thenBlock().statements(),
+                        visibleDeclared, captured);
+                    if (is.elseBranch().isPresent()) {
+                        switch (is.elseBranch().get()) {
+                            case Either.Left<IfStatement, Block> left -> {
+                                walkExprNestedFunctions(left.value().condition(),
+                                    visibleDeclared, captured);
+                                walkNestedFunctions(
+                                    left.value().thenBlock().statements(),
+                                    visibleDeclared, captured);
+                                if (left.value().elseBranch().isPresent()) {
+                                    walkNestedFunctions(
+                                        List.of(new IfStatement(
+                                            left.value().span(),
+                                            left.value().condition(),
+                                            left.value().thenBlock(),
+                                            left.value().elseBranch())),
+                                        visibleDeclared, captured);
+                                }
+                            }
+                            case Either.Right<IfStatement, Block> right ->
+                                walkNestedFunctions(
+                                    right.value().statements(),
+                                    visibleDeclared, captured);
+                        }
+                    }
+                }
+                case WhileStatement ws -> {
+                    walkExprNestedFunctions(ws.condition(), visibleDeclared,
+                        captured);
+                    walkNestedFunctions(ws.body().statements(),
+                        visibleDeclared, captured);
+                }
+                case ForStatement fs -> {
+                    if (fs.init().isPresent()
+                            && fs.init().get() instanceof ForInit.AssignExpr ae) {
+                        walkExprNestedFunctions(ae.expr(), visibleDeclared,
+                            captured);
+                    }
+                    if (fs.condition().isPresent()) {
+                        walkExprNestedFunctions(fs.condition().get(),
+                            visibleDeclared, captured);
+                    }
+                    if (fs.update().isPresent()) {
+                        walkExprNestedFunctions(fs.update().get(),
+                            visibleDeclared, captured);
+                    }
+                    walkNestedFunctions(fs.body().statements(),
+                        visibleDeclared, captured);
+                }
+                case ForOfStatement fos -> {
+                    walkExprNestedFunctions(fos.iterable(), visibleDeclared,
+                        captured);
+                    walkNestedFunctions(fos.body().statements(),
+                        visibleDeclared, captured);
+                }
+                case TryStatement ts -> {
+                    walkNestedFunctions(ts.tryBlock().statements(),
+                        visibleDeclared, captured);
+                    walkNestedFunctions(ts.catchBlock().statements(),
+                        visibleDeclared, captured);
+                }
+                case FunctionDeclaration fd ->
+                    processNestedFunction(fd.params(), fd.body(),
+                        visibleDeclared, captured);
+                default -> { }
+            }
+        }
+    }
+
+    /** Expression-side of the nested-function walk: recurses through every
+     * subexpression and hands each function expression to
+     * {@link #processNestedFunction}. */
+    private void walkExprNestedFunctions(ExpressionNode e,
+            Set<String> visibleDeclared, Set<String> captured) {
+        if (e instanceof FunctionExpr fe) {
+            processNestedFunction(fe.params(), fe.body(), visibleDeclared,
+                captured);
+            return;
+        }
+        if (e instanceof BinaryExpr bin) {
+            walkExprNestedFunctions(bin.left(), visibleDeclared, captured);
+            walkExprNestedFunctions(bin.right(), visibleDeclared, captured);
+        } else if (e instanceof UnaryExpr u) {
+            walkExprNestedFunctions(u.expr(), visibleDeclared, captured);
+        } else if (e instanceof CallExpr call) {
+            walkExprNestedFunctions(call.callee(), visibleDeclared, captured);
+            for (ExpressionNode arg : call.args()) {
+                walkExprNestedFunctions(arg, visibleDeclared, captured);
+            }
+        } else if (e instanceof MemberAccessExpr mae) {
+            walkExprNestedFunctions(mae.object(), visibleDeclared, captured);
+        } else if (e instanceof IndexExpr idx) {
+            walkExprNestedFunctions(idx.array(), visibleDeclared, captured);
+            walkExprNestedFunctions(idx.index(), visibleDeclared, captured);
+        } else if (e instanceof ArrayLiteralExpr al) {
+            for (ExpressionNode el : al.elements()) {
+                walkExprNestedFunctions(el, visibleDeclared, captured);
+            }
+        } else if (e instanceof ObjectLiteralExpr ol) {
+            for (Property prop : ol.properties()) {
+                walkExprNestedFunctions(prop.value(), visibleDeclared,
+                    captured);
+            }
+        } else if (e instanceof HasExpr he) {
+            walkExprNestedFunctions(he.object(), visibleDeclared, captured);
+        } else if (e instanceof TemplateLiteralExpr tl) {
+            for (ExpressionNode part : tl.parts()) {
+                walkExprNestedFunctions(part, visibleDeclared, captured);
+            }
+        } else if (e instanceof AwaitExpression aw) {
+            walkExprNestedFunctions(aw.callee(), visibleDeclared, captured);
+        } else if (e instanceof AssignmentExpr ae) {
+            walkExprNestedFunctions(ae.target(), visibleDeclared, captured);
+            walkExprNestedFunctions(ae.value(), visibleDeclared, captured);
+        }
+    }
+
+    /** One nested function: its free identifiers referencing
+     * {@code visibleDeclared} bindings become captures, and its body is
+     * walked recursively for deeper nesting. */
+    private void processNestedFunction(List<Parameter> params, Block body,
+            Set<String> visibleDeclared, Set<String> captured) {
+        Set<String> own = new LinkedHashSet<>();
+        collectLocalDeclarations(body.statements(), own);
+        for (Parameter p : params) own.add(p.name());
+        Set<String> free = new LinkedHashSet<>();
+        collectIdentifierNames(body, free);
+        for (String n : free) {
+            if (visibleDeclared.contains(n) && !own.contains(n)) {
+                captured.add(n);
+            }
+        }
+        Set<String> deeper = new LinkedHashSet<>(visibleDeclared);
+        deeper.addAll(own);
+        walkNestedFunctions(body.statements(), deeper, captured);
+    }
+
+    /** Collects every identifier name appearing in the block's
+     * expressions (not descending into nested function bodies — those are
+     * separate nested functions). */
+    private void collectIdentifierNames(Block b, Set<String> out) {
+        for (StatementNode stmt : b.statements()) {
+            collectStmtIdentifierNames(stmt, out);
+        }
+    }
+
+    private void collectStmtIdentifierNames(StatementNode stmt,
+            Set<String> out) {
+        switch (stmt) {
+            case VariableDeclaration vd ->
+                collectExprIdentifierNames(vd.initializer(), out);
+            case ExpressionStatement es ->
+                collectExprIdentifierNames(es.expr(), out);
+            case ReturnStatement rs -> {
+                if (rs.expr().isPresent()) {
+                    collectExprIdentifierNames(rs.expr().get(), out);
+                }
+            }
+            case ThrowStatement ts ->
+                collectExprIdentifierNames(ts.expr(), out);
+            case DeleteStatement ds ->
+                collectExprIdentifierNames(ds.target(), out);
+            case Block b -> collectIdentifierNames(b, out);
+            case IfStatement is -> {
+                collectExprIdentifierNames(is.condition(), out);
+                collectIdentifierNames(is.thenBlock(), out);
+                if (is.elseBranch().isPresent()) {
+                    switch (is.elseBranch().get()) {
+                        case Either.Left<IfStatement, Block> left -> {
+                            // Re-descend the whole else-if chain so every
+                            // link's condition/body/else contributes.
+                            collectStmtIdentifierNames(left.value(), out);
+                        }
+                        case Either.Right<IfStatement, Block> right ->
+                            collectIdentifierNames(right.value(), out);
+                    }
+                }
+            }
+            case WhileStatement ws -> {
+                collectExprIdentifierNames(ws.condition(), out);
+                collectIdentifierNames(ws.body(), out);
+            }
+            case ForStatement fs -> {
+                if (fs.init().isPresent()
+                        && fs.init().get() instanceof ForInit.AssignExpr ae) {
+                    collectExprIdentifierNames(ae.expr(), out);
+                }
+                if (fs.condition().isPresent()) {
+                    collectExprIdentifierNames(fs.condition().get(), out);
+                }
+                if (fs.update().isPresent()) {
+                    collectExprIdentifierNames(fs.update().get(), out);
+                }
+                collectIdentifierNames(fs.body(), out);
+            }
+            case ForOfStatement fos -> {
+                collectExprIdentifierNames(fos.iterable(), out);
+                collectIdentifierNames(fos.body(), out);
+            }
+            case TryStatement ts -> {
+                collectIdentifierNames(ts.tryBlock(), out);
+                collectIdentifierNames(ts.catchBlock(), out);
+            }
+            default -> { }
+        }
+    }
+
+    private void collectExprIdentifierNames(ExpressionNode e, Set<String> out) {
+        if (e instanceof FunctionExpr fe) {
+            return; // a nested function owns its identifiers
+        }
+        if (e instanceof IdentifierExpr id) {
+            out.add(id.name());
+        } else if (e instanceof BinaryExpr bin) {
+            collectExprIdentifierNames(bin.left(), out);
+            collectExprIdentifierNames(bin.right(), out);
+        } else if (e instanceof UnaryExpr u) {
+            collectExprIdentifierNames(u.expr(), out);
+        } else if (e instanceof CallExpr call) {
+            collectExprIdentifierNames(call.callee(), out);
+            for (ExpressionNode arg : call.args()) {
+                collectExprIdentifierNames(arg, out);
+            }
+        } else if (e instanceof MemberAccessExpr mae) {
+            collectExprIdentifierNames(mae.object(), out);
+        } else if (e instanceof IndexExpr idx) {
+            collectExprIdentifierNames(idx.array(), out);
+            collectExprIdentifierNames(idx.index(), out);
+        } else if (e instanceof ArrayLiteralExpr al) {
+            for (ExpressionNode el : al.elements()) {
+                collectExprIdentifierNames(el, out);
+            }
+        } else if (e instanceof ObjectLiteralExpr ol) {
+            for (Property prop : ol.properties()) {
+                collectExprIdentifierNames(prop.value(), out);
+            }
+        } else if (e instanceof HasExpr he) {
+            collectExprIdentifierNames(he.object(), out);
+        } else if (e instanceof TemplateLiteralExpr tl) {
+            for (ExpressionNode part : tl.parts()) {
+                collectExprIdentifierNames(part, out);
+            }
+        } else if (e instanceof AwaitExpression aw) {
+            collectExprIdentifierNames(aw.callee(), out);
+        } else if (e instanceof AssignmentExpr ae) {
+            collectExprIdentifierNames(ae.target(), out);
+            collectExprIdentifierNames(ae.value(), out);
+        }
     }
 
     private void emitFunction(FunctionDeclaration fd, boolean exported) {
@@ -4742,7 +5396,11 @@ public final class JvmBackend {
         // field as sync ones (below); async function EXPRESSIONS stay
         // E6000.
         if (!moduleLevel) {
-            unsupported("nested function declarations", fd.span());
+            // ISSUE-0102: a block-level function declaration is a fresh
+            // first-class function value at its declaration point (a
+            // cell so self-recursion works, exactly like the Lua
+            // backend's local function binding).
+            emitBlockFunction(fd);
             return;
         }
         Type returnType = resolveTypeNode(fd.returnType());
@@ -4854,6 +5512,19 @@ public final class JvmBackend {
             emitLine("};");
         }
 
+        // ISSUE-0102 closure captures: cell-ify every local/parameter a
+        // nested function references (the analysis walks all nested
+        // function expressions and block-level declarations at every
+        // depth). The frame must exist BEFORE the parameter declarations
+        // so declareLocal registers the captured parameter names.
+        Set<String> topDeclared = new LinkedHashSet<>();
+        collectLocalDeclarations(fd.body().statements(), topDeclared);
+        for (Parameter p : fd.params()) topDeclared.add(p.name());
+        Set<String> topCaptured = new LinkedHashSet<>();
+        walkNestedFunctions(fd.body().statements(), topDeclared, topCaptured);
+        capturedNamesStack.push(topCaptured);
+        capturedMappedStack.push(new LinkedHashSet<>());
+
         // Declare the parameters in a fresh scope BEFORE building the
         // signature: the signature must use each parameter's DECLARED
         // (possibly disambiguated) Java name, not the raw {@link #javaName}
@@ -4887,6 +5558,16 @@ public final class JvmBackend {
         sig.append(") {");
         emitLine(sig.toString());
         indent++;
+        // Captured parameters lower to cells: declare the cell right
+        // after the signature so every body read/write routes through
+        // <name>$c[0] (localJavaName).
+        for (int i = 0; i < fd.params().size(); i++) {
+            if (isCapturedMapped(paramNames.get(i))) {
+                emitLine("final " + paramTypes.get(i) + "[] "
+                    + paramNames.get(i) + "$c = { " + paramNames.get(i)
+                    + " };");
+            }
+        }
         boolean savedModuleLevel = moduleLevel;
         int savedModuleIndex = currentModuleStatementIndex;
         Type savedReturnType = currentReturnType;
@@ -4920,9 +5601,197 @@ public final class JvmBackend {
         localScopes.pop();
         localTypeScopes.pop();
         functionBindingNames.pop();
+        capturedNamesStack.pop();
+        capturedMappedStack.pop();
 
         indent--;
         emitLine("}");
+    }
+
+    // =========================================================================
+    // Function expressions and block-level functions (ISSUE-0102 closures)
+    // =========================================================================
+
+    /**
+     * Block-level function declaration (ISSUE-0102): a fresh first-class
+     * function value at its declaration point, bound through a
+     * one-element cell so the body's self-recursion reads the binding
+     * (a direct {@code final} local self-reference would be an illegal
+     * forward reference in Java). Reads and writes of the binding route
+     * through the cell like any other captured binding.
+     */
+    private void emitBlockFunction(FunctionDeclaration fd) {
+        if (capturedMappedStack.isEmpty()) {
+            // A module-level static block cannot hold a block-level
+            // function whose binding is a method-local cell — E6000,
+            // never a broken artifact. (Function-local blocks always
+            // have the enclosing function's capture frame.)
+            unsupported("block-level functions at module level", fd.span());
+            return;
+        }
+        if (fd.isAsync()) {
+            unsupported("async function expressions and block-level async "
+                + "functions", fd.span());
+            return;
+        }
+        Type returnType = resolveTypeNode(fd.returnType());
+        String javaReturn = javaReturnType(returnType, fd.returnType().span());
+        if (javaReturn == null) return;
+        List<Type> paramTypes = new ArrayList<>();
+        boolean ok = true;
+        for (Parameter p : fd.params()) {
+            Type pt = resolveTypeNode(p.type());
+            if (javaLocalType(pt, p.type().span()) == null) {
+                ok = false;
+                break;
+            }
+            paramTypes.add(pt);
+        }
+        if (!ok) return;
+        Type.Func funcType = new Type.Func(paramTypes, returnType, false);
+        String shape = registerWrapperShape(funcType);
+        if (shape == null) {
+            unsupported("function values whose signature contains "
+                + "arrays/classes/nullables/nested functions "
+                + "(deferred to ISSUE-0110)", fd.span());
+            return;
+        }
+        String mapped = declareLocal(fd.name(), funcType);
+        // The block-function binding is ALWAYS a cell (self-recursion
+        // needs it even when nothing else captures the name).
+        capturedMappedStack.peek().add(mapped);
+        String cell = mapped + "$c";
+        emitLine("final " + shape + "[] " + cell + " = new " + shape
+            + "[1];");
+        emitLine(cell + "[0] = " + emitInlineFunctionExpr(shape, javaReturn,
+            fd.params(), fd.body(), returnType, fd.span()) + ";");
+    }
+
+    /** A function expression (ISSUE-0102): an anonymous subclass of the
+     * signature's wrapper class emitted inline at the expression
+     * position. The body captures enclosing locals through their cells
+     * (the enclosing function's analysis cell-ified every captured
+     * binding), and the body's OWN captured locals (captured by deeper
+     * nested functions) cell-ify in their own frame. */
+    private String emitFunctionExpr(FunctionExpr fe) {
+        if (fe.isAsync()) {
+            unsupported("async function expressions", fe.span());
+            return "null";
+        }
+        Type t = typeOf(fe);
+        if (!(t instanceof Type.Func ft)) {
+            unsupported("function expression without a function type",
+                fe.span());
+            return "null";
+        }
+        String shape = registerWrapperShape(ft);
+        if (shape == null) {
+            unsupported("function values whose signature contains "
+                + "arrays/classes/nullables/nested functions "
+                + "(deferred to ISSUE-0110)", fe.span());
+            return "null";
+        }
+        Type returnType = ft.returnType();
+        String javaReturn = javaReturnType(returnType, fe.span());
+        if (javaReturn == null) return "null";
+        return emitInlineFunctionExpr(shape, javaReturn, fe.params(),
+            fe.body(), returnType, fe.span());
+    }
+
+    /**
+     * Emits an anonymous wrapper subclass as a multi-line inline
+     * expression: the {@code invoke} signature uses each parameter's
+     * DECLARED (disambiguated) Java name, captured parameters lower to
+     * cells, and the body statements emit into a temporary buffer at a
+     * consistent indentation (hoisted pre-statements flush INSIDE the
+     * body, where their temporaries belong).
+     */
+    private String emitInlineFunctionExpr(String shape, String javaReturn,
+            List<Parameter> params, Block body, Type returnType,
+            Span span) {
+        String pad = "    ";
+        int base = indent;
+        List<String> paramTypes = new ArrayList<>();
+        for (Parameter p : params) {
+            String jt = javaLocalType(resolveTypeNode(p.type()), p.span());
+            if (jt == null) return "null";
+            paramTypes.add(jt);
+        }
+        // The body's own capture frame + parameter scope exist BEFORE the
+        // parameter declarations, so declareLocal registers captured
+        // parameters into the right frame.
+        Set<String> own = new LinkedHashSet<>();
+        collectLocalDeclarations(body.statements(), own);
+        for (Parameter p : params) own.add(p.name());
+        Set<String> capturedHere = new LinkedHashSet<>();
+        walkNestedFunctions(body.statements(), own, capturedHere);
+        capturedNamesStack.push(capturedHere);
+        capturedMappedStack.push(new LinkedHashSet<>());
+        localScopes.push(new LinkedHashMap<>());
+        localTypeScopes.push(new LinkedHashMap<>());
+        functionBindingNames.push(new LinkedHashSet<>());
+        List<String> paramNames = new ArrayList<>();
+        for (Parameter p : params) {
+            paramNames.add(declareLocal(p.name(), resolveTypeNode(p.type())));
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("new ").append(shape).append("() {\n");
+        sb.append(pad.repeat(base + 1)).append("@Override\n");
+        sb.append(pad.repeat(base + 1)).append(javaReturn)
+            .append(" invoke(");
+        for (int i = 0; i < paramNames.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(paramTypes.get(i)).append(' ')
+                .append(paramNames.get(i));
+        }
+        sb.append(") {\n");
+
+        StringBuilder savedOut = out;
+        int savedIndent = indent;
+        Type savedReturnType = currentReturnType;
+        List<StatementNode> savedBody = currentFunctionBody;
+        List<String> savedParams = currentFunctionParams;
+        int savedModuleIndex = currentModuleStatementIndex;
+        out = sb;
+        indent = base + 2;
+        currentReturnType = returnType;
+        currentModuleStatementIndex = -1;
+        currentFunctionBody = body.statements();
+        List<String> dealParams = new ArrayList<>();
+        for (Parameter p : params) dealParams.add(p.name());
+        currentFunctionParams = dealParams;
+        for (int i = 0; i < paramNames.size(); i++) {
+            if (isCapturedMapped(paramNames.get(i))) {
+                emitLine("final " + paramTypes.get(i) + "[] "
+                    + paramNames.get(i) + "$c = { " + paramNames.get(i)
+                    + " };");
+            }
+        }
+        for (StatementNode stmt : body.statements()) {
+            emitStatement(stmt);
+            if (!statementCompletesNormally(stmt)) {
+                // Dead code after a non-completing statement (JLS
+                // §14.21): skip the rest, exactly like emitFunction.
+                flushPreStatements();
+                break;
+            }
+        }
+        currentFunctionBody = savedBody;
+        currentFunctionParams = savedParams;
+        currentReturnType = savedReturnType;
+        currentModuleStatementIndex = savedModuleIndex;
+        out = savedOut;
+        indent = savedIndent;
+        localScopes.pop();
+        localTypeScopes.pop();
+        functionBindingNames.pop();
+        capturedNamesStack.pop();
+        capturedMappedStack.pop();
+
+        sb.append(pad.repeat(base + 1)).append("}\n");
+        sb.append(pad.repeat(base)).append("}");
+        return sb.toString();
     }
 
     private void emitReturn(ReturnStatement rs) {
@@ -4992,6 +5861,14 @@ public final class JvmBackend {
     private static boolean statementCompletesNormally(StatementNode stmt) {
         return switch (stmt) {
             case ReturnStatement rs -> false;
+            // ISSUE-0102: a throw cannot complete normally (JLS §14.21)
+            // — statements after a try whose catch always throws are
+            // unreachable to javac, exactly like the return rule.
+            case ThrowStatement ts -> false;
+            // break/continue transfer control and cannot complete
+            // normally either (JLS §14.21).
+            case BreakStatement bs -> false;
+            case ContinueStatement cs -> false;
             case Block b -> {
                 List<StatementNode> body = b.statements();
                 yield body.isEmpty()
@@ -5017,6 +5894,11 @@ public final class JvmBackend {
             // statements after it stay reachable) unless the condition is
             // constant-true — which the helper wrapper makes impossible.
             case WhileStatement ws -> true;
+            // JLS §14.21: a try statement can complete normally iff the
+            // try block can complete normally OR the catch block can.
+            case TryStatement ts ->
+                statementCompletesNormally(ts.tryBlock())
+                    || statementCompletesNormally(ts.catchBlock());
             // Every other statement kind the skeleton emits completes
             // normally; unsupported kinds are rejected with E6000 when
             // emission reaches them.
@@ -5134,11 +6016,19 @@ public final class JvmBackend {
      */
     private void emitForOf(ForOfStatement fos) {
         Type iterableType = typeOf(fos.iterable());
-        if (!(iterableType instanceof Type.String)) {
-            unsupported("for-of over arrays (this slice supports string "
-                + "for-of only)", fos.span());
+        if (iterableType instanceof Type.String) {
+            emitStringForOf(fos);
             return;
         }
+        if (iterableType instanceof Type.Array arr) {
+            emitArrayForOf(fos, arr);
+            return;
+        }
+        unsupported("for-of over " + typeName(iterableType)
+            + " (only arrays and strings iterate)", fos.span());
+    }
+
+    private void emitStringForOf(ForOfStatement fos) {
         String iterable = emitExpression(fos.iterable());
         int n = forOfCounter++;
         String iterVar = "__iter" + n;
@@ -5162,11 +6052,426 @@ public final class JvmBackend {
             + cpVar + "));");
         emitLine(idxVar + " += (long) java.lang.Character.charCount("
             + cpVar + ");");
-        emitScopedBlock(fos.body());
+        emitForOfLoopBody(fos, loopVar);
         localScopes.pop();
         localTypeScopes.pop();
         indent--;
         emitLine("}");
+    }
+
+    /**
+     * Array for-of (ISSUE-0102): iterates the array wrapper's storage
+     * in index order, one fresh binding per iteration (spec-v1.2
+     * §For-of — the loop variable is a fresh binding per iteration, so
+     * closures captured inside the body see per-iteration values). The
+     * iterated expression evaluates exactly once, before the loop; the
+     * per-iteration element read runs the element-typed checks the
+     * array read helpers carry (always in-bounds here, so no E8001 can
+     * occur — the helpers still raise E8002 on a negative index, which
+     * never happens for the 0-based scan).
+     */
+    private void emitArrayForOf(ForOfStatement fos, Type.Array arr) {
+        String iterable = emitExpression(fos.iterable());
+        String wrapper = arrayWrapperName(arr.element());
+        if (wrapper == null) {
+            javaArrayElementType(arr.element(), fos.span());
+            return;
+        }
+        Type element = arr.element();
+        int n = forOfCounter++;
+        String iterVar = "__iter" + n;
+        String idxVar = "__i" + n;
+        flushPreStatements();
+        emitLine(wrapper + " " + iterVar + " = " + iterable + ";");
+        emitLine("for (long " + idxVar + " = 0L; " + idxVar + " < (long) "
+            + iterVar + ".data.length; " + idxVar + "++) {");
+        indent++;
+        localScopes.push(new LinkedHashMap<>());
+        localTypeScopes.push(new LinkedHashMap<>());
+        String loopVar = declareLocal(fos.varName(),
+            resolveTypeNode(fos.varType()));
+        String read = arrayForOfReadHelper(element, fos.span());
+        if (read == null) {
+            // Unsupported element shape (an unsupported function
+            // signature or nested shape): E6000 recorded by the helper
+            // lookup; emit the inert placeholder so the artifact gate
+            // still sees a diagnostic-carrying (discarded) result.
+            read = "null";
+        }
+        String javaType = javaLocalType(element, fos.span());
+        emitLine((javaType == null ? "java.lang.Object" : javaType) + " "
+            + loopVar + " = " + read + "(" + iterVar + ", " + idxVar
+            + ");");
+        emitForOfLoopBody(fos, loopVar);
+        localScopes.pop();
+        localTypeScopes.pop();
+        indent--;
+        emitLine("}");
+    }
+
+    /**
+     * Body emission shared by the string and array for-of forms: a
+     * captured loop variable gets a per-iteration fresh cell declared
+     * before the body (closures created in this iteration capture THIS
+     * iteration's cell), and the loop's continue semantics stay plain
+     * Java (the update — {@code idxVar++} — lives in the for head).
+     */
+    private void emitForOfLoopBody(ForOfStatement fos, String loopVar) {
+        loopContinueLabels.addLast(null);
+        boolean captured = isCapturedMapped(loopVar);
+        if (captured) {
+            String cellType = javaLocalType(resolveTypeNode(fos.varType()),
+                fos.span());
+            localScopes.push(new LinkedHashMap<>());
+            localTypeScopes.push(new LinkedHashMap<>());
+            localScopes.peek().put(fos.varName(), loopVar + "$c[0]");
+            emitLine("final " + cellType + "[] " + loopVar + "$c = { "
+                + loopVar + " };");
+        }
+        emitScopedBlock(fos.body());
+        if (captured) {
+            localScopes.pop();
+            localTypeScopes.pop();
+        }
+        loopContinueLabels.removeLast();
+    }
+
+    /** The per-element read helper for an array for-of over element type
+     * {@code element}, or {@code null} (with E6000 recorded) for an
+     * unsupported element shape. Mirrors the emitIndexRead helper chain:
+     * function elements, nullable function elements, and nested-array
+     * elements route through {@link #refArrayReadHelper} (the per-shape
+     * {@code __fnRead$}/{@code __fnOrNullRead$}/{@code __nestedRead$}
+     * helpers with their E6000 diagnostics for unsupported signatures)
+     * — never the inert placeholder without a diagnostic. */
+    private String arrayForOfReadHelper(Type element, Span span) {
+        if (element instanceof Type.Nullable ne) {
+            String h = orNullArrayReadHelper(ne.inner());
+            if (h == null && ne.inner() instanceof Type.Class cls) {
+                h = classArrayHelper(cls, "readOrNull", span);
+            }
+            if (h == null && ne.inner() instanceof Type.Func) {
+                h = refArrayReadHelper(element, span);
+            }
+            return h;
+        }
+        if (element instanceof Type.Class cls) {
+            return classArrayHelper(cls, "read", span);
+        }
+        if (element instanceof Type.Array || element instanceof Type.Func) {
+            return refArrayReadHelper(element, span);
+        }
+        String h = arrayReadHelper(element);
+        if (h != null) return h;
+        javaArrayElementType(element, span);
+        return null;
+    }
+
+    /**
+     * C-style for loop (ISSUE-0102). The simple form — no hoisted
+     * side effects in the initializer, condition, or update — emits a
+     * plain Java {@code for (init; loopCond(cond); update)} whose
+     * {@code continue} semantics match DEAL natively (the update runs).
+     * The transformed form re-places the condition test and update
+     * inside a {@code while (true)} body with a labeled body block:
+     * a DEAL {@code continue} becomes {@code break <label>;} so it jumps
+     * past the body to the re-placed update exactly once. A captured
+     * loop variable (closure cells) is declared in the head and gets a
+     * FRESH cell per iteration inside the body (spec-v1.2 §For — each
+     * iteration creates a fresh binding for closures).
+     */
+    private void emitFor(ForStatement fs) {
+        localScopes.push(new LinkedHashMap<>());
+        localTypeScopes.push(new LinkedHashMap<>());
+        String initCode = null;
+        String loopVarDeal = null;
+        String loopVarPlain = null;
+        String loopVarJavaType = null;
+        if (fs.init().isPresent()) {
+            if (fs.init().get() instanceof ForInit.VarDecl vd) {
+                VariableDeclaration decl = vd.decl();
+                Type loopType = decl.typeAnnotation().isPresent()
+                    ? resolveTypeNode(decl.typeAnnotation().get())
+                    : typeOf(decl.initializer());
+                String javaType = javaLocalType(loopType, decl.span());
+                if (javaType == null) {
+                    localScopes.pop();
+                    localTypeScopes.pop();
+                    return;
+                }
+                loopVarDeal = decl.name();
+                loopVarJavaType = javaType;
+                loopVarPlain = declareLocal(decl.name(), loopType);
+                String initVal = emitTargeted(decl.initializer(),
+                    loopType, false);
+                if (needsBooleanBoundary(decl.initializer(), loopType)) {
+                    initVal = "booleanNotNull(" + initVal + ")";
+                }
+                initVal = coerceNullValueCode(initVal, decl.initializer(),
+                    javaType, decl.span());
+                initCode = javaType + " " + loopVarPlain + " = " + initVal;
+            } else if (fs.init().get() instanceof ForInit.AssignExpr ae) {
+                initCode = emitAssignmentCore(ae.expr());
+            }
+        }
+        int preAfterInit = preStatements.size();
+        // The loop HEADER reads the plain loop variable: a captured
+        // variable's per-iteration cell is declared inside the body, so
+        // the condition and update cannot reference it.
+        if (loopVarPlain != null) {
+            plainReadNames.add(loopVarPlain);
+        }
+        String condCode = "true";
+        if (fs.condition().isPresent()) {
+            condCode = emitExpression(fs.condition().get());
+            if (needsBooleanBoundary(fs.condition().get(),
+                    Type.Boolean.INSTANCE)) {
+                condCode = "booleanNotNull(" + condCode + ")";
+            }
+        }
+        int preAfterCond = preStatements.size();
+        String updateCode = null;
+        if (fs.update().isPresent()) {
+            ExpressionNode u = fs.update().get();
+            if (u instanceof AssignmentExpr ae) {
+                updateCode = emitAssignmentCore(ae);
+            } else {
+                updateCode = emitExpression(u);
+            }
+        }
+        if (loopVarPlain != null) {
+            plainReadNames.remove(loopVarPlain);
+        }
+        boolean hoisted = !preStatements.isEmpty();
+        boolean capturedLoopVar = loopVarPlain != null
+            && isCapturedMapped(loopVarPlain);
+        if (!hoisted && !capturedLoopVar) {
+            emitLine("for (" + (initCode == null ? "" : initCode)
+                + "; loopCond(" + condCode + "); "
+                + (updateCode == null ? "" : updateCode) + ") {");
+            indent++;
+            loopContinueLabels.addLast(null);
+            emitScopedBlock(fs.body());
+            loopContinueLabels.removeLast();
+            indent--;
+            emitLine("}");
+            localScopes.pop();
+            localTypeScopes.pop();
+            return;
+        }
+        if (!hoisted) {
+            // Captured loop variable only: the plain head keeps the
+            // shared Java variable; the body declares a fresh cell per
+            // iteration and re-binds the DEAL name to the cell inside
+            // the body scope (header reads stay on the plain variable).
+            emitLine("for (" + (initCode == null ? "" : initCode)
+                + "; loopCond(" + condCode + "); "
+                + (updateCode == null ? "" : updateCode) + ") {");
+            indent++;
+            loopContinueLabels.addLast(null);
+            emitCapturedLoopVarCell(fs.body(), loopVarDeal, loopVarPlain,
+                loopVarJavaType);
+            loopContinueLabels.removeLast();
+            indent--;
+            emitLine("}");
+            localScopes.pop();
+            localTypeScopes.pop();
+            return;
+        }
+        // Transformed form (hoisted side effects): pre-statements are
+        // flushed at their exact evaluation points — the initializer's
+        // before the init assignment, the condition's per iteration
+        // before the test, the update's per iteration before the update.
+        if (initCode != null) {
+            flushNPreStatements(preAfterInit);
+            emitLine(initCode + ";");
+        }
+        emitLine("while (true) {");
+        indent++;
+        flushNPreStatements(preAfterCond - preAfterInit);
+        emitLine("if (!loopCond(" + condCode + ")) { break; }");
+        String contLabel = "cont$" + loopLabelCounter++;
+        loopContinueLabels.addLast(contLabel);
+        emitLine(contLabel + ": {");
+        indent++;
+        if (capturedLoopVar) {
+            emitCapturedLoopVarCell(fs.body(), loopVarDeal, loopVarPlain,
+                loopVarJavaType);
+        } else {
+            emitScopedBlock(fs.body());
+        }
+        indent--;
+        emitLine("}");
+        loopContinueLabels.removeLast();
+        flushPreStatements();
+        if (updateCode != null) emitLine(updateCode + ";");
+        indent--;
+        emitLine("}");
+        localScopes.pop();
+        localTypeScopes.pop();
+    }
+
+    /** Body of a loop whose captured loop variable gets a per-iteration
+     * fresh cell (shared by the for and for-of emitters). */
+    private void emitCapturedLoopVarCell(Block body, String dealName,
+            String plainName, String javaType) {
+        localScopes.push(new LinkedHashMap<>());
+        localTypeScopes.push(new LinkedHashMap<>());
+        localScopes.peek().put(dealName, plainName + "$c[0]");
+        emitLine("final " + javaType + "[] " + plainName + "$c = { "
+            + plainName + " };");
+        emitScopedBlock(body);
+        localScopes.pop();
+        localTypeScopes.pop();
+    }
+
+    private void emitBreak(BreakStatement bs) {
+        // The checker rejects break outside a loop (E2000); the nearest
+        // emitted Java loop is always the nearest DEAL loop, in both the
+        // plain and transformed forms.
+        emitLine("break;");
+    }
+
+    private void emitContinue(ContinueStatement cs) {
+        String label = loopContinueLabels.peekLast();
+        if (label == null) {
+            emitLine("continue;");
+        } else {
+            // Transformed for form: jump past the body to the re-placed
+            // update (the label wraps the body block).
+            emitLine("break " + label + ";");
+        }
+    }
+
+    /**
+     * Throw (ISSUE-0102): an Error object literal reifies as the
+     * emitted {@code DealError} (code and message evaluated
+     * left-to-right in literal order); a throw of an existing Error
+     * value rethrows it unchanged (its code survives across catch
+     * boundaries). DEAL Error values map to {@code RuntimeException}
+     * (every emitted module's DealError extends it), so caught errors
+     * from ANY module unify in the catch clause.
+     */
+    private void emitThrow(ThrowStatement th) {
+        ExpressionNode e = th.expr();
+        if (e instanceof ObjectLiteralExpr ol) {
+            String errorCode = emitErrorLiteral(ol);
+            if (errorCode.equals("null")) {
+                return; // diagnostic recorded by emitErrorLiteral
+            }
+            flushPreStatements();
+            emitLine("throw " + errorCode + ";");
+            return;
+        }
+        String thrown = emitExpression(e);
+        flushPreStatements();
+        emitLine("throw (" + thrown + ");");
+    }
+
+    /**
+     * Try/catch (ISSUE-0102): the try block emits as a plain Java
+     * {@code try}; the catch binds the DEAL catch variable (typed
+     * {@code Error}) to {@code java.lang.RuntimeException}, so DEAL
+     * errors from any module — every emitted module declares its own
+     * nested DealError, and each extends RuntimeException — are caught.
+     * Error values crossing the catch never leak raw foreign exceptions
+     * out of DEAL code.
+     */
+    private void emitTry(TryStatement ts) {
+        emitLine("try {");
+        indent++;
+        emitScopedBlock(ts.tryBlock());
+        indent--;
+        // The catch variable is a fresh function-level binding whose
+        // Java name must be visible inside the catch block; declare it
+        // in a scope pushed before the catch clause text is emitted.
+        localScopes.push(new LinkedHashMap<>());
+        localTypeScopes.push(new LinkedHashMap<>());
+        String catchName = declareLocal(ts.catchVar(),
+            Types.classType("Error", ""));
+        emitLine("} catch (java.lang.RuntimeException " + catchName + ") {");
+        indent++;
+        // ISSUE-0102 closure capture: a catch variable captured by a
+        // nested function inside the catch block (collectLocalDeclarations
+        // declares it, so declareLocal registered the mapped name in the
+        // capture frame) lowers to a final cell at the top of the catch
+        // block, exactly like a captured local or parameter: reads and
+        // writes route through <name>$c[0] (localJavaName), the closure
+        // references the effectively-final cell array, and the catch
+        // parameter itself is never reassigned in Java — DEAL-level
+        // reassignment writes the cell, so LuaJIT's shared-upvalue
+        // semantics hold without a javac effectively-final rejection.
+        if (isCapturedMapped(catchName)) {
+            emitLine("final java.lang.RuntimeException[] " + catchName
+                + "$c = { " + catchName + " };");
+        }
+        emitScopedBlock(ts.catchBlock());
+        indent--;
+        localScopes.pop();
+        localTypeScopes.pop();
+        emitLine("}");
+    }
+
+    /**
+     * Delete (ISSUE-0102): a table field delete removes the key; a
+     * class optional-field delete clears the value and the presence
+     * flag. The receiver evaluates exactly once (materialized into a
+     * temporary when it is not a bare identifier read).
+     */
+    private void emitDelete(DeleteStatement ds) {
+        if (ds.target() instanceof MemberAccessExpr mae) {
+            Type objType = typeOf(mae.object());
+            if (objType instanceof Type.Table) {
+                String obj = emitExpression(mae.object());
+                flushPreStatements();
+                emitLine("(" + obj + ").remove("
+                    + quoteJavaString(mae.field()) + ");");
+                return;
+            }
+            if (objType instanceof Type.Class cls
+                    && !isBuiltinErrorType(cls)) {
+                String f = javaName(mae.field());
+                String javaType = javaLocalType(objType, ds.span());
+                String obj = emitExpression(mae.object());
+                if (!isPureAfterEmission(mae.object())) {
+                    // The receiver is referenced twice (value clear +
+                    // presence clear): materialize a side-effecting
+                    // receiver so it evaluates exactly once, before both
+                    // stores (spec §Operational semantics rule 1).
+                    String temp = nextEvalTempName();
+                    preStatements.add(new PreLine(
+                        javaType + " " + temp + " = (" + javaType + ") "
+                            + obj + ";", 0));
+                    preStatementsDeclareTemps = true;
+                    obj = temp;
+                }
+                flushPreStatements();
+                emitLine("((" + javaType + ") " + obj + ")." + f
+                    + " = null;");
+                emitLine("((" + javaType + ") " + obj + ")." + f
+                    + "$present = false;");
+                return;
+            }
+            unsupported("delete of " + typeName(objType)
+                + " members", ds.span());
+            return;
+        }
+        if (ds.target() instanceof IndexExpr idx
+                && typeOf(idx.array()) instanceof Type.Table) {
+            List<String> codes = emitOperandsInOrder(
+                List.of(idx.array(), idx.index()));
+            flushPreStatements();
+            emitLine("$tRemove(" + codes.get(0) + ", " + codes.get(1)
+                + ");");
+            return;
+        }
+        unsupported("delete of this target shape", ds.span());
+    }
+
+    /** True when {@code c} is the builtin {@code Error} class type (the
+     * checker types throw/catch values as {@code @/Error}). */
+    private static boolean isBuiltinErrorType(Type.Class c) {
+        return "Error".equals(c.name()) && c.modulePath().isEmpty();
     }
 
     private void emitWhile(WhileStatement ws) {
@@ -5183,7 +6488,14 @@ public final class JvmBackend {
             // unreachable (LuaJIT accepts it and skips the body).
             emitLine("while (loopCond(" + condition + ")) {");
             indent++;
+            // A DEAL continue inside the body targets THIS while (the
+            // nearest enclosing loop), never an enclosing transformed
+            // for's re-placed-update label: the null frame makes
+            // emitContinue emit plain `continue;`, which Java resolves
+            // to the nearest Java loop — the while.
+            loopContinueLabels.addLast(null);
             emitScopedBlock(ws.body());
+            loopContinueLabels.removeLast();
             indent--;
             emitLine("}");
             return;
@@ -5200,7 +6512,14 @@ public final class JvmBackend {
         indent++;
         flushPreStatements();
         emitLine("if (!loopCond(" + condition + ")) { break; }");
+        // Same continue-target guard as the plain form: `continue;`
+        // re-enters the `while (true)` head, which re-runs the hoisted
+        // per-iteration pre-statements and the condition test — exactly
+        // LuaJIT's re-evaluation — regardless of an enclosing
+        // transformed for label below the frame.
+        loopContinueLabels.addLast(null);
         emitScopedBlock(ws.body());
+        loopContinueLabels.removeLast();
         indent--;
         emitLine("}");
     }
@@ -5362,14 +6681,8 @@ public final class JvmBackend {
             case IndexExpr idx -> emitIndexRead(idx, null);
             case ArrayLiteralExpr al -> emitArrayLiteral(al);
             case ObjectLiteralExpr ol -> emitObjectLiteral(ol);
-            case FunctionExpr fe -> {
-                unsupported("function expressions", fe.span());
-                yield "null";
-            }
-            case HasExpr he -> {
-                unsupported("has()", he.span());
-                yield "false";
-            }
+            case FunctionExpr fe -> emitFunctionExpr(fe);
+            case HasExpr he -> emitHas(he);
             case TemplateLiteralExpr tl -> emitTemplateLiteral(tl);
             case AwaitExpression aw -> {
                 // ISSUE-0100 blocking await lowering, extended by
@@ -5437,6 +6750,9 @@ public final class JvmBackend {
      * slice (E6000). */
     private String emitObjectLiteral(ObjectLiteralExpr ol) {
         Type t = typeOf(ol);
+        if (t instanceof Type.Class cls && isBuiltinErrorType(cls)) {
+            return emitErrorLiteral(ol);
+        }
         if (t instanceof Type.Class cls) {
             return emitClassConstruction(cls, ol);
         }
@@ -5463,6 +6779,33 @@ public final class JvmBackend {
      * defensive branch only ever fires for a program the checker already
      * rejected.
      */
+    /** Emits a builtin Error object literal as a DealError construction
+     * (ISSUE-0102): the code and message values evaluate left-to-right
+     * in literal order, exactly where LuaJIT evaluates the literal's
+     * fields. */
+    private String emitErrorLiteral(ObjectLiteralExpr ol) {
+        List<ExpressionNode> values = new ArrayList<>();
+        for (Property prop : ol.properties()) {
+            values.add(prop.value());
+        }
+        List<String> codes = emitOperandsInOrder(values);
+        String codeCode = null;
+        String messageCode = null;
+        for (int i = 0; i < ol.properties().size(); i++) {
+            if (ol.properties().get(i).name().equals("code")) {
+                codeCode = codes.get(i);
+            } else if (ol.properties().get(i).name().equals("message")) {
+                messageCode = codes.get(i);
+            }
+        }
+        if (codeCode == null || messageCode == null) {
+            unsupported("Error literal without both code and message "
+                + "fields", ol.span());
+            return "null";
+        }
+        return "new DealError(" + codeCode + ", " + messageCode + ")";
+    }
+
     private String emitClassConstruction(Type.Class cls, ObjectLiteralExpr obj) {
         // Locality is decided from the Type.Class MODULE PATH, then the
         // name-keyed lookup — a same-named local class must not satisfy
@@ -5678,7 +7021,14 @@ public final class JvmBackend {
                 // constants and emit standalone.)
                 code = "booleanNotNull(" + code + ")";
             }
-            if (code == null) {
+            boolean optional = cf.optional();
+            boolean presence = provided.containsKey(cf.name())
+                || cf.defaultExpr().isPresent();
+            if (code == null && optional && !presence) {
+                // A missing optional field constructs as the DEAL null,
+                // not present (has() is false, reads yield null).
+                code = "null";
+            } else if (code == null) {
                 // Checker-guaranteed unreachable (E4001 missing required
                 // field); defensive E6000 keeps the artifact contract.
                 unsupported("construction omitting the required-present field '"
@@ -5693,6 +7043,9 @@ public final class JvmBackend {
                     valueNode.span());
             }
             args.add(code);
+            if (cf.optional()) {
+                args.add(presence ? "true" : "false");
+            }
         }
         return "new " + ctorExpr + "(" + String.join(", ", args) + ")";
     }
@@ -5725,7 +7078,7 @@ public final class JvmBackend {
         List<ExpressionNode> valueNodes = new ArrayList<>();
         for (Property prop : ol.properties()) valueNodes.add(prop.value());
         List<String> codes = emitOperandsInOrder(valueNodes);
-        StringBuilder sb = new StringBuilder("new $T()");
+        StringBuilder sb = new StringBuilder("new $DealRt.Table()");
         for (int i = 0; i < ol.properties().size(); i++) {
             sb.append(".put(")
                 .append(quoteJavaString(ol.properties().get(i).name()))
@@ -5768,7 +7121,25 @@ public final class JvmBackend {
     private String localJavaName(String name) {
         for (Map<String, String> scope : localScopes) {
             String mapped = scope.get(name);
-            if (mapped != null) return mapped;
+            if (mapped != null) {
+                if (plainReadNames.contains(mapped)) {
+                    // The loop HEADER reads the plain variable; its
+                    // per-iteration cell is declared inside the body.
+                    return mapped;
+                }
+                // ISSUE-0102 closure capture: a cell-ified binding reads
+                // (and, through the same string, writes) its cell's
+                // element — <mapped>$c[0]. The cell array declaration
+                // happens at the binding's declaration site
+                // (emitVariable/emitFunction's parameter cells), so the
+                // element access is always in scope.
+                for (Set<String> frame : capturedMappedStack) {
+                    if (frame.contains(mapped)) {
+                        return mapped + "$c[0]";
+                    }
+                }
+                return mapped;
+            }
         }
         return null;
     }
@@ -5800,6 +7171,13 @@ public final class JvmBackend {
         }
         localScopes.peek().put(name, mapped);
         localTypeScopes.peek().put(name, declaredType);
+        // ISSUE-0102 closure capture: a binding captured by a nested
+        // function lowers to a cell. Register the MAPPED name (unique per
+        // binding, so shadowed siblings never share a cell).
+        if (!capturedNamesStack.isEmpty()
+                && capturedNamesStack.peek().contains(name)) {
+            capturedMappedStack.peek().add(mapped);
+        }
         // Parameters and function-body top-level lets share ONE scope map,
         // so this put() can overwrite an earlier mapping of the same DEAL
         // name (the parameter's). The overwritten emitted name is still in
@@ -6038,7 +7416,8 @@ public final class JvmBackend {
             // array wrappers and class instances are the same shape there),
             // exactly like the Lua backend's plain `(a == b)` fallthrough.
             if (leftType instanceof Type.Array
-                    || leftType instanceof Type.Class) {
+                    || leftType instanceof Type.Class
+                    || leftType instanceof Type.Table) {
                 List<String> idOps = emitOperandsInOrder(
                     List.of(bin.left(), bin.right()));
                 return op == BinaryOp.EQ
@@ -7506,6 +8885,19 @@ public final class JvmBackend {
         if ("std/time".equals(module)) {
             return emitStdlibTimeMemberCall(mae, call);
         }
+        if ("std/table".equals(module)) {
+            // ISSUE-0102: std/table.keys(t) — the JVM backend now maps
+            // tables as first-class values, so the module's only export
+            // (keys(t): string[]) executes with the LuaJIT reference
+            // semantics (insertion-order string keys).
+            if ("keys".equals(mae.field())) {
+                List<String> argCodes = emitOperandsInOrder(call.args());
+                return "__tableKeys(" + argCodes.get(0) + ")";
+            }
+            unsupported("export '" + mae.field() + "' of std/table",
+                mae.span());
+            return "null";
+        }
         // Project-module import (ISSUE-0096): a static call on the imported
         // module's emitted class. The checker has already verified the
         // export exists (E2004) and typed the member as the exported
@@ -7681,11 +9073,60 @@ public final class JvmBackend {
      * runtime nominal check runs (see {@link #emitTableRead}). Everything
      * else is E6000.
      */
+    /**
+     * Table field write (ISSUE-0102): {@code $tPut(<obj>, "f",
+     * <boxed value>)} with the receiver and value evaluated
+     * left-to-right. Values box to the table's Object storage (Long /
+     * Double / Boolean for the numeric primitives, plain references
+     * otherwise — null-typed values store Java null, the DEAL null);
+     * the generic return keeps the assignment's DEAL value, and the
+     * unbox suffix restores the primitive Java type the assignment
+     * expression carries in value positions.
+     */
+    private String emitTableWrite(MemberAccessExpr mae, ExpressionNode value) {
+        Type valueType = typeOf(value);
+        List<String> codes = emitOperandsInOrder(
+            List.of(mae.object(), value));
+        String boxed = switch (valueType) {
+            case Type.Int ignored ->
+                "java.lang.Long.valueOf(" + codes.get(1) + ")";
+            case Type.Number ignored ->
+                "java.lang.Double.valueOf(" + codes.get(1) + ")";
+            case Type.Boolean ignored ->
+                "java.lang.Boolean.valueOf(" + codes.get(1) + ")";
+            case Type.Null ignored -> "(java.lang.Object) null";
+            default -> codes.get(1);
+        };
+        String unbox = switch (valueType) {
+            case Type.Int ignored -> ".longValue()";
+            case Type.Number ignored -> ".doubleValue()";
+            case Type.Boolean ignored -> ".booleanValue()";
+            default -> "";
+        };
+        return "$tPut(" + codes.get(0) + ", "
+            + quoteJavaString(mae.field()) + ", " + boxed + ")" + unbox;
+    }
+
     private String emitMemberAccessValue(MemberAccessExpr mae) {
         Type objType = typeOf(mae.object());
         if (objType instanceof Type.Array && "length".equals(mae.field())) {
             String obj = emitExpression(mae.object());
             return "((long) " + obj + ".data.length)";
+        }
+        if (objType instanceof Type.Class cls && isBuiltinErrorType(cls)) {
+            // ISSUE-0102: Error values are RuntimeExceptions from
+            // arbitrary emitted modules; .code dispatches through the
+            // reflective unwrap (the same shape the runner's reportError
+            // uses) and .message reads getMessage().
+            String obj = emitExpression(mae.object());
+            if ("code".equals(mae.field())) {
+                return "__errorCode(" + obj + ")";
+            }
+            if ("message".equals(mae.field())) {
+                return "(" + obj + ").getMessage()";
+            }
+            unsupported("Error member other than code/message", mae.span());
+            return "null";
         }
         if (objType instanceof Type.Class) {
             String obj = emitExpression(mae.object());
@@ -7755,16 +9196,13 @@ public final class JvmBackend {
             // the element-typed E8001.
             String nilHelper = null;
             if (element instanceof Type.Class cls) {
-                // Only a LOCAL class has the per-class nullable read
-                // helper in this artifact; an imported class falls
-                // through to the element-typed chain below, which
-                // records the E6000 (imported class arrays stay out of
-                // slice) — never an unqualified helper javac would
-                // reject.
-                if (isLocalClassType(cls)
-                        && moduleClasses.containsKey(cls.name())) {
-                    nilHelper = classOrNullArrayReadName(cls.name());
-                }
+                // A local class uses the per-class nullable read helper
+                // in this artifact; an imported class (ISSUE-0109)
+                // dispatches on the DECLARING module's helper
+                // (Lib.$readOrNull$C) — never an unqualified helper
+                // javac would reject.
+                nilHelper = classArrayHelper(cls, "readOrNull",
+                    idx.span());
             } else {
                 nilHelper = boxedArrayReadHelper(element);
             }
@@ -7783,16 +9221,22 @@ public final class JvmBackend {
             // past the end (a valid nullable element — LuaJIT's nil, no
             // boundary failure at the read); a negative index still
             // raises E8002. Nullable class elements use the per-class
-            // helper with the nominal check.
+            // helper with the nominal check; nullable function elements
+            // use the per-signature helper.
             helper = orNullArrayReadHelper(ne.inner());
-            if (helper == null && ne.inner() instanceof Type.Class cls
-                    && localClassJavaType(cls, idx.span()) != null) {
-                helper = classOrNullArrayReadName(cls.name());
+            if (helper == null && ne.inner() instanceof Type.Class cls) {
+                helper = classArrayHelper(cls, "readOrNull", idx.span());
+            }
+            if (helper == null && ne.inner() instanceof Type.Func) {
+                helper = refArrayReadHelper(element, idx.span());
             }
         } else if (element instanceof Type.Class cls) {
-            if (localClassJavaType(cls, idx.span()) != null) {
-                helper = classArrayReadName(cls.name());
-            }
+            helper = classArrayHelper(cls, "read", idx.span());
+        } else if (element instanceof Type.Array
+                || element instanceof Type.Func
+                || (element instanceof Type.Nullable ne
+                    && ne.inner() instanceof Type.Func)) {
+            helper = refArrayReadHelper(element, idx.span());
         } else {
             helper = arrayReadHelper(element);
         }
@@ -8271,7 +9715,37 @@ public final class JvmBackend {
                 + get + "))";
         }
         if (target instanceof Type.Table) {
-            return "(($T) $check(\"table\", " + get + "))";
+            return "(($DealRt.Table) $check(\"table\", " + get + "))";
+        }
+        if (target instanceof Type.Int) {
+            // ISSUE-0102: primitive table reads route through the
+            // descriptor-driven seam — a Long passes (checked against
+            // the int safe range), an integral in-range Double
+            // converts, anything else raises E8001.
+            return "((java.lang.Long) $check(\"int\", " + get
+                + ")).longValue()";
+        }
+        if (target instanceof Type.Number) {
+            return "((java.lang.Double) $check(\"number\", " + get
+                + ")).doubleValue()";
+        }
+        if (target instanceof Type.Boolean) {
+            return "((java.lang.Boolean) $check(\"boolean\", " + get
+                + ")).booleanValue()";
+        }
+        if (target instanceof Type.Func f) {
+            // ISSUE-0102: a function-typed table read checks the stored
+            // wrapper's runtime descriptor through the shared seam's
+            // function branch ($FnValue) — a non-function or
+            // wrong-signature value raises E8001.
+            String shape = registerWrapperShape(f);
+            if (shape == null) {
+                unsupported("table field reads with target type "
+                    + typeName(target), mae.span());
+                return "null";
+            }
+            return "((" + shape + ") $check("
+                + quoteJavaString(typeDescriptor(f)) + ", " + get + "))";
         }
         if (target instanceof Type.String) {
             // ISSUE-0106 (v1.2 boundary string validation): a string
@@ -8345,6 +9819,25 @@ public final class JvmBackend {
             + " (this slice checks class, nullable, array, and table "
             + "targets only)", mae.span());
         return "null";
+    }
+
+    /**
+     * has() (ISSUE-0102): reads the optional class field's presence
+     * flag. The checker restricts has() to optional class fields
+     * (E4005), so the flag always exists in the generated class.
+     */
+    private String emitHas(HasExpr he) {
+        Type objType = typeOf(he.object());
+        if (objType instanceof Type.Class cls
+                && !isBuiltinErrorType(cls)) {
+            String obj = emitExpression(he.object());
+            String javaType = javaLocalType(objType, he.span());
+            if (javaType == null) return "false";
+            return "((" + javaType + ") " + obj + ")."
+                + javaName(he.field()) + "$present";
+        }
+        unsupported("has() on a non-class optional field", he.span());
+        return "false";
     }
 
     private String emitIntrinsicCall(String name, CallExpr call) {
@@ -8469,13 +9962,24 @@ public final class JvmBackend {
                 // the E6000.
                 if (indexType instanceof Type.Nullable ne) {
                     writeHelper = orNullArrayWriteHelper(ne.inner());
-                    if (writeHelper == null && ne.inner() instanceof Type.Class cls
-                            && localClassJavaType(cls, ae.span()) != null) {
-                        writeHelper = classOrNullArrayWriteName(cls.name());
+                    if (writeHelper == null
+                            && ne.inner() instanceof Type.Class cls) {
+                        writeHelper = classArrayHelper(cls, "writeOrNull",
+                            ae.span());
                     }
-                } else if (indexType instanceof Type.Class cls
-                        && localClassJavaType(cls, ae.span()) != null) {
-                    writeHelper = classArrayWriteName(cls.name());
+                    if (writeHelper == null
+                            && ne.inner() instanceof Type.Func) {
+                        writeHelper = refArrayWriteHelper(indexType,
+                            ae.span());
+                    }
+                } else if (indexType instanceof Type.Class cls) {
+                    writeHelper = classArrayHelper(cls, "write",
+                        ae.span());
+                } else if (indexType instanceof Type.Array
+                        || indexType instanceof Type.Func
+                        || (indexType instanceof Type.Nullable ne
+                            && ne.inner() instanceof Type.Func)) {
+                    writeHelper = refArrayWriteHelper(indexType, ae.span());
                 }
             }
             if (writeHelper == null) {
@@ -8509,6 +10013,16 @@ public final class JvmBackend {
         }
         if (ae.target() instanceof MemberAccessExpr mae) {
             Type objType = typeOf(mae.object());
+            if (objType instanceof Type.Table) {
+                // ISSUE-0102 table field write: the receiver and the
+                // value evaluate left-to-right before the store (spec
+                // §Operational semantics rule 1), the stored value
+                // boxes to the table's Object storage, and the
+                // expression keeps its DEAL value in value positions
+                // (the generic $tPut returns the stored value; the
+                // unbox suffix restores the primitive Java type).
+                return emitTableWrite(mae, ae.value());
+            }
             if (objType instanceof Type.Class) {
                 // A declared class field write (spec-v1.2 §Class assignment
                 // semantics): the checker guarantees the field is declared
@@ -8546,6 +10060,32 @@ public final class JvmBackend {
                     value = coerceNullValueCode(value, ae.value(),
                         fieldJava, ae.span());
                 }
+                // ISSUE-0102: an optional field write also sets the
+                // presence flag — routed through the per-class generic
+                // helper so the assignment keeps its DEAL value in value
+                // positions (the helper returns the stored value).
+                Type.Class cls = (Type.Class) objType;
+                ClassDeclaration cd = moduleClasses.get(cls.name());
+                if (cd != null) {
+                    for (ClassField cf : cd.fields()) {
+                        if (cf.optional() && cf.name().equals(mae.field())) {
+                            return "__optSet$" + classNameForClass(cd.name())
+                                + "$" + javaName(cf.name()) + "("
+                                + codes.get(0) + ", " + value + ")";
+                        }
+                    }
+                } else if (!isBuiltinErrorType(cls)) {
+                    Map<String, ClassDeclaration> decls =
+                        importedClasses.get(cls.modulePath());
+                    ClassDeclaration icd = decls == null ? null
+                        : decls.get(cls.name());
+                    if (icd != null
+                            && hasOptionalField(icd, mae.field())) {
+                        unsupported("optional field writes on imported class '"
+                            + cls.name() + "'", ae.span());
+                        return "null";
+                    }
+                }
                 return "(" + codes.get(0) + ")." + javaName(mae.field())
                     + " = " + value;
             }
@@ -8569,7 +10109,24 @@ public final class JvmBackend {
             // field's type node; the resolved type is already Nullable(T).
             if (!(t instanceof Type.Nullable)) return null;
         }
+        if (cf.optional() && !(t instanceof Type.Nullable)) {
+            // ISSUE-0102: an optional field reads as its declared type |
+            // null (the checker wraps the read); the Java field holds the
+            // boxed/nullable reference.
+            return new Type.Nullable(t);
+        }
         return t;
+    }
+
+    /** True when the class declaration {@code cd} declares an optional
+     * field named {@code field} — consulted for the imported-class
+     * optional-write guard. */
+    private static boolean hasOptionalField(ClassDeclaration cd,
+            String field) {
+        for (ClassField cf : cd.fields()) {
+            if (cf.optional() && cf.name().equals(field)) return true;
+        }
+        return false;
     }
 
     /** The declared type of a local class's field, or {@code null} when
@@ -8784,6 +10341,12 @@ public final class JvmBackend {
                             && moduleClasses.containsKey(nt.name())) {
                         yield new Type.Class(nt.name(), modulePath);
                     }
+                    if ("Error".equals(nt.name())
+                            && sym instanceof Symbol.ClassSymbol) {
+                        // ISSUE-0102: the builtin Error class type maps
+                        // to RuntimeException (see javaLocalType).
+                        yield new Type.Class("Error", "");
+                    }
                     unsupported("type '" + nt.name() + "' (only local classes "
                         + "are supported)", nt.span());
                     yield Type.Error.INSTANCE;
@@ -8885,13 +10448,23 @@ public final class JvmBackend {
         };
     }
 
-    /** True for the primitive/string/null types a function signature may
-     * contain in this slice (arrays, classes, nullables, and nested
-     * function types are deferred to ISSUE-0110). */
+    /** True for the types a function signature may contain in this
+     * slice (primitives/string/null and — ISSUE-0102 — nested function
+     * types recursively; arrays, classes, and nullables stay deferred
+     * to ISSUE-0110). */
     private static boolean isFunctionSignatureType(Type t) {
-        return t instanceof Type.Int || t instanceof Type.Number
-            || t instanceof Type.Boolean || t instanceof Type.String
-            || t instanceof Type.Null;
+        if (t instanceof Type.Int || t instanceof Type.Number
+                || t instanceof Type.Boolean || t instanceof Type.String
+                || t instanceof Type.Null) {
+            return true;
+        }
+        if (t instanceof Type.Func f) {
+            for (Type p : f.paramTypes()) {
+                if (!isFunctionSignatureType(p)) return false;
+            }
+            return isFunctionSignatureType(f.returnType());
+        }
+        return false;
     }
 
     /** Java type for a local/parameter/field. {@code null} when unsupported. */
@@ -8908,8 +10481,17 @@ public final class JvmBackend {
                 }
                 yield arrayWrapperName(a.element());
             }
-            case Type.Table ignored -> "$T";
+            case Type.Table ignored -> "$DealRt.Table";
             case Type.Class c -> {
+                // ISSUE-0102: the builtin Error class maps to
+                // java.lang.RuntimeException — every emitted module's
+                // nested DealError extends it, so Error values thrown,
+                // caught, returned, and stored unify across module
+                // boundaries. code/message reads dispatch through the
+                // reflection/accessor helpers in emitMemberAccessValue.
+                if (isBuiltinErrorType(c)) {
+                    yield "java.lang.RuntimeException";
+                }
                 // Locality is decided from the Type.Class MODULE PATH —
                 // a same-named local class must not satisfy the guard
                 // for a foreign path (lib.C would then be declared as
@@ -9018,6 +10600,18 @@ public final class JvmBackend {
                 unsupported("nullable type 'null | null'", span);
                 yield null;
             }
+            case Type.Func f -> {
+                // ISSUE-0102: a nullable function value holds the
+                // wrapper reference (Java null is the DEAL null).
+                String shape = fnShapeName(f);
+                if (shape == null) {
+                    unsupported("function values whose signature contains "
+                        + "arrays/classes/nullables/nested functions "
+                        + "(deferred to ISSUE-0110)", span);
+                    yield null;
+                }
+                yield registerWrapperShape(f);
+            }
             default -> {
                 unsupported("values of type " + typeName(inner) + " | null"
                     + " (only primitive, local class, and supported array"
@@ -9056,6 +10650,17 @@ public final class JvmBackend {
                     if (localClassJavaType(c, span) == null) yield null;
                     yield "java.lang.Object";
                 }
+                case Type.Func f -> {
+                    // ISSUE-0102: nullable function elements — Object
+                    // storage; null is the DEAL null element.
+                    if (fnShapeName(f) == null) {
+                        unsupported("function arrays whose signature "
+                            + "contains arrays/classes/nullables/nested "
+                            + "functions (deferred to ISSUE-0110)", span);
+                        yield null;
+                    }
+                    yield "java.lang.Object";
+                }
                 default -> {
                     unsupported("arrays with element type "
                         + typeName(element)
@@ -9066,7 +10671,32 @@ public final class JvmBackend {
                 }
             };
             case Type.Class c -> {
-                if (localClassJavaType(c, span) == null) yield null;
+                if (isLocalClassType(c)) {
+                    if (localClassJavaType(c, span) == null) yield null;
+                } else {
+                    if (importedClassModuleRef(c, span) == null) yield null;
+                }
+                yield "java.lang.Object";
+            }
+            case Type.Array inner -> {
+                // ISSUE-0102 nested arrays: Object storage; the
+                // per-element-shape helpers check each element.
+                if (arrayWrapperName(inner) == null) {
+                    unsupported("nested arrays with element type "
+                        + typeName(element), span);
+                    yield null;
+                }
+                yield "java.lang.Object";
+            }
+            case Type.Func f -> {
+                // ISSUE-0102 function arrays: Object storage; the
+                // per-signature helpers check each element.
+                if (fnShapeName(f) == null) {
+                    unsupported("function arrays whose signature contains "
+                        + "arrays/classes/nullables/nested functions "
+                        + "(deferred to ISSUE-0110)", span);
+                    yield null;
+                }
                 yield "java.lang.Object";
             }
             default -> {
@@ -9097,9 +10727,18 @@ public final class JvmBackend {
                 case Type.String ignored -> "__StringOrNullArray";
                 case Type.Boolean ignored -> "__BooleanOrNullArray";
                 case Type.Class c -> classOrNullArrayWrapperName(c.name());
+                case Type.Func f -> "__RefArray";
                 default -> null;
             };
-            case Type.Class c -> classArrayWrapperName(c.name());
+            case Type.Class c -> isLocalClassType(c)
+                ? classArrayWrapperName(c.name())
+                : importedArrayWrapperName(c);
+            // ISSUE-0102: nested arrays (T[][]) and function arrays
+            // ((...)=>T []) share the Object-storage __RefArray
+            // wrapper; reads/writes route through the per-element-shape
+            // helpers below, whose runtime checks prove every element.
+            case Type.Array inner -> "__RefArray";
+            case Type.Func f -> "__RefArray";
             default -> null;
         };
     }
@@ -9219,6 +10858,215 @@ public final class JvmBackend {
         };
     }
 
+    // =========================================================================
+    // Nested-array and function-array helpers (ISSUE-0102)
+    // =========================================================================
+
+    /**
+     * Per-shape helper text for nested arrays and function arrays,
+     * accumulated on demand and spliced with the wrapper classes at
+     * class-body level. Every helper name starts with {@code __} and is
+     * keyed by the inner wrapper/signature name, both unreachable from
+     * {@link #javaName}.
+     */
+    private final StringBuilder arrayHelpers = new StringBuilder();
+    private final Set<String> emittedArrayHelpers = new LinkedHashSet<>();
+
+    /** Read-helper name for a nested-array or function-array element
+     * type, or {@code null} (with E6000 recorded) for any other shape.
+     * The helper carries the bounds checks and the per-element runtime
+     * proof. */
+    private String refArrayReadHelper(Type element, Span span) {
+        if (element instanceof Type.Array inner) {
+            Type innerElem = inner.element();
+            String innerWrapper = arrayWrapperName(innerElem);
+            if (innerWrapper == null
+                    || !(innerElem instanceof Type.Int
+                        || innerElem instanceof Type.Number
+                        || innerElem instanceof Type.String
+                        || innerElem instanceof Type.Boolean)) {
+                unsupported("nested arrays with element type "
+                    + typeName(innerElem), span);
+                return null;
+            }
+            String key = "nestedarr$" + innerWrapper;
+            if (emittedArrayHelpers.add(key)) {
+                emitNestedArrayHelpers(innerElem, innerWrapper);
+            }
+            return "__nestedRead$" + innerWrapper;
+        }
+        if (element instanceof Type.Nullable ne
+                && ne.inner() instanceof Type.Func f) {
+            String shape = fnShapeName(f);
+            if (shape == null) {
+                unsupported("function arrays whose signature contains "
+                    + "arrays/classes/nullables/nested functions "
+                    + "(deferred to ISSUE-0110)", span);
+                return null;
+            }
+            registerWrapperShape(f);
+            String key = "fnarr$" + shape;
+            if (emittedArrayHelpers.add(key)) {
+                emitFnArrayHelpers(f, shape, true);
+            }
+            return "__fnOrNullRead$" + shape;
+        }
+        if (element instanceof Type.Func f) {
+            String shape = fnShapeName(f);
+            if (shape == null) {
+                unsupported("function arrays whose signature contains "
+                    + "arrays/classes/nullables/nested functions "
+                    + "(deferred to ISSUE-0110)", span);
+                return null;
+            }
+            registerWrapperShape(f);
+            String key = "fnarr$" + shape;
+            if (emittedArrayHelpers.add(key)) {
+                emitFnArrayHelpers(f, shape, false);
+            }
+            return "__fnRead$" + shape;
+        }
+        return null;
+    }
+
+    /** Write-helper name for a nested-array or function-array element
+     * type, or {@code null} (with E6000 recorded) for any other shape. */
+    private String refArrayWriteHelper(Type element, Span span) {
+        if (element instanceof Type.Array inner) {
+            Type innerElem = inner.element();
+            String innerWrapper = arrayWrapperName(innerElem);
+            if (innerWrapper == null
+                    || !(innerElem instanceof Type.Int
+                        || innerElem instanceof Type.Number
+                        || innerElem instanceof Type.String
+                        || innerElem instanceof Type.Boolean)) {
+                unsupported("nested arrays with element type "
+                    + typeName(innerElem), span);
+                return null;
+            }
+            String key = "nestedarr$" + innerWrapper;
+            if (emittedArrayHelpers.add(key)) {
+                emitNestedArrayHelpers(innerElem, innerWrapper);
+            }
+            return "__nestedWrite$" + innerWrapper;
+        }
+        if (element instanceof Type.Nullable ne
+                && ne.inner() instanceof Type.Func f) {
+            String shape = fnShapeName(f);
+            if (shape == null) {
+                unsupported("function arrays whose signature contains "
+                    + "arrays/classes/nullables/nested functions "
+                    + "(deferred to ISSUE-0110)", span);
+                return null;
+            }
+            registerWrapperShape(f);
+            String key = "fnarr$" + shape;
+            if (emittedArrayHelpers.add(key)) {
+                emitFnArrayHelpers(f, shape, true);
+            }
+            return "__fnOrNullWrite$" + shape;
+        }
+        if (element instanceof Type.Func f) {
+            String shape = fnShapeName(f);
+            if (shape == null) {
+                unsupported("function arrays whose signature contains "
+                    + "arrays/classes/nullables/nested functions "
+                    + "(deferred to ISSUE-0110)", span);
+                return null;
+            }
+            registerWrapperShape(f);
+            String key = "fnarr$" + shape;
+            if (emittedArrayHelpers.add(key)) {
+                emitFnArrayHelpers(f, shape, false);
+            }
+            return "__fnWrite$" + shape;
+        }
+        return null;
+    }
+
+    /** Emits the read/write helper pair for a nested primitive array
+     * ({@code int[][]} etc.): bounds checks (E8002 negative / past-end
+     * append rule), the per-element wrapper proof (E8003 on a wrong
+     * element shape, mirroring LuaJIT's check_array element mismatch),
+     * and the in-place grow-on-append storage. */
+    private void emitNestedArrayHelpers(Type inner, String innerWrapper) {
+        String desc = "[" + typeDescriptor(inner) + "]";
+        StringBuilder body = new StringBuilder();
+        body.append("// nested array ").append(desc)
+            .append(" element helpers (ISSUE-0102)\n");
+        body.append("static ").append(innerWrapper)
+            .append(" __nestedRead$").append(innerWrapper)
+            .append("(__RefArray a, long i) {\n");
+        body.append("    if (i < 0L) throw new DealError(\"E8002\", \"negative array index\");\n");
+        body.append("    if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected ").append(desc).append(", got null\");\n");
+        body.append("    return (").append(innerWrapper)
+            .append(") a.data[(int) i];\n");
+        body.append("}\n");
+        body.append("static ").append(innerWrapper)
+            .append(" __nestedWrite$").append(innerWrapper)
+            .append("(__RefArray a, long i, java.lang.Object v) {\n");
+        body.append("    if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\");\n");
+        body.append("    if (!(v instanceof ").append(innerWrapper)
+            .append(")) throw new DealError(\"E8003\", \"array element type mismatch: expected ").append(desc).append("\");\n");
+        body.append("    if (i == (long) a.data.length) { java.lang.Object[] nd = new java.lang.Object[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; }\n");
+        body.append("    return (").append(innerWrapper).append(") v;\n");
+        body.append("}\n");
+        for (String line : body.toString().split("\n", -1)) {
+            if (line.isEmpty()) continue;
+            arrayHelpers.append("    ").append(line).append('\n');
+        }
+    }
+
+    /** Emits the read/write helper pair for a function array element
+     * signature ({@code orNull} accepts the DEAL null element). Reads
+     * and writes prove the wrapper signature; the descriptor spelling
+     * matches the wrapper's runtime descriptor. */
+    private void emitFnArrayHelpers(Type.Func f, String shape,
+            boolean orNull) {
+        String desc = fnDescriptor(f);
+        StringBuilder body = new StringBuilder();
+        body.append("// function array ").append(desc)
+            .append(" element helpers (ISSUE-0102)\n");
+        String readName = orNull ? "__fnOrNullRead$" + shape
+            : "__fnRead$" + shape;
+        body.append("static ").append(shape).append(' ').append(readName)
+            .append("(__RefArray a, long i) {\n");
+        body.append("    if (i < 0L) throw new DealError(\"E8002\", \"negative array index\");\n");
+        body.append("    if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected ").append(desc).append(", got null\");\n");
+        body.append("    java.lang.Object v = a.data[(int) i];\n");
+        if (orNull) {
+            body.append("    if (v == null) return null;\n");
+        } else {
+            body.append("    if (v == null) throw new DealError(\"E8001\", \"expected ").append(desc).append(", got null\");\n");
+        }
+        body.append("    if (v instanceof ").append(shape)
+            .append(" fv) return fv;\n");
+        body.append("    throw new DealError(\"E8001\", \"expected ")
+            .append(desc).append(", got \" + $describe(v));\n");
+        body.append("}\n");
+        String writeName = orNull ? "__fnOrNullWrite$" + shape
+            : "__fnWrite$" + shape;
+        body.append("static ").append(shape).append(' ').append(writeName)
+            .append("(__RefArray a, long i, java.lang.Object v) {\n");
+        body.append("    if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\");\n");
+        if (orNull) {
+            body.append("    if (v != null && !(v instanceof ").append(shape)
+                .append(")) throw new DealError(\"E8001\", \"expected ")
+                .append(desc).append(", got \" + $describe(v));\n");
+        } else {
+            body.append("    if (!(v instanceof ").append(shape)
+                .append(")) throw new DealError(\"E8001\", \"expected ")
+                .append(desc).append(", got \" + $describe(v));\n");
+        }
+        body.append("    if (i == (long) a.data.length) { java.lang.Object[] nd = new java.lang.Object[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; }\n");
+        body.append("    return (").append(shape).append(") v;\n");
+        body.append("}\n");
+        for (String line : body.toString().split("\n", -1)) {
+            if (line.isEmpty()) continue;
+            arrayHelpers.append("    ").append(line).append('\n');
+        }
+    }
+
     /** Java return type for a function. {@code null} when unsupported. */
     private String javaReturnType(Type t, Span span) {
         if (t instanceof Type.Null) return "void";
@@ -9314,6 +11162,25 @@ public final class JvmBackend {
         }
         preStatements.clear();
         preStatementsDeclareTemps = false;
+    }
+
+    /** Flushes exactly the first {@code n} pending pre-statements,
+     * keeping the rest (the transformed for form flushes the
+     * initializer's hoisted side effects before the init assignment,
+     * the condition's per iteration, and the update's per iteration).
+     */
+    private void flushNPreStatements(int n) {
+        for (int i = 0; i < n; i++) {
+            PreLine line = preStatements.get(i);
+            if (!line.text().isEmpty()) {
+                out.append("    ".repeat(indent + line.extraIndent()));
+            }
+            out.append(line.text()).append('\n');
+        }
+        preStatements.subList(0, n).clear();
+        if (preStatements.isEmpty()) {
+            preStatementsDeclareTemps = false;
+        }
     }
 
     /** A fresh dummy-local name for a forced evaluation ({@code __ignored},

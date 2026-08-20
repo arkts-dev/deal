@@ -50,32 +50,71 @@ Supported (real semantics, spec JVM value mapping):
 | async function values (ISSUE-0099) | reuse the ISSUE-0098 wrapper machinery unchanged: the per-signature wrapper shape class (`Fn1_I_R_I` for `async (x: int) => int`) and the per-declaration wrapper instance field (`value$fn`) cover async markers (the descriptor string carries the `async` prefix), typed locals/parameters/returns of async function type hold wrapper references, and `await f(args)` over such a binding emits `f.invoke(args)` with the await-site completion check. Arity extension inherits the adapter machinery. The v1.2 module shape (E1049) removes module-level statements, so the load-time function-value read guards stay defensive, pinned exactly like the sibling ISSUE-0098 load-time guards |
 
 Out of scope (rejected with a backend `E6000` diagnostic, never silently
-miscompiled): optional class fields (their reads produce nullable values
-and presence checks), array/class/table-typed (non-nullable) class
-fields, nested (block/function-local) class declarations, table reads
-with non-nullable primitive/function target types (this slice checks
-class, nullable, array, and table targets), table field writes,
+miscompiled): nested (block/function-local) class declarations,
 non-literal default expressions on IMPORTED classes (an imported
 default evaluates in the declaring module's scope under LuaJIT, where
 the defaults table is built at load time; only literal constants emit
 inline at the construction site — ISSUE-0109), `table | null` values,
-nested (multi-dimensional) arrays,
-function arrays, stdlib imports other than the four
-supported modules (`std/console`, `std/string`, `std/math`, `std/time` —
-`std/table` and `std/json` stay E6000 at the import statement, used or
-unused, because their only functions take or return a `table`, a value
-type the slice does not support yet as a function parameter or return),
-for/for-of loops, try/throw, `@jsonable`.
-and (deferred to ISSUE-0110) function expressions, nested function
-declarations, function signatures containing arrays, classes,
-nullables, and nested function types, and cross-module
-function values — a Func-typed argument to an imported project-module
-call and an imported call result with Func static type are E6000
-because the per-module wrapper classes cannot cross a module boundary
-(never an artifact javac rejects after the CLI reported success). Plain
-function-type annotations over int/number/boolean/string/null signatures
-are fully supported, sync and async (ISSUE-0099 lifts the async marker
-into the same wrapper machinery — see "Async/await slice" below).
+arrays of table elements, stdlib imports other than the five
+supported modules (`std/console`, `std/string`, `std/math`, `std/time`,
+`std/table` — `std/json` stays E6000 at the import statement, used or
+unused), `@jsonable`, and cross-module function values — a Func-typed
+argument to an imported project-module call and an imported call
+result with Func static type are E6000 because the per-module wrapper
+classes cannot cross a module boundary (never an artifact javac
+rejects after the CLI reported success). Plain function-type
+annotations over int/number/boolean/string/null signatures are fully
+supported, sync and async (ISSUE-0099 lifts the async marker into the
+same wrapper machinery — see "Async/await slice" below); function
+signatures containing arrays, classes, or nullables stay deferred to
+ISSUE-0110.
+
+## ISSUE-0102 — JVM conformance promotion slice
+
+The promotion gate (`deal.test.JvmConformanceTest`, run by
+`run_tests.sh`) executes every existing backend-runtime conformance
+test through the real whole-project pipeline (CompilationOrchestrator →
+JvmBackend → javac → java) and requires at least 65% of the unchanged
+255-test denominator to pass with zero unclassified skips. The backend
+work that gate drove:
+
+- **Control flow** — C-style `for` loops (plain head form; a
+  transformed `while (true)` form when the initializer/condition/update
+  hoist side effects, with the DEAL `continue` label-routed to the
+  re-placed update), array `for-of` (index-ordered over the wrapper
+  storage, one FRESH binding per iteration — spec-v1.2 §For-of),
+  `break`/`continue`, `try`/`catch`/`throw`.
+- **Errors** — `throw {code, message}` reifies as the emitted
+  `DealError`; the builtin `Error` type maps to `java.lang.RuntimeException`
+  so caught errors unify across module boundaries; `.code` reads dispatch
+  through the reflective `__errorCode` unwrap and `.message` through
+  `getMessage()`; `throw e` rethrows with the code preserved.
+- **Tables** — field writes via the generic `$tPut` (expression
+  positions keep their DEAL value), dynamic-key `delete` via `$tRemove`,
+  primitive (`int`/`number`/`boolean`) and function-typed table reads
+  through the shared `$check` seam, `std/table.keys` via
+  `__tableKeys`. Tables map to the SHARED `$DealRt.Table` class
+  (declared by the entry module's artifact or the standalone
+  single-module adapter), so table values cross module boundaries with
+  shared identity.
+- **Classes** — optional fields (boxed/nullable Java reference plus a
+  `<name>$present` flag; `has()` reads the flag, `delete` clears value
+  and flag, writes route through the per-class `__optSet$` helper so
+  the assignment keeps its value), non-nullable array/table/class class
+  fields with per-construction fresh defaults.
+- **Arrays** — nested primitive arrays (`int[][]` — `__RefArray`
+  storage with per-element-shape `__nestedRead/Write$` helpers, E8003
+  on a wrong element shape), function arrays (per-signature
+  `__fnRead/Write$` helpers over the wrapper classes), imported-class
+  arrays (`Lib.$Array$C` with the declaring module's read/write
+  helpers).
+- **Closures** — function expressions and block-level function
+  declarations emit anonymous wrapper subclasses inline; captured
+  locals/parameters lower to `final <T>[] <name>$c = { v }` cells with
+  every read/write routed through `<name>$c[0]`; a block-level function
+  binding is always a cell (self-recursion); per-iteration loop
+  bindings capture FRESH cells; nested and nullable function signature
+  types emit recursive wrapper shapes.
 
 ## Host ABI slice (ISSUE-0100)
 

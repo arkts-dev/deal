@@ -275,6 +275,7 @@ public class JvmBackendTest {
             testWhileLoops();
             testWhileFalseBodySkipped();
             testWhileHoistedConditionPerIteration();
+            testWhileContinueTargetsWhileInsideTransformedFor();
             testWhileLoopModuleFieldDominanceGuards();
             testWhileModuleLevelReturnRejected();
             testWhileUseBeforeDeclarationRejected();
@@ -336,6 +337,8 @@ public class JvmBackendTest {
             testEntryModuleEmitsJvmEntryPoint();
             testEntryGateBackendE6004();
             testStringForOfScalarIteration();
+            testArrayForOfRefElementShapes();
+            testCatchVarCapturedByNestedFunction();
             testBoundaryStringValidation();
             testStdlibTimeNowMillis();
             testStdlibHelperNameCollisions();
@@ -729,18 +732,6 @@ public class JvmBackendTest {
 
         record Case(String what, String source) {}
         List<Case> cases = List.of(
-            new Case("class declaration", """
-                export class Point {
-                  x?: int;
-                }
-                export function test(): int { return 1; }
-                """),
-            new Case("nested array type", """
-                export function test(): int {
-                  let rows: int[][] = [[1, 2], [3, 4]];
-                  return rows[0][1];
-                }
-                """),
             new Case("array of nullable table elements", """
                 export function test(): null {
                   let xs: (table | null)[] = [];
@@ -750,36 +741,6 @@ public class JvmBackendTest {
                 export function test(): null {
                   let t: table | null = null;
                 }
-                """),
-            new Case("array of function elements", """
-                function add1(x: int): int { return x + 1; }
-                export function test(): int {
-                  let fs: ((x: int) => int)[] = [add1];
-                  return fs[0](3);
-                }
-                """),
-            new Case("table field read with a primitive target type", """
-                export function test(): int {
-                  let t: table = { item: 5 };
-                  let n: int = t.item;
-                  return n;
-                }
-                """),
-            new Case("table field assignment", """
-                export function test(): int {
-                  let t: table = { item: 5 };
-                  t.item = 6;
-                  return 1;
-                }
-                """),
-            new Case("optional class field", """
-                class Point { x?: int; }
-                export function test(): int { return 1; }
-                """),
-            new Case("class-typed class field", """
-                class Inner { v: int = 0; }
-                class Outer { inner: Inner = {}; }
-                export function test(): int { return 1; }
                 """),
             new Case("nested class declaration", """
                 export function test(): int {
@@ -793,10 +754,6 @@ public class JvmBackendTest {
                   return null;
                 }
                 """),
-            new Case("stdlib module import whose functions need table values", """
-                import * as t from "std/table"
-                export function test(): int { return 1; }
-                """),
             new Case("unused stdlib module import whose functions need table values", """
                 import * as j from "std/json"
                 export function test(): int { return 1; }
@@ -805,16 +762,9 @@ public class JvmBackendTest {
                 import * as m from "./other"
                 export function test(): int { return 1; }
                 """),
-            new Case("nullable function type", """
-                export function test(): null {
-                  let f: (() => int) | null = null;
-                }
-                """),
-            new Case("throw", """
-                export function test(): null {
-                  throw { code: "E_TEST", message: "x" };
-                  return;
-                }
+            new Case("function-typed class field", """
+                class Holder { cb: (x: int) => int; }
+                export function test(): int { return 1; }
                 """),
             new Case("self-referential initializer", """
                 export function test(): int {
@@ -848,6 +798,71 @@ public class JvmBackendTest {
             check(res.hasErrors(), "backend rejects " + c.what());
             check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
                 "E6000 diagnostic for " + c.what() + ": " + res.diagnostics());
+        }
+
+        // ISSUE-0102: the shapes this slice promoted out of the E6000
+        // rejection list now compile (each generates an artifact the
+        // runtime fixtures above also execute through javac + java).
+        List<Case> promoted = List.of(
+            new Case("optional class field", """
+                class Point { x?: int; }
+                export function test(): int { return 1; }
+                """),
+            new Case("nested array type", """
+                export function test(): int {
+                  let rows: int[][] = [[1, 2], [3, 4]];
+                  return rows[0][1];
+                }
+                """),
+            new Case("array of function elements", """
+                function add1(x: int): int { return x + 1; }
+                export function test(): int {
+                  let fs: ((x: int) => int)[] = [add1];
+                  return fs[0](3);
+                }
+                """),
+            new Case("table field read with a primitive target type", """
+                export function test(): int {
+                  let t: table = { item: 5 };
+                  let n: int = t.item;
+                  return n;
+                }
+                """),
+            new Case("table field assignment", """
+                export function test(): int {
+                  let t: table = { item: 5 };
+                  t.item = 6;
+                  return 1;
+                }
+                """),
+            new Case("class-typed class field", """
+                class Inner { v: int = 0; }
+                class Outer { inner: Inner = {}; }
+                export function test(): int { return 1; }
+                """),
+            new Case("stdlib module import whose functions take table values", """
+                import * as t from "std/table"
+                export function test(): int { return 1; }
+                """),
+            new Case("throw", """
+                export function test(): null {
+                  throw { code: "E_TEST", message: "x" };
+                  return;
+                }
+                """)
+        );
+        for (Case c : promoted) {
+            Frontend f = compileFrontend(c.source, "jvmtest-unsupported.deal");
+            if (!f.errors().isEmpty()) {
+                fail("frontend must accept promoted case '" + c.what()
+                    + "': " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res =
+                JvmBackend.generate(f.program(), f.checkResult(),
+                    "jvmtest-unsupported.deal", "main");
+            check(!res.hasErrors(),
+                "backend now accepts " + c.what() + ": " + res.diagnostics());
         }
     }
 
@@ -1051,6 +1066,127 @@ public class JvmBackendTest {
             "condition re-evaluates per iteration → tick ×3: " + perIter.output());
         check(perIter.output().contains("3"),
             "loop counts to 3: " + perIter.output());
+    }
+
+    /** A DEAL continue inside a while nested in a TRANSFORMED (hoisted)
+     * C-style for must target the while — the nearest enclosing loop —
+     * never the enclosing for's re-placed-update label. The transformed
+     * for pushes its cont$N label onto {@code loopContinueLabels}; the
+     * while pushes a null frame over it, so emitContinue emits plain
+     * {@code continue;} and Java resolves it to the nearest Java loop
+     * (the while). Without the frame the while-level continue emitted
+     * {@code break cont$N;} — exiting the for body, running the for
+     * update, and silently skipping the while's remaining iterations
+     * (LuaJIT prints 10 / 4, the broken JVM shape printed 5 / 2). */
+    private static void testWhileContinueTargetsWhileInsideTransformedFor()
+            throws Exception {
+        System.out.println("-- While continue inside a transformed for (javac + java) --");
+
+        // Runtime: the reviewer's probe shape — a while with a continue
+        // nested in a for whose boolean[]-read condition hoists the
+        // side-effecting reads into the transformed form.
+        ExecResult plain = compileAndRunJvm("""
+            export function test(): int {
+              let flags: boolean[] = [true, true, true, true, true];
+              let n: int = 0;
+              for (let i: int = 0; i < 5 && flags[i]; i = i + 1) {
+                let j: int = 0;
+                while (j < 2) {
+                  j = j + 1;
+                  n = n + 1;
+                  if (j === 1) { continue; }
+                }
+              }
+              return n;
+            }
+            """, "whilecontintransfor");
+        check(plain.exitCode() == 0,
+            "while-continue-in-transformed-for exits 0: " + plain.output());
+        check(plain.output().contains("10"),
+            "the while-level continue stays inside the while → 2 per for "
+                + "iteration, 5 iterations → 10 (LuaJIT parity; the broken "
+                + "shape printed 5): " + plain.output());
+
+        // Runtime: the hoisted-condition while variant — the continue
+        // must re-run the hoisted per-iteration condition side effects
+        // (tick) exactly like LuaJIT, not exit the while.
+        ExecResult hoisted = compileAndRunJvm("""
+            import * as console from "std/console"
+            function tick(): null { console.log("tick"); }
+            export function test(): int {
+              let flags: boolean[] = [true, true];
+              let n: int = 0;
+              for (let i: int = 0; i < 2 && flags[i]; i = i + 1) {
+                let j: int = 0;
+                while (j < 2 && tick() === null) {
+                  j = j + 1;
+                  n = n + 1;
+                  if (j === 1) { continue; }
+                }
+              }
+              return n;
+            }
+            """, "whilehoistedcontintransfor");
+        check(hoisted.exitCode() == 0,
+            "hoisted-while-continue-in-transformed-for exits 0: "
+                + hoisted.output());
+        check(occurrences(hoisted.output(), "tick") == 4,
+            "the continue re-enters the while head and re-runs the hoisted "
+                + "condition side effects → tick ×4: " + hoisted.output());
+        check(hoisted.output().contains("4"),
+            "the hoisted while counts fully → 4 (the broken shape printed "
+                + "2): " + hoisted.output());
+
+        // Emission shape: the for-level continue still routes to the
+        // re-placed-update label, the while-level continue stays a plain
+        // Java continue targeting the while, and the while body keeps the
+        // loopCond-wrapped condition.
+        Frontend f = compileFrontend("""
+            export function test(): int {
+              let flags: boolean[] = [true, true, true, true, true];
+              let n: int = 0;
+              for (let i: int = 0; i < 5 && flags[i]; i = i + 1) {
+                if (i === 2) { continue; }
+                let j: int = 0;
+                while (j < 2) {
+                  j = j + 1;
+                  n = n + 1;
+                  if (j === 1) { continue; }
+                }
+              }
+              return n;
+            }
+            """, "jvmtest-whilecont-transfor.deal");
+        check(f.errors().isEmpty(),
+            "while-continue-transformed-for probe frontend clean: "
+                + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-whilecont-transfor.deal", "main");
+            check(!res.hasErrors(),
+                "while-continue-transformed-for probe codegen clean: "
+                    + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains("break cont$0;"),
+                    "the for-level continue still routes through the "
+                        + "re-placed-update label");
+                check(occurrences(res.source(), "break cont$0;") == 1,
+                    "exactly one label-routed continue (the for-level "
+                        + "one) — the while-level continue is not one");
+                check(occurrences(res.source(), "continue;") == 1,
+                    "exactly one plain `continue;` — the while-level one: "
+                        + occurrences(res.source(), "continue;"));
+                int whileIdx =
+                    res.source().indexOf("while (loopCond((j < 2L))) {");
+                int contIdx = res.source().indexOf("continue;");
+                check(whileIdx >= 0 && contIdx > whileIdx,
+                    "the plain `continue;` sits inside the while body "
+                        + "(index " + contIdx + " after " + whileIdx + ")");
+                check(res.source().contains("while (loopCond((j < 2L))) {"),
+                    "the while body keeps the loopCond-wrapped condition");
+            }
+        }
     }
 
     /** Function-body module-field dominance guards walk through while
@@ -2200,15 +2336,35 @@ public class JvmBackendTest {
 
         record Case(String what, String source) {}
         List<Case> cases = List.of(
+            new Case("array of nullable table elements", """
+                export function test(): null {
+                  let xs: (table | null)[] = [];
+                }
+                """)
+        );
+
+        for (Case c : cases) {
+            Frontend f = compileFrontend(c.source, "jvmtest-unsupported-arr.deal");
+            if (!f.errors().isEmpty()) {
+                fail("frontend must accept unsupported array case '" + c.what()
+                    + "' (the backend rejects it): " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-unsupported-arr.deal", "main");
+            check(res.hasErrors(), "backend rejects " + c.what());
+            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 diagnostic for " + c.what() + ": " + res.diagnostics());
+        }
+
+        // ISSUE-0102: nested arrays, function arrays, and table
+        // reads/writes promoted out of the E6000 rejection list.
+        List<Case> promoted = List.of(
             new Case("nested array literal", """
                 export function test(): int {
                   let rows: int[][] = [[1, 2], [3, 4]];
                   return rows[0][1];
-                }
-                """),
-            new Case("array of nullable table elements", """
-                export function test(): null {
-                  let xs: (table | null)[] = [];
                 }
                 """),
             new Case("array of function elements", """
@@ -2231,20 +2387,18 @@ public class JvmBackendTest {
                 }
                 """)
         );
-
-        for (Case c : cases) {
+        for (Case c : promoted) {
             Frontend f = compileFrontend(c.source, "jvmtest-unsupported-arr.deal");
             if (!f.errors().isEmpty()) {
-                fail("frontend must accept unsupported array case '" + c.what()
-                    + "' (the backend rejects it): " + f.errors());
+                fail("frontend must accept promoted array case '" + c.what()
+                    + "': " + f.errors());
                 continue;
             }
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
                 f.program(), f.checkResult(),
                 "jvmtest-unsupported-arr.deal", "main");
-            check(res.hasErrors(), "backend rejects " + c.what());
-            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 diagnostic for " + c.what() + ": " + res.diagnostics());
+            check(!res.hasErrors(),
+                "backend now accepts " + c.what() + ": " + res.diagnostics());
         }
     }
 
@@ -2498,23 +2652,436 @@ public class JvmBackendTest {
             "ASCII for-of concatenates in order: " + ascii.output());
 
         // Array for-of stays rejected with E6000 (documented slice boundary).
-        Frontend arr = compileFrontend("""
+        // ISSUE-0102: array for-of promoted out of the E6000 slice
+        // boundary — it iterates the wrapper storage in index order with
+        // a fresh per-iteration binding (spec-v1.2 §For-of).
+        ExecResult arrRun = compileAndRunJvm("""
             import * as console from "std/console"
             export function test(): null {
               let xs: int[] = [1, 2, 3];
+              let total: int = 0;
               for (let x: int of xs) {
-                console.log("never");
+                total = total + x;
+              }
+              if (total !== 6) { console.log("bad-sum"); return; }
+              console.log("array-forof-ok");
+            }
+            """, "jvmtest-forof-array");
+        check(arrRun.exitCode() == 0,
+            "array for-of runs through javac + java: " + arrRun.output());
+        check(arrRun.output().contains("array-forof-ok"),
+            "array for-of sums its elements: " + arrRun.output());
+    }
+
+    /**
+     * ISSUE-0102 rework (BOT-0933 finding 1): array for-of over function
+     * elements, nullable-function elements, and nested-array elements was
+     * silently miscompiled — {@code arrayForOfReadHelper} returned null
+     * for these shapes while {@code javaArrayElementType} accepted them
+     * without recording an E6000, so {@code emitArrayForOf} emitted the
+     * inert {@code null(__iter0, __i0)} placeholder and the CLI reported
+     * success for an artifact javac rejects. The helper now mirrors the
+     * {@code emitIndexRead} chain: {@code Type.Func} /
+     * {@code Nullable(Type.Func)} / {@code Type.Array} elements route
+     * through {@code refArrayReadHelper} (per-shape
+     * {@code __fnRead$}/{@code __fnOrNullRead$}/{@code __nestedRead$}
+     * helpers with E6000 diagnostics for unsupported signatures), so the
+     * shapes either run correctly or the backend rejects the program —
+     * never a broken artifact after the CLI reported success.
+     */
+    private static void testArrayForOfRefElementShapes() throws Exception {
+        System.out.println("-- Array for-of: function / nested / nullable-function elements --");
+
+        // Runtime: for-of over a function array invokes every element.
+        ExecResult fn = compileAndRunJvm("""
+            import * as console from "std/console"
+            function add1(x: int): int { return x + 1; }
+            export function test(): null {
+              let fs: ((x: int) => int)[] = [add1, add1];
+              let total: int = 0;
+              for (let f: (x: int) => int of fs) {
+                total = total + f(total);
+              }
+              if (total !== 3) { console.log("bad-total"); return; }
+              console.log("fnarr-forof-ok");
+            }
+            """, "forof-fnarr");
+        check(fn.exitCode() == 0,
+            "function-array for-of runs through javac + java: " + fn.output());
+        check(fn.output().contains("fnarr-forof-ok"),
+            "function-array for-of invokes each element: " + fn.output());
+
+        // Runtime: for-of over a nested primitive array reads each row.
+        ExecResult nested = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let rows: int[][] = [[1, 2], [3, 4]];
+              let total: int = 0;
+              for (let row: int[] of rows) {
+                total = total + row[0] + row[1];
+              }
+              if (total !== 10) { console.log("bad-total"); return; }
+              console.log("nested-forof-ok");
+            }
+            """, "forof-nested");
+        check(nested.exitCode() == 0,
+            "nested-array for-of runs through javac + java: " + nested.output());
+        check(nested.output().contains("nested-forof-ok"),
+            "nested-array for-of sums the rows: " + nested.output());
+
+        // Runtime: for-of over a nullable-function array skips the DEAL
+        // null element (Java null from the per-signature read).
+        ExecResult orNull = compileAndRunJvm("""
+            import * as console from "std/console"
+            function add1(x: int): int { return x + 1; }
+            export function test(): null {
+              let fs: (((x: int) => int) | null)[] = [];
+              fs[fs.length] = add1;
+              fs[fs.length] = null;
+              let total: int = 0;
+              for (let f: ((x: int) => int) | null of fs) {
+                if (f !== null) { total = total + f(total); }
+              }
+              if (total !== 1) { console.log("bad-total"); return; }
+              console.log("fnornull-forof-ok");
+            }
+            """, "forof-fnornull");
+        check(orNull.exitCode() == 0,
+            "nullable-function-array for-of runs through javac + java: "
+                + orNull.output());
+        check(orNull.output().contains("fnornull-forof-ok"),
+            "nullable-function-array for-of skips the null element: "
+                + orNull.output());
+
+        // Emission shapes: each supported shape reads through its
+        // per-shape helper, never the inert null(...) placeholder.
+        Frontend shape = compileFrontend("""
+            function add1(x: int): int { return x + 1; }
+            export function test(): int {
+              let fs: ((x: int) => int)[] = [add1];
+              let rows: int[][] = [[1]];
+              let nfs: (((x: int) => int) | null)[] = [];
+              let total: int = 0;
+              for (let f: (x: int) => int of fs) { total = total + 1; }
+              for (let row: int[] of rows) { total = total + 1; }
+              for (let f: ((x: int) => int) | null of nfs) { total = total + 1; }
+              return total;
+            }
+            """, "jvmtest-forof-refshape.deal");
+        check(shape.errors().isEmpty(),
+            "ref-shape for-of probe frontend clean: " + shape.errors());
+        if (shape.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult er = JvmBackend.generate(
+                shape.program(), shape.checkResult(),
+                "jvmtest-forof-refshape.deal", "main");
+            check(!er.hasErrors(),
+                "ref-shape for-of codegen clean: " + er.diagnostics());
+            if (!er.hasErrors()) {
+                check(er.source().contains("__fnRead$Fn1_I_R_I"),
+                    "function-array for-of uses the per-signature read helper");
+                check(er.source().contains("__nestedRead$__IntArray"),
+                    "nested-array for-of uses the per-shape read helper");
+                check(er.source().contains("__fnOrNullRead$Fn1_I_R_I"),
+                    "nullable-function-array for-of uses the per-signature "
+                        + "read helper");
+                check(!er.source().contains("null(__iter"),
+                    "no inert null(...) placeholder in the for-of reads");
+            }
+        }
+
+        // Rejection: for-of over an unsupported function signature or a
+        // nested array of function elements records E6000 (no artifact a
+        // javac step would reject after the CLI reported success).
+        Frontend badSig = compileFrontend("""
+            function bad(xs: int[]): int { return 1; }
+            export function test(): int {
+              let fs: ((xs: int[]) => int)[] = [];
+              for (let f: (xs: int[]) => int of fs) { }
+              return 0;
+            }
+            """, "jvmtest-forof-badsig.deal");
+        check(badSig.errors().isEmpty(),
+            "unsupported-signature for-of probe frontend clean: "
+                + badSig.errors());
+        if (badSig.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult er = JvmBackend.generate(
+                badSig.program(), badSig.checkResult(),
+                "jvmtest-forof-badsig.deal", "main");
+            check(er.hasErrors(), "unsupported-signature for-of rejected");
+            check(er.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for the unsupported-signature for-of: "
+                    + er.diagnostics());
+        }
+        Frontend badNested = compileFrontend("""
+            function add1(x: int): int { return x + 1; }
+            export function test(): int {
+              let fss: (((x: int) => int)[][]) = [];
+              for (let fs: ((x: int) => int)[] of fss) { }
+              return 0;
+            }
+            """, "jvmtest-forof-badnested.deal");
+        check(badNested.errors().isEmpty(),
+            "nested-function-array for-of probe frontend clean: "
+                + badNested.errors());
+        if (badNested.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult er = JvmBackend.generate(
+                badNested.program(), badNested.checkResult(),
+                "jvmtest-forof-badnested.deal", "main");
+            check(er.hasErrors(), "nested-function-array for-of rejected");
+            check(er.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for the nested-function-array for-of: "
+                    + er.diagnostics());
+        }
+
+        // The real orchestrator pipeline (frontend → codegen → artifacts):
+        // the supported shapes compile with success=true and ZERO
+        // diagnostics, and the emitted artifacts run through javac + java.
+        writeFile("src/refof_main.deal", """
+            export function main(): null { return null; }
+            function add1(x: int): int { return x + 1; }
+            export function run(): int {
+              let fs: ((x: int) => int)[] = [add1];
+              let rows: int[][] = [[1, 2], [3, 4]];
+              let total: int = 0;
+              for (let f: (x: int) => int of fs) {
+                total = total + f(total);
+              }
+              for (let row: int[] of rows) {
+                total = total + row[0];
+              }
+              return total;
+            }
+            """);
+        Path entryFile = tmpDir.resolve("src/refof_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/refof");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JVM,
+            (DealConfig) null, roots,
+            Path.of(".").toAbsolutePath().normalize());
+        boolean success = orchestrator.compile();
+        check(success, "for-of over function/nested arrays compiles through "
+            + "the orchestrator: " + orchestrator.diagnostics());
+        check(orchestrator.diagnostics().isEmpty(),
+            "zero diagnostics for the supported ref-shape for-of: "
+                + orchestrator.diagnostics());
+        check(Files.exists(outputDir.resolve("Refof_main.java")),
+            "the ref-shape for-of entry module writes its artifact");
+        if (success && Files.exists(outputDir.resolve("Refof_main.java"))) {
+            ExecResult exec = runJvmArtifacts(outputDir,
+                parseProgram("export function run(): int { return 1; }"),
+                "Refof_main");
+            check(exec.exitCode() == 0 && exec.output().contains("5"),
+                "the orchestrator artifacts run: f(0)=1 then +1+3 = 5: "
+                    + exec.output());
+        }
+
+        // The unsupported-signature for-of fails the orchestrator with
+        // E6000 and writes no entry artifact (the slice contract: E6000,
+        // never a broken artifact).
+        writeFile("src2/refof_bad.deal", """
+            export function main(): null { return null; }
+            function bad(xs: int[]): int { return 1; }
+            export function run(): int {
+              let fs: ((xs: int[]) => int)[] = [];
+              for (let f: (xs: int[]) => int of fs) { }
+              return 0;
+            }
+            """);
+        Path badEntry = tmpDir.resolve("src2/refof_bad.deal").toAbsolutePath();
+        Path badOut = tmpDir.resolve("build/refof_bad");
+        List<Path> roots2 = List.of(tmpDir.resolve("src2").toAbsolutePath());
+        CompilationOrchestrator badOrchestrator = new CompilationOrchestrator(
+            badEntry, badOut, false, false, false, Backend.JVM,
+            (DealConfig) null, roots2,
+            Path.of(".").toAbsolutePath().normalize());
+        boolean badSuccess = badOrchestrator.compile();
+        check(!badSuccess,
+            "the unsupported-signature for-of fails the orchestrator: "
+                + badOrchestrator.diagnostics());
+        check(badOrchestrator.diagnostics().stream()
+                .anyMatch(d -> "E6000".equals(d.code())),
+            "orchestrator reports E6000 for the unsupported-signature "
+                + "for-of: " + badOrchestrator.diagnostics());
+        check(!Files.exists(badOut.resolve("Refof_bad.java")),
+            "no entry artifact when the ref-shape for-of is rejected");
+    }
+
+    /** A catch variable captured by a nested function inside the catch
+     * block must cell-ify exactly like a captured local or parameter
+     * (BOT-0942 finding 2). collectLocalDeclarations declares the catch
+     * variable, so the function-level capture analysis marks it captured
+     * and declareLocal registers the mapped name; emitTry then declares
+     * the final cell at the top of the catch block. Reads and writes
+     * route through e$c[0], the closure references the effectively-final
+     * cell array, and a DEAL-level reassignment of the catch variable
+     * writes the cell — LuaJIT's shared-upvalue semantics without javac's
+     * "local variables referenced from an inner class must be final or
+     * effectively final" rejection after the CLI reported success. */
+    private static void testCatchVarCapturedByNestedFunction() throws Exception {
+        System.out.println("-- Catch variable captured by a nested function (javac + java) --");
+
+        // Runtime: the reviewer's probe — a closure reading the catch
+        // variable's .code created BEFORE the catch variable is
+        // reassigned must observe the NEW value (shared upvalue).
+        ExecResult captured = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let ok: string = "no";
+              try {
+                throw { code: "E1", message: "first" };
+              } catch (e) {
+                let f: () => string = function(): string { return e.code; };
+                e = { code: "E2", message: "second" };
+                ok = f();
+              }
+              if (ok !== "E2") { console.log("bad-code"); return; }
+              console.log("catch-cell-ok");
+            }
+            """, "catchvarcapture");
+        check(captured.exitCode() == 0,
+            "captured catch variable exits 0 (javac accepted the artifact): "
+                + captured.output());
+        check(captured.output().contains("catch-cell-ok"),
+            "the closure reads the REASSIGNED catch variable's code (E2): "
+                + captured.output());
+
+        // Runtime: the same shape where the closure WRITES the catch
+        // variable and the later catch-block code reads the new value.
+        ExecResult write = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let seen: string = "no";
+              try {
+                throw { code: "E1", message: "first" };
+              } catch (e) {
+                let set: () => null = function(): null {
+                  e = { code: "E3", message: "third" };
+                };
+                set();
+                seen = e.code;
+              }
+              if (seen !== "E3") { console.log("bad-seen"); return; }
+              console.log("catch-cell-write-ok");
+            }
+            """, "catchvarwrite");
+        check(write.exitCode() == 0,
+            "closure-written catch variable exits 0: " + write.output());
+        check(write.output().contains("catch-cell-write-ok"),
+            "the closure's catch-variable write is visible to the catch "
+                + "block: " + write.output());
+
+        // Emission shape: the catch variable lowers to a final cell
+        // declared at the top of the catch block; the closure references
+        // the cell; the DEAL-level reassignment writes the cell.
+        Frontend f = compileFrontend("""
+            export function test(): null {
+              try {
+                throw { code: "E1", message: "first" };
+              } catch (e) {
+                let f: () => string = function(): string { return e.code; };
+                e = { code: "E2", message: "second" };
               }
             }
-            """, "jvmtest-forof-array.deal");
-        check(arr.errors().isEmpty(), "array for-of frontend clean: " + arr.errors());
-        if (arr.errors().isEmpty()) {
-            JvmBackend.JvmCodegenResult arrRes = JvmBackend.generate(
-                arr.program(), arr.checkResult(), "jvmtest-forof-array.deal", "main");
-            check(arrRes.hasErrors() && arrRes.diagnostics().stream()
-                    .anyMatch(d -> "E6000".equals(d.code())),
-                "array for-of is E6000 (documented slice boundary): "
-                    + arrRes.diagnostics());
+            """, "jvmtest-catchvar-capture.deal");
+        check(f.errors().isEmpty(),
+            "catch-var capture probe frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-catchvar-capture.deal", "main");
+            check(!res.hasErrors(),
+                "catch-var capture probe codegen clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains(
+                        "final java.lang.RuntimeException[] e$c = { e };"),
+                    "the captured catch variable declares its final cell at "
+                        + "the top of the catch block");
+                check(res.source().contains("return __errorCode(e$c[0]);"),
+                    "the closure reads the catch variable through the cell");
+                check(res.source().contains(
+                        "e$c[0] = new DealError(\"E2\", \"second\");"),
+                    "the DEAL-level reassignment writes the cell");
+            }
+        }
+
+        // Control: a catch variable NO nested function references stays a
+        // plain catch parameter — no cell is emitted.
+        Frontend plainCatch = compileFrontend("""
+            export function test(): string {
+              let code: string = "";
+              try {
+                throw { code: "E1", message: "first" };
+              } catch (e) {
+                code = e.code;
+              }
+              return code;
+            }
+            """, "jvmtest-catchvar-plain.deal");
+        check(plainCatch.errors().isEmpty(),
+            "plain catch probe frontend clean: " + plainCatch.errors());
+        if (plainCatch.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                plainCatch.program(), plainCatch.checkResult(),
+                "jvmtest-catchvar-plain.deal", "main");
+            check(!res.hasErrors(),
+                "plain catch probe codegen clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(!res.source().contains(
+                        "final java.lang.RuntimeException[] e$c"),
+                    "an uncaptured catch variable emits no cell");
+            }
+        }
+
+        // The real orchestrator pipeline (frontend → codegen → artifacts):
+        // the captured catch-variable shape compiles with success=true and
+        // zero diagnostics, and the emitted artifacts run through javac +
+        // java printing the reassigned code.
+        writeFile("src/catchcap_main.deal", """
+            import * as console from "std/console"
+            export function main(): null { return null; }
+            export function run(): null {
+              let ok: string = "no";
+              try {
+                throw { code: "E1", message: "first" };
+              } catch (e) {
+                let f: () => string = function(): string { return e.code; };
+                e = { code: "E2", message: "second" };
+                ok = f();
+              }
+              if (ok !== "E2") { console.log("bad-code"); return; }
+              console.log("catch-cell-ok");
+            }
+            """);
+        Path catchEntry =
+            tmpDir.resolve("src/catchcap_main.deal").toAbsolutePath();
+        Path catchOut = tmpDir.resolve("build/catchcap");
+        List<Path> catchRoots =
+            List.of(tmpDir.resolve("src").toAbsolutePath());
+        CompilationOrchestrator catchOrchestrator = new CompilationOrchestrator(
+            catchEntry, catchOut, false, false, false, Backend.JVM,
+            (DealConfig) null, catchRoots,
+            Path.of(".").toAbsolutePath().normalize());
+        boolean catchSuccess = catchOrchestrator.compile();
+        check(catchSuccess,
+            "captured catch-variable program compiles through the "
+                + "orchestrator: " + catchOrchestrator.diagnostics());
+        check(catchOrchestrator.diagnostics().isEmpty(),
+            "zero diagnostics for the captured catch-variable program: "
+                + catchOrchestrator.diagnostics());
+        check(Files.exists(catchOut.resolve("Catchcap_main.java")),
+            "the captured catch-variable entry module writes its artifact");
+        if (catchSuccess
+                && Files.exists(catchOut.resolve("Catchcap_main.java"))) {
+            ExecResult exec = runJvmArtifacts(catchOut,
+                parseProgram("export function run(): null { return null; }"),
+                "Catchcap_main");
+            check(exec.exitCode() == 0
+                    && exec.output().contains("catch-cell-ok"),
+                "the orchestrator artifacts run and print the reassigned "
+                    + "code: " + exec.output());
         }
     }
 
@@ -3272,7 +3839,7 @@ public class JvmBackendTest {
             "a class named like the error helper stays collision-free");
         check(java.contains("new $C_Point(1L, 5L)"),
             "construction fills declaration-order defaults around provided fields");
-        check(java.contains("new $T().put(\"item\", p)"),
+        check(java.contains("new $DealRt.Table().put(\"item\", p)"),
             "table literal chains put calls");
         check(java.contains("$check(\"@Main/Point\", (holder).get(\"item\"))"),
             "class-typed table read runs the shared seam with the spec "
@@ -3679,7 +4246,7 @@ public class JvmBackendTest {
                 + res.diagnostics());
             if (!res.hasErrors()) {
                 String src = res.source();
-                check(src.contains("static abstract class Fn2_II_R_I {"),
+                check(src.contains("static abstract class Fn2_II_R_I implements $FnValue {"),
                     "per-signature wrapper class emitted");
                 check(src.contains(
                     "final java.lang.String descriptor = \"(int,int)->int\";"),
@@ -4401,33 +4968,19 @@ public class JvmBackendTest {
         // Deferred signature shapes → E6000 (ISSUE-0110).
         record DeferredCase(String what, String source) {}
         List<DeferredCase> deferred = List.of(
-            new DeferredCase("nested function type", """
-                function inc(x: int): int { return x + 1; }
-                export function test(): int {
-                  let h: (x: int) => (y: int) => int = function(x: int): (y: int) => int { return inc; };
-                  return 1;
-                }
-                """),
-            new DeferredCase("nullable function type", """
-                function inc(x: int): int { return x + 1; }
-                export function test(): int {
-                  let f: ((x: int) => int) | null = inc;
-                  return 1;
-                }
-                """),
-            new DeferredCase("array of functions", """
-                function inc(x: int): int { return x + 1; }
-                export function test(): int {
-                  let fs: ((x: int) => int)[] = [inc];
-                  return 1;
-                }
-                """),
-            // Function equality/inequality over deferred signature shapes:
-            // the value use reaches emitIdentifier's FunctionSymbol branch
-            // without a typed function-value boundary in between, and the
-            // wrapper field emitFunction gates on does not exist for these
-            // signatures — E6000, never an artifact javac rejects after
-            // the CLI reported success.
+            // The four former deferred cases — async function types
+            // (ISSUE-0099), nested and nullable function types, and
+            // arrays of functions (ISSUE-0102) — are promoted out of
+            // this list: async function-type bindings run through the
+            // ISSUE-0099 wrapper machinery (testAsyncSlice), and the
+            // ISSUE-0102 promoted block below pins the other three.
+            // Function equality/inequality over deferred signature
+            // shapes: the value use reaches emitIdentifier's
+            // FunctionSymbol branch without a typed function-value
+            // boundary in between, and the wrapper field emitFunction
+            // gates on does not exist for these signatures — E6000,
+            // never an artifact javac rejects after the CLI reported
+            // success.
             new DeferredCase(
                 "function equality with array-parameter signatures", """
                 function f(xs: int[]): int { return xs[0]; }
@@ -4459,6 +5012,37 @@ public class JvmBackendTest {
             check(res.hasErrors(), "backend rejects " + c.what());
             check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
                 "E6000 for " + c.what() + ": " + res.diagnostics());
+        }
+
+        // ISSUE-0102: nested and nullable function types promoted out of
+        // the deferred list — they now emit wrapper shapes.
+        List<DeferredCase> promoted = List.of(
+            new DeferredCase("nested function type", """
+                function inc(x: int): int { return x + 1; }
+                export function test(): int {
+                  let h: (x: int) => (y: int) => int = function(x: int): (y: int) => int { return inc; };
+                  return 1;
+                }
+                """),
+            new DeferredCase("nullable function type", """
+                function inc(x: int): int { return x + 1; }
+                export function test(): int {
+                  let f: ((x: int) => int) | null = inc;
+                  return 1;
+                }
+                """));
+        for (DeferredCase c : promoted) {
+            Frontend df = compileFrontend(c.source, "jvmtest-fv-promoted.deal");
+            if (!df.errors().isEmpty()) {
+                fail("frontend must accept the promoted case '" + c.what()
+                    + "': " + df.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                df.program(), df.checkResult(), "jvmtest-fv-promoted.deal",
+                "main");
+            check(!res.hasErrors(),
+                "backend now accepts " + c.what() + ": " + res.diagnostics());
         }
 
         // v1.2 grammar gate: rest parameters and rest function-type arms
@@ -6037,10 +6621,16 @@ public class JvmBackendTest {
     private static void testOrchestratorJvmRejectsUnsupported() throws Exception {
         System.out.println("-- Orchestrator: JVM backend rejects out-of-scope constructs --");
 
+        // ISSUE-0102: optional class fields (x?: int) are now supported
+        // — the rejection pin moves to a still-out-of-scope shape (a
+        // function-typed class field).
         writeFile("src/unsupported_main.deal", """
             export function main(): null { return null; }
             export class Point {
               x?: int;
+            }
+            export class CallbackHolder {
+              cb: (x: int) => int;
             }
             export function run(): int { return 1; }
             """);
@@ -6054,12 +6644,36 @@ public class JvmBackendTest {
             (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
-        check(!success, "JVM backend rejects class declarations");
+        check(!success, "JVM backend rejects function-typed class fields");
         check(orchestrator.diagnostics().stream()
                 .anyMatch(d -> "E6000".equals(d.code())),
             "orchestrator reports E6000: " + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("Unsupported_main.java")),
             "no artifact written when the backend reports errors");
+
+        // The optional-field class alone now compiles through the
+        // orchestrator (ISSUE-0102 promotion of optional class fields).
+        writeFile("src/optional_main.deal", """
+            export function main(): null { return null; }
+            export class Point {
+              x?: int;
+            }
+            export function run(): int { return 1; }
+            """);
+        Path optionalEntry = tmpDir.resolve("src/optional_main.deal")
+            .toAbsolutePath();
+        Path optionalOut = tmpDir.resolve("build/optional_supported");
+        CompilationOrchestrator optionalOrchestrator =
+            new CompilationOrchestrator(
+                optionalEntry, optionalOut, false, false, false,
+                Backend.JVM, (DealConfig) null, roots,
+                Path.of(".").toAbsolutePath().normalize());
+        boolean optionalSuccess = optionalOrchestrator.compile();
+        check(optionalSuccess,
+            "optional class fields compile through the orchestrator: "
+                + optionalOrchestrator.diagnostics());
+        check(Files.exists(optionalOut.resolve("Optional_main.java")),
+            "optional-class-field module writes its artifact");
     }
 
     // =========================================================================
@@ -6862,15 +7476,6 @@ public class JvmBackendTest {
                 export function test(): null {
                   let xs: (table | null)[] = [];
                 }
-                """),
-            new Gate("optional class field", """
-                class Point { x?: int; }
-                export function test(): int { return 1; }
-                """),
-            new Gate("class-typed class field", """
-                class Inner { v: int = 0; }
-                class Outer { inner: Inner = {}; }
-                export function test(): int { return 1; }
                 """)
         );
         for (Gate g : gates) {
@@ -6886,6 +7491,34 @@ public class JvmBackendTest {
             check(res.hasErrors(), "backend rejects " + g.what());
             check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
                 "E6000 diagnostic for " + g.what() + ": " + res.diagnostics());
+        }
+
+        // ISSUE-0102: optional and class-typed class fields promoted out
+        // of the E6000 gate — they now compile (and run through the
+        // class fixtures above).
+        List<Gate> promoted = List.of(
+            new Gate("optional class field", """
+                class Point { x?: int; }
+                export function test(): int { return 1; }
+                """),
+            new Gate("class-typed class field", """
+                class Inner { v: int = 0; }
+                class Outer { inner: Inner = {}; }
+                export function test(): int { return 1; }
+                """)
+        );
+        for (Gate g : promoted) {
+            Frontend f = compileFrontend(g.source(), "jvmtest-nullable-gate.deal");
+            if (!f.errors().isEmpty()) {
+                fail("frontend must accept promoted gate '" + g.what()
+                    + "': " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-nullable-gate.deal", "main");
+            check(!res.hasErrors(),
+                "backend now accepts " + g.what() + ": " + res.diagnostics());
         }
     }
 
@@ -7086,6 +7719,16 @@ public class JvmBackendTest {
             }
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(f.program(),
                 f.checkResult(), "jvmtest-stdlib-boundary.deal", "main");
+            if (c.module().equals("std/table")) {
+                // ISSUE-0102: std/table.keys now executes — tables map as
+                // first-class values, so the import compiles (the emitted
+                // artifact carries the __tableKeys helper).
+                check(!res.hasErrors(),
+                    "backend accepts " + c.what() + ": " + res.diagnostics());
+                check(res.source().contains("__tableKeys"),
+                    "std/table import emits the keys helper");
+                continue;
+            }
             check(res.hasErrors(), "backend rejects " + c.what());
             check(res.diagnostics().stream().anyMatch(d ->
                     "E6000".equals(d.code())
@@ -7096,10 +7739,10 @@ public class JvmBackendTest {
         }
 
         // The orchestrator's JVM path reports the same E6000 at the import
-        // statement and writes no artifact for the std/table-importing
+        // statement and writes no artifact for the std/json-importing
         // module (the backend is the single rejection site).
         writeFile("src/table_import.deal", """
-            import * as t from "std/table"
+            import * as j from "std/json"
             export function main(): null { return null; }
             export function run(): int { return 1; }
             """);
@@ -7110,13 +7753,13 @@ public class JvmBackendTest {
             entryFile, outputDir, false, false, false, Backend.JVM,
             (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
         boolean success = orchestrator.compile();
-        check(!success, "orchestrator JVM path rejects std/table imports");
+        check(!success, "orchestrator JVM path rejects std/json imports");
         check(orchestrator.diagnostics().stream().anyMatch(d ->
                 "E6000".equals(d.code()) && d.message().contains("table values")),
             "orchestrator reports the table boundary: "
                 + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("Table_import.java")),
-            "no artifact written for the std/table-importing module");
+            "no artifact written for the std/json-importing module");
     }
 
     /** Real stdlib execution through the emitted artifact: every supported

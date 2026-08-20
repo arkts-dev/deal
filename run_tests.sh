@@ -45,6 +45,7 @@ javac --release 25 -proc:none -d build \
   test/StdlibContractTest.java \
   test/GenerateStdlibGoldenIr.java \
   test/ConformanceTest.java \
+  test/JvmConformanceTest.java \
   test/LuaAbiTest.java \
   test/LuaAbiBackendTest.java \
   test/CrossModuleTypingTest.java
@@ -181,4 +182,8 @@ echo "=== Running Conformance Tests ==="
 java -ea -cp build deal.test.ConformanceTest test/conformance/
 
 echo ""
+echo ""
+echo "=== Running JVM Conformance Tests (ISSUE-0102) ==="
+java -ea -cp build deal.test.JvmConformanceTest test/conformance/
+
 echo "=== All Tests Passed ==="
