@@ -4,7 +4,11 @@
 // @features: async, runtime
 
 export async function f(): int {
-  return 5;
+  let result: int = 5;
+  if (result !== 5) {
+    throw { code: "TEST_FAIL", message: "synchronous completion value mismatch" };
+  }
+  return result;
 }
 
 export function main(): null {

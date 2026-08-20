@@ -4,7 +4,11 @@
 // @features: async-await
 
 export async function test_no_await(): int {
-  return 42;
+  let result: int = 42;
+  if (result !== 42) {
+    throw { code: "TEST_FAIL", message: "no-await completion value mismatch" };
+  }
+  return result;
 }
 
 export function main(): null {
