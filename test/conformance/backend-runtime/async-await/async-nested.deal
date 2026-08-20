@@ -3,11 +3,42 @@
 // @expected: runtime-ok
 // @features: async, await, runtime
 
-async function c(): int { return 10; }
-async function b(): int { return await c(); }
+// Invocation-local stage carrier threaded through the private chain helpers.
+class ChainStage { step: int = 0; }
+
+async function c(stage: ChainStage): int {
+  // The innermost completion must be the first chain event: stage 0.
+  if (stage.step !== 0) {
+    throw { code: "TEST_FAIL", message: "c completion stage mismatch" };
+  }
+  stage.step = stage.step + 1;
+  return 10;
+}
+
+async function b(stage: ChainStage): int {
+  let v: int = await c(stage);
+  // b resumes once after c's completion: stage must be 1.
+  if (stage.step !== 1) {
+    throw { code: "TEST_FAIL", message: "b resume stage mismatch" };
+  }
+  stage.step = stage.step + 1;
+  if (v !== 10) {
+    throw { code: "TEST_FAIL", message: "b resumed value mismatch" };
+  }
+  return v;
+}
 
 export async function a(): int {
-  return await b();
+  let stage: ChainStage = { step: 0 };
+  let v: int = await b(stage);
+  // a resumes once after b's resume: the designed terminal stage is 2.
+  if (stage.step !== 2) {
+    throw { code: "TEST_FAIL", message: "a resume stage mismatch" };
+  }
+  if (v !== 10) {
+    throw { code: "TEST_FAIL", message: "a final value mismatch" };
+  }
+  return v;
 }
 
 export function main(): null {
