@@ -4924,7 +4924,6 @@ public class JvmBackendTest {
             import * as console from "std/console"
             export function main(): null { return null; }
             function add(a: int, b: int): int { return a + b; }
-            export function main(): null { return null; }
             export function run(): int {
               console.log("jvm-orchestrator");
               return add(20, 22);
@@ -5014,7 +5013,6 @@ public class JvmBackendTest {
             export class Point {
               x?: int;
             }
-            export function main(): null { return null; }
             export function run(): int { return 1; }
             """);
 

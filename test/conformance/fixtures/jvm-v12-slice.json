@@ -22,7 +22,7 @@
     },
     {
       "name": "jvm-v12-entry-main-missing-rejected",
-      "description": "The v1.2 entry gate: a selected entry module that does not export main is rejected by the frontend with E5005 before any backend runs",
+      "description": "The v1.2 entry gate: a selected entry module that does not export main is rejected by the frontend with E2010 (the orchestrator selected-entry rule) before any backend runs",
       "modules": {
         "main.deal": "export function run(): int { return 1; }\n",
         "lib.deal": "export function helper(): int { return 7; }\n"
@@ -31,7 +31,7 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": null,
-      "expectedCompileError": "E5005",
+      "expectedCompileError": "E2010",
       "irContains": [],
       "irNotContains": [],
       "backends": [
@@ -40,7 +40,7 @@
     },
     {
       "name": "jvm-v12-entry-main-async-rejected",
-      "description": "The v1.2 entry gate: an async main violates the non-async signature requirement — E5005",
+      "description": "The v1.2 entry gate: an async main violates the non-async signature requirement — E2011",
       "modules": {
         "main.deal": "export async function main(): null { return null; }\n"
       },
@@ -48,7 +48,7 @@
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": null,
-      "expectedCompileError": "E5005",
+      "expectedCompileError": "E2011",
       "irContains": [],
       "irNotContains": [],
       "backends": [

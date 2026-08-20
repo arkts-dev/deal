@@ -381,7 +381,7 @@
     {
       "name": "function-type-descriptor-fixed-array-param",
       "description": "Function type (string,[int])->null appears in IR for fixed-param function (v1.2 — no rest arm)",
-      "source": "function describe(label: string, values: int[]): null { return; }\nlet f: (label: string, values: int[]) => null = describe;",
+      "source": "function describe(label: string, values: int[]): null { return; }\nexport function main(): null {\n  let f: (label: string, values: int[]) => null = describe;\n  return null;\n}",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
