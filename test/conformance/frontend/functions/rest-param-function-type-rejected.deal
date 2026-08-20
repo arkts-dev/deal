@@ -1,6 +1,6 @@
 // @spec: Functions — Function type compatibility
 // @description: function types have no rest arm in v1.2; a rest-parameter function type is a compile-time error
-// @expected: compile-error any
+// @expected: compile-error E1047
 // @features: functions, rest, v1.2
 
 export function probe(f: (...xs: int[]) => int): int {
