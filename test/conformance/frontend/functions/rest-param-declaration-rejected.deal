@@ -1,7 +1,6 @@
 // @spec: Functions — Function declaration
 // @description: rest parameters are removed in v1.2; a rest-parameter declaration is a compile-time error
-// @expected: known-fail compile-error any
-// @issue: ISSUE-0103
+// @expected: compile-error any
 // @features: functions, rest, v1.2
 
 export function sum(...values: int[]): int {
