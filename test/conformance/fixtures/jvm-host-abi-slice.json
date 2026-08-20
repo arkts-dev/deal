@@ -4,10 +4,10 @@
   "tests": [
     {
       "name": "jvm-host-export-presence",
-      "description": "A host module's declared exports are exposed through load-time-validated wrappers: info() runs the host implementation at load time and add() computes through the boundary",
+      "description": "A host module's declared exports are exposed through load-time-validated wrappers: main() calls info() through the boundary and run() computes add() through the boundary (DEAL v1.2 has no module-level statements, so the v1.1 load-time call moved into main())",
       "modules": {
         "bindings/log.d.deal": "export function info(level: int, s: string): null;\nexport function add(a: int, b: int): int;",
-        "entry.deal": "import * as log from \"host/log\"\nlog.info(1, \"hello\");\nexport function run(): int { return log.add(2, 3); }"
+        "entry.deal": "import * as log from \"host/log\"\nexport function main(): null { log.info(1, \"hello\"); return null; }\nexport function run(): int { return log.add(2, 3); }"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -33,7 +33,7 @@
       "description": "A host module whose class lacks a declared export fails at module load with E8011 \u2014 the load-time error fires from the import's presence check before any function runs",
       "modules": {
         "bindings/log.d.deal": "export function ping(): null;",
-        "entry.deal": "import * as log from \"host/log\"\nexport function run(): null { return null; }"
+        "entry.deal": "import * as log from \"host/log\"\nexport function main(): null { return null; }\nexport function run(): null { return null; }"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -57,7 +57,7 @@
       "description": "A host import whose implementation class cannot be loaded fails at module load with E8011 (the JVM analog of LuaJIT's wrapped require failure)",
       "modules": {
         "bindings/log.d.deal": "export function ping(): null;",
-        "entry.deal": "import * as log from \"host/log\"\nexport function run(): null { return null; }"
+        "entry.deal": "import * as log from \"host/log\"\nexport function main(): null { return null; }\nexport function run(): null { return null; }"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -81,7 +81,7 @@
       "description": "Extra host exports are structurally dropped: the host class supplies an undeclared extra() method and the load succeeds with the declared surface intact",
       "modules": {
         "bindings/log.d.deal": "export function value(): string;",
-        "entry.deal": "import * as log from \"host/log\"\nexport function run(): string { return log.value(); }"
+        "entry.deal": "import * as log from \"host/log\"\nexport function main(): null { return null; }\nexport function run(): string { return log.value(); }"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -105,7 +105,7 @@
       "description": "A host function returning a value of the wrong runtime kind for its declared return type raises E8010 at the call boundary (Long for a declared string)",
       "modules": {
         "bindings/log.d.deal": "export function value(): string;",
-        "entry.deal": "import * as log from \"host/log\"\nexport function run(): string { return log.value(); }"
+        "entry.deal": "import * as log from \"host/log\"\nexport function main(): null { return null; }\nexport function run(): string { return log.value(); }"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -129,7 +129,7 @@
       "description": "Java null crossing the untyped host boundary into a non-nullable return raises E8010 \u2014 the spec forbids exposing Java null as DEAL null without validation",
       "modules": {
         "bindings/log.d.deal": "export function value(): string;",
-        "entry.deal": "import * as log from \"host/log\"\nexport function run(): string { return log.value(); }"
+        "entry.deal": "import * as log from \"host/log\"\nexport function main(): null { return null; }\nexport function run(): string { return log.value(); }"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -153,7 +153,7 @@
       "description": "A host function returning an out-of-DEAL-safe-range int raises E8004 at the call boundary (checkInt mirrors LuaJIT's int boundary)",
       "modules": {
         "bindings/log.d.deal": "export function value(): int;",
-        "entry.deal": "import * as log from \"host/log\"\nexport function run(): int { return log.value(); }"
+        "entry.deal": "import * as log from \"host/log\"\nexport function main(): null { return null; }\nexport function run(): int { return log.value(); }"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -177,7 +177,7 @@
       "description": "A host function declared string | null returns Java null (the JVM DEAL null sentinel) and a string across calls; DEAL narrowing observes both",
       "modules": {
         "bindings/log.d.deal": "export function find(s: string): string | null;",
-        "entry.deal": "import * as console from \"std/console\"\nimport * as log from \"host/log\"\nlet a: string | null = log.find(\"hit\");\nlet b: string | null = log.find(\"miss\");\nif (a !== null) { console.log(\"a-hit\"); } else { console.log(\"a-null\"); }\nif (b === null) { console.log(\"b-null\"); } else { console.log(\"b-hit\"); }\nexport function run(): null { return null; }"
+        "entry.deal": "import * as console from \"std/console\"\nimport * as log from \"host/log\"\nexport function main(): null {\n  let a: string | null = log.find(\"hit\");\n  let b: string | null = log.find(\"miss\");\n  if (a !== null) { console.log(\"a-hit\"); } else { console.log(\"a-null\"); }\n  if (b === null) { console.log(\"b-null\"); } else { console.log(\"b-hit\"); }\n  return null;\n}"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -201,7 +201,7 @@
       "description": "A host function declared string | null returning a non-null non-string value raises E8010 (the nullable boundary checks the inner type)",
       "modules": {
         "bindings/log.d.deal": "export function find(s: string): string | null;",
-        "entry.deal": "import * as console from \"std/console\"\nimport * as log from \"host/log\"\nlet f: string | null = log.find(\"x\");\nif (f === null) { console.log(\"none\"); } else { console.log(f); }\nexport function run(): null { return null; }"
+        "entry.deal": "import * as console from \"std/console\"\nimport * as log from \"host/log\"\nexport function main(): null {\n  let f: string | null = log.find(\"x\");\n  if (f === null) { console.log(\"none\"); } else { console.log(f); }\n  return null;\n}"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -222,10 +222,10 @@
     },
     {
       "name": "jvm-host-null-return-ok",
-      "description": "A host function declared ->null returning Java null passes the null boundary on both the module-level discard path and an in-function call",
+      "description": "A host function declared ->null returning Java null passes the null boundary on both the main() discard path and an in-function call",
       "modules": {
         "bindings/log.d.deal": "export function ping(): null;",
-        "entry.deal": "import * as console from \"std/console\"\nimport * as log from \"host/log\"\nlog.ping();\nconsole.log(\"after\");\nexport function run(): null { log.ping(); console.log(\"run\"); return null; }"
+        "entry.deal": "import * as console from \"std/console\"\nimport * as log from \"host/log\"\nexport function main(): null { log.ping(); console.log(\"after\"); return null; }\nexport function run(): null { log.ping(); console.log(\"run\"); return null; }"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -249,7 +249,7 @@
       "description": "A host function declared ->null returning a non-null value raises E8010 at the boundary (LuaJIT's sync ->null check, JVM null sentinel)",
       "modules": {
         "bindings/log.d.deal": "export function ping(): null;",
-        "entry.deal": "import * as log from \"host/log\"\nlog.ping();\nexport function run(): null { return null; }"
+        "entry.deal": "import * as log from \"host/log\"\nexport function main(): null { log.ping(); return null; }\nexport function run(): null { return null; }"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -273,7 +273,7 @@
       "description": "Host function parameter adaptation: declared int/number/boolean/string parameters arrive as their JVM mappings and a nullable parameter receives Java null (the DEAL null) and a value across calls",
       "modules": {
         "bindings/log.d.deal": "export function combine(a: int, b: number, c: boolean, d: string): string;\nexport function maybe(s: string | null): string;",
-        "entry.deal": "import * as console from \"std/console\"\nimport * as log from \"host/log\"\nconsole.log(log.combine(7, 2.5, true, \"s\"));\nconsole.log(log.maybe(\"x\"));\nconsole.log(log.maybe(null));\nexport function run(): null { return null; }"
+        "entry.deal": "import * as console from \"std/console\"\nimport * as log from \"host/log\"\nexport function main(): null {\n  console.log(log.combine(7, 2.5, true, \"s\"));\n  console.log(log.maybe(\"x\"));\n  console.log(log.maybe(null));\n  return null;\n}"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -297,7 +297,7 @@
       "description": "A host function declared async returns a CompletableFuture (the backend async operation); await joins it and the completion value satisfies the declared return type \u2014 including a DEAL async function awaited through another",
       "modules": {
         "bindings/log.d.deal": "export async function fetch(id: int): string;",
-        "entry.deal": "import * as console from \"std/console\"\nimport * as log from \"host/log\"\nasync function load(): string {\n  let v: string = await log.fetch(9);\n  return v;\n}\nexport async function run(): null {\n  let v: string = await load();\n  console.log(v);\n  return null;\n}"
+        "entry.deal": "import * as console from \"std/console\"\nimport * as log from \"host/log\"\nexport function main(): null { return null; }\nasync function load(): string {\n  let v: string = await log.fetch(9);\n  return v;\n}\nexport async function run(): null {\n  let v: string = await load();\n  console.log(v);\n  return null;\n}"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -321,7 +321,7 @@
       "description": "A host function declared async returning a non-operation raises E8010 (the async operation shape check, spec: the host must return a backend async operation accepted by the await lowering)",
       "modules": {
         "bindings/log.d.deal": "export async function fetch(): string;",
-        "entry.deal": "import * as log from \"host/log\"\nexport async function run(): string { return await log.fetch(); }"
+        "entry.deal": "import * as log from \"host/log\"\nexport function main(): null { return null; }\nexport async function run(): string { return await log.fetch(); }"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -345,7 +345,7 @@
       "description": "A host async operation completing with a value that does not satisfy the declared return type raises E8001 at the await site (the LuaJIT await-site completion check)",
       "modules": {
         "bindings/log.d.deal": "export async function fetch(): string;",
-        "entry.deal": "import * as log from \"host/log\"\nexport async function run(): string { return await log.fetch(); }"
+        "entry.deal": "import * as log from \"host/log\"\nexport function main(): null { return null; }\nexport async function run(): string { return await log.fetch(); }"
       },
       "entry": "entry.deal",
       "hosts": {

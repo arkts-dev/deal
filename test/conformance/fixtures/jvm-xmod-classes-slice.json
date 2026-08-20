@@ -181,7 +181,7 @@
     },
     {
       "name": "jvm-xmod-class-unused-import-side-effect",
-      "description": "v1.2: module top level holds only declarations, so the An import of a class-exporting module whose alias is never used still runs the imported module's load-time side effects (lib-class-initialized prints before the entry's own result), because the import trigger initializes the imported class exactly where LuaJIT runs require",
+      "description": "v1.2 compile-error gate: module top level holds only declarations, so the v1.1 load-time statement in the class-exporting imported module is rejected with E1049 before any backend codegen",
       "modules": {
         "lib.deal": "import * as console from \"std/console\"\nconsole.log(\"lib-class-initialized\");\nexport class Marker {\n  id: int = 0;\n}",
         "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return 1; }"

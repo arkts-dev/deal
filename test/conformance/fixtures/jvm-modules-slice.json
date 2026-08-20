@@ -96,7 +96,7 @@
     },
     {
       "name": "jvm-mod-import-load-time-order",
-      "description": "v1.2: module top level holds only declarations, so the The import statement runs the imported module's load-time statements where it appears (depth-first, before the importing module's later load-time statements): lib-load, then main-load, then the called export prints ping",
+      "description": "v1.2 compile-error gate: module top level holds only declarations, so the v1.1 load-time statements (console.log at module top level) are rejected with E1049 before any backend codegen",
       "modules": {
         "lib.deal": "import * as console from \"std/console\"\nconsole.log(\"lib-load\");\nexport function ping(): null { console.log(\"ping\"); }",
         "main.deal": "import * as console from \"std/console\"\nimport * as lib from \"./lib\"\nconsole.log(\"main-load\");\nexport function run(): null { lib.ping(); }"
@@ -114,7 +114,7 @@
     },
     {
       "name": "jvm-mod-unused-import-side-effect",
-      "description": "v1.2: module top level holds only declarations, so the An imported-but-unused alias still runs the imported module's load-time side effects (LuaJIT runs require for the import regardless of use): lib-initialized prints even though the alias is never referenced",
+      "description": "v1.2 compile-error gate: module top level holds only declarations, so the v1.1 load-time statement in the imported lib is rejected with E1049 before any backend codegen",
       "modules": {
         "lib.deal": "import * as console from \"std/console\"\nconsole.log(\"lib-initialized\");\nexport function helper(): int { return 7; }",
         "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return 1; }"
@@ -132,7 +132,7 @@
     },
     {
       "name": "jvm-mod-transitive-import",
-      "description": "v1.2: module top level holds only declarations, so the A transitive import chain initializes depth-first in import order (c-load, b-load, main-load) and b's exported plus() calls c's exported base() across the b→c module boundary: plus(5) = 10 + 5 = 15",
+      "description": "v1.2 compile-error gate: module top level holds only declarations, so the v1.1 load-time statements in the transitive import chain are rejected with E1049 before any backend codegen",
       "modules": {
         "c.deal": "import * as console from \"std/console\"\nconsole.log(\"c-load\");\nexport function base(): int { return 10; }",
         "b.deal": "import * as console from \"std/console\"\nimport * as c from \"./c\"\nconsole.log(\"b-load\");\nexport function plus(x: int): int { return c.base() + x; }",
@@ -170,7 +170,7 @@
     },
     {
       "name": "jvm-mod-load-time-imported-call",
-      "description": "v1.2: module top level holds only declarations, so the An imported direct call at module level (load time) feeds a module field initializer: base = lib.value() = 40, then run() returns base + 2 = 42",
+      "description": "v1.2 compile-error gate: module top level holds only declarations, so the v1.1 module-level call feeding a module field initializer is rejected with E1049 before any backend codegen",
       "modules": {
         "lib.deal": "export function value(): int { return 40; }",
         "main.deal": "import * as lib from \"./lib\"\nlet base: int = lib.value();\nexport function run(): int { return base + 2; }"

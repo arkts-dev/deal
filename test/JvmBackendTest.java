@@ -6232,6 +6232,7 @@ public class JvmBackendTest {
             """);
         writeFile("src/entry.deal", """
             import * as m from "./hostlib"
+            export function main(): null { return null; }
             export function run(): int { return 1; }
             """);
         Path outputDir2 = tmpDir.resolve("build/import_decl_class");
@@ -6279,9 +6280,12 @@ public class JvmBackendTest {
         writeFile("src/entry.deal", """
             import * as console from "std/console"
             import * as log from "host/log"
-            log.info(1, "hello");
-            let f: string | null = log.find("x");
-            if (f === null) { console.log("null"); } else { console.log(f); }
+            export function main(): null {
+              log.info(1, "hello");
+              let f: string | null = log.find("x");
+              if (f === null) { console.log("null"); } else { console.log(f); }
+              return null;
+            }
             export function run(): int { return log.add(2, 3); }
             """);
         writeFile("HostLog.java", """
@@ -6333,6 +6337,7 @@ public class JvmBackendTest {
         Files.writeString(outputDir.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(
                 parseProgram("""
+                    export function main(): null { return null; }
                     export function run(): int { return 1; }
                     """), "Entry"));
         ProcessBuilder javac = new ProcessBuilder("javac", "-encoding", "UTF-8",
@@ -6374,6 +6379,7 @@ public class JvmBackendTest {
         Files.writeString(outputDir2.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(
                 parseProgram("""
+                    export function main(): null { return null; }
                     export function run(): int { return 1; }
                     """), "Entry"));
         ProcessBuilder javac2 = new ProcessBuilder("javac", "-encoding", "UTF-8",
@@ -6405,6 +6411,7 @@ public class JvmBackendTest {
             """);
         writeFile("src/entry_bad.deal", """
             import * as log from "host/log"
+            export function main(): null { return null; }
             export function run(): string { return log.value(); }
             """);
         Path entryBad = tmpDir.resolve("src/entry_bad.deal").toAbsolutePath();
@@ -6419,6 +6426,7 @@ public class JvmBackendTest {
         Files.writeString(outputDir3.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(
                 parseProgram("""
+                    export function main(): null { return null; }
                     export function run(): string { return "x"; }
                     """), "Entry_bad"));
         ProcessBuilder javac3 = new ProcessBuilder("javac", "-encoding", "UTF-8",
@@ -6442,6 +6450,7 @@ public class JvmBackendTest {
         // shape (E8010) and completion (E8001) failures.
         writeFile("src/entry_async.deal", """
             import * as log from "host/log"
+            export function main(): null { return null; }
             export async function run(): string { return await log.fetch(); }
             """);
         Path entryAsync = tmpDir.resolve("src/entry_async.deal").toAbsolutePath();
@@ -6456,6 +6465,7 @@ public class JvmBackendTest {
         Files.writeString(outputDir4.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(
                 parseProgram("""
+                    export function main(): null { return null; }
                     export async function run(): string { return "x"; }
                     """), "Entry_async"));
         ProcessBuilder javac4 = new ProcessBuilder("javac", "-encoding", "UTF-8",
@@ -6495,6 +6505,7 @@ public class JvmBackendTest {
         Files.writeString(outputDir5.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(
                 parseProgram("""
+                    export function main(): null { return null; }
                     export async function run(): string { return "x"; }
                     """), "Entry_async"));
         ProcessBuilder javac5 = new ProcessBuilder("javac", "-encoding", "UTF-8",
@@ -6533,6 +6544,7 @@ public class JvmBackendTest {
         Files.writeString(outputDir6.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(
                 parseProgram("""
+                    export function main(): null { return null; }
                     export async function run(): string { return "x"; }
                     """), "Entry_async"));
         ProcessBuilder javac6 = new ProcessBuilder("javac", "-encoding", "UTF-8",
