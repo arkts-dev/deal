@@ -336,6 +336,7 @@ public class JvmBackendTest {
             testEntryModuleEmitsJvmEntryPoint();
             testEntryGateBackendE6004();
             testStringForOfScalarIteration();
+            testArrayForOfRefElementShapes();
             testBoundaryStringValidation();
             testStdlibTimeNowMillis();
             testStdlibHelperNameCollisions();
@@ -2547,6 +2548,242 @@ public class JvmBackendTest {
             "array for-of runs through javac + java: " + arrRun.output());
         check(arrRun.output().contains("array-forof-ok"),
             "array for-of sums its elements: " + arrRun.output());
+    }
+
+    /**
+     * ISSUE-0102 rework (BOT-0933 finding 1): array for-of over function
+     * elements, nullable-function elements, and nested-array elements was
+     * silently miscompiled — {@code arrayForOfReadHelper} returned null
+     * for these shapes while {@code javaArrayElementType} accepted them
+     * without recording an E6000, so {@code emitArrayForOf} emitted the
+     * inert {@code null(__iter0, __i0)} placeholder and the CLI reported
+     * success for an artifact javac rejects. The helper now mirrors the
+     * {@code emitIndexRead} chain: {@code Type.Func} /
+     * {@code Nullable(Type.Func)} / {@code Type.Array} elements route
+     * through {@code refArrayReadHelper} (per-shape
+     * {@code __fnRead$}/{@code __fnOrNullRead$}/{@code __nestedRead$}
+     * helpers with E6000 diagnostics for unsupported signatures), so the
+     * shapes either run correctly or the backend rejects the program —
+     * never a broken artifact after the CLI reported success.
+     */
+    private static void testArrayForOfRefElementShapes() throws Exception {
+        System.out.println("-- Array for-of: function / nested / nullable-function elements --");
+
+        // Runtime: for-of over a function array invokes every element.
+        ExecResult fn = compileAndRunJvm("""
+            import * as console from "std/console"
+            function add1(x: int): int { return x + 1; }
+            export function test(): null {
+              let fs: ((x: int) => int)[] = [add1, add1];
+              let total: int = 0;
+              for (let f: (x: int) => int of fs) {
+                total = total + f(total);
+              }
+              if (total !== 3) { console.log("bad-total"); return; }
+              console.log("fnarr-forof-ok");
+            }
+            """, "forof-fnarr");
+        check(fn.exitCode() == 0,
+            "function-array for-of runs through javac + java: " + fn.output());
+        check(fn.output().contains("fnarr-forof-ok"),
+            "function-array for-of invokes each element: " + fn.output());
+
+        // Runtime: for-of over a nested primitive array reads each row.
+        ExecResult nested = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let rows: int[][] = [[1, 2], [3, 4]];
+              let total: int = 0;
+              for (let row: int[] of rows) {
+                total = total + row[0] + row[1];
+              }
+              if (total !== 10) { console.log("bad-total"); return; }
+              console.log("nested-forof-ok");
+            }
+            """, "forof-nested");
+        check(nested.exitCode() == 0,
+            "nested-array for-of runs through javac + java: " + nested.output());
+        check(nested.output().contains("nested-forof-ok"),
+            "nested-array for-of sums the rows: " + nested.output());
+
+        // Runtime: for-of over a nullable-function array skips the DEAL
+        // null element (Java null from the per-signature read).
+        ExecResult orNull = compileAndRunJvm("""
+            import * as console from "std/console"
+            function add1(x: int): int { return x + 1; }
+            export function test(): null {
+              let fs: (((x: int) => int) | null)[] = [];
+              fs[fs.length] = add1;
+              fs[fs.length] = null;
+              let total: int = 0;
+              for (let f: ((x: int) => int) | null of fs) {
+                if (f !== null) { total = total + f(total); }
+              }
+              if (total !== 1) { console.log("bad-total"); return; }
+              console.log("fnornull-forof-ok");
+            }
+            """, "forof-fnornull");
+        check(orNull.exitCode() == 0,
+            "nullable-function-array for-of runs through javac + java: "
+                + orNull.output());
+        check(orNull.output().contains("fnornull-forof-ok"),
+            "nullable-function-array for-of skips the null element: "
+                + orNull.output());
+
+        // Emission shapes: each supported shape reads through its
+        // per-shape helper, never the inert null(...) placeholder.
+        Frontend shape = compileFrontend("""
+            function add1(x: int): int { return x + 1; }
+            export function test(): int {
+              let fs: ((x: int) => int)[] = [add1];
+              let rows: int[][] = [[1]];
+              let nfs: (((x: int) => int) | null)[] = [];
+              let total: int = 0;
+              for (let f: (x: int) => int of fs) { total = total + 1; }
+              for (let row: int[] of rows) { total = total + 1; }
+              for (let f: ((x: int) => int) | null of nfs) { total = total + 1; }
+              return total;
+            }
+            """, "jvmtest-forof-refshape.deal");
+        check(shape.errors().isEmpty(),
+            "ref-shape for-of probe frontend clean: " + shape.errors());
+        if (shape.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult er = JvmBackend.generate(
+                shape.program(), shape.checkResult(),
+                "jvmtest-forof-refshape.deal", "main");
+            check(!er.hasErrors(),
+                "ref-shape for-of codegen clean: " + er.diagnostics());
+            if (!er.hasErrors()) {
+                check(er.source().contains("__fnRead$Fn1_I_R_I"),
+                    "function-array for-of uses the per-signature read helper");
+                check(er.source().contains("__nestedRead$__IntArray"),
+                    "nested-array for-of uses the per-shape read helper");
+                check(er.source().contains("__fnOrNullRead$Fn1_I_R_I"),
+                    "nullable-function-array for-of uses the per-signature "
+                        + "read helper");
+                check(!er.source().contains("null(__iter"),
+                    "no inert null(...) placeholder in the for-of reads");
+            }
+        }
+
+        // Rejection: for-of over an unsupported function signature or a
+        // nested array of function elements records E6000 (no artifact a
+        // javac step would reject after the CLI reported success).
+        Frontend badSig = compileFrontend("""
+            function bad(xs: int[]): int { return 1; }
+            export function test(): int {
+              let fs: ((xs: int[]) => int)[] = [];
+              for (let f: (xs: int[]) => int of fs) { }
+              return 0;
+            }
+            """, "jvmtest-forof-badsig.deal");
+        check(badSig.errors().isEmpty(),
+            "unsupported-signature for-of probe frontend clean: "
+                + badSig.errors());
+        if (badSig.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult er = JvmBackend.generate(
+                badSig.program(), badSig.checkResult(),
+                "jvmtest-forof-badsig.deal", "main");
+            check(er.hasErrors(), "unsupported-signature for-of rejected");
+            check(er.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for the unsupported-signature for-of: "
+                    + er.diagnostics());
+        }
+        Frontend badNested = compileFrontend("""
+            function add1(x: int): int { return x + 1; }
+            export function test(): int {
+              let fss: (((x: int) => int)[][]) = [];
+              for (let fs: ((x: int) => int)[] of fss) { }
+              return 0;
+            }
+            """, "jvmtest-forof-badnested.deal");
+        check(badNested.errors().isEmpty(),
+            "nested-function-array for-of probe frontend clean: "
+                + badNested.errors());
+        if (badNested.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult er = JvmBackend.generate(
+                badNested.program(), badNested.checkResult(),
+                "jvmtest-forof-badnested.deal", "main");
+            check(er.hasErrors(), "nested-function-array for-of rejected");
+            check(er.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())),
+                "E6000 for the nested-function-array for-of: "
+                    + er.diagnostics());
+        }
+
+        // The real orchestrator pipeline (frontend → codegen → artifacts):
+        // the supported shapes compile with success=true and ZERO
+        // diagnostics, and the emitted artifacts run through javac + java.
+        writeFile("src/refof_main.deal", """
+            export function main(): null { return null; }
+            function add1(x: int): int { return x + 1; }
+            export function run(): int {
+              let fs: ((x: int) => int)[] = [add1];
+              let rows: int[][] = [[1, 2], [3, 4]];
+              let total: int = 0;
+              for (let f: (x: int) => int of fs) {
+                total = total + f(total);
+              }
+              for (let row: int[] of rows) {
+                total = total + row[0];
+              }
+              return total;
+            }
+            """);
+        Path entryFile = tmpDir.resolve("src/refof_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/refof");
+        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JVM,
+            (DealConfig) null, roots,
+            Path.of(".").toAbsolutePath().normalize());
+        boolean success = orchestrator.compile();
+        check(success, "for-of over function/nested arrays compiles through "
+            + "the orchestrator: " + orchestrator.diagnostics());
+        check(orchestrator.diagnostics().isEmpty(),
+            "zero diagnostics for the supported ref-shape for-of: "
+                + orchestrator.diagnostics());
+        check(Files.exists(outputDir.resolve("Refof_main.java")),
+            "the ref-shape for-of entry module writes its artifact");
+        if (success && Files.exists(outputDir.resolve("Refof_main.java"))) {
+            ExecResult exec = runJvmArtifacts(outputDir,
+                parseProgram("export function run(): int { return 1; }"),
+                "Refof_main");
+            check(exec.exitCode() == 0 && exec.output().contains("5"),
+                "the orchestrator artifacts run: f(0)=1 then +1+3 = 5: "
+                    + exec.output());
+        }
+
+        // The unsupported-signature for-of fails the orchestrator with
+        // E6000 and writes no entry artifact (the slice contract: E6000,
+        // never a broken artifact).
+        writeFile("src2/refof_bad.deal", """
+            export function main(): null { return null; }
+            function bad(xs: int[]): int { return 1; }
+            export function run(): int {
+              let fs: ((xs: int[]) => int)[] = [];
+              for (let f: (xs: int[]) => int of fs) { }
+              return 0;
+            }
+            """);
+        Path badEntry = tmpDir.resolve("src2/refof_bad.deal").toAbsolutePath();
+        Path badOut = tmpDir.resolve("build/refof_bad");
+        List<Path> roots2 = List.of(tmpDir.resolve("src2").toAbsolutePath());
+        CompilationOrchestrator badOrchestrator = new CompilationOrchestrator(
+            badEntry, badOut, false, false, false, Backend.JVM,
+            (DealConfig) null, roots2,
+            Path.of(".").toAbsolutePath().normalize());
+        boolean badSuccess = badOrchestrator.compile();
+        check(!badSuccess,
+            "the unsupported-signature for-of fails the orchestrator: "
+                + badOrchestrator.diagnostics());
+        check(badOrchestrator.diagnostics().stream()
+                .anyMatch(d -> "E6000".equals(d.code())),
+            "orchestrator reports E6000 for the unsupported-signature "
+                + "for-of: " + badOrchestrator.diagnostics());
+        check(!Files.exists(badOut.resolve("Refof_bad.java")),
+            "no entry artifact when the ref-shape for-of is rejected");
     }
 
     /**

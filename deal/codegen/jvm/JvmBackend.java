@@ -6086,7 +6086,8 @@ public final class JvmBackend {
             resolveTypeNode(fos.varType()));
         String read = arrayForOfReadHelper(element, fos.span());
         if (read == null) {
-            // Unsupported element shape: E6000 recorded by the helper
+            // Unsupported element shape (an unsupported function
+            // signature or nested shape): E6000 recorded by the helper
             // lookup; emit the inert placeholder so the artifact gate
             // still sees a diagnostic-carrying (discarded) result.
             read = "null";
@@ -6131,17 +6132,28 @@ public final class JvmBackend {
 
     /** The per-element read helper for an array for-of over element type
      * {@code element}, or {@code null} (with E6000 recorded) for an
-     * unsupported element shape. */
+     * unsupported element shape. Mirrors the emitIndexRead helper chain:
+     * function elements, nullable function elements, and nested-array
+     * elements route through {@link #refArrayReadHelper} (the per-shape
+     * {@code __fnRead$}/{@code __fnOrNullRead$}/{@code __nestedRead$}
+     * helpers with their E6000 diagnostics for unsupported signatures)
+     * — never the inert placeholder without a diagnostic. */
     private String arrayForOfReadHelper(Type element, Span span) {
         if (element instanceof Type.Nullable ne) {
             String h = orNullArrayReadHelper(ne.inner());
             if (h == null && ne.inner() instanceof Type.Class cls) {
                 h = classArrayHelper(cls, "readOrNull", span);
             }
+            if (h == null && ne.inner() instanceof Type.Func) {
+                h = refArrayReadHelper(element, span);
+            }
             return h;
         }
         if (element instanceof Type.Class cls) {
             return classArrayHelper(cls, "read", span);
+        }
+        if (element instanceof Type.Array || element instanceof Type.Func) {
+            return refArrayReadHelper(element, span);
         }
         String h = arrayReadHelper(element);
         if (h != null) return h;
