@@ -8,3 +8,5 @@ import * as M from "./async_lib";
 async function f(): int {
   return await M.fetch(1);
 }
+
+export function main(): null { return null; }

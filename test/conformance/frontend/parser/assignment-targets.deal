@@ -23,3 +23,5 @@ export function test_assign(): null {
 
   return null;
 }
+
+export function main(): null { return null; }

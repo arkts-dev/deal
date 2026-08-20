@@ -3,5 +3,9 @@
 // @expected: compile-error E3003
 // @features: type-system, tables
 
+export function main(): null {
 let t: table = {};
 let v = t.x;
+
+return null;
+}

@@ -13,3 +13,5 @@ export function test_empty_for(): null {
   }
   return null;
 }
+
+export function main(): null { return null; }

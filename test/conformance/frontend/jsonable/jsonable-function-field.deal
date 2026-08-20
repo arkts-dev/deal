@@ -7,3 +7,5 @@
 export class BadJsonable {
   f: () => int = function(): int { return 1; };
 }
+
+export function main(): null { return null; }

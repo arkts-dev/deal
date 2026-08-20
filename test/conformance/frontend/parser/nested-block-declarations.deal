@@ -15,3 +15,5 @@ export function test_nested_block_grammar(): int {
   }
   return x;
 }
+
+export function main(): null { return null; }

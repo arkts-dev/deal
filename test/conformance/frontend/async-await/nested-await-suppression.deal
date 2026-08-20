@@ -9,3 +9,5 @@ async function outer(x: int): int { return x; }
 async function f(): int {
   return await outer(await inner());
 }
+
+export function main(): null { return null; }

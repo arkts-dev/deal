@@ -10,3 +10,5 @@ export function test_bad_class_field_runtime_type(): Box {
   let b: Box = t;
   return b;
 }
+
+export function main(): null { return null; }

@@ -3,7 +3,11 @@
 // @expected: compile-ok
 // @features: lexer, number
 
+export function main(): null {
 let a: number = 3.14;
 let b: number = 0.0;
 let c: number = 1e308;
 let d: number = 1.0e-3;
+
+return null;
+}

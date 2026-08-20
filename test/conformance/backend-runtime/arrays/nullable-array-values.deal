@@ -12,3 +12,5 @@ export function test_nullable_array_values(): null {
   acceptNullable(xs);
   return null;
 }
+
+export function main(): null { return null; }

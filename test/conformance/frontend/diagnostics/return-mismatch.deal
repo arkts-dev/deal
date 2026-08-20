@@ -6,3 +6,5 @@
 function wrongReturn(): int {
   return 1.0;
 }
+
+export function main(): null { return null; }

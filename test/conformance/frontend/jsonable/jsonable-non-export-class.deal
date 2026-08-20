@@ -11,3 +11,5 @@ class C {
 export function test_exists(): null {
   return null;
 }
+
+export function main(): null { return null; }

@@ -1,12 +1,14 @@
-// @spec: Classes — Field access
-// @description: Reading optional field yields T | null, not T
+// @spec: Classes — Optional fields
+// @description: Reading an optional field yields T | null, not T
 // @expected: compile-error E3001
-// @features: classes, optional
+// @features: classes, optional-fields
 
-class User {
-  name: string = "";
+class OptUser {
   nick?: string;
 }
 
-let u: User = { name: "Ada" };
-let n: string = u.nick; // error: string | null is not string
+export function main(): null {
+  let ou: OptUser = {};
+  let os: string = ou.nick;
+  return null;
+}

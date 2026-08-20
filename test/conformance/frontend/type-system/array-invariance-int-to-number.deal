@@ -3,5 +3,9 @@
 // @expected: compile-error E3001
 // @features: type-system, arrays, diagnostics
 
+export function main(): null {
 let ints: int[] = [1, 2];
 let nums: number[] = ints;
+
+return null;
+}

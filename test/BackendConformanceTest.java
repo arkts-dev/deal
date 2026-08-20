@@ -6,6 +6,7 @@ import deal.codegen.Backend;
 import deal.codegen.jvm.JvmBackend;
 import deal.codegen.lua.LuaBackend;
 import deal.module.CompilationOrchestrator;
+import deal.module.ModuleShapeValidator;
 import deal.module.DealConfig;
 import deal.ir.IrDumper;
 import deal.lexer.*;
@@ -74,8 +75,9 @@ import javax.tools.ToolProvider;
  * {@code test/conformance/fixtures/jvm-stdlib-slice.json}
  * (the stdlib modules whose declared functions use only the slice's
  * prerequisite value types — std/console output, std/string
- * UTF-8 byte-wise length/substring/split plus the plain-text
- * search/replace/trim helpers, std/math floor/ceil/sqrt/absInt/
+ * Unicode scalar-value length/substring/split (ISSUE-0106, spec-v1.2)
+ * plus the plain-text search/replace/trim helpers, std/math
+ * floor/ceil/sqrt/absInt/
  * absNumber/minInt/maxInt with the sqrt-negative E8001 runtime error,
  * std/time's second-truncated nowMillis, stdlib results composing
  * across modules, a frontend E5001 compile-error gate, and a
@@ -94,11 +96,14 @@ import javax.tools.ToolProvider;
  * (externals-gated host modules: declared export exposure, missing
  * declared exports as load-time E8011 errors, extra host exports
  * ignored, sync return boundary checks — E8010 wrong kinds and Java
- * null crossing non-nullable returns, E8004 out-of-safe-range ints —
- * nullable returns with Java null as the DEAL null sentinel, null
- * return boundaries, host function parameter adaptation, async host
- * operation shape checks (E8010) and completion checks (E8001 at the
- * await site with the blocking JVM await lowering), and an E2009
+ * null crossing non-nullable returns, E8004 out-of-safe-range ints,
+ * the ISSUE-0106 boundary string validation rejecting unpaired UTF-16
+ * surrogate strings on sync returns (E8010, plain and nullable string
+ * descriptors) and async completion values (E8001) — nullable returns
+ * with Java null as the DEAL null sentinel, null return boundaries,
+ * host function parameter adaptation, async host operation shape
+ * checks (E8010) and completion checks (E8001 at the await site with
+ * the blocking JVM await lowering), and an E2009
  * frontend gate — each fixture's 'hosts' map supplying a declaration
  * path and a real host implementation class compiled with the emitted
  * artifacts), and the ISSUE-0108 nullable-slice fixtures live in
@@ -962,6 +967,19 @@ public class BackendConformanceTest {
      * (lexer, parser, name resolver, type checker), mirroring
      * {@code ConformanceTest.compileAndGetDiagnostics}. A bypassed parser or
      * checker yields no diagnostics — the compile-error fixtures fail.
+     *
+     * <p>v1.2 entry-model note: this path checks the fixture module as a
+     * STANDALONE compiled unit (the module is not the selected entry of
+     * the compilation), so the spec-v1.2 entry gate (the selected entry
+     * module must export non-async {@code main(): null} — the
+     * orchestrator's E2010/E2011 frontend gate, with the E6004 backend
+     * backstop) does not fire here and the fixtures export their scenario
+     * functions directly. The selected-entry path — the entry gate, the
+     * emitted {@code public static void main} invocation — is exercised by
+     * the multi-module fixtures through {@link CompilationOrchestrator}
+     * ({@code entry} naming the entry module) and by
+     * {@code JvmBackendTest.testEntryModuleEmitsJvmEntryPoint}, which
+     * compiles and runs the emitted entry point directly.
      */
     // E9999 is the project's test-only pseudo code for a NameResolver
     // exception (the ConformanceTest precedent); the String-code overload is
@@ -984,6 +1002,17 @@ public class BackendConformanceTest {
             if ("error".equals(d.severity())) errors.add(d);
         }
         if (parseResult.hasErrors()) {
+            return new FrontendCompile(null, null, null, errors);
+        }
+
+        // Post-parse module shape validation (v1.2 module top level:
+        // E1048/E1049/E1050/E1051), mirroring the orchestrator pipeline —
+        // the parser alone does not reject v1.1 module shapes.
+        for (Diagnostic d : ModuleShapeValidator.validate(parseResult.program(),
+                filename, filename.endsWith(".d.deal"))) {
+            if ("error".equals(d.severity())) errors.add(d);
+        }
+        if (!errors.isEmpty()) {
             return new FrontendCompile(null, null, null, errors);
         }
 

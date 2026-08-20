@@ -1,10 +1,9 @@
 // @spec: Control flow — For-of
 // @description: string for-of yields one string containing exactly one Unicode scalar value per iteration, in order (v1.2)
-// @expected: known-fail runtime-ok
-// @issue: ISSUE-0105
+// @expected: runtime-ok
 // @features: for-of, unicode, v1.2
 
-export function test_for_of_unicode_scalar(): null {
+export function main(): null {
   let count: int = 0;
   for (let c: string of "é") {
     count = count + 1;

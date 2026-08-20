@@ -8,3 +8,5 @@ import * as str from "std/string"
 export function test_string_len(): int {
   return str.length("hello");
 }
+
+export function main(): null { return null; }

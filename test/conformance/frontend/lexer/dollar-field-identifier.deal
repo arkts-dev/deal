@@ -6,3 +6,5 @@
 class BadField {
   bad$field: int = 0;
 }
+
+export function main(): null { return null; }

@@ -12,3 +12,5 @@ export function test_delete_required(): null {
   delete u.name;
   return null;
 }
+
+export function main(): null { return null; }

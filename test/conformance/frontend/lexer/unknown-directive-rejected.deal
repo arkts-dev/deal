@@ -8,3 +8,5 @@
 export function probe(): null {
   return null;
 }
+
+export function main(): null { return null; }

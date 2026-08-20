@@ -154,53 +154,48 @@
     },
     {
       "name": "jvm-fn-param-shadow-module-field",
-      "description": "A parameter shadowing a module field: the body reads the parameter (5 → 6), the signature and the body use the same disambiguated Java name, and the module field keeps its own value",
+      "description": "v1.2 grammar gate: the parameter-shadows-module-field chain rests on a module-level let — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A parameter shadowing a module field: the body reads the parameter (5 → 6), the signature and the body use the same disambiguated Java name, and the module field keeps its own value",
       "source": "let x: int = 1;\nfunction f(x: int): int { return x + 1; }\nexport function test(): int { return f(5); }",
-      "expectedOutput": "6",
+      "expectedOutput": null,
       "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "function f: int"
-      ],
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
+      "irContains": [],
       "irNotContains": [],
       "backends": [
         "jvm"
-      ]
+      ],
+      "expectedNotOutput": []
     },
     {
       "name": "jvm-fn-param-shadow-let",
-      "description": "A let shadowing a parameter that itself shadows a module field: the let's initializer binds to the parameter (LuaJIT's `local g = g + 10` reads the outer binding → 15), and the module field stays 1 → f(5) + g = 16",
+      "description": "v1.2 grammar gate: the parameter-shadows-module-field chain rests on a module-level let — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A let shadowing a parameter that itself shadows a module field: the let's initializer binds to the parameter (LuaJIT's `local g = g + 10` reads the outer binding → 15), and the module field stays 1 → f(5) + g = 16",
       "source": "let g: int = 1;\nfunction f(g: int): int {\n  let g: int = g + 10;\n  return g;\n}\nexport function test(): int { return f(5) + g; }",
-      "expectedOutput": "16",
+      "expectedOutput": null,
       "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "function f: int",
-        "let g: int"
-      ],
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
+      "irContains": [],
       "irNotContains": [],
       "backends": [
         "jvm"
-      ]
+      ],
+      "expectedNotOutput": []
     },
     {
       "name": "jvm-fn-param-shadow-let-block",
-      "description": "Triple-deep shadow chain (module field → parameter → body-top let → inner-block let): every binding gets a distinct emitted Java name — the inner-block let never reuses the shadowed parameter's still-in-Java-scope name (JLS §6.4 forbids an inner block from redeclaring a method parameter), which javac used to reject after the CLI reported success — and the artifact compiles and runs to the LuaJIT value: f(5) = 15, + field g = 16",
+      "description": "v1.2 grammar gate: the parameter-shadows-module-field chain rests on a module-level let — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. Triple-deep shadow chain (module field → parameter → body-top let → inner-block let): every binding gets a distinct emitted Java name — the inner-block let never reuses the shadowed parameter's still-in-Java-scope name (JLS §6.4 forbids an inner block from redeclaring a method parameter), which javac used to reject after the CLI reported success — and the artifact compiles and runs to the LuaJIT value: f(5) = 15, + field g = 16",
       "source": "let g: int = 1;\nfunction f(g: int): int {\n  let g: int = g + 10;\n  { let g: int = g + 1; }\n  return g;\n}\nexport function test(): int { return f(5) + g; }",
-      "expectedOutput": "16",
+      "expectedOutput": null,
       "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "function f: int",
-        "let g: int"
-      ],
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
+      "irContains": [],
       "irNotContains": [],
       "backends": [
         "jvm"
-      ]
+      ],
+      "expectedNotOutput": []
     },
     {
       "name": "jvm-fn-param-shadow-let-block-nofield",

@@ -9,3 +9,5 @@ function f(): null {
   let x: int = g();
   return null;
 }
+
+export function main(): null { return null; }

@@ -3,5 +3,9 @@
 // @expected: compile-ok
 // @features: type-system, nullable
 
+export function main(): null {
 let a: int = 42;
 let b: int | null = a;
+
+return null;
+}

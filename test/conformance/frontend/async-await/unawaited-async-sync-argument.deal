@@ -9,3 +9,5 @@ function consume(x: int): int { return x; }
 async function test_nested_sync_argument(): int {
   return consume(fetch());
 }
+
+export function main(): null { return null; }

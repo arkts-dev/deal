@@ -11,3 +11,5 @@ function test(): null {
   let g: () => int = f;
   return null;
 }
+
+export function main(): null { return null; }

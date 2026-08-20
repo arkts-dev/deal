@@ -7,3 +7,5 @@
 export function int32_overflow_literal(): int {
   return 2147483648;
 }
+
+export function main(): null { return null; }

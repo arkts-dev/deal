@@ -4,7 +4,13 @@
 // @features: functions, type-check
 
 function add(a: int, b: int): int { return a + b; }
+export function main(): null { return null; }
+export function main(): null {
 
 let x: number = 1.0;
 let y: number = 2.0;
 let r: int = add(x, y); // error: int vs number
+
+
+return null;
+}

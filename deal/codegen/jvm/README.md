@@ -36,7 +36,7 @@ Supported (real semantics, spec JVM value mapping):
 | standalone expression statements (`x + 1;`) | lowered to a dummy-local declaration (`long __ignored = intAdd(x, 1L);`) so they are genuinely evaluated — an int overflow there is an observable E8004, as under LuaJIT |
 | `int()` / `number()` intrinsics | `intFromNumber` / `numberFromInt` helpers (E8001/E8004) |
 | `import * as c from "std/console"` | `c.log` → `java.lang.System.out.println`, `c.error` → `java.lang.System.err.println` |
-| `import * as str from "std/string"` (ISSUE-0097) | `length` → the emitted `__strLength` helper (`s.codePointCount(0, s.length())` — Unicode scalar-value count; DEAL v1.2 strings are Unicode scalar-value sequences, spec-v1.2 §String escapes and Unicode, and the v1.2 std/string counts scalar values via `utf8_next` walks); `substring` → the emitted `__strSubstring` helper (LuaJIT's `string.sub(s, start + 1, end)` corrections on scalar-value positions: each bound clamps to [1, n] after a negative adjustment `pos += n+1`, `start > end` yields the empty string, and `offsetByCodePoints` maps scalar positions to UTF-16 indexes); `contains`/`startsWith`/`endsWith` → plain-text `java.lang.String.contains/startsWith/endsWith` (whole-string plain-text matching — UTF-16-wise and scalar-value-wise matching coincide for valid strings, and Lua pattern magic characters are literal); `replace` → the emitted `__strReplace` helper (every plain-text occurrence; an empty `old` returns `s` unchanged, matching the LuaJIT guard before gsub); `split` → the emitted `__strSplit` helper returning `__StringArray` (LuaJIT's semantics: an empty `s` yields the empty array whatever the separator, an empty separator splits into individual Unicode scalar values — one `string` per code point via `codePointAt`/`charCount`, in order — and every occurrence of `sep` delimits a part with the trailing remainder — even empty — appended); `trim` → the emitted `__strTrim` helper (Lua's `%s` whitespace set exactly: space, tab, newline, vertical tab, form feed, carriage return) |
+| `import * as str from "std/string"` (ISSUE-0097, ISSUE-0106 v1.2 scalar strings) | `length` → the emitted `__strLength` helper (Unicode scalar-value count — spec-v1.2 §String lengths and positions are measured in Unicode scalar values); `substring` → the emitted `__strSubstring` helper (positions measured in Unicode scalar values with the v1.2 reference clamping — spec-v1.2 §String lengths and positions are measured in Unicode scalar values: a negative start behaves as 0, a negative end yields the empty string, an end beyond the string clamps to its length, and `start >= end` yields the empty string); `contains`/`startsWith`/`endsWith` → plain-text `java.lang.String.contains/startsWith/endsWith` (whole-string matching is code-unit-invariant, and Lua pattern magic characters are literal); `replace` → the emitted `__strReplace` helper (every plain-text occurrence; an empty `old` returns `s` unchanged, matching the LuaJIT guard before gsub); `split` → the emitted `__strSplit` helper returning `__StringArray` (an empty `s` yields the empty array whatever the separator, an empty separator splits into individual Unicode scalar values — one part per code point, and every occurrence of `sep` delimits a part with the trailing remainder — even empty — appended); `trim` → the emitted `__strTrim` helper (Lua's `%s` whitespace set exactly: space, tab, newline, vertical tab, form feed, carriage return) |
 | `import * as math from "std/math"` (ISSUE-0097) | `floor`/`ceil`/`absNumber` → `java.lang.Math.floor/ceil/abs`; `minInt`/`maxInt` → `java.lang.Math.min/max` (the same IEEE 754 semantics as LuaJIT's `math.*`); `absInt` → `checkInt(java.lang.Math.abs(x))` exactly like LuaJIT's `check_int(math.abs(x))`; `sqrt` → the emitted `__mathSqrt` helper (negative input → E8001 "sqrt of negative number", matching std/math.lua; NaN passes through) |
 | `import * as time from "std/time"` (ISSUE-0097) | `nowMillis` → `(java.lang.System.currentTimeMillis() / 1000L) * 1000L` — LuaJIT's `os.time() * 1000`: epoch milliseconds truncated to whole seconds, never the raw `System.currentTimeMillis()` (whose sub-second precision would diverge from the reference implementation) |
 | `int[]` / `number[]` / `string[]` / `boolean[]` | mutable wrapper classes `__IntArray` / `__NumberArray` / `__StringArray` / `__BooleanArray` holding a primitive Java array (the spec's "specialized primitive array wrapper") — literals `new __IntArray(new long[]{…})`, index reads via the emitted `__intArrayRead`-family helpers (typed read sites raise E8001 past the end; `===`/`!==` operand positions box the read — `__intArrayReadBoxed` family, null past the end — and compute the nil comparison per the read-site contract), element writes via the `__intArrayWrite`-family helpers, `.length` via `((long) xs.data.length)`. The wrapper identity is stable across appends (a write at `i == length` grows the wrapped storage in place), so aliases observe every write exactly like LuaJIT's shared 1-based table |
@@ -100,7 +100,10 @@ int → `long`, number → `double`, boolean → `boolean`, string →
   mismatch", Java null crossing a non-nullable return → E8010 (the
   spec forbids exposing Java null as DEAL null without validation),
   `T | null` accepts Java null as the DEAL null sentinel, an
-  out-of-safe-range int → E8004 (checkInt);
+  out-of-safe-range int → E8004 (checkInt), a string carrying an
+  unpaired UTF-16 surrogate code unit → E8010 with the seam's message
+  (spec-v1.2 §JVM value mapping: `java.lang.String` with no unpaired
+  surrogate code units — ISSUE-0106 boundary string validation);
 - async exports must return a `java.util.concurrent.CompletableFuture`
   — the backend async operation the await lowering accepts
   (spec-v1.2 §Async operation semantics permits blocking calls as a
@@ -108,7 +111,9 @@ int → `long`, number → `double`, boolean → `boolean`, string →
   return an async operation"; the wrapper joins the operation and
   checks the completion value against the declared return descriptor
   → E8001 at the await site, mirroring LuaJIT's await-site completion
-  check. Async function declarations emit as plain blocking methods;
+  check — including the ISSUE-0106 unpaired-surrogate string
+  rejection, which raises E8001 there (the completion error code).
+  Async function declarations emit as plain blocking methods;
   await of a DEAL async call is a plain call (its body already
   blocked), await of a host async call blocks on the operation.
 
@@ -124,7 +129,7 @@ Every supported host ABI form, with the test covering it. All fixture
 evidence runs through the real frontend → real `JvmBackend` codegen →
 `javac` subprocess → `java` subprocess executing the emitted artifact
 against a real host implementation class
-(`test/conformance/fixtures/jvm-host-abi-slice.json`, 16 JVM-only
+(`test/conformance/fixtures/jvm-host-abi-slice.json`, 19 JVM-only
 fixtures; `test/BackendConformanceTest` fails a fixture whose
 parser/checker/module-discovery yields no compile, whose codegen leaves
 no `.java` artifact, or whose JVM execution is bypassed):
@@ -138,6 +143,8 @@ no `.java` artifact, or whose JVM execution is bypassed):
 | sync return boundary check — wrong runtime kind → E8010 | `jvm-host-bad-return` (Long for a declared string) |
 | sync return boundary check — Java null crossing a non-nullable return → E8010 (no unvalidated null) | `jvm-host-bad-return-null-for-string` |
 | sync return boundary check — out-of-safe-range int → E8004 (checkInt) | `jvm-host-int-out-of-range-return` |
+| sync return boundary check — unpaired UTF-16 surrogate string → E8010 with the seam's message (ISSUE-0106 boundary string validation) | `jvm-host-bad-return-unpaired-surrogate`; `JvmBackendTest.testHostAbiSlice` |
+| nullable return boundary check — non-null string with an unpaired surrogate → E8010 (the `?string` branch still scans) | `jvm-host-nullable-return-unpaired-surrogate` |
 | nullable return: Java null is the DEAL null sentinel, values pass, both observable with narrowing | `jvm-host-nullable-return-ok` |
 | nullable return boundary check — non-null wrong inner kind → E8010 | `jvm-host-nullable-return-bad` |
 | null return boundary — `->null` host function returning Java null passes (discard path + in-function) | `jvm-host-null-return-ok` |
@@ -146,20 +153,22 @@ no `.java` artifact, or whose JVM execution is bypassed):
 | async host operation shape — non-operation return → E8010 | `jvm-host-async-shape-bad`; `JvmBackendTest.testHostAbiSlice` |
 | async host ok — CompletableFuture joined by the blocking await lowering, completion value checked | `jvm-host-async-ok` (host async awaited through a DEAL async function) |
 | async host completion mismatch → E8001 at the await site | `jvm-host-async-completion-bad`; `JvmBackendTest.testHostAbiSlice` |
+| async host completion — unpaired UTF-16 surrogate string → E8001 with the seam's message | `jvm-host-async-completion-unpaired-surrogate`; `JvmBackendTest.testHostAbiSlice` |
 | async function declarations emit as plain blocking methods (spec-permitted JVM lowering); async function expressions stay E6000 | `jvm-host-async-ok` (async `run`/`load`), `JvmBackendTest.testUnsupportedConstructsRejected` ("async function expression" case) |
 | function descriptor validation at load (getDeclaredMethod signature check against the declared descriptor) | `jvm-host-missing-export` (missing), `jvm-host-export-presence` + `JvmBackendTest.testHostAbiSlice` (present); signature-mismatch E8011 same path |
 | frontend compile-error rejected before backend (externals gating E2009, no artifacts) | `jvm-host-frontend-gate-e2009` |
-| unsupported declared shapes rejected at the import, never miscompiled: host class exports, rest parameters, array/table/function-typed parameters and returns → E6000 | `JvmBackendTest.testOrchestratorJvmDeclarationImportRejected` (class-export E6000); `JvmBackendTest.testHostAbiSlice` compiles only supported shapes |
+| unsupported declared shapes rejected at the import, never miscompiled: host class exports, array/table/function-typed parameters and returns → E6000 (rest parameters are a v1.2 parser error E1047, never reaching the backend) | `JvmBackendTest.testOrchestratorJvmDeclarationImportRejected` (class-export E6000); `JvmBackendTest.testHostAbiSlice` compiles only supported shapes |
 | relative (`./`) declaration import is a host module without an externals listing (host-module-abi D5(4)) | `JvmBackendTest.testOrchestratorJvmDeclarationImportRejected` |
 
 Not supported in this slice (E6000 at the import, documented): host
 class exports (the fixture-list item "host class export where
 supported" is therefore not yet supported — a host module declaring a
-class export is rejected, never miscompiled), rest parameters, and
-array/table/function-typed host parameters or returns.
+class export is rejected, never miscompiled) and
+array/table/function-typed host parameters or returns. Rest parameters
+are a v1.2 parser error (E1047) and never reach the backend.
 
 The JVM's static type system proves typed boundaries redundant, which the
-normative spec explicitly permits (`docs/spec-v1.2.md` §JVM backend
+current normative spec explicitly permits (`docs/spec-v1.2.md` §JVM backend
 contract: "The JVM backend may use JVM primitive types, final classes,
 verifier-checked bytecode, method signatures, and JIT optimization to prove
 typed-boundary checks redundant" — see "Known skeleton limitations" for
@@ -1194,22 +1203,28 @@ unused (`JvmBackendTest.testStdlibTableBoundaryRejected`).
   re-pinned with the other stdlib modules) — `jvm-std-console-output`
   (observable stdout/stderr output) and the `jvm-skeleton.json`
   `jvm-console-error` stderr pin.
-- **`std/string.length`** — UTF-8 byte count like LuaJIT's `#s`:
-  `jvm-std-string-length` ("hello" → 5, "" → 0, "héllo" → 6 — the
+- **`std/string.length`** — Unicode scalar-value count (spec-v1.2
+  §String lengths and positions are measured in Unicode scalar values):
+  `jvm-std-string-length` ("hello" → 5, "" → 0, "héllo" → 5 — the
   multibyte pin), `JvmBackendTest.testStdlibExecution` (n === 5),
-  `JvmBackendTest.testStdlibByteSemantics` (bytes === 6), and
+  `JvmBackendTest.testStdlibScalarSemantics` (scalars === 5 and a
+  supplementary character counting as ONE scalar value), and
   `JvmBackendTest.testStdlibCallEmission` (the `__strLength(` call and
   helper-definition emission assertions).
-- **`std/string.substring`** — LuaJIT's `string.sub(s, start + 1, end)`
-  corrections (each bound clamps to [1, n] after `pos += n+1` for
-  negatives, `start > end` yields the empty string):
+- **`std/string.substring`** — the v1.2 reference semantics of
+  `std/string.lua` over Unicode scalar-value positions (a negative start
+  behaves as 0, a negative end yields the empty string, an out-of-range
+  end clamps to the string end, `start >= end` yields the empty string,
+  and the scalar bounds convert to UTF-16 offsets via
+  `offsetByCodePoints`):
   `jvm-std-string-substring` (whole, middle, `start === end`,
-  `start > end`, end clipped, start past the end, negative start),
-  `JvmBackendTest.testStdlibExecution` (clip/past/neg),
-  `JvmBackendTest.testStdlibByteSemantics` (the complete byte range
-  `substring("héllo", 1, 3) === "é"` and the mid-character cut decoding
-  as U+FFFD — the documented closest-byte-faithful reading, since
-  `java.lang.String` cannot hold LuaJIT's raw partial bytes).
+  `start > end`, end clipped, start past the end, negative start as 0,
+  negative end empty, negative start with a positive end),
+  `JvmBackendTest.testStdlibExecution` (clip/past/negative bounds),
+  `JvmBackendTest.testStdlibScalarSemantics`
+  (`substring("héllo", 1, 2) === "é"` and
+  `substring("a😀b", 1, 2) === "😀"` — positions are Unicode scalar
+  values, so a scalar boundary never cuts inside a character).
 - **`std/string.contains`** — plain-text containment (Lua pattern magic
   characters literal, empty part contained): `jvm-std-string-search`
   (found, `"%"` literal, empty part, negative case),
@@ -1224,8 +1239,8 @@ unused (`JvmBackendTest.testStdlibTableBoundaryRejected`).
   `JvmBackendTest.testStdlibExecution` (replaced + kept).
 - **`std/string.split`** — `jvm-std-string-split` (separator split,
   single-element array, empty-string → empty array, empty-separator →
-  individual characters, consecutive/leading/trailing separators
-  producing empty parts, longer separator runs),
+  one part per Unicode scalar value, consecutive/leading/trailing
+  separators producing empty parts, longer separator runs),
   `JvmBackendTest.testStdlibExecution` (the `a,,b` parts and length),
   `JvmBackendTest.testOrchestratorJvmStdlibImport` (split inside an
   imported compiled project module through the orchestrator).
@@ -1313,12 +1328,19 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
   scalar-value string surface (code-point length/substring/split/ordering
   helpers) have landed; their fixtures pass, and the
   `jvm-unicode-scalar-string-length` case was promoted out of the
-  known-fail gate. The remaining divergence is tracked, never silent:
+  known-fail gate. ISSUE-0106 landed the JVM side of the v1.2 contract:
+  the emitted entry module class carries `public static void main(String[]
+  args)` invoking the DEAL `main` export (non-entry modules emit no entry
+  point), host-boundary string validation rejects unpaired-surrogate
+  values (E8010 for sync host returns, E8001 for async completion
+  values), and `std/string` substring uses the v1.2 reference clamping.
+  The remaining divergence is tracked, never silent:
   signed 32-bit `int` and `bytes` (ISSUE-0111) are pinned by explicit
   failing fixtures (`test/conformance/backend-runtime/…` and
   `test/conformance/fixtures/jvm-v1.2-known-fail.json`). Until those
   land, the backend keeps its ±(2^53-1) `int` emission, and the
   conformance harness records each case as a classified known-failure.
+  The backend cites spec-v1.2.
 - Multi-module JVM projects support compiled project modules only
   (ISSUE-0096): a namespace import of a compiled module runs its load-time
   side effects through the emitted `__init$` trigger and imported direct

@@ -3,8 +3,12 @@
 // @expected: compile-ok
 // @features: lexer, comments
 
+export function main(): null {
 /* This is a block comment */
 let x: int = 1;
 /* Multi-line
    block comment */
 let y: int = 2;
+
+return null;
+}

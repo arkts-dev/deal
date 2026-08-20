@@ -6,3 +6,5 @@
 function badParam(bad$param: int): int {
   return 1;
 }
+
+export function main(): null { return null; }

@@ -9,3 +9,5 @@ async function outer(x: int): int { return x; }
 async function test_nested_unawaited_argument(): int {
   return await outer(inner());
 }
+
+export function main(): null { return null; }

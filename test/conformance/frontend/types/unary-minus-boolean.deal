@@ -6,3 +6,5 @@
 function test_unary_minus_boolean(): int {
   return -true;
 }
+
+export function main(): null { return null; }

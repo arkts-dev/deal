@@ -8,3 +8,5 @@ export function test_object_literal_computed_key(): table {
   let t: table = { [key]: 1 };
   return t;
 }
+
+export function main(): null { return null; }

@@ -4,4 +4,10 @@
 // @features: type-system, functions, diagnostics
 
 function takesInt(x: int): int { return x; }
+export function main(): null { return null; }
+export function main(): null {
 let f: (x: number) => int = takesInt;
+
+
+return null;
+}

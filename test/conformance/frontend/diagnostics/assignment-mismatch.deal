@@ -3,5 +3,9 @@
 // @expected: compile-error E3001
 // @features: diagnostics, assignment
 
+export function main(): null {
 let y: int = 1;
 y = 2.0;
+
+return null;
+}

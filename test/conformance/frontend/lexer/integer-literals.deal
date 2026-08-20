@@ -3,6 +3,10 @@
 // @expected: compile-ok
 // @features: lexer, int
 
+export function main(): null {
 let a: int = 0;
 let b: int = 42;
 let c: int = 1234567890;
+
+return null;
+}

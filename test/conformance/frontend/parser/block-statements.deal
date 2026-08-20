@@ -11,3 +11,5 @@ export function test_blocks(): int {
   }
   return x;
 }
+
+export function main(): null { return null; }

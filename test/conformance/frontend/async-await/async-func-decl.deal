@@ -6,3 +6,5 @@
 async function fetchUser(id: int): string {
   return "user";
 }
+
+export function main(): null { return null; }

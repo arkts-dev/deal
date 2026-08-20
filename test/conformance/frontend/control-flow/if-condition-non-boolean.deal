@@ -9,3 +9,5 @@ function test_if_requires_boolean(): int {
   }
   return 0;
 }
+
+export function main(): null { return null; }

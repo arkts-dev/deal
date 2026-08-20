@@ -11,3 +11,5 @@ class NonJsonable {
 export class BadClass {
   x: NonJsonable = {};
 }
+
+export function main(): null { return null; }

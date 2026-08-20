@@ -4,5 +4,11 @@
 // @features: functions, arity
 
 function two(a: int, b: int): int { return a + b; }
+export function main(): null { return null; }
+export function main(): null {
 
 let g: (x: int) => int = two;
+
+
+return null;
+}

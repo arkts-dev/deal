@@ -8,3 +8,5 @@ class Error { message: string = ""; }
 
 // Case 2: nested class Error inside a function body
 function f(): null { class Error { code: string = ""; } return null; }
+
+export function main(): null { return null; }

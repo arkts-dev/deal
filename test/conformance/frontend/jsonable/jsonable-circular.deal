@@ -12,3 +12,5 @@ export class A {
 export class B {
   a: A = {};
 }
+
+export function main(): null { return null; }

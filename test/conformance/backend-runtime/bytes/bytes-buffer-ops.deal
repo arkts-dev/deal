@@ -4,7 +4,7 @@
 // @issue: ISSUE-0111
 // @features: bytes, runtime, v1.2
 
-export function test_bytes_buffer_ops(): null {
+export function main(): null {
   let b: bytes = bytes(4);
   if (b.length !== 4) {
     throw { code: "TEST_FAIL", message: "bytes: initial length mismatch" };

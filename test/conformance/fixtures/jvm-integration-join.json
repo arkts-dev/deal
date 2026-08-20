@@ -244,7 +244,7 @@
       "description": "Cross-feature join across modules: an imported nominal class appears in descriptors — the entry-local function's parameter spells the spec class descriptor @lib/Point in the IR, the value flows in and out of an entry-local function, and the field reads back (7)",
       "modules": {
         "lib.deal": "export class Point { x: int = 0; }\nexport function make(x: int): Point { return { x: x }; }\n",
-        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\nfunction use(p: lib.Point): int { return p.x; }\nexport function run(): int {\n  let got: int = use(lib.make(7));\n  return got;\n}\n"
+        "main.deal": "import * as lib from \"./lib\"\nfunction use(p: lib.Point): int { return p.x; }\nexport function run(): int {\n  let got: int = use(lib.make(7));\n  return got;\n}\nexport function main(): null { return null; }\n"
       },
       "entry": "main.deal",
       "expectedOutput": "7",
@@ -265,7 +265,7 @@
       "description": "Cross-feature join across modules: an imported nominal class crosses the untyped table boundary — the read dispatches on the DECLARING module's shared seam with the spec class descriptor @lib/Item (the IR spells the resolved read type @lib/Item) and the field reads back ('x')",
       "modules": {
         "lib.deal": "export class Item { tag: string = \"\"; }\nexport function make(tag: string): Item { return { tag: tag }; }\n",
-        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\nexport function run(): string {\n  let holder: table = { item: lib.make(\"x\") };\n  let i: lib.Item = holder.item;\n  return i.tag;\n}\n"
+        "main.deal": "import * as lib from \"./lib\"\nexport function run(): string {\n  let holder: table = { item: lib.make(\"x\") };\n  let i: lib.Item = holder.item;\n  return i.tag;\n}\nexport function main(): null { return null; }\n"
       },
       "entry": "main.deal",
       "expectedOutput": "x",
@@ -286,7 +286,7 @@
       "modules": {
         "modela.deal": "export class Item { tag: string = \"\"; }\nexport function make(tag: string): Item { return { tag: tag }; }\n",
         "modelb.deal": "export class Item { tag: string = \"\"; }\n",
-        "main.deal": "import * as modela from \"./modela\"\nimport * as modelb from \"./modelb\"\nexport function main(): null { return null; }\nexport function run(): string {\n  let holder: table = { item: modela.make(\"a\") };\n  let b: modelb.Item = holder.item;\n  return b.tag;\n}\n"
+        "main.deal": "import * as modela from \"./modela\"\nimport * as modelb from \"./modelb\"\nexport function run(): string {\n  let holder: table = { item: modela.make(\"a\") };\n  let b: modelb.Item = holder.item;\n  return b.tag;\n}\nexport function main(): null { return null; }\n"
       },
       "entry": "main.deal",
       "expectedOutput": "expected instance of @modelb/Item, got @modela/Item",
@@ -322,7 +322,7 @@
     {
       "name": "jvm-join-async-completion-descriptor-ir",
       "description": "Async completion descriptor coverage at the IR layer: an async function declaration and its async function-typed value spell the spec descriptor async(int)->string, and the return inside the async body carries the async-completion boundary (the JVM async slice ISSUE-0099 consumes this seam; async functions stay E6000 at JVM codegen in this slice)",
-      "source": "async function fetch(x: int): string { return \"s\"; }\nlet f: async (x: int) => string = fetch;\n",
+      "source": "async function fetch(x: int): string { return \"s\"; }\nexport function main(): null {\n  let f: async (x: int) => string = fetch;\n  return null;\n}\n",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": null,
@@ -340,7 +340,7 @@
     {
       "name": "jvm-join-function-type-descriptor-ir",
       "description": "Function-signature descriptor coverage at the IR layer: a function type whose parameters and return combine an array, a nullable class, and nullability spells the nested spec descriptor ([int],?@mod/User)->?@mod/User on the function-typed value (function values stay E6000 at JVM codegen in this slice; the ISSUE-0098 function-value slice consumes this seam)",
-      "source": "class User { name: string = \"\"; }\nfunction use(a: int[], u: User | null): User | null { if (u !== null) { return u; } return null; }\nlet f: (a: int[], u: User | null) => User | null = use;\n",
+      "source": "class User { name: string = \"\"; }\nfunction use(a: int[], u: User | null): User | null { if (u !== null) { return u; } return null; }\nexport function main(): null {\n  let f: (a: int[], u: User | null) => User | null = use;\n  return null;\n}\n",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": null,

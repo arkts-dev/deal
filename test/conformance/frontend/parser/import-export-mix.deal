@@ -12,3 +12,5 @@ export class ParserShape {
 export function test_import_export_mix(): int {
   return Lib.value();
 }
+
+export function main(): null { return null; }

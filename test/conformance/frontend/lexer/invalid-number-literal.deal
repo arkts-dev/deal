@@ -3,4 +3,8 @@
 // @expected: compile-error E1034
 // @features: lexer, number
 
+export function main(): null {
 let x: number = 0.;
+
+return null;
+}

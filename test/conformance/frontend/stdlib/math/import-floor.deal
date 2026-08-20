@@ -8,3 +8,5 @@ import * as math from "std/math"
 export function test_math_floor(x: number): number {
   return math.floor(x);
 }
+
+export function main(): null { return null; }

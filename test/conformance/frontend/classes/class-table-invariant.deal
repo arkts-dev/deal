@@ -4,6 +4,12 @@
 // @features: classes, tables
 
 class Point { x: int = 0; }
+export function main(): null { return null; }
+export function main(): null {
 
 let p: Point = { x: 1 };
 let t: table = p;
+
+
+return null;
+}

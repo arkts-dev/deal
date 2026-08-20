@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "DEAL v1.2 promotion gate (ISSUE-0107): intentionally unsupported v1.2 cases for the JVM backend-runtime gate. Every case names its tracked follow-up issue in 'knownFail'; when the tracked issue lands and the case passes, the runner fails with a promotion instruction.",
+  "description": "DEAL v1.2 promotion gate (ISSUE-0107): intentionally unsupported v1.2 cases for the JVM backend-runtime gate. Every case names its tracked follow-up issue in 'knownFail'; when the tracked issue lands and the case passes, the runner fails with a promotion instruction. ISSUE-0106 promoted jvm-unicode-scalar-string-length (the JVM backend now measures std/string length in Unicode scalar values; the passing pins live in jvm-v12-slice.json).",
   "tests": [
     {
       "name": "jvm-int32-literal-out-of-range",
@@ -25,13 +25,6 @@
       "expectedOutput": "4",
       "backends": ["jvm"],
       "knownFail": "ISSUE-0111"
-    },
-    {
-      "name": "jvm-unicode-scalar-string-length",
-      "description": "v1.2 strings are Unicode scalar values: std/string.length(\"é\") is 1, not the UTF-8 byte count 2",
-      "source": "import * as strings from \"std/string\"\nexport function test(): int {\n  return strings.length(\"é\");\n}",
-      "expectedOutput": "1",
-      "backends": ["jvm"]
     }
   ]
 }

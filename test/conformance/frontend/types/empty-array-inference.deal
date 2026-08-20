@@ -3,4 +3,8 @@
 // @expected: compile-error E3002
 // @features: type-system, arrays
 
+export function main(): null {
 let a = [];
+
+return null;
+}

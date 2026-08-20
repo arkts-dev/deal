@@ -5,6 +5,12 @@
 
 class A { x: int = 0; }
 class B { x: int = 0; }
+export function main(): null { return null; }
+export function main(): null {
 
 let a: A = { x: 1 };
 let b: B = a;
+
+
+return null;
+}

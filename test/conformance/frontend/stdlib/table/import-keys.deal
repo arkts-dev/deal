@@ -8,3 +8,5 @@ import * as tbl from "std/table"
 export function test_table_keys(t: table): string[] {
   return tbl.keys(t);
 }
+
+export function main(): null { return null; }

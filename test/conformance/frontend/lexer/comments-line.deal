@@ -4,5 +4,9 @@
 // @features: lexer, comments
 
 // This is a line comment
+export function main(): null {
 let x: int = 1; // comment after statement
 let y: int = 2;
+
+return null;
+}

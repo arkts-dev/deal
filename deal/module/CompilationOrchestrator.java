@@ -1172,9 +1172,10 @@ public final class CompilationOrchestrator {
                     }
                 }
             }
+            boolean isEntry = info.sourcePath.equals(entryFile.toString());
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
-                importResolutions, importedClasses, hostModules);
+                importResolutions, importedClasses, hostModules, isEntry);
             for (Diagnostic d : res.diagnostics()) {
                 diagnostics.add(d);
                 hasErrors = true;

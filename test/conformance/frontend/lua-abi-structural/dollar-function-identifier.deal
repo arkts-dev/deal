@@ -4,3 +4,5 @@
 // @features: lua-abi, diagnostics, structural
 
 function bad$helper(): int { return 1; }
+
+export function main(): null { return null; }

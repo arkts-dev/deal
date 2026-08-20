@@ -8,3 +8,5 @@ export function test_table_delete(): null {
   delete t.x;
   return null;
 }
+
+export function main(): null { return null; }

@@ -6,3 +6,5 @@
 function missingReturn(): int {
   let x: int = 1;
 }
+
+export function main(): null { return null; }

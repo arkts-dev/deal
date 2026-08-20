@@ -9,3 +9,5 @@ export function test_decl_type(): int {
   let f: (a: int, b: int) => int = Decl.declaredAdd;
   return 1;
 }
+
+export function main(): null { return null; }

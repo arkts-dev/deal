@@ -8,3 +8,5 @@ export function test_length_delete(): null {
   delete xs.length;
   return null;
 }
+
+export function main(): null { return null; }

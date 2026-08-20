@@ -323,17 +323,18 @@
     },
     {
       "name": "jvm-nullable-module-field-narrowing",
-      "description": "a module-level int | null field narrows inside a function's null-check branch and the doubled value returns (4 * 2 = 8)",
+      "description": "v1.2 grammar gate: module-field narrowing rests on a module-level let — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. a module-level int | null field narrows inside a function's null-check branch and the doubled value returns (4 * 2 = 8)",
       "source": "let count: int | null = 4;\nexport function test(): int {\n  if (count !== null) {\n    return count * 2;\n  }\n  return 0;\n}\n",
-      "expectedOutput": "8",
+      "expectedOutput": null,
       "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
       "irContains": [],
       "irNotContains": [],
       "backends": [
         "jvm"
-      ]
+      ],
+      "expectedNotOutput": []
     },
     {
       "name": "jvm-nullable-if-else-branches",
@@ -366,7 +367,7 @@
     {
       "name": "jvm-nullable-narrowing-invalidation",
       "description": "assigning null inside a narrowed block invalidates the narrowing: the follow-up non-null read is a compile-time E3001 rejected before any backend runs",
-      "source": "let x: string | null = \"a\";\nif (x !== null) {\n  let a: string = x;\n  if (a === \"a\") { let u: int = 1; }\n  x = null;\n  let b: string = x;\n}\n",
+      "source": "export function main(): null {\nlet x: string | null = \"a\";\nif (x !== null) {\n  let a: string = x;\n  if (a === \"a\") { let u: int = 1; }\n  x = null;\n  let b: string = x;\n}\nreturn null;\n}",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": null,
@@ -380,7 +381,7 @@
     {
       "name": "jvm-nullable-unwrapped-read-compile-error",
       "description": "reading an int | null into an int target without narrowing is a compile-time E3001 rejected before any backend runs",
-      "source": "let n: int | null = 1;\nlet i: int = n;\n",
+      "source": "export function main(): null {\nlet n: int | null = 1;\nlet i: int = n;\nreturn null;\n}",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": null,
@@ -394,7 +395,7 @@
     {
       "name": "jvm-nullable-null-compare-compile-error",
       "description": "comparing a plain int with null is a compile-time E3006 rejected before any backend runs (only T | null compares with null)",
-      "source": "let i: int = 1;\nlet b: boolean = i === null;\n",
+      "source": "export function main(): null {\nlet i: int = 1;\nlet b: boolean = i === null;\nreturn null;\n}",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": null,
@@ -478,7 +479,7 @@
     {
       "name": "jvm-nullable-null-declared-params-module-fields",
       "description": "Null-typed values flow into nullable positions from every binding shape: a null-declared local feeds a nullable call argument (take(z)), a nullable class-field write (h.i = z), and a nullable-array element write (ys[0] = z on (int | null)[]); a null-declared MODULE field reads into a nullable local (zmod); and a null-typed PARAMETER returns through a nullable return (ret(z)) — every site observes the null side (1+2+4+8+16=31). The pre-fix artifacts were rejected by javac with incompatible types: Void cannot be converted to Long at each site after the CLI reported success",
-      "source": "let zmod: null = null;\nclass Holder { i: int | null = null; }\nfunction take(m: int | null): int | null { return m; }\nfunction ret(z: null): int | null { return z; }\nexport function test(): int {\n  let z: null = null;\n  let m: int | null = take(z);\n  let h: Holder = {};\n  h.i = z;\n  let ys: (int | null)[] = [];\n  ys[0] = z;\n  let r: int = 0;\n  if (m === null) { r = 1; }\n  let hi: int | null = h.i;\n  if (hi === null) { r = r + 2; }\n  let y0: int | null = ys[0];\n  if (y0 === null) { r = r + 4; }\n  let m2: int | null = zmod;\n  if (m2 === null) { r = r + 8; }\n  let m3: int | null = ret(z);\n  if (m3 === null) { r = r + 16; }\n  return r;\n}\n",
+      "source": "class Holder { i: int | null = null; }\nfunction take(m: int | null): int | null { return m; }\nfunction ret(z: null): int | null { return z; }\nexport function test(): int {\n  let zmod: null = null;\n  let z: null = null;\n  let m: int | null = take(z);\n  let h: Holder = {};\n  h.i = z;\n  let ys: (int | null)[] = [];\n  ys[0] = z;\n  let r: int = 0;\n  if (m === null) { r = 1; }\n  let hi: int | null = h.i;\n  if (hi === null) { r = r + 2; }\n  let y0: int | null = ys[0];\n  if (y0 === null) { r = r + 4; }\n  let m2: int | null = zmod;\n  if (m2 === null) { r = r + 8; }\n  let m3: int | null = ret(z);\n  if (m3 === null) { r = r + 16; }\n  return r;\n}\n",
       "expectedOutput": "31",
       "expectedError": null,
       "expectedExitCode": 0,
@@ -737,7 +738,7 @@
     },
     {
       "name": "jvm-nullable-read-nullable-target-primitives",
-      "description": "Cross-backend parity for past-end reads of non-nullable primitive element arrays at a T | null target: the spec's read-site contract (spec-v1.2 \u00a7Bounds and nil behavior — 'Optional nullable arrays follow target typing') checks the read result against the TARGET type, so LuaJIT's check_nullable accepts the nil and the JVM read must yield the DEAL null instead of raising the element-typed E8001. The in-bounds positive control pins value preservation (20 / a / true / 1.5) through the same nullable declarations.",
+      "description": "Cross-backend parity for past-end reads of non-nullable primitive element arrays at a T | null target: the spec's read-site contract (spec-v1.2 §Bounds and nil behavior — 'Optional nullable arrays follow target typing') checks the read result against the TARGET type, so LuaJIT's check_nullable accepts the nil and the JVM read must yield the DEAL null instead of raising the element-typed E8001. The in-bounds positive control pins value preservation (20 / a / true / 1.5) through the same nullable declarations.",
       "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let xs: int[] = [10, 20];\n  let ss: string[] = [\"a\"];\n  let bs: boolean[] = [true];\n  let ns: number[] = [1.5];\n  let n: int | null = xs[9];\n  let s: string | null = ss[9];\n  let b: boolean | null = bs[9];\n  let d: number | null = ns[9];\n  if (n === null && s === null && b === null && d === null) {\n    console.log(\"past-end-null\");\n  }\n  let n2: int | null = xs[1];\n  let s2: string | null = ss[0];\n  let b2: boolean | null = bs[0];\n  let d2: number | null = ns[0];\n  if (n2 !== null) {\n    if (s2 !== null) {\n      if (b2 !== null) {\n        if (d2 !== null) {\n          if (n2 === 20 && s2 === \"a\" && b2 === true && d2 === 1.5) {\n            console.log(\"in-bounds-value\");\n          }\n        }\n      }\n    }\n  }\n}\n",
       "expectedOutput": "past-end-null\nin-bounds-value",
       "expectedError": null,
@@ -767,7 +768,7 @@
     },
     {
       "name": "jvm-nullable-read-comparison-class-parity",
-      "description": "Cross-backend parity for local-class array reads in === / !== operand positions: the comparison operand applies no typed boundary (spec-v1.2 \u00a7Bounds and nil behavior), so ps[9] === ps[9] is nil === nil (true), p === ps[9] and ps[9] === p are value-vs-nil (false), and p !== ps[9] / ps[9] !== p are true — the JVM must emit the nil-yielding per-class read exactly like the primitive boxed comparison reads, never the element-typed E8001 read. The in-bounds positive controls pin nominal identity (ps[0] === ps[0] and p === ps[0] are the same instance).",
+      "description": "Cross-backend parity for local-class array reads in === / !== operand positions: the comparison operand applies no typed boundary (spec-v1.2 §Bounds and nil behavior), so ps[9] === ps[9] is nil === nil (true), p === ps[9] and ps[9] === p are value-vs-nil (false), and p !== ps[9] / ps[9] !== p are true — the JVM must emit the nil-yielding per-class read exactly like the primitive boxed comparison reads, never the element-typed E8001 read. The in-bounds positive controls pin nominal identity (ps[0] === ps[0] and p === ps[0] are the same instance).",
       "source": "import * as console from \"std/console\"\nclass Point { x: int = 0; }\nexport function test(): null {\n  let p: Point = { x: 5 };\n  let ps: Point[] = [p];\n  if (ps[9] === ps[9]) { console.log(\"nil-eq-nil\"); }\n  if (p === ps[9]) { console.log(\"bad-v-eq-nil\"); }\n  if (ps[9] === p) { console.log(\"bad-nil-eq-v\"); }\n  if (ps[9] !== ps[9]) { console.log(\"bad-nil-neq-nil\"); }\n  if (p !== ps[9]) { console.log(\"v-neq-nil\"); }\n  if (ps[9] !== p) { console.log(\"nil-neq-v\"); }\n  if (ps[0] === ps[0]) { console.log(\"in-eq\"); }\n  if (p === ps[0]) { console.log(\"v-eq-v\"); }\n  if (ps[0] !== ps[0]) { console.log(\"bad-in-neq\"); }\n}\n",
       "expectedOutput": "nil-eq-nil\nv-neq-nil\nnil-neq-v\nin-eq\nv-eq-v",
       "expectedError": null,
@@ -886,7 +887,7 @@
     },
     {
       "name": "jvm-nullable-class-arr-or-null-rejected-jvm",
-      "description": "JVM pin: a (C | null)[] containing a null crossing a C[]-typed table-read boundary fails the boundary gate with E8001 'expected array, got \u2026' (the distinct $ArrayOrNull$<C> wrapper never passes the C[] $Array$<C> gate, so the null element can never cross the typed boundary unvalidated), exit 1 — the pre-fix JVM shared one wrapper for C[] and (C | null)[] and silently let the null-containing array through. The LuaJIT reference side of the same program raises E8003 (pinned by jvm-nullable-class-arr-or-null-rejected-luajit; the E8001-vs-E8003 code-number difference is the documented storage-analog divergence).",
+      "description": "JVM pin: a (C | null)[] containing a null crossing a C[]-typed table-read boundary fails the boundary gate with E8001 'expected array, got …' (the distinct $ArrayOrNull$<C> wrapper never passes the C[] $Array$<C> gate, so the null element can never cross the typed boundary unvalidated), exit 1 — the pre-fix JVM shared one wrapper for C[] and (C | null)[] and silently let the null-containing array through. The LuaJIT reference side of the same program raises E8003 (pinned by jvm-nullable-class-arr-or-null-rejected-luajit; the E8001-vs-E8003 code-number difference is the documented storage-analog divergence).",
       "source": "import * as console from \"std/console\"\nclass Item { v: int = 0; }\nexport function test(): null {\n  let ys: (Item | null)[] = [];\n  ys[0] = null;\n  let t: table = { v: ys };\n  let zs: Item[] = t.v;\n  console.log(\"bad\");\n}\n",
       "expectedOutput": null,
       "expectedError": "E8001",
@@ -916,7 +917,7 @@
     {
       "name": "jvm-nullable-read-module-level",
       "description": "Cross-backend parity for load-time (module-level) declarations consuming past-end reads at T | null targets: the static-initializer path must carry the same nil-yielding read — a direct read (n) and a read materialized ahead of a hoisting sibling argument (m, whose 'm' print hoists into the static block) both receive the DEAL null at load time, so the single zero-arity export observes both.",
-      "source": "import * as console from \"std/console\"\nfunction log(s: string): null { console.log(s); }\nfunction pick(v: int | null, x: null): int | null { return v; }\nlet xs: int[] = [10];\nlet n: int | null = xs[9];\nlet m: int | null = pick(xs[9], log(\"m\"));\nexport function test(): null {\n  if (n === null && m === null) {\n    console.log(\"both-null\");\n  }\n}\n",
+      "source": "import * as console from \"std/console\"\nfunction log(s: string): null { console.log(s); }\nfunction pick(v: int | null, x: null): int | null { return v; }\nexport function test(): null {\n  let xs: int[] = [10];\n  let n: int | null = xs[9];\n  let m: int | null = pick(xs[9], log(\"m\"));\n  if (n === null && m === null) { console.log(\"both-null\"); }\n}",
       "expectedOutput": "m\nboth-null",
       "expectedError": null,
       "expectedExitCode": null,

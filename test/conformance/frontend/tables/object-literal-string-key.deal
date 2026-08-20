@@ -7,3 +7,5 @@ export function test_object_literal_string_key(): table {
   let t: table = { "name": "Ada" };
   return t;
 }
+
+export function main(): null { return null; }

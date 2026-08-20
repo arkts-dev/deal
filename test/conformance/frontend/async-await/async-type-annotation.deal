@@ -5,4 +5,7 @@
 
 async function g(id: int): string { return "x"; }
 
-let f: async (id: int) => string = g;
+export function main(): null {
+  let f: async (id: int) => string = g;
+  return null;
+}

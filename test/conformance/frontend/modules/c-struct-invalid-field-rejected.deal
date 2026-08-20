@@ -9,3 +9,5 @@ export class Vec2 {
   x: number = 0.0;
   label: string = "";
 }
+
+export function main(): null { return null; }

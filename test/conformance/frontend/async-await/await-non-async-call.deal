@@ -8,3 +8,5 @@ function syncFunc(): int { return 42; }
 async function f(): int {
   return await syncFunc();
 }
+
+export function main(): null { return null; }

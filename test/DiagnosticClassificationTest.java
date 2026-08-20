@@ -139,17 +139,24 @@ public class DiagnosticClassificationTest {
         triggers.put("E1001", "@");
         triggers.put("E1003", "\"unterminated");
         triggers.put("E1004", "/* unterminated block comment");
+        // v1.2 module top level allows only declarations: executable
+        // fragments live inside main() (the spec-v1.2 application-fixture
+        // shape), so the trigger still exercises the pinned code.
+        String inMain = "export function main(): null { %s return null; }";
         triggers.put("E2000", "function f(): null { break; }");
-        triggers.put("E2001", "let x = y;");
-        triggers.put("E2002", "let x = 1; let x = 2;");
-        triggers.put("E3001", "let x: int = 3.14;");
-        triggers.put("E3002", "let x = [];");
-        triggers.put("E3008", "let x = 1; x();");
-        triggers.put("E3009", "function f(x: int): null {} f(1, 2);");
+        triggers.put("E2001", inMain.replace("%s", "let x = y; "));
+        triggers.put("E2002", inMain.replace("%s", "let x = 1; let x = 2; "));
+        triggers.put("E3001", inMain.replace("%s", "let x: int = 3.14; "));
+        triggers.put("E3002", inMain.replace("%s", "let x = []; "));
+        triggers.put("E3008", inMain.replace("%s", "let x = 1; x(); "));
+        triggers.put("E3009", inMain.replace("%s",
+            "function f(x: int): null { return null; } f(1, 2); "));
         triggers.put("E4001",
-            "class Foo { name: string; } let f: Foo = {};");
+            "class Foo { name: string; } "
+            + inMain.replace("%s", "let f: Foo = {}; "));
         triggers.put("E4002",
-            "class Foo { name: string; } let f: Foo = { name: \"x\", extra: 1 };");
+            "class Foo { name: string; } "
+            + inMain.replace("%s", "let f: Foo = { name: \"x\", extra: 1 }; "));
         triggers.put("E4007",
             "// @jsonable\nexport class Foo { fn: (x: int) => null = function(x: int): null { return null; }; }");
         triggers.put("E5001", "function f(x: int): null {} f(true);");

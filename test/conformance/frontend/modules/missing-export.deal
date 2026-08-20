@@ -8,3 +8,5 @@ import * as Lib from "./module_extra_lib"
 export function test_missing_export(): int {
   return Lib.doesNotExist(1);
 }
+
+export function main(): null { return null; }

@@ -6,3 +6,5 @@
 export function test_throw_bad(): null {
   throw 42;
 }
+
+export function main(): null { return null; }

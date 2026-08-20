@@ -93,11 +93,12 @@ import java.util.Set;
  * types (ISSUE-0097): {@code std/console} (already the trusted builtin),
  * {@code std/string}, {@code std/math}, and {@code std/time} — every
  * function of those four modules executes with the LuaJIT reference
- * semantics of {@code std/*.lua} (UTF-8 byte-wise {@code length}/
- * {@code substring}/{@code split}, plain-text search/replace, the Lua
- * whitespace set for {@code trim}, {@code sqrt} of a negative number →
- * {@code E8001}, {@code nowMillis()} → second-truncated epoch
- * milliseconds like {@code os.time() * 1000}). {@code std/table} and
+ * semantics of {@code std/*.lua} for search/replace/{@code trim} and
+ * with the spec-v1.2 Unicode scalar-value positions for
+ * {@code length}/{@code substring}/{@code split} (ISSUE-0106),
+ * {@code sqrt} of a negative number → {@code E8001},
+ * {@code nowMillis()} → second-truncated epoch milliseconds like
+ * {@code os.time() * 1000}). {@code std/table} and
  * {@code std/json} stay rejected with {@code E6000} at the import
  * statement: their only functions take or return a {@code table}, a
  * value type the slice still does not support as a function parameter
@@ -110,26 +111,32 @@ import java.util.Set;
  * {@code table | null} values, nullable tables, nested
  * (multi-dimensional) arrays, function arrays, stdlib imports other
  * than the four supported
- * modules, {@code @jsonable}, for/for-of loops, break/continue,
- * try/throw — is rejected with a backend {@code E6000} diagnostic,
- * never silently miscompiled. The ISSUE-0100 host ABI slice lifts
- * declaration/host-module imports and async/await from that list:
- * a host-module import (a declaration file that is not a spec stdlib
- * module, supplied through the orchestrator's hostModules map — the
- * same classification the LuaJIT use site builds, host-module-abi D5)
- * emits per-alias wrapper methods whose load-time presence check raises
- * E8011 for a missing host class or a missing declared export (extra
- * host exports are ignored), whose sync calls runtime-check the host
- * return against the declared descriptor (E8010 wrong kind, including
- * Java null crossing a non-nullable boundary; E8004 out-of-safe-range
- * int; Java null is the DEAL null sentinel for {@code T | null}), and
- * whose async calls require a {@code java.util.concurrent.CompletableFuture}
- * operation (E8010 otherwise) whose completion value is checked at the
- * await site (E8001). Async function DECLARATIONS emit as plain
- * blocking methods (the spec-permitted JVM async lowering); await of a
- * host async call blocks on the operation. Host class exports and
+ * modules, {@code @jsonable}, array for-of loops, for loops,
+ * break/continue, try/throw — is rejected with a backend {@code E6000}
+ * diagnostic, never silently miscompiled. The ISSUE-0100 host ABI
+ * slice lifts declaration/host-module imports and async/await from
+ * that list: a host-module import (a declaration file that is not a
+ * spec stdlib module, supplied through the orchestrator's hostModules
+ * map — the same classification the LuaJIT use site builds,
+ * host-module-abi D5) emits per-alias wrapper methods whose load-time
+ * presence check raises E8011 for a missing host class or a missing
+ * declared export (extra host exports are ignored), whose sync calls
+ * runtime-check the host return against the declared descriptor
+ * (E8010 wrong kind, including Java null crossing a non-nullable
+ * boundary; E8004 out-of-safe-range int; Java null is the DEAL null
+ * sentinel for {@code T | null}), and whose async calls require a
+ * {@code java.util.concurrent.CompletableFuture} operation (E8010
+ * otherwise) whose completion value is checked at the await site
+ * (E8001). Async function DECLARATIONS emit as plain blocking methods
+ * (the spec-permitted JVM async lowering); await of a host async call
+ * blocks on the operation. Host class exports and
  * array/table/function-typed host parameters and returns stay E6000 at
- * the import statement.
+ * the import statement. ISSUE-0106 adds Unicode scalar-value STRING
+ * for-of — one string containing exactly one scalar value per
+ * iteration, a fresh binding per iteration (spec-v1.2 §For-of) — and
+ * moves the std/string length/substring/split helpers to scalar-value
+ * positions (spec-v1.2 §std/string: lengths and positions are
+ * measured in Unicode scalar values).
  *
  * <p>Stdlib calls (ISSUE-0097) emit either an inline Java-library
  * expression (plain-text {@code contains}/{@code startsWith}/
@@ -137,7 +144,10 @@ import java.util.Set;
  * {@code java.lang.Math.floor/ceil/abs/min/max}; the second-truncated
  * {@code System.currentTimeMillis()} form for {@code nowMillis}) or a
  * call to an emitted {@code __str*}/{@code __mathSqrt} runtime helper
- * (UTF-8 byte-wise {@code length}/{@code substring}/{@code split},
+ * (Unicode scalar-value {@code length}/{@code substring}/{@code split}
+ * — ISSUE-0106: {@code length} counts code points,
+ * {@code substring} positions are scalar values, and the
+ * empty-separator {@code split} yields one part per scalar value;
  * plain-text {@code replace} with the empty-{@code old} guard, the
  * Lua-whitespace {@code trim}, and the negative-input {@code E8001}
  * check of {@code sqrt}). Every helper name starts with {@code __},
@@ -324,22 +334,30 @@ import java.util.Set;
  * with E6000 instead of emitting an illegal forward reference.
  *
  * <p>JVM value mapping follows the spec's JVM backend contract
- * ({@code docs/spec-v1.2.md} §JVM value mapping / §JVM backend contract):
- * {@code int → long},
- * {@code number → double}, {@code boolean → boolean}, {@code string → String},
- * {@code null → void}/{@code Void}. The JVM's static type system proves typed
- * boundaries redundant, which the spec explicitly permits ("The JVM backend
- * may use JVM primitive types, final classes, verifier-checked bytecode …
- * to prove typed-boundary checks redundant"); the int safe range is still
- * enforced at runtime because it is observable behavior (E8004) that the
- * type system cannot prove.
+ * ({@code docs/spec-v1.2.md} §JVM value mapping / §JVM backend contract —
+ * the normative v1.2 spec):
+ * {@code int → long} (the v1.1 backend-supported safe range; the
+ * ISSUE-0111 signed-int32 migration owns the representation switch),
+ * {@code number → double}, {@code boolean → boolean}, {@code string →
+ * String} (a {@code java.lang.String} with no unpaired UTF-16 surrogate
+ * code units — scalar-string boundaries validate the encoding, ISSUE-0106),
+ * {@code null → void}/{@code Void}. The JVM's static type system proves
+ * typed boundaries redundant, which the spec explicitly permits ("The JVM
+ * backend may use JVM primitive types, final classes, verifier-checked
+ * bytecode … to prove typed-boundary checks redundant"); the int safe
+ * range is still enforced at runtime because it is observable behavior
+ * (E8004) that the type system cannot prove.
  *
- * <p>The emitted class has no {@code main}: the artifact is a module class.
- * The conformance adapter compiles it together with a small runner class that
- * auto-invokes the zero-arity exported functions in declaration order (the
- * Lua harness iterates {@code pairs()} — an unspecified order — so fixtures
- * must not depend on cross-backend invocation order) and prints
- * non-{@code null} results.
+ * <p>The emitted class is a module class; when the compilation selected
+ * this module as the entry module, it additionally carries the JVM entry
+ * point {@code public static void main(String[] args)} that invokes the
+ * DEAL {@code main} export (spec-v1.2 §No user-defined globals — see
+ * {@link #generate(ProgramNode, CheckResult, String, String, Map, Map,
+ * boolean)}). The conformance adapter compiles it together with a small
+ * runner class that auto-invokes the zero-arity exported functions in
+ * declaration order (the Lua harness iterates {@code pairs()} — an
+ * unspecified order — so fixtures must not depend on cross-backend
+ * invocation order) and prints non-{@code null} results.
  *
  * <p>Local classes and nominal checks (ISSUE-0095) add the DEAL v1.1
  * nominal record class surface: module-level {@code class} declarations,
@@ -448,6 +466,7 @@ public final class JvmBackend {
     private final SymbolTable symbols;
     private final String sourcePath;
     private final String modulePath;
+    private final boolean isEntry;
     private final List<Diagnostic> diagnostics = new ArrayList<>();
     private final StringBuilder out = new StringBuilder();
     private int indent = 0;
@@ -653,6 +672,13 @@ public final class JvmBackend {
      * Unreachable from {@link #javaName} for the same reason. */
     private int evalTempCounter = 0;
 
+    /** Counter for string for-of loop temporaries ({@code __iter0},
+     * {@code __i0}, {@code __cp0}, …). Sequential sibling loops share the
+     * enclosing Java block scope, so every loop's temporaries need a
+     * unique name; the {@code __} prefix is unreachable from
+     * {@link #javaName}. */
+    private int forOfCounter = 0;
+
     /** Module-level function declarations by name (exports included), in
      * declaration order. */
     private final Map<String, FunctionDeclaration> moduleFunctions =
@@ -753,11 +779,13 @@ public final class JvmBackend {
                        String sourcePath, String modulePath,
                        Map<String, String> importResolutions,
                        Map<String, Map<String, ClassDeclaration>> importedClasses,
-                       Map<String, Map<String, Type>> hostModules) {
+                       Map<String, Map<String, Type>> hostModules,
+                       boolean isEntry) {
         this.typeMap = typeMap;
         this.symbols = symbols;
         this.sourcePath = sourcePath;
         this.modulePath = modulePath;
+        this.isEntry = isEntry;
         this.importResolutions = importResolutions == null
             ? Map.of() : Map.copyOf(importResolutions);
         this.importedClasses = importedClasses == null
@@ -829,13 +857,13 @@ public final class JvmBackend {
                                             Map<String, String> importResolutions,
                                             Map<String, Map<String, ClassDeclaration>> importedClasses) {
         return generate(program, result, sourcePath, modulePath,
-            importResolutions, importedClasses, Map.of());
+            importResolutions, importedClasses, Map.of(), false);
     }
 
     /**
      * Generates Java source for a checked module with the orchestrator's
-     * import resolution map, imported class declarations, and host-module
-     * declarations (ISSUE-0100).
+     * import resolution map, imported class declarations, host-module
+     * declarations (ISSUE-0100), and entry status (ISSUE-0106).
      *
      * @param hostModules    raw import path → declared export map
      *                       (export name → declared {@link Type}) of the
@@ -850,14 +878,35 @@ public final class JvmBackend {
      *                       and call-time boundary checks (E8010/E8001);
      *                       unsupported declarations are E6000 at the
      *                       import statement, never silently miscompiled
+     * @param isEntry        true when this module is the selected entry
+     *                       module of the compilation (the orchestrator
+     *                       passes this for {@code entryFile});
+     *                       spec-v1.2 §No user-defined globals: when a
+     *                       compiler invocation selects an entry module,
+     *                       the backend invokes {@code main()} from that
+     *                       module. The emitted entry module class
+     *                       therefore gets a real JVM entry point —
+     *                       {@code public static void main(String[] args)}
+     *                       — that calls the module's emitted DEAL
+     *                       {@code main} export (a {@code static void
+     *                       main()} method; the checker has verified the
+     *                       non-async {@code (): null} signature when the
+     *                       compilation ran through the entry gate). The
+     *                       DEAL {@code main} function name survives
+     *                       {@link #javaName} unchanged, so the entry
+     *                       method overloads the plain {@code main()}
+     *                       without collision. Non-entry modules emit a
+     *                       plain module class with no JVM entry point
      */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
                                             Map<String, Map<String, ClassDeclaration>> importedClasses,
-                                            Map<String, Map<String, Type>> hostModules) {
+                                            Map<String, Map<String, Type>> hostModules,
+                                            boolean isEntry) {
         JvmBackend backend = new JvmBackend(result.typeMap(), result.symbolTable(),
-            sourcePath, modulePath, importResolutions, importedClasses, hostModules);
+            sourcePath, modulePath, importResolutions, importedClasses,
+            hostModules, isEntry);
         return backend.generateProgram(program);
     }
 
@@ -934,6 +983,7 @@ public final class JvmBackend {
         Map.entry("numberFromInt", List.of("long")),
         Map.entry("scalarCompare", List.of("java.lang.String", "java.lang.String")),
         Map.entry("checkInt", List.of("long")),
+        Map.entry("__hasUnpairedSurrogate", List.of("java.lang.String")),
         Map.entry("loopCond", List.of("boolean")),
         Map.entry("booleanNotNull", List.of("java.lang.Boolean")),
         Map.entry("intFromNullable", List.of("java.lang.Long")),
@@ -1131,10 +1181,62 @@ public final class JvmBackend {
         // appended its descriptor branches to classCheckBranches.
         emitSharedCheckSeam();
 
+        if (isEntry) {
+            emitEntryPoint(program, className);
+        }
+
         indent--;
         emitLine("}");
 
         return new JvmCodegenResult(className, out.toString(), diagnostics);
+    }
+
+    /**
+     * Emits the JVM entry point for a selected entry module (spec-v1.2
+     * §No user-defined globals): {@code public static void main(String[]
+     * args)} invoking the module's DEAL {@code main} export. The frontend
+     * entry gate (E2010/E2011, the compilation orchestrator's v1.2
+     * selected-entry rule) guarantees an exported non-async
+     * {@code main(): null}; this defensive scan keeps the artifact valid
+     * Java when the backend is driven directly (unit tests) without that
+     * gate — a missing or mismatched {@code main} is an E6004 diagnostic
+     * (the same backend gate the Lua backend raises) instead of a silent
+     * broken artifact.
+     */
+    private void emitEntryPoint(ProgramNode program, String className) {
+        FunctionDeclaration mainDecl = null;
+        boolean foundAnyMain = false;
+        for (StatementNode stmt : program.statements()) {
+            if (stmt instanceof ExportDeclaration ed
+                    && ed.declaration() instanceof FunctionDeclaration fd) {
+                if (fd.name().equals("main")) {
+                    foundAnyMain = true;
+                    if (fd.params().isEmpty()
+                            && !fd.isAsync()
+                            && resolveTypeNode(fd.returnType()) instanceof Type.Null) {
+                        mainDecl = fd;
+                    }
+                }
+            }
+        }
+        if (mainDecl == null) {
+            diagnostics.add(Diagnostic.error(DiagnosticCode.E6004,
+                "entry module must export non-async main(): null; found "
+                + (foundAnyMain
+                    ? "main with a different signature or an async marker"
+                    : "no main export"),
+                program.span().file(), program.span().startLine(),
+                program.span().startColumn()));
+            return;
+        }
+        emitLine();
+        emitLine("// Entry-module invocation (spec-v1.2 §No user-defined globals): the");
+        emitLine("// backend invokes main() from the selected entry module.");
+        emitLine("public static void main(java.lang.String[] args) {");
+        indent++;
+        emitLine(javaName(mainDecl.name()) + "();");
+        indent--;
+        emitLine("}");
     }
 
     /** Class-body members at module level (vs. load-time statements). */
@@ -1869,7 +1971,11 @@ public final class JvmBackend {
         emitLine("// the untyped host boundary against the declared return descriptor.");
         emitLine("// Sync returns raise E8010 on a mismatch (host-module-abi D3 case 2);");
         emitLine("// async completion values raise E8001 at the await site (the LuaJIT");
-        emitLine("// await-site completion check). Java null is the DEAL null sentinel");
+        emitLine("// await-site completion check). ISSUE-0106 (v1.2 boundary string");
+        emitLine("// validation): the string branch also scans for unpaired UTF-16");
+        emitLine("// surrogate code units (spec-v1.2 \u00a7JVM value mapping) and raises");
+        emitLine("// the branch's error code (E8010 sync, E8001 completion) with the");
+        emitLine("// seam's rejection message. Java null is the DEAL null sentinel");
         emitLine("// (spec-v1.2 \u00a7JVM value mapping): it passes only where the declared");
         emitLine("// descriptor permits it (?T or null), and every other context rejects");
         emitLine("// it — the spec forbids exposing Java null as DEAL null across an");
@@ -1891,7 +1997,7 @@ public final class JvmBackend {
         emitLine("            if (v instanceof java.lang.Boolean b) return b;");
         emitLine("            break;");
         emitLine("        case \"string\":");
-        emitLine("            if (v instanceof java.lang.String s) return s;");
+        emitLine("            if (v instanceof java.lang.String s) { if (__hasUnpairedSurrogate(s)) throw new DealError(completion ? \"E8001\" : \"E8010\", \"expected string, got string with unpaired surrogate code units\"); return s; }");
         emitLine("            break;");
         emitLine("        case \"null\":");
         emitLine("            if (v == null) return null;");
@@ -2074,41 +2180,35 @@ public final class JvmBackend {
         emitLine("static long intFromNullable(java.lang.Long v) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to int\"); return v; }");
         emitLine("static double numberFromNullable(java.lang.Double v) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to number\"); return v; }");
         emitLine();
-        emitLine("// ---- DEAL stdlib support (ISSUE-0097): std/string, std/math, std/time ----");
-        emitLine("// DEAL v1.2: a `string` is a sequence of Unicode scalar values, and string");
-        emitLine("// lengths and positions are measured in Unicode scalar values");
-        emitLine("// (spec-v1.2 §String escapes and Unicode, §Standard library declarations).");
-        emitLine("// The JVM mapping (java.lang.String) holds UTF-16 code units, so");
-        emitLine("// __strLength/__strSubstring/__strSplit walk code points: a Java code");
-        emitLine("// point is a Unicode scalar value, including supplementary characters.");
-        emitLine("// Plain-text search/replace/trim operate on whole strings, where UTF-16-wise");
-        emitLine("// and scalar-value-wise matching coincide, so contains/startsWith/endsWith/");
-        emitLine("// replace/trim keep plain String operations.");
+        emitLine("// ---- DEAL stdlib support (ISSUE-0097, ISSUE-0106 v1.2 scalar strings): std/string, std/math, std/time ----");
+        emitLine("// DEAL strings are sequences of Unicode scalar values (spec-v1.2 §String");
+        emitLine("// escapes and Unicode), and std/string length/substring positions are");
+        emitLine("// measured in Unicode scalar values. The JVM mapping (java.lang.String,");
+        emitLine("// UTF-16 code units) therefore converts scalar positions to code-unit");
+        emitLine("// offsets with codePointCount/offsetByCodePoints, so supplementary");
+        emitLine("// characters count as ONE scalar value. Search/replace/trim operate on");
+        emitLine("// whole strings, where scalar-value and code-unit semantics coincide.");
         emitLine("static long __strLength(java.lang.String s) { return (long) s.codePointCount(0, s.length()); }");
-        emitLine("// LuaJIT string.sub correction on scalar-value positions: start+1/end each");
-        emitLine("// clamp to [1, n] after a negative adjustment (pos += n+1), and start > end");
-        emitLine("// yields the empty string.  n is the scalar-value count.");
+        emitLine("// v1.2 reference semantics (std/string.lua): positions are Unicode");
+        emitLine("// scalar values; a negative start behaves as 0, a negative end yields");
+        emitLine("// the empty string, an end beyond the string clamps to n, and");
+        emitLine("// start >= end yields the empty string. The scalar bounds convert to");
+        emitLine("// UTF-16 offsets via offsetByCodePoints.");
         emitLine("static java.lang.String __strSubstring(java.lang.String s, long start, long end) {");
         emitLine("    long n = (long) s.codePointCount(0, s.length());");
-        emitLine("    long st = start + 1L;");
-        emitLine("    if (st < 0L) st += n + 1L;");
-        emitLine("    if (st < 1L) st = 1L;");
-        emitLine("    long en = end;");
-        emitLine("    if (en < 0L) en += n + 1L;");
-        emitLine("    if (en > n) en = n;");
-        emitLine("    if (st > en) return \"\";");
-        emitLine("    int stIdx = s.offsetByCodePoints(0, (int) (st - 1L));");
-        emitLine("    int enIdx = s.offsetByCodePoints(0, (int) en);");
-        emitLine("    return s.substring(stIdx, enIdx);");
+        emitLine("    int from = s.offsetByCodePoints(0, (int) java.lang.Math.min(java.lang.Math.max(start, 0L), n));");
+        emitLine("    int to = s.offsetByCodePoints(0, (int) java.lang.Math.min(java.lang.Math.max(end, 0L), n));");
+        emitLine("    if (to < from) return \"\";");
+        emitLine("    return s.substring(from, to);");
         emitLine("}");
         emitLine("// Plain-text replace of every occurrence; an empty old returns s unchanged");
         emitLine("// (LuaJIT guards before gsub, which cannot match an empty pattern).");
         emitLine("static java.lang.String __strReplace(java.lang.String s, java.lang.String old, java.lang.String to) { return old.isEmpty() ? s : s.replace(old, to); }");
-        emitLine("// Plain-text split with LuaJIT's semantics: an empty s yields the empty array");
-        emitLine("// (whatever the separator); an empty separator splits into individual Unicode");
-        emitLine("// scalar values (one `string` per code point, in order); otherwise every");
-        emitLine("// occurrence of sep delimits a part, with the trailing remainder (even");
-        emitLine("// empty) appended.");
+        emitLine("// Plain-text split: an empty s yields the empty array (whatever the");
+        emitLine("// separator); an empty separator splits into individual Unicode scalar");
+        emitLine("// values (spec-v1.2 §String lengths and positions are measured in");
+        emitLine("// Unicode scalar values); otherwise every occurrence of sep delimits a");
+        emitLine("// part, with the trailing remainder (even empty) appended.");
         emitLine("static __StringArray __strSplit(java.lang.String s, java.lang.String sep) {");
         emitLine("    java.util.ArrayList<java.lang.String> parts = new java.util.ArrayList<>();");
         emitLine("    if (s.isEmpty()) return new __StringArray(parts.toArray(new java.lang.String[0]));");
@@ -2116,9 +2216,8 @@ public final class JvmBackend {
         emitLine("        int i = 0;");
         emitLine("        while (i < s.length()) {");
         emitLine("            int cp = s.codePointAt(i);");
-        emitLine("            int end = i + java.lang.Character.charCount(cp);");
-        emitLine("            parts.add(s.substring(i, end));");
-        emitLine("            i = end;");
+        emitLine("            parts.add(new java.lang.String(java.lang.Character.toChars(cp)));");
+        emitLine("            i += java.lang.Character.charCount(cp);");
         emitLine("        }");
         emitLine("        return new __StringArray(parts.toArray(new java.lang.String[0]));");
         emitLine("    }");
@@ -2162,7 +2261,10 @@ public final class JvmBackend {
      * {@code int} — a Long passes through {@code checkInt}, an integral
      * in-range Double converts, NaN/infinity/non-integral raise E8001,
      * out-of-safe-range raises E8004; {@code number} accepts every Long
-     * and Double like check_number); the array branches gate on the
+     * and Double like check_number); {@code string} additionally runs the
+     * v1.2 boundary string validation — an unpaired UTF-16 surrogate code
+     * unit raises E8001 (spec-v1.2 §JVM value mapping); the array branches
+     * gate on the
      * emitted wrappers with the {@code [?T]} widening forms (a plain
      * {@code T[]} wrapper passes a {@code [?T]} gate — the boxed copy /
      * shared-storage conversions the retired gates performed); the class
@@ -2186,6 +2288,23 @@ public final class JvmBackend {
         emitLine("// docs/spec-v1.2.md): every boundary the JVM type system cannot");
         emitLine("// prove routes through $check(descriptor, value). A ? prefix is");
         emitLine("// check_nullable: the DEAL null (Java null here) passes through.");
+        emitLine("// ISSUE-0106 (v1.2 boundary string validation): the \"string\"");
+        emitLine("// branch also scans for unpaired UTF-16 surrogate code units — the");
+        emitLine("// JVM string representation contract (spec-v1.2 §JVM value mapping:");
+        emitLine("// \"java.lang.String with no unpaired surrogate code units\"). A");
+        emitLine("// string with a lone high or low surrogate raises E8001.");
+        emitLine("static boolean __hasUnpairedSurrogate(java.lang.String s) {");
+        emitLine("    for (int i = 0; i < s.length(); i++) {");
+        emitLine("        char c = s.charAt(i);");
+        emitLine("        if (java.lang.Character.isHighSurrogate(c)) {");
+        emitLine("            if (i + 1 >= s.length() || !java.lang.Character.isLowSurrogate(s.charAt(i + 1))) return true;");
+        emitLine("            i++;");
+        emitLine("        } else if (java.lang.Character.isLowSurrogate(c)) {");
+        emitLine("            return true;");
+        emitLine("        }");
+        emitLine("    }");
+        emitLine("    return false;");
+        emitLine("}");
         emitLine("static java.lang.Object $check(java.lang.String descriptor, java.lang.Object v) {");
         indent++;
         emitLine("if (descriptor.startsWith(\"?\")) {");
@@ -2196,7 +2315,7 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (descriptor.equals(\"table\")) { if (v instanceof $T t) return t; throw new DealError(\"E8001\", \"expected table, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"boolean\")) { if (v instanceof java.lang.Boolean b) return b; throw new DealError(\"E8001\", \"expected boolean, got \" + $describe(v)); }");
-        emitLine("if (descriptor.equals(\"string\")) { if (v instanceof java.lang.String s) return s; throw new DealError(\"E8001\", \"expected string, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"string\")) { if (v instanceof java.lang.String s) { if (__hasUnpairedSurrogate(s)) throw new DealError(\"E8001\", \"expected string, got string with unpaired surrogate code units\"); return s; } throw new DealError(\"E8001\", \"expected string, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"int\")) { if (v instanceof java.lang.Long l) return checkInt(l); if (v instanceof java.lang.Double d) { if (d.isNaN()) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (d.isInfinite()) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (d % 1.0 != 0.0) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); return checkInt((long) (double) d); } throw new DealError(\"E8001\", \"expected int, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"number\")) { if (v instanceof java.lang.Long l) return (double) l; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"[int]\")) { if (v instanceof __IntArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
@@ -2253,7 +2372,7 @@ public final class JvmBackend {
             }
             case WhileStatement ws -> emitWhile(ws);
             case ForStatement fs -> unsupported("for loops", fs.span());
-            case ForOfStatement fos -> unsupported("for-of loops", fos.span());
+            case ForOfStatement fos -> emitForOf(fos);
             case BreakStatement bs -> unsupported("break", bs.span());
             case ContinueStatement cs -> unsupported("continue", cs.span());
             case DeleteStatement ds -> unsupported("delete", ds.span());
@@ -3533,6 +3652,53 @@ public final class JvmBackend {
         } else {
             emitLine("}");
         }
+    }
+
+    /**
+     * Emits a for-of loop (ISSUE-0106 v1.2 slice). Only string iterables
+     * are supported: the loop iterates Unicode scalar values (spec-v1.2
+     * §For-of — one string containing exactly one scalar value per
+     * iteration, in order), advancing by {@code Character.charCount}
+     * code units per step so a supplementary character yields ONE
+     * iteration. The loop variable is a fresh Java binding per iteration,
+     * scoped to the loop body like LuaJIT's per-iteration local. Array
+     * for-of stays rejected with E6000 (documented slice boundary).
+     */
+    private void emitForOf(ForOfStatement fos) {
+        Type iterableType = typeOf(fos.iterable());
+        if (!(iterableType instanceof Type.String)) {
+            unsupported("for-of over arrays (this slice supports string "
+                + "for-of only)", fos.span());
+            return;
+        }
+        String iterable = emitExpression(fos.iterable());
+        int n = forOfCounter++;
+        String iterVar = "__iter" + n;
+        String idxVar = "__i" + n;
+        String cpVar = "__cp" + n;
+        // The iterated expression evaluates exactly once, before the loop
+        // (LuaJIT evaluates the for-of expression once). Hoisted side
+        // effects of its evaluation run before the materialization line.
+        flushPreStatements();
+        emitLine("java.lang.String " + iterVar + " = " + iterable + ";");
+        emitLine("for (long " + idxVar + " = 0L; " + idxVar + " < "
+            + iterVar + ".length(); ) {");
+        indent++;
+        emitLine("int " + cpVar + " = " + iterVar + ".codePointAt((int) "
+            + idxVar + ");");
+        localScopes.push(new LinkedHashMap<>());
+        localTypeScopes.push(new LinkedHashMap<>());
+        String loopVar = declareLocal(fos.varName(), Type.String.INSTANCE);
+        emitLine("java.lang.String " + loopVar
+            + " = new java.lang.String(java.lang.Character.toChars("
+            + cpVar + "));");
+        emitLine(idxVar + " += (long) java.lang.Character.charCount("
+            + cpVar + ");");
+        emitScopedBlock(fos.body());
+        localScopes.pop();
+        localTypeScopes.pop();
+        indent--;
+        emitLine("}");
     }
 
     private void emitWhile(WhileStatement ws) {
@@ -5112,15 +5278,18 @@ public final class JvmBackend {
     }
 
     /**
-     * Emits a {@code std/string} member call (ISSUE-0097). The checker has
-     * already verified the export exists (E2004) and typed every argument,
-     * so arity and types are guaranteed. Plain-text search predicates map
-     * to the mapped {@code java.lang.String} directly (byte-wise and
-     * UTF-16-wise matching coincide for valid UTF-8); {@code length}/
-     * {@code substring}/{@code split} route through the emitted UTF-8
-     * byte-wise helpers to reproduce LuaJIT's byte-string semantics, and
-     * {@code replace}/{@code trim} route through helpers for the
-     * empty-{@code old} guard and the Lua {@code %s} whitespace set.
+     * Emits a {@code std/string} member call (ISSUE-0097, ISSUE-0106 v1.2
+     * scalar strings). The checker has already verified the export exists
+     * (E2004) and typed every argument, so arity and types are
+     * guaranteed. Plain-text search predicates map to the mapped {@code
+     * java.lang.String} directly (whole-string matching coincides between
+     * the scalar-value and UTF-16 views); {@code length}/{@code
+     * substring}/{@code split} route through the emitted helpers whose
+     * lengths and positions are measured in Unicode scalar values
+     * (spec-v1.2 \u00a7String lengths and positions are measured in
+     * Unicode scalar values), and {@code replace}/{@code trim} route
+     * through helpers for the empty-{@code old} guard and the Lua
+     * {@code %s} whitespace set.
      * The helper call's Java arguments evaluate left to right before the
      * helper body runs, preserving the spec's evaluation order.
      */
@@ -5801,6 +5970,13 @@ public final class JvmBackend {
         }
         if (target instanceof Type.Table) {
             return "(($T) $check(\"table\", " + get + "))";
+        }
+        if (target instanceof Type.String) {
+            // ISSUE-0106 (v1.2 boundary string validation): a string
+            // crossing the table boundary must be a java.lang.String with
+            // no unpaired surrogate code units — the seam's "string"
+            // branch runs the surrogate scan.
+            return "((java.lang.String) $check(\"string\", " + get + "))";
         }
         if (target instanceof Type.Nullable nn) {
             // Nullable boundary checks (ISSUE-0108, unified ISSUE-0110):

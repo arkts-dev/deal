@@ -6,3 +6,5 @@
 export function int32_max(): int {
   return 2147483647;
 }
+
+export function main(): null { return null; }

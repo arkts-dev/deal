@@ -7,3 +7,5 @@ export function test_escapes(): string {
   let s: string = "hello\nworld\t!\\\"\'";
   return s;
 }
+
+export function main(): null { return null; }

@@ -3,5 +3,9 @@
 // @expected: compile-error E1025
 // @features: tables, delete, diagnostics
 
+export function main(): null {
 let x: int = 1;
 delete x;
+
+return null;
+}

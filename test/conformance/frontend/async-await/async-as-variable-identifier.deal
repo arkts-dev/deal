@@ -3,4 +3,8 @@
 // @expected: compile-error E1007
 // @features: async, diagnostics
 
+export function main(): null {
 let async: int = 1;
+
+return null;
+}

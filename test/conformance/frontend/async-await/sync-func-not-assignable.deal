@@ -4,5 +4,11 @@
 // @features: async, types
 
 function g(x: int): int { return x; }
+export function main(): null { return null; }
+export function main(): null {
 
 let f: async (x: int) => int = g;
+
+
+return null;
+}

@@ -9,3 +9,5 @@ function consume(x: int): int { return x; }
 export async function test_unawaited_async_argument(): int {
   return consume(value());
 }
+
+export function main(): null { return null; }

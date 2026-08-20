@@ -4,3 +4,5 @@
 // @features: diagnostics, imports, lua-abi
 
 import * as bad$alias from "./alias_lib"
+
+export function main(): null { return null; }

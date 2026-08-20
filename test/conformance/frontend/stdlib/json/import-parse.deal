@@ -8,3 +8,5 @@ import * as json from "std/json"
 export function test_json_parse(s: string): table {
   return json.parse(s);
 }
+
+export function main(): null { return null; }

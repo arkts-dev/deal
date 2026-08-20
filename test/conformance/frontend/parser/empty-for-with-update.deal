@@ -9,3 +9,5 @@ export function test_empty_for_forms(): int {
   }
   return i;
 }
+
+export function main(): null { return null; }

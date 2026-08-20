@@ -1,7 +1,0 @@
-// @expected: companion
-// @description: Classified support module — compiled by the companion
-// catalog when a parent conformance fixture imports it. The v1.2 gate
-// (ISSUE-0107) removes unclassified skips: every .deal file carries an
-// explicit classification, and companions must keep compiling standalone.
-let state: int = 0;
-export function next(): int { state = state + 1; return state; }

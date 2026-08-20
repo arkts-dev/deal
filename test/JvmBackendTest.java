@@ -14,6 +14,7 @@ import deal.codegen.jvm.JvmBackend;
 import deal.lexer.Diagnostic;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
+import deal.module.ModuleShapeValidator;
 import deal.module.CompilationOrchestrator;
 import deal.module.DealConfig;
 import deal.parser.ParseResult;
@@ -117,12 +118,14 @@ import java.util.Set;
  *       their declared functions through the emitted {@code __str*}/
  *       {@code __mathSqrt} helpers and fully-qualified
  *       {@code java.lang.Math}/{@code java.lang.String} expressions —
- *       UTF-8 byte-wise {@code length}/{@code substring}/{@code split}
- *       (including the {@code "héllo"} byte-length and character-boundary
- *       pins), plain-text search/replace with the empty-{@code old}
- *       guard, the Lua-whitespace {@code trim}, the negative-input
- *       {@code sqrt} E8001, the extreme-negative {@code absInt}, and the
- *       second-truncated {@code nowMillis()} — while {@code std/table}
+ *       Unicode scalar-value {@code length}/{@code substring}/
+ *       {@code split} (including the {@code "héllo"} scalar-count and
+ *       scalar-position pins — spec-v1.2 measures string lengths and
+ *       positions in Unicode scalar values), plain-text search/replace
+ *       with the empty-{@code old} guard, the Lua-whitespace
+ *       {@code trim}, the negative-input {@code sqrt} E8001, the
+ *       extreme-negative {@code absInt}, and the second-truncated
+ *       {@code nowMillis()} — while {@code std/table}
  *       and {@code std/json} imports (used and unused) stay E6000 at the
  *       import statement because their functions require {@code table}
  *       values, all compiled and executed with {@code javac} +
@@ -283,7 +286,13 @@ public class JvmBackendTest {
             testStdlibTableBoundaryRejected();
             testStdlibExecution();
             testStdlibSqrtNegativeRuntimeError();
-            testStdlibByteSemantics();
+            testStdlibScalarSemantics();
+            // ISSUE-0106 v1.2 slice: entry-module invocation, Unicode
+            // scalar-value string for-of, and boundary string validation.
+            testEntryModuleEmitsJvmEntryPoint();
+            testEntryGateBackendE6004();
+            testStringForOfScalarIteration();
+            testBoundaryStringValidation();
             testStdlibTimeNowMillis();
             testStdlibHelperNameCollisions();
             testOrchestratorJvmStdlibImport();
@@ -374,6 +383,17 @@ public class JvmBackendTest {
             if ("error".equals(d.severity())) errors.add(d);
         }
         if (parse.hasErrors()) {
+            return new Frontend(null, null, errors);
+        }
+
+        // Post-parse module shape validation (v1.2 module top level:
+        // E1048/E1049/E1050/E1051), mirroring the orchestrator pipeline —
+        // the parser alone no longer rejects v1.1 module shapes.
+        for (Diagnostic d : ModuleShapeValidator.validate(parse.program(),
+                filename, filename.endsWith(".d.deal"))) {
+            if ("error".equals(d.severity())) errors.add(d);
+        }
+        if (!errors.isEmpty()) {
             return new Frontend(null, null, errors);
         }
 
@@ -599,8 +619,6 @@ public class JvmBackendTest {
         String source = """
             import * as console from "std/console"
 
-            let counter: int = 7;
-
             function add(a: int, b: int): int { return a + b; }
 
             function classify(n: int): int {
@@ -637,8 +655,8 @@ public class JvmBackendTest {
 
         String java = res.source();
         check(java.contains("public final class Main"), "class declaration");
-        check(java.contains("static long counter = 7L;"),
-            "module-level let → static field");
+        // v1.2 module top level has no lets, so no module-field emission
+        // surface exists in the smoke shape.
         check(java.contains("static long add(long a, long b)"),
             "function → static method with mapped types");
         check(java.contains("return intAdd(a, b);"), "checked int add");
@@ -723,11 +741,6 @@ public class JvmBackendTest {
                   return 1;
                 }
                 """),
-            new Case("class default reading a later module field", """
-                class Point { x: int = later; }
-                let later: int = 1;
-                export function test(): int { return 1; }
-                """),
             new Case("async function expression", """
                 export function test(): null {
                   let f: async () => int = async function(): int { return 5; };
@@ -757,10 +770,6 @@ public class JvmBackendTest {
                   return;
                 }
                 """),
-            new Case("module-level return", """
-                export function test(): int { return 1; }
-                return 1;
-                """),
             new Case("self-referential initializer", """
                 export function test(): int {
                   let x: int = x + 1;
@@ -773,11 +782,6 @@ public class JvmBackendTest {
                   console.log(x);
                   let x: string = "later";
                 }
-                """),
-            new Case("forward reference to module field", """
-                let b: int = c + 1;
-                let c: int = 2;
-                export function test(): int { return b; }
                 """),
             new Case("function colliding with runtime helper", """
                 function intAdd(a: int, b: int): int { return a + b; }
@@ -874,23 +878,39 @@ public class JvmBackendTest {
         check(until.output().contains("3"),
             "while-true loop returns from inside the body → 3: " + until.output());
 
-        // A module-level while runs at load time: the field starts at 0,
-        // the loop ticks twice, and the export observes 2.
+        // v1.2 module top level has no statements; the condition
+        // re-evaluation shape runs inside a function instead (a
+        // module-level while would be a parse error, pinned below).
         ExecResult moduleWhile = compileAndRunJvm("""
             import * as console from "std/console"
             function tick(): null { console.log("tick"); }
-            let i: int = 0;
-            while (i < 2 && tick() === null) {
-              i = i + 1;
+            export function test(): int {
+              let i: int = 0;
+              while (i < 2 && tick() === null) {
+                i = i + 1;
+              }
+              return i;
             }
-            export function test(): int { return i; }
             """, "whilemodule");
-        check(moduleWhile.exitCode() == 0, "module-level while exits 0");
+        check(moduleWhile.exitCode() == 0, "while-loop exits 0");
         check(occurrences(moduleWhile.output(), "tick") == 2,
-            "module-level while condition re-evaluates per iteration → tick ×2: "
+            "while condition re-evaluates per iteration → tick ×2: "
                 + moduleWhile.output());
         check(moduleWhile.output().contains("2"),
-            "module-level while leaves the field at 2: " + moduleWhile.output());
+            "while leaves the local at 2: " + moduleWhile.output());
+
+        // v1.2 grammar gate: the module-level while shape is a frontend
+        // parse error (E1049).
+        Frontend moduleWhileShape = compileFrontend("""
+            import * as console from "std/console"
+            while (true) {
+              console.log("never");
+            }
+            export function test(): null { return null; }
+            """, "jvmtest-whilemodule-shape.deal");
+        check(moduleWhileShape.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-level while rejected with E1049: " + moduleWhileShape.errors());
 
         // Emission shape: the plain form routes the condition through the
         // loopCond identity helper (never a constant expression) and keeps
@@ -993,8 +1013,11 @@ public class JvmBackendTest {
      * fields in a condition or body stay E6000, and the field-declared-
      * first shape stays full parity. */
     private static void testWhileLoopModuleFieldDominanceGuards() throws Exception {
-        System.out.println("-- While loops in the module-field dominance guards --");
-
+        // v1.2 grammar gate: module-level lets were removed, so the v1.1
+        // module-field dominance-guard shapes (function-body reads/writes
+        // of later-declared module fields) are frontend parse errors
+        // (E1049) before any backend analysis. The in-function loop
+        // behavior they guarded is pinned by testWhileLoops above.
         Frontend writeInBody = compileFrontend("""
             function f(): int {
               let i: int = 0;
@@ -1007,16 +1030,9 @@ public class JvmBackendTest {
             let x: int = 1;
             export function test(): int { return f(); }
             """, "jvmtest-while-dominance-write.deal");
-        check(writeInBody.errors().isEmpty(),
-            "while-body write shape frontend clean: " + writeInBody.errors());
-        if (writeInBody.errors().isEmpty()) {
-            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                writeInBody.program(), writeInBody.checkResult(),
-                "jvmtest-while-dominance-write.deal", "main");
-            check(res.hasErrors() && res.diagnostics().stream()
-                    .anyMatch(d -> "E6000".equals(d.code())),
-                "while-body write to a later field is E6000: " + res.diagnostics());
-        }
+        check(writeInBody.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "while-body write shape rejected with E1049: " + writeInBody.errors());
 
         Frontend readInCond = compileFrontend("""
             function g(): int {
@@ -1029,21 +1045,11 @@ public class JvmBackendTest {
             let x: int = 5;
             export function test(): int { return g(); }
             """, "jvmtest-while-dominance-read.deal");
-        check(readInCond.errors().isEmpty(),
-            "while-condition read shape frontend clean: " + readInCond.errors());
-        if (readInCond.errors().isEmpty()) {
-            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                readInCond.program(), readInCond.checkResult(),
-                "jvmtest-while-dominance-read.deal", "main");
-            check(res.hasErrors() && res.diagnostics().stream()
-                    .anyMatch(d -> "E6000".equals(d.code())),
-                "while-condition read of a later field is E6000: " + res.diagnostics());
-        }
+        check(readInCond.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "while-condition read shape rejected with E1049: " + readInCond.errors());
 
-        // The positive shape: field declared BEFORE the function — the
-        // module-local upvalue read with full parity, exercised through a
-        // real while loop.
-        ExecResult parity = compileAndRunJvm("""
+        Frontend parity = compileFrontend("""
             let x: int = 2;
             function h(): int {
               let i: int = 0;
@@ -1053,17 +1059,19 @@ public class JvmBackendTest {
               return i;
             }
             export function test(): int { return h(); }
-            """, "whiledomparity");
-        check(parity.exitCode() == 0, "declared-first while parity exits 0");
-        check(parity.output().contains("2"),
-            "declared-first field read in a while condition → 2: " + parity.output());
+            """, "jvmtest-whiledomparity.deal");
+        check(parity.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "declared-first module field shape rejected with E1049: " + parity.errors());
+    
     }
 
     /** Module-level while bodies cannot contain return (Java initializers
      * cannot return) — E6000, never an artifact javac rejects. */
     private static void testWhileModuleLevelReturnRejected() {
-        System.out.println("-- Module-level return inside a while body → E6000 --");
-
+        // v1.2 grammar gate: a module-level while is a frontend parse
+        // error (E1049) — the v1.1 module-level-return E6000 surface is
+        // removed with the module-level statement grammar.
         Frontend f = compileFrontend("""
             export function test(): int { return 1; }
             while (true) {
@@ -1072,15 +1080,9 @@ public class JvmBackendTest {
               }
             }
             """, "jvmtest-while-module-return.deal");
-        check(f.errors().isEmpty(), "module-while-return frontend clean: " + f.errors());
-        if (f.errors().isEmpty()) {
-            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                f.program(), f.checkResult(),
-                "jvmtest-while-module-return.deal", "main");
-            check(res.hasErrors() && res.diagnostics().stream()
-                    .anyMatch(d -> "E6000".equals(d.code())),
-                "module-level return inside a while body is E6000: " + res.diagnostics());
-        }
+        check(f.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
+            "module-level while rejected with E1049: " + f.errors());
+    
     }
 
     /** Use-before-declaration detection walks while conditions: a
@@ -1244,15 +1246,16 @@ public class JvmBackendTest {
         check(append.output().contains("18"),
             "append + param write computes 18 (9+2+4+3): " + append.output());
 
-        // Module-level array fields initialize and mutate at load time.
-        ExecResult module = compileAndRunJvm("""
+        // v1.2 grammar gate: module-level array fields were removed — the
+        // v1.1 load-time mutation shape is a frontend parse error (E1049).
+        Frontend moduleShape = compileFrontend("""
             let g: int[] = [1, 2];
             g[0] = 5;
             export function test(): int { return g[0] + g[1] + g.length; }
-            """, "modarr");
-        check(module.exitCode() == 0, "module array exits 0: " + module.output());
-        check(module.output().contains("9"),
-            "module-level array field computes 9 (5+2+2): " + module.output());
+            """, "jvmtest-modarr.deal");
+        check(moduleShape.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-level array field rejected with E1049: " + moduleShape.errors());
 
         // Emission shape: wrapper classes, read/write helper calls, length
         // lowering, and checkInt on int element stores.
@@ -2197,43 +2200,12 @@ public class JvmBackendTest {
      * is E6000 (Java cannot-find-symbol); an index write whose array
      * identifier is a later-declared local is E6000. */
     private static void testArrayUseBeforeDeclarationGuards() {
-        System.out.println("-- Array use-before-declaration guards → E6000 --");
-
+        // v1.2 grammar gate: module-field shapes (a module-level let) are
+        // frontend parse errors (E1049) before the backend's
+        // use-before-declaration analysis — module fields were removed.
+        // The in-function guard shapes keep their E6000 backend rejection.
         record Case(String what, String source) {}
         List<Case> cases = List.of(
-            new Case("module-level call reading later field via index", """
-                let xs: int[] = [1, 2];
-                f();
-                function f(): int { return xs[0]; }
-                export function test(): int { return 1; }
-                """),
-            new Case("module-level call reading later field via length", """
-                f();
-                let xs: int[] = [1, 2];
-                function f(): int { return xs.length; }
-                export function test(): int { return 1; }
-                """),
-            new Case("module-level call reading later field via array literal", """
-                f();
-                let a: int = 1;
-                function f(): int[] { return [a, 2]; }
-                export function test(): int { return 1; }
-                """),
-            new Case("function reading later field via index", """
-                function f(): int { return xs[0]; }
-                let xs: int[] = [1, 2];
-                export function test(): int { return f(); }
-                """),
-            new Case("function writing later field via index", """
-                function f(): int { xs[0] = 9; return 0; }
-                let xs: int[] = [1, 2];
-                export function test(): int { return f(); }
-                """),
-            new Case("function writing later field via append", """
-                function f(): int { xs[xs.length] = 9; return 0; }
-                let xs: int[] = [1, 2];
-                export function test(): int { return f(); }
-                """),
             new Case("index expression referencing later local", """
                 export function test(): int {
                   let xs: int[] = [1, 2];
@@ -2266,21 +2238,276 @@ public class JvmBackendTest {
                 "E6000 diagnostic for " + c.what() + ": " + res.diagnostics());
         }
 
-        // The declared-first shape stays clean: a function declared AFTER
-        // the field reads/writes the module-local array with full parity.
-        Frontend ok = compileFrontend("""
+        List<String> moduleShapes = List.of(
+            """
+            let xs: int[] = [1, 2];
+            f();
+            function f(): int { return xs[0]; }
+            export function test(): int { return 1; }
+            """,
+            """
+            f();
+            let xs: int[] = [1, 2];
+            function f(): int { return xs.length; }
+            export function test(): int { return 1; }
+            """,
+            """
+            f();
+            let a: int = 1;
+            function f(): int[] { return [a, 2]; }
+            export function test(): int { return 1; }
+            """,
+            """
+            function f(): int { return xs[0]; }
+            let xs: int[] = [1, 2];
+            export function test(): int { return f(); }
+            """,
+            """
+            function f(): int { xs[0] = 9; return 0; }
+            let xs: int[] = [1, 2];
+            export function test(): int { return f(); }
+            """,
+            """
+            function f(): int { xs[xs.length] = 9; return 0; }
+            let xs: int[] = [1, 2];
+            export function test(): int { return f(); }
+            """,
+            """
             let xs: int[] = [1, 2];
             function bump(): int { xs[0] = 9; return xs[0]; }
             export function test(): int { return bump() + xs.length; }
-            """, "jvmtest-arr-field-parity.deal");
-        check(ok.errors().isEmpty(), "declared-first array access frontend clean: "
+            """
+        );
+        for (String shape : moduleShapes) {
+            Frontend f = compileFrontend(shape, "jvmtest-arr-module-shape.deal");
+            check(f.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
+                "module-field array shape rejected with E1049: " + f.errors());
+        }
+    
+    }
+
+    /**
+     * ISSUE-0106 v1.2 entry-module invocation: when a compilation selects
+     * an entry module, the backend must invoke {@code main()} from that
+     * module (spec-v1.2 §No user-defined globals). The emitted entry
+     * class gets a real JVM entry point — {@code public static void
+     * main(String[] args)} — that calls the DEAL {@code main} export, so
+     * running {@code java <Class>} executes the module's main without any
+     * test runner.
+     */
+    private static void testEntryModuleEmitsJvmEntryPoint() throws Exception {
+        System.out.println("-- Entry module emits the JVM entry point --");
+
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            export function main(): null {
+              console.log("entry-main-ran");
+              return null;
+            }
+            export function helper(x: int): int { return x + 1; }
+            """, "jvmtest-entry.deal");
+        check(f.errors().isEmpty(), "entry frontend clean: " + f.errors());
+        if (!f.errors().isEmpty()) return;
+
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-entry.deal", "main",
+            Map.of(), Map.of(), Map.of(), true);
+        check(!res.hasErrors(), "entry codegen clean: " + res.diagnostics());
+        if (res.hasErrors()) return;
+        check(res.source().contains("public static void main(java.lang.String[] args)"),
+            "entry module emits the JVM entry point");
+        check(res.source().contains("    main();"),
+            "the entry point invokes the DEAL main export");
+
+        // javac + run `java Main` directly: the backend-emitted entry point
+        // (not the conformance runner) drives the invocation.
+        Path dir = Files.createTempDirectory("jvmtest_entry_");
+        Files.writeString(dir.resolve("Main.java"), res.source());
+        StringBuilder javacErr = new StringBuilder();
+        boolean javacOk = BackendConformanceTest.compileWithJavac(dir,
+            List.of("Main.java"), javacErr);
+        check(javacOk, "entry artifact compiles: " + javacErr);
+        if (javacOk) {
+            ProcessBuilder java = new ProcessBuilder("java", "-cp",
+                dir.toString(), "Main");
+            java.redirectErrorStream(true);
+            Process p = java.start();
+            String out = new String(p.getInputStream().readAllBytes()).trim();
+            int exit = p.waitFor();
+            check(exit == 0, "java Main exits 0 (the emitted entry point runs)");
+            check(out.contains("entry-main-ran"),
+                "main() side effect observed through the emitted entry point: " + out);
+        }
+        try {
+            Files.walk(dir).sorted(Comparator.reverseOrder())
+                .forEach(p2 -> { try { Files.deleteIfExists(p2); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+
+        // Non-entry modules emit no JVM entry point.
+        JvmBackend.JvmCodegenResult lib = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-entry.deal", "main");
+        check(!lib.hasErrors() && !lib.source()
+                .contains("public static void main(java.lang.String[] args)"),
+            "non-entry module emits no JVM entry point");
+    }
+
+    /** The JVM backend's entry-point backstop (spec-v1.2 §No user-defined
+     * globals): when a compilation selects this module as the entry module,
+     * the emitted entry point invokes the DEAL main export; a missing main,
+     * a non-exported main, an async main, or a non-null return type is an
+     * E6004 diagnostic (the same backend gate the Lua backend raises)
+     * instead of a silently broken artifact. The frontend E2010/E2011
+     * gate (the orchestrator's selected-entry rule) is pinned by
+     * ModuleSystemTest; this pins the JVM emission path. */
+    private static void testEntryGateBackendE6004() {
+        System.out.println("-- Entry gate E6004 (JVM backend) --");
+
+        List<String> bad = List.of(
+            "export function helper(): int { return 1; }",
+            "function main(): null { return null; }",
+            "export async function main(): null { return null; }",
+            "export function main(): int { return 1; }");
+        for (String source : bad) {
+            Frontend f = compileFrontend(source, "jvmtest-entrygate.deal");
+            check(f.errors().isEmpty(), "entry-gate probe frontend clean: "
+                + f.errors());
+            if (f.errors().isEmpty()) {
+                JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                    f.program(), f.checkResult(), "jvmtest-entrygate.deal",
+                    "main", Map.of(), Map.of(), Map.of(), true);
+                check(res.hasErrors() && res.diagnostics().stream()
+                        .anyMatch(d -> "E6004".equals(d.code())),
+                    "entry gate E6004: " + res.diagnostics());
+            }
+        }
+
+        Frontend ok = compileFrontend(
+            "export function main(): null { return null; }",
+            "jvmtest-entrygate-ok.deal");
+        check(ok.errors().isEmpty(), "conforming main(): null passes the gate: "
             + ok.errors());
         if (ok.errors().isEmpty()) {
-            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                ok.program(), ok.checkResult(),
-                "jvmtest-arr-field-parity.deal", "main");
-            check(!res.hasErrors(),
-                "declared-first array field access stays clean: " + res.diagnostics());
+            JvmBackend.JvmCodegenResult okRes = JvmBackend.generate(
+                ok.program(), ok.checkResult(), "jvmtest-entrygate-ok.deal",
+                "main", Map.of(), Map.of(), Map.of(), true);
+            check(!okRes.hasErrors()
+                    && okRes.source().contains("public static void main(java.lang.String[] args)"),
+                "conforming entry module emits the JVM entry point");
+        }
+    }
+
+    /**
+     * ISSUE-0106 v1.2 Unicode scalar-value string for-of: each iteration
+     * yields one string containing exactly one scalar value, in order —
+     * a supplementary character (U+1F600) is ONE iteration, not two UTF-16
+     * code units.
+     */
+    private static void testStringForOfScalarIteration() throws Exception {
+        System.out.println("-- String for-of iterates Unicode scalar values --");
+
+        ExecResult res = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let acc: string = "";
+              let count: int = 0;
+              for (let c: string of "a\ud83d\ude00b") {
+                acc = acc + c;
+                count = count + 1;
+              }
+              console.log(acc);
+              if (count !== 3) { console.log("bad-count"); return; }
+              if (acc !== "a\ud83d\ude00b") { console.log("bad-acc"); return; }
+              console.log("for-of-scalar-ok");
+            }
+            """, "forof-scalar");
+        check(res.exitCode() == 0, "string for-of run exits 0: " + res.output());
+        check(res.output().contains("for-of-scalar-ok"),
+            "string for-of iterates three scalar values: " + res.output());
+
+        // A string for-of over an ASCII string concatenates the scalar
+        // values in order.
+        ExecResult ascii = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let acc: string = "";
+              for (let c: string of "deal") {
+                acc = acc + c;
+              }
+              console.log(acc);
+            }
+            """, "forof-ascii");
+        check(ascii.exitCode() == 0 && ascii.output().contains("deal"),
+            "ASCII for-of concatenates in order: " + ascii.output());
+
+        // Array for-of stays rejected with E6000 (documented slice boundary).
+        Frontend arr = compileFrontend("""
+            import * as console from "std/console"
+            export function test(): null {
+              let xs: int[] = [1, 2, 3];
+              for (let x: int of xs) {
+                console.log("never");
+              }
+            }
+            """, "jvmtest-forof-array.deal");
+        check(arr.errors().isEmpty(), "array for-of frontend clean: " + arr.errors());
+        if (arr.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult arrRes = JvmBackend.generate(
+                arr.program(), arr.checkResult(), "jvmtest-forof-array.deal", "main");
+            check(arrRes.hasErrors() && arrRes.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())),
+                "array for-of is E6000 (documented slice boundary): "
+                    + arrRes.diagnostics());
+        }
+    }
+
+    /**
+     * ISSUE-0106 v1.2 boundary string validation: a string crossing an
+     * untyped boundary (a table read) must be a java.lang.String with no
+     * unpaired UTF-16 surrogate code units — the JVM string representation
+     * contract (spec-v1.2 §String escapes and Unicode / §JVM value
+     * mapping). Valid scalar strings (including supplementary characters)
+     * pass; the emitted check helper carries the surrogate scan.
+     */
+    private static void testBoundaryStringValidation() throws Exception {
+        System.out.println("-- Boundary string validation (unpaired surrogates) --");
+
+        ExecResult res = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let t: table = { s: "a\ud83d\ude00b" };
+              let s: string = t.s;
+              console.log(s);
+              if (s !== "a\ud83d\ude00b") { console.log("bad-read"); return; }
+              console.log("boundary-ok");
+            }
+            """, "boundary-string");
+        check(res.exitCode() == 0, "boundary string run exits 0: " + res.output());
+        check(res.output().contains("boundary-ok"),
+            "a scalar-valid supplementary string passes the table boundary: "
+                + res.output());
+
+        // Emission shape: the boundary check scans for unpaired surrogates.
+        Frontend f = compileFrontend("""
+            export function test(): string {
+              let t: table = { s: "x" };
+              let s: string = t.s;
+              return s;
+            }
+            """, "jvmtest-boundary-emission.deal");
+        check(f.errors().isEmpty(), "boundary probe frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult er = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-boundary-emission.deal", "main");
+            check(!er.hasErrors(), "boundary probe codegen clean: " + er.diagnostics());
+            if (!er.hasErrors()) {
+                check(er.source().contains("$check(\"string\","),
+                    "non-nullable string table reads run the $check string branch");
+                check(er.source().contains("__hasUnpairedSurrogate"),
+                    "the seam's string branch scans for unpaired surrogate code units");
+                check(er.source().contains(
+                        "expected string, got string with unpaired surrogate code units"),
+                    "the rejection message names the invalid encoding");
+            }
         }
     }
 
@@ -2366,18 +2593,16 @@ public class JvmBackendTest {
         check(arg.output().contains("arg-log"),
             "null-typed call argument prints: " + arg.output());
 
-        // A module-level null-typed field initializer hoists its side effect
-        // into a static block before the field declaration (valid Java).
-        ExecResult moduleField = compileAndRunJvm("""
+        // v1.2 grammar gate: module-level null-typed field initializers were
+        // removed with module-level lets (E1049).
+        Frontend moduleFieldShape = compileFrontend("""
             import * as console from "std/console"
             let z: null = console.log("module-null-field");
             export function test(): int { return 1; }
-            """, "nullmodulefield");
-        check(moduleField.exitCode() == 0, "module-level null field exits 0");
-        check(moduleField.output().contains("module-null-field"),
-            "module-level null field initializer runs: " + moduleField.output());
-        check(moduleField.output().contains("1"),
-            "module-level null field module still works: " + moduleField.output());
+            """, "jvmtest-nullmodulefield.deal");
+        check(moduleFieldShape.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-level null field rejected with E1049: " + moduleFieldShape.errors());
 
         // A non-null call used as a STATEMENT whose null-typed argument is
         // hoisted: the argument runs before the call.
@@ -2757,8 +2982,10 @@ public class JvmBackendTest {
 
     /** Module-level statements run at load time inside static initializers. */
     private static void testModuleLevelStatements() throws Exception {
-        System.out.println("-- Module-level statements (static initializers) --");
-
+        // v1.2 grammar gate: module-level statements (lets, calls, ifs,
+        // assignments) were removed — the v1.1 static-initializer surface
+        // is a frontend parse error (E1049). The same statement shapes
+        // inside functions are pinned by the while/if/null tests above.
         Frontend f = compileFrontend("""
             import * as console from "std/console"
             let x: int = 1;
@@ -2767,51 +2994,10 @@ public class JvmBackendTest {
             x = 2;
             export function test(): int { return x; }
             """, "jvmtest-modstmts.deal");
-        check(f.errors().isEmpty(), "module-level statements frontend clean");
-        if (f.errors().isEmpty()) {
-            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                f.program(), f.checkResult(), "jvmtest-modstmts.deal", "main");
-            check(!res.hasErrors(), "module-level statements codegen clean: "
-                + res.diagnostics());
-            if (!res.hasErrors()) {
-                String java = res.source();
-                check(java.contains("static {"), "static initializer emitted");
-                check(java.contains("    java.lang.System.out.println(\"module-if-ran\");"),
-                    "module-level call inside the static block");
-                check(java.contains("    if ((x == 1L)) {"),
-                    "module-level if inside the static block");
-                check(java.contains("    x = 2L;"),
-                    "module-level assignment inside the static block");
-                check(java.contains("static long x = 1L;"),
-                    "module field declared as a class member");
-            }
-        }
+        check(f.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
+            "module-level statements rejected with E1049: " + f.errors());
 
-        ExecResult exec = compileAndRunJvm("""
-            import * as console from "std/console"
-            let x: int = 1;
-            console.log("module-if-ran");
-            if (x === 1) { console.log("module-if-true"); }
-            x = 2;
-            export function test(): int { return x; }
-            """, "modstmts");
-        check(exec.exitCode() == 0, "module-level statements exit 0");
-        check(exec.output().contains("module-if-ran"),
-            "module-level console.log ran at class init: " + exec.output());
-        check(exec.output().contains("module-if-true"),
-            "module-level if ran at class init: " + exec.output());
-        check(exec.output().contains("2"),
-            "module-level assignment visible to exported function: " + exec.output());
-
-        // Interleaved ordering: side-effecting field initializers and
-        // module-level statements must run in source order. f/g are
-        // declared BEFORE their call sites — LuaJIT assigns each function
-        // value at its declaration point, so the old shape (fields calling
-        // f/g before the declarations) fails at load under LuaJIT and is
-        // rejected with E6000 by the backend (see
-        // testModuleLevelCallBeforeFunctionDeclarationRejected); declaring
-        // them first makes this shape load-time-parity with LuaJIT.
-        ExecResult order = compileAndRunJvm("""
+        Frontend interleaved = compileFrontend("""
             import * as console from "std/console"
             function f(): int { console.log("f-ran"); return 1; }
             function g(): int { console.log("g-ran"); return 2; }
@@ -2819,15 +3005,12 @@ public class JvmBackendTest {
             console.log("mid");
             let b: int = g();
             export function test(): int { return a + b; }
-            """, "modorder");
-        check(order.exitCode() == 0, "interleaved module order exits 0");
-        check(order.output().contains("f-ran"), "first field initializer ran");
-        check(order.output().contains("mid"), "module statement ran between fields");
-        check(order.output().contains("g-ran"), "second field initializer ran");
-        check(order.output().indexOf("f-ran") < order.output().indexOf("mid"),
-            "f-ran precedes mid: " + order.output());
-        check(order.output().indexOf("mid") < order.output().indexOf("g-ran"),
-            "mid precedes g-ran: " + order.output());
+            """, "jvmtest-modorder.deal");
+        check(interleaved.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "interleaved module-level statements rejected with E1049: "
+                + interleaved.errors());
+    
     }
 
     /** A shadowed let whose initializer references the outer binding uses the
@@ -2845,18 +3028,18 @@ public class JvmBackendTest {
         check(exec.output().contains("6"),
             "shadowed initializer computes 6 from the outer x: " + exec.output());
 
-        // Same pattern at module scope: a function-local shadow reads the
-        // module field.
-        ExecResult fieldShadow = compileAndRunJvm("""
+        // v1.2 grammar gate: the module-field shadow shape (a module-level
+        // let) was removed — E1049.
+        Frontend fieldShadow = compileFrontend("""
             let counter: int = 5;
             export function test(): int {
               let counter: int = counter + 1;
               return counter;
             }
-            """, "fieldshadow");
-        check(fieldShadow.exitCode() == 0, "field shadow exits 0");
-        check(fieldShadow.output().contains("6"),
-            "field shadow computes 6 from the module field: " + fieldShadow.output());
+            """, "jvmtest-fieldshadow.deal");
+        check(fieldShadow.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-field shadow rejected with E1049: " + fieldShadow.errors());
     }
 
     /**
@@ -2893,125 +3076,34 @@ public class JvmBackendTest {
      * names and run to the LuaJIT values.
      */
     private static void testParameterShadowing() throws Exception {
-        System.out.println("-- Parameter shadowing (ISSUE-0093) --");
-
-        // A parameter shadowing a module field: the body must read the
-        // parameter, not the field, and the signature/body names must match.
+        // v1.2 grammar gate: module fields were removed, so the
+        // parameter-shadows-field chains are frontend parse errors
+        // (E1049). The parameter/local shadow chains survive in-function
+        // and are pinned below (the no-field shapes).
         Frontend f = compileFrontend("""
             let x: int = 1;
             function f(x: int): int { return x + 1; }
             export function test(): int { return f(5); }
             """, "jvmtest-paramshadow.deal");
-        if (!f.errors().isEmpty()) {
-            fail("checker must accept the parameter-shadow probe: " + f.errors());
-            return;
-        }
-        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-            f.program(), f.checkResult(), "jvmtest-paramshadow.deal", "main");
-        check(!res.hasErrors(), "parameter shadow emits without E6000");
-        check(res.source().contains("static long f(long x$1)"),
-            "signature uses the declared (disambiguated) parameter name: "
-                + res.source());
-        check(res.source().contains("intAdd(x$1, 1L)"),
-            "body reads the same declared parameter name");
+        check(f.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
+            "parameter-shadow-field shape rejected with E1049: " + f.errors());
 
-        ExecResult exec = compileAndRunJvm("""
-            let x: int = 1;
-            function f(x: int): int { return x + 1; }
-            export function test(): int { return f(5); }
-            """, "paramshadow");
-        check(exec.exitCode() == 0, "parameter shadow exits 0");
-        check(exec.output().contains("6"),
-            "parameter shadow computes 6 from the parameter: " + exec.output());
-
-        // A let shadowing a parameter that itself shadows a module field:
-        // the let's initializer binds to the parameter (LuaJIT's
-        // `local g = g + 10` reads the outer binding → 15), and the module
-        // field keeps its own value (1) → 16.
-        ExecResult triple = compileAndRunJvm("""
+        Frontend triple = compileFrontend("""
             let g: int = 1;
             function f(g: int): int {
               let g: int = g + 10;
               return g;
             }
             export function test(): int { return f(5) + g; }
-            """, "tripleshadow");
-        check(triple.exitCode() == 0, "triple shadow exits 0");
-        check(triple.output().contains("16"),
-            "let-shadow-parameter-shadow-field computes 15 + field 1 = 16: "
-                + triple.output());
+            """, "jvmtest-tripleshadow.deal");
+        check(triple.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
+            "triple-shadow field shape rejected with E1049: " + triple.errors());
 
-        // Double-nested local shadowing: each level reads the nearest
-        // enclosing binding ({@code x$2 = x$1 + 1} = 3).
-        ExecResult nested = compileAndRunJvm("""
-            let x: int = 1;
-            export function test(): int {
-              { let x: int = 2; { let x: int = x + 1; return x; } }
-            }
-            """, "nestedshadow");
-        check(nested.exitCode() == 0, "nested shadow exits 0");
-        check(nested.output().contains("3"),
-            "double-nested shadow computes 3: " + nested.output());
-
-        // ISSUE-0093 rework regression: the triple-deep shadow chain
-        // (field → parameter → body-top let → inner-block let). The
-        // body-top let OVERWRITES the parameter's scope-map key (they
-        // share the function scope), so the parameter's emitted name —
-        // still in Java scope per JLS §6.4 (an inner block may not
-        // redeclare a method parameter) — must stay reserved for
-        // collision purposes. It used to be lost with the overwrite: the
-        // inner block then re-emitted `long g$1` over the parameter's
-        // `long g$1` and javac rejected the artifact after the CLI
-        // reported success ("variable g$1 is already defined in method
-        // f(long)"). The backend now keeps a per-function set of every
-        // emitted binding name (parameters + locals), so every binding in
-        // the chain gets a distinct name.
-        Frontend chain = compileFrontend("""
-            let g: int = 1;
-            function f(g: int): int {
-              let g: int = g + 10;
-              { let g: int = g + 1; }
-              return g;
-            }
-            export function test(): int { return f(5) + g; }
-            """, "jvmtest-shadowchain.deal");
-        if (!chain.errors().isEmpty()) {
-            fail("checker must accept the triple-shadow chain probe: "
-                + chain.errors());
-            return;
-        }
-        JvmBackend.JvmCodegenResult chainRes = JvmBackend.generate(
-            chain.program(), chain.checkResult(), "jvmtest-shadowchain.deal",
-            "main");
-        check(!chainRes.hasErrors(), "triple-shadow chain emits without E6000");
-        check(chainRes.source().contains("static long f(long g$1)"),
-            "chain: signature keeps the parameter's disambiguated name");
-        check(chainRes.source().contains("long g$2 = intAdd(g$1, 10L);"),
-            "chain: body-top let takes the next free name and reads the parameter");
-        check(chainRes.source().contains("long g$3 = intAdd(g$2, 1L);"),
-            "chain: inner-block let never reuses the parameter's name "
-                + "(g$3, not g$1)");
-        check(chainRes.source().contains("return g$2;"),
-            "chain: trailing read resolves to the body-top let");
-
-        ExecResult chainRun = compileAndRunJvm("""
-            let g: int = 1;
-            function f(g: int): int {
-              let g: int = g + 10;
-              { let g: int = g + 1; }
-              return g;
-            }
-            export function test(): int { return f(5) + g; }
-            """, "shadowchain");
-        check(chainRun.exitCode() == 0, "triple-shadow chain exits 0");
-        check(chainRun.output().contains("16"),
-            "triple-shadow chain computes 15 + field 1 = 16: "
-                + chainRun.output());
-
-        // The no-field variant pins the same defect class without any
-        // module field: the body-top let overwrites the parameter's key
-        // again, and the inner block used to emit `long g` over the
-        // parameter's `long g` — the same javac rejection. Every binding
+        // The no-field variant pins the same disambiguation defect class
+        // without any module field: the body-top let overwrites the
+        // parameter's key, and the inner block must never reuse the
+        // parameter's emitted name (the old backend emitted `long g` over
+        // the parameter's `long g` — a javac rejection). Every binding
         // now gets a distinct name and the artifact compiles.
         Frontend noField = compileFrontend("""
             function f(g: int): int {
@@ -3051,6 +3143,32 @@ public class JvmBackendTest {
         check(noFieldRun.exitCode() == 0, "no-field chain exits 0");
         check(noFieldRun.output().contains("15"),
             "no-field chain computes 15: " + noFieldRun.output());
+
+        // A let shadowing a parameter: the let's initializer binds to the
+        // parameter (LuaJIT's `local g = g + 10` reads the outer binding
+        // → 15).
+        ExecResult letShadow = compileAndRunJvm("""
+            function f(g: int): int {
+              let g: int = g + 10;
+              return g;
+            }
+            export function test(): int { return f(5); }
+            """, "letshadowparam");
+        check(letShadow.exitCode() == 0, "let-shadow-parameter exits 0");
+        check(letShadow.output().contains("15"),
+            "let-shadow-parameter computes 15: " + letShadow.output());
+
+        // Double-nested local shadowing: each level reads the nearest
+        // enclosing binding ({@code x$2 = x$1 + 1} = 3).
+        ExecResult nested = compileAndRunJvm("""
+            export function test(): int {
+              { let x: int = 2; { let x: int = x + 1; return x; } }
+            }
+            """, "nestedshadow");
+        check(nested.exitCode() == 0, "nested shadow exits 0");
+        check(nested.output().contains("3"),
+            "double-nested shadow computes 3: " + nested.output());
+    
     }
 
     /** ISSUE-0095: local classes and nominal checks — emission shape and
@@ -3218,21 +3336,21 @@ public class JvmBackendTest {
             "null-typed call inside a default emits valid Java and runs to 1: "
                 + defaultNullCall.output());
 
-        // A nil-aware DEFAULT crossing the constructor's boolean boundary
-        // raises E8001 (parity with the identifier boundary), pinned by
-        // jvm-class-default-bool-boundary.
-        ExecResult defaultBoolBoundary = compileAndRunJvm("""
+        // The nil-aware default boundary shape needs a module-level array
+        // field, which v1.2 removed (E1049 grammar gate); the in-function
+        // nil-aware boolean boundary is pinned by the nullable-slice tests.
+        Frontend defaultBoolBoundaryShape = compileFrontend("""
             let xs: boolean[] = [true, false];
             class P { b: boolean = xs[0] && xs[5]; }
             export function test(): int {
               let p: P = {};
               return 1;
             }
-            """, "class-slice-default-bool-boundary");
-        check(defaultBoolBoundary.exitCode() == 1
-                && defaultBoolBoundary.output().contains("DEAL_ERROR_CODE: E8001"),
-            "nil-aware default fails the boolean boundary with E8001: "
-                + defaultBoolBoundary.output());
+            """, "jvmtest-class-slice-default-bool-boundary.deal");
+        check(defaultBoolBoundaryShape.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-level array field default shape rejected with E1049: "
+                + defaultBoolBoundaryShape.errors());
 
         // ISSUE-0095 reviewer round 10, re-unified by ISSUE-0110: a
         // local class named `Table` is legal DEAL. Its nominal check
@@ -3395,9 +3513,10 @@ public class JvmBackendTest {
             "receiver effects run before the RHS's E8001 boundary "
             + "failure: " + writeErrOrder.output());
 
-        // The pure-user-function variant (no stdlib): the module string
-        // accumulates exactly target, value, make in evaluation order.
-        ExecResult writeOrderPure = compileAndRunJvm("""
+        // v1.2 grammar gate: the pure variant's module-level accumulator
+        // string is a removed module field (E1049). The evaluation order
+        // itself stays pinned by the console-based variant above.
+        Frontend writeOrderPureShape = compileFrontend("""
             let noteLog: string = "";
             class Box { x: int = 0; }
             function note(s: string): null { noteLog = noteLog + s; return; }
@@ -3408,24 +3527,20 @@ public class JvmBackendTest {
               if (noteLog === "targetvaluemake") { return 0; }
               return 1;
             }
-            """, "class-write-order-pure");
-        check(writeOrderPure.exitCode() == 0
-                && writeOrderPure.output().contains("0"),
-            "pure-function field write accumulates targetvaluemake: "
-                + writeOrderPure.output());
+            """, "jvmtest-class-write-order-pure.deal");
+        check(writeOrderPureShape.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-accumulator field write shape rejected with E1049: "
+                + writeOrderPureShape.errors());
     }
 
     private static void testUseBeforeDeclarationRejected() {
-        System.out.println("-- Use-before-declaration → E6000 --");
-
-        // LuaJIT reads nil for these uses and fails at runtime; the backend
-        // must never emit a Java forward reference that javac would reject
-        // after the CLI reported success.
+        // v1.2 grammar gate: module-field use-before-declaration shapes
+        // (module-level lets/ifs) are frontend parse errors (E1049). The
+        // in-function shape keeps its E6000 backend rejection.
         List<String> sources = List.of(
             // self-reference in a local initializer
             "export function test(): int { let x: int = x + 1; return x; }",
-            // self-reference at module scope
-            "let x: int = x + 1;\nexport function test(): int { return x; }",
             // use of a local before its declaration
             """
             import * as console from "std/console"
@@ -3433,14 +3548,6 @@ public class JvmBackendTest {
               console.log(x);
               let x: string = "later";
             }
-            """,
-            // forward reference to a later module field in a field initializer
-            "let b: int = c + 1;\nlet c: int = 2;\nexport function test(): int { return b; }",
-            // forward reference to a later module field in a module-level if
-            """
-            if (x === 1) { }
-            let x: int = 1;
-            export function test(): int { return x; }
             """);
 
         for (String source : sources) {
@@ -3457,6 +3564,22 @@ public class JvmBackendTest {
             check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
                 "E6000 for use-before-declaration: " + res.diagnostics());
         }
+
+        List<String> moduleShapes = List.of(
+            "let x: int = x + 1;\nexport function test(): int { return x; }",
+            "let b: int = c + 1;\nlet c: int = 2;\nexport function test(): int { return b; }",
+            """
+            if (x === 1) { }
+            let x: int = 1;
+            export function test(): int { return x; }
+            """);
+        for (String shape : moduleShapes) {
+            Frontend f = compileFrontend(shape, "jvmtest-usebefore.deal");
+            check(f.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
+                "module-field use-before-declaration shape rejected with E1049: "
+                    + f.errors());
+        }
+    
     }
 
     /**
@@ -3499,177 +3622,33 @@ public class JvmBackendTest {
      * </ul>
      */
     private static void testFunctionBodyModuleFieldAccessGuards() throws Exception {
-        System.out.println("-- Function-body module-field access guards (declaration order) --");
-
-        // ---- Allowed: the field is declared BEFORE the function ----
-        // (LuaJIT's upvalue write/read = Java's static-field write/read).
-        ExecResult parity = compileAndRunJvm("""
+        // v1.2 grammar gate: module fields were removed, so every
+        // function-body module-field access shape (declared-before and
+        // declared-after) is a frontend parse error (E1049). The
+        // function-local access rules they guarded survive unchanged.
+        List<String> shapes = List.of(
+            """
             let x: int = 1;
             function f(): int { x = 5; return x; }
             export function test(): int { return f() + x; }
-            """, "fieldwriteparity");
-        check(parity.exitCode() == 0, "post-declaration write+read exits 0");
-        check(parity.output().contains("10"),
-            "post-declaration write+read: f()=5 and x=5 (upvalue parity): "
-                + parity.output());
-
-        // A write in EVERY branch of an if/else then a read — allowed.
-        ExecResult bothBranches = compileAndRunJvm("""
-            let x: int = 1;
-            function f(): int { if (true) { x = 5; } else { x = 5; } return x; }
-            export function test(): int { return f(); }
-            """, "fieldwriteboth");
-        check(bothBranches.exitCode() == 0, "both-branches write exits 0");
-        check(bothBranches.output().contains("5"),
-            "post-declaration write in both branches reads 5: "
-                + bothBranches.output());
-
-        // Writes in if-condition and call-argument positions — allowed.
-        ExecResult positions = compileAndRunJvm("""
-            let x: int = 1;
-            function g(v: int): int { return v; }
-            function f(): int { x = 5; if (x === 5) { return g(x); } return 0; }
-            export function test(): int { return f(); }
-            """, "fieldwritepositions");
-        check(positions.exitCode() == 0, "condition/argument write exits 0");
-        check(positions.output().contains("5"),
-            "condition and call-argument reads observe the upvalue write (5): "
-                + positions.output());
-
-        // A function-local shadow of the module field is a local use, not a
-        // field access — allowed.
-        ExecResult shadowed = compileAndRunJvm("""
-            function f(): int { let x: int = 9; return x; }
-            let x: int = 5;
-            export function test(): int { return f(); }
-            """, "fieldshadow");
-        check(shadowed.exitCode() == 0, "function-local shadow exits 0");
-        check(shadowed.output().contains("9"),
-            "function-local shadow reads the local (9): " + shadowed.output());
-
-        // ---- Rejected: the field is declared AFTER the function ----
-        // LuaJIT binds every access in a pre-declaration function to the
-        // GLOBAL: a no-prior-write read fails at call time (E8001) while
-        // Java would silently read the initialized static field; a write
-        // leaves the module-local untouched under LuaJIT (later readers
-        // observe the initializer value) while Java would pollute the
-        // static field. Both shapes — and every position a write can
-        // appear in — are E6000.
-        List<String> rejected = List.of(
-            // the reviewer's round-8 critical: write-then-read in a
-            // pre-declaration function plus a LATER reader — real luajit
-            // prints "parity" (f()==5, g()==1); the JVM static field
-            // would make g()==5
-            """
-            import * as console from "std/console"
-            function f(): int { x = 5; return x; }
-            let x: int = 1;
-            export function g(): int { return x; }
-            export function test(): null {
-              if (f() === 5 && g() === 1) { console.log("parity"); }
-            }
             """,
-            // write-then-read without a later reader: the function's own
-            // read observes the global write under LuaJIT, but the write
-            // still pollutes the Java static field — rejected
-            """
-            function f(): int { x = 5; return x; }
-            let x: int = 1;
-            export function test(): int { return f(); }
-            """,
-            // write-only shape
-            """
-            function f(): null { if (true) { x = 5; } }
-            let x: int = 1;
-            export function test(): null { f(); }
-            """,
-            // write inside a block
-            """
-            function f(): null { { x = 5; } }
-            let x: int = 1;
-            export function test(): null { f(); }
-            """,
-            // write in both if/else branches then read — the write itself
-            // is rejected regardless of branch coverage
-            """
-            function f(): int { if (true) { x = 5; } else { x = 5; } return x; }
-            let x: int = 1;
-            export function test(): int { return f(); }
-            """,
-            // write in a return value position
-            """
-            function f(): int { return x = 5; }
-            let x: int = 1;
-            export function test(): int { return f(); }
-            """,
-            // write in a call-argument position
-            """
-            function g(v: int): null { }
-            function f(): int { g(x = 5); return 0; }
-            let x: int = 1;
-            export function test(): int { return f(); }
-            """,
-            // the reviewer's exact round-8 repro: plain read, no prior write
             """
             function f(): int { return x; }
             let x: int = 5;
             export function test(): int { return f(); }
             """,
-            // read in an initializer position, no prior write
             """
-            function f(): int { let y: int = x + 1; return y; }
-            let x: int = 5;
-            export function test(): int { return f(); }
-            """,
-            // a write in a taken-only branch does not dominate the read
-            // after it (LuaJIT reads the global nil when the branch is not
-            // taken) — conservative rejection
-            """
-            function f(): int { if (true) { x = 5; } return x; }
+            function f(): null { if (true) { x = 5; } }
             let x: int = 1;
-            export function test(): int { return f(); }
-            """,
-            // a write inside a called function does not establish
-            // dominance (the callee's writes may be conditional) —
-            // conservative rejection
-            """
-            function setx(): null { x = 5; }
-            function f(): int { setx(); return x; }
-            let x: int = 1;
-            export function test(): int { return f(); }
+            export function test(): int { f(); return 1; }
             """);
-        for (String source : rejected) {
-            Frontend f = compileFrontend(source, "jvmtest-forwardaccess-rej.deal");
-            if (!f.errors().isEmpty()) {
-                fail("checker must accept the pre-declaration access probe: "
+        for (String shape : shapes) {
+            Frontend f = compileFrontend(shape, "jvmtest-field-access-shape.deal");
+            check(f.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
+                "function-body module-field access shape rejected with E1049: "
                     + f.errors());
-                continue;
-            }
-            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                f.program(), f.checkResult(), "jvmtest-forwardaccess-rej.deal", "main");
-            check(res.hasErrors(),
-                "pre-declaration module-field access is rejected with E6000");
-            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 for the pre-declaration access: " + res.diagnostics());
         }
-
-        // The load-time guards are untouched: a module-level initializer
-        // reading a later field is still E6000 (Java illegal forward
-        // reference; LuaJIT reads the not-yet-declared global at load).
-        Frontend moduleFwd = compileFrontend(
-            "let b: int = c + 1;\nlet c: int = 2;\n"
-                + "export function test(): int { return b; }",
-            "jvmtest-module-fwd.deal");
-        if (moduleFwd.errors().isEmpty()) {
-            JvmBackend.JvmCodegenResult res =
-                JvmBackend.generate(moduleFwd.program(), moduleFwd.checkResult(),
-                    "jvmtest-module-fwd.deal", "main");
-            check(res.hasErrors(), "module-level later-field read is still rejected");
-            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 for the module-level later-field read: " + res.diagnostics());
-        } else {
-            fail("checker must accept the module-level forward probe: " + moduleFwd.errors());
-        }
+    
     }
 
     private static void testAssignmentBeforeDeclarationRejected() throws Exception {
@@ -3730,29 +3709,26 @@ public class JvmBackendTest {
                     + res.diagnostics());
         }
 
-        // Allowed: a function-body write to a module field declared BEFORE
-        // the function resolves to the static field — LuaJIT's upvalue
-        // write; both observe 5.
-        ExecResult fieldShadow = compileAndRunJvm("""
+        // v1.2 grammar gate: the allowed v1.1 module-field write shapes
+        // (a module-level let) were removed with module fields — E1049.
+        Frontend fieldShadowShape = compileFrontend("""
             let x: int = 1;
             export function test(): int { x = 5; return x; }
-            """, "assignfieldshadow");
-        check(fieldShadow.exitCode() == 0, "module-field shadow write exits 0");
-        check(fieldShadow.output().contains("5"),
-            "module-field shadow write observes 5: " + fieldShadow.output());
+            """, "jvmtest-assignfieldshadow.deal");
+        check(fieldShadowShape.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-field shadow write rejected with E1049: "
+                + fieldShadowShape.errors());
 
-        // Allowed: a module-level write to a later-declared field is legal
-        // Java (JLS §8.3.3 LHS exception) and the later initializer wins,
-        // exactly like LuaJIT (probed: both observe 1).
-        ExecResult moduleLater = compileAndRunJvm("""
+        Frontend moduleLaterShape = compileFrontend("""
             x = 5;
             let x: int = 1;
             export function test(): int { return x; }
-            """, "assignmodulelater");
-        check(moduleLater.exitCode() == 0, "module-level later-field write exits 0");
-        check(moduleLater.output().contains("1"),
-            "module-level later-field write observes 1: "
-                + moduleLater.output());
+            """, "jvmtest-assignmodulelater.deal");
+        check(moduleLaterShape.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-level later-field write rejected with E1049: "
+                + moduleLaterShape.errors());
     }
 
     /**
@@ -3947,17 +3923,16 @@ public class JvmBackendTest {
                 && boundaryAdd.output().contains("9007199254740991"),
             "in-range add stays in range: " + boundaryAdd.output());
 
-        // A module-level out-of-range literal throws during class init;
-        // the runner unwraps ExceptionInInitializerError into the
-        // DEAL_ERROR_CODE contract (LuaJIT fails at load the same way).
-        ExecResult modLit = compileAndRunJvm("""
+        // v1.2 grammar gate: the module-level out-of-range literal shape
+        // (a module-level let) was removed — E1049. The in-function
+        // out-of-range boundary is pinned by the int-boundary tests above.
+        Frontend modLitShape = compileFrontend("""
             let x: int = 9223372036854775807;
             export function test(): int { return 1; }
-            """, "modintlit");
-        check(modLit.exitCode() == 1, "module-level out-of-range literal exits 1: "
-            + modLit.output());
-        check(modLit.output().contains("DEAL_ERROR_CODE: E8004"),
-            "module-level out-of-range literal reports E8004: " + modLit.output());
+            """, "jvmtest-modintlit.deal");
+        check(modLitShape.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-level literal field rejected with E1049: " + modLitShape.errors());
 
         // intFromNumber boundary: int(9007199254740991.0) is in range.
         ExecResult convOk = compileAndRunJvm(
@@ -4029,8 +4004,6 @@ public class JvmBackendTest {
      * qualified.
      */
     private static void testJavaLangNameCollisions() throws Exception {
-        System.out.println("-- java.lang name collisions (javac + java) --");
-
         // Locals shadowing every java.lang name the generated code touches.
         ExecResult locals = compileAndRunJvm("""
             import * as console from "std/console"
@@ -4053,37 +4026,42 @@ public class JvmBackendTest {
         check(locals.output().contains("45"),
             "shadowing locals compute 45: " + locals.output());
 
-        // Module field named Math + int arithmetic (the always-emitted
-        // intAdd/intSub helpers reference Math.addExact).
-        ExecResult mathField = compileAndRunJvm("""
+        // v1.2 grammar gate: module-field java.lang-name collision shapes
+        // (module-level lets) were removed with module fields — E1049.
+        // The in-function collision surface is pinned by namelocals and
+        // the local variants below.
+        List<String> moduleFieldShapes = List.of(
+            """
             let Math: int = 1;
             export function test(): int { return Math + 2; }
-            """, "mathfield");
-        check(mathField.exitCode() == 0 && mathField.output().contains("3"),
-            "module field Math + int arithmetic: " + mathField.output());
-
-        // Module field named Double (the always-emitted intFromNumber helper
-        // references Double.isNaN even when int() is never called).
-        ExecResult doubleField = compileAndRunJvm("""
+            """,
+            """
             let Double: int = 1;
             export function test(): int { return Double + 1; }
-            """, "doublefield");
-        check(doubleField.exitCode() == 0 && doubleField.output().contains("2"),
-            "module field Double + int arithmetic: " + doubleField.output());
-
-        // Module field named System + module-level console.log (load-time
-        // static-initializer output goes through System.out).
-        ExecResult systemField = compileAndRunJvm("""
+            """,
+            """
             import * as console from "std/console"
             let System: int = 1;
             console.log("sys-field-ok");
             export function test(): int { return System; }
-            """, "systemfield");
-        check(systemField.exitCode() == 0
-                && systemField.output().contains("sys-field-ok"),
-            "module field System + module-level console.log: " + systemField.output());
-        check(systemField.output().contains("1"),
-            "module field System read back: " + systemField.output());
+            """,
+            """
+            let Integer: int = 0;
+            let Character: int = 0;
+            export function test(): boolean {
+              return "a" < "b";
+            }
+            """,
+            """
+            let RuntimeException: int = 1;
+            export function test(): int { return RuntimeException / 0; }
+            """);
+        for (String shape : moduleFieldShapes) {
+            Frontend f = compileFrontend(shape, "jvmtest-name-field-shape.deal");
+            check(f.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
+                "java.lang-name module-field shape rejected with E1049: "
+                    + f.errors());
+        }
 
         // Local Double + a 1e999 literal (renders as
         // Double.POSITIVE_INFINITY).
@@ -4127,35 +4105,13 @@ public class JvmBackendTest {
         check(voidLocal.exitCode() == 0 && voidLocal.output().contains("1"),
             "local named Void: " + voidLocal.output());
 
-        // Module field named Integer + string ordering (scalarCompare uses
-        // Integer.compare and Character.charCount).
-        ExecResult integerField = compileAndRunJvm("""
-            let Integer: int = 0;
-            let Character: int = 0;
-            export function test(): boolean {
-              return "a" < "b";
-            }
-            """, "integerfield");
-        check(integerField.exitCode() == 0
-                && integerField.output().contains("true"),
-            "fields Integer/Character + string ordering: " + integerField.output());
-
-        // Module field named RuntimeException + a runtime error (DealError
-        // extends java.lang.RuntimeException).
-        ExecResult runtimeField = compileAndRunJvm("""
-            let RuntimeException: int = 1;
-            export function test(): int { return RuntimeException / 0; }
-            """, "runtimefield");
-        check(runtimeField.exitCode() == 1
-                && runtimeField.output().contains("DEAL_ERROR_CODE: E8005"),
-            "field RuntimeException + E8005 still surfaces: " + runtimeField.output());
-
         // Emission shape: no unqualified java.lang references remain.
         Frontend f = compileFrontend("""
             import * as console from "std/console"
-            let System: int = 1;
-            console.log("qualified");
-            export function test(): number { return 1e999; }
+            export function test(): number {
+              console.log("qualified");
+              return 1e999;
+            }
             """, "jvmtest-qualified.deal");
         check(f.errors().isEmpty(), "qualified-name frontend clean: " + f.errors());
         if (f.errors().isEmpty()) {
@@ -4177,6 +4133,7 @@ public class JvmBackendTest {
                     "DealError extends java.lang.RuntimeException");
             }
         }
+    
     }
 
     /**
@@ -4191,26 +4148,17 @@ public class JvmBackendTest {
     private static void testElseIfChainUseBeforeDeclaration() throws Exception {
         System.out.println("-- Else-if chain conditions: use-before-declaration → E6000 --");
 
-        // Module-level chain: `z` is declared after the chain (LuaJIT reads
-        // nil at load and the condition is false; Java would emit an
-        // illegal forward reference).
+        // v1.2 grammar gate: a module-level chain is a frontend parse
+        // error (E1049) — module-level statements were removed.
         Frontend moduleCase = compileFrontend("""
             if (true) { } else if (z === 2) { }
             let z: int = 2;
             export function test(): int { return 1; }
             """, "jvmtest-elseif-module.deal");
-        check(moduleCase.errors().isEmpty(),
-            "module-level else-if chain frontend clean: " + moduleCase.errors());
-        if (moduleCase.errors().isEmpty()) {
-            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                moduleCase.program(), moduleCase.checkResult(),
-                "jvmtest-elseif-module.deal", "main");
-            check(res.hasErrors(),
-                "module-level else-if forward reference rejected");
-            check(res.diagnostics().stream()
-                    .anyMatch(d -> d.message().contains("'z'")),
-                "module-level diagnostic names z: " + res.diagnostics());
-        }
+        check(moduleCase.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-level else-if chain rejected with E1049: "
+                + moduleCase.errors());
 
         // Function-body chain: `x` is declared after the chain.
         Frontend bodyCase = compileFrontend(
@@ -4261,15 +4209,19 @@ public class JvmBackendTest {
         check(ok.exitCode() == 0 && ok.output().contains("7"),
             "clean else-if chain runs: " + ok.output());
 
-        // Positive: a module-level chain over already-declared fields.
-        ExecResult modOk = compileAndRunJvm("""
+        // v1.2 grammar gate: the module-level positive chain shape was
+        // removed with module-level statements (E1049); the function-body
+        // positive chain above covers the semantics.
+        Frontend modOkShape = compileFrontend("""
             let z: int = 2;
             let hit: boolean = false;
             if (z === 1) { } else if (z === 2) { hit = true; }
             export function test(): int { if (hit) { return 1; } return 0; }
-            """, "elseifmodok");
-        check(modOk.exitCode() == 0 && modOk.output().contains("1"),
-            "clean module-level else-if chain runs: " + modOk.output());
+            """, "jvmtest-elseifmodok.deal");
+        check(modOkShape.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-level positive chain rejected with E1049: "
+                + modOkShape.errors());
     }
 
     /**
@@ -4446,41 +4398,42 @@ public class JvmBackendTest {
                 < both.output().indexOf("helper-ran"),
             "evaluation order preserved: " + both.output());
 
-        // Module-level field initializer with a guarded operand: the
-        // temporary must stay in scope, so the field is declared
-        // uninitialized and assigned inside the same static block.
-        ExecResult modSkip = compileAndRunJvm("""
+        // v1.2 grammar gate: module-level guarded field initializers were
+        // removed with module-level lets (E1049); the guarded-operand
+        // semantics run in-function in the shapes above.
+        Frontend modSkipShape = compileFrontend("""
             import * as console from "std/console"
             function helper(): null { console.log("helper-ran"); }
             let b: boolean = false && helper() === null;
             export function test(): null { console.log("test-ran"); }
-            """, "scmodskip");
-        check(modSkip.exitCode() == 0, "module-level guarded initializer exits 0");
-        check(modSkip.output().contains("test-ran"),
-            "module still runs: " + modSkip.output());
-        check(!modSkip.output().contains("helper-ran"),
-            "module-level guarded operand is NOT evaluated: " + modSkip.output());
+            """, "jvmtest-scmodskip.deal");
+        check(modSkipShape.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-level guarded initializer rejected with E1049: "
+                + modSkipShape.errors());
 
         ExecResult modRuns = compileAndRunJvm("""
             import * as console from "std/console"
             function helper(): null { console.log("helper-ran"); }
-            let b: boolean = true && helper() === null;
-            export function test(): null { console.log("test-ran"); }
+            export function test(): null {
+              let b: boolean = true && helper() === null;
+              console.log("test-ran");
+            }
             """, "scmodruns");
-        check(modRuns.exitCode() == 0, "module-level reachable initializer exits 0");
+        check(modRuns.exitCode() == 0, "guarded initializer (runs) exits 0");
         check(modRuns.output().contains("helper-ran"),
-            "module-level reachable operand IS evaluated: " + modRuns.output());
-        check(modRuns.output().indexOf("helper-ran")
-                < modRuns.output().indexOf("test-ran"),
-            "module-level initializer runs before the exported call: " + modRuns.output());
+            "reachable guarded operand IS evaluated: " + modRuns.output());
 
-        // Emission assertions: no lambdas, and the module-level case
-        // declares the field then assigns it in the static block.
+        // Emission assertions: no lambdas; the guarded lowering runs
+        // in-function (the module-level field variant is an E1049 gate
+        // above — module fields were removed in v1.2).
         Frontend f = compileFrontend("""
             import * as console from "std/console"
             function helper(): null { console.log("helper-ran"); }
-            let b: boolean = false && helper() === null;
-            export function test(): null { console.log("test-ran"); }
+            export function test(): null {
+              let b: boolean = false && helper() === null;
+              console.log("test-ran");
+            }
             """, "jvmtest-sc.deal");
         check(f.errors().isEmpty(), "short-circuit probe frontend clean: " + f.errors());
         if (f.errors().isEmpty()) {
@@ -4491,10 +4444,8 @@ public class JvmBackendTest {
             if (!res.hasErrors()) {
                 check(!res.source().contains("->"),
                     "short-circuit lowering emits no lambda");
-                check(res.source().contains("static boolean b;"),
-                    "module-level guarded initializer declares the field uninitialized");
-                check(res.source().contains("b = __sc0;"),
-                    "module-level guarded initializer assigns inside the static block");
+                check(res.source().contains("boolean b = __sc0;"),
+                    "guarded initializer assigns the temporary in-function");
             }
         }
     }
@@ -4572,25 +4523,20 @@ public class JvmBackendTest {
                 && cond.output().indexOf("g-ran") < cond.output().indexOf("x"),
             "if-condition position: g() before console.log: " + cond.output());
 
-        // Module-level field-initializer position: the materialized
-        // temporary is declared inside the static block that also holds
-        // the hoisted statement and the field assignment (a class-body
-        // initializer cannot see a block-local declaration).
-        ExecResult fieldInit = compileAndRunJvm("""
+        // v1.2 grammar gate: the module-level field-initializer position
+        // was removed with module-level lets (E1049); the in-function
+        // initializer position above keeps the evaluation-order pin.
+        Frontend fieldInitShape = compileFrontend("""
             import * as console from "std/console"
             function g(): int { console.log("g-ran"); return 7; }
             function f(y: int, x: null): int { return y; }
             let a: int = f(g(), console.log("x"));
             export function test(): int { return a; }
-            """, "evalorder-fieldinit");
-        check(fieldInit.exitCode() == 0, "field-initializer eval order exits 0");
-        check(fieldInit.output().indexOf("g-ran") >= 0
-                && fieldInit.output().indexOf("g-ran")
-                    < fieldInit.output().indexOf("x"),
-            "field-initializer position: g() before console.log: "
-                + fieldInit.output());
-        check(fieldInit.output().contains("7"),
-            "field-initializer position computes 7: " + fieldInit.output());
+            """, "jvmtest-evalorder-fieldinit.deal");
+        check(fieldInitShape.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "field-initializer position rejected with E1049: "
+                + fieldInitShape.errors());
 
         // Non-leading && operand: the short-circuit guard keeps the order.
         ExecResult sc = compileAndRunJvm("""
@@ -4777,10 +4723,11 @@ public class JvmBackendTest {
      * E6000: LuaJIT fails at load with a nil read while Java would silently
      * read the field's default value. */
     private static void testModuleLevelCallReadingLaterField() throws Exception {
-        System.out.println("-- Module-level call reading a later field -> E6000 --");
-
+        // v1.2 grammar gate: every module-level call shape reading a later
+        // module field (module-level lets removed) is a frontend parse
+        // error (E1049) — the E6000 load-time analysis surface was removed
+        // with the module-level statement grammar.
         List<String> rejected = List.of(
-            // call before the field the callee reads (callee declared first)
             """
             import * as console from "std/console"
             function f(): int { return x; }
@@ -4788,7 +4735,6 @@ public class JvmBackendTest {
             let x: int = 5;
             export function test(): null { console.log("test-ran"); }
             """,
-            // the reviewer's shape: call before the callee's own declaration
             """
             import * as console from "std/console"
             f();
@@ -4796,7 +4742,6 @@ public class JvmBackendTest {
             function f(): int { return x; }
             export function test(): null { console.log("test-ran"); }
             """,
-            // transitive: f calls g which reads the later field
             """
             function f(): int { return g(); }
             function g(): int { return x; }
@@ -4804,22 +4749,18 @@ public class JvmBackendTest {
             let x: int = 5;
             export function test(): int { return 1; }
             """,
-            // call in a module-level field initializer
             """
             function f(): int { return x; }
             let y: int = f();
             let x: int = 5;
             export function test(): int { return y; }
             """,
-            // call in a module-level if condition
             """
             function f(): int { return x; }
             if (f() === 1) { }
             let x: int = 5;
             export function test(): int { return 1; }
             """,
-            // a field's own initializer calling a function that reads the
-            // field being initialized (LuaJIT reads nil, fails at load)
             """
             let x: int = f();
             function f(): int { return x; }
@@ -4828,44 +4769,25 @@ public class JvmBackendTest {
 
         for (String source : rejected) {
             Frontend f = compileFrontend(source, "jvmtest-modcall.deal");
-            if (!f.errors().isEmpty()) {
-                fail("checker must accept the module-level call probe "
-                    + "(the backend rejects it): " + f.errors());
-                continue;
-            }
-            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                f.program(), f.checkResult(), "jvmtest-modcall.deal", "main");
-            check(res.hasErrors(), "backend rejects the module-level call "
-                + "reading a later field");
-            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 for the module-level call reading a later field: "
-                    + res.diagnostics());
+            check(f.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
+                "module-level call shape rejected with E1049: " + f.errors());
         }
 
-        // Positive: a call reading a field declared BEFORE the call site is
-        // fine, and a function-local shadow of a module field is not a
-        // field read.
-        ExecResult ok = compileAndRunJvm("""
-            import * as console from "std/console"
-            let x: int = 5;
-            function f(): int { return x; }
-            f();
-            export function test(): int { return 1; }
-            """, "modcallok");
-        check(ok.exitCode() == 0, "earlier-field call exits 0");
-        check(ok.output().contains("1"),
-            "earlier-field call module still works: " + ok.output());
-
+        // Positive in-function shape: a block-local shadow of an outer
+        // local is not an outer read.
         ExecResult shadow = compileAndRunJvm("""
             import * as console from "std/console"
-            let x: int = 5;
-            function f(): int { let x: int = 9; return x; }
-            f();
-            export function test(): int { return 1; }
+            export function test(): int {
+              let x: int = 5;
+              { let x: int = 9; }
+              return x;
+            }
             """, "modcallshadow");
         check(shadow.exitCode() == 0, "local-shadow call exits 0");
-        check(shadow.output().contains("1"),
-            "local shadow of a module field is not a field read: " + shadow.output());
+        check(shadow.output().contains("5"),
+            "block-local shadow does not overwrite the outer local: "
+                + shadow.output());
+    
     }
 
     /**
@@ -4882,18 +4804,17 @@ public class JvmBackendTest {
      */
     private static void testModuleLevelCallBeforeFunctionDeclarationRejected()
             throws Exception {
-        System.out.println("-- Module-level call before function declaration → E6000 --");
-
+        // v1.2 grammar gate: every module-level call shape (module-level
+        // executable statements removed) is a frontend parse error
+        // (E1049) — the E6000 call-before-declaration surface was removed
+        // with the module-level statement grammar.
         List<String> rejected = List.of(
-            // direct: call before the callee's own declaration
             """
             import * as console from "std/console"
             f();
             function f(): null { console.log("f-ran"); }
             export function test(): int { return 1; }
             """,
-            // the exact shape the module-level ordering test used before
-            // rework (field initializers calling later-declared functions)
             """
             import * as console from "std/console"
             let a: int = f();
@@ -4903,8 +4824,6 @@ public class JvmBackendTest {
             function g(): int { console.log("g-ran"); return 2; }
             export function test(): int { return a + b; }
             """,
-            // transitive: the callee is declared first, but its body calls
-            // a function declared later than the call site
             """
             import * as console from "std/console"
             function f(): null { g(); }
@@ -4912,7 +4831,6 @@ public class JvmBackendTest {
             function g(): null { console.log("g-ran"); }
             export function test(): int { return 1; }
             """,
-            // deep transitive chain f → h → g with g declared later
             """
             import * as console from "std/console"
             function f(): null { h(); }
@@ -4921,13 +4839,11 @@ public class JvmBackendTest {
             function g(): null { console.log("g-ran"); }
             export function test(): int { return 1; }
             """,
-            // a field initializer calling a later-declared function
             """
             let a: int = f();
             function f(): int { return 1; }
             export function test(): int { return a; }
             """,
-            // a module-level call of an export declared later
             """
             import * as console from "std/console"
             test2();
@@ -4937,46 +4853,31 @@ public class JvmBackendTest {
 
         for (String source : rejected) {
             Frontend f = compileFrontend(source, "jvmtest-modfndecl.deal");
-            if (!f.errors().isEmpty()) {
-                fail("checker must accept the module-level call-before-"
-                    + "declaration probe (the backend rejects it): "
-                    + f.errors());
-                continue;
-            }
-            JvmBackend.JvmCodegenResult res =
-                JvmBackend.generate(f.program(), f.checkResult(),
-                    "jvmtest-modfndecl.deal", "main");
-            check(res.hasErrors(), "backend rejects the module-level call "
-                + "reaching a later-declared function");
-            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 for the module-level call reaching a later-declared "
-                    + "function: " + res.diagnostics());
+            check(f.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
+                "module-level call shape rejected with E1049: " + f.errors());
         }
 
-        // Positive: all declarations before the call site run at load with
-        // the same observable order as LuaJIT (verified with luajit).
+        // The positive function-declaration hoisting that the module-level
+        // shapes exercised survives: forward calls from a function body to
+        // a later-declared module function run normally.
         ExecResult direct = compileAndRunJvm("""
             import * as console from "std/console"
             function f(): int { console.log("f-ran"); return 1; }
-            f();
-            export function test(): int { return 1; }
+            export function test(): int { return f(); }
             """, "modfnorderok");
         check(direct.exitCode() == 0, "post-declaration call exits 0");
         check(direct.output().contains("f-ran"),
-            "post-declaration module call ran at load: " + direct.output());
+            "in-function call ran: " + direct.output());
 
-        // Transitive positive: the callee's body calls another function
-        // that is also declared before the call site.
         ExecResult transitive = compileAndRunJvm("""
             function f(): int { return g(); }
             function g(): int { return 7; }
-            f();
-            export function test(): int { return 1; }
+            export function test(): int { return f(); }
             """, "modfntransok");
-        check(transitive.exitCode() == 0, "transitive post-declaration call exits 0");
-        check(transitive.output().contains("1"),
-            "transitive post-declaration call module still works: "
-                + transitive.output());
+        check(transitive.exitCode() == 0, "transitive call exits 0");
+        check(transitive.output().contains("7"),
+            "transitive call computes 7: " + transitive.output());
+    
     }
 
     /** The DEAL_ERROR_CODE contract must hold for module-level errors
@@ -4985,25 +4886,29 @@ public class JvmBackendTest {
      * arrives as an ExceptionInInitializerError (a LinkageError, not a
      * RuntimeException) that the runner unwraps. */
     private static void testRunnerModuleErrorCodeWithExport() throws Exception {
-        System.out.println("-- Module-level error + zero-arity export (DEAL_ERROR_CODE) --");
-
-        ExecResult withExport = compileAndRunJvm("""
+        // v1.2 grammar gate: module-level error shapes (module-level
+        // lets removed) are frontend parse errors (E1049) — there is no
+        // module-load-time executable surface left to raise. The runtime
+        // error codes themselves are pinned by the in-function boundary
+        // tests (E8005 int division by zero etc.).
+        Frontend withExport = compileFrontend("""
             export function test(): int { return 1; }
             let x: int = 1 / 0;
-            """, "moderrwithexport");
-        check(withExport.exitCode() == 1, "module-level error with export exits 1");
-        check(withExport.output().contains("DEAL_ERROR_CODE: E8005"),
-            "DEAL_ERROR_CODE contract holds with a zero-arity export: "
-                + withExport.output());
+            """, "jvmtest-moderrwithexport.deal");
+        check(withExport.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-level error shape rejected with E1049: "
+                + withExport.errors());
 
-        ExecResult noExport = compileAndRunJvm("""
+        Frontend noExport = compileFrontend("""
             let x: int = 1 / 0;
             export function takesArg(y: int): int { return y; }
-            """, "moderrnoexport");
-        check(noExport.exitCode() == 1, "module-level error without export exits 1");
-        check(noExport.output().contains("DEAL_ERROR_CODE: E8005"),
-            "DEAL_ERROR_CODE contract holds without a zero-arity export: "
-                + noExport.output());
+            """, "jvmtest-moderrnoexport.deal");
+        check(noExport.errors().stream()
+                .anyMatch(d -> "E1049".equals(d.code())),
+            "module-level error without export rejected with E1049: "
+                + noExport.errors());
+    
     }
 
     private static void testOrchestratorJvmBackend() throws Exception {
@@ -5019,6 +4924,7 @@ public class JvmBackendTest {
             import * as console from "std/console"
             export function main(): null { return null; }
             function add(a: int, b: int): int { return a + b; }
+            export function main(): null { return null; }
             export function run(): int {
               console.log("jvm-orchestrator");
               return add(20, 22);
@@ -5108,6 +5014,7 @@ public class JvmBackendTest {
             export class Point {
               x?: int;
             }
+            export function main(): null { return null; }
             export function run(): int { return 1; }
             """);
 
@@ -5744,6 +5651,10 @@ public class JvmBackendTest {
     private static void testOrchestratorJvmImportSupported() throws Exception {
         System.out.println("-- Orchestrator: unused project-module import runs load-time code --");
 
+        // v1.2: the imported module's load-time side effect moves inside
+        // an exported function (module-level statements were removed); the
+        // load-time trigger surface itself is exercised by the
+        // init-trigger fixture in the backend conformance suite.
         writeFile("src/other.deal", """
             import * as console from "std/console"
             export function unused(): int { return 1; }
@@ -5899,8 +5810,10 @@ public class JvmBackendTest {
         List<Case> cases = List.of(
             new Case("std/table import + table use", """
                 import * as t from "std/table"
-                let tbl: table = {};
-                export function test(): int { return 1; }
+                export function test(): int {
+                  let tbl: table = {};
+                  return 1;
+                }
                 """, "std/table"),
             new Case("unused std/table import", """
                 import * as t from "std/table"
@@ -5908,8 +5821,10 @@ public class JvmBackendTest {
                 """, "std/table"),
             new Case("std/json import + call", """
                 import * as j from "std/json"
-                let parsed: table = j.parse("{}");
-                export function test(): int { return 1; }
+                export function test(): int {
+                  let parsed: table = j.parse("{}");
+                  return 1;
+                }
                 """, "std/json"),
             new Case("unused std/json import", """
                 import * as j from "std/json"
@@ -5960,7 +5875,9 @@ public class JvmBackendTest {
 
     /** Real stdlib execution through the emitted artifact: every supported
      * std/string and std/math function computes its LuaJIT reference value,
-     * including the substring clipping and negative-start corrections. */
+     * including the substring clipping and the v1.2 negative-bound semantics
+     * (a negative start behaves as 0, a negative end yields the empty
+     * string). */
     private static void testStdlibExecution() throws Exception {
         System.out.println("-- Stdlib execution (ISSUE-0097) --");
 
@@ -5974,6 +5891,9 @@ public class JvmBackendTest {
               let clip: string = str.substring("abc", 1, 10);
               let past: string = str.substring("abc", 5, 10);
               let neg: string = str.substring("abc", -3, 3);
+              let negEnd: string = str.substring("abc", 1, -1);
+              let negBoth: string = str.substring("abc", 0, -1);
+              let negStartMid: string = str.substring("abc", -2, 2);
               let trimmed: string = str.trim("  deal  ");
               let replaced: string = str.replace("a-b-c", "-", ":");
               let kept: string = str.replace("hello", "", "x");
@@ -5988,7 +5908,8 @@ public class JvmBackendTest {
               let vt: string = str.trim("\u000bhello\u000b");
               let ff: string = str.trim("\u000chello\u000c");
               if (n !== 5 || sub !== "ell" || clip !== "bc" || past !== ""
-                  || neg !== "bc" || trimmed !== "deal"
+                  || neg !== "abc" || negEnd !== "" || negBoth !== ""
+                  || negStartMid !== "ab" || trimmed !== "deal"
                   || replaced !== "a:b:c" || kept !== "hello"
                   || fl !== 3 || ce !== 4 || sq !== 3 || ai !== 7
                   || an !== 2.5 || mn !== 3 || mx !== 9
@@ -6029,27 +5950,24 @@ public class JvmBackendTest {
             "sqrt(-1) reports the std/math.lua message: " + res.output());
     }
 
-    /** Unicode scalar-value semantics (spec-v1.2): {@code
-     * length("héllo")} is 5 scalar values, {@code substring("héllo", 1, 3)}
-     * is {@code "él"} (scalar positions), and supplementary-plane
-     * characters count as ONE scalar value each (a Java code point — the
-     * UTF-16 surrogate pair is never visible as two string elements). */
-    private static void testStdlibByteSemantics() throws Exception {
+    /** ISSUE-0106 v1.2 Unicode scalar-value semantics: {@code
+     * length("héllo")} is 5 scalar values, {@code substring} positions
+     * are scalar values ({"é"} at position 1..2), and a supplementary
+     * character counts as ONE scalar value everywhere. */
+    private static void testStdlibScalarSemantics() throws Exception {
         System.out.println("-- Stdlib Unicode scalar-value semantics --");
 
         ExecResult res = compileAndRunJvm("""
             import * as str from "std/string"
             export function run(): string {
               let scalars: int = str.length("héllo");
-              let chars: string = str.substring("héllo", 1, 3);
-              let inner: string = str.substring("héllo", 1, 2);
-              let supp: int = str.length("𝄞x");
-              let first: string = str.substring("𝄞x", 0, 1);
+              let e: string = str.substring("héllo", 1, 2);
+              let sup: int = str.length("\ud83d\ude00");
+              let cut: string = str.substring("a\ud83d\ude00b", 1, 2);
               if (scalars !== 5) { return "bad-scalars"; }
-              if (chars !== "él") { return "bad-chars"; }
-              if (inner !== "é") { return "bad-inner"; }
-              if (supp !== 2) { return "bad-supp"; }
-              if (first !== "𝄞") { return "bad-first"; }
+              if (e !== "é") { return "bad-e"; }
+              if (sup !== 1) { return "bad-sup"; }
+              if (cut !== "\ud83d\ude00") { return "bad-cut"; }
               return "scalars-ok";
             }
             """, "stdlib-scalars");
@@ -6326,6 +6244,10 @@ public class JvmBackendTest {
             "the sync wrapper checks the return boundary (E8010 path)");
         check(java.contains("__hostCheck(\"string\", __v, \"host/log.fetch\", true)"),
             "the async wrapper checks the completion value (E8001 path)");
+        check(java.contains(
+                "__hasUnpairedSurrogate(s)) throw new DealError(completion ? \"E8001\" : \"E8010\""),
+            "the host check's string branch runs the v1.2 unpaired-surrogate "
+                + "scan (E8010 sync / E8001 completion)");
         check(java.contains("static {\n        __hostLoad$log();\n    }"),
             "the import statement emits the load-time presence-check block");
 
@@ -6445,6 +6367,53 @@ public class JvmBackendTest {
         check(out3.contains("DEAL_ERROR_CODE: E8010"),
             "wrong-kind host return reports E8010: " + out3);
 
+        // ISSUE-0106 v1.2 boundary string validation at the host return
+        // boundary: a sync string return carrying an unpaired UTF-16
+        // surrogate (a lone high surrogate) is rejected with E8010 and
+        // the seam's message — the host boundary is an ingress where an
+        // invalid encoding can enter DEAL.
+        writeFile("HostLogBadSurrogate.java", """
+            public final class HostLog {
+                public static Object info(long level, String s) { return null; }
+                public static Object add(long a, long b) { return Long.valueOf(a + b); }
+                public static Object find(String s) { return s; }
+                public static Object value() { return "a" + (char) 0xD800 + "b"; }
+                public static Object fetch() { return java.util.concurrent.CompletableFuture.completedFuture("d"); }
+            }
+            """);
+        Path outputDirSur = tmpDir.resolve("build/host_abi_bad_surrogate");
+        CompilationOrchestrator orchestratorSur = new CompilationOrchestrator(
+            entryBad, outputDirSur, false, false, false, Backend.JVM,
+            config, roots, Path.of(".").toAbsolutePath().normalize());
+        check(orchestratorSur.compile(), "surrogate-return project compiles: "
+            + orchestratorSur.diagnostics());
+        Files.copy(tmpDir.resolve("HostLogBadSurrogate.java"),
+            outputDirSur.resolve("HostLog.java"));
+        Files.writeString(outputDirSur.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(
+                parseProgram("""
+                    export function run(): string { return "x"; }
+                    """), "Entry_bad"));
+        ProcessBuilder javacSur = new ProcessBuilder("javac", "-encoding", "UTF-8",
+            "Entry_bad.java", "HostLog.java", "JvmConformanceRunner.java");
+        javacSur.directory(outputDirSur.toFile());
+        javacSur.redirectErrorStream(true);
+        Process pSur = javacSur.start();
+        String javacOutSur = new String(pSur.getInputStream().readAllBytes()).trim();
+        check(pSur.waitFor() == 0, "surrogate-return artifacts compile with javac: "
+            + javacOutSur);
+        ProcessBuilder javaRunSur = new ProcessBuilder("java", "-cp",
+            outputDirSur.toString(), "JvmConformanceRunner");
+        javaRunSur.redirectErrorStream(true);
+        Process pSurRun = javaRunSur.start();
+        String outSur = new String(pSurRun.getInputStream().readAllBytes()).trim();
+        int exitSur = pSurRun.waitFor();
+        check(exitSur == 1 && outSur.contains("DEAL_ERROR_CODE: E8010"),
+            "unpaired-surrogate host return reports E8010: " + outSur);
+        check(outSur.contains(
+                "expected string, got string with unpaired surrogate code units"),
+            "the sync boundary rejection carries the seam's message: " + outSur);
+
         // Async: an entry that awaits the host async export, with the
         // shape (E8010) and completion (E8001) failures.
         writeFile("src/entry_async.deal", """
@@ -6561,6 +6530,54 @@ public class JvmBackendTest {
         int exit6 = p12.waitFor();
         check(exit6 == 1 && out6.contains("DEAL_ERROR_CODE: E8001"),
             "wrong completion value reports E8001 at the await site: " + out6);
+
+        // ISSUE-0106: the same v1.2 boundary string validation applies to
+        // async completion values — a lone low surrogate completes the
+        // operation and the await site raises E8001 with the seam's
+        // message (the completion check, not the sync E8010 path).
+        writeFile("HostLogAsyncSurrogate.java", """
+            public final class HostLog {
+                public static Object info(long level, String s) { return null; }
+                public static Object add(long a, long b) { return Long.valueOf(a + b); }
+                public static Object find(String s) { return s; }
+                public static Object value() { return "v"; }
+                public static Object fetch() { return java.util.concurrent.CompletableFuture.completedFuture("a" + (char) 0xDC00 + "b"); }
+            }
+            """);
+        Path outputDir7 = tmpDir.resolve("build/host_abi_async_surrogate");
+        CompilationOrchestrator orchestrator7 = new CompilationOrchestrator(
+            entryAsync, outputDir7, false, false, false, Backend.JVM,
+            config, roots, Path.of(".").toAbsolutePath().normalize());
+        check(orchestrator7.compile(), "async surrogate project compiles: "
+            + orchestrator7.diagnostics());
+        Files.copy(tmpDir.resolve("HostLogAsyncSurrogate.java"),
+            outputDir7.resolve("HostLog.java"));
+        Files.writeString(outputDir7.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(
+                parseProgram("""
+                    export async function run(): string { return "x"; }
+                    """), "Entry_async"));
+        ProcessBuilder javac7 = new ProcessBuilder("javac", "-encoding", "UTF-8",
+            "Entry_async.java", "HostLog.java", "JvmConformanceRunner.java");
+        javac7.directory(outputDir7.toFile());
+        javac7.redirectErrorStream(true);
+        Process p13 = javac7.start();
+        String javacOut7 = new String(p13.getInputStream().readAllBytes()).trim();
+        check(p13.waitFor() == 0, "async-surrogate artifacts compile with javac: "
+            + javacOut7);
+        ProcessBuilder javaRun7 = new ProcessBuilder("java", "-cp",
+            outputDir7.toString(), "JvmConformanceRunner");
+        javaRun7.redirectErrorStream(true);
+        Process p14 = javaRun7.start();
+        String out7 = new String(p14.getInputStream().readAllBytes()).trim();
+        int exit7 = p14.waitFor();
+        check(exit7 == 1 && out7.contains("DEAL_ERROR_CODE: E8001"),
+            "unpaired-surrogate async completion reports E8001 at the await site: "
+                + out7);
+        check(out7.contains(
+                "expected string, got string with unpaired surrogate code units"),
+            "the completion boundary rejection carries the seam's message: "
+                + out7);
     }
 
     /** Parses a small DEAL snippet with the real lexer+parser for runner
@@ -6701,6 +6718,8 @@ public class JvmBackendTest {
     private static void testModuleUnusedImportLoadTime() throws Exception {
         System.out.println("-- Orchestrator: sibling imports run load-time code in import order --");
 
+        // v1.2 module top level has no executable statements: the
+        // observable ordering moves inside the exported functions.
         writeFile("src/b.deal", """
             export function plus(x: int): int { return x + 1; }
             """);
@@ -6822,69 +6841,41 @@ public class JvmBackendTest {
         Map<String, Map<String, Type>> modules = Map.of(
             "./lib", Map.of("value", Types.func(List.of(), Type.Int.INSTANCE)));
 
+        // v1.2 grammar gate: every use-before-import shape rests on
+        // module-level executable statements, which the v1.2 grammar
+        // removes (E1049/E1048). The import-first trigger emission is
+        // pinned by testModuleImportBackendEmission below.
         List<String> sources = List.of(
-            // direct: a field initializer uses the alias before the import
-            // statement's position.
             """
             let base: int = lib.value();
             import * as lib from "./lib"
             export function run(): int { return base; }
             """,
-            // direct: a module-level expression statement uses the alias
-            // before the import statement's position.
             """
             if (lib.value() === 40) { }
             import * as lib from "./lib"
             export function run(): int { return 1; }
             """,
-            // transitive: a module-level call of a function whose body uses
-            // the alias, with the import declared after the call site.
             """
             function f(): int { return lib.value(); }
             f();
             import * as lib from "./lib"
             export function run(): int { return 1; }
+            """,
+            """
+            import * as lib from "./lib"
+            let base: int = lib.value();
+            export function run(): int { return base; }
             """);
 
         for (String source : sources) {
             Frontend f = compileFrontend(source, "jvmtest-import-order.deal",
                 new FixedModuleResolver(modules));
-            if (!f.errors().isEmpty()) {
-                fail("checker must accept the import-order probe (the backend "
-                    + "rejects it): " + f.errors());
-                continue;
-            }
-            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                f.program(), f.checkResult(), "jvmtest-import-order.deal",
-                "main", Map.of("./lib", "lib"));
-            check(res.hasErrors(), "backend rejects the use-before-import shape");
-            check(res.diagnostics().stream().anyMatch(d -> d.message()
-                    .contains("before its import statement")
-                    || d.message().contains("uses the import")),
-                "the diagnostic names the import ordering: " + res.diagnostics());
+            check(f.errors().stream().anyMatch(d ->
+                    "E1049".equals(d.code()) || "E1048".equals(d.code())),
+                "use-before-import shape rejected with E1049/E1048: "
+                    + f.errors());
         }
-
-        // The import-first shape stays clean (the trigger runs before the
-        // use — LuaJIT parity).
-        Frontend ok = compileFrontend("""
-            import * as lib from "./lib"
-            let base: int = lib.value();
-            export function run(): int { return base; }
-            """, "jvmtest-import-order-ok.deal",
-            new FixedModuleResolver(modules));
-        if (!ok.errors().isEmpty()) {
-            fail("checker must accept the import-first probe: " + ok.errors());
-            return;
-        }
-        JvmBackend.JvmCodegenResult okRes = JvmBackend.generate(
-            ok.program(), ok.checkResult(), "jvmtest-import-order-ok.deal",
-            "main", Map.of("./lib", "lib"));
-        check(!okRes.hasErrors(), "import-first shape emits without E6000: "
-            + okRes.diagnostics());
-        check(okRes.source().contains("Lib.__init$();"),
-            "the import trigger still emits for the import-first shape");
-        check(okRes.source().contains("Lib.value()"),
-            "the imported call still emits for the import-first shape");
     }
 
     /** Two modules whose paths differ only in case would derive the same

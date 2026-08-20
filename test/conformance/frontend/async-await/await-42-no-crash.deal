@@ -7,3 +7,5 @@ async function f(): null {
   await 42;
   return null;
 }
+
+export function main(): null { return null; }

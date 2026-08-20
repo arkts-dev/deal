@@ -4,3 +4,5 @@
 // @features: modules, diagnostics
 
 import * as m from "./nonexistent_module";
+
+export function main(): null { return null; }

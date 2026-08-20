@@ -11,3 +11,5 @@ export function bytes_probe(): bytes {
   let v: int = b[0];
   return b;
 }
+
+export function main(): null { return null; }

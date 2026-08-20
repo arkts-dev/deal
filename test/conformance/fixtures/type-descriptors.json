@@ -180,7 +180,7 @@
     {
       "name": "class-descriptor-spec-format",
       "description": "Class type uses @module/Class format on resolved expression",
-      "source": "class User { name: string = \"\"; }\nfunction makeUser(): User { return { name: \"Ada\" }; }\nlet f: User = makeUser();",
+      "source": "class User { name: string = \"\"; }\nfunction makeUser(): User { return { name: \"Ada\" }; }\nexport function main(): null {\nlet f: User = makeUser();\nreturn null;\n}",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
@@ -302,7 +302,7 @@
     {
       "name": "function-type-descriptor-multi-arg",
       "description": "Function type (int,int)->int appears in IR for function-typed ident",
-      "source": "function add(a: int, b: int): int { return a + b; }\nlet f: (a: int, b: int) => int = add;",
+      "source": "function add(a: int, b: int): int { return a + b; }\nexport function main(): null {\nlet f: (a: int, b: int) => int = add;\nreturn null;\n}",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
@@ -317,7 +317,7 @@
     {
       "name": "function-type-descriptor-null-return",
       "description": "Function type ()->null appears in IR for function-typed ident",
-      "source": "function noop(): null { return; }\nlet f: () => null = noop;",
+      "source": "function noop(): null { return; }\nexport function main(): null {\nlet f: () => null = noop;\nreturn null;\n}",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
@@ -332,7 +332,7 @@
     {
       "name": "function-type-descriptor-nullable-return",
       "description": "Function type (int)->?string appears in IR for nullable-return function",
-      "source": "function maybe(x: int): int | null { if (x === 0) { return null; } return x; }\nlet f: (x: int) => int | null = maybe;",
+      "source": "function maybe(x: int): int | null { if (x === 0) { return null; } return x; }\nexport function main(): null {\nlet f: (x: int) => int | null = maybe;\nreturn null;\n}",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": null,
@@ -349,7 +349,7 @@
     {
       "name": "function-type-descriptor-mixed-params",
       "description": "Function type (int,string)->boolean appears in IR for mixed-param function",
-      "source": "function check(x: int, s: string): boolean { return true; }\nlet f: (x: int, s: string) => boolean = check;",
+      "source": "function check(x: int, s: string): boolean { return true; }\nexport function main(): null {\nlet f: (x: int, s: string) => boolean = check;\nreturn null;\n}",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
@@ -364,7 +364,7 @@
     {
       "name": "function-type-descriptor-array-param",
       "description": "Function type ([int])->int appears in IR for array-param function",
-      "source": "function head(xs: int[]): int { return xs[0]; }\nlet f: (xs: int[]) => int = head;",
+      "source": "function head(xs: int[]): int { return xs[0]; }\nexport function main(): null {\nlet f: (xs: int[]) => int = head;\nreturn null;\n}",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,
@@ -398,7 +398,7 @@
     {
       "name": "async-function-descriptor",
       "description": "Async function descriptor uses async prefix in IR",
-      "source": "async function fetch(x: int): string { return \"data\"; }\nlet f: async (x: int) => string = fetch;",
+      "source": "async function fetch(x: int): string { return \"data\"; }\nexport function main(): null {\nlet f: async (x: int) => string = fetch;\nreturn null;\n}",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": 0,

@@ -89,19 +89,18 @@
     },
     {
       "name": "jvm-class-module-level-construction",
-      "description": "A module-level (load-time) class construction runs in the static initializer, and a construction before the class declaration resolves through checker hoisting (origin.x * 10 + origin.y = 12)",
+      "description": "v1.2 grammar gate: module-level class construction runs at load time — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A module-level (load-time) class construction runs in the static initializer, and a construction before the class declaration resolves through checker hoisting (origin.x * 10 + origin.y = 12)",
       "source": "let origin: Point = {};\nclass Point { x: int = 1; y: int = 2; }\nexport function test(): int { return origin.x * 10 + origin.y; }",
-      "expectedOutput": "12",
+      "expectedOutput": null,
       "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "class Point"
-      ],
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
+      "irContains": [],
       "irNotContains": [],
       "backends": [
         "jvm"
-      ]
+      ],
+      "expectedNotOutput": []
     },
     {
       "name": "jvm-class-construction-evaluation-order",
@@ -188,7 +187,7 @@
     {
       "name": "jvm-class-frontend-nominal-assignment-error",
       "description": "A direct A→B assignment between identically-shaped classes is a frontend compile error (E3001) rejected before any backend — nominal typing is enforced statically too",
-      "source": "class A { x: int = 0; }\nclass B { x: int = 0; }\nlet a: A = { x: 1 };\nlet b: B = a;",
+      "source": "class A { x: int = 0; }\nclass B { x: int = 0; }\nexport function main(): null {\nlet a: A = { x: 1 };\nlet b: B = a;\nreturn null;\n}",
       "expectedOutput": null,
       "expectedError": null,
       "expectedExitCode": null,
@@ -269,20 +268,18 @@
     },
     {
       "name": "jvm-class-default-bool-boundary",
-      "description": "A nil-aware DEFAULT expression (`b: boolean = xs[0] && xs[5]`, a past-end boolean[] read in an && operand) crosses the constructor's typed boolean boundary and raises E8001 — parity with the identifier boundary",
+      "description": "v1.2 grammar gate: the nil-aware default reads a module-level array field — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A nil-aware DEFAULT expression (`b: boolean = xs[0] && xs[5]`, a past-end boolean[] read in an && operand) crosses the constructor's typed boolean boundary and raises E8001 — parity with the identifier boundary",
       "source": "let xs: boolean[] = [true, false];\nclass P { b: boolean = xs[0] && xs[5]; }\nexport function test(): int {\n  let p: P = {};\n  return 1;\n}",
       "expectedOutput": null,
-      "expectedError": "E8001",
-      "expectedExitCode": 1,
-      "expectedCompileError": null,
-      "irContains": [
-        "class P",
-        "[boundary: class-construct]"
-      ],
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E1049",
+      "irContains": [],
       "irNotContains": [],
       "backends": [
         "jvm"
-      ]
+      ],
+      "expectedNotOutput": []
     },
     {
       "name": "jvm-class-field-write-eval-order-parity",

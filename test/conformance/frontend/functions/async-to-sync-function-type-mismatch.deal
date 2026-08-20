@@ -4,4 +4,10 @@
 // @features: async, functions, diagnostics
 
 async function f(): int { return 1; }
+export function main(): null { return null; }
+export function main(): null {
 let g: () => int = f;
+
+
+return null;
+}
