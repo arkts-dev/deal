@@ -2349,6 +2349,77 @@ public class ModuleSystemTest {
             "nested import produces E1050");
     }
 
+    private static void testModuleShapeNestedInFunctionExpressions()
+            throws Exception {
+        System.out.println(
+            "-- v1.2 module shape: import/export inside function expressions (E1050) --");
+
+        // Function expression in statement position (variable initializer).
+        List<Diagnostic> diags = shapeDiags("""
+            export function main(): null {
+              let f = function(): null { import * as x from "./x"; return null; };
+              return null;
+            }
+            """, false);
+        check(diags.stream().anyMatch(d -> "E1050".equals(d.code())
+                && "error".equals(d.severity())),
+            "nested import in function expression (statement position) produces E1050");
+
+        diags = shapeDiags("""
+            export function main(): null {
+              let f = function(): null { export function inner(): null { return null; } return null; };
+              return null;
+            }
+            """, false);
+        check(diags.stream().anyMatch(d -> "E1050".equals(d.code())
+                && "error".equals(d.severity())),
+            "nested export in function expression (statement position) produces E1050");
+
+        // Function expression in a class-field default.
+        diags = shapeDiags("""
+            class C { f: (() => null) = function(): null { import * as x from "./x"; return null; }; }
+            export function main(): null { return null; }
+            """, false);
+        check(diags.stream().anyMatch(d -> "E1050".equals(d.code())
+                && "error".equals(d.severity())),
+            "nested import in class-field default function expression produces E1050");
+
+        diags = shapeDiags("""
+            class C { f: (() => null) = function(): null { export function inner(): null { return null; } return null; }; }
+            export function main(): null { return null; }
+            """, false);
+        check(diags.stream().anyMatch(d -> "E1050".equals(d.code())
+                && "error".equals(d.severity())),
+            "nested export in class-field default function expression produces E1050");
+
+        // Deeply nested clean function expressions stay valid (no false
+        // positives from descending through expressions).
+        diags = shapeDiags("""
+            import * as lib from "./lib"
+            export function main(): null {
+              let f = function(): null { let g = function(): int { return 1; }; return null; };
+              let a = [1, function(): int { return 2; }];
+              return null;
+            }
+            """, false);
+        check(diags.isEmpty(),
+            "clean nested function expressions produce no shape diagnostics");
+
+        // End to end: the orchestrator must reject the module instead of
+        // silently miscompiling when a function-expression body carries a
+        // nested export.
+        List<Diagnostic> orchestratorDiags = compileEntry(
+            "nested_fn_expr_export", """
+            export function main(): null {
+              let f = function(): null { export function inner(): null { return null; } return null; };
+              return null;
+            }
+            """);
+        check(orchestratorDiags.stream().anyMatch(d -> "E1050".equals(d.code())
+                && "error".equals(d.severity())),
+            "orchestrator rejects nested export in function expression with E1050");
+    }
+
     private static void testModuleShapeBodylessInImplementation() {
         System.out.println("-- v1.2 module shape: bodyless declaration in .deal (E1051) --");
         List<Diagnostic> diags = shapeDiags(
@@ -2437,6 +2508,7 @@ public class ModuleSystemTest {
             testModuleShapeImportAfterDeclaration();
             testModuleShapeTopLevelStatement();
             testModuleShapeNestedExportAndImport();
+            testModuleShapeNestedInFunctionExpressions();
             testModuleShapeBodylessInImplementation();
             testEntryMainValidation();
             testTopologicalSortDiamond();

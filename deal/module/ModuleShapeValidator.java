@@ -13,14 +13,17 @@ import java.util.List;
  * <p>The v1.2 grammar restricts a module to
  * {@code ImportDeclaration* TopLevelDeclaration*} — imports first, then
  * only function/class/export declarations.  Imports and exports are not
- * statements, so they may not appear inside blocks or function bodies.
- * This pass runs on the parsed AST (after parsing, before name
- * resolution) and enforces those rules with frontend diagnostics:</p>
+ * statements, so they may not appear inside blocks or function bodies,
+ * including function bodies nested inside expressions (function
+ * expressions in variable initializers, call arguments, literals,
+ * class-field defaults, loop heads, and so on).  This pass runs on the
+ * parsed AST (after parsing, before name resolution) and enforces those
+ * rules with frontend diagnostics:</p>
  *
  * <ul>
  *   <li>{@code E1048} — import after a non-import top-level declaration</li>
  *   <li>{@code E1049} — statement that is not a top-level declaration</li>
- *   <li>{@code E1050} — import/export in a nested (block) context</li>
+ *   <li>{@code E1050} — import/export in a nested (non-top-level) context</li>
  *   <li>{@code E1051} — bodyless (external) function declaration in an
  *       implementation file</li>
  * </ul>
@@ -110,8 +113,9 @@ public final class ModuleShapeValidator {
 
     /**
      * Recurses into the nested statement contexts of a top-level
-     * declaration: function bodies.  Class declarations and imports have
-     * no nested statement contexts.
+     * declaration: function bodies and class field default expressions
+     * (which may contain function expressions).  Import declarations have
+     * no nested contexts at all.
      */
     private static void checkTopLevelBody(StatementNode stmt,
                                           List<Diagnostic> diagnostics) {
@@ -119,14 +123,30 @@ public final class ModuleShapeValidator {
             case FunctionDeclaration fd -> checkNested(fd.body(), diagnostics);
             case ExportDeclaration exp ->
                 checkTopLevelBody(exp.declaration(), diagnostics);
+            case ClassDeclaration cd -> checkFieldDefaults(cd, diagnostics);
             default -> { /* no nested statement scope */ }
         }
     }
 
     /**
-     * Walks a nested statement list (function body, block, control-flow
-     * body) and rejects import/export there: imports and exports are
-     * module-level declarations, not statements (E1050).
+     * Walks the default value expressions of a class body; a default may
+     * be a function expression whose body is a nested statement context.
+     */
+    private static void checkFieldDefaults(ClassDeclaration cd,
+                                           List<Diagnostic> diagnostics) {
+        for (ClassField field : cd.fields()) {
+            field.defaultExpr().ifPresent(
+                expr -> checkExpression(expr, diagnostics));
+        }
+    }
+
+    /**
+     * Walks a nested statement context (function body, block,
+     * control-flow body, loop head expression, expression statement) and
+     * rejects import/export there: imports and exports are module-level
+     * declarations, not statements (E1050).  Every expression reachable
+     * from a statement is visited so that function expressions nested in
+     * arbitrary expression positions have their bodies checked too.
      */
     private static void checkNested(StatementNode stmt,
                                     List<Diagnostic> diagnostics) {
@@ -147,7 +167,18 @@ public final class ModuleShapeValidator {
                 }
             }
             case FunctionDeclaration fd -> checkNested(fd.body(), diagnostics);
+            case ClassDeclaration cd -> checkFieldDefaults(cd, diagnostics);
+            case VariableDeclaration vd ->
+                checkExpression(vd.initializer(), diagnostics);
+            case ReturnStatement rs ->
+                rs.expr().ifPresent(e -> checkExpression(e, diagnostics));
+            case ThrowStatement ts -> checkExpression(ts.expr(), diagnostics);
+            case ExpressionStatement es ->
+                checkExpression(es.expr(), diagnostics);
+            case DeleteStatement ds ->
+                checkExpression(ds.target(), diagnostics);
             case IfStatement is -> {
+                checkExpression(is.condition(), diagnostics);
                 checkNested(is.thenBlock(), diagnostics);
                 is.elseBranch().ifPresent(eb -> {
                     switch (eb) {
@@ -158,14 +189,87 @@ public final class ModuleShapeValidator {
                     }
                 });
             }
-            case WhileStatement ws -> checkNested(ws.body(), diagnostics);
-            case ForStatement fs -> checkNested(fs.body(), diagnostics);
-            case ForOfStatement fos -> checkNested(fos.body(), diagnostics);
+            case WhileStatement ws -> {
+                checkExpression(ws.condition(), diagnostics);
+                checkNested(ws.body(), diagnostics);
+            }
+            case ForStatement fs -> {
+                fs.init().ifPresent(init -> checkForInit(init, diagnostics));
+                fs.condition().ifPresent(c -> checkExpression(c, diagnostics));
+                fs.update().ifPresent(u -> checkExpression(u, diagnostics));
+                checkNested(fs.body(), diagnostics);
+            }
+            case ForOfStatement fos -> {
+                checkExpression(fos.iterable(), diagnostics);
+                checkNested(fos.body(), diagnostics);
+            }
             case TryStatement ts -> {
                 checkNested(ts.tryBlock(), diagnostics);
                 checkNested(ts.catchBlock(), diagnostics);
             }
-            default -> { /* no nested statement scope */ }
+            case BreakStatement bs -> { /* leaf */ }
+            case ContinueStatement cs -> { /* leaf */ }
+        }
+    }
+
+    /** Walks the two for-init alternatives ({@code let} vs assignment). */
+    private static void checkForInit(ForInit init,
+                                     List<Diagnostic> diagnostics) {
+        switch (init) {
+            case ForInit.VarDecl vd -> checkNested(vd.decl(), diagnostics);
+            case ForInit.AssignExpr ae -> checkExpression(ae.expr(), diagnostics);
+        }
+    }
+
+    /**
+     * Walks an expression and every sub-expression.  When a function
+     * expression is found, its body is checked as a nested statement
+     * context so imports/exports there are rejected with E1050.
+     */
+    private static void checkExpression(ExpressionNode expr,
+                                        List<Diagnostic> diagnostics) {
+        switch (expr) {
+            case LiteralExpr le -> { /* leaf */ }
+            case IdentifierExpr ie -> { /* leaf */ }
+            case FunctionExpr fe -> checkNested(fe.body(), diagnostics);
+            case CallExpr ce -> {
+                checkExpression(ce.callee(), diagnostics);
+                for (ExpressionNode arg : ce.args()) {
+                    checkExpression(arg, diagnostics);
+                }
+            }
+            case MemberAccessExpr mae ->
+                checkExpression(mae.object(), diagnostics);
+            case IndexExpr ie -> {
+                checkExpression(ie.array(), diagnostics);
+                checkExpression(ie.index(), diagnostics);
+            }
+            case ArrayLiteralExpr ale -> {
+                for (ExpressionNode element : ale.elements()) {
+                    checkExpression(element, diagnostics);
+                }
+            }
+            case ObjectLiteralExpr ole -> {
+                for (Property property : ole.properties()) {
+                    checkExpression(property.value(), diagnostics);
+                }
+            }
+            case HasExpr he -> checkExpression(he.object(), diagnostics);
+            case AssignmentExpr ae -> {
+                checkExpression(ae.target(), diagnostics);
+                checkExpression(ae.value(), diagnostics);
+            }
+            case BinaryExpr be -> {
+                checkExpression(be.left(), diagnostics);
+                checkExpression(be.right(), diagnostics);
+            }
+            case UnaryExpr ue -> checkExpression(ue.expr(), diagnostics);
+            case TemplateLiteralExpr tle -> {
+                for (ExpressionNode part : tle.parts()) {
+                    checkExpression(part, diagnostics);
+                }
+            }
+            case AwaitExpression aw -> checkExpression(aw.callee(), diagnostics);
         }
     }
 }
