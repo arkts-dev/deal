@@ -242,7 +242,6 @@ public class BackendConformanceTest {
     private static final AtomicInteger luajitFailed = new AtomicInteger();
     private static final AtomicInteger jvmPassed = new AtomicInteger();
     private static final AtomicInteger jvmFailed = new AtomicInteger();
-    private static final Object KNOWN_FAIL_LOCK = new Object();
     /**
      * Known-fail cases are drained on the main thread after every worker
      * fixture file has completed: their outcome bookkeeping snapshots the
@@ -810,14 +809,13 @@ public class BackendConformanceTest {
         if (multiModule) {
             // Multi-module fixtures are JVM-only (validated by
             // multiModuleConfigViolation): attribute their outcome to the
-            // JVM backend-runtime gate.
-            synchronized (KNOWN_FAIL_LOCK) {
-                int p0 = passed.get(), f0 = failed.get();
-                runMultiModuleTestCase(fixtureName, test);
-                int deltaP = passed.get() - p0;
-                int deltaF = failed.get() - f0;
-                jvmPassed.addAndGet(Math.max(deltaP, 0));
-                jvmFailed.addAndGet(Math.max(deltaF, 0));
+            // JVM backend-runtime gate from the case's own returned
+            // outcome (never from shared-counter deltas, which parallel
+            // workers mutate concurrently).
+            Boolean outcome = runMultiModuleTestCase(fixtureName, test);
+            if (outcome != null) {
+                if (outcome) jvmPassed.incrementAndGet();
+                else jvmFailed.incrementAndGet();
             }
             return;
         }
@@ -1237,7 +1235,17 @@ public class BackendConformanceTest {
     }
 
     @SuppressWarnings("unchecked")
-    private static void runMultiModuleTestCase(String fixtureName, Map<String, Object> test) {
+    /**
+     * Runs one multi-module (JVM-only) fixture. Returns {@code TRUE}
+     * when the case passed, {@code FALSE} when it failed, and
+     * {@code null} when it was skipped (no JVM gate attribution).
+     * The caller attributes the outcome to the JVM backend-runtime
+     * gate from this return value, never from shared-counter deltas:
+     * parallel workers increment the shared counters concurrently,
+     * so a delta snapshot can absorb other cases' increments and
+     * make the per-backend totals nondeterministic.
+     */
+    private static Boolean runMultiModuleTestCase(String fixtureName, Map<String, Object> test) {
         String name = jsonString(test, "name", "<unnamed>");
         String description = jsonString(test, "description", "");
         String entry = jsonString(test, "entry", null);
@@ -1285,7 +1293,7 @@ public class BackendConformanceTest {
                     log("  [" + name + "] FAIL: generated deal.json did "
                         + "not load");
                     failed.incrementAndGet();
-                    return;
+                    return false;
                 }
             }
 
@@ -1307,7 +1315,7 @@ public class BackendConformanceTest {
                         + "compile-error " + expectedCompileError
                         + " but the project compiled successfully");
                     failed.incrementAndGet();
-                    return;
+                    return false;
                 }
                 if (!matched) {
                     log("  [" + name + "] FAIL: expected frontend "
@@ -1316,14 +1324,14 @@ public class BackendConformanceTest {
                             : run.diagnostics().stream().map(Diagnostic::toString)
                                 .toList()));
                     failed.incrementAndGet();
-                    return;
+                    return false;
                 }
                 if (!onlyFrontend) {
                     log("  [" + name + "] FAIL: error codes came "
                         + "from backend lowering, not the frontend: "
                         + run.diagnostics());
                     failed.incrementAndGet();
-                    return;
+                    return false;
                 }
                 boolean artifactWritten = Files.isDirectory(outputRoot);
                 if (artifactWritten) {
@@ -1337,13 +1345,13 @@ public class BackendConformanceTest {
                         + "gate produced .java artifacts (codegen ran): "
                         + run.capturedOutput());
                     failed.incrementAndGet();
-                    return;
+                    return false;
                 }
                 log("  [" + name + "] OK — compile-error "
                     + expectedCompileError + " rejected before backend"
                     + " (orchestrator pipeline; no codegen invoked)");
                 passed.incrementAndGet();
-                return;
+                return true;
             }
 
             // ---- Runtime fixture: the whole project must compile. ----
@@ -1354,7 +1362,7 @@ public class BackendConformanceTest {
                     + "failed: " + run.diagnostics() + "\n"
                     + run.capturedOutput());
                 failed.incrementAndGet();
-                return;
+                return false;
             }
 
             // IR assertions over every module's IR dump.
@@ -1380,7 +1388,7 @@ public class BackendConformanceTest {
             }
             if (!irOk) {
                 failed.incrementAndGet();
-                return;
+                return false;
             }
 
             Object expectedOutput = test.get("expectedOutput");
@@ -1395,14 +1403,14 @@ public class BackendConformanceTest {
                 log("  [" + name + "] OK" +
                     (description.isEmpty() ? "" : " — " + description));
                 passed.incrementAndGet();
-                return;
+                return true;
             }
 
             if (!jvmAvailable) {
                 log("  [" + name + "] SKIP (multi-module runtime "
                     + "test, javac/java unavailable)");
                 skipped.incrementAndGet();
-                return;
+                return null;
             }
 
             // Codegen was real: the entry artifact must exist before javac.
@@ -1412,7 +1420,7 @@ public class BackendConformanceTest {
                 log("  [" + name + "] FAIL: JVM codegen produced "
                     + "no '" + entryJava.getFileName() + "' artifact");
                 failed.incrementAndGet();
-                return;
+                return false;
             }
 
             // ISSUE-0100: host implementation classes. The backend derives
@@ -1439,7 +1447,7 @@ public class BackendConformanceTest {
                     log("  [" + name + "] FAIL: host implementation for '"
                         + he.getKey() + "' declares no top-level class");
                     failed.incrementAndGet();
-                    return;
+                    return false;
                 }
                 Files.writeString(outputRoot.resolve(m.group(1) + ".java"),
                     javaSrc);
@@ -1471,14 +1479,14 @@ public class BackendConformanceTest {
                 log("  [" + name + "] FAIL: javac failed (exit "
                     + javacExit + "):\n" + javacOutput);
                 failed.incrementAndGet();
-                return;
+                return false;
             }
             if (!Files.exists(outputRoot.resolve(entryClass + ".class"))
                     || !Files.exists(outputRoot.resolve("JvmConformanceRunner.class"))) {
                 log("  [" + name + "] FAIL: javac exited 0 but no "
                     + ".class artifacts were produced (JVM compilation bypassed)");
                 failed.incrementAndGet();
-                return;
+                return false;
             }
 
             // Execute the emitted artifacts with java.
@@ -1492,18 +1500,20 @@ public class BackendConformanceTest {
 
             if (!assertJvmRun(name, output, actualExitCode, expectedOutput,
                     List.of(), expectedError, expectedExitCode)) {
-                return; // failure already reported
+                return false; // failure already reported
             }
 
             log("  [" + name + "] OK" +
                 (description.isEmpty() ? "" : " — " + description));
             passed.incrementAndGet();
+            return true;
 
         } catch (Exception e) {
             log("  [" + name + "] FAIL: multi-module JVM "
                 + "execution exception: " + e.getMessage());
             e.printStackTrace(System.out);
             failed.incrementAndGet();
+            return false;
         } finally {
             if (projectRoot != null) {
                 try {

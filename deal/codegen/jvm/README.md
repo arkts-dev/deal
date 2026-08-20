@@ -159,12 +159,11 @@ class export is rejected, never miscompiled), rest parameters, and
 array/table/function-typed host parameters or returns.
 
 The JVM's static type system proves typed boundaries redundant, which the
-current normative spec explicitly permits (`docs/spec-v1.1.md` §JVM backend
+normative spec explicitly permits (`docs/spec-v1.2.md` §JVM backend
 contract: "The JVM backend may use JVM primitive types, final classes,
 verifier-checked bytecode, method signatures, and JIT optimization to prove
-typed-boundary checks redundant"; `docs/spec-v1.2.md` is a future draft
-whose grammar is not normative for this backend — see "Known skeleton
-limitations"). This is why `let z: null = console.log("x")` runs the
+typed-boundary checks redundant" — see "Known skeleton limitations" for
+the tracked divergences). This is why `let z: null = console.log("x")` runs the
 print and stores null under JVM while LuaJIT's `check_null` rejects the raw
 nil — the JVM backend proves the boundary statically, exactly as the spec
 allows.
@@ -1307,12 +1306,19 @@ probes), the JVM runtime fixtures are skipped, mirroring the LuaJIT skip.
 
 ## Known skeleton limitations (documented, not silent)
 
-- The normative spec for this backend is `docs/spec-v1.1.md` (§JVM value
-  mapping / §JVM backend contract); `docs/spec-v1.2.md` is a future draft
-  whose grammar is not normative here (e.g. its grammar forbids
-  module-level statements while the current checker accepts them and the
-  backend implements their load-time semantics). The backend cites
-  spec-v1.1 only.
+- The normative spec for this backend is `docs/spec-v1.2.md` (§JVM value
+  mapping / §JVM backend contract) — the ISSUE-0107 promotion gate made
+  v1.2 the only language spec. The remaining divergences are tracked,
+  never silent: the v1.2 frontend hard break (rejecting module-level
+  statements, imports after declarations, and rest parameters —
+  ISSUE-0103), signed 32-bit `int` and `bytes` (ISSUE-0111), and Unicode
+  scalar-value strings (ISSUE-0105/ISSUE-0106) are pinned by explicit
+  failing fixtures (`test/conformance/frontend/…`,
+  `test/conformance/backend-runtime/…`, and
+  `test/conformance/fixtures/jvm-v1.2-known-fail.json`). Until those land,
+  the backend keeps its v1.1-era emission (module-level load-time
+  statements, ±(2^53-1) `int`, UTF-8/byte string semantics), and the
+  conformance harness records each case as a classified known-failure.
 - Multi-module JVM projects support compiled project modules only
   (ISSUE-0096): a namespace import of a compiled module runs its load-time
   side effects through the emitted `__init$` trigger and imported direct
