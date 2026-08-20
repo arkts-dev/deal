@@ -327,7 +327,7 @@ public class ModuleSystemTest {
 
         String json = """
             {
-              "languageVersion": "1.0",
+              "languageVersion": "1.2",
               "moduleRoots": ["src"],
               "output": "build/lua",
               "backend": "luajit",

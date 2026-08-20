@@ -1266,7 +1266,7 @@ public class BackendConformanceTest {
             DealConfig config = null;
             if (!hosts.isEmpty()) {
                 StringBuilder dealJson = new StringBuilder();
-                dealJson.append("{\n  \"languageVersion\": \"1.1\",\n");
+                dealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
                 dealJson.append("  \"externals\": {\n");
                 boolean first = true;
                 for (Map.Entry<String, Map<String, String>> he

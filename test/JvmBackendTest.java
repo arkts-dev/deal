@@ -179,7 +179,7 @@ import java.util.Set;
  *       read/write and gap write → E8002, read past the end → E8001
  *       "expected &lt;T&gt;, got null"; element value checks: int elements
  *       route through {@code checkInt} → E8004; the write check runs after
- *       the receiver/index/RHS expressions evaluate, per spec-v1.1
+ *       the receiver/index/RHS expressions evaluate, per spec-v1.2
  *       §Operational semantics rule 3), appends at {@code i == length} with
  *       the wrapper identity stable across growth (alias parity),
  *       evaluation order with hoisted null-typed side effects materialized
@@ -3318,7 +3318,7 @@ public class JvmBackendTest {
         // read) ran its side effects BEFORE the receiver's inline
         // effects — the pre-fix artifact for getBox().x =
         // make(note("value")) printed value → target → make while
-        // LuaJIT's strict left-to-right order (spec v1.1 §Operational
+        // LuaJIT's strict left-to-right order (spec-v1.2 §Operational
         // semantics rule 1: receiver before member/index/call
         // arguments) prints target → value → make. Both operands now
         // route through emitOperandsInOrder, which materializes the
@@ -6250,7 +6250,7 @@ public class JvmBackendTest {
 
         writeFile("deal.json", """
             {
-              "languageVersion": "1.1",
+              "languageVersion": "1.2",
               "moduleRoots": ["src"],
               "externals": {
                 "host/log": { "declaration": "bindings/log.d.deal" }

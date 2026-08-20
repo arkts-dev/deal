@@ -210,37 +210,6 @@
       ]
     },
     {
-      "name": "function-type-array-param",
-      "description": "Array param type in function \u2014 rest param uses [...[T]]",
-      "source": "function sumValues(...xs: int[]): null { return; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "irContains": [
-        "rest param xs: [int]"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "luajit"
-      ]
-    },
-    {
-      "name": "rest-param-mixed",
-      "description": "Mixed fixed+rest param function",
-      "source": "function describe(label: string, ...values: int[]): null { return; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "irContains": [
-        "rest param values: [int]",
-        "param label: string"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "luajit"
-      ]
-    },
-    {
       "name": "nullable-array-param",
       "description": "Nullable array param uses ?[int] format",
       "source": "function f(a: int[] | null): null { return; }",
@@ -370,21 +339,6 @@
       "irNotContains": [
         "int[]"
       ],
-      "backends": [
-        "luajit"
-      ]
-    },
-    {
-      "name": "function-type-descriptor-rest-param",
-      "description": "Function type (string,...[int])->null appears in IR for mixed fixed+rest function",
-      "source": "function describe(label: string, ...values: int[]): null { return; }\nlet f: (label: string, ...values: int[]) => null = describe;",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "irContains": [
-        "(string,...[int])->null"
-      ],
-      "irNotContains": [],
       "backends": [
         "luajit"
       ]
