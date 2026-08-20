@@ -4,12 +4,34 @@
 // @features: async, error-handling, runtime
 
 export async function f(): string {
+  let intendedCatchRan: boolean = false;
+  let fallbackCatchRan: boolean = false;
+  let normalRan: boolean = false;
+  let intendedCode: string = "";
+  let fallbackCode: string = "";
+
   try {
-    throw { code: "E_TEST", message: "test error" };
-    return "unreachable";
+    try {
+      throw { code: "E_TEST", message: "test error" };
+      normalRan = true;
+    } catch (e) {
+      intendedCatchRan = true;
+      intendedCode = e.code;
+    }
   } catch (e) {
-    return e.code;
+    fallbackCatchRan = true;
+    fallbackCode = e.code;
   }
+
+  if (intendedCatchRan !== true ||
+      fallbackCatchRan !== false ||
+      normalRan !== false ||
+      intendedCode !== "E_TEST" ||
+      fallbackCode !== "") {
+    throw { code: "TEST_FAIL", message: "E_TEST must reach only the intended same-async catch with empty fallback state" };
+  }
+
+  return "E_TEST";
 }
 
 export function main(): null {
