@@ -22,8 +22,8 @@
     },
     {
       "name": "jvm-async-value-positions",
-      "description": "Await in value positions \u2014 let initializers and a return position \u2014 with int, string, and boolean completion types flows through locals to 'hi-jvm' (an await-in-condition position is pinned by jvm-async-await-in-condition)",
-      "source": "async function add(a: int, b: int): int { return a + b; }\nasync function greet(name: string): string { return \"hi-\" + name; }\nasync function flag(): boolean { return true; }\nexport async function test(): string {\n  let x: int = await add(2, 3);\n  let y: int = await add(x, 5);\n  let b: boolean = await flag();\n  if (y === 10 && b) { return await greet(\"jvm\"); }\n  return \"bad\";\n}",
+      "description": "Await in value positions \u2014 let initializers and a return position \u2014 with int, string, boolean, and number completion types flows through locals to 'hi-jvm' (an await-in-condition position is pinned by jvm-async-await-in-condition)",
+      "source": "async function add(a: int, b: int): int { return a + b; }\nasync function greet(name: string): string { return \"hi-\" + name; }\nasync function flag(): boolean { return true; }\nasync function half(n: number): number { return n / 2.0; }\nexport async function test(): string {\n  let x: int = await add(2, 3);\n  let y: int = await add(x, 5);\n  let b: boolean = await flag();\n  let h: number = await half(6.0);\n  if (y === 10 && b && h === 3.0) { return await greet(\"jvm\"); }\n  return \"bad\";\n}",
       "expectedOutput": "hi-jvm",
       "expectedError": null,
       "expectedExitCode": 0,
@@ -32,7 +32,8 @@
         "async function add: int",
         "await : int",
         "await : string",
-        "await : boolean"
+        "await : boolean",
+        "await : number"
       ],
       "irNotContains": [],
       "backends": [
