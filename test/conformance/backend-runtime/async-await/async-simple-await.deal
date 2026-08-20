@@ -6,7 +6,11 @@
 async function g(): int { return 42; }
 
 export async function f(): int {
-  return await g();
+  let x: int = await g();
+  if (x !== 42) {
+    throw { code: "TEST_FAIL", message: "simple await value mismatch" };
+  }
+  return x;
 }
 
 export function main(): null {

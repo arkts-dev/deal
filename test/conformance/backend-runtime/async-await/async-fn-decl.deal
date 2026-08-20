@@ -9,6 +9,9 @@ async function helper(): int {
 
 export async function test_async_decl(): int {
   let x: int = await helper();
+  if (x !== 42) {
+    throw { code: "TEST_FAIL", message: "async function declaration awaited value mismatch" };
+  }
   return x;
 }
 
