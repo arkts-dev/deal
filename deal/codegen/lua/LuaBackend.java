@@ -1174,7 +1174,7 @@ public final class LuaBackend implements Visitor<Void> {
             addDiagnostic(DiagnosticCode.E6003,
                 "rest parameters are not part of DEAL v1.2; "
                     + "declare an explicit array parameter instead",
-                node.span()));
+                rest.span()));
 
         // Build parameter list (fixed parameters only — no vararg header).
         StringBuilder paramList = new StringBuilder();
@@ -2256,7 +2256,7 @@ public final class LuaBackend implements Visitor<Void> {
             addDiagnostic(DiagnosticCode.E6003,
                 "rest parameters are not part of DEAL v1.2; "
                     + "declare an explicit array parameter instead",
-                fe.span()));
+                rest.span()));
 
         // Build parameter list (fixed parameters only — no vararg header).
         StringBuilder paramList = new StringBuilder();
