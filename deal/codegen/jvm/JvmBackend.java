@@ -365,7 +365,7 @@ import java.util.Set;
  * per construction), primitive field reads/writes, and same-module
  * nominal runtime checks. Each DEAL class emits a generated nested
  * static class ({@code $C_<name>}, extending the emitted {@code $Base}
- * identity holder); spec v1.1 classes are sealed records with no
+ * identity holder); spec-v1.2 classes are sealed records with no
  * methods and no constructors, so there is no method surface beyond the
  * module functions the earlier slices already support. The only in-slice
  * untyped boundary is the DEAL table ({@code table} read in a contextual
@@ -2387,7 +2387,7 @@ public final class JvmBackend {
         } else if (ed.declaration() instanceof ClassDeclaration cd) {
             // ISSUE-0109: an exported class emits the same generated
             // nested class and nominal-check helper as a local class
-            // (spec v1.1 §Export forms: "Exporting a class exports class
+            // (spec-v1.2 §Export forms: "Exporting a class exports class
             // metadata, not a constructor" — the metadata is the class's
             // generated Java type plus its module-qualified identity
             // string, which importers consume directly).
@@ -3971,7 +3971,7 @@ public final class JvmBackend {
      * class — ISSUE-0109). Provided field values are evaluated
      * left-to-right in literal order (LuaJIT evaluates the
      * provided-fields table in literal order), defaults are evaluated per
-     * construction exactly as spec v1.1 §Construction requires (inline,
+     * construction exactly as spec-v1.2 §Construction requires (inline,
      * at the construction site — never shared). The constructor argument
      * order is field declaration order, with provided values materialized
      * first so a side-effecting provided value runs in literal order
@@ -5373,7 +5373,7 @@ public final class JvmBackend {
     /**
      * A member access used as a value (not a call): the array
      * {@code .length} intrinsic (ISSUE-0094), a declared class field
-     * read (spec v1.1 §Field access — the checker guarantees the field is
+     * read (spec-v1.2 §Field access — the checker guarantees the field is
      * declared and returns its declared type), or a table field read in a
      * contextual target type — the slice's one untyped boundary, where the
      * runtime nominal check runs (see {@link #emitTableRead}). Everything
@@ -6205,7 +6205,7 @@ public final class JvmBackend {
         if (ae.target() instanceof MemberAccessExpr mae) {
             Type objType = typeOf(mae.object());
             if (objType instanceof Type.Class) {
-                // A declared class field write (spec v1.1 §Class assignment
+                // A declared class field write (spec-v1.2 §Class assignment
                 // semantics): the checker guarantees the field is declared
                 // and the value matches its type. Spec §Operational
                 // semantics rule 1 makes evaluation strict and

@@ -290,7 +290,7 @@ public class DiagnosticClassificationTest {
         coverage.put("E6001", "LuaBackendTest (continue outside loop)");
         coverage.put("E6002", "Historical (ISSUE-0011, no longer emitted)");
         coverage.put("E6003", "LuaBackendTest (rest parameter rejection)");
-        coverage.put("E6004", "LuaBackendTest (entry main validation)");
+        coverage.put("E6004", "LuaBackendTest / JvmBackendTest (entry main validation)");
 
         coverage.put("E7001", "ModuleSystemTest (decl file exec stmt)");
 
