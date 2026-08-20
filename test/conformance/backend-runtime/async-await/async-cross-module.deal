@@ -7,11 +7,17 @@ import * as lib from "./async_lib.deal";
 
 export async function test_cross_module(): int {
   let x: int = await lib.getAnswer();
+  if (x !== 42) {
+    throw { code: "TEST_FAIL", message: "cross-module getAnswer value mismatch" };
+  }
   return x;
 }
 
 export async function test_cross_module_greet(): string {
   let s: string = await lib.greet("world");
+  if (s !== "Hello, world") {
+    throw { code: "TEST_FAIL", message: "cross-module greet value mismatch" };
+  }
   return s;
 }
 
