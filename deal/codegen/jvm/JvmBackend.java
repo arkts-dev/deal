@@ -5078,6 +5078,12 @@ public final class JvmBackend {
                     collectLocalDeclarations(fos.body().statements(), out);
                 }
                 case TryStatement ts -> {
+                    // The catch variable DECLARES a binding (the checker
+                    // scopes it to the catch block): nested functions
+                    // inside the catch block that read or write it must
+                    // mark it captured so emitTry cell-ifies it exactly
+                    // like a local or parameter.
+                    out.add(ts.catchVar());
                     collectLocalDeclarations(ts.tryBlock().statements(), out);
                     collectLocalDeclarations(ts.catchBlock().statements(), out);
                 }
@@ -6385,6 +6391,20 @@ public final class JvmBackend {
             Types.classType("Error", ""));
         emitLine("} catch (java.lang.RuntimeException " + catchName + ") {");
         indent++;
+        // ISSUE-0102 closure capture: a catch variable captured by a
+        // nested function inside the catch block (collectLocalDeclarations
+        // declares it, so declareLocal registered the mapped name in the
+        // capture frame) lowers to a final cell at the top of the catch
+        // block, exactly like a captured local or parameter: reads and
+        // writes route through <name>$c[0] (localJavaName), the closure
+        // references the effectively-final cell array, and the catch
+        // parameter itself is never reassigned in Java — DEAL-level
+        // reassignment writes the cell, so LuaJIT's shared-upvalue
+        // semantics hold without a javac effectively-final rejection.
+        if (isCapturedMapped(catchName)) {
+            emitLine("final java.lang.RuntimeException[] " + catchName
+                + "$c = { " + catchName + " };");
+        }
         emitScopedBlock(ts.catchBlock());
         indent--;
         localScopes.pop();
@@ -6468,7 +6488,14 @@ public final class JvmBackend {
             // unreachable (LuaJIT accepts it and skips the body).
             emitLine("while (loopCond(" + condition + ")) {");
             indent++;
+            // A DEAL continue inside the body targets THIS while (the
+            // nearest enclosing loop), never an enclosing transformed
+            // for's re-placed-update label: the null frame makes
+            // emitContinue emit plain `continue;`, which Java resolves
+            // to the nearest Java loop — the while.
+            loopContinueLabels.addLast(null);
             emitScopedBlock(ws.body());
+            loopContinueLabels.removeLast();
             indent--;
             emitLine("}");
             return;
@@ -6485,7 +6512,14 @@ public final class JvmBackend {
         indent++;
         flushPreStatements();
         emitLine("if (!loopCond(" + condition + ")) { break; }");
+        // Same continue-target guard as the plain form: `continue;`
+        // re-enters the `while (true)` head, which re-runs the hoisted
+        // per-iteration pre-statements and the condition test — exactly
+        // LuaJIT's re-evaluation — regardless of an enclosing
+        // transformed for label below the frame.
+        loopContinueLabels.addLast(null);
         emitScopedBlock(ws.body());
+        loopContinueLabels.removeLast();
         indent--;
         emitLine("}");
     }

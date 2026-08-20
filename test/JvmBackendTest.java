@@ -275,6 +275,7 @@ public class JvmBackendTest {
             testWhileLoops();
             testWhileFalseBodySkipped();
             testWhileHoistedConditionPerIteration();
+            testWhileContinueTargetsWhileInsideTransformedFor();
             testWhileLoopModuleFieldDominanceGuards();
             testWhileModuleLevelReturnRejected();
             testWhileUseBeforeDeclarationRejected();
@@ -337,6 +338,7 @@ public class JvmBackendTest {
             testEntryGateBackendE6004();
             testStringForOfScalarIteration();
             testArrayForOfRefElementShapes();
+            testCatchVarCapturedByNestedFunction();
             testBoundaryStringValidation();
             testStdlibTimeNowMillis();
             testStdlibHelperNameCollisions();
@@ -1064,6 +1066,127 @@ public class JvmBackendTest {
             "condition re-evaluates per iteration → tick ×3: " + perIter.output());
         check(perIter.output().contains("3"),
             "loop counts to 3: " + perIter.output());
+    }
+
+    /** A DEAL continue inside a while nested in a TRANSFORMED (hoisted)
+     * C-style for must target the while — the nearest enclosing loop —
+     * never the enclosing for's re-placed-update label. The transformed
+     * for pushes its cont$N label onto {@code loopContinueLabels}; the
+     * while pushes a null frame over it, so emitContinue emits plain
+     * {@code continue;} and Java resolves it to the nearest Java loop
+     * (the while). Without the frame the while-level continue emitted
+     * {@code break cont$N;} — exiting the for body, running the for
+     * update, and silently skipping the while's remaining iterations
+     * (LuaJIT prints 10 / 4, the broken JVM shape printed 5 / 2). */
+    private static void testWhileContinueTargetsWhileInsideTransformedFor()
+            throws Exception {
+        System.out.println("-- While continue inside a transformed for (javac + java) --");
+
+        // Runtime: the reviewer's probe shape — a while with a continue
+        // nested in a for whose boolean[]-read condition hoists the
+        // side-effecting reads into the transformed form.
+        ExecResult plain = compileAndRunJvm("""
+            export function test(): int {
+              let flags: boolean[] = [true, true, true, true, true];
+              let n: int = 0;
+              for (let i: int = 0; i < 5 && flags[i]; i = i + 1) {
+                let j: int = 0;
+                while (j < 2) {
+                  j = j + 1;
+                  n = n + 1;
+                  if (j === 1) { continue; }
+                }
+              }
+              return n;
+            }
+            """, "whilecontintransfor");
+        check(plain.exitCode() == 0,
+            "while-continue-in-transformed-for exits 0: " + plain.output());
+        check(plain.output().contains("10"),
+            "the while-level continue stays inside the while → 2 per for "
+                + "iteration, 5 iterations → 10 (LuaJIT parity; the broken "
+                + "shape printed 5): " + plain.output());
+
+        // Runtime: the hoisted-condition while variant — the continue
+        // must re-run the hoisted per-iteration condition side effects
+        // (tick) exactly like LuaJIT, not exit the while.
+        ExecResult hoisted = compileAndRunJvm("""
+            import * as console from "std/console"
+            function tick(): null { console.log("tick"); }
+            export function test(): int {
+              let flags: boolean[] = [true, true];
+              let n: int = 0;
+              for (let i: int = 0; i < 2 && flags[i]; i = i + 1) {
+                let j: int = 0;
+                while (j < 2 && tick() === null) {
+                  j = j + 1;
+                  n = n + 1;
+                  if (j === 1) { continue; }
+                }
+              }
+              return n;
+            }
+            """, "whilehoistedcontintransfor");
+        check(hoisted.exitCode() == 0,
+            "hoisted-while-continue-in-transformed-for exits 0: "
+                + hoisted.output());
+        check(occurrences(hoisted.output(), "tick") == 4,
+            "the continue re-enters the while head and re-runs the hoisted "
+                + "condition side effects → tick ×4: " + hoisted.output());
+        check(hoisted.output().contains("4"),
+            "the hoisted while counts fully → 4 (the broken shape printed "
+                + "2): " + hoisted.output());
+
+        // Emission shape: the for-level continue still routes to the
+        // re-placed-update label, the while-level continue stays a plain
+        // Java continue targeting the while, and the while body keeps the
+        // loopCond-wrapped condition.
+        Frontend f = compileFrontend("""
+            export function test(): int {
+              let flags: boolean[] = [true, true, true, true, true];
+              let n: int = 0;
+              for (let i: int = 0; i < 5 && flags[i]; i = i + 1) {
+                if (i === 2) { continue; }
+                let j: int = 0;
+                while (j < 2) {
+                  j = j + 1;
+                  n = n + 1;
+                  if (j === 1) { continue; }
+                }
+              }
+              return n;
+            }
+            """, "jvmtest-whilecont-transfor.deal");
+        check(f.errors().isEmpty(),
+            "while-continue-transformed-for probe frontend clean: "
+                + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-whilecont-transfor.deal", "main");
+            check(!res.hasErrors(),
+                "while-continue-transformed-for probe codegen clean: "
+                    + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains("break cont$0;"),
+                    "the for-level continue still routes through the "
+                        + "re-placed-update label");
+                check(occurrences(res.source(), "break cont$0;") == 1,
+                    "exactly one label-routed continue (the for-level "
+                        + "one) — the while-level continue is not one");
+                check(occurrences(res.source(), "continue;") == 1,
+                    "exactly one plain `continue;` — the while-level one: "
+                        + occurrences(res.source(), "continue;"));
+                int whileIdx =
+                    res.source().indexOf("while (loopCond((j < 2L))) {");
+                int contIdx = res.source().indexOf("continue;");
+                check(whileIdx >= 0 && contIdx > whileIdx,
+                    "the plain `continue;` sits inside the while body "
+                        + "(index " + contIdx + " after " + whileIdx + ")");
+                check(res.source().contains("while (loopCond((j < 2L))) {"),
+                    "the while body keeps the loopCond-wrapped condition");
+            }
+        }
     }
 
     /** Function-body module-field dominance guards walk through while
@@ -2784,6 +2907,182 @@ public class JvmBackendTest {
                 + "for-of: " + badOrchestrator.diagnostics());
         check(!Files.exists(badOut.resolve("Refof_bad.java")),
             "no entry artifact when the ref-shape for-of is rejected");
+    }
+
+    /** A catch variable captured by a nested function inside the catch
+     * block must cell-ify exactly like a captured local or parameter
+     * (BOT-0942 finding 2). collectLocalDeclarations declares the catch
+     * variable, so the function-level capture analysis marks it captured
+     * and declareLocal registers the mapped name; emitTry then declares
+     * the final cell at the top of the catch block. Reads and writes
+     * route through e$c[0], the closure references the effectively-final
+     * cell array, and a DEAL-level reassignment of the catch variable
+     * writes the cell — LuaJIT's shared-upvalue semantics without javac's
+     * "local variables referenced from an inner class must be final or
+     * effectively final" rejection after the CLI reported success. */
+    private static void testCatchVarCapturedByNestedFunction() throws Exception {
+        System.out.println("-- Catch variable captured by a nested function (javac + java) --");
+
+        // Runtime: the reviewer's probe — a closure reading the catch
+        // variable's .code created BEFORE the catch variable is
+        // reassigned must observe the NEW value (shared upvalue).
+        ExecResult captured = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let ok: string = "no";
+              try {
+                throw { code: "E1", message: "first" };
+              } catch (e) {
+                let f: () => string = function(): string { return e.code; };
+                e = { code: "E2", message: "second" };
+                ok = f();
+              }
+              if (ok !== "E2") { console.log("bad-code"); return; }
+              console.log("catch-cell-ok");
+            }
+            """, "catchvarcapture");
+        check(captured.exitCode() == 0,
+            "captured catch variable exits 0 (javac accepted the artifact): "
+                + captured.output());
+        check(captured.output().contains("catch-cell-ok"),
+            "the closure reads the REASSIGNED catch variable's code (E2): "
+                + captured.output());
+
+        // Runtime: the same shape where the closure WRITES the catch
+        // variable and the later catch-block code reads the new value.
+        ExecResult write = compileAndRunJvm("""
+            import * as console from "std/console"
+            export function test(): null {
+              let seen: string = "no";
+              try {
+                throw { code: "E1", message: "first" };
+              } catch (e) {
+                let set: () => null = function(): null {
+                  e = { code: "E3", message: "third" };
+                };
+                set();
+                seen = e.code;
+              }
+              if (seen !== "E3") { console.log("bad-seen"); return; }
+              console.log("catch-cell-write-ok");
+            }
+            """, "catchvarwrite");
+        check(write.exitCode() == 0,
+            "closure-written catch variable exits 0: " + write.output());
+        check(write.output().contains("catch-cell-write-ok"),
+            "the closure's catch-variable write is visible to the catch "
+                + "block: " + write.output());
+
+        // Emission shape: the catch variable lowers to a final cell
+        // declared at the top of the catch block; the closure references
+        // the cell; the DEAL-level reassignment writes the cell.
+        Frontend f = compileFrontend("""
+            export function test(): null {
+              try {
+                throw { code: "E1", message: "first" };
+              } catch (e) {
+                let f: () => string = function(): string { return e.code; };
+                e = { code: "E2", message: "second" };
+              }
+            }
+            """, "jvmtest-catchvar-capture.deal");
+        check(f.errors().isEmpty(),
+            "catch-var capture probe frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-catchvar-capture.deal", "main");
+            check(!res.hasErrors(),
+                "catch-var capture probe codegen clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains(
+                        "final java.lang.RuntimeException[] e$c = { e };"),
+                    "the captured catch variable declares its final cell at "
+                        + "the top of the catch block");
+                check(res.source().contains("return __errorCode(e$c[0]);"),
+                    "the closure reads the catch variable through the cell");
+                check(res.source().contains(
+                        "e$c[0] = new DealError(\"E2\", \"second\");"),
+                    "the DEAL-level reassignment writes the cell");
+            }
+        }
+
+        // Control: a catch variable NO nested function references stays a
+        // plain catch parameter — no cell is emitted.
+        Frontend plainCatch = compileFrontend("""
+            export function test(): string {
+              let code: string = "";
+              try {
+                throw { code: "E1", message: "first" };
+              } catch (e) {
+                code = e.code;
+              }
+              return code;
+            }
+            """, "jvmtest-catchvar-plain.deal");
+        check(plainCatch.errors().isEmpty(),
+            "plain catch probe frontend clean: " + plainCatch.errors());
+        if (plainCatch.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                plainCatch.program(), plainCatch.checkResult(),
+                "jvmtest-catchvar-plain.deal", "main");
+            check(!res.hasErrors(),
+                "plain catch probe codegen clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(!res.source().contains(
+                        "final java.lang.RuntimeException[] e$c"),
+                    "an uncaptured catch variable emits no cell");
+            }
+        }
+
+        // The real orchestrator pipeline (frontend → codegen → artifacts):
+        // the captured catch-variable shape compiles with success=true and
+        // zero diagnostics, and the emitted artifacts run through javac +
+        // java printing the reassigned code.
+        writeFile("src/catchcap_main.deal", """
+            import * as console from "std/console"
+            export function main(): null { return null; }
+            export function run(): null {
+              let ok: string = "no";
+              try {
+                throw { code: "E1", message: "first" };
+              } catch (e) {
+                let f: () => string = function(): string { return e.code; };
+                e = { code: "E2", message: "second" };
+                ok = f();
+              }
+              if (ok !== "E2") { console.log("bad-code"); return; }
+              console.log("catch-cell-ok");
+            }
+            """);
+        Path catchEntry =
+            tmpDir.resolve("src/catchcap_main.deal").toAbsolutePath();
+        Path catchOut = tmpDir.resolve("build/catchcap");
+        List<Path> catchRoots =
+            List.of(tmpDir.resolve("src").toAbsolutePath());
+        CompilationOrchestrator catchOrchestrator = new CompilationOrchestrator(
+            catchEntry, catchOut, false, false, false, Backend.JVM,
+            (DealConfig) null, catchRoots,
+            Path.of(".").toAbsolutePath().normalize());
+        boolean catchSuccess = catchOrchestrator.compile();
+        check(catchSuccess,
+            "captured catch-variable program compiles through the "
+                + "orchestrator: " + catchOrchestrator.diagnostics());
+        check(catchOrchestrator.diagnostics().isEmpty(),
+            "zero diagnostics for the captured catch-variable program: "
+                + catchOrchestrator.diagnostics());
+        check(Files.exists(catchOut.resolve("Catchcap_main.java")),
+            "the captured catch-variable entry module writes its artifact");
+        if (catchSuccess
+                && Files.exists(catchOut.resolve("Catchcap_main.java"))) {
+            ExecResult exec = runJvmArtifacts(catchOut,
+                parseProgram("export function run(): null { return null; }"),
+                "Catchcap_main");
+            check(exec.exitCode() == 0
+                    && exec.output().contains("catch-cell-ok"),
+                "the orchestrator artifacts run and print the reassigned "
+                    + "code: " + exec.output());
+        }
     }
 
     /**
