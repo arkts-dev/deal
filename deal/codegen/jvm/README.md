@@ -27,8 +27,8 @@ Supported (real semantics, spec JVM value mapping):
 | template literals | plain Java string concatenation in source order (`("a" + expr + "b")`) — checker-typed `string` interpolations, empty literal parts elided, an empty interpolation kept, a template with no interpolations emitted as its literal |
 | `null` | `void` returns / `Void` locals and params; `null === null` is `true`, `z === null`/`!==` emit Java `==`/`!=` (spec §Value equality) |
 | functions | `static` methods of the generated module class: parameters, return values, direct calls, nested calls, and direct self-recursion (a function body calling itself — the module-level use-before-declaration guard applies only to load-time call sites, never to function-body call sites) |
-| `class C { ... }` | a generated nested static class `$C_<name>` extending the emitted `$Base` identity holder (spec v1.1 §Classes: nominal record, no methods, no constructors — the only callables are the module functions above). Object-literal construction in a class-typed context emits `new $C_<name>(args)` with declaration-order constructor arguments: provided field values evaluate left-to-right in literal order and defaults are evaluated per construction (spec §Construction). Required-present primitive fields (`int`/`number`/`boolean`/`string`) and required-present nullable primitive/class fields (`f: T | null`, defaulting to the DEAL null) are supported; field reads/writes emit direct accesses (ISSUE-0108 adds the nullable forms) |
-| `table` | a minimal ordered string-key map (`$T` over `java.lang.LinkedHashMap<String,Object>`), emitted for the slice's one untyped boundary: a table field read in a contextual target type. Class-typed reads run the runtime nominal check (`$check<C>` — `instanceof` plus the identity string, E8001 "expected instance of @mod/C, got …" for a wrong-class value, "expected class instance" for a non-class value, mirroring LuaJIT's `__rt.check_type` class branch); table-typed reads run the fixed `$check$Table` helper (the extra raw `$` keeps it collision-free against a local class named `Table`, whose nominal-check helper spells `$checkTable`). Table literals chain `put` calls in literal order. Every other class-typed boundary (locals, parameters, returns, field reads/writes, construction) is provably typed by the JVM's static type system, which spec-v1.1 §JVM backend contract explicitly permits to make typed-boundary checks redundant |
+| `class C { ... }` | a generated nested static class `$C_<name>` extending the emitted `$Base` identity holder (spec-v1.2 §Classes: nominal record, no methods, no constructors — the only callables are the module functions above). Object-literal construction in a class-typed context emits `new $C_<name>(args)` with declaration-order constructor arguments: provided field values evaluate left-to-right in literal order and defaults are evaluated per construction (spec §Construction). Required-present primitive fields (`int`/`number`/`boolean`/`string`) and required-present nullable primitive/class fields (`f: T | null`, defaulting to the DEAL null) are supported; field reads/writes emit direct accesses (ISSUE-0108 adds the nullable forms) |
+| `table` | a minimal ordered string-key map (`$T` over `java.lang.LinkedHashMap<String,Object>`), emitted for the slice's one untyped boundary: a table field read in a contextual target type. Class-typed reads run the runtime nominal check (`$check<C>` — `instanceof` plus the identity string, E8001 "expected instance of @mod/C, got …" for a wrong-class value, "expected class instance" for a non-class value, mirroring LuaJIT's `__rt.check_type` class branch); table-typed reads run the fixed `$check$Table` helper (the extra raw `$` keeps it collision-free against a local class named `Table`, whose nominal-check helper spells `$checkTable`). Table literals chain `put` calls in literal order. Every other class-typed boundary (locals, parameters, returns, field reads/writes, construction) is provably typed by the JVM's static type system, which spec-v1.2 §JVM backend contract explicitly permits to make typed-boundary checks redundant |
 | object literals | class construction when the contextual target is a class type (the checker's `checkClassConstruction`), a table literal otherwise (`table` target or no target) |
 | `let` locals / module fields | locals (shadowing disambiguated `$n`) / `static` fields |
 | `if`/`else if`/`else`, `return`, assignment, direct calls | plain Java control flow |
@@ -36,7 +36,7 @@ Supported (real semantics, spec JVM value mapping):
 | standalone expression statements (`x + 1;`) | lowered to a dummy-local declaration (`long __ignored = intAdd(x, 1L);`) so they are genuinely evaluated — an int overflow there is an observable E8004, as under LuaJIT |
 | `int()` / `number()` intrinsics | `intFromNumber` / `numberFromInt` helpers (E8001/E8004) |
 | `import * as c from "std/console"` | `c.log` → `java.lang.System.out.println`, `c.error` → `java.lang.System.err.println` |
-| `import * as str from "std/string"` (ISSUE-0097) | `length` → the emitted `__strLength` helper (UTF-8 byte count — DEAL strings are UTF-8 byte sequences, spec-v1.1 §String escapes and UTF-8, and LuaJIT's `#s` counts those bytes); `substring` → the emitted `__strSubstring` helper (LuaJIT's `string.sub(s, start + 1, end)` corrections: each bound clamps to [1, n] after a negative adjustment `pos += n+1`, `start > end` yields the empty string); `contains`/`startsWith`/`endsWith` → plain-text `java.lang.String.contains/startsWith/endsWith` (byte-wise and UTF-16-wise matching coincide for valid UTF-8, and Lua pattern magic characters are literal); `replace` → the emitted `__strReplace` helper (every plain-text occurrence; an empty `old` returns `s` unchanged, matching the LuaJIT guard before gsub); `split` → the emitted `__strSplit` helper returning `__StringArray` (LuaJIT's semantics: an empty `s` yields the empty array whatever the separator, an empty separator splits into individual UTF-8 bytes like `s:sub(i, i)` for `i = 1..#s`, and every occurrence of `sep` delimits a part with the trailing remainder — even empty — appended); `trim` → the emitted `__strTrim` helper (Lua's `%s` whitespace set exactly: space, tab, newline, vertical tab, form feed, carriage return) |
+| `import * as str from "std/string"` (ISSUE-0097) | `length` → the emitted `__strLength` helper (`s.codePointCount(0, s.length())` — Unicode scalar-value count; DEAL v1.2 strings are Unicode scalar-value sequences, spec-v1.2 §String escapes and Unicode, and the v1.2 std/string counts scalar values via `utf8_next` walks); `substring` → the emitted `__strSubstring` helper (LuaJIT's `string.sub(s, start + 1, end)` corrections on scalar-value positions: each bound clamps to [1, n] after a negative adjustment `pos += n+1`, `start > end` yields the empty string, and `offsetByCodePoints` maps scalar positions to UTF-16 indexes); `contains`/`startsWith`/`endsWith` → plain-text `java.lang.String.contains/startsWith/endsWith` (whole-string plain-text matching — UTF-16-wise and scalar-value-wise matching coincide for valid strings, and Lua pattern magic characters are literal); `replace` → the emitted `__strReplace` helper (every plain-text occurrence; an empty `old` returns `s` unchanged, matching the LuaJIT guard before gsub); `split` → the emitted `__strSplit` helper returning `__StringArray` (LuaJIT's semantics: an empty `s` yields the empty array whatever the separator, an empty separator splits into individual Unicode scalar values — one `string` per code point via `codePointAt`/`charCount`, in order — and every occurrence of `sep` delimits a part with the trailing remainder — even empty — appended); `trim` → the emitted `__strTrim` helper (Lua's `%s` whitespace set exactly: space, tab, newline, vertical tab, form feed, carriage return) |
 | `import * as math from "std/math"` (ISSUE-0097) | `floor`/`ceil`/`absNumber` → `java.lang.Math.floor/ceil/abs`; `minInt`/`maxInt` → `java.lang.Math.min/max` (the same IEEE 754 semantics as LuaJIT's `math.*`); `absInt` → `checkInt(java.lang.Math.abs(x))` exactly like LuaJIT's `check_int(math.abs(x))`; `sqrt` → the emitted `__mathSqrt` helper (negative input → E8001 "sqrt of negative number", matching std/math.lua; NaN passes through) |
 | `import * as time from "std/time"` (ISSUE-0097) | `nowMillis` → `(java.lang.System.currentTimeMillis() / 1000L) * 1000L` — LuaJIT's `os.time() * 1000`: epoch milliseconds truncated to whole seconds, never the raw `System.currentTimeMillis()` (whose sub-second precision would diverge from the reference implementation) |
 | `int[]` / `number[]` / `string[]` / `boolean[]` | mutable wrapper classes `__IntArray` / `__NumberArray` / `__StringArray` / `__BooleanArray` holding a primitive Java array (the spec's "specialized primitive array wrapper") — literals `new __IntArray(new long[]{…})`, index reads via the emitted `__intArrayRead`-family helpers (typed read sites raise E8001 past the end; `===`/`!==` operand positions box the read — `__intArrayReadBoxed` family, null past the end — and compute the nil comparison per the read-site contract), element writes via the `__intArrayWrite`-family helpers, `.length` via `((long) xs.data.length)`. The wrapper identity is stable across appends (a write at `i == length` grows the wrapped storage in place), so aliases observe every write exactly like LuaJIT's shared 1-based table |
@@ -86,7 +86,7 @@ exported names from its declaration; missing declared exports are
 load-time errors". Extra host methods are never looked up (structurally
 dropped — "extra host exports are ignored").
 
-Wrapper behavior per declared signature (spec-v1.1 §JVM value mapping —
+Wrapper behavior per declared signature (spec-v1.2 §JVM value mapping —
 int → `long`, number → `double`, boolean → `boolean`, string →
 `java.lang.String`, `T | null` → the boxed reference, null → Java null):
 
@@ -103,7 +103,7 @@ int → `long`, number → `double`, boolean → `boolean`, string →
   out-of-safe-range int → E8004 (checkInt);
 - async exports must return a `java.util.concurrent.CompletableFuture`
   — the backend async operation the await lowering accepts
-  (spec-v1.1 §Async operation semantics permits blocking calls as a
+  (spec-v1.2 §Async operation semantics permits blocking calls as a
   JVM lowering) — anything else → E8010 "host async function must
   return an async operation"; the wrapper joins the operation and
   checks the completion value against the declared return descriptor
@@ -129,7 +129,7 @@ fixtures; `test/BackendConformanceTest` fails a fixture whose
 parser/checker/module-discovery yields no compile, whose codegen leaves
 no `.java` artifact, or whose JVM execution is bypassed):
 
-| Host ABI form (spec-v1.1 §Host ABI / §JVM value mapping) | Test covering it |
+| Host ABI form (spec-v1.2 §Host ABI and interoperability / §JVM value mapping) | Test covering it |
 |---|---|
 | declared host export exposure (load-time-validated wrappers; the host object exposes every declared name) | `jvm-host-export-presence` (load-time `info()` call + `add(2,3)` = 5); emission pins in `JvmBackendTest.testHostAbiSlice` (`$host$log$add$m`, `Class.forName("HostLog")`, the `(int,int)->int` descriptor) |
 | missing declared export → load-time E8011 | `jvm-host-missing-export`; `JvmBackendTest.testHostAbiSlice` (javac passes, `java` raises `DEAL_ERROR_CODE: E8011`) |
@@ -667,7 +667,7 @@ fixture whose codegen or JVM execution is bypassed):
   the RHS value check fires before the bounds check, per spec
   §Operational semantics rule 3: "Evaluate assignment RHS before LHS
   write check"). The number/string/boolean element checks are proven
-  redundant by the JVM static type system (spec-v1.1 §JVM backend
+  redundant by the JVM static type system (spec-v1.2 §JVM backend
   contract permits proving typed-boundary checks redundant).
 - **Read evaluation order** (spec §Operational semantics rule 1:
   receiver before index) — `jvm-arr-eval-order-read` (get prints "arr",
@@ -784,7 +784,7 @@ fixture whose codegen or JVM execution is bypassed):
   Provided field values evaluate left-to-right in literal order
   (materialized ahead of the constructor call, whose arguments run in
   declaration order with omitted fields filled by their default
-  expressions — spec v1.1 §Construction: defaults are evaluated per
+  expressions — spec-v1.2 §Construction: defaults are evaluated per
   construction). Two constructions of a class with a defaulted field
   yield independent instances (pinned by
   `jvm-class-fresh-instances-per-construction`). Construction before the
@@ -833,11 +833,10 @@ fixture whose codegen or JVM execution is bypassed):
   slice (locals, parameters, returns, field reads/writes, construction)
   is proven by the JVM static type system — the redundancy the spec's
   JVM backend contract explicitly permits.
-- **Methods: spec v1.1 classes have none.** §Classes declares a sealed
+- **Methods: spec-v1.2 classes have none.** §Classes declares a sealed
   record shape with "no inheritance, no methods, no constructors", so
   the class body contributes no callable surface; the only callables are
   the module functions covered by the ISSUE-0093 function fixtures.
-  (The v1.2 draft is not normative for this backend.)
 - **Tables stay minimal.** A table is an ordered string-key map over
   `java.lang.Object`; literals chain `put` calls so property values
   evaluate in literal order with the existing hoisting machinery
@@ -997,7 +996,7 @@ import), `@jsonable`.
     running the receiver). Both write-order forms route the receiver
     and the RHS through `emitOperandsInOrder`, the same
     materialization the array-write branch uses.
-    Methods: spec v1.1 §Classes declares the class body
+    Methods: spec-v1.2 §Classes declares the class body
     "no methods, no constructors", so the slice's method surface is
     empty by construction — the only callables are the module functions
     the ISSUE-0093 fixtures cover.

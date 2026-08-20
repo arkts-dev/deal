@@ -3,7 +3,7 @@
 Mapping from DEAL runtime type descriptor strings (spec format) to
 LuaJIT and JVM runtime representations.
 
-**Authority**: `docs/spec-v1.1.md` §Runtime type descriptor format,
+**Authority**: `docs/spec-v1.2.md` §Runtime type descriptor format,
 §LuaJIT value mapping, §JVM value mapping.
 
 **Format**: All descriptors in this table use the spec's
@@ -64,7 +64,7 @@ retired with v1.1.
 | DEAL Type Descriptor (spec format) | LuaJIT Representation | JVM Representation | Notes |
 |---|---|---|---|
 | `?null` | INVALID — Nullable(null) is forbidden by spec | — | Spec constraint: inner must not be `null` |
-| `??T` | INVALID — inner must not be another NullableDescriptor | — | Spec constraint (`docs/spec-v1.1.md` §Runtime type descriptor format); enforced in the compiler by the `Type.Nullable` constructor invariant (`deal/types/Type.java:66-68` → E3005), so no producer can emit it (cycle 6); guard fixture `frontend/types/chained-nullable-e3005.deal` |
+| `??T` | INVALID — inner must not be another NullableDescriptor | — | Spec constraint (`docs/spec-v1.2.md` §Runtime type descriptor format); enforced in the compiler by the `Type.Nullable` constructor invariant (`deal/types/Type.java:66-68` → E3005), so no producer can emit it (cycle 6); guard fixture `frontend/types/chained-nullable-e3005.deal` |
 | `?boolean` | `__NULL` sentinel or Lua boolean | `null` reference or `Boolean` | [specified, not yet implemented] |
 | `?int` | `__NULL` sentinel or Lua number | `null` reference or `Long` | [specified, not yet implemented] |
 | `?number` | `__NULL` sentinel or Lua number | `null` reference or `Double` | [specified, not yet implemented] |
@@ -112,7 +112,7 @@ retired with v1.1.
 
 ## Descriptor grammar (normative)
 
-From `docs/spec-v1.1.md` §Runtime type descriptor format:
+From `docs/spec-v1.2.md` §Runtime type descriptor format:
 
 ```
 RuntimeTypeDescriptor ::=
@@ -160,7 +160,7 @@ ParamDescriptor ::=
 
 **Notes**:
 - Parsing drift (ISSUE-0082, cycle 3): `runtime.lua`'s `parse_descriptor` adopts order P — `?T` prefix → async strip + function branch → `|null` end-anchored suffix → `[]` suffix → `[T]` prefix → class → primitives → bare class name. Any future descriptor form must keep (a) the top-level arrow recognized before suffix stripping and (b) the `?`/`[T]` prefixes recognized before the function branch, or function descriptors with nullable/array returns and function-involving arrays regress. Emission must never conflate `Nullable(Func)` with `Func(ret=Nullable)` or `Array(Func)`-family with `Func(ret=Array)`-family — the `?F`/`[...]` emission invariants are the guard.
-- Rest-arm removal (DEAL v1.2): function descriptors have no rest arm.  No v1.2 producer emits one — `Type.Func` carries no rest field and the IR dumper and backends emit fixed-list parameter descriptors — so the v1.1 `...T[]` / `...[T]` dialect is no longer emitted.  The shipped runtime still tolerates the legacy dialect: `runtime.lua` `parse_descriptor` accepts a `...`-prefixed parameter entry and `from_lua_function` adapts rest arguments.  That tolerance exists for pre-v1.2 descriptor strings only; v1.2 sources cannot produce a rest arm (the `...` rest-parameter syntax is rejected at parse time), so no newly emitted descriptor contains `...`.
+- Rest-arm removal (DEAL v1.2): function descriptors have no rest arm.  No v1.2 producer emits one — `Type.Func` carries no rest field and the IR dumper and backends emit fixed-list parameter descriptors — so the v1.1 `...T[]` / `...[T]` dialect is no longer emitted.  The v1.2 runtime retired rest tolerance as well: `from_lua_function` enforces exact arity (no rest arm exists, so extra arguments raise E8010), and a legacy `...`-prefixed parameter entry is not special — `parse_descriptor` splits it out as an ordinary parameter entry that falls through to the unknown (class-name fallback) descriptor and fails type checks like any unknown descriptor (`test_runtime.lua` pins both shapes: "from_lua_function legacy rest descriptor enforces exact arity" and "from_lua_function legacy rest descriptor wrong type errors with E8010").
 - Hand-written `?T[]` family (cycle 4): under order P `?` binds first, so `?string[]`/`?int[]` read `Nullable(Array(T))`; `Array(Nullable(T))` is spelled `T|null[]` (legacy dialect, emitted) / `[?T]` (spec). No producer emits `?T[]`.
 - Nested nullables (cycle 6): the `??T` family has no parsing rule and needs none — `Type.Nullable` construction rejects Nullable inners (`deal/types/Type.java:66-68`) and the checker reports E3005, so no producer can emit it; `frontend/types/chained-nullable-e3005.deal` guards the constructor invariant.
 - The `Error` builtin class is a nominal type with special runtime representation; it is not a primitive but is handled as a standalone builtin in the descriptor grammar.

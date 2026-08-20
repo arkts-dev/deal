@@ -11,7 +11,7 @@ import java.util.List;
  * original DEAL source {@link Span}s during codegen, and produces a JSON
  * sidecar file after codegen completes.
  *
- * <p>Format per {@code fs/docs/spec-v1.1.md} §Source maps and debugging:
+ * <p>Format per {@code docs/spec-v1.2.md} §Source maps and debugging:
  * <pre>{@code
  * {
  *   "version": 1,

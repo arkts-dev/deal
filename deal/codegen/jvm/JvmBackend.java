@@ -183,8 +183,8 @@ import java.util.Set;
  * runtime-check the stored value against the element type — int
  * elements route through {@code checkInt} ({@code E8004}); the JVM
  * static type system proves the number/string/boolean element checks
- * redundant, which spec-v1.1 §JVM backend contract permits. Evaluation
- * order follows spec-v1.1 §Operational semantics: the receiver, the
+ * redundant, which spec-v1.2 §JVM backend contract permits. Evaluation
+ * order follows spec-v1.2 §Operational semantics: the receiver, the
  * index, and the assignment RHS all evaluate (left to right) before the
  * LHS write check — the emitted write is a helper call whose Java
  * arguments evaluate left to right before the helper performs the
@@ -324,9 +324,7 @@ import java.util.Set;
  * with E6000 instead of emitting an illegal forward reference.
  *
  * <p>JVM value mapping follows the spec's JVM backend contract
- * ({@code docs/spec-v1.1.md} §JVM value mapping / §JVM backend contract —
- * the current normative spec; {@code docs/spec-v1.2.md} is a future
- * draft whose grammar is not normative for this backend):
+ * ({@code docs/spec-v1.2.md} §JVM value mapping / §JVM backend contract):
  * {@code int → long},
  * {@code number → double}, {@code boolean → boolean}, {@code string → String},
  * {@code null → void}/{@code Void}. The JVM's static type system proves typed
@@ -369,7 +367,7 @@ import java.util.Set;
  * see below). Every other class/nullable-typed
  * boundary in the slice
  * (locals, parameters, returns, field reads/writes, construction) is
- * provably typed by the JVM's static type system, which spec-v1.1
+ * provably typed by the JVM's static type system, which spec-v1.2
  * §JVM backend contract explicitly permits to make typed-boundary checks
  * redundant.
  *
@@ -1843,7 +1841,7 @@ public final class JvmBackend {
         emitLine("// ---- JVM host ABI runtime support (ISSUE-0100) ----");
         emitLine("// Load-time presence check for one declared host export: the host");
         emitLine("// module class's static method must exist with the descriptor-derived");
-        emitLine("// parameter classes (spec-v1.1 \u00a7Host ABI: the host module runtime");
+        emitLine("// parameter classes (spec-v1.2 \u00a7Host ABI and interoperability: the host module runtime");
         emitLine("// object must expose every declared export; a missing declared export");
         emitLine("// is a load-time error). Extra host methods are never looked up.");
         emitLine("static java.lang.reflect.Method __hostMethod(java.lang.Class<?> h, java.lang.String module, java.lang.String name, java.lang.String desc, java.lang.Class<?>[] params) {");
@@ -1872,7 +1870,7 @@ public final class JvmBackend {
         emitLine("// Sync returns raise E8010 on a mismatch (host-module-abi D3 case 2);");
         emitLine("// async completion values raise E8001 at the await site (the LuaJIT");
         emitLine("// await-site completion check). Java null is the DEAL null sentinel");
-        emitLine("// (spec-v1.1 \u00a7JVM value mapping): it passes only where the declared");
+        emitLine("// (spec-v1.2 \u00a7JVM value mapping): it passes only where the declared");
         emitLine("// descriptor permits it (?T or null), and every other context rejects");
         emitLine("// it — the spec forbids exposing Java null as DEAL null across an");
         emitLine("// untyped boundary without validation.");
@@ -1972,7 +1970,7 @@ public final class JvmBackend {
         emitLine();
         emitLine("// ---- DEAL primitive array runtime support (ISSUE-0094) ----");
         emitLine("// int[]/number[]/string[]/boolean[] map to mutable wrapper classes — the");
-        emitLine("// spec's specialized primitive array wrapper (spec-v1.1 §JVM value mapping).");
+        emitLine("// spec's specialized primitive array wrapper (spec-v1.2 §JVM value mapping).");
         emitLine("// The wrapper identity is stable across appends (writing at i == length grows");
         emitLine("// the wrapped storage in place), so aliases observe every write exactly like");
         emitLine("// LuaJIT's shared 1-based table. Every name here uses the __ prefix, which is");
@@ -2020,10 +2018,10 @@ public final class JvmBackend {
         emitLine("// element (spec §Array writes); the stored value is runtime-checked against the");
         emitLine("// element type — int elements route through checkInt (E8004, like LuaJIT's");
         emitLine("// check_int at the write), while the JVM static type system proves the");
-        emitLine("// number/string/boolean element checks redundant (spec-v1.1 §JVM backend");
+        emitLine("// number/string/boolean element checks redundant (spec-v1.2 §JVM backend");
         emitLine("// contract). The write check runs after the value expression has been");
         emitLine("// evaluated — the helper call's Java arguments evaluate left to right before");
-        emitLine("// the bounds check, per spec-v1.1 §Operational semantics rule 3.");
+        emitLine("// the bounds check, per spec-v1.2 §Operational semantics rule 3.");
         emitLine("static long __intArrayWrite(__IntArray a, long i, long v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); v = checkInt(v); if (i == (long) a.data.length) { long[] nd = new long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine("static double __numberArrayWrite(__NumberArray a, long i, double v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { double[] nd = new double[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine("static java.lang.String __stringArrayWrite(__StringArray a, long i, java.lang.String v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
@@ -2157,7 +2155,7 @@ public final class JvmBackend {
      * emitted {@code $check(descriptor, value)} helper that every typed
      * boundary the JVM type system cannot prove routes through, with the
      * expected type spelled as its spec {@code RuntimeTypeDescriptor}
-     * ({@code docs/spec-v1.1.md} §Runtime type descriptor format). A
+     * ({@code docs/spec-v1.2.md} §Runtime type descriptor format). A
      * {@code ?} prefix applies {@code check_nullable} (the DEAL null
      * passes through); the primitive branches carry the exact acceptance
      * semantics of the retired per-kind helpers (check_int parity for
@@ -2185,7 +2183,7 @@ public final class JvmBackend {
         emitLine();
         emitLine("// ---- Shared descriptor-driven runtime-check seam (ISSUE-0110) ----");
         emitLine("// One helper, one descriptor convention (spec RuntimeTypeDescriptor,");
-        emitLine("// docs/spec-v1.1.md): every boundary the JVM type system cannot");
+        emitLine("// docs/spec-v1.2.md): every boundary the JVM type system cannot");
         emitLine("// prove routes through $check(descriptor, value). A ? prefix is");
         emitLine("// check_nullable: the DEAL null (Java null here) passes through.");
         emitLine("static java.lang.Object $check(java.lang.String descriptor, java.lang.Object v) {");
@@ -2343,7 +2341,7 @@ public final class JvmBackend {
         emitLine("// ---- Host module bindings (ISSUE-0100 JVM host ABI slice) ----");
         emitLine("// A host module is a Java class named by the module path");
         emitLine("// (host/http -> HostHttp) whose static methods implement the");
-        emitLine("// declared function exports (spec-v1.1 §JVM value mapping:");
+        emitLine("// declared function exports (spec-v1.2 §JVM value mapping:");
         emitLine("// int -> long, number -> double, boolean -> boolean, string ->");
         emitLine("// java.lang.String, T | null -> the boxed reference, null -> Java");
         emitLine("// null). Return values arrive as java.lang.Object across the");
@@ -2709,7 +2707,7 @@ public final class JvmBackend {
      * so the later function-value (ISSUE-0098) and async (ISSUE-0099)
      * slices — and the unit tests — consume exactly one spelling. Maps a
      * {@link Type} to the spec's {@code RuntimeTypeDescriptor} string
-     * ({@code docs/spec-v1.1.md} §Runtime type descriptor format):
+     * ({@code docs/spec-v1.2.md} §Runtime type descriptor format):
      * {@code ?T} nullables, {@code [T]} arrays, {@code @module/Name}
      * classes (bare name only for an empty module path — the same
      * spelling {@code IrDumper} produces), {@code (params)->ret} function
@@ -3200,7 +3198,7 @@ public final class JvmBackend {
 
     private void emitFunction(FunctionDeclaration fd, boolean exported) {
         // ISSUE-0100: async function declarations are supported through the
-        // blocking lowering the spec permits for JVM backends (spec-v1.1
+        // blocking lowering the spec permits for JVM backends (spec-v1.2
         // §Async operation semantics: "A JVM backend may implement async
         // lowering with virtual threads, blocking calls, futures, or
         // explicit state machines"). The body emits as a plain static
@@ -6409,7 +6407,7 @@ public final class JvmBackend {
             }
             case Type.Nullable n -> {
                 // T | null maps to the boxed reference representation
-                // (spec-v1.1 §JVM value mapping: "nullable JVM reference
+                // (spec-v1.2 §JVM value mapping: "nullable JVM reference
                 // or tagged nullable wrapper for primitives"): boxed
                 // java.lang.Long/Double/Boolean for the numeric
                 // primitives, the (already-nullable) java.lang.String
