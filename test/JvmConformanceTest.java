@@ -71,24 +71,26 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <h2>The skip registry (ISSUE-0102)</h2>
  *
  * <ul>
- *   <li><b>ISSUE-0099</b> — the async-await corpus (async function
- *       values, cross-module async flow, async error propagation): the
- *       JVM async-await slice owns these shapes.</li>
- *   <li><b>ISSUE-0101</b> — the @jsonable corpus plus every test whose
- *       observable behavior requires the {@code std/json} boundary: the
- *       JVM @jsonable / std-json slice owns these shapes.</li>
- *   <li><b>ISSUE-0100</b> — host-ABI corpus fixtures whose host
- *       fixtures declare surfaces the landed JVM host ABI slice does
- *       not support (class exports, array parameters/returns,
- *       function-typed parameters/returns, and the Lua pre-wrapped
- *       export form). The JVM host-boundary conformance for the
- *       supported shapes is pinned by
- *       {@code test/conformance/fixtures/jvm-host-abi-slice.json};
- *       these corpus fixtures keep exercising the LuaJIT host loader,
- *       whose host implementations are Lua modules.</li>
- *   <li><b>ISSUE-0110</b> — cross-module function-value flow (an
- *       imported wrapper crossing a module boundary): the per-module
- *       wrapper classes cannot be named by the importing module.</li>
+ *   <li><b>JVM-GAP-STDJSON</b> — std/json JVM boundary:
+ *       {@code JvmBackend} E6000 at {@code import std/json}
+ *       (json.parse/stringify require table values the JVM slice does
+ *       not support).</li>
+ *   <li><b>JVM-GAP-JSONABLE-RESIDUAL</b> — residual @jsonable JVM
+ *       defects: error-typed member access/NEQ E6000; optional-nullable
+ *       {@code fromJson} divergence; nested-array {@code fromJson}
+ *       javac collision; table-field nested arrays E8001.</li>
+ *   <li><b>JVM-GAP-HOST-ABI-SHAPES</b> — JVM host ABI unsupported
+ *       declared shapes: host class exports, array/function-typed
+ *       parameters and returns (E6000), and the Lua pre-wrapped export
+ *       form.</li>
+ *   <li><b>JVM-GAP-XMOD-FNVALUE</b> — cross-module function values:
+ *       imported call results and module aliases used as function
+ *       values (E6000).</li>
+ *   <li><b>JVM-GAP-XMOD-ARRAY</b> — imported async array return:
+ *       per-module array wrapper classes cannot cross module boundaries
+ *       (javac-rejected artifact; a missed E6000 guard).</li>
+ *   <li><b>JVM-GAP-ASYNC-FNEXPR</b> — async function expressions and
+ *       block-level async functions (E6000).</li>
  * </ul>
  *
  * <h2>Gates</h2>
@@ -110,182 +112,165 @@ public class JvmConformanceTest {
     // =========================================================================
 
     /** One skip-registry entry: corpus-relative path, documented reason,
-     * and follow-up issue id. */
-    private record SkipEntry(String path, String reason, String issue) {}
+     * and gap id. */
+    private record SkipEntry(String path, String reason, String gapId) {}
 
     /** The complete skip registry. Every entry must name an on-disk
      * runtime-classified corpus test; the runner validates the registry
      * against the corpus so a stale entry fails the run. */
     private static final Map<String, SkipEntry> SKIPS = new LinkedHashMap<>();
     static {
-        // ---- ISSUE-0099: the async-await corpus ----
-        for (String name : List.of(
-                "async-await-statement", "async-cross-module",
-                "async-error-propagation", "async-fn-decl", "async-fn-expr",
-                "async-function-value", "async-if-branching",
-                "async-import-await", "async-multiple-await",
-                "async-multiple-awaits", "async-multi-sync-complete",
-                "async-nested", "async-no-await", "async-nullable-return",
-                "async-simple-await", "async-sync-complete",
-                "async-throw-catch", "async-type-propagation",
-                "async-with-params", "await-completion-check",
-                "awaited-error-caught-by-caller", "await-in-call-arg",
-                "await-in-if-condition", "await-in-loop-body",
-                "await-returning-array-indexed",
-                "await-returning-class-member", "immediate-async-await",
-                "imported-async-function-value", "multiple-await-state",
-                "multiple-await-state-expanded",
-                "nested-await-argument-runtime", "nested-await-arguments")) {
-            skip("backend-runtime/async-await/" + name + ".deal",
-                "requires async/await operations (async function values, "
-                    + "cross-module async flow, async error propagation)",
-                "ISSUE-0099");
-        }
-        skip("backend-runtime/runtime-errors/async-error-code-through-module.deal",
-            "requires cross-module async error propagation through an "
-                + "imported async function", "ISSUE-0099");
-        skip("backend-runtime/source-location/async-error-source.deal",
-            "requires an async function whose thrown error crosses an await",
-            "ISSUE-0099");
-        skip("backend-runtime/source-location-precision/imported-async-error-source.deal",
-            "requires an imported async function whose thrown error crosses "
-                + "a module boundary and an await", "ISSUE-0099");
-
-        // ---- ISSUE-0101: the @jsonable corpus and the std/json boundary ----
-        for (String name : List.of(
-                "fromjson-extra-key-runtime", "jsonable-complex-roundtrip",
-                "jsonable-cross-module",
-                "jsonable-cross-module-nested-class-array",
-                "jsonable-fromjson", "jsonable-fromjson-extra-keys",
-                "jsonable-fromjson-null", "jsonable-helper-exports",
-                "jsonable-local-nested-class-array",
-                "jsonable-malformed-input",
-                "jsonable-minimal-nested-class-array-access",
-                "jsonable-nested", "jsonable-nested-array-extra-key",
-                "jsonable-nested-array-malformed-element",
-                "jsonable-optional-nullable",
-                "jsonable-optional-nullable-nested-class",
-                "jsonable-roundtrip", "jsonable-table-field-nested-arrays",
-                "jsonable-tojson", "jsonable-tojson-omits-missing",
-                "nested-array-roundtrip",
-                "optional-nullable-three-state-roundtrip",
-                "table-field-roundtrip")) {
-            skip("backend-runtime/jsonable/" + name + ".deal",
-                "requires @jsonable code generation and the std/json "
-                    + "boundary", "ISSUE-0101");
-        }
-        skip("backend-runtime/runtime-errors/json-stringify-function-e8001.deal",
-            "requires the std/json boundary (json.stringify of a "
-                + "function-holding table)", "ISSUE-0101");
-        skip("backend-runtime/source-location/json-error-source.deal",
-            "requires the std/json boundary (json.parse of a malformed "
-                + "document)", "ISSUE-0101");
-        skip("backend-runtime/source-location-precision/class-param-error-source.deal",
-            "requires the std/json boundary (a parsed dynamic class value)",
-            "ISSUE-0101");
-        skip("backend-runtime/type-system/dynamic-array-element-e8003.deal",
-            "requires the std/json boundary (json.parse of a mixed array)",
-            "ISSUE-0101");
-        skip("backend-runtime/class-runtime-errors/dynamic-bad-class-param-e8001.deal",
-            "requires the std/json boundary (json.parse builds the dynamic "
-                + "class value)", "ISSUE-0101");
-        skip("backend-runtime/class-runtime-errors/dynamic-bad-class-return-e8001.deal",
-            "requires the std/json boundary (json.parse builds the dynamic "
-                + "class value)", "ISSUE-0101");
-        skip("backend-runtime/class-runtime-errors/dynamic-bad-imported-class-param-e8001.deal",
-            "requires the std/json boundary (json.parse builds the dynamic "
-                + "imported-class value)", "ISSUE-0101");
-        skip("backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal",
-            "requires the std/json boundary (json.parse builds the dynamic "
-                + "nullable-class value)", "ISSUE-0101");
+        // ---- JVM-GAP-STDJSON: the std/json JVM boundary ----
         skip("backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal",
-            "requires the std/json boundary (json.parse builds the dynamic "
-                + "array value)", "ISSUE-0101");
-        skip("backend-runtime/lua-abi/jsonable-helper-name-near-collision.deal",
-            "requires @jsonable helper code generation", "ISSUE-0101");
-        skip("backend-runtime/lua-abi-structural/jsonable-helper-export-keys.deal",
-            "requires @jsonable helper code generation", "ISSUE-0101");
+            "json.parse builds the dynamic array value.", "JVM-GAP-STDJSON");
+        skip("backend-runtime/class-runtime-errors/dynamic-bad-class-param-e8001.deal",
+            "json.parse builds the dynamic class value.", "JVM-GAP-STDJSON");
+        skip("backend-runtime/class-runtime-errors/dynamic-bad-class-return-e8001.deal",
+            "json.parse builds the dynamic class value.", "JVM-GAP-STDJSON");
+        skip("backend-runtime/class-runtime-errors/dynamic-bad-imported-class-param-e8001.deal",
+            "json.parse builds the dynamic imported-class value.",
+            "JVM-GAP-STDJSON");
+        skip("backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal",
+            "json.parse builds the dynamic nullable-class value.",
+            "JVM-GAP-STDJSON");
+        skip("backend-runtime/runtime-errors/json-stringify-function-e8001.deal",
+            "json.stringify of a function-holding table.",
+            "JVM-GAP-STDJSON");
+        skip("backend-runtime/source-location/json-error-source.deal",
+            "json.stringify of a function-holding table (E8001) requires "
+                + "the std/json JVM boundary.", "JVM-GAP-STDJSON");
+        skip("backend-runtime/source-location-precision/class-param-error-source.deal",
+            "json.parse builds the dynamic class value.", "JVM-GAP-STDJSON");
+        skip("backend-runtime/type-system/dynamic-array-element-e8003.deal",
+            "json.parse of a mixed array.", "JVM-GAP-STDJSON");
 
-        // ---- ISSUE-0100: host-ABI corpus fixtures whose host surfaces the
-        // landed JVM host ABI slice does not support ----
+        // ---- JVM-GAP-JSONABLE-RESIDUAL: residual @jsonable JVM defects ----
+        skip("backend-runtime/jsonable/jsonable-complex-roundtrip.deal",
+            "E6000: member access as a value and NEQ over an error-typed "
+                + "operand (line 13).", "JVM-GAP-JSONABLE-RESIDUAL");
+        skip("backend-runtime/jsonable/jsonable-cross-module-nested-class-array.deal",
+            "E6000: member access as a value and NEQ over error/int "
+                + "(line 13).", "JVM-GAP-JSONABLE-RESIDUAL");
+        skip("backend-runtime/jsonable/jsonable-optional-nullable.deal",
+            "runtime divergence: C$fromJson returns null for an "
+                + "explicit-null optional field the LuaJIT reference "
+                + "accepts (TEST_FAIL \"fromJson null for nullable "
+                + "test\").", "JVM-GAP-JSONABLE-RESIDUAL");
+        skip("backend-runtime/jsonable/jsonable-optional-nullable-nested-class.deal",
+            "E6000: NEQ over error/null/int and member access as a value.",
+            "JVM-GAP-JSONABLE-RESIDUAL");
+        skip("backend-runtime/jsonable/nested-array-roundtrip.deal",
+            "emitted $fromJsonValue redeclares locals (l0/a0/i0/e0); "
+                + "javac rejects the artifact.", "JVM-GAP-JSONABLE-RESIDUAL");
+        skip("backend-runtime/jsonable/jsonable-table-field-nested-arrays.deal",
+            "runtime E8001 \"value is not JSON-shaped\": toJson of a "
+                + "table field holding nested arrays.",
+            "JVM-GAP-JSONABLE-RESIDUAL");
+
+        // ---- JVM-GAP-HOST-ABI-SHAPES: unsupported declared host shapes ----
         skip("backend-runtime/host-abi/host-array-return-ok.deal",
-            "host fixture declares an array-typed return (the JVM host ABI "
-                + "slice supports primitive/string/nullable returns; the "
-                + "array host surface stays LuaJIT-only — pinned by "
-                + "jvm-host-abi-slice.json)", "ISSUE-0100");
-        skip("backend-runtime/host-abi/host-boundary-apply-function.deal",
-            "host fixture declares a function-typed parameter (the JVM host "
-                + "ABI slice does not adapt DEAL wrappers into host "
-                + "callbacks; the shape stays LuaJIT-only)",
-            "ISSUE-0100");
-        skip("backend-runtime/host-abi/host-class-export.deal",
-            "host fixture declares class exports (Endpoints/ServerConfig "
-                + "host classes — the JVM host ABI slice does not emit "
-                + "host-class construction; the shape stays LuaJIT-only)",
-            "ISSUE-0100");
-        skip("backend-runtime/host-abi/host-export-presence.deal",
-            "host fixture constructs a declared host class (Config) — host "
-                + "class exports stay LuaJIT-only for the JVM slice",
-            "ISSUE-0100");
-        skip("backend-runtime/host-abi/host-nullable-function-param.deal",
-            "host fixture declares a nullable function-typed parameter — "
-                + "function-typed host parameters stay LuaJIT-only",
-            "ISSUE-0100");
-        skip("backend-runtime/host-abi/host-nullable-function-param-bad.deal",
-            "host fixture declares a nullable function-typed parameter — "
-                + "function-typed host parameters stay LuaJIT-only",
-            "ISSUE-0100");
-        skip("backend-runtime/host-abi/host-nullable-function-return-ok.deal",
-            "host fixture declares a nullable function-typed return — "
-                + "function-typed host returns stay LuaJIT-only",
-            "ISSUE-0100");
-        skip("backend-runtime/host-abi/host-nullable-function-return-bad.deal",
-            "host fixture declares a nullable function-typed return — "
-                + "function-typed host returns stay LuaJIT-only",
-            "ISSUE-0100");
-        skip("backend-runtime/host-abi/host-prewrapped-ok.deal",
-            "host fixture supplies pre-wrapped Lua exports (sig-annotated "
-                + "tables) — the pre-wrapped form is a LuaJIT host-loader "
-                + "mechanism with no JVM analog", "ISSUE-0100");
-        skip("backend-runtime/host-abi/host-prewrapped-bad.deal",
-            "host fixture supplies pre-wrapped Lua exports (sig-annotated "
-                + "tables) — the pre-wrapped form is a LuaJIT host-loader "
-                + "mechanism with no JVM analog", "ISSUE-0100");
+            "E6000: declared array-typed host return (the JVM host ABI "
+                + "slice supports primitive/string/nullable returns "
+                + "only).", "JVM-GAP-HOST-ABI-SHAPES");
         skip("backend-runtime/host-abi/host-rest-ok.deal",
-            "host fixture declares an array-typed parameter (the v1.2 "
-                + "fixed-array host form — array host parameters stay "
-                + "LuaJIT-only for the JVM slice)", "ISSUE-0100");
+            "E6000: declared array-typed host parameter (v1.2 fixed-array "
+                + "host form).", "JVM-GAP-HOST-ABI-SHAPES");
         skip("backend-runtime/host-abi/host-rest-bad.deal",
-            "host fixture declares an array-typed parameter (the v1.2 "
-                + "fixed-array host form — array host parameters stay "
-                + "LuaJIT-only for the JVM slice)", "ISSUE-0100");
+            "E6000: declared array-typed host parameter (v1.2 fixed-array "
+                + "host form).", "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-boundary-apply-function.deal",
+            "E6000: declared function-typed host parameter.",
+            "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-nullable-function-param.deal",
+            "E6000: declared function | null host parameter.",
+            "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-nullable-function-param-bad.deal",
+            "E6000: declared function | null host parameter.",
+            "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-nullable-function-return-ok.deal",
+            "E6000: declared function | null host return.",
+            "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-nullable-function-return-bad.deal",
+            "E6000: declared function | null host return.",
+            "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-class-export.deal",
+            "host class exports unsupported on JVM: E3004 \"Unknown "
+                + "class 'ServerConfig'\" (the JVM externals path "
+                + "synthesizes no host class symbols and the backend "
+                + "rejects host class exports).", "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-export-presence.deal",
+            "host class exports unsupported on JVM: E3004 \"Unknown "
+                + "class 'Config'\" (same root cause).",
+            "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-prewrapped-ok.deal",
+            "the Lua pre-wrapped export form (sig-annotated tables) is a "
+                + "LuaJIT host-loader mechanism with no JVM analog (no "
+                + "Java host implementation can express it).",
+            "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-prewrapped-bad.deal",
+            "the Lua pre-wrapped export form; no JVM analog.",
+            "JVM-GAP-HOST-ABI-SHAPES");
 
-        // ---- ISSUE-0110: cross-module function-value flow ----
-        skip("backend-runtime/modules/imported-recursive-callback.deal",
-            "passes an imported function as a callback (a cross-module "
-                + "function value — the per-module wrapper classes cannot "
-                + "cross a module boundary)", "ISSUE-0110");
+        // ---- JVM-GAP-XMOD-FNVALUE: cross-module function values ----
         skip("backend-runtime/closures/closure-returned-from-module.deal",
-            "an imported closure factory's returned wrapper crosses the "
-                + "module boundary (cross-module function value)",
-            "ISSUE-0110");
+            "E6000: function values returned from an imported module "
+                + "call (per-module wrapper classes cannot cross a module "
+                + "boundary).", "JVM-GAP-XMOD-FNVALUE");
         skip("backend-runtime/modules/imported-closure-factory.deal",
-            "an imported closure factory's returned wrapper crosses the "
-                + "module boundary (cross-module function value)",
-            "ISSUE-0110");
+            "E6000: function values returned from an imported module "
+                + "call.", "JVM-GAP-XMOD-FNVALUE");
+        skip("backend-runtime/modules/imported-recursive-callback.deal",
+            "E6000: module aliases used as values (cross-module function "
+                + "value).", "JVM-GAP-XMOD-FNVALUE");
+        skip("backend-runtime/async-await/imported-async-function-value.deal",
+            "E6000: module aliases used as values (imported async "
+                + "function as a function value).", "JVM-GAP-XMOD-FNVALUE");
+
+        // ---- JVM-GAP-XMOD-ARRAY: imported async array return ----
+        skip("backend-runtime/async-await/await-returning-array-indexed.deal",
+            "imported async call returning an array: per-module "
+                + "__IntArray wrapper classes cannot cross the module "
+                + "boundary; the emitted artifact is javac-rejected "
+                + "(\"incompatible types: Async_batch2_lib.__IntArray "
+                + "cannot be converted to "
+                + "Await_returning_array_indexed.__IntArray\") — a "
+                + "missed E6000 guard.", "JVM-GAP-XMOD-ARRAY");
+
+        // ---- JVM-GAP-ASYNC-FNEXPR: async function expressions ----
+        skip("backend-runtime/async-await/async-fn-expr.deal",
+            "E6000: async function expressions.", "JVM-GAP-ASYNC-FNEXPR");
+        skip("backend-runtime/async-await/async-await-statement.deal",
+            "E6000: block-level async functions and async function "
+                + "expressions (plus the forward-reference guard).",
+            "JVM-GAP-ASYNC-FNEXPR");
     }
 
-    private static void skip(String path, String reason, String issue) {
-        SKIPS.put(path, new SkipEntry(path, reason, issue));
+    private static void skip(String path, String reason, String gapId) {
+        SKIPS.put(path, new SkipEntry(path, reason, gapId));
     }
 
-    /** Follow-up issue id → human-readable lane description, for the
-     * summary's skip-group report. */
-    private static final Map<String, String> FOLLOW_UP_ISSUES = Map.of(
-        "ISSUE-0099", "JVM async-await slice",
-        "ISSUE-0101", "JVM @jsonable slice (and the std/json JVM boundary)",
-        "ISSUE-0100", "JVM host ABI slice (landed) — LuaJIT-only host corpus shapes",
-        "ISSUE-0110", "JVM cross-module function-value flow"
+    /** Gap id → human-readable lane description, for the summary's
+     * skip-group report. */
+    private static final Map<String, String> FOLLOW_UP_GAPS = Map.of(
+        "JVM-GAP-STDJSON", "std/json JVM boundary — JvmBackend E6000 at "
+            + "import std/json (json.parse/stringify require table "
+            + "values the JVM slice does not support)",
+        "JVM-GAP-JSONABLE-RESIDUAL", "residual @jsonable JVM defects — "
+            + "error-typed member access/NEQ E6000; optional-nullable "
+            + "fromJson divergence; nested-array fromJson javac "
+            + "collision; table-field nested arrays E8001",
+        "JVM-GAP-HOST-ABI-SHAPES", "JVM host ABI unsupported declared "
+            + "shapes — host class exports, array/function-typed "
+            + "parameters and returns (E6000), the Lua pre-wrapped "
+            + "export form",
+        "JVM-GAP-XMOD-FNVALUE", "cross-module function values — imported "
+            + "call results and module aliases used as function values "
+            + "(E6000)",
+        "JVM-GAP-XMOD-ARRAY", "imported async array return — per-module "
+            + "array wrapper classes cannot cross module boundaries "
+            + "(javac-rejected artifact; a missed E6000 guard)",
+        "JVM-GAP-ASYNC-FNEXPR", "async function expressions and "
+            + "block-level async functions (E6000)"
     );
 
     // =========================================================================
@@ -400,7 +385,7 @@ public class JvmConformanceTest {
     }
 
     private record Classified(TestFile test, Kind kind, String expectedCode,
-            String skipReason, String skipIssue) {}
+            String skipReason, String skipGapId) {}
 
     private record Outcome(TestFile test, Classified classified,
             boolean pass, String message) {}
@@ -621,7 +606,7 @@ public class JvmConformanceTest {
                 SkipEntry entry = SKIPS.get(test.relativePath());
                 if (entry != null) {
                     result.add(new Classified(test, Kind.SKIPPED, code,
-                        entry.reason(), entry.issue()));
+                        entry.reason(), entry.gapId()));
                 } else {
                     result.add(new Classified(test, Kind.APPLICABLE, code,
                         null, null));
@@ -651,7 +636,7 @@ public class JvmConformanceTest {
                     + "test — the registry must stay current");
             }
             if (entry.reason() == null || entry.reason().isEmpty()
-                    || entry.issue() == null || entry.issue().isEmpty()) {
+                    || entry.gapId() == null || entry.gapId().isEmpty()) {
                 throw new IllegalStateException("skip registry entry "
                     + entry.path() + " lacks a reason or follow-up issue id");
             }
@@ -673,10 +658,10 @@ public class JvmConformanceTest {
                 default -> {
                     // SKIPPED: recorded once, reported in the summary.
                     applicableSkipped.incrementAndGet();
-                    skipGroupCounts.merge(classified.skipIssue(), 1,
+                    skipGroupCounts.merge(classified.skipGapId(), 1,
                         Integer::sum);
                     log("  [" + classified.test().relativePath()
-                        + "] SKIP (" + classified.skipIssue() + "): "
+                        + "] SKIP (" + classified.skipGapId() + "): "
                         + classified.skipReason());
                     yield null;
                 }
@@ -1436,12 +1421,12 @@ public class JvmConformanceTest {
 
         System.out.println("Skipped backend-runtime groups (every skip "
             + "carries a reason and a follow-up issue id):");
-        List<String> issues = new ArrayList<>(skipGroupCounts.keySet());
-        Collections.sort(issues);
-        for (String issue : issues) {
-            System.out.printf("  %-11s %-60s %d test(s)%n",
-                issue, FOLLOW_UP_ISSUES.getOrDefault(issue, ""),
-                skipGroupCounts.get(issue));
+        List<String> gaps = new ArrayList<>(skipGroupCounts.keySet());
+        Collections.sort(gaps);
+        for (String gapId : gaps) {
+            System.out.printf("  %-30s %-60s %d test(s)%n",
+                gapId, FOLLOW_UP_GAPS.getOrDefault(gapId, ""),
+                skipGroupCounts.get(gapId));
         }
         System.out.println();
 
