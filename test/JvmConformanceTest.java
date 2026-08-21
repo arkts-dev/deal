@@ -378,7 +378,10 @@ public class JvmConformanceTest {
         FRONTEND,
         /** runtime-ok / runtime-error — JVM-applicable backend test. */
         APPLICABLE,
-        /** runtime test skipped under a named follow-up issue. */
+        /** runtime test skipped under a catalog gap id — its
+         *  underlying runtime mode is probed through the real
+         *  pipeline each run (a passing probe is a stale registry
+         *  entry that fails the gate). */
         SKIPPED,
         /** known-fail MODE — tracked follow-up issue; run + stale-checked. */
         KNOWN_FAIL
@@ -400,6 +403,9 @@ public class JvmConformanceTest {
     private static final AtomicInteger knownFailTotal = new AtomicInteger();
     private static final AtomicInteger knownFailTracked = new AtomicInteger();
     private static final AtomicInteger knownFailStale = new AtomicInteger();
+    private static final AtomicInteger staleSkip = new AtomicInteger();
+    private static final AtomicInteger probeHarnessFailed =
+        new AtomicInteger();
 
     private static final List<Outcome> outcomes =
         Collections.synchronizedList(new ArrayList<>());
@@ -570,8 +576,10 @@ public class JvmConformanceTest {
     /**
      * The deterministic applicability policy. See the class javadoc.
      * The {@link Kind#SKIPPED} branch is only ever reached through a
-     * registry entry with a reason and a follow-up issue id — there is
-     * no unclassified fallback skip branch.
+     * registry entry with a reason and a gap id — there is no
+     * unclassified fallback skip branch, and every registry entry
+     * must be reached by classification (a dead entry fails
+     * validation).
      */
     private static List<Classified> classifyAll(List<TestFile> tests) {
         List<Classified> result = new ArrayList<>();
@@ -617,17 +625,31 @@ public class JvmConformanceTest {
                     + expected + "' in " + test.relativePath());
             }
         }
-        validateRegistry();
+        validateRegistry(tests, result);
         return result;
     }
 
     /**
-     * Validates the explicit skip registry against the on-disk corpus:
-     * every registry entry must name an existing runtime-classified
-     * backend-runtime test (a stale entry fails the run), and the
-     * registry must have produced no skip without a reason or issue id.
+     * Validates the explicit skip registry against the on-disk corpus.
+     * Every entry must name an existing, discovered, runtime-classified
+     * (runtime-ok / runtime-error) backend-runtime test, carry a reason
+     * and a catalog gap id, and be reached by classification — no skip
+     * without a reason or gap id, no unknown gap id, and no dead entry
+     * (a missing, frontend-classified, companion, or known-fail file
+     * fails the run naming the entry).
      */
-    private static void validateRegistry() {
+    private static void validateRegistry(List<TestFile> discovered,
+            List<Classified> classified) {
+        Map<String, TestFile> byPath = new LinkedHashMap<>();
+        for (TestFile test : discovered) {
+            byPath.put(test.relativePath(), test);
+        }
+        Set<String> skippedPaths = new HashSet<>();
+        for (Classified c : classified) {
+            if (c.kind() == Kind.SKIPPED) {
+                skippedPaths.add(c.test().relativePath());
+            }
+        }
         for (SkipEntry entry : SKIPS.values()) {
             Path file = conformanceRoot.resolve(entry.path());
             if (!Files.isRegularFile(file)) {
@@ -638,7 +660,32 @@ public class JvmConformanceTest {
             if (entry.reason() == null || entry.reason().isEmpty()
                     || entry.gapId() == null || entry.gapId().isEmpty()) {
                 throw new IllegalStateException("skip registry entry "
-                    + entry.path() + " lacks a reason or follow-up issue id");
+                    + entry.path() + " lacks a reason or gap id");
+            }
+            if (!FOLLOW_UP_GAPS.containsKey(entry.gapId())) {
+                throw new IllegalStateException("skip registry entry "
+                    + entry.path() + " cites unknown gap id '"
+                    + entry.gapId() + "' — the gap id must be a "
+                    + "FOLLOW_UP_GAPS catalog key");
+            }
+            TestFile named = byPath.get(entry.path());
+            if (named == null) {
+                throw new IllegalStateException("skip registry entry "
+                    + entry.path() + " does not name a discovered "
+                    + "backend-runtime corpus test — dead entry");
+            }
+            if (!named.expected().startsWith("runtime-ok")
+                    && !named.expected().startsWith("runtime-error ")) {
+                throw new IllegalStateException("skip registry entry "
+                    + entry.path() + " names a non-runtime-classified "
+                    + "file (@expected: '" + named.expected() + "') — "
+                    + "dead entry; the registry may only name "
+                    + "runtime-ok / runtime-error tests");
+            }
+            if (!skippedPaths.contains(entry.path())) {
+                throw new IllegalStateException("skip registry entry "
+                    + entry.path() + " is not reached by classification "
+                    + "— dead entry");
             }
         }
     }
@@ -655,16 +702,7 @@ public class JvmConformanceTest {
                 case FRONTEND -> runFrontend(classified);
                 case APPLICABLE -> runApplicable(classified);
                 case KNOWN_FAIL -> runKnownFail(classified);
-                default -> {
-                    // SKIPPED: recorded once, reported in the summary.
-                    applicableSkipped.incrementAndGet();
-                    skipGroupCounts.merge(classified.skipGapId(), 1,
-                        Integer::sum);
-                    log("  [" + classified.test().relativePath()
-                        + "] SKIP (" + classified.skipGapId() + "): "
-                        + classified.skipReason());
-                    yield null;
-                }
+                case SKIPPED -> runSkippedProbe(classified);
             };
             if (outcome != null) {
                 outcomes.add(outcome);
@@ -676,10 +714,23 @@ public class JvmConformanceTest {
                 frontendFailed.incrementAndGet();
                 outcomes.add(new Outcome(classified.test(), classified,
                     false, "runner exception: " + e.getMessage()));
-            } else {
+            } else if (classified.kind() == Kind.APPLICABLE) {
                 applicableFailed.incrementAndGet();
                 outcomes.add(new Outcome(classified.test(), classified,
                     false, "runner exception: " + e.getMessage()));
+            } else {
+                // A runner exception (an Error, or anything thrown
+                // before runApplicable's internal Exception catch)
+                // escaping a SKIPPED or KNOWN_FAIL probe is an explicit
+                // harness failure — never an applicable failure, never
+                // a tracked skip.
+                probeHarnessFailed.incrementAndGet();
+                log("  [" + classified.test().relativePath()
+                    + "] FAIL (runner exception during skip/known-fail "
+                    + "probe — harness failure): " + e.getMessage());
+                outcomes.add(new Outcome(classified.test(), classified,
+                    false, "runner exception during skip/known-fail "
+                    + "probe — harness failure: " + e.getMessage()));
             }
         } finally {
             WORKER_OUTPUT.remove();
@@ -960,6 +1011,41 @@ public class JvmConformanceTest {
     }
 
     // =========================================================================
+    // Skip probes (D1): every SKIPPED entry runs its underlying mode
+    // through the real pipeline; a passing probe is a stale entry
+    // =========================================================================
+
+    /**
+     * Executes a SKIPPED entry's underlying runtime mode through the
+     * real pipeline (orchestrator → JvmBackend codegen → javac → java)
+     * with {@code knownFailProbe=true}, so no branch touches the
+     * applicable counters. A failing probe is tracked evidence: one
+     * {@code applicableSkipped} plus the per-gap count, and the skip
+     * line carries the live probe message. A passing probe means the
+     * registry entry is stale: {@code staleSkip} increments, the
+     * promotion instruction is logged, a failed Outcome is recorded,
+     * and the gate fails.
+     */
+    private static Outcome runSkippedProbe(Classified classified) {
+        TestFile test = classified.test();
+        Outcome probe = runApplicable(classified, true);
+        if (probe.pass()) {
+            staleSkip.incrementAndGet();
+            log("  [" + test.relativePath()
+                + "] FAIL (STALE skip: " + test.relativePath()
+                + " now passes on JVM — remove the skip-registry entry)");
+            return new Outcome(test, classified, false,
+                "stale skip; remove the skip-registry entry");
+        }
+        applicableSkipped.incrementAndGet();
+        skipGroupCounts.merge(classified.skipGapId(), 1, Integer::sum);
+        log("  [" + test.relativePath() + "] SKIP ("
+            + classified.skipGapId() + "): " + classified.skipReason()
+            + " — probe: " + probe.message());
+        return null;
+    }
+
+    // =========================================================================
     // Backend-runtime execution: orchestrator → javac → java
     // =========================================================================
 
@@ -974,10 +1060,12 @@ public class JvmConformanceTest {
             applicableTotal.incrementAndGet();
         }
         if (!jvmAvailable) {
-            applicableFailed.incrementAndGet();
-            log("  [" + test.relativePath()
-                + "] FAIL (javac/java unavailable — the JVM execution "
-                + "stage cannot be bypassed)");
+            if (!knownFailProbe) {
+                applicableFailed.incrementAndGet();
+                log("  [" + test.relativePath()
+                    + "] FAIL (javac/java unavailable — the JVM "
+                    + "execution stage cannot be bypassed)");
+            }
             return new Outcome(test, classified, false,
                 "javac/java unavailable");
         }
@@ -1470,6 +1558,21 @@ public class JvmConformanceTest {
                 + " stale known-fail marker(s) — promote the fixture(s)");
             ok = false;
         }
+        if (staleSkip.get() > 0) {
+            System.out.println("GATE FAILURE: " + staleSkip.get()
+                + " stale skip-registry entry (or entries) now pass on "
+                + "JVM — promotion instruction: remove the "
+                + "skip-registry entry (or entries)");
+            ok = false;
+        }
+        if (probeHarnessFailed.get() > 0) {
+            System.out.println("GATE FAILURE: probeHarnessFailed = "
+                + probeHarnessFailed.get() + " — a runner exception "
+                + "escaped a skip/known-fail probe (harness failure; a "
+                + "probe crash is never silent evidence and never a "
+                + "tracked skip)");
+            ok = false;
+        }
         if (ff > 0) {
             System.out.println("GATE FAILURE: " + ff
                 + " frontend test(s) failed — 100% required");
@@ -1492,6 +1595,7 @@ public class JvmConformanceTest {
         }
         System.out.println("Gates PASSED: frontend 100%; backend-runtime "
             + ">= 65% over the unchanged " + denominator
-            + "-test denominator; zero unclassified skips.");
+            + "-test denominator; zero unclassified skips; zero stale "
+            + "skips; zero probe runner exceptions.");
     }
 }
