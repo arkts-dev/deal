@@ -6,8 +6,26 @@
 async function yes(): boolean { return true; }
 
 export async function test_await_in_if_condition(): int {
-  if (await yes()) { return 1; }
-  return 0;
+  let result: int = 0;
+  let trueBranch: boolean = false;
+  let falseBranch: boolean = false;
+  if (await yes()) {
+    trueBranch = true;
+    result = 1;
+  } else {
+    falseBranch = true;
+    result = 0;
+  }
+  if (!trueBranch) {
+    throw { code: "TEST_FAIL", message: "awaited condition did not select the true branch" };
+  }
+  if (falseBranch) {
+    throw { code: "TEST_FAIL", message: "awaited condition selected the forbidden false branch" };
+  }
+  if (result !== 1) {
+    throw { code: "TEST_FAIL", message: "true branch result mismatch" };
+  }
+  return result;
 }
 
 export function main(): null {
