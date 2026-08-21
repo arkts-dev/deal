@@ -662,6 +662,173 @@ test("json.stringify rejects Infinity in array", function()
 end)
 
 -- ===========================================================================
+-- std/json Unicode conformance tests (ISSUE-0171): byte-precise hostile-input
+-- regressions pinning the hardened std/json.lua decode/rejection behavior.
+-- Hostile bytes (raw controls, invalid UTF-8) are built with string.char at
+-- runtime; none are committed literally to this file.
+-- ===========================================================================
+
+-- Assert that a string carries exactly the given byte sequence (string.byte
+-- comparisons; never string.find on human-readable text).
+local function assert_byte_seq(actual, ...)
+  local expected = {...}
+  assert(type(actual) == "string", "expected a string, got " .. type(actual))
+  if #actual ~= #expected then
+    error("byte length mismatch: got " .. #actual .. ", expected " .. #expected)
+  end
+  for i = 1, #expected do
+    local b = string.byte(actual, i)
+    if b ~= expected[i] then
+      error("byte " .. i .. " mismatch: got 0x" .. string.format("%02X", b)
+        .. ", expected 0x" .. string.format("%02X", expected[i]))
+    end
+  end
+end
+
+-- Assert that fn raises an E8001 error table whose message contains needle.
+-- A raw Lua error (code == nil) fails the assert_error_code table check, so
+-- untranslated errors can never pass these pins.
+local function assert_json_error(fn, needle)
+  local err = assert_error_code(fn, "E8001")
+  assert(type(err.message) == "string", "E8001 error should carry a message")
+  assert(string.find(err.message, needle, 1, true) ~= nil,
+    "error message should contain '" .. needle .. "', got: " .. tostring(err.message))
+  return err
+end
+
+test("json.parse decodes the full RFC 8259 escape table", function()
+  local text = '"' .. '\\"' .. '\\\\' .. '\\/' .. '\\b' .. '\\f' .. '\\n' .. '\\r' .. '\\t' .. '"'
+  local r = json.parse.f(text)
+  assert_byte_seq(r, 0x22, 0x5C, 0x2F, 0x08, 0x0C, 0x0A, 0x0D, 0x09)
+end)
+
+test("json.parse decodes \\u00E9 to UTF-8 bytes C3 A9", function()
+  assert_byte_seq(json.parse.f('"\\u00E9"'), 0xC3, 0xA9)
+  -- Hex digits are case-insensitive (RFC 8259 section 7: 4HEXDIG).
+  assert_byte_seq(json.parse.f('"\\u00e9"'), 0xC3, 0xA9)
+end)
+
+test("json.parse decodes \\u4E2D to UTF-8 bytes E4 B8 AD", function()
+  assert_byte_seq(json.parse.f('"\\u4E2D"'), 0xE4, 0xB8, 0xAD)
+end)
+
+test("json.parse combines surrogate pair \\uD834\\uDD1E to U+1D11E (F0 9D 84 9E)", function()
+  assert_byte_seq(json.parse.f('"\\uD834\\uDD1E"'), 0xF0, 0x9D, 0x84, 0x9E)
+end)
+
+test("json.parse combines boundary pair \\uD800\\uDC00 to U+10000 (F0 90 80 80)", function()
+  assert_byte_seq(json.parse.f('"\\uD800\\uDC00"'), 0xF0, 0x90, 0x80, 0x80)
+end)
+
+test("json.parse combines boundary pair \\uDBFF\\uDFFF to U+10FFFF (F4 8F BF BF)", function()
+  assert_byte_seq(json.parse.f('"\\uDBFF\\uDFFF"'), 0xF4, 0x8F, 0xBF, 0xBF)
+end)
+
+test("json.parse rejects lone high surrogate \\uD834 with E8001", function()
+  assert_json_error(function() json.parse.f('"\\uD834"') end,
+    "unpaired surrogate code unit in unicode escape")
+end)
+
+test("json.parse rejects lone low surrogate \\uDD1E with E8001", function()
+  assert_json_error(function() json.parse.f('"\\uDD1E"') end,
+    "unpaired surrogate code unit in unicode escape")
+end)
+
+test("json.parse rejects surrogate pair mismatch \\uD834\\u0041 with E8001", function()
+  assert_json_error(function() json.parse.f('"\\uD834\\u0041"') end,
+    "unpaired surrogate code unit in unicode escape")
+end)
+
+test("json.parse rejects malformed \\u escapes with E8001", function()
+  local forms = { '"\\u12"', '"\\u123"', '"\\uZZZZ"', '"\\u12G4"' }
+  for _, text in ipairs(forms) do
+    assert_json_error(function() json.parse.f(text) end,
+      "invalid unicode escape: expected 4 hex digits")
+  end
+end)
+
+test("json.parse rejects unknown escapes with E8001", function()
+  local forms = {
+    '"' .. "\\x41" .. '"',
+    '"' .. "\\q" .. '"',
+    '"' .. "\\'" .. '"',
+    '"' .. "\\0" .. '"',
+    '"' .. "\\v" .. '"',
+  }
+  for _, text in ipairs(forms) do
+    assert_json_error(function() json.parse.f(text) end, "unknown escape sequence")
+  end
+end)
+
+test("json.parse rejects raw control characters with E8001", function()
+  local controls = { 0x00, 0x01, 0x08, 0x09, 0x0A, 0x0D }
+  for _, b in ipairs(controls) do
+    local text = '"' .. string.char(b) .. '"'
+    assert_json_error(function() json.parse.f(text) end,
+      "raw control character in string (must be escaped)")
+  end
+end)
+
+test("json.parse accepts raw DEL (0x7F) and escaped control forms", function()
+  assert_byte_seq(json.parse.f('"' .. string.char(0x7F) .. '"'), 0x7F)
+  assert_byte_seq(json.parse.f('"\\u0000"'), 0x00)
+  assert_byte_seq(json.parse.f('"\\u007F"'), 0x7F)
+end)
+
+test("json.parse treats decoded \\u0022 and \\u005C as data, not structure", function()
+  -- Decoded quote/backslash must not re-lex: the parse only succeeds when
+  -- they are appended as data.
+  assert_byte_seq(json.parse.f('"\\u0022\\u005C"'), 0x22, 0x5C)
+end)
+
+test("json.parse passes raw supplementary UTF-8 through byte-identically", function()
+  local supplementary = "\xF0\x9D\x84\x9E" -- U+1D11E, scalar-valid UTF-8
+  assert_byte_seq(json.parse.f('"' .. supplementary .. '"'), 0xF0, 0x9D, 0x84, 0x9E)
+end)
+
+test("json.stringify emits supplementary characters raw (byte-identical)", function()
+  local supplementary = "\xF0\x9D\x84\x9E" -- U+1D11E
+  local result = json.stringify.f({ v = supplementary })
+  assert(string.find(result, supplementary, 1, true) ~= nil,
+    "supplementary bytes should be emitted raw, got: " .. result)
+  assert(string.find(result, "\\uD834\\uDD1E") == nil,
+    "supplementary bytes should not be re-encoded as a surrogate pair")
+end)
+
+test("json supplementary stringify/parse round-trip is byte-identical", function()
+  local orig = "\xF0\x9D\x84\x9E\xC3\xA9\xE4\xB8\xAD" -- U+1D11E U+00E9 U+4E2D
+  local encoded = json.stringify.f({ v = orig })
+  assert(string.find(encoded, orig, 1, true) ~= nil, "raw bytes should survive stringify")
+  local decoded = json.parse.f(encoded)
+  assert(decoded.v == orig, "parse(stringify(s)) should be byte-identical")
+end)
+
+test("json.stringify rejects invalid UTF-8 leaves with E8001", function()
+  local invalid = {
+    string.char(0xED, 0xA0, 0x80), -- UTF-16 surrogate encoded in UTF-8
+    string.char(0xC0, 0xAF),       -- overlong encoding
+    string.char(0xC3),             -- truncated 2-byte sequence
+  }
+  for _, s in ipairs(invalid) do
+    assert_json_error(function() json.stringify.f({ v = s }) end,
+      "cannot encode invalid UTF-8 as JSON")
+  end
+end)
+
+test("json.stringify rejects invalid UTF-8 keys with E8001", function()
+  local t = {}
+  t[string.char(0xED, 0xA0, 0x80)] = "value"
+  assert_json_error(function() json.stringify.f(t) end,
+    "cannot encode invalid UTF-8 as JSON")
+end)
+
+test("json.parse rejects raw invalid UTF-8 input with E8001 (entry gate)", function()
+  local surrogate_bytes = string.char(0xED, 0xA0, 0x80)
+  assert_json_error(function() json.parse.f('"' .. surrogate_bytes .. '"') end,
+    "expected string, got invalid UTF-8 encoding")
+end)
+
+-- ===========================================================================
 -- std/math tests
 -- ===========================================================================
 
