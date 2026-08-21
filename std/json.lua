@@ -1,14 +1,50 @@
 -- DEAL Standard Library: std/json
 -- Provides JSON encoding and decoding (simple pure-Lua implementation).
+--
+-- Unicode conformance (v1.2, RFC 8259): parse accepts exactly the section 7
+-- escape set (" \ / b f n r t u), \uXXXX must carry exactly four hex digits
+-- and decodes to UTF-8, surrogate pairs combine to one supplementary scalar,
+-- lone surrogates and raw control characters (U+0000-U+001F) are rejected,
+-- and stringify refuses to emit strings that are not scalar-valid UTF-8.
 
 local __rt = require("deal.runtime")
 
 local json = {}
 
+-- Encode a Unicode code point as its UTF-8 byte sequence (1-4 bytes).
+-- Inputs are Unicode scalar values only: callers never pass surrogates
+-- (parse rejects them) or values above U+10FFFF (surrogate-pair math caps
+-- at 0x10FFFF).
+local function utf8_encode(cp)
+  if cp < 0x80 then
+    return string.char(cp)
+  elseif cp < 0x800 then
+    return string.char(0xC0 + math.floor(cp / 0x40), 0x80 + cp % 0x40)
+  elseif cp < 0x10000 then
+    return string.char(
+      0xE0 + math.floor(cp / 0x1000),
+      0x80 + math.floor(cp / 0x40) % 0x40,
+      0x80 + cp % 0x40)
+  else
+    return string.char(
+      0xF0 + math.floor(cp / 0x40000),
+      0x80 + math.floor(cp / 0x1000) % 0x40,
+      0x80 + math.floor(cp / 0x40) % 0x40,
+      0x80 + cp % 0x40)
+  end
+end
+
 -- Escape a string for JSON output.  Handles all ASCII control characters
 -- (U+0000–U+001F) as well as the required escapes for \", \\, and the
 -- common whitespace escapes.
+--
+-- RFC 8259 section 8.1/10: generated JSON text must be UTF-8 and strictly
+-- conform, so strings that are not scalar-valid UTF-8 are rejected with
+-- E8001 instead of being emitted as invalid bytes.
 local function escape(s)
+  if not __rt.utf8_valid(s) then
+    error(__rt._err("E8001", "cannot encode invalid UTF-8 as JSON", nil, nil, nil, nil, nil))
+  end
   return (string.gsub(s, '[%c\\"]', function(c)
     local byte = string.byte(c)
     if c == '"'  then return '\\"'
@@ -106,6 +142,24 @@ json.parse = __rt.function_("(string)->table", function(s)
       .. " (near '" .. ctx .. "')", nil, nil, nil, nil, nil))
   end
 
+  -- Read four characters as hexadecimal digits; the first result is the
+  -- value (nil when any character is not [0-9A-Fa-f]).
+  local function read_hex4(hex)
+    local v = 0
+    for i = 1, 4 do
+      local d = string.byte(hex, i)
+      local dv
+      if d >= 48 and d <= 57 then dv = d - 48
+      elseif d >= 65 and d <= 70 then dv = d - 55
+      elseif d >= 97 and d <= 102 then dv = d - 87
+      else
+        return nil
+      end
+      v = v * 16 + dv
+    end
+    return v
+  end
+
   local function peek()
     if pos > len then return nil end
     return s:sub(pos, pos)
@@ -200,16 +254,51 @@ json.parse = __rt.function_("(string)->table", function(s)
         elseif esc == '"' then parts[#parts+1] = '"'
         elseif esc == '/' then parts[#parts+1] = '/'
         elseif esc == 'u' then
+          -- RFC 8259 section 7: \u must be followed by exactly four
+          -- hexadecimal digits (case-insensitive).
           local hex = s:sub(pos+1, pos+4)
           if #hex < 4 then
             parse_error("invalid unicode escape: expected 4 hex digits")
           end
+          local v = read_hex4(hex)
+          if v == nil then
+            parse_error("invalid unicode escape: expected 4 hex digits")
+          end
           pos = pos + 4
-          parts[#parts+1] = string.char(tonumber(hex, 16))
+          if v >= 0xDC00 and v <= 0xDFFF then
+            -- Lone low surrogate: not a Unicode scalar value.
+            parse_error("unpaired surrogate code unit in unicode escape")
+          elseif v >= 0xD800 and v <= 0xDBFF then
+            -- High surrogate: must combine with an immediately following
+            -- \uXXXX escape in the low-surrogate range; the pair decodes
+            -- to one supplementary scalar (RFC 8259 section 7).
+            local combined = false
+            if pos + 1 <= len and s:sub(pos+1, pos+2) == '\\u' then
+              local lo_hex = s:sub(pos+3, pos+6)
+              if #lo_hex == 4 then
+                local lo = read_hex4(lo_hex)
+                if lo ~= nil and lo >= 0xDC00 and lo <= 0xDFFF then
+                  pos = pos + 6
+                  parts[#parts+1] = utf8_encode(0x10000 + (v - 0xD800) * 0x400 + (lo - 0xDC00))
+                  combined = true
+                end
+              end
+            end
+            if not combined then
+              parse_error("unpaired surrogate code unit in unicode escape")
+            end
+          else
+            -- BMP scalar: append its 1-3 byte UTF-8 form.
+            parts[#parts+1] = utf8_encode(v)
+          end
         else
-          parts[#parts+1] = esc
+          parse_error("unknown escape sequence '\\" .. esc .. "'")
         end
       else
+        -- Raw character: U+0000-U+001F must be escaped (RFC 8259 section 7).
+        if string.byte(c) < 0x20 then
+          parse_error("raw control character in string (must be escaped)")
+        end
         parts[#parts+1] = c
       end
       pos = pos + 1
