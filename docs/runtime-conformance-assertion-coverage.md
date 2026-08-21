@@ -257,16 +257,19 @@ Command: `./run_tests.sh` — exit code **0**, final marker
 | LuaJIT suites `test_runtime.lua` / `test_runtime_jsonable.lua` / `test_stdlib.lua` / `test_async_nesting.lua` | run (LuaJIT 2.1.0-beta3 present), all pass; no `luajit not found` warning anywhere in the log |
 | ConformanceTest (LuaJIT) | `Discovered 409`, `Total: 373, Passed: 373, Failed: 0, Skipped: 0` (6 tracked known-fails for ISSUE-0111); all 63 ledger targets print `OK` (rest-params: `OK (found E1047)`); `Companions (classified support modules): 30` |
 | Stdlib Golden IR check | `Golden IR file is current` |
-| JvmConformanceTest (ISSUE-0102) | Gates PASSED: frontend 100%; backend-runtime pass rate 66.3% over the unchanged 255-test denominator; zero unclassified skips |
+| JvmConformanceTest (ISSUE-0102 origin — ISSUE-0168 capability accounting) | Gates PASSED: frontend 100%; backend-runtime zero applicable failures AND pass rate 85.9% over the unchanged 255-test denominator (219 passed / 0 failed / 34 gap-cataloged probed skips 9/6/12/4/1/2 / 2 tracked known-fails); zero unclassified skips |
 
 Skip reconciliation (per `async-runtime-ok-oracle-migration`): every
 executable LuaJIT-side runner that exposes a skip counter reports
 `Skipped: 0`. The JVM conformance phase reports its separately governed,
-pre-existing *classified* skip groups (ISSUE-0099 async slice 35,
-ISSUE-0100 host ABI 12, ISSUE-0101 @jsonable 34, ISSUE-0110 cross-module
-function values 3 — each with a reason and tracked follow-up issue, and
-zero unclassified skips). Those groups are outside this epic's scope and
-unchanged by it; they are not executable-test skips.
+*classified* gap-cataloged probed skips (34 entries under six active gap
+ids — JVM-GAP-STDJSON 9, JVM-GAP-JSONABLE-RESIDUAL 6,
+JVM-GAP-HOST-ABI-SHAPES 12, JVM-GAP-XMOD-FNVALUE 4, JVM-GAP-XMOD-ARRAY 1,
+JVM-GAP-ASYNC-FNEXPR 2 — each with a reason and a gap id, probed
+through the real pipeline every run, and zero unclassified skips; 219
+applicable passed / 0 failed over the unchanged 255-test denominator =
+85.9%, 2 tracked known-fails). Those gaps are outside this epic's scope;
+they are not executable-test skips.
 
 ## Evidence boundaries
 

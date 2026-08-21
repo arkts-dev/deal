@@ -204,7 +204,7 @@ java -ea -cp build deal.test.ConformanceTest test/conformance/
 
 echo ""
 echo ""
-echo "=== Running JVM Conformance Tests (ISSUE-0102) ==="
+echo "=== Running JVM Conformance Tests (ISSUE-0102 origin — ISSUE-0168 capability accounting) ==="
 java -ea -cp build deal.test.JvmConformanceTest test/conformance/
 
 echo "=== All Tests Passed ==="

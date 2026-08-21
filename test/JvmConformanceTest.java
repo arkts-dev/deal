@@ -62,7 +62,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       {@code runtime-error CODE}): JVM-applicable and must pass
  *       through the whole pipeline UNLESS the explicit skip registry
  *       (below) classifies them. Every skip carries a documented reason
- *       and a follow-up issue id; the registry is validated against the
+ *       and a gap id; the registry is validated against the
  *       on-disk corpus (a stale entry naming a missing file fails the
  *       run, and there is no fallback skip branch — zero unclassified
  *       skips by construction).</li>
@@ -71,37 +71,45 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <h2>The skip registry (ISSUE-0102)</h2>
  *
  * <ul>
- *   <li><b>JVM-GAP-STDJSON</b> — std/json JVM boundary:
+ *   <li><b>JVM-GAP-STDJSON</b> (9 entries) — std/json JVM boundary:
  *       {@code JvmBackend} E6000 at {@code import std/json}
  *       (json.parse/stringify require table values the JVM slice does
  *       not support).</li>
- *   <li><b>JVM-GAP-JSONABLE-RESIDUAL</b> — residual @jsonable JVM
- *       defects: error-typed member access/NEQ E6000; optional-nullable
- *       {@code fromJson} divergence; nested-array {@code fromJson}
- *       javac collision; table-field nested arrays E8001.</li>
- *   <li><b>JVM-GAP-HOST-ABI-SHAPES</b> — JVM host ABI unsupported
- *       declared shapes: host class exports, array/function-typed
- *       parameters and returns (E6000), and the Lua pre-wrapped export
- *       form.</li>
- *   <li><b>JVM-GAP-XMOD-FNVALUE</b> — cross-module function values:
- *       imported call results and module aliases used as function
- *       values (E6000).</li>
- *   <li><b>JVM-GAP-XMOD-ARRAY</b> — imported async array return:
- *       per-module array wrapper classes cannot cross module boundaries
- *       (javac-rejected artifact; a missed E6000 guard).</li>
- *   <li><b>JVM-GAP-ASYNC-FNEXPR</b> — async function expressions and
- *       block-level async functions (E6000).</li>
+ *   <li><b>JVM-GAP-JSONABLE-RESIDUAL</b> (6 entries) — residual
+ *       @jsonable JVM defects: error-typed member access/NEQ E6000;
+ *       optional-nullable {@code fromJson} divergence; nested-array
+ *       {@code fromJson} javac collision; table-field nested arrays
+ *       E8001.</li>
+ *   <li><b>JVM-GAP-HOST-ABI-SHAPES</b> (12 entries) — JVM host ABI
+ *       unsupported declared shapes: host class exports,
+ *       array/function-typed parameters and returns (E6000), and the
+ *       Lua pre-wrapped export form.</li>
+ *   <li><b>JVM-GAP-XMOD-FNVALUE</b> (4 entries) — cross-module function
+ *       values: imported call results and module aliases used as
+ *       function values (E6000).</li>
+ *   <li><b>JVM-GAP-XMOD-ARRAY</b> (1 entry) — imported async array
+ *       return: per-module array wrapper classes cannot cross module
+ *       boundaries (javac-rejected artifact; a missed E6000
+ *       guard).</li>
+ *   <li><b>JVM-GAP-ASYNC-FNEXPR</b> (2 entries) — async function
+ *       expressions and block-level async functions (E6000).</li>
  * </ul>
  *
  * <h2>Gates</h2>
  * <ul>
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
- *   <li>backend-runtime: at least 65% of the on-disk backend-runtime
- *       tests (the unchanged 253-test denominator) pass through the
- *       frontend → CompilationOrchestrator → JVM codegen → javac → JVM
- *       pipeline;</li>
+ *   <li>backend-runtime: zero applicable failures AND at least 80% of
+ *       the on-disk backend-runtime tests (the unchanged 255-test
+ *       denominator) pass through the frontend → CompilationOrchestrator
+ *       → JVM codegen → javac → JVM pipeline;</li>
  *   <li>zero unclassified skips (by construction — the classifier has
  *       no fallback skip branch, and the registry is validated);</li>
+ *   <li>zero stale skips and zero stale known-fail markers (promotion
+ *       is forced);</li>
+ *   <li>zero probe runner exceptions (a probe crash is never silent
+ *       evidence);</li>
+ *   <li>the classified runtime total equals the on-disk
+ *       denominator;</li>
  *   <li>the runner exits non-zero when any gate fails.</li>
  * </ul>
  */
@@ -449,7 +457,7 @@ public class JvmConformanceTest {
 
         jvmAvailable = probeJvm();
 
-        System.out.println("=== DEAL v1.2 JVM Conformance Suite (ISSUE-0102) ===");
+        System.out.println("=== DEAL v1.2 JVM Conformance Suite (ISSUE-0102 origin — ISSUE-0168 capability accounting) ===");
         System.out.println("Root: " + conformanceRoot);
         System.out.println("JVM (javac + java): " + (jvmAvailable ? "available"
             : "NOT available (backend-runtime tests will fail — a bypassed "
@@ -1515,7 +1523,7 @@ public class JvmConformanceTest {
     private static void printReport(List<Outcome> sorted, int runtimeTotal)
             throws IOException {
         System.out.println();
-        System.out.println("=== JVM Conformance Summary (ISSUE-0102) ===");
+        System.out.println("=== JVM Conformance Summary (ISSUE-0102 origin — ISSUE-0168 capability accounting) ===");
 
         int ft = frontendTotal.get();
         int fp = frontendPassed.get();
@@ -1540,7 +1548,7 @@ public class JvmConformanceTest {
         System.out.println();
 
         System.out.println("Skipped backend-runtime groups (every skip "
-            + "carries a reason and a follow-up issue id):");
+            + "carries a reason and a gap id):");
         List<String> gaps = new ArrayList<>(skipGroupCounts.keySet());
         Collections.sort(gaps);
         for (String gapId : gaps) {
@@ -1610,9 +1618,15 @@ public class JvmConformanceTest {
                 + " frontend test(s) failed — 100% required");
             ok = false;
         }
-        if (pct < 65.0) {
+        if (af > 0) {
+            System.out.println("GATE FAILURE: " + af
+                + " applicable backend-runtime test(s) failed — zero "
+                + "applicable failures required");
+            ok = false;
+        }
+        if (pct < 80.0) {
             System.out.println("GATE FAILURE: backend-runtime pass rate "
-                + pct + "% below the 65% threshold (denominator "
+                + pct + "% below the 80% threshold (denominator "
                 + denominator + ")");
             ok = false;
         }
@@ -1626,8 +1640,10 @@ public class JvmConformanceTest {
             System.exit(1);
         }
         System.out.println("Gates PASSED: frontend 100%; backend-runtime "
-            + ">= 65% over the unchanged " + denominator
+            + "zero applicable failures AND >= 80% pass rate over the "
+            + "unchanged " + denominator
             + "-test denominator; zero unclassified skips; zero stale "
-            + "skips; zero probe runner exceptions.");
+            + "skips; zero stale known-fail markers; zero probe runner "
+            + "exceptions.");
     }
 }
