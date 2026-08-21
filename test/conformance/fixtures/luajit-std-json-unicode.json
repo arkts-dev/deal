@@ -1,0 +1,137 @@
+{
+  "version": "1.0",
+  "tests": [
+    {
+      "name": "luajit-std-json-bmp-escape-decode",
+      "description": "RFC 8259 section 7 BMP escapes: \\u00E9 decodes to the raw UTF-8 C3 A9 (U+00E9) scalar and \\u4E2D decodes to E4 B8 AD (U+4E2D) — each decoded value is read back through an object-field access on the (string)->table parse result and compared against the raw UTF-8 literal",
+      "source": "import * as json from \"std/json\"\nimport * as console from \"std/console\"\nexport function test(): null {\n  let t: table = json.parse(\"{\\\"a\\\":\\\"\\\\u00E9\\\",\\\"b\\\":\\\"\\\\u4E2D\\\"}\");\n  let a: string = t.a;\n  let b: string = t.b;\n  if (a !== \"é\") { console.log(\"luajit-std-json-bmp-escape-decode-a-mismatch\"); return; }\n  if (b !== \"中\") { console.log(\"luajit-std-json-bmp-escape-decode-b-mismatch\"); return; }\n  console.log(\"luajit-std-json-bmp-escape-decode-ok\");\n}",
+      "expectedOutput": "luajit-std-json-bmp-escape-decode-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "luajit-std-json-surrogate-pair-decode",
+      "description": "RFC 8259 section 7 surrogate pair: the 12-character form \\uD834\\uDD1E decodes to the single supplementary scalar U+1D11E (UTF-8 F0 9D 84 9E) — the decoded value read back through an object-field access equals the raw U+1D11E literal; this is the first valid-pair acceptance pin in the conformance tree",
+      "source": "import * as json from \"std/json\"\nimport * as console from \"std/console\"\nexport function test(): null {\n  let t: table = json.parse(\"{\\\"v\\\":\\\"\\\\uD834\\\\uDD1E\\\"}\");\n  let v: string = t.v;\n  if (v !== \"𝄞\") { console.log(\"luajit-std-json-surrogate-pair-decode-mismatch\"); return; }\n  console.log(\"luajit-std-json-surrogate-pair-decode-ok\");\n}",
+      "expectedOutput": "luajit-std-json-surrogate-pair-decode-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "luajit-std-json-pair-boundaries",
+      "description": "surrogate-pair boundary code points: \\uD800\\uDC00 decodes to the lowest supplementary scalar U+10000 (UTF-8 F0 90 80 80) and \\uDBFF\\uDFFF decodes to the highest U+10FFFF (UTF-8 F4 8F BF BF) — both decoded values read back through object-field accesses equal the raw UTF-8 literals",
+      "source": "import * as json from \"std/json\"\nimport * as console from \"std/console\"\nexport function test(): null {\n  let t: table = json.parse(\"{\\\"lo\\\":\\\"\\\\uD800\\\\uDC00\\\",\\\"hi\\\":\\\"\\\\uDBFF\\\\uDFFF\\\"}\");\n  let lo: string = t.lo;\n  let hi: string = t.hi;\n  if (lo !== \"𐀀\") { console.log(\"luajit-std-json-pair-boundaries-lo-mismatch\"); return; }\n  if (hi !== \"􏿿\") { console.log(\"luajit-std-json-pair-boundaries-hi-mismatch\"); return; }\n  console.log(\"luajit-std-json-pair-boundaries-ok\");\n}",
+      "expectedOutput": "luajit-std-json-pair-boundaries-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "luajit-std-json-escaped-quote-backslash-decode",
+      "description": "\\u0022 and \\u005C decode as data, never re-lexed as structure: an object whose field values are the escaped forms parses successfully and the decoded values read back through object-field accesses equal the raw quote and backslash literals",
+      "source": "import * as json from \"std/json\"\nimport * as console from \"std/console\"\nexport function test(): null {\n  let t: table = json.parse(\"{\\\"q\\\":\\\"\\\\u0022\\\",\\\"b\\\":\\\"\\\\u005C\\\"}\");\n  let q: string = t.q;\n  let b: string = t.b;\n  if (q !== \"\\\"\") { console.log(\"luajit-std-json-escaped-quote-backslash-decode-q-mismatch\"); return; }\n  if (b !== \"\\\\\") { console.log(\"luajit-std-json-escaped-quote-backslash-decode-b-mismatch\"); return; }\n  console.log(\"luajit-std-json-escaped-quote-backslash-decode-ok\");\n}",
+      "expectedOutput": "luajit-std-json-escaped-quote-backslash-decode-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "luajit-std-json-supplementary-roundtrip",
+      "description": "supplementary preservation: a raw U+1D11E leaf stringifies with the raw UTF-8 bytes F0 9D 84 9E present and without any \\uD834 escape text (plain-text std/string.contains on the stringified text), and the stringify output parses back byte-identically",
+      "source": "import * as json from \"std/json\"\nimport * as str from \"std/string\"\nimport * as console from \"std/console\"\nexport function test(): null {\n  let sup: string = \"𝄞\";\n  let t: table = { v: sup };\n  let encoded: string = json.stringify(t);\n  if (!str.contains(encoded, sup)) { console.log(\"luajit-std-json-supplementary-roundtrip-stringify-lost-raw-bytes\"); return; }\n  if (str.contains(encoded, \"\\\\uD834\")) { console.log(\"luajit-std-json-supplementary-roundtrip-stringify-escaped-pair\"); return; }\n  let back: table = json.parse(encoded);\n  let v: string = back.v;\n  if (v !== sup) { console.log(\"luajit-std-json-supplementary-roundtrip-mismatch\"); return; }\n  console.log(\"luajit-std-json-supplementary-roundtrip-ok\");\n}",
+      "expectedOutput": "luajit-std-json-supplementary-roundtrip-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "luajit-std-json-scalar-length-crosscheck",
+      "description": "scalar-value accounting: std/string.length over a decoded mixed BMP/supplementary string (\\u00E9 \\u4E2D \\uD834\\uDD1E) counts each of the three scalars once (3, not the 9 UTF-8 bytes)",
+      "source": "import * as json from \"std/json\"\nimport * as str from \"std/string\"\nimport * as console from \"std/console\"\nexport function test(): null {\n  let t: table = json.parse(\"{\\\"s\\\":\\\"\\\\u00E9\\\\u4E2D\\\\uD834\\\\uDD1E\\\"}\");\n  let s: string = t.s;\n  let n: int = str.length(s);\n  if (n !== 3) { console.log(\"luajit-std-json-scalar-length-crosscheck-bad-count\"); return; }\n  console.log(\"luajit-std-json-scalar-length-crosscheck-ok\");\n}",
+      "expectedOutput": "luajit-std-json-scalar-length-crosscheck-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "luajit-std-json-lone-high-surrogate-e8001",
+      "description": "lone high surrogate rejection: the \\uD834 escape with no following low-surrogate escape raises E8001 (unpaired surrogate code unit in unicode escape) and exits 1 through the DEAL_ERROR_CODE contract",
+      "source": "import * as json from \"std/json\"\nexport function test(): null {\n  json.parse(\"{\\\"v\\\":\\\"\\\\uD834\\\"}\");\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "luajit-std-json-lone-low-surrogate-e8001",
+      "description": "lone low surrogate rejection: the \\uDD1E escape without a preceding high-surrogate escape raises E8001 (unpaired surrogate code unit in unicode escape) and exits 1 through the DEAL_ERROR_CODE contract",
+      "source": "import * as json from \"std/json\"\nexport function test(): null {\n  json.parse(\"{\\\"v\\\":\\\"\\\\uDD1E\\\"}\");\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "luajit-std-json-pair-mismatch-e8001",
+      "description": "pair mismatch rejection: the high surrogate \\uD834 followed by the non-low-surrogate escape \\u0041 raises E8001 (unpaired surrogate code unit in unicode escape) and exits 1 through the DEAL_ERROR_CODE contract",
+      "source": "import * as json from \"std/json\"\nexport function test(): null {\n  json.parse(\"{\\\"v\\\":\\\"\\\\uD834\\\\u0041\\\"}\");\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "luajit-std-json-malformed-u-escape-e8001",
+      "description": "malformed unicode escape rejection: the truncated \\u12 form and the non-hex \\uZZZZ form each raise E8001 (invalid unicode escape: expected 4 hex digits) — both earlier calls are wrapped in try/catch with their E8001 codes asserted, and a final uncaught \\uZZZZ call exits 1 through the DEAL_ERROR_CODE contract",
+      "source": "import * as json from \"std/json\"\nexport function test(): null {\n  let ok: boolean = true;\n  try {\n    json.parse(\"{\\\"v\\\":\\\"\\\\u12\\\"}\");\n    ok = false;\n  } catch (e) {\n    if (e.code !== \"E8001\") { ok = false; }\n  }\n  try {\n    json.parse(\"{\\\"v\\\":\\\"\\\\uZZZZ\\\"}\");\n    ok = false;\n  } catch (e) {\n    if (e.code !== \"E8001\") { ok = false; }\n  }\n  if (!ok) {\n    throw { code: \"E9999\", message: \"malformed unicode escape accepted or mis-coded\" };\n  }\n  json.parse(\"{\\\"v\\\":\\\"\\\\uZZZZ\\\"}\");\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "luajit-std-json-unknown-escape-e8001",
+      "description": "unknown escape rejection: the \\x41 and \\' forms (outside the RFC 8259 section 7 escape set) each raise E8001 (unknown escape sequence) — both earlier calls are wrapped in try/catch with their E8001 codes asserted, and a final uncaught \\x41 call exits 1 through the DEAL_ERROR_CODE contract",
+      "source": "import * as json from \"std/json\"\nexport function test(): null {\n  let ok: boolean = true;\n  try {\n    json.parse(\"{\\\"v\\\":\\\"\\\\x41\\\"}\");\n    ok = false;\n  } catch (e) {\n    if (e.code !== \"E8001\") { ok = false; }\n  }\n  try {\n    json.parse(\"{\\\"v\\\":\\\"\\\\'\\\"}\");\n    ok = false;\n  } catch (e) {\n    if (e.code !== \"E8001\") { ok = false; }\n  }\n  if (!ok) {\n    throw { code: \"E9999\", message: \"unknown escape accepted or mis-coded\" };\n  }\n  json.parse(\"{\\\"v\\\":\\\"\\\\x41\\\"}\");\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "luajit-std-json-raw-control-e8001",
+      "description": "raw control rejection: a first parse decodes the escaped control \\u0001 into a table field, the byte is read back and spliced into a second parse text (never committed to any source file), and the spliced parse raises E8001 (raw control character in string (must be escaped)) and exits 1 through the DEAL_ERROR_CODE contract",
+      "source": "import * as json from \"std/json\"\nexport function test(): null {\n  let t: table = json.parse(\"{\\\"v\\\":\\\"\\\\u0001\\\"}\");\n  let ctl: string = t.v;\n  let text: string = \"{\\\"v\\\":\\\"\" + ctl + \"\\\"}\";\n  json.parse(text);\n}",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "backends": [
+        "luajit"
+      ]
+    }
+  ]
+}
