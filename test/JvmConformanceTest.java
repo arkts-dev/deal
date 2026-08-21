@@ -1353,10 +1353,42 @@ public class JvmConformanceTest {
         for (String importPath : relativeImports(normalized)) {
             Path resolved = resolveCompanionPath(importPath,
                 normalized.getParent());
-            if (resolved != null) {
-                copyTransitively(resolved, projectRoot, written);
-            }
+            if (resolved == null) continue;
+            // D4 (ISSUE-0176): an import spelling carrying an explicit
+            // .deal extension resolves to its alias-named copy in the
+            // flat project root, so materialize the companion under
+            // that name before the recursive walk (the written-map
+            // early return below must not suppress it).
+            copyCompanionAliasIfExplicit(resolved, importPath, projectRoot);
+            copyTransitively(resolved, projectRoot, written);
         }
+    }
+
+    /**
+     * Materializes a resolved companion under the production-resolved
+     * alias name when the import spelling carries an explicit
+     * {@code .deal} extension ({@code ./async_lib.deal} →
+     * {@code async_lib.deal.deal}): {@link CompilationOrchestrator}
+     * searches {@code basePath + ".deal"} first, and its
+     * {@code isMatch} rule resolves the spelling to exactly that alias
+     * file. The stem-named copy is still written by the recursive
+     * walk; stem-only spellings need no alias and are untouched. The
+     * copy is idempotent across repeated explicit spellings of the
+     * same companion (the alias target already materialized is
+     * skipped).
+     */
+    private static void copyCompanionAliasIfExplicit(Path resolved,
+            String importPath, Path projectRoot) throws IOException {
+        if (!importPath.endsWith(".deal")) return;
+        String aliasBase = importPath;
+        if (aliasBase.startsWith("./")) {
+            aliasBase = aliasBase.substring("./".length());
+        } else if (aliasBase.startsWith("../")) {
+            aliasBase = aliasBase.substring("../".length());
+        }
+        Path aliasTarget = projectRoot.resolve(aliasBase + ".deal");
+        if (Files.exists(aliasTarget)) return;
+        Files.copy(resolved.toAbsolutePath().normalize(), aliasTarget);
     }
 
     /** Relative import paths ({@code ./} / {@code ../}) appearing in the
