@@ -75,15 +75,19 @@ public final class DealConfig {
         // The check is case-insensitive (trim + lowercase), mirroring
         // Backend.fromCliName — the CLI accepts --backend JVM / Lua, so the
         // manifest accepts the same spellings; "lua" is accepted for parity
-        // with the CLI alias.
+        // with the CLI alias. "js" (ISSUE-0195) joins the normalized set so
+        // the manifest and the CLI cannot disagree; the orchestrator rejects
+        // a phase-4 JS selection with an E6000 guard until the emitter
+        // epic (ISSUE-0191) replaces it.
         String normalizedBackend = backend == null ? null
             : backend.trim().toLowerCase(Locale.ROOT);
         if (normalizedBackend != null && !normalizedBackend.equals("luajit")
                 && !normalizedBackend.equals("lua")
-                && !normalizedBackend.equals("jvm")) {
+                && !normalizedBackend.equals("jvm")
+                && !normalizedBackend.equals("js")) {
             throw new IllegalArgumentException(
                 "deal.json: unsupported backend '" + backend
-                    + "'. Supported backends: 'luajit' (or 'lua'), 'jvm'");
+                    + "'. Supported backends: 'luajit' (or 'lua'), 'jvm', 'js'");
         }
 
         return new DealConfig(configFile, moduleRoots, output, backend,
