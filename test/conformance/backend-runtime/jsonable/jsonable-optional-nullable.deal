@@ -23,8 +23,8 @@ export function test_optional_nullable(): null {
     throw { code: "TEST_FAIL", message: "roundtrip 1 fromJson null" };
   }
 
-  // Test 2: explicit null on optional field, value on nullable
-  let p2: Profile | null = Profile$fromJson("{\"nick\":null,\"bio\":\"hello\",\"score\":50}");
+  // Test 2: value on optional field, explicit null on nullable
+  let p2: Profile | null = Profile$fromJson("{\"nick\":\"Nick\",\"bio\":null,\"score\":50}");
   if (p2 !== null) {
     let s2: string = Profile$toJson(p2);
     let r2: Profile | null = Profile$fromJson(s2);
@@ -49,6 +49,16 @@ export function test_optional_nullable(): null {
     throw { code: "TEST_FAIL", message: "fromJson null for all-fields test" };
   }
 
+  return null;
+}
+
+export function test_fromJson_explicit_null_on_non_nullable_optional(): null {
+  // The optional field `nick` is not nullable: an explicit JSON null on
+  // it is a validation failure and fromJson must return null end to end.
+  let rejected: Profile | null = Profile$fromJson("{\"nick\":null,\"bio\":\"hello\",\"score\":50}");
+  if (rejected !== null) {
+    throw { code: "TEST_FAIL", message: "fromJson should return null for explicit null on non-nullable optional field" };
+  }
   return null;
 }
 

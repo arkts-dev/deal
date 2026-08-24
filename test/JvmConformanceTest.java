@@ -77,9 +77,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       not support).</li>
  *   <li><b>JVM-GAP-JSONABLE-RESIDUAL</b> (6 entries) — residual
  *       @jsonable JVM defects: error-typed member access/NEQ E6000;
- *       optional-nullable {@code fromJson} divergence; nested-array
- *       {@code fromJson} javac collision; table-field nested arrays
- *       E8001.</li>
+ *       nested-array {@code fromJson} javac collision; table-field
+ *       nested arrays E8001; the fromJson top-level input gate
+ *       (ISSUE-0101 promotion).</li>
  *   <li><b>JVM-GAP-HOST-ABI-SHAPES</b> (12 entries) — JVM host ABI
  *       unsupported declared shapes: host class exports,
  *       array/function-typed parameters and returns (E6000), and the
@@ -99,7 +99,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <ul>
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
  *   <li>backend-runtime: zero applicable failures AND at least 80% of
- *       the on-disk backend-runtime tests (the unchanged 255-test
+ *       the on-disk backend-runtime tests (the 256-test
  *       denominator) pass through the frontend → CompilationOrchestrator
  *       → JVM codegen → javac → JVM pipeline;</li>
  *   <li>zero unclassified skips (by construction — the classifier has
@@ -159,11 +159,9 @@ public class JvmConformanceTest {
         skip("backend-runtime/jsonable/jsonable-cross-module-nested-class-array.deal",
             "E6000: member access as a value and NEQ over error/int "
                 + "(line 13).", "JVM-GAP-JSONABLE-RESIDUAL");
-        skip("backend-runtime/jsonable/jsonable-optional-nullable.deal",
-            "runtime divergence: C$fromJson returns null for an "
-                + "explicit-null optional field the LuaJIT reference "
-                + "accepts (TEST_FAIL \"fromJson null for nullable "
-                + "test\").", "JVM-GAP-JSONABLE-RESIDUAL");
+        skip("backend-runtime/jsonable/jsonable-fromjson-top-level-scalar.deal",
+            "requires @jsonable code generation and the std/json boundary.",
+            "JVM-GAP-JSONABLE-RESIDUAL");
         skip("backend-runtime/jsonable/jsonable-optional-nullable-nested-class.deal",
             "E6000: NEQ over error/null/int and member access as a value.",
             "JVM-GAP-JSONABLE-RESIDUAL");
@@ -264,9 +262,10 @@ public class JvmConformanceTest {
             + "import std/json (json.parse/stringify require table "
             + "values the JVM slice does not support)",
         "JVM-GAP-JSONABLE-RESIDUAL", "residual @jsonable JVM defects — "
-            + "error-typed member access/NEQ E6000; optional-nullable "
-            + "fromJson divergence; nested-array fromJson javac "
-            + "collision; table-field nested arrays E8001",
+            + "error-typed member access/NEQ E6000; nested-array "
+            + "fromJson javac collision; table-field nested arrays "
+            + "E8001; the fromJson top-level input gate "
+            + "(ISSUE-0101 promotion)",
         "JVM-GAP-HOST-ABI-SHAPES", "JVM host ABI unsupported declared "
             + "shapes — host class exports, array/function-typed "
             + "parameters and returns (E6000), the Lua pre-wrapped "

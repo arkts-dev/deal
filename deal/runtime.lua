@@ -1247,106 +1247,230 @@ end
 --- Deserialize a parsed JSON table into a tagged class instance.
 -- Operates on an already-parsed Lua table (from json.parse via pcall).
 -- Does NOT call json.parse itself — the JSON I/O boundary is in generated code.
+-- Never throws: every malformed input returns nil (Contract 1).
 --
--- @param descriptor string  classifier for error messages and __classname tag
+-- @param descriptor string  classifier for the __classname tag
 -- @param parsed     table   already-decoded JSON object (from json.parse)
 -- @param defaults   table   default values per field (contains __NULL/__MISSING sentinels)
 -- @param fields     array   array of field descriptor tables
 -- @return tagged instance table on success, or nil on validation failure
 function __rt.json_from_json(descriptor, parsed, defaults, fields)
-  -- 1. Validate that all keys in parsed are declared in fields
+  return __rt._json_from_instance(descriptor, parsed, defaults, fields, {}, 0)
+end
+
+--- Decode one class instance (D2 gate order, steps 1-10). Never throws:
+-- every failure path returns nil. seen is the shared path-local set (D4);
+-- depth counts walker nesting levels (D5). Nested class decode recurses
+-- here with depth + 1, re-running every gate on the nested defaults and
+-- fields.
+function __rt._json_from_instance(descriptor, parsed, defaults, fields, seen, depth)
+  if type(seen) ~= "table" then
+    seen = {}
+  end
+  if type(depth) ~= "number" then
+    depth = 0
+  end
+  -- 1. Depth guard (D5): past 512 nesting levels → nil.
+  if depth > __rt._JSON_MAX_DEPTH then
+    return nil
+  end
+  -- 2. Top-level input gate (D2 step 2): only a decoded JSON object may
+  -- reach the key gate; the null sentinel is itself a Lua table and is
+  -- rejected by identity (the generated wrapper maps nil to __NULL, so
+  -- C$fromJson("null") returns the DEAL null).
+  if type(parsed) ~= "table" then
+    return nil
+  end
+  if parsed == __rt.__NULL then
+    return nil
+  end
+  -- 3. Defaults identity gate (D2 step 3): a sentinel or identity-
+  -- preserved defaults (__kind in {"function","class","async"} — exactly
+  -- the condition under which _deep_copy returns the table by identity)
+  -- would be overlaid and tagged in place, corrupting the global
+  -- sentinels; reject it before _deep_copy can return it as the instance
+  -- scaffold. Any other __kind value is a legal field default.
+  if not __rt._json_defaults_identity_ok(defaults) then
+    return nil
+  end
+  -- 4. Fields gate (D2 step 4): a missing/non-table fields argument
+  -- (including an absent host <C>_fields reference) yields nil, never a
+  -- raw ipairs crash.
+  if type(fields) ~= "table" then
+    return nil
+  end
+  -- 5. Descriptor-entry validation (D2 step 5, decode rule set) before
+  -- any key iteration. Re-run at every descent: array branches re-check
+  -- their element descriptor and nested class decode re-runs this gate
+  -- on the nested fields array, so a malformed descriptor at any depth
+  -- returns nil instead of throwing a raw indexing error.
+  if not __rt._json_validate_fields(fields, true) then
+    return nil
+  end
+  -- 6. Key gate (D2 step 6): every parsed key must be a declared field
+  -- name; extra/unknown keys and the integer keys of non-empty
+  -- array-shaped input are rejections.
   local valid_keys = {}
   for _, f in ipairs(fields) do
     valid_keys[f.name] = true
   end
-  for k, _ in pairs(parsed) do
+  for k in pairs(parsed) do
     if not valid_keys[k] then
       return nil
     end
   end
-
-  -- 2. Start with deep-copied defaults (preserves __NULL/__MISSING sentinels by identity)
+  -- 7. Empty parsed input accepted: decodes as the defaulted instance
+  -- (D2a — the []/{} parse collapse).
+  -- 8. Defaults acyclicity (D4): cyclic defaults → nil before _deep_copy.
+  if not __rt._json_defaults_acyclic(defaults, {}) then
+    return nil
+  end
+  -- 9. Seen push (D4): a cycle in the parsed data re-enters this table
+  -- on the current path → nil. The set is popped on every return path.
+  if seen[parsed] then
+    return nil
+  end
+  seen[parsed] = true
+  -- 10. Decode (D2 step 10): deep-copy → overlay → __MISSING-removal →
+  -- tagging, order unchanged (D8). The instance is a fresh table and
+  -- never enters seen.
   local instance = __rt._deep_copy(defaults)
-
-  -- 3. Overlay parsed values with type validation
   for _, f in ipairs(fields) do
     local raw = parsed[f.name]
     if raw ~= nil then
-      if raw == __rt.__NULL and f.nullable then
-        -- Explicit null on a nullable field
-        instance[f.name] = __rt.__NULL
-      elseif f.jtype == "class" then
-        -- Nested class: recursive deserialization
-        if type(raw) ~= "table" then
-          return nil
-        end
-        local nested = __rt.json_from_json(f.className, raw, f.defaults, f.fields)
-        if nested == nil then
-          return nil
-        end
-        instance[f.name] = nested
-      elseif f.jtype == "array" then
-        -- Array: iterate elements, deserialize each recursively
-        if type(raw) ~= "table" then
-          return nil
-        end
-        local arr = {}
-        for i = 1, #raw do
-          local ev = raw[i]
-          if f.element.jtype == "class" then
-            if type(ev) ~= "table" then
-              return nil
-            end
-            local nested = __rt.json_from_json(f.element.className, ev, f.element.defaults, f.element.fields)
-            if nested == nil then
-              return nil
-            end
-            arr[i] = nested
-          elseif f.element.jtype == "array" then
-            -- Nested array: recursively process via json_from_json with synthetic descriptor
-            if type(ev) ~= "table" then
-              return nil
-            end
-            local nested_arr = {}
-            for j = 1, #ev do
-              local eev = ev[j]
-              if f.element.element.jtype == "class" then
-                if type(eev) ~= "table" then return nil end
-                local nested = __rt.json_from_json(f.element.element.className, eev, f.element.element.defaults, f.element.element.fields)
-                if nested == nil then return nil end
-                nested_arr[j] = nested
-              else
-                nested_arr[j] = eev
-              end
-            end
-            arr[i] = nested_arr
-          else
-            -- Primitive element: store directly
-            arr[i] = ev
-          end
-        end
-        instance[f.name] = arr
-      else
-        -- Primitive type: store raw value directly
-        instance[f.name] = raw
+      local v = __rt._json_from_value(f, raw, seen, depth)
+      if v == nil then
+        seen[parsed] = nil
+        return nil
       end
+      instance[f.name] = v
     end
-    -- Key absent: keep default from step 2
+    -- Key absent: keep the deep-copied default.
   end
-
-  -- 4. Remove __MISSING entries: optional fields not provided stay missing (nil)
   for k, v in pairs(instance) do
     if v == __rt.__MISSING then
       instance[k] = nil
     end
   end
-
-  -- 5. Tag with class name and kind
   instance.__classname = descriptor
   instance.__kind = "class"
-
+  seen[parsed] = nil
   return instance
 end
+
+--- Decode one field/element value per its descriptor (Contract 4 fromJson
+-- columns). Never raises: every malformed value returns nil. fdesc is an
+-- entry validated by the caller (field entries by the instance's
+-- _json_validate_fields gate; element descriptors by the array branch's
+-- re-validation), so jtype is known and field-entry flags are booleans
+-- (an absent element flag reads nil — false semantics). seen is the
+-- shared path-local set; depth counts walker nesting levels.
+function __rt._json_from_value(fdesc, raw, seen, depth)
+  if type(seen) ~= "table" then
+    seen = {}
+  end
+  if type(depth) ~= "number" then
+    depth = 0
+  end
+  if raw == __rt.__NULL then
+    -- Explicit JSON null: accepted only on a nullable field/element or a
+    -- null-typed field; everywhere else it is a shape violation.
+    if fdesc.nullable or fdesc.jtype == "null" then
+      return __rt.__NULL
+    end
+    return nil
+  end
+  local jtype = fdesc.jtype
+  if jtype == "null" then
+    -- Only __NULL decodes to null (handled above).
+    return nil
+  elseif jtype == "boolean" then
+    if type(raw) ~= "boolean" then
+      return nil
+    end
+    return raw
+  elseif jtype == "string" then
+    if type(raw) ~= "string" then
+      return nil
+    end
+    return raw
+  elseif jtype == "int" then
+    if not __rt._json_is_int(raw) then
+      return nil
+    end
+    return raw
+  elseif jtype == "number" then
+    if not __rt._json_is_number(raw) then
+      return nil
+    end
+    return raw
+  elseif jtype == "class" then
+    if type(raw) ~= "table" then
+      return nil
+    end
+    -- The nested call re-runs every gate (descriptor-entry validation on
+    -- fdesc.fields, the defaults identity gate on fdesc.defaults, the
+    -- key gate on the nested object) and pushes raw onto seen.
+    return __rt._json_from_instance(fdesc.className, raw, fdesc.defaults,
+        fdesc.fields, seen, depth + 1)
+  elseif jtype == "array" then
+    if type(raw) ~= "table" then
+      return nil
+    end
+    if depth > __rt._JSON_MAX_DEPTH then
+      return nil
+    end
+    -- Dense JSON array shape (holes or mixed keys are rejections; the
+    -- empty array is accepted).
+    if not __rt._json_is_array(raw) then
+      return nil
+    end
+    -- Recursive rule: re-validate the element descriptor before
+    -- descending — a truncated nested-array element (an array-typed
+    -- descriptor without its own element) returns nil here, never a raw
+    -- attempt-to-index throw.
+    if not __rt._json_validate_entry(fdesc.element, true) then
+      return nil
+    end
+    -- Push the array container onto the path-local set (D4); a cyclic
+    -- array re-entering itself through a nested-array element is nil.
+    if seen[raw] then
+      return nil
+    end
+    seen[raw] = true
+    local arr = {}
+    for i = 1, #raw do
+      local v = __rt._json_from_value(fdesc.element, raw[i], seen, depth + 1)
+      if v == nil then
+        seen[raw] = nil
+        return nil
+      end
+      arr[i] = v
+    end
+    seen[raw] = nil
+    return arr
+  elseif jtype == "table" then
+    if type(raw) ~= "table" then
+      return nil
+    end
+    -- D7 asymmetry: fromJson accepts only a JSON object for table
+    -- fields (an array-shaped table value is a rejection).
+    if not __rt._json_is_object(raw) then
+      return nil
+    end
+    -- The whole datum must be JSON-shaped (finite leaves, acyclic);
+    -- _json_table_shape pushes raw onto seen and pops on every return.
+    if not __rt._json_table_shape(raw, seen, depth) then
+      return nil
+    end
+    -- Store the validated parsed sub-table by reference (v1.1 aliasing
+    -- behavior; the generated wrapper discards parsed after the call).
+    return raw
+  end
+  -- Unknown jtype (defensive — the entry validators reject it first).
+  return nil
+end
+
 
 --- Serialize a class instance to a JSON-compatible Lua table.
 -- Operates on an already-tagged class instance (from class_ or json_from_json).

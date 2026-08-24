@@ -1,0 +1,51 @@
+// @spec: Classes — @jsonable fromJson top-level input gate
+// @description: @jsonable fromJson returns null (never throws) for scalar, null, and non-empty-array JSON documents, and treats "[]" and "{}" alike — both decode to the defaulted instance (the documented parse collapse)
+// @expected: runtime-ok
+// @features: jsonable, fromJson, validation
+
+// @jsonable
+export class C {
+  x: int = 0;
+}
+
+export function test_fromJson_top_level_scalars(): null {
+  if (C$fromJson("42") !== null) {
+    throw { code: "TEST_FAIL", message: "fromJson(\"42\") should return null" };
+  }
+  if (C$fromJson("\"x\"") !== null) {
+    throw { code: "TEST_FAIL", message: "fromJson(\"x\") should return null" };
+  }
+  if (C$fromJson("true") !== null) {
+    throw { code: "TEST_FAIL", message: "fromJson(true) should return null" };
+  }
+  if (C$fromJson("null") !== null) {
+    throw { code: "TEST_FAIL", message: "fromJson(null) should return null" };
+  }
+  if (C$fromJson("[1,2]") !== null) {
+    throw { code: "TEST_FAIL", message: "fromJson(\"[1,2]\") should return null" };
+  }
+  return null;
+}
+
+export function test_fromJson_empty_collapse(): null {
+  let from_obj: C | null = C$fromJson("{}");
+  let from_arr: C | null = C$fromJson("[]");
+  if (from_obj !== null) {
+    if (from_arr !== null) {
+      let s_obj: string = C$toJson(from_obj);
+      let s_arr: string = C$toJson(from_arr);
+      if (s_obj !== s_arr) {
+        throw { code: "TEST_FAIL", message: "fromJson({}) and fromJson([]) must roundtrip identically" };
+      }
+    } else {
+      throw { code: "TEST_FAIL", message: "fromJson([]) should decode the defaulted instance" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "fromJson({}) should decode the defaulted instance" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}
