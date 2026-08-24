@@ -2685,6 +2685,223 @@ test("json_to_json does not mutate the instance or nested tables", function()
   assert(instance.__classname == "C" and instance.__kind == "class")
 end)
 
+-- ==================== ISSUE-0188 cross-direction roundtrip invariants (step 4) ====================
+-- Each test below exercises the combined hardened pair end to end:
+--   decode    — __rt.json_from_json builds the tagged instance from the
+--               parsed JSON input (decode child, ISSUE-0186);
+--   encode    — __rt.json_to_json produces the JSON-shaped table from
+--               that instance (encode child, ISSUE-0187);
+--   re-decode — __rt.json_from_json rebuilds the instance from the
+--               encoded table;
+--   compare   — the re-decoded instance is deep-equal to the original
+--               decoded instance (every field value, the
+--               missing/absent state, and the __classname/__kind tags),
+--               and re-encoding the re-decoded instance reproduces the
+--               first encoded table (fixed point).
+
+-- Local deep-equality for JSON-shaped instance graphs: identity shortcut
+-- (covers the __NULL sentinel and by-reference table datum aliasing),
+-- then key-symmetric recursive comparison for tables; non-table values
+-- compare by ==. A missing key (nil) is equal only to another nil.
+local function _jsonable_deep_equal(a, b)
+  if a == b then return true end
+  if type(a) ~= "table" or type(b) ~= "table" then return false end
+  local a_keys, b_keys = 0, 0
+  for k, v in pairs(a) do
+    a_keys = a_keys + 1
+    if not _jsonable_deep_equal(v, b[k]) then return false end
+  end
+  for k in pairs(b) do
+    b_keys = b_keys + 1
+    if a[k] == nil then return false end
+  end
+  return a_keys == b_keys
+end
+
+test("ISSUE-0188 roundtrip invariant: optional-nullable three-state", function()
+  local fields = {
+    { name = "missing_field", jtype = "string", optional = true, nullable = true },
+    { name = "null_field", jtype = "string", optional = true, nullable = true },
+    { name = "value_field", jtype = "string", optional = true, nullable = true },
+    { name = "required", jtype = "string", optional = false, nullable = false },
+  }
+  local defaults = {
+    missing_field = __rt.__MISSING,
+    null_field = __rt.__NULL,
+    value_field = __rt.__MISSING,
+    required = "",
+  }
+  -- JSON input carrying null and value states; the missing state is
+  -- simply absent from the object.
+  local parsed = {
+    null_field = __rt.__NULL,
+    value_field = "hello",
+    required = "r",
+  }
+
+  -- decode
+  local original = __rt.json_from_json("TriState", parsed, defaults, fields)
+  assert(original ~= nil)
+  assert(original.missing_field == nil)
+  assert(original.null_field == __rt.__NULL)
+  assert(original.value_field == "hello")
+  assert(original.required == "r")
+
+  -- encode
+  local encoded = __rt.json_to_json("TriState", original, fields)
+  assert(encoded.missing_field == nil)
+  assert(encoded.null_field == __rt.__NULL)
+  assert(encoded.value_field == "hello")
+  assert(encoded.required == "r")
+
+  -- re-decode
+  local redecoded = __rt.json_from_json("TriState", encoded, defaults, fields)
+  assert(redecoded ~= nil)
+
+  -- compare: the re-decoded instance is deep-equal to the original
+  assert(_jsonable_deep_equal(original, redecoded))
+  -- fixed point: the re-decoded instance encodes to the same table
+  assert(_jsonable_deep_equal(encoded, __rt.json_to_json("TriState", redecoded, fields)))
+end)
+
+test("ISSUE-0188 roundtrip invariant: nested class", function()
+  local child_fields = {
+    { name = "x", jtype = "int", optional = false, nullable = false },
+    { name = "y", jtype = "string", optional = true, nullable = false },
+  }
+  local child_defaults = { x = 0, y = __rt.__MISSING }
+  local parent_fields = {
+    { name = "name", jtype = "string", optional = false, nullable = false },
+    { name = "child", jtype = "class", optional = false, nullable = false,
+      className = "Child", defaults = child_defaults, fields = child_fields },
+  }
+  local parent_defaults = { name = "", child = __rt.__MISSING }
+  local parsed = { name = "P", child = { x = 41, y = "yy" } }
+
+  -- decode
+  local original = __rt.json_from_json("Parent", parsed, parent_defaults, parent_fields)
+  assert(original ~= nil)
+  assert(original.child.__classname == "Child")
+  assert(original.child.x == 41 and original.child.y == "yy")
+
+  -- encode
+  local encoded = __rt.json_to_json("Parent", original, parent_fields)
+  assert(encoded.name == "P")
+  assert(encoded.child.x == 41 and encoded.child.y == "yy")
+
+  -- re-decode
+  local redecoded = __rt.json_from_json("Parent", encoded, parent_defaults, parent_fields)
+  assert(redecoded ~= nil)
+
+  -- compare (recurses into the nested child instance and its tags)
+  assert(_jsonable_deep_equal(original, redecoded))
+  assert(_jsonable_deep_equal(encoded, __rt.json_to_json("Parent", redecoded, parent_fields)))
+end)
+
+test("ISSUE-0188 roundtrip invariant: int[][]", function()
+  -- Hand-built element descriptors omit optional/nullable: the absent
+  -- flags mean false/false in both directions (Contract 3 element rule).
+  local fields = {
+    { name = "matrix", jtype = "array", optional = false, nullable = false,
+      element = { jtype = "array", element = { jtype = "int" } } },
+  }
+  local defaults = { matrix = {} }
+  -- The empty inner row pins the documented []/{} collapse one level
+  -- down (D2a) inside the invariant.
+  local parsed = { matrix = { { 1, 2, 3 }, {}, { 4 } } }
+
+  -- decode
+  local original = __rt.json_from_json("Matrix", parsed, defaults, fields)
+  assert(original ~= nil)
+  assert(#original.matrix == 3)
+  assert(#original.matrix[2] == 0)
+
+  -- encode
+  local encoded = __rt.json_to_json("Matrix", original, fields)
+  assert(#encoded.matrix == 3)
+  assert(#encoded.matrix[2] == 0)
+  assert(encoded.matrix[1][3] == 3 and encoded.matrix[3][1] == 4)
+
+  -- re-decode
+  local redecoded = __rt.json_from_json("Matrix", encoded, defaults, fields)
+  assert(redecoded ~= nil)
+
+  -- compare
+  assert(_jsonable_deep_equal(original, redecoded))
+  assert(_jsonable_deep_equal(encoded, __rt.json_to_json("Matrix", redecoded, fields)))
+end)
+
+test("ISSUE-0188 roundtrip invariant: class arrays", function()
+  local child_fields = {
+    { name = "val", jtype = "int", optional = false, nullable = false },
+  }
+  local child_defaults = { val = 0 }
+  -- The class element is nullable: a __NULL element must survive the
+  -- pair in both directions (Contract 4 element-nullability gate).
+  local fields = {
+    { name = "children", jtype = "array", optional = false, nullable = false,
+      element = { jtype = "class", className = "Child", defaults = child_defaults,
+        fields = child_fields, nullable = true } },
+  }
+  local defaults = { children = {} }
+  local parsed = { children = { { val = 1 }, __rt.__NULL, { val = 3 } } }
+
+  -- decode
+  local original = __rt.json_from_json("Parent", parsed, defaults, fields)
+  assert(original ~= nil)
+  assert(#original.children == 3)
+  assert(original.children[1].__classname == "Child")
+  assert(original.children[2] == __rt.__NULL)
+  assert(original.children[3].val == 3)
+
+  -- encode
+  local encoded = __rt.json_to_json("Parent", original, fields)
+  assert(#encoded.children == 3)
+  assert(encoded.children[2] == __rt.__NULL)
+  assert(encoded.children[1].val == 1 and encoded.children[3].val == 3)
+
+  -- re-decode
+  local redecoded = __rt.json_from_json("Parent", encoded, defaults, fields)
+  assert(redecoded ~= nil)
+
+  -- compare (recurses through the nested class elements and the null
+  -- element)
+  assert(_jsonable_deep_equal(original, redecoded))
+  assert(_jsonable_deep_equal(encoded, __rt.json_to_json("Parent", redecoded, fields)))
+end)
+
+test("ISSUE-0188 roundtrip invariant: table objects with nested arrays", function()
+  local fields = {
+    { name = "data", jtype = "table", optional = false, nullable = false },
+  }
+  local defaults = { data = {} }
+  -- Object-shaped table datum with nested arrays inside object values:
+  -- valid in both directions (D7 asymmetry, nested arrays stay allowed).
+  local parsed = { data = {
+    config = { levels = { 1, 2, 3 }, label = "cfg" },
+    tags = { "a", "b" },
+  } }
+
+  -- decode
+  local original = __rt.json_from_json("Holder", parsed, defaults, fields)
+  assert(original ~= nil)
+  assert(original.data.config.levels[3] == 3)
+  assert(original.data.config.label == "cfg")
+
+  -- encode
+  local encoded = __rt.json_to_json("Holder", original, fields)
+  assert(encoded.data.config.levels[2] == 2)
+  assert(encoded.data.tags[1] == "a" and encoded.data.tags[2] == "b")
+
+  -- re-decode
+  local redecoded = __rt.json_from_json("Holder", encoded, defaults, fields)
+  assert(redecoded ~= nil)
+
+  -- compare (recurses through the nested arrays inside the table datum)
+  assert(_jsonable_deep_equal(original, redecoded))
+  assert(_jsonable_deep_equal(encoded, __rt.json_to_json("Holder", redecoded, fields)))
+end)
+
 -- ==================== Summary ====================
 
 print("")
