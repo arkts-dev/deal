@@ -2,7 +2,7 @@
   "protocol": "DEALPG4",
   "version": 4,
   "platform": "linux-x86_64",
-  "sha256": "7976ccd8f2fd888e421b2e7f4e1fc91af6fd87085fe5d9f3dcaa30b924609aea",
+  "sha256": "fcc580c80e401ac3d4517aab17bf1799fbef735264c09cbc16b5c11335ae05ea",
   "buildRecipeReference": "tools/build-launcher.sh",
   "invocationLimits": {
     "overallTimeoutMs": 45000,
