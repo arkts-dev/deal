@@ -1190,6 +1190,19 @@ function __rt._json_validate_fields(fields, decode)
     return false
   end
   for _, entry in ipairs(fields) do
+    -- Every member of a fields array is a field descriptor (Contract 3)
+    -- and must carry a string name: a nameless member (e.g.
+    -- { jtype = "int" }) would otherwise be classified under the element
+    -- rules of _json_validate_entry and later crash the walkers with a
+    -- raw Lua error ("attempt to concatenate field 'name' (a nil
+    -- value)" in the encode missing-required-field message, "table
+    -- index is nil" at valid_keys[f.name] on the decode key gate).
+    -- Requiring the name here converts those crashes into the pinned
+    -- malformed-descriptor outcomes (decode returns nil, encode raises
+    -- E8001 "malformed field descriptors").
+    if type(entry) ~= "table" or type(entry.name) ~= "string" then
+      return false
+    end
     if not __rt._json_validate_entry(entry, decode) then
       return false
     end

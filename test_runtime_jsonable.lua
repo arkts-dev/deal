@@ -1303,6 +1303,19 @@ test("_json_validate_fields: any invalid entry fails the whole array", function(
   assert(__rt._json_validate_fields(bad_flag, false) == false)
 end)
 
+test("_json_validate_fields: members must carry a string name", function()
+  -- a nameless member would otherwise pass the element rules of
+  -- _json_validate_entry and crash the walkers with a raw Lua error
+  -- (encode: "attempt to concatenate field 'name' (a nil value)";
+  -- decode: "table index is nil" at valid_keys[f.name])
+  assert(__rt._json_validate_fields({ { jtype = "int" } }, true) == false)
+  assert(__rt._json_validate_fields({ { jtype = "int" } }, false) == false)
+  assert(__rt._json_validate_fields(
+      { { jtype = "int", optional = true, nullable = false } }, true) == false)
+  assert(__rt._json_validate_fields(
+      { { jtype = "int", optional = true, nullable = false } }, false) == false)
+end)
+
 test("_json_validate_fields: existing hand-built descriptors stay valid", function()
   -- class element descriptor omitting optional/nullable (absent = false/false),
   -- as in the suite's array-of-nested-classes tests
@@ -1730,6 +1743,24 @@ test("decode matrix: malformed descriptor entries return nil", function()
   -- non-string className
   assert(__rt.json_from_json("C", {}, defaults,
       { { name = "c", jtype = "class", optional = false, nullable = false, className = 42, defaults = {}, fields = {} } }) == nil)
+end)
+
+test("decode matrix: nameless field entry returns nil (no raw Lua error)", function()
+  local defaults = {}
+  -- a nameless member would otherwise pass the element rules and crash
+  -- the key gate with a raw "table index is nil" at valid_keys[f.name]
+  assert(__rt.json_from_json("C", {}, defaults, { { jtype = "int" } }) == nil)
+  assert(__rt.json_from_json("C", {}, defaults,
+      { { jtype = "int", optional = true, nullable = false } }) == nil)
+end)
+
+test("decode matrix: nameless entry inside nested class fields returns nil", function()
+  local parent_fields = {
+    { name = "child", jtype = "class", optional = false, nullable = false,
+      className = "Child", defaults = {}, fields = { { jtype = "int" } } }
+  }
+  local defaults = { child = __rt.__MISSING }
+  assert(__rt.json_from_json("Parent", { child = {} }, defaults, parent_fields) == nil)
 end)
 
 test("decode matrix: class element missing className/defaults/fields returns nil", function()
@@ -2456,6 +2487,30 @@ test("json_to_json encode matrix: non-table fields and non-table entries raise E
     "E8001", "malformed field descriptors")
   assert_error(function() __rt.json_to_json("C", instance,
     { { name = "x", jtype = "function", optional = false, nullable = false } }) end,
+    "E8001", "malformed field descriptors")
+end)
+
+test("json_to_json encode matrix: nameless field entry raises E8001, never a raw error", function()
+  local instance = { x = 1, __classname = "C", __kind = "class" }
+  -- a nameless member would otherwise be classified under the element
+  -- rules and crash the walker with "attempt to concatenate field
+  -- 'name' (a nil value)" (missing required) or "table index is nil"
+  assert_error(function() __rt.json_to_json("C", instance, { { jtype = "int" } }) end,
+    "E8001", "malformed field descriptors")
+  -- nameless + optional=true must not be silently accepted either
+  assert_error(function() __rt.json_to_json("C", instance,
+    { { jtype = "int", optional = true, nullable = false } }) end,
+    "E8001", "malformed field descriptors")
+end)
+
+test("json_to_json encode matrix: nameless entry inside nested class fields raises E8001", function()
+  local parent_fields = {
+    { name = "child", jtype = "class", optional = false, nullable = false,
+      className = "Child", fields = { { jtype = "int" } } }
+  }
+  local child = { x = 1, __classname = "Child", __kind = "class" }
+  local parent = { child = child, __classname = "Parent", __kind = "class" }
+  assert_error(function() __rt.json_to_json("Parent", parent, parent_fields) end,
     "E8001", "malformed field descriptors")
 end)
 
