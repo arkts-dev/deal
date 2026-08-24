@@ -1063,12 +1063,20 @@ end
 -- iteration. seen is the path-local set: pushed before recursion,
 -- popped on every return (D4). depth counts nesting levels (D5);
 -- nil seen/depth default to a fresh set and 0 so the helper is total.
+--
+-- Second return value (encode-side refinement, D3/D4/D5): a false
+-- verdict carries a reason — "cycle" (seen re-entry), "depth" (nesting
+-- past __rt._JSON_MAX_DEPTH), or "shape" (any other violation). The
+-- boolean first return is the helper's contract — decode-side and
+-- predicate callers read only that value, so the helper stays total
+-- and non-throwing; the encoder maps the reason to the pinned E8001
+-- messages.
 function __rt._json_table_shape(v, seen, depth)
   if type(v) ~= "table" then
-    return false
+    return false, "shape"
   end
   if v.__kind == "function" or v.__kind == "class" or v.__kind == "async" then
-    return false
+    return false, "shape"
   end
   if type(seen) ~= "table" then
     seen = {}
@@ -1077,13 +1085,14 @@ function __rt._json_table_shape(v, seen, depth)
     depth = 0
   end
   if depth > __rt._JSON_MAX_DEPTH then
-    return false
+    return false, "depth"
   end
   if seen[v] then
-    return false
+    return false, "cycle"
   end
   seen[v] = true
   local ok = __rt._json_is_object(v) or __rt._json_is_array(v)
+  local reason = "shape"
   if ok then
     for _, val in pairs(v) do
       if val == __rt.__NULL then
@@ -1093,22 +1102,29 @@ function __rt._json_table_shape(v, seen, depth)
       elseif type(val) == "number" then
         if not __rt._json_is_number(val) then
           ok = false
+          reason = "shape"
           break
         end
       elseif type(val) == "table" then
-        if not __rt._json_table_shape(val, seen, depth + 1) then
+        local nested_ok, nested_reason = __rt._json_table_shape(val, seen, depth + 1)
+        if not nested_ok then
           ok = false
+          reason = nested_reason or "shape"
           break
         end
       else
         -- functions and any other non-JSON leaf
         ok = false
+        reason = "shape"
         break
       end
     end
   end
   seen[v] = nil
-  return ok
+  if ok then
+    return true
+  end
+  return false, reason
 end
 
 --- D2 step 3 defaults identity gate, as a non-throwing predicate:
@@ -1472,55 +1488,195 @@ function __rt._json_from_value(fdesc, raw, seen, depth)
 end
 
 
---- Serialize a class instance to a JSON-compatible Lua table.
--- Operates on an already-tagged class instance (from class_ or json_from_json).
--- Does NOT call json.stringify — the JSON I/O boundary is in generated code.
---
--- @param descriptor string  classifier for error messages
--- @param value      table   class instance table
--- @param fields     array   array of field descriptor tables
--- @return table suitable for json.stringify
-function __rt.json_to_json(descriptor, value, fields)
+--- Encode one class instance (Contract 2, D3): iterate the field
+-- descriptors and emit each present field through _json_to_value.
+-- Raises E8001/E8004 DEAL errors on invalid input. The caller marks the
+-- instance on the path-local seen set before recursing (D4), so this
+-- helper reads fields and never mutates value.
+function __rt._json_to_instance(descriptor, value, fields, seen, depth)
+  if depth > __rt._JSON_MAX_DEPTH then
+    error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", nil, nil, nil, nil, nil))
+  end
+  -- Recursive rule (D3 step 2): every nested fields array re-runs the
+  -- encode descriptor-entry validation before iteration, so validation
+  -- depth always equals walker depth and no encode path ever iterates
+  -- an unvalidated descriptor.
+  if not __rt._json_validate_fields(fields, false) then
+    error(__rt._err("E8001", "malformed field descriptors", nil, nil, nil, nil, nil))
+  end
   local result = {}
   for _, f in ipairs(fields) do
     local v = value[f.name]
-    if v == nil and f.optional then
-      -- Missing optional: omit key from output
-    elseif v == __rt.__NULL and f.nullable then
-      -- Explicit null on nullable field: emit __NULL (json.stringify encodes as null)
-      result[f.name] = __rt.__NULL
-    elseif f.jtype == "class" then
-      -- Nested class: recursive serialization
-      result[f.name] = __rt.json_to_json(f.className, v, f.fields)
-    elseif f.jtype == "array" then
-      -- Array: iterate elements, serialize each recursively
-      local arr = {}
-      for i = 1, #v do
-        local ev = v[i]
-        if f.element.jtype == "class" then
-          arr[i] = __rt.json_to_json(f.element.className, ev, f.element.fields)
-        elseif f.element.jtype == "array" then
-          -- Nested array: recursively process
-          local nested_arr = {}
-          for j = 1, #ev do
-            local eev = ev[j]
-            if f.element.element.jtype == "class" then
-              nested_arr[j] = __rt.json_to_json(f.element.element.className, eev, f.element.element.fields)
-            else
-              nested_arr[j] = eev
-            end
-          end
-          arr[i] = nested_arr
-        else
-          arr[i] = ev
-        end
+    if v == nil then
+      if not f.optional then
+        error(__rt._err("E8001", "missing required field '" .. f.name .. "'", nil, nil, nil, nil, nil))
       end
-      result[f.name] = arr
+      -- Missing optional field: omit the key from the output
     else
-      -- Primitive type: assign directly
-      result[f.name] = v
+      result[f.name] = __rt._json_to_value(f, v, seen, depth)
     end
   end
+  return result
+end
+
+--- Encode one field/element value per its descriptor (Contract 4 toJson
+-- columns, D3 step 4). Every raise is a DEAL error (E8001/E8004 built
+-- by __rt._err with no source-location arguments, like
+-- std/json.stringify); no raw Lua error can escape for caller inputs —
+-- every predicate and validator applies its type guard before any
+-- iteration or dereference. The descriptor is always caller-validated:
+-- fields arrays are validated before _json_to_instance iterates them
+-- and the array branch re-validates its element descriptor before
+-- element-wise recursion (D3 step 2 recursive rule).
+function __rt._json_to_value(fdesc, v, seen, depth)
+  if depth > __rt._JSON_MAX_DEPTH then
+    error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", nil, nil, nil, nil, nil))
+  end
+  local jtype = fdesc.jtype
+  if v == __rt.__NULL then
+    -- Explicit null: accepted iff the field/element is nullable or the
+    -- jtype itself is null (Contract 4).
+    if fdesc.nullable or jtype == "null" then
+      return __rt.__NULL
+    end
+    local what = fdesc.name ~= nil and ("field '" .. fdesc.name .. "'") or "array element"
+    error(__rt._err("E8001", "explicit null on non-nullable " .. what, nil, nil, nil, nil, nil))
+  end
+  if jtype == "null" then
+    error(__rt._err("E8001", "expected null", nil, nil, nil, "null", type(v)))
+  elseif jtype == "boolean" then
+    if type(v) ~= "boolean" then
+      error(__rt._err("E8001", "expected boolean", nil, nil, nil, "boolean", type(v)))
+    end
+    return v
+  elseif jtype == "int" then
+    -- check_int: E8001 for non-number/NaN/Infinity/non-integer,
+    -- E8004 "int out of safe range" beyond the safe range — the int
+    -- type contract (see check_int above).
+    return __rt.check_int(v)
+  elseif jtype == "number" then
+    if type(v) ~= "number" then
+      error(__rt._err("E8001", "expected number", nil, nil, nil, "number", type(v)))
+    end
+    if v ~= v then  -- NaN check: NaN is the only value not equal to itself
+      error(__rt._err("E8001", "cannot encode NaN as JSON", nil, nil, nil, nil, nil))
+    end
+    if v == math.huge or v == -math.huge then
+      error(__rt._err("E8001", "cannot encode Infinity as JSON", nil, nil, nil, nil, nil))
+    end
+    return v
+  elseif jtype == "string" then
+    if type(v) ~= "string" then
+      error(__rt._err("E8001", "expected string", nil, nil, nil, "string", type(v)))
+    end
+    return v
+  elseif jtype == "table" then
+    if type(v) ~= "table" then
+      error(__rt._err("E8001", "expected table", nil, nil, nil, "table", type(v)))
+    end
+    if depth + 1 > __rt._JSON_MAX_DEPTH then
+      error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", nil, nil, nil, nil, nil))
+    end
+    -- D7: toJson accepts string-keyed objects and dense arrays with
+    -- finite primitive leaves, finite and acyclic. _json_table_shape
+    -- shares the walker's path-local seen set, so a datum re-entering
+    -- any table on the path (instance, array container, nested table
+    -- value) is a cycle.
+    local ok, reason = __rt._json_table_shape(v, seen, depth + 1)
+    if not ok then
+      if reason == "cycle" then
+        error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", nil, nil, nil, nil, nil))
+      elseif reason == "depth" then
+        error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", nil, nil, nil, nil, nil))
+      else
+        error(__rt._err("E8001", "value is not JSON-shaped", nil, nil, nil, nil, nil))
+      end
+    end
+    -- Emit the validated original table by reference (never mutated).
+    return v
+  elseif jtype == "class" then
+    if type(v) ~= "table" or v.__kind ~= "class" then
+      error(__rt._err("E8001", "expected class instance", nil, nil, nil, "class", type(v)))
+    end
+    if v.__classname ~= fdesc.className then
+      error(__rt._err("E8001", "expected instance of " .. fdesc.className .. ", got " .. tostring(v.__classname or "unknown"), nil, nil, nil, fdesc.className, v.__classname))
+    end
+    if seen[v] then
+      error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", nil, nil, nil, nil, nil))
+    end
+    seen[v] = true
+    local nested = __rt._json_to_instance(fdesc.className, v, fdesc.fields, seen, depth + 1)
+    seen[v] = nil
+    return nested
+  elseif jtype == "array" then
+    if type(v) ~= "table" then
+      error(__rt._err("E8001", "expected array", nil, nil, nil, "array", type(v)))
+    end
+    if not __rt._json_is_array(v) then
+      error(__rt._err("E8001", "expected dense array", nil, nil, nil, "array", nil))
+    end
+    -- Recursive rule (D3 step 2): the element descriptor is re-validated
+    -- before element-wise encoding — a truncated array-typed element
+    -- lacking its own element raises E8001 here, never a raw error.
+    if not __rt._json_validate_entry(fdesc.element, false) then
+      error(__rt._err("E8001", "malformed field descriptors", nil, nil, nil, nil, nil))
+    end
+    if seen[v] then
+      error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", nil, nil, nil, nil, nil))
+    end
+    seen[v] = true
+    local arr = {}
+    for i = 1, #v do
+      arr[i] = __rt._json_to_value(fdesc.element, v[i], seen, depth + 1)
+    end
+    seen[v] = nil
+    return arr
+  end
+  -- Unknown jtype: descriptor-entry validation upstream rejects unknown
+  -- jtypes before any walker descent; this arm is unreachable through
+  -- validated descriptors and stays as a defensive DEAL error.
+  error(__rt._err("E8001", "unknown jtype in field descriptor", nil, nil, nil, nil, nil))
+end
+
+--- Serialize a class instance to a JSON-compatible Lua table.
+-- Operates on an already-tagged class instance (from class_ or json_from_json).
+-- Does NOT call json.stringify — the JSON I/O boundary is in generated code.
+-- Raises E8001/E8004 DEAL errors (never raw Lua errors) on invalid input:
+-- identity mismatch, malformed descriptors at any nesting depth, wrong
+-- primitive types, explicit null on non-nullable fields/elements, missing
+-- required fields, shape violations, non-JSON table values, cycles, and
+-- depth overruns (Contract 2).
+--
+-- @param descriptor string  classifier for error messages and __classname tag
+-- @param value      table   tagged class instance table
+-- @param fields     array   array of field descriptor tables
+-- @return table suitable for json.stringify
+function __rt.json_to_json(descriptor, value, fields)
+  -- 1. Top-level identity check (D3 step 1, defense in depth — the
+  -- generated wrapper's check_type fires first): exact-compare like
+  -- check_type's class branch.
+  if type(value) ~= "table" or value.__kind ~= "class" then
+    error(__rt._err("E8001", "expected class instance", nil, nil, nil, "class", type(value)))
+  end
+  if value.__classname ~= descriptor then
+    error(__rt._err("E8001", "expected instance of " .. tostring(descriptor) .. ", got " .. tostring(value.__classname or "unknown"), nil, nil, nil, descriptor, value.__classname))
+  end
+  -- 2. Encode descriptor-entry validation (D3 step 2): field entries
+  -- require boolean optional/nullable, present element flags must be
+  -- boolean (absent means false/false), class entries and class elements
+  -- require className/fields only — defaults is decode-only.
+  if not __rt._json_validate_fields(fields, false) then
+    error(__rt._err("E8001", "malformed field descriptors", nil, nil, nil, nil, nil))
+  end
+  -- 3. Path-local seen push, the recursive walker, then the pop (D3
+  -- step 3, D4). A raise inside the walker unwinds the whole call and
+  -- the per-call seen set is discarded with it (it is local and never
+  -- escapes), so path-local semantics hold on every path; the pop line
+  -- below runs for the success path.
+  local seen = {}
+  seen[value] = true
+  local result = __rt._json_to_instance(descriptor, value, fields, seen, 0)
+  seen[value] = nil
   return result
 end
 

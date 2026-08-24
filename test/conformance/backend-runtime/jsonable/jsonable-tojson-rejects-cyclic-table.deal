@@ -1,0 +1,19 @@
+// @spec: Classes — @jsonable toJson
+// @description: @jsonable toJson raises E8001 for a cyclic table datum (the spec's finite-acyclic JSON-shape requirement)
+// @expected: runtime-error E8001
+// @features: jsonable, toJson, table, cycle
+
+// @jsonable
+export class Wrapper {
+  data: table = {};
+}
+
+export function test_jsonable_tojson_cyclic_table(): string {
+  let w: Wrapper = { data: {} };
+  w.data.self = w.data;
+  return Wrapper$toJson(w);
+}
+
+export function main(): null {
+  return null;
+}

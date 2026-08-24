@@ -99,7 +99,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <ul>
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
  *   <li>backend-runtime: zero applicable failures AND at least 80% of
- *       the on-disk backend-runtime tests (the 256-test
+ *       the on-disk backend-runtime tests (the 257-test
  *       denominator) pass through the frontend → CompilationOrchestrator
  *       → JVM codegen → javac → JVM pipeline;</li>
  *   <li>zero unclassified skips (by construction — the classifier has
@@ -172,6 +172,11 @@ public class JvmConformanceTest {
             "runtime E8001 \"value is not JSON-shaped\": toJson of a "
                 + "table field holding nested arrays.",
             "JVM-GAP-JSONABLE-RESIDUAL");
+        // jsonable-tojson-rejects-cyclic-table.deal is deliberately NOT
+        // registered: it passes on JVM — the ISSUE-0168 JVM slice's own
+        // cycle detection raises E8001 — so a skip entry would be stale
+        // and fail the stale-skip gate deterministically. Verified JVM
+        // promotion, recorded per ISSUE-0187.
 
         // ---- JVM-GAP-HOST-ABI-SHAPES: unsupported declared host shapes ----
         skip("backend-runtime/host-abi/host-array-return-ok.deal",
