@@ -17,16 +17,17 @@ import java.util.List;
  *
  * <p>Usage:
  * <pre>{@code
- * deal compile <entry.deal> [--output <dir>] [--backend <lua|jvm>] [--verbose] [--dump-ir] [--source-map]
+ * deal compile <entry.deal> [--output <dir>] [--backend <lua|jvm|js>] [--verbose] [--dump-ir] [--source-map]
  * }</pre>
  *
  * <p>Options:
  * <ul>
  *   <li>{@code compile <entry.deal>} — compile a DEAL project (required)</li>
  *   <li>{@code --output <dir>} / {@code -o <dir>} — output directory
- *       (default: ./build/lua, or ./build/jvm with {@code --backend jvm})</li>
+ *       (default: ./build/lua, ./build/jvm with {@code --backend jvm},
+ *       or ./build/js with {@code --backend js})</li>
  *   <li>{@code --backend <name>} — code-generation backend, {@code lua}/{@code luajit}
- *       (default) or {@code jvm} (ISSUE-0091). A {@code deal.json}
+ *       (default), {@code jvm} (ISSUE-0091), or {@code js}. A {@code deal.json}
  *       {@code "backend"} field is used when the flag is absent.</li>
  *   <li>{@code --verbose} / {@code -v} — verbose output with per-module timing</li>
  *   <li>{@code --dump-ir} — produce IR dump files at {@code <outputDir>/<module-path>.ir.txt}</li>
@@ -83,7 +84,7 @@ public final class Main {
                 }
                 case "--backend" -> {
                     if (i + 1 >= remaining.length) {
-                        System.err.println("deal: --backend requires a backend name (lua|jvm)");
+                        System.err.println("deal: --backend requires a backend name (lua|jvm|js)");
                         return 1;
                     }
                     backendName = remaining[++i];
@@ -135,7 +136,7 @@ public final class Main {
             backend = Backend.fromCliName(backendName).orElse(null);
             if (backend == null) {
                 System.err.println("deal: unknown backend '" + backendName
-                    + "'. Supported backends: lua, luajit, jvm");
+                    + "'. Supported backends: lua, luajit, jvm, js");
                 return 1;
             }
         } else if (config != null && config.backend() != null) {
@@ -150,8 +151,11 @@ public final class Main {
             if (config != null && config.output() != null) {
                 outputDir = projectDir.resolve(config.output()).normalize();
             } else {
-                String defaultDir = backend == Backend.JVM
-                    ? "build/jvm" : "build/lua";
+                String defaultDir = switch (backend) {
+                    case JVM -> "build/jvm";
+                    case JS -> "build/js";
+                    case LUAJIT -> "build/lua";
+                };
                 outputDir = Path.of(defaultDir).toAbsolutePath().normalize();
             }
         }
@@ -212,11 +216,11 @@ public final class Main {
     }
 
     private static void printUsage() {
-        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--backend <lua|jvm>] [--verbose] [--dump-ir] [--source-map]");
+        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--backend <lua|jvm|js>] [--verbose] [--dump-ir] [--source-map]");
         System.err.println();
         System.err.println("Options:");
-        System.err.println("  --output, -o <dir>   Output directory (default: ./build/lua, or ./build/jvm with --backend jvm)");
-        System.err.println("  --backend <name>     Code-generation backend: lua/luajit (default) or jvm");
+        System.err.println("  --output, -o <dir>   Output directory (default: ./build/lua, ./build/jvm with --backend jvm, or ./build/js with --backend js)");
+        System.err.println("  --backend <name>     Code-generation backend: lua/luajit (default), jvm, or js");
         System.err.println("  --verbose, -v        Verbose output with per-module timing");
         System.err.println("  --dump-ir            Produce IR dump files at <outputDir>/<module-path>.ir.txt");
         System.err.println("  --source-map         Produce source map sidecar files (.deal.map.json)");
