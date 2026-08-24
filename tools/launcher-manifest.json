@@ -1,0 +1,25 @@
+{
+  "protocol": "DEALPG4",
+  "version": 4,
+  "platform": "linux-x86_64",
+  "sha256": "39aa109cf6849792d6d2f75c7d454498be12e4fc932067f63c25ddc9139303e4",
+  "buildRecipeReference": "tools/build-launcher.sh",
+  "invocationLimits": {
+    "overallTimeoutMs": 45000,
+    "startupTimeoutMs": 5000,
+    "executionCutoffMs": 35000,
+    "termGraceMs": 2000,
+    "killAndProofReserveMs": 5000,
+    "finalizationReserveMs": 3000
+  },
+  "outerLimits": {
+    "overallTimeoutMs": 900000,
+    "readinessTimeoutMs": 5000,
+    "nestedStopMs": 880000,
+    "cleanupReserveMs": 20000,
+    "brokerStallMs": 2000
+  },
+  "selftestLimits": {
+    "selftestTimeoutMs": 90000
+  }
+}
