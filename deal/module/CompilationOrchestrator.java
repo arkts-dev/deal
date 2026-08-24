@@ -1004,6 +1004,16 @@ public final class CompilationOrchestrator {
             // module. Import resolution and the Lua runtime copies are
             // LuaJIT-specific and skipped here.
             codegenAllJvm();
+        } else if (backend == Backend.JS) {
+            // JS staging guard (ISSUE-0195): the JavaScript emitter lands
+            // with the emitter epic (ISSUE-0191). Fail fast with exactly one
+            // E6000 and emit no artifacts -- no module emission, no runtime
+            // copy, no stdlib copy -- so a Backend.JS selection can never
+            // fall into the LuaJIT path and silently miscompile. ISSUE-0191
+            // replaces this arm with codegenAllJs().
+            error(DiagnosticCode.E6000,
+                "JavaScript backend: compilation for the JavaScript backend is not yet available",
+                entryFile.toString(), 1, 1);
         } else {
             // Lua use site: the existing LuaJIT emitter, unchanged.
             for (ModuleInfo info : modules.values()) {

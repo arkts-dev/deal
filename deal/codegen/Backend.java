@@ -23,7 +23,13 @@ public enum Backend {
     /** Emits Java source (compiled to JVM bytecode by {@code javac}) via
      * {@code deal.codegen.jvm.JvmBackend}. Skeleton scope (ISSUE-0091):
      * functions, primitives, control flow, and {@code std/console} output. */
-    JVM("jvm");
+    JVM("jvm"),
+
+    /** JavaScript backend (ISSUE-0195): the {@code "js"} selection name joins
+     * the seam now, but the emitter lands with the emitter epic (ISSUE-0191).
+     * Until then {@code CompilationOrchestrator} rejects a phase-4 {@code JS}
+     * selection with an E6000 diagnostic and emits no artifacts. */
+    JS("js");
 
     private final String cliName;
 
@@ -38,14 +44,16 @@ public enum Backend {
 
     /**
      * Parses a CLI/manifest backend name. Accepts {@code "lua"} and
-     * {@code "luajit"} for {@link #LUAJIT} and {@code "jvm"} for
-     * {@link #JVM}; any other value (including {@code null}) yields empty.
+     * {@code "luajit"} for {@link #LUAJIT}, {@code "jvm"} for {@link #JVM},
+     * and {@code "js"} for {@link #JS}; any other value (including
+     * {@code null}) yields empty.
      */
     public static Optional<Backend> fromCliName(String name) {
         if (name == null) return Optional.empty();
         return switch (name.trim().toLowerCase(Locale.ROOT)) {
             case "lua", "luajit" -> Optional.of(LUAJIT);
             case "jvm" -> Optional.of(JVM);
+            case "js" -> Optional.of(JS);
             default -> Optional.empty();
         };
     }
