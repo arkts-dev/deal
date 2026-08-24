@@ -9,6 +9,12 @@
  *        Field  ::= token without SP / LF / CR
  *    one record per line, a record complete only at LF, CR anywhere
  *    invalid, a line not starting with "DEALPG4 SP" a framing defect;
+ *    the INVOKE cwd field (fixed index 1) may be empty: the empty
+ *    string is even-length lowercase hex (dealpg4-protocol-core D2), so
+ *    an empty cwd is in-class framing-wise and is delivered as a
+ *    zero-length field slice -- it decodes to an empty path, which the
+ *    semantic check classifies record-level MALFORMED_INVOKE (artifact
+ *    page D5/D6 split: framing defects alone close the channel);
  *  - the per-class field encodings (decimal ids/counts/milliseconds,
  *    32-lowercase-hex nonces, even-length lowercase-hex opaque byte
  *    strings, [A-Za-z_]+ tokens) and the per-type size caps (INVOKE <=
@@ -147,7 +153,9 @@ typedef enum dealpg4_parse_status {
     DEALPG4_PARSE_ERR_FIELD_COUNT,        /* wrong number of fields */
     DEALPG4_PARSE_ERR_FIELD_ENCODING,     /* field outside its class (incl.
                                              non-hex/odd-length hex, empty
-                                             field, non-SP separator) */
+                                             field -- except the INVOKE
+                                             cwd, which may be empty --
+                                             non-SP separator) */
     DEALPG4_PARSE_ERR_OVERSIZE_OUT_CHUNK, /* OUT hexChunk > 65536 hex chars */
     DEALPG4_PARSE_ERR_OVERSIZE_ARGV       /* INVOKE raw argv > 65536 bytes */
 } dealpg4_parse_status;
@@ -172,7 +180,9 @@ const char *dealpg4_parse_status_name(dealpg4_parse_status s);
 /* A parsed, caps-conforming record. For INVOKE the first three fields
  * (clientTag, cwd, argc) are in fields[]; the argv tail is one contiguous
  * region in the line addressed by argv_count/argv_region and located with
- * dealpg4_parsed_argv_element. */
+ * dealpg4_parsed_argv_element. The INVOKE cwd slice may be zero-length
+ * (an empty hex string); the consumer's dealpg4_invoke_semantic_check
+ * classifies the empty path MALFORMED_INVOKE. */
 typedef struct dealpg4_parsed {
     dealpg4_parse_status status;   /* DEALPG4_PARSE_OK on success */
     dealpg4_record_type type;      /* UNKNOWN when the type token failed */
@@ -310,9 +320,11 @@ typedef struct dealpg4_field_value {
  * the INVOKE raw-argv cap, the OUT chunk cap, and the per-type line cap
  * exactly like the parser (write-side symmetry): an oversize or
  * class-violating request is refused with -1/errno=EINVAL — a malformed
- * line is never emitted. A conforming record that does not fit the
- * caller's buffer returns -1/errno=ENOBUFS. On success returns 0 and
- * *written = bytes emitted (including the LF). */
+ * line is never emitted. The INVOKE cwd field may be empty (write-side
+ * symmetry with the parse acceptance); the serialized line round-trips
+ * through dealpg4_parse to identical field slices. A conforming record
+ * that does not fit the caller's buffer returns -1/errno=ENOBUFS. On
+ * success returns 0 and *written = bytes emitted (including the LF). */
 int dealpg4_serialize(dealpg4_record_type type,
                       const dealpg4_field_value *fields, size_t nfields,
                       char *out, size_t cap, size_t *written);

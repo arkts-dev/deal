@@ -22,7 +22,10 @@
 typedef enum dealpg4_field_class {
     DEALPG4_F_DECIMAL,        /* 1*DIGIT, value <= INT64_MAX */
     DEALPG4_F_NONCE,          /* exactly 32 lowercase hex chars */
-    DEALPG4_F_HEX,            /* even-length (>= 2) lowercase hex */
+    DEALPG4_F_HEX,            /* even-length (>= 2) lowercase hex; the
+                                 INVOKE cwd field (fixed index 1) may be
+                                 empty -- the empty string is even-length
+                                 hex -- exempted at that position only */
     DEALPG4_F_TOKEN,          /* [A-Za-z_]+ */
     DEALPG4_F_DASH_OR_TOKEN,  /* "-" or a token */
     DEALPG4_F_STREAM,         /* "out" | "err" */
@@ -339,7 +342,13 @@ static int dealpg4_is_nonce_text(const char *p, size_t len)
 
 /* Opaque byte string: even length (>= 2) lowercase hex of UTF-8 bytes.
  * The framing layer checks the hex grammar only; UTF-8 validity of the
- * decoded cwd is a record-level INVOKE check (D6 split). */
+ * decoded cwd is a record-level INVOKE check (D6 split). The len >= 2
+ * floor does not apply to the INVOKE cwd field, which may be empty: the
+ * empty string is even-length hex (protocol-core D2), so an empty cwd
+ * is in-class framing-wise and decodes to an empty path -- a record-level
+ * MALFORMED_INVOKE defect (artifact page D5/D6), never a framing defect.
+ * The exemption is applied at the parse/serialize call sites, which know
+ * the field position. */
 static int dealpg4_is_hex_text(const char *p, size_t len)
 {
     size_t i;
@@ -477,10 +486,26 @@ dealpg4_parse_status dealpg4_parse(const char *line, size_t len,
         fstart = pos;
         while (pos < len - 1 && line[pos] != ' ')
             pos++;
-        if (pos == fstart)
-            /* Empty field: violates Field ::= token without SP/LF/CR. */
+        if (pos == fstart) {
+            /* Empty field: violates Field ::= token without SP/LF/CR --
+             * except the INVOKE cwd field (fixed index 1), which may be
+             * empty: the empty string is even-length hex (protocol-core
+             * D2), so an empty cwd is in-class framing-wise; it decodes
+             * to an empty path, which dealpg4_invoke_semantic_check
+             * classifies record-level MALFORMED_INVOKE (artifact-page
+             * D5/D6 split: framing defects alone close the channel).
+             * Deliver a zero-length field slice so the semantic layer
+             * receives it. */
+            if (type == DEALPG4_REC_INVOKE && fixed == 1) {
+                total_fields++;
+                out->fields[fixed].p = line + fstart;
+                out->fields[fixed].len = 0;
+                fixed++;
+                continue;
+            }
             return dealpg4_parse_fail(out,
                                       DEALPG4_PARSE_ERR_FIELD_ENCODING);
+        }
         total_fields++;
         if (!entry->exact && total_fields > entry->fixed_count) {
             /* INVOKE argv tail: one contiguous region, counted only. */
@@ -512,6 +537,14 @@ dealpg4_parse_status dealpg4_parse(const char *line, size_t len,
 
     /* Fixed-field classes. */
     for (i = 0; i < fixed; i++) {
+        /* The empty INVOKE cwd (fixed index 1) accepted by the framing
+         * walk above is exempt from dealpg4_is_hex_text's len >= 2
+         * floor: the empty string is even-length lowercase hex (D2), so
+         * it passes the hex class; dealpg4_invoke_semantic_check then
+         * classifies the empty path MALFORMED_INVOKE (record-level). */
+        if (type == DEALPG4_REC_INVOKE && i == 1 &&
+            out->fields[i].len == 0)
+            continue;
         if (!dealpg4_field_matches_class(entry->classes[i], &out->fields[i]))
             return dealpg4_parse_fail(out,
                                       DEALPG4_PARSE_ERR_FIELD_ENCODING);
@@ -872,7 +905,14 @@ static int dealpg4_serialize_validate(dealpg4_record_type type,
         }
         f.p = fields[i].data;
         f.len = fields[i].len;
-        if (!dealpg4_field_matches_class(class_, &f)) {
+        /* Write-side symmetry with the parser: the INVOKE cwd field
+         * (fixed index 1) may be empty -- the empty string is
+         * even-length hex (D2) and decodes to an empty path, a
+         * record-level MALFORMED_INVOKE downstream, never a framing
+         * defect. */
+        if (type == DEALPG4_REC_INVOKE && i == 1 && fields[i].len == 0) {
+            /* accepted: empty cwd */
+        } else if (!dealpg4_field_matches_class(class_, &f)) {
             errno = EINVAL;
             return -1;
         }
@@ -947,7 +987,8 @@ int dealpg4_serialize(dealpg4_record_type type,
     pos += strlen(entry->name);
     for (i = 0; i < nfields; i++) {
         out[pos++] = ' ';
-        memcpy(out + pos, fields[i].data, fields[i].len);
+        if (fields[i].len > 0)
+            memcpy(out + pos, fields[i].data, fields[i].len);
         pos += fields[i].len;
     }
     out[pos++] = '\n';
