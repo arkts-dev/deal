@@ -959,6 +959,445 @@ test("json_from_json returns nil on failure (does not throw)", function()
   assert(instance == nil)
 end)
 
+-- ==================== Direct helpers: _json_is_object ====================
+
+test("_json_is_object: non-table inputs are false, no throw", function()
+  assert(__rt._json_is_object(42) == false)
+  assert(__rt._json_is_object("x") == false)
+  assert(__rt._json_is_object(true) == false)
+  assert(__rt._json_is_object(nil) == false)
+  assert(__rt._json_is_object(function() end) == false)
+end)
+
+test("_json_is_object: string keys accepted, non-string keys rejected", function()
+  assert(__rt._json_is_object({}) == true)
+  assert(__rt._json_is_object(__rt.__NULL) == true)  -- empty table
+  assert(__rt._json_is_object({ a = 1, b = 2 }) == true)
+  assert(__rt._json_is_object({ [1] = "x" }) == false)
+  assert(__rt._json_is_object({ a = 1, [2] = "x" }) == false)
+  assert(__rt._json_is_object({ [true] = "x" }) == false)
+end)
+
+-- ==================== Direct helpers: _json_is_array ====================
+
+test("_json_is_array: non-table inputs are false, no throw", function()
+  assert(__rt._json_is_array(42) == false)
+  assert(__rt._json_is_array("x") == false)
+  assert(__rt._json_is_array(false) == false)
+  assert(__rt._json_is_array(nil) == false)
+  assert(__rt._json_is_array(function() end) == false)
+end)
+
+test("_json_is_array: dense arrays accepted, edge cases rejected", function()
+  assert(__rt._json_is_array({}) == true)
+  assert(__rt._json_is_array({1, 2, 3}) == true)
+  assert(__rt._json_is_array({[1] = "x"}) == true)
+  assert(__rt._json_is_array({[1] = "x", [2] = "y"}) == true)
+  assert(__rt._json_is_array({ a = 1 }) == false)
+  assert(__rt._json_is_array({1, 2, [4] = 4}) == false)          -- hole at 3
+  assert(__rt._json_is_array({[2] = "x"}) == false)              -- sparse: missing 1
+  assert(__rt._json_is_array({[1] = "x", [3] = "y"}) == false)   -- hole at 2
+  assert(__rt._json_is_array({[0] = "x"}) == false)              -- 0-key
+  assert(__rt._json_is_array({[-1] = "x"}) == false)             -- negative key
+  assert(__rt._json_is_array({[1.5] = "x"}) == false)            -- non-integer key
+  assert(__rt._json_is_array({[1] = "x", [2] = "y", a = "z"}) == false)  -- mixed keys
+  assert(__rt._json_is_array({1, nil, 3}) == false)              -- nil hole
+end)
+
+-- ==================== Direct helpers: _json_is_int / _json_is_number ====================
+
+test("_json_is_int: safe-range boundaries accepted, beyond rejected", function()
+  assert(__rt._json_is_int(0) == true)
+  assert(__rt._json_is_int(-0) == true)
+  assert(__rt._json_is_int(42) == true)
+  assert(__rt._json_is_int(-42) == true)
+  assert(__rt._json_is_int(9007199254740991) == true)
+  assert(__rt._json_is_int(-9007199254740991) == true)
+  assert(__rt._json_is_int(9007199254740992) == false)
+  assert(__rt._json_is_int(-9007199254740992) == false)
+end)
+
+test("_json_is_int: NaN/Infinity/non-integer/non-number rejected", function()
+  assert(__rt._json_is_int(0/0) == false)    -- NaN
+  assert(__rt._json_is_int(1/0) == false)    -- +Infinity
+  assert(__rt._json_is_int(-1/0) == false)   -- -Infinity
+  assert(__rt._json_is_int(3.5) == false)    -- non-integer
+  assert(__rt._json_is_int("42") == false)
+  assert(__rt._json_is_int(true) == false)
+  assert(__rt._json_is_int(nil) == false)
+  assert(__rt._json_is_int(function() end) == false)
+end)
+
+test("_json_is_number: finite numbers accepted, NaN/Infinity/non-numbers rejected", function()
+  assert(__rt._json_is_number(0) == true)
+  assert(__rt._json_is_number(-0) == true)
+  assert(__rt._json_is_number(3.14) == true)
+  assert(__rt._json_is_number(1e300) == true)
+  assert(__rt._json_is_number(-1e300) == true)
+  assert(__rt._json_is_number(0/0) == false)    -- NaN
+  assert(__rt._json_is_number(1/0) == false)    -- +Infinity
+  assert(__rt._json_is_number(-1/0) == false)   -- -Infinity
+  assert(__rt._json_is_number("3.14") == false)
+  assert(__rt._json_is_number(true) == false)
+  assert(__rt._json_is_number(nil) == false)
+  assert(__rt._json_is_number(function() end) == false)
+end)
+
+-- ==================== Direct helpers: _json_table_shape ====================
+
+test("_json_table_shape: non-table inputs are false, no throw", function()
+  assert(__rt._json_table_shape(42, {}, 0) == false)
+  assert(__rt._json_table_shape("x", {}, 0) == false)
+  assert(__rt._json_table_shape(true, {}, 0) == false)
+  assert(__rt._json_table_shape(nil, {}, 0) == false)
+  assert(__rt._json_table_shape(function() end, {}, 0) == false)
+end)
+
+test("_json_table_shape: nested objects/arrays with finite primitive leaves accepted", function()
+  local datum = {
+    obj = { a = 1, b = "x", c = true, d = __rt.__NULL },
+    arr = {1, 2.5, "s", false, __rt.__NULL},
+    nested = { inner = { {1, 2}, {k = "v"} } },
+  }
+  assert(__rt._json_table_shape(datum, {}, 0) == true)
+  assert(__rt._json_table_shape({}, {}, 0) == true)
+  assert(__rt._json_table_shape({}, {}) == true)          -- nil seen/depth default total
+  assert(__rt._json_table_shape(__rt.__NULL, {}, 0) == true)  -- empty table datum
+end)
+
+test("_json_table_shape: function leaf rejected", function()
+  assert(__rt._json_table_shape({ fn = function() end }, {}, 0) == false)
+  assert(__rt._json_table_shape({ nested = { fn = function() end } }, {}, 0) == false)
+end)
+
+test("_json_table_shape: function-wrapper leaf rejected", function()
+  assert(__rt._json_table_shape({ fn = { __kind = "function" } }, {}, 0) == false)
+end)
+
+test("_json_table_shape: class-instance leaf rejected", function()
+  assert(__rt._json_table_shape({ inst = { __kind = "class", __classname = "C" } }, {}, 0) == false)
+end)
+
+test("_json_table_shape: async handle leaf rejected", function()
+  assert(__rt._json_table_shape({ handle = { __kind = "async" } }, {}, 0) == false)
+end)
+
+test("_json_table_shape: top-level tagged tables rejected", function()
+  assert(__rt._json_table_shape({ __kind = "class", __classname = "C" }, {}, 0) == false)
+  assert(__rt._json_table_shape({ __kind = "function" }, {}, 0) == false)
+  assert(__rt._json_table_shape({ __kind = "async" }, {}, 0) == false)
+end)
+
+test("_json_table_shape: NaN and Infinity leaves rejected", function()
+  assert(__rt._json_table_shape({ x = 0/0 }, {}, 0) == false)
+  assert(__rt._json_table_shape({ x = 1/0 }, {}, 0) == false)
+  assert(__rt._json_table_shape({ x = -1/0 }, {}, 0) == false)
+  assert(__rt._json_table_shape({ arr = {1, 0/0} }, {}, 0) == false)
+  assert(__rt._json_table_shape({ obj = { x = 1/0 } }, {}, 0) == false)
+end)
+
+test("_json_table_shape: cyclic datum rejected", function()
+  local t = { a = 1 }
+  t.self = t
+  assert(__rt._json_table_shape(t, {}, 0) == false)
+  local u = { child = {} }
+  u.child.back = u
+  assert(__rt._json_table_shape(u, {}, 0) == false)
+end)
+
+test("_json_table_shape: shared non-cyclic child accepted (path-local seen)", function()
+  local child = { x = 1 }
+  assert(__rt._json_table_shape({ a = child, b = child }, {}, 0) == true)
+end)
+
+test("_json_table_shape: mixed-shape tables rejected", function()
+  assert(__rt._json_table_shape({ [1] = "x", a = 1 }, {}, 0) == false)     -- mixed keys
+  assert(__rt._json_table_shape({ [1] = "x", [3] = "z" }, {}, 0) == false) -- sparse
+  assert(__rt._json_table_shape({ [0] = "x" }, {}, 0) == false)            -- 0-key array
+end)
+
+test("_json_table_shape: depth boundary 512 accepted, 513 rejected", function()
+  local function build_chain(n)  -- n tables total: deepest nested at depth n-1
+    local root = {}
+    local cur = root
+    for i = 2, n do
+      cur.child = {}
+      cur = cur.child
+    end
+    cur.leaf = "x"
+    return root
+  end
+  assert(__rt._json_table_shape(build_chain(513), {}, 0) == true)   -- deepest at depth 512
+  assert(__rt._json_table_shape(build_chain(514), {}, 0) == false)  -- deepest at depth 513
+end)
+
+test("_json_table_shape: malformed seen/depth arguments never throw", function()
+  assert(__rt._json_table_shape({ x = 1 }, 42, "deep") == true)
+  local cyc = {}
+  cyc.self = cyc
+  assert(__rt._json_table_shape(cyc, "not-a-set", -5) == false)
+  assert(__rt._json_defaults_acyclic({ a = 1 }, "not-a-set") == true)
+end)
+
+test("_json_table_shape: seen set unwound on success and failure", function()
+  local seen = {}
+  assert(__rt._json_table_shape({ a = { b = 1 } }, seen, 0) == true)
+  assert(next(seen) == nil)
+  assert(__rt._json_table_shape({ x = function() end }, seen, 0) == false)
+  assert(next(seen) == nil)
+  local cyc = {}
+  cyc.self = cyc
+  assert(__rt._json_table_shape(cyc, seen, 0) == false)
+  assert(next(seen) == nil)
+end)
+
+-- ==================== Direct helpers: _json_validate_entry ====================
+
+test("_json_validate_entry: non-table entries are false, no throw", function()
+  assert(__rt._json_validate_entry(42, true) == false)
+  assert(__rt._json_validate_entry("x", true) == false)
+  assert(__rt._json_validate_entry(nil, true) == false)
+  assert(__rt._json_validate_entry(function() end, true) == false)
+  assert(__rt._json_validate_entry(42, false) == false)
+end)
+
+test("_json_validate_entry: field entries require boolean optional/nullable", function()
+  local ok = { name = "x", jtype = "int", optional = false, nullable = false }
+  assert(__rt._json_validate_entry(ok, true) == true)
+  assert(__rt._json_validate_entry(ok, false) == true)
+  -- missing optional
+  local m1 = { name = "x", jtype = "int", nullable = false }
+  assert(__rt._json_validate_entry(m1, true) == false)
+  assert(__rt._json_validate_entry(m1, false) == false)
+  -- missing nullable
+  local m2 = { name = "x", jtype = "int", optional = false }
+  assert(__rt._json_validate_entry(m2, true) == false)
+  assert(__rt._json_validate_entry(m2, false) == false)
+  -- non-boolean optional (truthy)
+  local n1 = { name = "x", jtype = "int", optional = 1, nullable = false }
+  assert(__rt._json_validate_entry(n1, true) == false)
+  assert(__rt._json_validate_entry(n1, false) == false)
+  -- non-boolean nullable (truthy string)
+  local n2 = { name = "x", jtype = "int", optional = false, nullable = "yes" }
+  assert(__rt._json_validate_entry(n2, true) == false)
+  assert(__rt._json_validate_entry(n2, false) == false)
+end)
+
+test("_json_validate_entry: field-entry name must be a string", function()
+  local bad = { name = 42, jtype = "int", optional = false, nullable = false }
+  assert(__rt._json_validate_entry(bad, true) == false)
+  assert(__rt._json_validate_entry(bad, false) == false)
+end)
+
+test("_json_validate_entry: unknown or missing jtype is false", function()
+  assert(__rt._json_validate_entry({ name = "x", jtype = "function", optional = false, nullable = false }, true) == false)
+  assert(__rt._json_validate_entry({ name = "x", jtype = "int32", optional = false, nullable = false }, true) == false)
+  assert(__rt._json_validate_entry({ jtype = "wat" }, true) == false)
+  assert(__rt._json_validate_entry({ name = "x", optional = false, nullable = false }, true) == false)
+end)
+
+test("_json_validate_entry: element descriptors may omit optional/nullable", function()
+  local elem = { jtype = "int" }
+  assert(__rt._json_validate_entry(elem, true) == true)
+  assert(__rt._json_validate_entry(elem, false) == true)
+  -- present boolean element flags stay valid
+  local with_flags = { jtype = "int", optional = false, nullable = true }
+  assert(__rt._json_validate_entry(with_flags, true) == true)
+  assert(__rt._json_validate_entry(with_flags, false) == true)
+  -- present non-boolean element flag is malformed
+  assert(__rt._json_validate_entry({ jtype = "int", optional = 1 }, true) == false)
+  assert(__rt._json_validate_entry({ jtype = "int", optional = 1 }, false) == false)
+  assert(__rt._json_validate_entry({ jtype = "int", nullable = "yes" }, true) == false)
+  assert(__rt._json_validate_entry({ jtype = "int", nullable = "yes" }, false) == false)
+end)
+
+test("_json_validate_entry: class entries need className and fields; defaults decode-only", function()
+  local full = { name = "c", jtype = "class", optional = false, nullable = false,
+                 className = "C", defaults = {}, fields = {} }
+  assert(__rt._json_validate_entry(full, true) == true)
+  assert(__rt._json_validate_entry(full, false) == true)
+  -- encode accepts a class entry without defaults; decode rejects it
+  local no_defaults = { name = "c", jtype = "class", optional = false, nullable = false,
+                        className = "C", fields = {} }
+  assert(__rt._json_validate_entry(no_defaults, false) == true)
+  assert(__rt._json_validate_entry(no_defaults, true) == false)
+  -- missing className
+  local no_classname = { name = "c", jtype = "class", optional = false, nullable = false,
+                         defaults = {}, fields = {} }
+  assert(__rt._json_validate_entry(no_classname, true) == false)
+  assert(__rt._json_validate_entry(no_classname, false) == false)
+  -- missing fields
+  local no_fields = { name = "c", jtype = "class", optional = false, nullable = false,
+                      className = "C", defaults = {} }
+  assert(__rt._json_validate_entry(no_fields, true) == false)
+  assert(__rt._json_validate_entry(no_fields, false) == false)
+  -- non-string className
+  local bad_classname = { name = "c", jtype = "class", optional = false, nullable = false,
+                          className = 42, defaults = {}, fields = {} }
+  assert(__rt._json_validate_entry(bad_classname, true) == false)
+  -- non-table defaults rejected on decode only
+  local bad_defaults = { name = "c", jtype = "class", optional = false, nullable = false,
+                         className = "C", defaults = "x", fields = {} }
+  assert(__rt._json_validate_entry(bad_defaults, true) == false)
+  assert(__rt._json_validate_entry(bad_defaults, false) == true)
+end)
+
+test("_json_validate_entry: class elements follow the same rule", function()
+  local elem = { jtype = "class", className = "C", defaults = {}, fields = {} }
+  assert(__rt._json_validate_entry(elem, true) == true)
+  assert(__rt._json_validate_entry(elem, false) == true)
+  local no_defaults = { jtype = "class", className = "C", fields = {} }
+  assert(__rt._json_validate_entry(no_defaults, false) == true)
+  assert(__rt._json_validate_entry(no_defaults, true) == false)
+  local no_fields = { jtype = "class", className = "C", defaults = {} }
+  assert(__rt._json_validate_entry(no_fields, true) == false)
+  assert(__rt._json_validate_entry(no_fields, false) == false)
+  local no_classname = { jtype = "class", defaults = {}, fields = {} }
+  assert(__rt._json_validate_entry(no_classname, true) == false)
+end)
+
+test("_json_validate_entry: array entries require a table element", function()
+  local ok_field = { name = "a", jtype = "array", optional = false, nullable = false,
+                     element = { jtype = "int" } }
+  assert(__rt._json_validate_entry(ok_field, true) == true)
+  assert(__rt._json_validate_entry(ok_field, false) == true)
+  local no_element = { name = "a", jtype = "array", optional = false, nullable = false }
+  assert(__rt._json_validate_entry(no_element, true) == false)
+  assert(__rt._json_validate_entry(no_element, false) == false)
+  local non_table_element = { name = "a", jtype = "array", optional = false, nullable = false,
+                              element = "int" }
+  assert(__rt._json_validate_entry(non_table_element, true) == false)
+end)
+
+test("_json_validate_entry: truncated nested-array element descriptor is false", function()
+  -- an array-typed element descriptor without its own element key
+  local truncated = { jtype = "array", optional = false, nullable = false }
+  assert(__rt._json_validate_entry(truncated, true) == false)
+  assert(__rt._json_validate_entry(truncated, false) == false)
+end)
+
+-- ==================== Direct helpers: _json_validate_fields ====================
+
+test("_json_validate_fields: non-table fields is false, no throw", function()
+  assert(__rt._json_validate_fields(42, true) == false)
+  assert(__rt._json_validate_fields("x", true) == false)
+  assert(__rt._json_validate_fields(nil, true) == false)
+  assert(__rt._json_validate_fields(function() end, true) == false)
+  assert(__rt._json_validate_fields(42, false) == false)
+end)
+
+test("_json_validate_fields: any invalid entry fails the whole array", function()
+  local fields = {
+    { name = "a", jtype = "int", optional = false, nullable = false },
+    { name = "b", jtype = "string", optional = true, nullable = false },
+  }
+  assert(__rt._json_validate_fields(fields, true) == true)
+  assert(__rt._json_validate_fields(fields, false) == true)
+  assert(__rt._json_validate_fields({}, true) == true)
+  local non_table_entry = {
+    { name = "a", jtype = "int", optional = false, nullable = false },
+    42,
+  }
+  assert(__rt._json_validate_fields(non_table_entry, true) == false)
+  local bad_flag = {
+    { name = "a", jtype = "int", optional = false, nullable = false },
+    { name = "b", jtype = "string", optional = true, nullable = "yes" },
+  }
+  assert(__rt._json_validate_fields(bad_flag, true) == false)
+  assert(__rt._json_validate_fields(bad_flag, false) == false)
+end)
+
+test("_json_validate_fields: existing hand-built descriptors stay valid", function()
+  -- class element descriptor omitting optional/nullable (absent = false/false),
+  -- as in the suite's array-of-nested-classes tests
+  local child_fields = {
+    { name = "val", jtype = "int", optional = false, nullable = false }
+  }
+  local parent_fields = {
+    { name = "children", jtype = "array", optional = false, nullable = false,
+      element = { jtype = "class", className = "Child", defaults = {}, fields = child_fields } }
+  }
+  assert(__rt._json_validate_fields(parent_fields, true) == true)
+  assert(__rt._json_validate_fields(parent_fields, false) == true)
+  -- encode-side hand-built class entry without defaults
+  local enc_fields = {
+    { name = "child", jtype = "class", optional = false, nullable = false,
+      className = "Child", fields = child_fields }
+  }
+  assert(__rt._json_validate_fields(enc_fields, false) == true)
+  assert(__rt._json_validate_fields(enc_fields, true) == false)
+end)
+
+-- ==================== Direct helpers: defaults identity gate ====================
+
+test("_json_defaults_identity_ok: sentinels and tagged tables rejected, plain accepted", function()
+  assert(__rt._json_defaults_identity_ok(__rt.__NULL) == false)
+  assert(__rt._json_defaults_identity_ok(__rt.__MISSING) == false)
+  assert(__rt._json_defaults_identity_ok({ __kind = "class", __classname = "C" }) == false)
+  assert(__rt._json_defaults_identity_ok({ __kind = "function" }) == false)
+  assert(__rt._json_defaults_identity_ok({ __kind = "async" }) == false)
+  -- a __kind field holding any other value is a legal field default
+  assert(__rt._json_defaults_identity_ok({ __kind = "plain" }) == true)
+  assert(__rt._json_defaults_identity_ok({ a = 1 }) == true)
+  assert(__rt._json_defaults_identity_ok({}) == true)
+  -- non-table defaults
+  assert(__rt._json_defaults_identity_ok(42) == false)
+  assert(__rt._json_defaults_identity_ok("x") == false)
+  assert(__rt._json_defaults_identity_ok(nil) == false)
+  assert(__rt._json_defaults_identity_ok(function() end) == false)
+  -- the predicate never mutates the global sentinels
+  assert(__rt.__NULL.__kind == nil)
+  assert(__rt.__MISSING.__kind == nil)
+  assert(__rt.__NULL.__classname == nil)
+end)
+
+-- ==================== Direct helpers: _json_defaults_acyclic ====================
+
+test("_json_defaults_acyclic: acyclic defaults accepted, cyclic rejected", function()
+  local acyclic = { a = 1, b = { c = "x" }, d = __rt.__NULL, e = __rt.__MISSING }
+  assert(__rt._json_defaults_acyclic(acyclic, {}) == true)
+  assert(__rt._json_defaults_acyclic({}, {}) == true)
+  assert(__rt._json_defaults_acyclic(42, {}) == true)   -- non-table is trivially acyclic
+  assert(__rt._json_defaults_acyclic(nil, {}) == true)
+  assert(__rt._json_defaults_acyclic("x", {}) == true)
+  assert(__rt._json_defaults_acyclic(function() end, {}) == true)
+  -- input is never mutated
+  assert(acyclic.a == 1 and acyclic.b.c == "x" and acyclic.d == __rt.__NULL and acyclic.e == __rt.__MISSING)
+  -- direct self-cycle
+  local cyc = { a = 1 }
+  cyc.self = cyc
+  assert(__rt._json_defaults_acyclic(cyc, {}) == false)
+  -- cycle through a nested table
+  local nested = { child = {} }
+  nested.child.back = nested
+  assert(__rt._json_defaults_acyclic(nested, {}) == false)
+  -- shared non-cyclic child: path-local seen, no false positive
+  local shared = { x = 1 }
+  assert(__rt._json_defaults_acyclic({ a = shared, b = shared }, {}) == true)
+  -- sentinels and __kind-tagged tables are leaves (mirror _deep_copy)
+  assert(__rt._json_defaults_acyclic(__rt.__NULL, {}) == true)
+  assert(__rt._json_defaults_acyclic(__rt.__MISSING, {}) == true)
+  local tagged = { __kind = "class", __classname = "C" }
+  tagged.self = tagged
+  assert(__rt._json_defaults_acyclic(tagged, {}) == true)
+end)
+
+test("_json_defaults_acyclic: seen set unwound on every return", function()
+  local seen = {}
+  assert(__rt._json_defaults_acyclic({ a = { b = 1 } }, seen) == true)
+  assert(next(seen) == nil)
+  local cyc = {}
+  cyc.self = cyc
+  assert(__rt._json_defaults_acyclic(cyc, seen) == false)
+  assert(next(seen) == nil)
+end)
+
+-- ==================== Direct helpers: depth constant ====================
+
+test("_JSON_MAX_DEPTH is 512 (JVM parity)", function()
+  assert(__rt._JSON_MAX_DEPTH == 512)
+end)
+
 -- ==================== Summary ====================
 
 print("")

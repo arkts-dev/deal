@@ -963,6 +963,287 @@ end
 
 -- ===== JSON serialization helpers (v1.1 @jsonable) =====
 
+-- Shared validation foundation for the descriptor-driven JSON walkers
+-- (jsonable-runtime-validation D1-D5). Every helper below is non-throwing:
+-- it returns a boolean and never raises, so the no-throw decode guarantee
+-- and the DEAL-error-only encode contract stay mechanical.
+
+-- Maximum walker recursion depth (D5; JVM parity with
+-- JvmBackend.JSON_TABLE_DEPTH_LIMIT = 512: entry at depth 0, every
+-- recursive descent increments, depth > 512 rejects).
+__rt._JSON_MAX_DEPTH = 512
+
+--- True iff t is a JSON-object-shaped table: every key is a string
+-- (empty tables qualify). Non-table t is false — the type guard runs
+-- before any iteration, so no predicate can throw.
+function __rt._json_is_object(t)
+  if type(t) ~= "table" then
+    return false
+  end
+  for k in pairs(t) do
+    if type(k) ~= "string" then
+      return false
+    end
+  end
+  return true
+end
+
+--- True iff t is a dense-array-shaped table: the keys are exactly the
+-- integers 1..n (empty tables qualify). Non-table t is false — the type
+-- guard runs before any iteration.
+function __rt._json_is_array(t)
+  if type(t) ~= "table" then
+    return false
+  end
+  local n = 0
+  for k in pairs(t) do
+    if type(k) ~= "number" then
+      return false
+    end
+    if k < 1 or k % 1 ~= 0 then
+      return false
+    end
+    if k > n then
+      n = k
+    end
+  end
+  for i = 1, n do
+    if t[i] == nil then
+      return false
+    end
+  end
+  local count = 0
+  for _ in pairs(t) do
+    count = count + 1
+  end
+  return count == n
+end
+
+--- Non-throwing twin of check_int (see check_int above): false for
+-- non-numbers, NaN, infinities, non-integers, and values outside the
+-- int safe range; true otherwise.
+function __rt._json_is_int(v)
+  if type(v) ~= "number" then
+    return false
+  end
+  if v ~= v then  -- NaN check: NaN is the only value not equal to itself
+    return false
+  end
+  if v == math.huge or v == -math.huge then
+    return false
+  end
+  if v % 1 ~= 0 then
+    return false
+  end
+  if v < -9007199254740991 or v > 9007199254740991 then
+    return false
+  end
+  return true
+end
+
+--- False for non-numbers, NaN, and infinities; true for every other
+-- (finite) number.
+function __rt._json_is_number(v)
+  if type(v) ~= "number" then
+    return false
+  end
+  if v ~= v or v == math.huge or v == -math.huge then
+    return false
+  end
+  return true
+end
+
+--- True iff v is a JSON-shaped table datum (Contract 4 table row):
+-- JSON-object or dense-array shape whose leaves are __NULL, booleans,
+-- finite numbers, or strings, and whose nested tables satisfy the same
+-- shape. Functions, function wrappers (__kind == "function"), class
+-- instances (__kind == "class"), async handles (__kind == "async"),
+-- NaN/Infinity leaves, cycles, and depth overruns are false; empty
+-- tables are true. Non-table v is false — the guard runs before any
+-- iteration. seen is the path-local set: pushed before recursion,
+-- popped on every return (D4). depth counts nesting levels (D5);
+-- nil seen/depth default to a fresh set and 0 so the helper is total.
+function __rt._json_table_shape(v, seen, depth)
+  if type(v) ~= "table" then
+    return false
+  end
+  if v.__kind == "function" or v.__kind == "class" or v.__kind == "async" then
+    return false
+  end
+  if type(seen) ~= "table" then
+    seen = {}
+  end
+  if type(depth) ~= "number" then
+    depth = 0
+  end
+  if depth > __rt._JSON_MAX_DEPTH then
+    return false
+  end
+  if seen[v] then
+    return false
+  end
+  seen[v] = true
+  local ok = __rt._json_is_object(v) or __rt._json_is_array(v)
+  if ok then
+    for _, val in pairs(v) do
+      if val == __rt.__NULL then
+        -- JSON null leaf: fine
+      elseif type(val) == "boolean" or type(val) == "string" then
+        -- primitive leaf: fine
+      elseif type(val) == "number" then
+        if not __rt._json_is_number(val) then
+          ok = false
+          break
+        end
+      elseif type(val) == "table" then
+        if not __rt._json_table_shape(val, seen, depth + 1) then
+          ok = false
+          break
+        end
+      else
+        -- functions and any other non-JSON leaf
+        ok = false
+        break
+      end
+    end
+  end
+  seen[v] = nil
+  return ok
+end
+
+--- D2 step 3 defaults identity gate, as a non-throwing predicate:
+-- false when defaults is not a table, when defaults is __NULL or
+-- __MISSING by identity, or when defaults.__kind is
+-- "function"/"class"/"async" — exactly the condition under which
+-- _deep_copy returns the table by identity (see _deep_copy above).
+-- A __kind field holding any other value (a legal field default) is
+-- accepted.
+function __rt._json_defaults_identity_ok(defaults)
+  if type(defaults) ~= "table" then
+    return false
+  end
+  if defaults == __rt.__NULL or defaults == __rt.__MISSING then
+    return false
+  end
+  local k = defaults.__kind
+  if k == "function" or k == "class" or k == "async" then
+    return false
+  end
+  return true
+end
+
+--- Path-local acyclicity check for the defaults table (D4): false for
+-- cyclic input, true for acyclic input. Traversal mirrors _deep_copy:
+-- sentinels and __kind-tagged tables (function/class/async) are treated
+-- as leaves — exactly the tables _deep_copy returns by identity — so
+-- this check is precisely the condition under which _deep_copy
+-- terminates. Never mutates input, never raises.
+function __rt._json_defaults_acyclic(t, seen)
+  if type(t) ~= "table" then
+    return true
+  end
+  if type(seen) ~= "table" then
+    seen = {}
+  end
+  if seen[t] then
+    return false
+  end
+  seen[t] = true
+  local ok = true
+  if t ~= __rt.__NULL and t ~= __rt.__MISSING then
+    local k = t.__kind
+    if k ~= "function" and k ~= "class" and k ~= "async" then
+      for _, v in pairs(t) do
+        if type(v) == "table" and not __rt._json_defaults_acyclic(v, seen) then
+          ok = false
+          break
+        end
+      end
+    end
+  end
+  seen[t] = nil
+  return ok
+end
+
+--- True iff every entry of the fields array satisfies the
+-- direction-specific entry rules (D2 step 5 for decode, D3 step 2 for
+-- encode). Non-table fields -> false. The walkers re-run this at every
+-- descriptor descent, so validation depth always equals walker depth.
+function __rt._json_validate_fields(fields, decode)
+  if type(fields) ~= "table" then
+    return false
+  end
+  for _, entry in ipairs(fields) do
+    if not __rt._json_validate_entry(entry, decode) then
+      return false
+    end
+  end
+  return true
+end
+
+--- Validate one field/element descriptor entry against the direction's
+-- rules (Contract 3). Never raises; returns false on any violation.
+-- A field entry (carrying name) requires a string name, a known jtype,
+-- and boolean optional and nullable keys (missing key or non-boolean
+-- value is malformed). An element descriptor may omit optional/nullable
+-- (absent means false/false); a present element flag must be boolean.
+-- jtype == "class" requires a string className and a table fields, plus
+-- a table defaults on the decode rule set only (defaults is decode-only;
+-- encode never requires or reads it). jtype == "array" requires a table
+-- element. Unknown jtype is false. The array branch checks only this
+-- entry's element reference — the walker re-runs this validator on the
+-- element descriptor itself when it descends, so a truncated
+-- nested-array element is caught at the depth where it is consumed.
+function __rt._json_validate_entry(entry, decode)
+  if type(entry) ~= "table" then
+    return false
+  end
+  if entry.name ~= nil then
+    -- Field entry: name and both flags are mandatory booleans
+    if type(entry.name) ~= "string" then
+      return false
+    end
+    if type(entry.optional) ~= "boolean" then
+      return false
+    end
+    if type(entry.nullable) ~= "boolean" then
+      return false
+    end
+  else
+    -- Element descriptor: absent flags mean false/false; a present
+    -- flag must be boolean (a truthy non-boolean would silently flip
+    -- element semantics).
+    if entry.optional ~= nil and type(entry.optional) ~= "boolean" then
+      return false
+    end
+    if entry.nullable ~= nil and type(entry.nullable) ~= "boolean" then
+      return false
+    end
+  end
+  local jtype = entry.jtype
+  if jtype == "null" or jtype == "boolean" or jtype == "int"
+      or jtype == "number" or jtype == "string" or jtype == "table" then
+    return true
+  elseif jtype == "class" then
+    if type(entry.className) ~= "string" then
+      return false
+    end
+    if type(entry.fields) ~= "table" then
+      return false
+    end
+    if decode and type(entry.defaults) ~= "table" then
+      return false
+    end
+    return true
+  elseif jtype == "array" then
+    if type(entry.element) ~= "table" then
+      return false
+    end
+    return true
+  end
+  return false
+end
+
 --- Deserialize a parsed JSON table into a tagged class instance.
 -- Operates on an already-parsed Lua table (from json.parse via pcall).
 -- Does NOT call json.parse itself — the JSON I/O boundary is in generated code.
