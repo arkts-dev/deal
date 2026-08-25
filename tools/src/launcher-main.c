@@ -32,11 +32,11 @@
 #include "selftest.h"
 #include "supervisor.h"
 
-/* Dispatch exit statuses. The mode entries own their own statuses; these
- * two cover the dispatch-owned invocation and configuration failures.
- * Neither value is an integrity token. */
+/* Dispatch exit statuses. The mode entries own their own statuses; the
+ * usage status covers the dispatch-owned invocation failures, and the
+ * CONFIG_INVALID status (selftest.h) is shared with the probe entry's
+ * mode-entry limits re-check. Neither value is an integrity token. */
 #define DEALPG4_EXIT_USAGE 2
-#define DEALPG4_EXIT_CONFIG_INVALID 3
 
 static void dealpg4_print_usage(FILE *out)
 {
