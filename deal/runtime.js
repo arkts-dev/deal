@@ -57,6 +57,24 @@ const $MISSING = {};
 const $jsonArrayTables = new WeakSet();
 const $jsonNullTables = new WeakSet();
 
+// ===== Actual-kind mapping (js-backend-runtime-artifact D3) =====
+// $kindOf: the diagnostic "actual" string for every check — the JS mirror
+// of Lua's type() augmented with the runtime's own value forms. undefined
+// (the T1 captured nil-equivalent, compared against $undefined — never the
+// bare spelling) maps to "nil"; null to "null"; wrappers and class
+// instances are identified by their $kind tag before the Map/Array
+// branches; Maps (the T1 $Map capture) are tables; Arrays (the T1 $Array
+// capture) are arrays; everything else reports the JS typeof name.
+function $kindOf(v) {
+  if (v === $undefined) return "nil";
+  if (v === null) return "null";
+  if (v.$kind === "function") return "function";
+  if (v.$kind === "class") return "class";
+  if (v instanceof $Map) return "table";
+  if ($Array.isArray(v)) return "array";
+  return typeof v;
+}
+
 const $rt = {
   MISSING: $MISSING,
   NULL: null,
@@ -157,6 +175,100 @@ const $rt = {
     const err = $rt.reifyError(e);
     $process.stderr.write("DEAL_ERROR_CODE: " + err.code + " " + err.message + "\n");
     $process.exitCode = 1;
+  },
+
+  // ===== Primitive typed-boundary checks (js-backend-runtime-artifact D3) =====
+  // Every check accepts trailing (file, line, column) arguments and throws
+  // every error through fail (the D8 spine), so the DEALError carries the
+  // exact message, the expected/actual pair where the contract defines
+  // one, and the passed location fields (absent when undefined, the _err
+  // convention, deal/runtime.lua:19-32). Success returns the validated
+  // value — identity except checkInt's -0 normalization. Checks are total
+  // and mutate no input.
+
+  // checkNull: DEAL null is only JS null — undefined and MISSING are
+  // rejected (deal/runtime.lua:50-55).
+  checkNull: function $checkNull(v, file, line, column) {
+    if (v !== null) {
+      $rt.fail("E8001", "expected null", file, line, column, "null", $kindOf(v));
+    }
+    return v;
+  },
+
+  checkBoolean: function $checkBoolean(v, file, line, column) {
+    if (typeof v !== "boolean") {
+      $rt.fail("E8001", "expected boolean", file, line, column, "boolean", $kindOf(v));
+    }
+    return v;
+  },
+
+  // checkInt: the exact check_int order (deal/runtime.lua:64-83) — the
+  // ±Infinity E8001 arm fires before the E8004 finite-range arm, so intPow
+  // overflow to Infinity is E8001 and only finite values outside
+  // ±(2^53-1) are E8004. -0 normalizes to 0 (the v = v + 0 step, :72).
+  // NaN/±Infinity/non-integer carry expected "int" exactly like the
+  // reference _err calls; the E8004 range arm carries no expected/actual
+  // (nil in the reference — fields absent, the _err convention).
+  checkInt: function $checkInt(v, file, line, column) {
+    if (typeof v !== "number") {
+      $rt.fail("E8001", "expected int", file, line, column, "int", $kindOf(v));
+    }
+    if (Number.isNaN(v)) {
+      $rt.fail("E8001", "expected int, got NaN", file, line, column, "int", "NaN");
+    }
+    v = v + 0; // normalize -0 to 0
+    if (v === Infinity || v === -Infinity) {
+      $rt.fail("E8001", "expected int, got infinity", file, line, column, "int", "infinity");
+    }
+    if (v % 1 !== 0) {
+      $rt.fail("E8001", "expected int, got non-integer number", file, line, column, "int", "number");
+    }
+    if (v < -9007199254740991 || v > 9007199254740991) {
+      $rt.fail("E8004", "int out of safe range", file, line, column);
+    }
+    return v;
+  },
+
+  // checkNumber: NaN and ±Infinity pass (spec §Numeric overflow).
+  checkNumber: function $checkNumber(v, file, line, column) {
+    if (typeof v !== "number") {
+      $rt.fail("E8001", "expected number", file, line, column, "number", $kindOf(v));
+    }
+    return v;
+  },
+
+  // checkString: boundary validation rejects unpaired UTF-16 surrogates —
+  // a high surrogate (U+D800..U+DBFF) not followed by a low surrogate
+  // (U+DC00..U+DFFF), or a lone low surrogate — with the reference's
+  // boundary message (deal/runtime.lua:204-215). Valid supplementary pairs
+  // pass; the string is returned unchanged.
+  checkString: function $checkString(v, file, line, column) {
+    if (typeof v !== "string") {
+      $rt.fail("E8001", "expected string", file, line, column, "string", $kindOf(v));
+    }
+    for (let $i = 0; $i < v.length; $i++) {
+      const $c = v.charCodeAt($i);
+      if ($c >= 0xd800 && $c <= 0xdbff) {
+        const $next = $i + 1 < v.length ? v.charCodeAt($i + 1) : -1;
+        if ($next < 0xdc00 || $next > 0xdfff) {
+          $rt.fail("E8001", "expected string, got invalid UTF-8 encoding", file, line, column, "string", "invalid UTF-8 string");
+        }
+        $i++; // skip the low surrogate of a valid pair
+      } else if ($c >= 0xdc00 && $c <= 0xdfff) {
+        $rt.fail("E8001", "expected string, got invalid UTF-8 encoding", file, line, column, "string", "invalid UTF-8 string");
+      }
+    }
+    return v;
+  },
+
+  // checkTable: the strict split (js-backend-runtime D3) — instanceof Map
+  // passes (the T1-marked JSON Maps included, D2); anything else — Array,
+  // plain object, class instance, wrapper, primitives — is rejected.
+  checkTable: function $checkTable(v, file, line, column) {
+    if (!(v instanceof $Map)) {
+      $rt.fail("E8001", "expected table", file, line, column, "table", $kindOf(v));
+    }
+    return v;
   },
 };
 
