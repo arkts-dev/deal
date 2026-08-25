@@ -1,19 +1,33 @@
 package deal.test;
 
+import deal.ast.Span;
+import deal.ast.TokenType;
+import deal.lexer.Diagnostic;
+import deal.lexer.Token;
+import deal.parser.ParseResult;
+import deal.parser.Parser;
 import deal.source.ScalarPosition;
 import deal.source.ScalarSourceCursor;
 
+import java.util.List;
+
 /**
- * Tests for the non-lossy diagnostic range foundation (ISSUE-0216).
+ * Tests for the non-lossy diagnostic range foundation (ISSUE-0216 /
+ * ISSUE-0217).
  *
- * <p>This file is the home of the ISSUE-0216 verification suites. The first
- * capability to land is the scalar position foundation, so this file
- * currently holds the {@link ScalarSourceCursor} / {@link ScalarPosition}
- * section: hand-computed walk expectations for astral characters, tabs, LF,
- * CRLF, and CR line endings, unpaired surrogates, mark/reset lookahead, and
- * the {@code scalarCount} overloads. Later capabilities extend this file
- * with the carrier, formatter, manifest-range, and producer-migration
- * sections.
+ * <p>This file is the home of the ISSUE-0216/ISSUE-0217 verification
+ * suites. It holds the {@link ScalarSourceCursor} / {@link ScalarPosition}
+ * section (hand-computed walk expectations for astral characters, tabs,
+ * LF, CRLF, and CR line endings, unpaired surrogates, mark/reset lookahead,
+ * and the {@code scalarCount} overloads) and the Token/Span scalar-offset
+ * section (the UNKNOWN_OFFSET sentinel on convenience constructors,
+ * {@code hasScalarOffsets()}, verbatim offset preservation through
+ * {@code Token.withDirectives}, {@code Span.synthetic} UNKNOWN offsets,
+ * scalar-count recomputation against {@code ScalarSourceCursor}, parser
+ * span-helper propagation, the empty-program (0,0) span, and the past-end
+ * {@code peek()} pseudo-EOF position carrying). Later capabilities extend
+ * this file with the carrier, formatter, manifest-range, and
+ * producer-migration sections.
  *
  * <p>Runs via main() using the check() helpers; exits non-zero on failure.
  */
@@ -50,6 +64,11 @@ public class DiagnosticRangeTest {
         testCursorSurrogates();
         testCursorMarkReset();
         testScalarCount();
+
+        testTokenOffsets();
+        testSpanOffsets();
+        testSpanHelperPropagation();
+        testPeekPseudoEof();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -450,5 +469,326 @@ public class DiagnosticRangeTest {
         check(ScalarSourceCursor.scalarCount(null) == 0, "scalarCount(null) != 0");
         check(ScalarSourceCursor.scalarCount(null, 0, 5) == 0,
             "scalarCount(null, 0, 5) != 0");
+    }
+
+    // =========================================================================
+    // Token/Span scalar-offset section
+    // =========================================================================
+
+    private static void testTokenOffsets() {
+        System.out.println("-- Token offsets: UNKNOWN sentinel, constructors, withDirectives --");
+
+        check(Token.UNKNOWN_OFFSET == -1, "Token.UNKNOWN_OFFSET != -1");
+
+        // 5-argument convenience constructor: no offset information, never 0.
+        Token t5 = new Token(TokenType.IDENTIFIER, "x", 2, 3, 1);
+        check(t5.startScalarOffset() == Token.UNKNOWN_OFFSET,
+            "5-arg Token startScalarOffset " + t5.startScalarOffset() + " != UNKNOWN_OFFSET");
+        check(t5.scalarLength() == Token.UNKNOWN_OFFSET,
+            "5-arg Token scalarLength " + t5.scalarLength() + " != UNKNOWN_OFFSET");
+        check(!t5.hasScalarOffsets(), "5-arg Token hasScalarOffsets() must be false");
+        check(t5.endScalarOffset() == Token.UNKNOWN_OFFSET,
+            "5-arg Token endScalarOffset() " + t5.endScalarOffset() + " != UNKNOWN_OFFSET");
+        check(t5.line() == 2 && t5.column() == 3 && t5.length() == 1,
+            "5-arg Token positions/length changed");
+        check(t5.directives().isEmpty(), "5-arg Token directives must default to empty");
+
+        // 6-argument convenience constructor with directives: UNKNOWN offsets.
+        Token t6 = new Token(TokenType.EXPORT, "export", 1, 1, 6, List.of("@jsonable"));
+        check(t6.startScalarOffset() == Token.UNKNOWN_OFFSET
+                && t6.scalarLength() == Token.UNKNOWN_OFFSET,
+            "6-arg Token must default both offsets to UNKNOWN_OFFSET");
+        check(!t6.hasScalarOffsets(), "6-arg Token hasScalarOffsets() must be false");
+        check(t6.directives().equals(List.of("@jsonable")),
+            "6-arg Token directives lost");
+
+        // Canonical constructor with known offsets: start 7, scalar length 3.
+        Token known = new Token(TokenType.IDENTIFIER, "a\uD83D\uDE00b", 4, 5, 4, 7, 3, List.of());
+        check(known.hasScalarOffsets(), "known-offset Token hasScalarOffsets() must be true");
+        check(known.startScalarOffset() == 7 && known.scalarLength() == 3,
+            "known-offset Token offsets (" + known.startScalarOffset() + ","
+                + known.scalarLength() + ") != (7,3)");
+        check(known.endScalarOffset() == 10,
+            "known-offset Token endScalarOffset() " + known.endScalarOffset() + " != 10");
+
+        // Independent recomputation: 'a' + U+1F600 + 'b' is three decoded
+        // scalars and four UTF-16 units; start + scalarLength must equal the
+        // expected half-open end offset.
+        check(ScalarSourceCursor.scalarCount(known.lexeme()) == 3,
+            "scalarCount(known.lexeme()) " + ScalarSourceCursor.scalarCount(known.lexeme())
+                + " != 3");
+        check(known.lexeme().length() == 4,
+            "known-offset Token UTF-16 length " + known.lexeme().length() + " != 4");
+        check(known.startScalarOffset() + known.scalarLength() == 10,
+            "startScalarOffset + scalarLength != expected end offset 10");
+
+        // withDirectives preserves offsets verbatim (known in -> known out)
+        // and never routes through the offset-less convenience constructors.
+        Token withD = known.withDirectives(List.of("@jsonable", "@deal-version 1.2"));
+        check(withD.startScalarOffset() == 7 && withD.scalarLength() == 3,
+            "withDirectives must preserve known offsets verbatim, got ("
+                + withD.startScalarOffset() + "," + withD.scalarLength() + ")");
+        check(withD.hasScalarOffsets(),
+            "withDirectives result hasScalarOffsets() must stay true");
+        check(withD.directives().equals(List.of("@jsonable", "@deal-version 1.2")),
+            "withDirectives directives lost");
+        check(withD.type() == known.type() && withD.lexeme().equals(known.lexeme())
+                && withD.line() == 4 && withD.column() == 5 && withD.length() == 4,
+            "withDirectives must copy all other fields");
+
+        // withDirectives preserves UNKNOWN verbatim (UNKNOWN in -> UNKNOWN out).
+        Token unknownD = t6.withDirectives(List.of());
+        check(unknownD.startScalarOffset() == Token.UNKNOWN_OFFSET
+                && unknownD.scalarLength() == Token.UNKNOWN_OFFSET,
+            "withDirectives must preserve UNKNOWN offsets verbatim");
+        check(!unknownD.hasScalarOffsets(),
+            "withDirectives UNKNOWN result hasScalarOffsets() must stay false");
+        check(unknownD.directives().isEmpty(),
+            "withDirectives with empty list must clear directives");
+
+        // hasScalarOffsets(): true iff exactly both components non-negative.
+        check(!new Token(TokenType.IDENTIFIER, "x", 1, 1, 1, Token.UNKNOWN_OFFSET, 2, List.of())
+                .hasScalarOffsets(),
+            "negative start offset must make hasScalarOffsets() false");
+        check(!new Token(TokenType.IDENTIFIER, "x", 1, 1, 1, 0, Token.UNKNOWN_OFFSET, List.of())
+                .hasScalarOffsets(),
+            "negative scalarLength must make hasScalarOffsets() false");
+        check(new Token(TokenType.IDENTIFIER, "x", 1, 1, 1, 0, 0, List.of())
+                .hasScalarOffsets(),
+            "(0,0) offsets must make hasScalarOffsets() true");
+
+        // Existing validation of line/column/length is unchanged.
+        boolean threw = false;
+        try {
+            new Token(TokenType.IDENTIFIER, "x", 0, 1, 1);
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        check(threw, "Token line < 1 validation must remain");
+        threw = false;
+        try {
+            new Token(null, "x", 1, 1, 1);
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        check(threw, "Token null type validation must remain");
+    }
+
+    private static void testSpanOffsets() {
+        System.out.println("-- Span offsets: UNKNOWN sentinel, constructors, synthetic --");
+
+        check(Span.UNKNOWN_OFFSET == -1, "Span.UNKNOWN_OFFSET != -1");
+
+        // 5-argument convenience constructor: no offset information, never 0.
+        Span s5 = new Span("f.deal", 1, 5, 1, 10);
+        check(s5.startScalarOffset() == Span.UNKNOWN_OFFSET
+                && s5.endScalarOffset() == Span.UNKNOWN_OFFSET,
+            "5-arg Span must default both offsets to UNKNOWN_OFFSET");
+        check(!s5.hasScalarOffsets(), "5-arg Span hasScalarOffsets() must be false");
+        check(s5.startLine() == 1 && s5.startColumn() == 5
+                && s5.endLine() == 1 && s5.endColumn() == 10,
+            "5-arg Span positions changed");
+
+        // Explicit-offset constructor: known half-open range [4, 9).
+        Span known = new Span("f.deal", 2, 3, 2, 7, 4, 9);
+        check(known.hasScalarOffsets(), "known-offset Span hasScalarOffsets() must be true");
+        check(known.startScalarOffset() == 4 && known.endScalarOffset() == 9,
+            "known-offset Span offsets (" + known.startScalarOffset() + ","
+                + known.endScalarOffset() + ") != (4,9)");
+        check(known.endScalarOffset() - known.startScalarOffset() == 5,
+            "half-open span length " + (known.endScalarOffset() - known.startScalarOffset())
+                + " != 5");
+        check(known.startLine() == 2 && known.startColumn() == 3
+                && known.endLine() == 2 && known.endColumn() == 7,
+            "known-offset Span positions changed");
+
+        // Span.synthetic remains (1,1,1,1) and carries UNKNOWN offsets.
+        Span syn = Span.synthetic("f.deal");
+        check(syn.file().equals("f.deal"), "Span.synthetic file");
+        check(syn.startLine() == 1 && syn.startColumn() == 1
+                && syn.endLine() == 1 && syn.endColumn() == 1,
+            "Span.synthetic positions must remain (1,1,1,1)");
+        check(!syn.hasScalarOffsets(), "Span.synthetic must carry UNKNOWN offsets");
+        check(syn.startScalarOffset() == Span.UNKNOWN_OFFSET
+                && syn.endScalarOffset() == Span.UNKNOWN_OFFSET,
+            "Span.synthetic offsets (" + syn.startScalarOffset() + ","
+                + syn.endScalarOffset() + ") != UNKNOWN_OFFSET");
+
+        // hasScalarOffsets(): true iff exactly both components non-negative.
+        check(!new Span("f", 1, 1, 1, 1, Span.UNKNOWN_OFFSET, 2).hasScalarOffsets(),
+            "negative start offset must make Span hasScalarOffsets() false");
+        check(!new Span("f", 1, 1, 1, 1, 0, Span.UNKNOWN_OFFSET).hasScalarOffsets(),
+            "negative end offset must make Span hasScalarOffsets() false");
+        check(new Span("f", 1, 1, 1, 1, 0, 0).hasScalarOffsets(),
+            "(0,0) offsets must make Span hasScalarOffsets() true");
+
+        // Existing validation pins are unchanged (end not before start).
+        boolean threw = false;
+        try {
+            new Span("x", 2, 1, 1, 1);
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        check(threw, "Span end-before-start validation must remain");
+    }
+
+    /**
+     * Exercises the parser's span helpers through the public parse() entry:
+     * spanOf (expression spans), spanBetween(Token,Token) (statement spans),
+     * spanBetween(Span,Span) (program span), and the empty-program (0,0)
+     * explicit-offset span.
+     */
+    private static void testSpanHelperPropagation() {
+        System.out.println("-- Token/Span offsets: parser span helper propagation --");
+
+        // Known offsets: hand-built tokens for "let x = 42;" at exact scalar
+        // positions (offsets 0-11, EOF at scalar offset 11).
+        Token let = new Token(TokenType.LET, "let", 1, 1, 3, 0, 3, List.of());
+        Token name = new Token(TokenType.IDENTIFIER, "x", 1, 5, 1, 4, 1, List.of());
+        Token eq = new Token(TokenType.EQ_SIGN, "=", 1, 7, 1, 6, 1, List.of());
+        Token num = new Token(TokenType.INT_LITERAL, "42", 1, 9, 2, 8, 2, List.of());
+        Token semi = new Token(TokenType.SEMICOLON, ";", 1, 11, 1, 10, 1, List.of());
+        Token eof = new Token(TokenType.EOF, "", 1, 12, 0, 11, 0, List.of());
+
+        ParseResult r = new Parser(List.of(let, name, eq, num, semi, eof), "f.deal").parse();
+        check(r.diagnostics().isEmpty(), "known-offset program must parse clean, got "
+            + r.diagnostics());
+        Span prog = r.program().span();
+        check(prog.hasScalarOffsets(), "program span must carry known offsets");
+        check(prog.startScalarOffset() == 0 && prog.endScalarOffset() == 11,
+            "program span offsets (" + prog.startScalarOffset() + ","
+                + prog.endScalarOffset() + ") != (0,11)");
+        check(prog.startLine() == 1 && prog.startColumn() == 1
+                && prog.endLine() == 1 && prog.endColumn() == 12,
+            "program span positions must stay (1,1)-(1,12)");
+
+        // Statement span: spanBetween(Token,Token) — let start to the
+        // consumed ';'/'EOF' end. Lexeme scalar counts recomputed
+        // independently.
+        check(ScalarSourceCursor.scalarCount("let") == 3, "scalarCount(\"let\") != 3");
+        check(ScalarSourceCursor.scalarCount("42") == 2, "scalarCount(\"42\") != 2");
+        check(let.startScalarOffset() + let.scalarLength() == 3,
+            "let token end offset != 3");
+        check(num.startScalarOffset() + num.scalarLength() == 10,
+            "42 token end offset != 10");
+        check(r.program().statements().size() == 1, "known-offset program stmt count");
+        Span stmt = r.program().statements().get(0).span();
+        check(stmt.startScalarOffset() == 0 && stmt.endScalarOffset() == 11,
+            "statement span offsets (" + stmt.startScalarOffset() + ","
+                + stmt.endScalarOffset() + ") != (0,11)");
+
+        // UNKNOWN in -> UNKNOWN out: the same program built with offset-less
+        // convenience constructors everywhere.
+        Token ulet = new Token(TokenType.LET, "let", 1, 1, 3);
+        Token uname = new Token(TokenType.IDENTIFIER, "x", 1, 5, 1);
+        Token ueq = new Token(TokenType.EQ_SIGN, "=", 1, 7, 1);
+        Token unum = new Token(TokenType.INT_LITERAL, "42", 1, 9, 2);
+        Token usemi = new Token(TokenType.SEMICOLON, ";", 1, 11, 1);
+        Token ueof = new Token(TokenType.EOF, "", 1, 12, 0);
+        ParseResult ur = new Parser(List.of(ulet, uname, ueq, unum, usemi, ueof),
+            "f.deal").parse();
+        check(ur.diagnostics().isEmpty(), "UNKNOWN-input program must parse clean");
+        Span uprog = ur.program().span();
+        check(!uprog.hasScalarOffsets(),
+            "UNKNOWN-input program span must carry UNKNOWN offsets");
+        check(uprog.startScalarOffset() == Span.UNKNOWN_OFFSET
+                && uprog.endScalarOffset() == Span.UNKNOWN_OFFSET,
+            "UNKNOWN-input program span offsets (" + uprog.startScalarOffset() + ","
+                + uprog.endScalarOffset() + ") != UNKNOWN");
+        check(uprog.startLine() == 1 && uprog.startColumn() == 1
+                && uprog.endLine() == 1 && uprog.endColumn() == 12,
+            "UNKNOWN-input program span positions must stay (1,1)-(1,12)");
+
+        // Mixed: known start offset, UNKNOWN end offset -> the known start
+        // propagates, the end stays UNKNOWN, hasScalarOffsets() is false.
+        Token mlet = new Token(TokenType.LET, "let", 1, 1, 3, 0, 3, List.of());
+        ParseResult mr = new Parser(List.of(mlet, uname, ueq, unum, usemi, ueof),
+            "f.deal").parse();
+        Span mprog = mr.program().span();
+        check(mprog.startScalarOffset() == 0,
+            "mixed-input span start offset must propagate the known start, got "
+                + mprog.startScalarOffset());
+        check(mprog.endScalarOffset() == Span.UNKNOWN_OFFSET,
+            "mixed-input span end offset must stay UNKNOWN, got "
+                + mprog.endScalarOffset());
+        check(!mprog.hasScalarOffsets(),
+            "mixed-input span hasScalarOffsets() must be false");
+
+        // Empty program (no tokens at all): explicit (0,0) offsets, never
+        // UNKNOWN, positions (1,1)-(1,1).
+        Span empty = new Parser(List.of(), "f.deal").parse().program().span();
+        check(empty.startLine() == 1 && empty.startColumn() == 1
+                && empty.endLine() == 1 && empty.endColumn() == 1,
+            "empty program span positions must stay (1,1)-(1,1)");
+        check(empty.hasScalarOffsets(), "empty program span must carry explicit offsets");
+        check(empty.startScalarOffset() == 0 && empty.endScalarOffset() == 0,
+            "empty program span offsets (" + empty.startScalarOffset() + ","
+                + empty.endScalarOffset() + ") != (0,0)");
+
+        // EOF-token-only list is also an empty program with (0,0) offsets.
+        Span eofOnly = new Parser(List.of(
+            new Token(TokenType.EOF, "", 3, 4, 0, 7, 0, List.of())), "f.deal")
+            .parse().program().span();
+        check(eofOnly.hasScalarOffsets() && eofOnly.startScalarOffset() == 0
+                && eofOnly.endScalarOffset() == 0,
+            "EOF-only program span offsets (" + eofOnly.startScalarOffset() + ","
+                + eofOnly.endScalarOffset() + ") != (0,0)");
+
+        // Two statements: the program span is spanBetween(first.span(),
+        // last.span()) — first statement start / last statement end.
+        Token a = new Token(TokenType.IDENTIFIER, "a", 2, 3, 1, 5, 1, List.of());
+        Token asemi = new Token(TokenType.SEMICOLON, ";", 2, 4, 1, 6, 1, List.of());
+        Token b = new Token(TokenType.IDENTIFIER, "b", 3, 1, 1, 8, 1, List.of());
+        Token bsemi = new Token(TokenType.SEMICOLON, ";", 3, 2, 1, 9, 1, List.of());
+        Token eof2 = new Token(TokenType.EOF, "", 3, 3, 0, 10, 0, List.of());
+        ParseResult two = new Parser(List.of(a, asemi, b, bsemi, eof2), "f.deal").parse();
+        check(two.diagnostics().isEmpty(), "two-statement program must parse clean, got "
+            + two.diagnostics());
+        Span twospan = two.program().span();
+        check(twospan.hasScalarOffsets(), "two-statement program span must have offsets");
+        check(twospan.startScalarOffset() == 5 && twospan.endScalarOffset() == 9,
+            "two-statement program span offsets (" + twospan.startScalarOffset() + ","
+                + twospan.endScalarOffset() + ") != (5,9)");
+        check(twospan.startLine() == 2 && twospan.startColumn() == 3
+                && twospan.endLine() == 3 && twospan.endColumn() == 1,
+            "two-statement program span positions must stay (2,3)-(3,1)");
+    }
+
+    private static void testPeekPseudoEof() {
+        System.out.println("-- Token/Span offsets: peek() past-end pseudo-EOF position carrying --");
+
+        // No EOF token in the input list (defensive/test-only): the
+        // pseudo-EOF keeps the historical (1,1) fallback position. The
+        // end-of-input error anchors there.
+        ParseResult noEof = new Parser(List.of(
+            new Token(TokenType.LET, "let", 1, 1, 3, 0, 3, List.of())), "f.deal").parse();
+        List<Diagnostic> diags = noEof.diagnostics();
+        check(diags.size() == 1,
+            "no-EOF list: expected exactly 1 diagnostic, got " + diags.size());
+        if (!diags.isEmpty()) {
+            check(diags.get(0).line() == 1 && diags.get(0).column() == 1,
+                "no-EOF pseudo-EOF must keep the (1,1) fallback position, got ("
+                    + diags.get(0).line() + "," + diags.get(0).column() + ")");
+        }
+        // The same parse still yields the explicit empty-program (0,0) span.
+        Span emptySpan = noEof.program().span();
+        check(emptySpan.hasScalarOffsets() && emptySpan.startScalarOffset() == 0
+                && emptySpan.endScalarOffset() == 0,
+            "no-EOF parse: program span offsets (" + emptySpan.startScalarOffset() + ","
+                + emptySpan.endScalarOffset() + ") != (0,0)");
+
+        // EOF token present at a non-(1,1) position: end-of-input errors
+        // anchor at the real EOF-token position (line/column carrying).
+        ParseResult withEof = new Parser(List.of(
+            new Token(TokenType.LET, "let", 1, 1, 3, 0, 3, List.of()),
+            new Token(TokenType.EOF, "", 3, 4, 0, 9, 0, List.of())), "f.deal").parse();
+        List<Diagnostic> eofDiags = withEof.diagnostics();
+        check(eofDiags.size() == 1,
+            "EOF-terminated list: expected exactly 1 diagnostic, got " + eofDiags.size());
+        if (!eofDiags.isEmpty()) {
+            check(eofDiags.get(0).line() == 3 && eofDiags.get(0).column() == 4,
+                "end-of-input error must anchor at the real EOF token position (3,4), got ("
+                    + eofDiags.get(0).line() + "," + eofDiags.get(0).column() + ")");
+        }
     }
 }

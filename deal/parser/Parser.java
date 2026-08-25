@@ -39,6 +39,8 @@ public final class Parser {
     private final List<Token> tokens;
     private final String file;
     private final List<Diagnostic> diagnostics = new ArrayList<>();
+    /** The input list's EOF token, or null when the list has none. */
+    private final Token inputEofToken;
     private int pos;          // current index into tokens (0-based)
 
     // -----------------------------------------------------------------------
@@ -49,6 +51,20 @@ public final class Parser {
         this.tokens = List.copyOf(tokens);
         this.file = file;
         this.pos = 0;
+        this.inputEofToken = findEofToken(this.tokens);
+    }
+
+    /**
+     * Returns the last EOF token in the list, or null when the list has
+     * none (defensive/test-only inputs such as {@code List.of()}).
+     */
+    private static Token findEofToken(List<Token> tokens) {
+        for (int i = tokens.size() - 1; i >= 0; i--) {
+            if (tokens.get(i).type() == TokenType.EOF) {
+                return tokens.get(i);
+            }
+        }
+        return null;
     }
 
     // =======================================================================
@@ -68,13 +84,15 @@ public final class Parser {
 
         Span progSpan;
         if (statements.isEmpty()) {
-            progSpan = new Span(file, 1, 1, 1, 1);
+            // Empty program: an exact zero-length range at file start with
+            // explicit known offsets (0,0) — never UNKNOWN.
+            progSpan = new Span(file, 1, 1, 1, 1, 0, 0);
         } else {
             StatementNode first = statements.get(0);
             StatementNode last = statements.get(statements.size() - 1);
-            progSpan = new Span(file,
-                    first.span().startLine(), first.span().startColumn(),
-                    last.span().endLine(), last.span().endColumn());
+            // spanBetween propagates the first statement's start offset and
+            // the last statement's end offset.
+            progSpan = spanBetween(first.span(), last.span());
         }
 
         ProgramNode program = new ProgramNode(progSpan, List.copyOf(statements));
@@ -1579,8 +1597,22 @@ public final class Parser {
     // Helper methods — token stream
     // =======================================================================
 
+    /**
+     * Returns the current token, or a past-end pseudo-EOF when the token
+     * stream is exhausted. The pseudo-EOF carries the input list's
+     * EOF-token position (line/column always; scalar offsets once the
+     * lexer computes them, UNKNOWN when the list has no EOF token). A list
+     * without an EOF token (defensive/test-only) falls back to the
+     * historical (1,1) position with no offset information.
+     */
     private Token peek() {
         if (pos >= tokens.size()) {
+            if (inputEofToken != null) {
+                return new Token(TokenType.EOF, "",
+                    inputEofToken.line(), inputEofToken.column(), 0,
+                    inputEofToken.startScalarOffset(), inputEofToken.scalarLength(),
+                    List.of());
+            }
             return new Token(TokenType.EOF, "", 1, 1, 0);
         }
         return tokens.get(pos);
@@ -1629,36 +1661,76 @@ public final class Parser {
     // Helper methods — spans
     // =======================================================================
 
+    /**
+     * Inclusive end column of a token on its line (tokens never span line
+     * breaks). Uses the token's scalar length when known — columns count
+     * decoded Unicode scalars — and falls back to the UTF-16 length for
+     * column display only when no offset information is available.
+     */
+    private int tokenEndColumn(Token token) {
+        int len = token.hasScalarOffsets() ? token.scalarLength() : token.length();
+        return token.column() + Math.max(0, len - 1);
+    }
+
+    /**
+     * Span of a token: start position and scalar offset from the token,
+     * end offset {@code startScalarOffset + scalarLength} when known.
+     * UNKNOWN inputs propagate UNKNOWN.
+     */
     private Span spanOf(Token token) {
-        int endCol = token.column() + Math.max(0, token.length() - 1);
-        return new Span(file, token.line(), token.column(), token.line(), endCol);
+        int endCol = tokenEndColumn(token);
+        return new Span(file, token.line(), token.column(), token.line(), endCol,
+            token.startScalarOffset(), token.endScalarOffset());
     }
 
+    /**
+     * Span from the first token's start to the last token's end. UNKNOWN
+     * inputs propagate UNKNOWN.
+     */
     private Span spanBetween(Token start, Token end) {
-        int endCol = end.column() + Math.max(0, end.length() - 1);
-        return new Span(file, start.line(), start.column(), end.line(), endCol);
+        int endCol = tokenEndColumn(end);
+        return new Span(file, start.line(), start.column(), end.line(), endCol,
+            start.startScalarOffset(), end.endScalarOffset());
     }
 
+    /**
+     * Span from the first span's start to the last span's end. UNKNOWN
+     * inputs propagate UNKNOWN.
+     */
     private Span spanBetween(Span start, Span end) {
         return new Span(file, start.startLine(), start.startColumn(),
-                end.endLine(), end.endColumn());
+                end.endLine(), end.endColumn(),
+                start.startScalarOffset(), end.endScalarOffset());
     }
 
-    /** Returns a synthetic token carrying the start position of the given span. */
+    /**
+     * Returns a zero-scalar-length token carrying the start position and
+     * start scalar offset of the given span.
+     */
     private Token tokenSpanStart(Span sp) {
-        return new Token(TokenType.IDENTIFIER, "", sp.startLine(), sp.startColumn(), 1);
+        return new Token(TokenType.IDENTIFIER, "", sp.startLine(), sp.startColumn(), 1,
+            sp.startScalarOffset(), 0, List.of());
     }
 
-    /** Returns a synthetic token carrying the start position of a TypeNode. */
+    /**
+     * Returns a zero-scalar-length token carrying the start position and
+     * start scalar offset of a TypeNode's span.
+     */
     private Token tokenSpanStart(TypeNode type) {
         Span sp = type.span();
-        return new Token(TokenType.IDENTIFIER, "", sp.startLine(), sp.startColumn(), 1);
+        return new Token(TokenType.IDENTIFIER, "", sp.startLine(), sp.startColumn(), 1,
+            sp.startScalarOffset(), 0, List.of());
     }
 
-    /** Combines a start Token and end Span into a new Span. */
+    /**
+     * Combines a start Token and end Span into a new Span: the token's
+     * start offset and the span's end offset. UNKNOWN inputs propagate
+     * UNKNOWN.
+     */
     private Span combineTokenAndSpan(Token start, Span end) {
         return new Span(file, start.line(), start.column(),
-                end.endLine(), end.endColumn());
+                end.endLine(), end.endColumn(),
+                start.startScalarOffset(), end.endScalarOffset());
     }
 
     // =======================================================================
