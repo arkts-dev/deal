@@ -3,6 +3,7 @@ package deal.test;
 import deal.ast.*;
 import deal.checker.*;
 import deal.codegen.lua.LuaBackend;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.lexer.*;
 import deal.module.ExportExtractor;
 import deal.module.ModuleShapeValidator;
@@ -406,6 +407,23 @@ public class ConformanceTest {
     }
 
     /**
+     * Transitional ranged-to-legacy conversion at the harness lexer
+     * boundary (T3 scaffolding, removed when T13 migrates this harness
+     * natively): file/line/column derive from the range start, preserving
+     * every rendered position. The conversion never fabricates offsets and
+     * the legacy side never produces a SOURCE range (D4/D9).
+     */
+    private static List<Diagnostic> toLegacyDiagnostics(
+            List<CompilerDiagnostic> rangedDiags) {
+        List<Diagnostic> legacy = new ArrayList<>(rangedDiags.size());
+        for (CompilerDiagnostic d : rangedDiags) {
+            legacy.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                d.file(), d.line(), d.column(), d.diagnosticCode()));
+        }
+        return legacy;
+    }
+
+    /**
      * Compiles a classified companion support module standalone. Regular
      * {@code .deal} companions run the shared frontend pipeline
      * (lexer/parser/name resolution/type checking). {@code .d.deal}
@@ -423,7 +441,7 @@ public class ConformanceTest {
 
             LexResult lex = new Lexer(source, filename).tokenize();
             if (lex.hasErrors()) {
-                return new ArrayList<>(lex.diagnostics());
+                return toLegacyDiagnostics(lex.diagnostics());
             }
 
             Parser parser = new Parser(lex.tokens(), filename);
@@ -703,7 +721,7 @@ public class ConformanceTest {
         String filename = test.path().toString();
 
         LexResult lex = new Lexer(source, filename).tokenize();
-        List<Diagnostic> allDiags = new ArrayList<>(lex.diagnostics());
+        List<Diagnostic> allDiags = toLegacyDiagnostics(lex.diagnostics());
         if (lex.hasErrors()) {
             return allDiags;
         }

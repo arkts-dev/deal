@@ -7,6 +7,7 @@ import deal.codegen.jvm.JvmBackend;
 import deal.codegen.lua.LuaBackend;
 import deal.ir.IrDumper;
 import deal.lexer.*;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.parser.*;
 import deal.types.Type;
 import deal.types.Types;
@@ -252,7 +253,7 @@ public final class CompilationOrchestrator {
             }
 
             LexResult lex = new Lexer(source, sourcePath).tokenize();
-            diagnostics.addAll(lex.diagnostics());
+            diagnostics.addAll(toLegacyLexDiagnostics(lex.diagnostics()));
             if (hasLexErrors(lex)) {
                 hasErrors = true;
                 continue;
@@ -331,6 +332,23 @@ public final class CompilationOrchestrator {
 
     private boolean hasLexErrors(LexResult lex) {
         return lex.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()));
+    }
+
+    /**
+     * Transitional position-preserving conversion at the lexer aggregation
+     * boundary (T3 scaffolding, replaced when the orchestrator migrates to
+     * ranged diagnostics in T11): each ranged lexer diagnostic becomes the
+     * legacy start-only record, deriving file/line/column from the range
+     * start. The conversion is ranged-to-legacy only — it never fabricates
+     * offsets, and the legacy side never produces a SOURCE range (D4/D9).
+     */
+    private static List<Diagnostic> toLegacyLexDiagnostics(List<CompilerDiagnostic> lexDiags) {
+        List<Diagnostic> legacy = new ArrayList<>(lexDiags.size());
+        for (CompilerDiagnostic d : lexDiags) {
+            legacy.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                d.file(), d.line(), d.column(), d.diagnosticCode()));
+        }
+        return legacy;
     }
 
     // =========================================================================
@@ -1500,7 +1518,7 @@ public final class CompilationOrchestrator {
 
             LexResult lex = new Lexer(source, syntheticPath).tokenize();
             if (hasLexErrors(lex)) {
-                diagnostics.addAll(lex.diagnostics());
+                diagnostics.addAll(toLegacyLexDiagnostics(lex.diagnostics()));
                 hasErrors = true;
                 return null;
             }

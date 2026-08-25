@@ -7,6 +7,7 @@ import deal.checker.NameResolver;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.types.Type;
 import deal.types.Types;
 import deal.codegen.Backend;
@@ -443,8 +444,15 @@ public class JvmBackendTest {
         List<Diagnostic> errors = new ArrayList<>();
 
         LexResult lex = new Lexer(source, filename).tokenize();
-        for (Diagnostic d : lex.diagnostics()) {
-            if ("error".equals(d.severity())) errors.add(d);
+        // Transitional ranged-to-legacy boundary conversion (T3 scaffolding,
+        // removed in T13): the severity filter is unchanged; each retained
+        // entry converts into the still-legacy errors list with start values
+        // derived from the range start (position-preserving).
+        for (CompilerDiagnostic d : lex.diagnostics()) {
+            if ("error".equals(d.severity())) {
+                errors.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+            }
         }
         if (lex.hasErrors()) {
             return new Frontend(null, null, errors);

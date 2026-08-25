@@ -88,6 +88,16 @@ public final class ScalarSourceCursor {
         return scalarOffset;
     }
 
+    /**
+     * Returns the UTF-16 index of the next unconsumed source unit. Consumers
+     * that retain a UTF-16 index for substring extraction (e.g. the lexer)
+     * use this accessor to keep their index in lockstep with the cursor's
+     * scalar arithmetic.
+     */
+    public int index() {
+        return index;
+    }
+
     /** Returns true exactly at end of input (no unconsumed source unit remains). */
     public boolean atEnd() {
         return index >= source.length();

@@ -1397,8 +1397,14 @@ public final class Parser {
         deal.lexer.Lexer subLexer = new deal.lexer.Lexer(source, file);
         deal.lexer.LexResult subResult = subLexer.tokenize();
 
-        // 2. Merge lexer diagnostics with position adjustment
-        for (deal.lexer.Diagnostic d : subResult.diagnostics()) {
+        // 2. Merge sub-lexer diagnostics with position adjustment.
+        // The sub-lexer now emits ranged CompilerDiagnostics (T3); this
+        // loop is a transitional ranged-to-legacy conversion — the parser's
+        // own diagnostics list is still the legacy start-only record until
+        // the parser producer migration (T4/T5).  d.file()/d.line()/
+        // d.column() derive from the range start, preserving today's
+        // rendered positions exactly.
+        for (deal.diagnostics.CompilerDiagnostic d : subResult.diagnostics()) {
             DiagnosticCode dc = d.diagnosticCode();
             if (dc == null) {
                 dc = DiagnosticCode.fromCode(d.code());

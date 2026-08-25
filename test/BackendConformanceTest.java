@@ -3,6 +3,7 @@ package deal.test;
 import deal.ast.*;
 import deal.checker.*;
 import deal.codegen.Backend;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.codegen.jvm.JvmBackend;
 import deal.codegen.lua.LuaBackend;
 import deal.module.CompilationOrchestrator;
@@ -1094,8 +1095,15 @@ public class BackendConformanceTest {
         List<Diagnostic> errors = new ArrayList<>();
 
         LexResult lex = new Lexer(source, filename).tokenize();
-        for (Diagnostic d : lex.diagnostics()) {
-            if ("error".equals(d.severity())) errors.add(d);
+        // Transitional ranged-to-legacy boundary conversion (T3 scaffolding,
+        // removed in T13): the severity filter is unchanged; each retained
+        // entry converts into the still-legacy errors list with start values
+        // derived from the range start (position-preserving).
+        for (CompilerDiagnostic d : lex.diagnostics()) {
+            if ("error".equals(d.severity())) {
+                errors.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+            }
         }
         if (lex.hasErrors()) {
             return new FrontendCompile(null, null, null, errors);

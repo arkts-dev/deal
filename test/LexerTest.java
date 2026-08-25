@@ -1,7 +1,11 @@
 package deal.test;
 
 import deal.ast.TokenType;
+import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.lexer.*;
+import deal.source.ScalarSourceCursor;
 
 import java.util.List;
 
@@ -56,22 +60,102 @@ public class LexerTest {
                 context, expectedType, token.type(), token.lexeme()));
     }
 
-    private static void assertDiagnosticCount(List<Diagnostic> diags,
+    private static void assertDiagnosticCount(List<CompilerDiagnostic> diags,
                                                int expectedCount, String context) {
         check(diags.size() == expectedCount,
             String.format("%s: expected %d diagnostics, got %d: %s",
                 context, expectedCount, diags.size(), diags));
     }
 
-    private static void assertNoDiagnostics(List<Diagnostic> diags, String context) {
+    private static void assertNoDiagnostics(List<CompilerDiagnostic> diags, String context) {
         assertDiagnosticCount(diags, 0, context);
     }
 
-    private static void assertDiagnosticCode(List<Diagnostic> diags,
+    private static void assertDiagnosticCode(List<CompilerDiagnostic> diags,
                                               String expectedCode, String context) {
         check(diags.stream().anyMatch(d -> d.code().equals(expectedCode)),
             String.format("%s: expected diagnostic %s, got: %s",
                 context, expectedCode, diags));
+    }
+
+    /** Returns the first diagnostic with the given code, or null. */
+    private static CompilerDiagnostic findDiag(LexResult r, String code) {
+        for (CompilerDiagnostic d : r.diagnostics()) {
+            if (d.code().equals(code)) {
+                return d;
+            }
+        }
+        return null;
+    }
+
+    /** Asserts the complete half-open SOURCE range of a diagnostic. */
+    private static void assertRange(CompilerDiagnostic d, String file,
+            int startLine, int startCol, int endLine, int endCol,
+            int startOffset, int endOffset, String context) {
+        DiagnosticRange r = d.range();
+        check(r.origin() == RangeOrigin.SOURCE,
+            context + ": origin SOURCE, got " + r.origin());
+        check(r.file().equals(file),
+            context + ": file expected " + file + ", got " + r.file());
+        check(r.startLine() == startLine && r.startColumn() == startCol,
+            context + ": start expected " + startLine + ":" + startCol
+                + ", got " + r.startLine() + ":" + r.startColumn());
+        check(r.endLine() == endLine && r.endColumn() == endCol,
+            context + ": end expected " + endLine + ":" + endCol
+                + ", got " + r.endLine() + ":" + r.endColumn());
+        check(r.startScalarOffset() == startOffset
+                && r.endScalarOffset() == endOffset,
+            context + ": offsets expected [" + startOffset + "," + endOffset
+                + "), got [" + r.startScalarOffset() + ","
+                + r.endScalarOffset() + ")");
+        check(r.scalarLength() == endOffset - startOffset,
+            context + ": scalar length expected " + (endOffset - startOffset)
+                + ", got " + r.scalarLength());
+    }
+
+    /**
+     * Recomputes every emitted token's scalar offsets through an
+     * independent {@link ScalarSourceCursor} walk: the start offset is
+     * {@code scalarCount(source, 0, lexemeUtf16Index)} and the scalar
+     * length is {@code scalarCount(lexeme)}; the EOF token must carry the
+     * final cursor position and zero scalar length.
+     */
+    private static void assertTokenOffsetsMatchCursorWalk(String source) {
+        LexResult r = tokenize(source);
+        int searchFrom = 0;
+        for (Token t : r.tokens()) {
+            if (t.type() == TokenType.EOF) {
+                ScalarSourceCursor c = new ScalarSourceCursor(source);
+                while (!c.atEnd()) {
+                    c.advance();
+                }
+                check(t.startScalarOffset() == c.scalarOffset(),
+                    "EOF offset equals total scalar count for: " + source
+                        + " (got " + t.startScalarOffset() + ", expected "
+                        + c.scalarOffset() + ")");
+                check(t.scalarLength() == 0,
+                    "EOF scalar length is 0 for: " + source);
+                check(t.line() == c.line() && t.column() == c.column(),
+                    "EOF position matches final cursor position for: "
+                        + source + " (got " + t.line() + ":" + t.column()
+                        + ", expected " + c.line() + ":" + c.column() + ")");
+                continue;
+            }
+            int idx = source.indexOf(t.lexeme(), searchFrom);
+            check(idx >= 0,
+                "lexeme '" + t.lexeme() + "' located for recomputation in: "
+                    + source);
+            searchFrom = idx + Math.max(1, t.length());
+            check(t.startScalarOffset()
+                    == ScalarSourceCursor.scalarCount(source, 0, idx),
+                "start offset recomputed via scalarCount for '" + t.lexeme()
+                    + "' in: " + source + " (got " + t.startScalarOffset()
+                    + ", expected " + ScalarSourceCursor.scalarCount(source, 0, idx) + ")");
+            check(t.scalarLength() == ScalarSourceCursor.scalarCount(t.lexeme()),
+                "scalar length recomputed via scalarCount for '" + t.lexeme()
+                    + "' in: " + source + " (got " + t.scalarLength()
+                    + ", expected " + ScalarSourceCursor.scalarCount(t.lexeme()) + ")");
+        }
     }
 
     // =========================================================================
@@ -112,6 +196,8 @@ public class LexerTest {
         testAwaitTokenizesAsKeyword();
         testDirectiveComments();
         testDealVersionDirectives();
+        testScalarOffsets();
+        testDiagnosticRanges();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -1336,6 +1422,244 @@ public class LexerTest {
         check(eof.directives().size() == 1
                 && eof.directives().get(0).equals("@deal-version 1.2"),
             "EOF token carries the misplaced @deal-version directive");
+    }
+
+    // =========================================================================
+    // Scalar offset tracking tests (T3): token/EOF offsets recomputed via an
+    // independent ScalarSourceCursor walk over astral, tab, CRLF, and CR
+    // fixtures (D2/D3).
+    // =========================================================================
+
+    static void testScalarOffsets() {
+        System.out.println("-- Scalar Offsets --");
+
+        // Astral character: U+1F600 is two UTF-16 units but one decoded
+        // scalar — one column and one scalar offset.
+        String src = "let s = \"x\uD83D\uDE00y\";";
+        LexResult r = tokenize(src);
+        assertNoDiagnostics(r.diagnostics(), "astral string fixture");
+        List<Token> tokens = r.tokens();
+        check(tokens.size() == 6, "astral fixture: 5 tokens + EOF, got " + tokens.size());
+        Token str = tokens.get(3);
+        check(str.type() == TokenType.STRING_LITERAL,
+            "astral fixture: string token at index 3, got " + str.type());
+        // "let s = " = 8 scalars; the lexeme is 5 scalars
+        // (quote, x, astral, y, quote).
+        check(str.startScalarOffset() == 8,
+            "astral: string start offset 8, got " + str.startScalarOffset());
+        check(str.scalarLength() == 5,
+            "astral: string scalar length 5, got " + str.scalarLength());
+        check(str.startScalarOffset()
+                == ScalarSourceCursor.scalarCount(src, 0, src.indexOf("\"x")),
+            "astral: recomputed string start offset");
+        check(str.scalarLength() == ScalarSourceCursor.scalarCount(str.lexeme()),
+            "astral: recomputed string scalar length");
+        // The astral scalar counts one column: semicolon at column 14.
+        check(tokens.get(4).type() == TokenType.SEMICOLON
+                && tokens.get(4).column() == 14,
+            "astral: semicolon at column 14 (astral = one column), got "
+                + tokens.get(4).column());
+
+        // Tab counts one scalar.
+        src = "\tx";
+        r = tokenize(src);
+        Token x = r.tokens().get(0);
+        check(x.type() == TokenType.IDENTIFIER && x.startScalarOffset() == 1
+                && x.scalarLength() == 1 && x.column() == 2,
+            "tab: x at offset 1, column 2");
+
+        // CRLF counts two scalars and one line break.
+        src = "a\r\nb";
+        r = tokenize(src);
+        tokens = r.tokens();
+        check(tokens.get(0).startScalarOffset() == 0
+                && tokens.get(0).scalarLength() == 1,
+            "CRLF: 'a' offsets [0,1)");
+        check(tokens.get(1).startScalarOffset() == 3
+                && tokens.get(1).scalarLength() == 1,
+            "CRLF: 'b' start offset 3 (a + two CRLF scalars), got "
+                + tokens.get(1).startScalarOffset());
+        check(tokens.get(1).line() == 2 && tokens.get(1).column() == 1,
+            "CRLF: 'b' at 2:1");
+        Token eof = tokens.get(tokens.size() - 1);
+        check(eof.type() == TokenType.EOF
+                && eof.startScalarOffset() == 4 && eof.scalarLength() == 0,
+            "CRLF: EOF offset 4, zero scalar length, got "
+                + eof.startScalarOffset() + "/" + eof.scalarLength());
+        check(eof.line() == 2 && eof.column() == 2,
+            "CRLF: EOF at 2:2, got " + eof.line() + ":" + eof.column());
+
+        // Lone CR: one scalar, one line break.
+        src = "a\rb";
+        r = tokenize(src);
+        tokens = r.tokens();
+        check(tokens.get(1).startScalarOffset() == 2
+                && tokens.get(1).line() == 2 && tokens.get(1).column() == 1,
+            "CR: 'b' offset 2 at 2:1, got " + tokens.get(1).startScalarOffset());
+        eof = tokens.get(tokens.size() - 1);
+        check(eof.startScalarOffset() == 3 && eof.scalarLength() == 0
+                && eof.line() == 2 && eof.column() == 2,
+            "CR: EOF offset 3 at 2:2");
+
+        // Full recomputation via the independent cursor walk over astral,
+        // tab, CRLF, CR, multi-line, and comment fixtures.
+        assertTokenOffsetsMatchCursorWalk("let s = \"x\uD83D\uDE00y\";");
+        assertTokenOffsetsMatchCursorWalk("let\tx = 1;");
+        assertTokenOffsetsMatchCursorWalk("let a = 1;\r\nlet b = 2;\rlet c = 3;");
+        assertTokenOffsetsMatchCursorWalk("// comment \uD83D\uDE00\nlet x = 1;");
+        assertTokenOffsetsMatchCursorWalk("class A {\n    name: string;\n}");
+    }
+
+    // =========================================================================
+    // Diagnostic range tests (T3): the exact D5 mapping for
+    // E1001/E1002/E1003/E1004 and the complete directive comment ranges for
+    // E1052/E1053/E1054 (parent D6), including Unicode and CRLF fixtures.
+    // =========================================================================
+
+    static void testDiagnosticRanges() {
+        System.out.println("-- Diagnostic Ranges --");
+
+        // E1001 = the offending single scalar.
+        LexResult r = tokenize("@");
+        CompilerDiagnostic d = findDiag(r, "E1001");
+        check(d != null, "E1001 present for '@'");
+        assertRange(d, "test.deal", 1, 1, 1, 2, 0, 1, "E1001 single scalar");
+
+        // E1001 with an astral scalar: the second diagnostic covers exactly
+        // the one supplementary scalar at (1,2) — never two columns.
+        r = tokenize("@\uD83D\uDE00");
+        List<CompilerDiagnostic> e1001s = r.diagnostics().stream()
+            .filter(x -> x.code().equals("E1001")).toList();
+        check(e1001s.size() == 2,
+            "two E1001 diagnostics for '@<astral>', got " + e1001s.size());
+        if (e1001s.size() == 2) {
+            assertRange(e1001s.get(0), "test.deal", 1, 1, 1, 2, 0, 1,
+                "E1001 '@' of astral fixture");
+            assertRange(e1001s.get(1), "test.deal", 1, 2, 1, 3, 1, 2,
+                "E1001 astral single scalar");
+        }
+
+        // E1002 = token start through the first unconsumed scalar (the
+        // second '.' of 1.2.3).
+        r = tokenize("1.2.3");
+        d = findDiag(r, "E1002");
+        check(d != null, "E1002 present for 1.2.3");
+        assertRange(d, "test.deal", 1, 1, 1, 4, 0, 3,
+            "E1002 token start through first unconsumed scalar");
+
+        // E1002 exponent-without-digits: token start through the first
+        // unconsumed scalar after the consumed exponent prefix.
+        r = tokenize("1.5e");
+        d = findDiag(r, "E1002");
+        check(d != null, "E1002 present for 1.5e");
+        assertRange(d, "test.deal", 1, 1, 1, 5, 0, 4,
+            "E1002 exponent without digits at EOF");
+
+        // E1003 = token start through the first unconsumed scalar (the
+        // terminator's first scalar).
+        r = tokenize("\"hello\n");
+        d = findDiag(r, "E1003");
+        check(d != null, "E1003 present for newline");
+        assertRange(d, "test.deal", 1, 1, 1, 7, 0, 6,
+            "E1003 token start through newline");
+
+        // E1003 with CRLF: the range ends at the '\r' — the terminator's
+        // first scalar (CRLF = two scalars, one line break).
+        r = tokenize("\"hello\r\n");
+        d = findDiag(r, "E1003");
+        check(d != null, "E1003 present for CRLF");
+        assertRange(d, "test.deal", 1, 1, 1, 7, 0, 6,
+            "E1003 CRLF: end at terminator's first scalar");
+
+        // E1003 at EOF.
+        r = tokenize("\"hello");
+        d = findDiag(r, "E1003");
+        check(d != null, "E1003 present at EOF");
+        assertRange(d, "test.deal", 1, 1, 1, 7, 0, 6, "E1003 at EOF");
+
+        // E1004 = comment start through EOF.
+        r = tokenize("/* unterminated");
+        d = findDiag(r, "E1004");
+        check(d != null, "E1004 present for unterminated block comment");
+        assertRange(d, "test.deal", 1, 1, 1, 16, 0, 15,
+            "E1004 comment start through EOF");
+
+        // E1052 = complete directive comment range: first '/' of '//'
+        // through the last comment scalar, end = the terminator's first
+        // scalar (here EOF).
+        r = tokenize("class A {}\n// @deal-version 1.2");
+        d = findDiag(r, "E1052");
+        check(d != null, "E1052 present after a declaration");
+        assertRange(d, "test.deal", 2, 1, 2, 21, 11, 31,
+            "E1052 complete comment range");
+
+        // E1052 with CRLF before the comment: the CRLF line break counts
+        // two scalars, so the comment starts at offset 12 on line 2.
+        r = tokenize("let x = 1;\r\n// @deal-version 1.2");
+        d = findDiag(r, "E1052");
+        check(d != null, "E1052 present in CRLF fixture");
+        assertRange(d, "test.deal", 2, 1, 2, 21, 12, 32,
+            "E1052 CRLF comment range");
+
+        // E1052 with a Unicode astral scalar inside the comment: the range
+        // is scalar-exact (the astral scalar counts one column/offset).
+        r = tokenize("class A {}\n// @deal-version 1.2 \uD83D\uDE00");
+        d = findDiag(r, "E1052");
+        check(d != null, "E1052 present in Unicode fixture");
+        // Comment = 20 ASCII scalars + space + 1 astral scalar = 22.
+        assertRange(d, "test.deal", 2, 1, 2, 23, 11, 33,
+            "E1052 Unicode comment range");
+
+        // E1053: duplicate @deal-version anchors at the complete range of
+        // the second comment.
+        r = tokenize("// @deal-version 1.2\n// @deal-version 1.2");
+        d = findDiag(r, "E1053");
+        check(d != null, "E1053 present for duplicate @deal-version");
+        assertRange(d, "test.deal", 2, 1, 2, 21, 21, 41,
+            "E1053 second complete comment range");
+
+        // E1054: empty argument anchors at the complete comment range.
+        r = tokenize("// @deal-version");
+        d = findDiag(r, "E1054");
+        check(d != null, "E1054 present for empty argument");
+        assertRange(d, "test.deal", 1, 1, 1, 17, 0, 16,
+            "E1054 complete comment range");
+
+        // Trailing directive comment: the EOF token keeps its final cursor
+        // position offsets through the offset-preserving withDirectives
+        // attachment (D3).
+        r = tokenize("let x = 1;\n// @jsonable");
+        assertNoDiagnostics(r.diagnostics(), "trailing @jsonable fixture");
+        List<Token> tokens = r.tokens();
+        Token eof = tokens.get(tokens.size() - 1);
+        check(eof.type() == TokenType.EOF, "trailing directive: last token EOF");
+        check(eof.directives().size() == 1
+                && eof.directives().get(0).equals("@jsonable"),
+            "EOF carries the trailing @jsonable directive");
+        check(eof.line() == 2 && eof.column() == 13,
+            "trailing directive: EOF at 2:13, got "
+                + eof.line() + ":" + eof.column());
+        check(eof.startScalarOffset() == 23 && eof.scalarLength() == 0,
+            "trailing directive: EOF offset 23, zero scalar length, got "
+                + eof.startScalarOffset() + "/" + eof.scalarLength());
+
+        // Directive-bearing real token keeps makeToken offsets through the
+        // offset-preserving withDirectives attachment (D3).
+        r = tokenize("// @jsonable\nexport class C {}");
+        assertNoDiagnostics(r.diagnostics(), "@jsonable before export fixture");
+        tokens = r.tokens();
+        Token exportToken = tokens.get(0);
+        check(exportToken.type() == TokenType.EXPORT
+                && exportToken.directives().contains("@jsonable"),
+            "EXPORT carries @jsonable");
+        check(exportToken.line() == 2 && exportToken.column() == 1,
+            "EXPORT at 2:1, got " + exportToken.line() + ":"
+                + exportToken.column());
+        check(exportToken.startScalarOffset() == 13
+                && exportToken.scalarLength() == 6,
+            "EXPORT offsets preserved through withDirectives: start 13, "
+                + "length 6, got " + exportToken.startScalarOffset() + "/"
+                + exportToken.scalarLength());
     }
 
 }
