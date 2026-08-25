@@ -1,8 +1,9 @@
 /*
- * DEALPG4 probe mode and the five micro-batteries.
+ * DEALPG4 probe mode, selftest mode, and the five micro-batteries.
  *
- * Owns (dealpg4-probe-selftest-foundation D1-D3, probe mode contract;
- * dealpg4-time-stream-utilities battery mechanics):
+ * Probe mode (ISSUE-0203) and selftest mode surface (ISSUE-0204) live
+ * here. Owns (dealpg4-probe-selftest-foundation D1-D4, probe/selftest
+ * mode contracts; dealpg4-time-stream-utilities battery mechanics):
  *  - the byte-stable three-part probe report: exactly one identity line
  *    "DEALPG4 4 linux-x86_64 CAPS 31" (every advertised capability bit
  *    is backed by a passing battery in this artifact), exactly one
@@ -23,6 +24,34 @@
  *    stderr and exits nonzero;
  *  - the named failure tokens: a failing battery prints
  *    "CAPABILITY_MISSING <battery>" on stderr and exits nonzero.
+ *
+ * Selftest mode:
+ *  - the mode-level monotonic bound armed from selftest entry with the
+ *    same monotonic context (timerfd_create(CLOCK_MONOTONIC,
+ *    TFD_NONBLOCK|TFD_CLOEXEC)) as every other deadline: the effective
+ *    bound is the dispatch-validated --limit-ms N override when present
+ *    (N >= 15000) and the embedded selftestLimits.selftestTimeoutMs
+ *    otherwise, read from the same embedded constants the probe reports
+ *    (never a hardcoded default — bound provenance). The bound bounds
+ *    the selftest run only — never an invocation/outer limit — and
+ *    changes no embedded constant, probe report, or manifest;
+ *  - one selftest child forked from the entry inherits the bound
+ *    context and runs an explicit additive battery list: at this stage
+ *    the five probe batteries, printing the same five "OK <battery>"
+ *    lines as probe in the same order (identity/LIMITS lines are
+ *    probe-only); the fault-injection battery (excluded, ISSUE-0184)
+ *    appends to the same list, child, and bound machinery, with every
+ *    future scenario deadline-owned at the earlier of its scenario
+ *    budget and the remaining mode bound — the bound machinery needs no
+ *    change;
+ *  - success: every battery passed and the bound did not fire (exit 0).
+ *    Failure: the first failing battery's "CAPABILITY_MISSING
+ *    <battery>" or SELFTEST_TIMEOUT on stderr (the entry owns the single
+ *    token print; the child reports through its exit status), nonzero
+ *    exit; no skip, no retry. Post-state: the selftest child reaped, no
+ *    survivors (the child runs in its own process group so the
+ *    bound-expiry kill takes the whole battery subtree down at once),
+ *    bound context closed.
  *
  * Battery contracts (each passes only when its full success criterion
  * holds; any deviation is a battery failure — no skip, no retry):
@@ -97,7 +126,7 @@ _Static_assert(DEALPG4_PROBE_CAPS == 31,
 #define DEALPG4_BATTERY_TIMER_DELTA_MS 250u
 
 /* Battery-local deadlines: every blocking point is bounded by the earlier
- * of this local deadline and the overall probe bound; battery mechanics
+ * of this local deadline and the overall mode bound; battery mechanics
  * use their own short absolute deadlines. */
 #define DEALPG4_BATTERY_LOCAL_DEADLINE_MS 5000u
 
@@ -120,26 +149,28 @@ _Static_assert(DEALPG4_PROBE_CAPS == 31,
  * exercises the cut point): 1048576 + 4096 bytes. */
 #define DEALPG4_DRAIN_BATTERY_OVERSHOOT_BYTES 4096
 
-/* === Battery result and probe bound ==================================== */
+/* === Battery result and mode bound ==================================== */
 
 enum dealpg4_battery_result {
     DEALPG4_BATTERY_PASS = 0,  /* full success criterion holds */
     DEALPG4_BATTERY_FAIL = -1, /* capability failure -> CAPABILITY_MISSING */
-    DEALPG4_BATTERY_BOUND = -2 /* overall probe bound expired -> PROBE_TIMEOUT */
+    DEALPG4_BATTERY_BOUND = -2 /* overall mode bound expired ->
+                                  PROBE_TIMEOUT/SELFTEST_TIMEOUT */
 };
 
-/* The overall probe bound: one monotonic context armed from probe entry,
- * plus the sticky expired flag (a drained timerfd is idle, so the expiry
- * observation must persist for every later check). */
-typedef struct dealpg4_probe_bound {
+/* The overall mode bound (probe or selftest): one monotonic context
+ * armed from mode entry, plus the sticky expired flag (a drained
+ * timerfd is idle, so the expiry observation must persist for every
+ * later check). */
+typedef struct dealpg4_battery_bound {
     dealpg4_deadline_ctx ctx;
     int expired;
-} dealpg4_probe_bound;
+} dealpg4_battery_bound;
 
 /* 1 once the overall bound has fired (expiry drained from the timerfd;
  * the observation is sticky). A timerfd read error fails closed as
  * expired. */
-static int dealpg4_probe_bound_expired(dealpg4_probe_bound *bound)
+static int dealpg4_battery_bound_expired(dealpg4_battery_bound *bound)
 {
     uint64_t expirations = 0;
 
@@ -166,17 +197,17 @@ static int dealpg4_probe_bound_expired(dealpg4_probe_bound *bound)
  * ready (data or EOF both wake POLLIN) or a deadline passes.
  */
 
-/* Sleep one short slice, bounded by the overall probe bound. Returns 0
+/* Sleep one short slice, bounded by the overall mode bound. Returns 0
  * after the slice, DEALPG4_BATTERY_BOUND when the overall bound expired,
  * or -1 on poll error. The caller owns the local deadline and re-checks
  * child state after every slice (a SIGCHLD can already have been
  * delivered before the sleep began; a full-deadline sleep would miss the
  * state change and fail the battery on a race). */
-static int dealpg4_sleep_slice(dealpg4_probe_bound *bound)
+static int dealpg4_sleep_slice(dealpg4_battery_bound *bound)
 {
     struct pollfd pfd;
 
-    if (dealpg4_probe_bound_expired(bound))
+    if (dealpg4_battery_bound_expired(bound))
         return DEALPG4_BATTERY_BOUND;
     pfd.fd = -1;
     pfd.events = 0;
@@ -195,14 +226,14 @@ static int dealpg4_sleep_slice(dealpg4_probe_bound *bound)
  * overall bound expires. Returns 1 on readiness (*revents), 0 on local
  * timeout, DEALPG4_BATTERY_BOUND on bound expiry, or -1 on poll error. */
 static int dealpg4_poll_wait(int fd, uint64_t local_deadline_ms,
-                             dealpg4_probe_bound *bound, short *revents)
+                             dealpg4_battery_bound *bound, short *revents)
 {
     for (;;) {
         struct pollfd pfd;
         uint64_t now, remain, bound_remain;
         int timeout, rc;
 
-        if (dealpg4_probe_bound_expired(bound))
+        if (dealpg4_battery_bound_expired(bound))
             return DEALPG4_BATTERY_BOUND;
         now = dealpg4_now_ms();
         if (now >= local_deadline_ms)
@@ -235,7 +266,7 @@ static int dealpg4_poll_wait(int fd, uint64_t local_deadline_ms,
  * len bytes / read error / local timeout. */
 static int dealpg4_read_bounded(int fd, void *buf, size_t len,
                                 uint64_t local_deadline_ms,
-                                dealpg4_probe_bound *bound)
+                                dealpg4_battery_bound *bound)
 {
     unsigned char *p = buf;
     size_t got = 0;
@@ -273,7 +304,7 @@ static int dealpg4_read_bounded(int fd, void *buf, size_t len,
  * local timeout — the child is still running). */
 static int dealpg4_waitpid_bounded(pid_t pid, int *status,
                                    uint64_t local_deadline_ms,
-                                   dealpg4_probe_bound *bound)
+                                   dealpg4_battery_bound *bound)
 {
     for (;;) {
         pid_t r = waitpid(pid, status, WNOHANG);
@@ -304,7 +335,7 @@ static int dealpg4_waitpid_bounded(pid_t pid, int *status,
  * returns 0 when no children remain, DEALPG4_BATTERY_BOUND on bound
  * expiry, or -1 when a live descendant remains at the deadline or a wait
  * error occurs. */
-static int dealpg4_reap_all_bounded(dealpg4_probe_bound *bound,
+static int dealpg4_reap_all_bounded(dealpg4_battery_bound *bound,
                                     uint64_t local_deadline_ms)
 {
     for (;;) {
@@ -337,7 +368,7 @@ static int dealpg4_reap_all_bounded(dealpg4_probe_bound *bound,
 /* Best-effort failure-path cleanup: reap every exited descendant; live
  * stragglers are expected to exit/die within the grace window (each
  * battery's children are self-bounded). */
-static void dealpg4_battery_cleanup_until(dealpg4_probe_bound *bound,
+static void dealpg4_battery_cleanup_until(dealpg4_battery_bound *bound,
                                           uint64_t local_deadline_ms)
 {
     (void)dealpg4_reap_all_bounded(bound, local_deadline_ms);
@@ -351,9 +382,9 @@ static void dealpg4_battery_cleanup_until(dealpg4_probe_bound *bound,
  * already-exited child is a harmless ESRCH; on a zombie it succeeds and
  * the waitid below collects it. The per-pid wait uses plain nanosleep
  * slices (not the probe-bound-gated sleep slice) so an already-expired
- * probe bound cannot skip the reaping of children we just killed; the
+ * mode bound cannot skip the reaping of children we just killed; the
  * grace deadline still bounds the whole cleanup. */
-static void dealpg4_battery_kill_reap(dealpg4_probe_bound *bound,
+static void dealpg4_battery_kill_reap(dealpg4_battery_bound *bound,
                                       const pid_t *pids, size_t npids)
 {
     uint64_t grace = dealpg4_now_ms() + DEALPG4_BATTERY_CLEANUP_GRACE_MS;
@@ -392,7 +423,7 @@ static void dealpg4_battery_kill_reap(dealpg4_probe_bound *bound,
 }
 
 /* Kill-then-reap a single known battery child. */
-static void dealpg4_battery_kill_reap_one(dealpg4_probe_bound *bound,
+static void dealpg4_battery_kill_reap_one(dealpg4_battery_bound *bound,
                                           pid_t pid)
 {
     dealpg4_battery_kill_reap(bound, &pid, 1);
@@ -421,7 +452,7 @@ static int dealpg4_battery_write_all(int fd, const void *buf, size_t len)
 
 /* === The five micro-batteries ========================================== */
 
-static int dealpg4_battery_monotonic_timer(dealpg4_probe_bound *bound)
+static int dealpg4_battery_monotonic_timer(dealpg4_battery_bound *bound)
 {
     dealpg4_deadline_ctx t;
     uint64_t t0, t1, prev, deadline, expirations;
@@ -448,7 +479,7 @@ static int dealpg4_battery_monotonic_timer(dealpg4_probe_bound *bound)
         uint64_t now, remain, bound_remain;
         int rc, timeout;
 
-        if (dealpg4_probe_bound_expired(bound)) {
+        if (dealpg4_battery_bound_expired(bound)) {
             dealpg4_deadline_close(&t);
             return DEALPG4_BATTERY_BOUND;
         }
@@ -504,7 +535,7 @@ static int dealpg4_battery_monotonic_timer(dealpg4_probe_bound *bound)
     return DEALPG4_BATTERY_PASS;
 }
 
-static int dealpg4_battery_subreaper(dealpg4_probe_bound *bound)
+static int dealpg4_battery_subreaper(dealpg4_battery_bound *bound)
 {
     int pipefd[2];
     pid_t child, gpid;
@@ -649,7 +680,7 @@ static int dealpg4_battery_subreaper(dealpg4_probe_bound *bound)
     return DEALPG4_BATTERY_PASS;
 }
 
-static int dealpg4_battery_parent_death(dealpg4_probe_bound *bound)
+static int dealpg4_battery_parent_death(dealpg4_battery_bound *bound)
 {
     int pipefd[2];
     pid_t a, b;
@@ -800,7 +831,7 @@ static int dealpg4_battery_parent_death(dealpg4_probe_bound *bound)
     return DEALPG4_BATTERY_PASS;
 }
 
-static int dealpg4_battery_negative_pgid(dealpg4_probe_bound *bound)
+static int dealpg4_battery_negative_pgid(dealpg4_battery_bound *bound)
 {
     int pipefd[2];
     pid_t child, pgid;
@@ -887,7 +918,7 @@ static int dealpg4_battery_negative_pgid(dealpg4_probe_bound *bound)
     return DEALPG4_BATTERY_PASS;
 }
 
-static int dealpg4_battery_bounded_drain(dealpg4_probe_bound *bound)
+static int dealpg4_battery_bounded_drain(dealpg4_battery_bound *bound)
 {
     int pipefd[2];
     pid_t child;
@@ -949,7 +980,7 @@ static int dealpg4_battery_bounded_drain(dealpg4_probe_bound *bound)
             return DEALPG4_BATTERY_FAIL;
         }
         /* EAGAIN: wait for POLLIN, bounded by the battery deadline and
-         * the overall probe bound. */
+         * the overall mode bound. */
         {
             short revents = 0;
             int rc = dealpg4_poll_wait(pipefd[0], local, bound, &revents);
@@ -1014,10 +1045,14 @@ static int dealpg4_battery_bounded_drain(dealpg4_probe_bound *bound)
 
 /* === Probe entry ======================================================= */
 
-static const struct dealpg4_probe_battery {
+struct dealpg4_battery_spec {
     const char *name;
-    int (*run)(dealpg4_probe_bound *bound);
-} dealpg4_probe_batteries[] = {
+    int (*run)(dealpg4_battery_bound *bound);
+};
+
+/* The probe battery table: exactly the five canonical batteries in the
+ * canonical order (byte-stable report). */
+static const struct dealpg4_battery_spec dealpg4_probe_batteries[] = {
     { DEALPG4_PROBE_BATTERY_MONOTONIC_TIMER,
       dealpg4_battery_monotonic_timer },
     { DEALPG4_PROBE_BATTERY_SUBREAPER, dealpg4_battery_subreaper },
@@ -1029,6 +1064,73 @@ static const struct dealpg4_probe_battery {
 _Static_assert(sizeof(dealpg4_probe_batteries)
                    / sizeof(dealpg4_probe_batteries[0]) == 5,
                "probe runs exactly the five canonical batteries");
+
+/* The selftest battery table: an explicit additive structure. At this
+ * stage it carries the five probe batteries — the same spec entries in
+ * the same canonical order, so the selftest OK lines are byte-equal to
+ * probe's; the fault-injection battery (excluded, ISSUE-0184) appends
+ * here and runs in the same child under the same bound machinery (every
+ * future scenario is deadline-owned at the earlier of its scenario
+ * budget and the remaining mode bound — the run signature already
+ * carries the bound, so the machinery needs no change). */
+static const struct dealpg4_battery_spec dealpg4_selftest_batteries[] = {
+    { DEALPG4_PROBE_BATTERY_MONOTONIC_TIMER,
+      dealpg4_battery_monotonic_timer },
+    { DEALPG4_PROBE_BATTERY_SUBREAPER, dealpg4_battery_subreaper },
+    { DEALPG4_PROBE_BATTERY_PARENT_DEATH, dealpg4_battery_parent_death },
+    { DEALPG4_PROBE_BATTERY_NEGATIVE_PGID, dealpg4_battery_negative_pgid },
+    { DEALPG4_PROBE_BATTERY_BOUNDED_DRAIN, dealpg4_battery_bounded_drain }
+    /* ISSUE-0184 fault-injection battery appends here. */
+};
+
+_Static_assert(sizeof(dealpg4_selftest_batteries)
+                   / sizeof(dealpg4_selftest_batteries[0]) >= 5,
+               "selftest runs the five probe batteries plus the fault "
+               "battery");
+
+/* Outcome of a battery-list run. */
+enum dealpg4_battery_list_outcome {
+    DEALPG4_BATTERY_LIST_ALL_PASS = 0,
+    DEALPG4_BATTERY_LIST_FAILED, /* *failed_index set */
+    DEALPG4_BATTERY_LIST_BOUND_EXPIRED
+};
+
+/* Run a battery list under the mode bound, printing one "OK <name>" line
+ * per passing battery (stdout, byte-stable order — the shared runner is
+ * what keeps the probe and selftest OK lines byte-equal). The bound is
+ * checked before every battery and after the last one; a battery whose
+ * mechanics hit the bound maps to DEALPG4_BATTERY_LIST_BOUND_EXPIRED.
+ * On a battery failure *failed_index holds the failing entry's index.
+ * The caller maps the outcome to its mode token (PROBE_TIMEOUT or
+ * SELFTEST_TIMEOUT). */
+static enum dealpg4_battery_list_outcome
+dealpg4_run_battery_list(dealpg4_battery_bound *bound,
+                         const struct dealpg4_battery_spec *specs,
+                         size_t nspecs, size_t *failed_index)
+{
+    size_t i;
+
+    for (i = 0; i < nspecs; i++) {
+        int rc;
+
+        if (dealpg4_battery_bound_expired(bound))
+            return DEALPG4_BATTERY_LIST_BOUND_EXPIRED;
+        rc = specs[i].run(bound);
+        if (rc == DEALPG4_BATTERY_PASS) {
+            printf("OK %s\n", specs[i].name);
+            fflush(stdout);
+            continue;
+        }
+        if (rc == DEALPG4_BATTERY_BOUND)
+            return DEALPG4_BATTERY_LIST_BOUND_EXPIRED;
+        *failed_index = i;
+        return DEALPG4_BATTERY_LIST_FAILED;
+    }
+    /* The bound must not have fired during the run. */
+    if (dealpg4_battery_bound_expired(bound))
+        return DEALPG4_BATTERY_LIST_BOUND_EXPIRED;
+    return DEALPG4_BATTERY_LIST_ALL_PASS;
+}
 
 /* The 12-field LIMITS line from the embedded limits records, in manifest
  * field order. Printed only after the mode-entry limits validation
@@ -1052,8 +1154,11 @@ static void dealpg4_probe_print_limits(void)
 int dealpg4_probe_entry(int64_t limit_ms)
 {
     uint64_t bound_ms;
-    dealpg4_probe_bound bound;
-    size_t i;
+    dealpg4_battery_bound bound;
+    size_t nspecs = sizeof(dealpg4_probe_batteries)
+                        / sizeof(dealpg4_probe_batteries[0]);
+    size_t failed_index = 0;
+    enum dealpg4_battery_list_outcome outcome;
 
     /* Effective bound: default 15000; the dispatch-validated override
      * otherwise (the floor is enforced defensively here too). The bound
@@ -1093,51 +1198,221 @@ int dealpg4_probe_entry(int64_t limit_ms)
     dealpg4_probe_print_limits();
     fflush(stdout);
 
-    for (i = 0; i < sizeof(dealpg4_probe_batteries)
-                        / sizeof(dealpg4_probe_batteries[0]); i++) {
-        int rc;
-
-        if (dealpg4_probe_bound_expired(&bound)) {
-            dealpg4_deadline_close(&bound.ctx);
-            fprintf(stderr, "PROBE_TIMEOUT\n");
-            return DEALPG4_EXIT_PROBE_TIMEOUT;
-        }
-        rc = dealpg4_probe_batteries[i].run(&bound);
-        if (rc == DEALPG4_BATTERY_PASS) {
-            printf("OK %s\n", dealpg4_probe_batteries[i].name);
-            fflush(stdout);
-            continue;
-        }
-        dealpg4_deadline_close(&bound.ctx);
-        if (rc == DEALPG4_BATTERY_BOUND) {
-            fprintf(stderr, "PROBE_TIMEOUT\n");
-            return DEALPG4_EXIT_PROBE_TIMEOUT;
-        }
-        fprintf(stderr, "CAPABILITY_MISSING %s\n",
-                dealpg4_probe_batteries[i].name);
-        return DEALPG4_EXIT_CAPABILITY_MISSING;
-    }
-
-    /* The bound must not have fired during the run. */
-    if (dealpg4_probe_bound_expired(&bound)) {
-        dealpg4_deadline_close(&bound.ctx);
+    outcome = dealpg4_run_battery_list(&bound, dealpg4_probe_batteries,
+                                       nspecs, &failed_index);
+    dealpg4_deadline_close(&bound.ctx);
+    if (outcome == DEALPG4_BATTERY_LIST_ALL_PASS)
+        return 0;
+    if (outcome == DEALPG4_BATTERY_LIST_BOUND_EXPIRED) {
         fprintf(stderr, "PROBE_TIMEOUT\n");
         return DEALPG4_EXIT_PROBE_TIMEOUT;
     }
-    dealpg4_deadline_close(&bound.ctx);
-    return 0;
+    fprintf(stderr, "CAPABILITY_MISSING %s\n",
+            dealpg4_probe_batteries[failed_index].name);
+    return DEALPG4_EXIT_CAPABILITY_MISSING;
 }
 
-/* === Selftest entry (stage placeholder) ================================ */
+/* === Selftest entry ==================================================== */
+
+/* Selftest child -> entry exit-status encoding (internal to the mode;
+ * the child never prints a failure token — the entry owns the single
+ * token print, so stderr carries exactly one line on every failure
+ * path): 0 all pass; TIMEOUT the mode bound fired; INTERNAL an internal
+ * child malfunction; BATTERY_BASE + i the first failing battery's index
+ * in the selftest battery table. */
+#define DEALPG4_SELFTEST_CHILD_EXIT_OK 0
+#define DEALPG4_SELFTEST_CHILD_EXIT_TIMEOUT \
+    DEALPG4_EXIT_SELFTEST_TIMEOUT
+#define DEALPG4_SELFTEST_CHILD_EXIT_INTERNAL 7
+#define DEALPG4_SELFTEST_CHILD_EXIT_BATTERY_BASE 16
+
+/* The selftest child body: own process group, then the additive battery
+ * list under the inherited bound. Never returns. */
+static void dealpg4_selftest_child_main(dealpg4_battery_bound *bound)
+{
+    size_t nspecs = sizeof(dealpg4_selftest_batteries)
+                        / sizeof(dealpg4_selftest_batteries[0]);
+    size_t failed_index = 0;
+    enum dealpg4_battery_list_outcome outcome;
+
+    /* Own process group: on the entry's bound-expiry kill the whole
+     * battery subtree dies at once (no-survivors post-state). */
+    if (setpgid(0, 0) != 0)
+        _exit(DEALPG4_SELFTEST_CHILD_EXIT_INTERNAL);
+
+    outcome = dealpg4_run_battery_list(bound, dealpg4_selftest_batteries,
+                                       nspecs, &failed_index);
+    fflush(stdout);
+    if (outcome == DEALPG4_BATTERY_LIST_FAILED) {
+        if (failed_index < nspecs)
+            _exit(DEALPG4_SELFTEST_CHILD_EXIT_BATTERY_BASE
+                  + (int)failed_index);
+        _exit(DEALPG4_SELFTEST_CHILD_EXIT_INTERNAL);
+    }
+    if (outcome == DEALPG4_BATTERY_LIST_BOUND_EXPIRED)
+        _exit(DEALPG4_SELFTEST_CHILD_EXIT_TIMEOUT);
+    _exit(DEALPG4_SELFTEST_CHILD_EXIT_OK);
+}
+
+/* Wait for the selftest child, bounded by the mode bound. Returns 1 with
+ * *status on reaping, DEALPG4_BATTERY_BOUND on bound expiry, or -1 on a
+ * wait error. */
+static int dealpg4_selftest_wait_child(dealpg4_battery_bound *bound,
+                                       pid_t child, int *status)
+{
+    for (;;) {
+        pid_t r = waitpid(child, status, WNOHANG);
+
+        if (r == child)
+            return 1;
+        if (r < 0) {
+            if (errno == EINTR)
+                continue;
+            return -1;
+        }
+        if (dealpg4_battery_bound_expired(bound))
+            return DEALPG4_BATTERY_BOUND;
+        {
+            int rc = dealpg4_sleep_slice(bound);
+
+            if (rc == DEALPG4_BATTERY_BOUND)
+                return DEALPG4_BATTERY_BOUND;
+            if (rc != 0)
+                return -1;
+        }
+    }
+}
+
+/* Bound-expiry cleanup: the child placed itself in its own process
+ * group, so one group kill takes the whole battery subtree down at
+ * once; the pgid guard keeps a child whose setpgid failed (still in
+ * this group) from being group-killed. Then reap the direct child
+ * within the cleanup grace. */
+static void dealpg4_selftest_kill_reap(dealpg4_battery_bound *bound,
+                                       pid_t child)
+{
+    pid_t pg = getpgid(child);
+
+    if (pg > 0 && pg == child)
+        (void)kill(-child, SIGKILL);
+    dealpg4_battery_kill_reap(bound, &child, 1);
+}
 
 int dealpg4_selftest_entry(int64_t limit_ms)
 {
-    /* Stage placeholder: the selftest bound machinery (embedded
-     * selftestLimits.selftestTimeoutMs default, --limit-ms override) and
-     * the fault-injection battery slot land in the selftest child
-     * (ISSUE-0184). No fork, no exec, no channel. MODE_NOT_IMPLEMENTED is
-     * a stage placeholder, not an integrity token. */
-    (void)limit_ms;
-    fprintf(stderr, "MODE_NOT_IMPLEMENTED\n");
-    return 1;
+    uint64_t bound_ms;
+    dealpg4_battery_bound bound;
+    pid_t child;
+    int status;
+    size_t nspecs = sizeof(dealpg4_selftest_batteries)
+                        / sizeof(dealpg4_selftest_batteries[0]);
+
+    /* Effective mode bound: the dispatch-validated --limit-ms override
+     * when present, else the embedded selftestLimits.selftestTimeoutMs —
+     * the same embedded constants the probe reports (bound provenance;
+     * never a hardcoded default). The bound bounds the selftest run
+     * only; it is never an invocation/outer limit and changes no
+     * embedded constant, probe report, or manifest. */
+    bound_ms = (limit_ms >= DEALPG4_PROBE_SELFTEST_LIMIT_MS_FLOOR)
+                   ? (uint64_t)limit_ms
+                   : (uint64_t)dealpg4_embedded_selftest_limits
+                         .selftestTimeoutMs;
+
+    /* Mode-entry limits re-check (dispatch ran it before delegating; the
+     * local guarantee mirrors the probe entry — the bound is armed only
+     * past a valid embedded configuration). */
+    if (dealpg4_embedded_limits_ordering_check() != DEALPG4_LIMITS_OK) {
+        fprintf(stderr, "CONFIG_INVALID\n");
+        return DEALPG4_EXIT_CONFIG_INVALID;
+    }
+
+    /* One mode-level monotonic bound armed from selftest entry with the
+     * monotonic context — the same timerfd machinery as every other
+     * deadline. A broken timer capability fails before any battery
+     * runs. */
+    if (dealpg4_deadline_open(&bound.ctx) != 0) {
+        fprintf(stderr, "CAPABILITY_MISSING %s\n",
+                DEALPG4_PROBE_BATTERY_MONOTONIC_TIMER);
+        return DEALPG4_EXIT_CAPABILITY_MISSING;
+    }
+    bound.expired = 0;
+    if (dealpg4_deadline_arm_relative(&bound.ctx, bound_ms) != 0) {
+        dealpg4_deadline_close(&bound.ctx);
+        fprintf(stderr, "CAPABILITY_MISSING %s\n",
+                DEALPG4_PROBE_BATTERY_MONOTONIC_TIMER);
+        return DEALPG4_EXIT_CAPABILITY_MISSING;
+    }
+
+    /* One selftest child inherits the bound context (the timerfd is
+     * shared across the fork, so parent and child observe the same
+     * absolute deadline) and runs the additive battery list. */
+    child = fork();
+    if (child < 0) {
+        dealpg4_deadline_close(&bound.ctx);
+        fprintf(stderr, "CAPABILITY_MISSING selftest-child\n");
+        return DEALPG4_EXIT_CAPABILITY_MISSING;
+    }
+    if (child == 0) {
+        dealpg4_selftest_child_main(&bound);
+        _exit(DEALPG4_SELFTEST_CHILD_EXIT_INTERNAL); /* unreachable */
+    }
+
+    /* The entry waits for the child under the same bound and owns the
+     * single failure-token print. */
+    {
+        int rc = dealpg4_selftest_wait_child(&bound, child, &status);
+
+        if (rc == DEALPG4_BATTERY_BOUND) {
+            dealpg4_selftest_kill_reap(&bound, child);
+            dealpg4_deadline_close(&bound.ctx);
+            fprintf(stderr, "SELFTEST_TIMEOUT\n");
+            return DEALPG4_EXIT_SELFTEST_TIMEOUT;
+        }
+        if (rc != 1) {
+            dealpg4_selftest_kill_reap(&bound, child);
+            dealpg4_deadline_close(&bound.ctx);
+            fprintf(stderr, "CAPABILITY_MISSING selftest-child\n");
+            return DEALPG4_EXIT_CAPABILITY_MISSING;
+        }
+    }
+
+    if (WIFEXITED(status)) {
+        int code = WEXITSTATUS(status);
+
+        if (code == DEALPG4_SELFTEST_CHILD_EXIT_OK) {
+            /* Success requires the bound not to have fired: the child
+             * passed its own final check; the entry re-checks so a bound
+             * firing in the reap window cannot pass the mode. */
+            if (dealpg4_battery_bound_expired(&bound)) {
+                dealpg4_deadline_close(&bound.ctx);
+                fprintf(stderr, "SELFTEST_TIMEOUT\n");
+                return DEALPG4_EXIT_SELFTEST_TIMEOUT;
+            }
+            dealpg4_deadline_close(&bound.ctx);
+            return 0;
+        }
+        dealpg4_deadline_close(&bound.ctx);
+        if (code == DEALPG4_SELFTEST_CHILD_EXIT_TIMEOUT) {
+            fprintf(stderr, "SELFTEST_TIMEOUT\n");
+            return DEALPG4_EXIT_SELFTEST_TIMEOUT;
+        }
+        if (code >= DEALPG4_SELFTEST_CHILD_EXIT_BATTERY_BASE
+            && (size_t)(code - DEALPG4_SELFTEST_CHILD_EXIT_BATTERY_BASE)
+                   < nspecs) {
+            fprintf(stderr, "CAPABILITY_MISSING %s\n",
+                    dealpg4_selftest_batteries[code
+                        - DEALPG4_SELFTEST_CHILD_EXIT_BATTERY_BASE].name);
+            return DEALPG4_EXIT_CAPABILITY_MISSING;
+        }
+        /* Defensive: an unexpected child report (internal malfunction)
+         * is still a named-token failure with no retry. */
+        fprintf(stderr, "CAPABILITY_MISSING selftest-child\n");
+        return DEALPG4_EXIT_CAPABILITY_MISSING;
+    }
+
+    /* Defensive: the child died by an external signal (the entry's own
+     * bound-expiry kill returns above with the timeout token). */
+    dealpg4_deadline_close(&bound.ctx);
+    fprintf(stderr, "CAPABILITY_MISSING selftest-child\n");
+    return DEALPG4_EXIT_CAPABILITY_MISSING;
 }

@@ -13,11 +13,27 @@
  * tokens (CAPABILITY_MISSING <battery>, PROBE_TIMEOUT). Exit 0 iff every
  * battery passes; no skip, no retry.
  *
- * The selftest mode surface (bound machinery with the embedded
- * selftestLimits.selftestTimeoutMs default and the fault-battery slot)
- * lands in the selftest child; its entry stays the stage placeholder
- * MODE_NOT_IMPLEMENTED (no fork, no exec, no channel; a stage
- * placeholder, not an integrity token).
+ * Selftest mode surface (ISSUE-0204): the mode-level monotonic bound
+ * armed from selftest entry with the same timerfd machinery as every
+ * other deadline (dealpg4-time-stream-utilities monotonic context). The
+ * effective bound is the dispatch-validated --limit-ms N override when
+ * present (N >= DEALPG4_PROBE_SELFTEST_LIMIT_MS_FLOOR) and the embedded
+ * selftestLimits.selftestTimeoutMs otherwise — read from the same
+ * embedded constants the probe reports, never a hardcoded default. The
+ * bound bounds the selftest run only — never an invocation/outer limit —
+ * and changes no embedded constant, probe report, or manifest. The
+ * selftest entry forks one selftest child which inherits the bound
+ * context and runs an explicit additive battery list: at this stage the
+ * five probe batteries, printing the same five "OK <battery>" lines as
+ * probe in the same order (identity/LIMITS lines are probe-only); the
+ * fault-injection battery (excluded, ISSUE-0184) appends to the same
+ * list, child, and bound machinery, with every future scenario
+ * deadline-owned at the earlier of its scenario budget and the remaining
+ * mode bound — the bound machinery needs no change. Success: all
+ * batteries passed and the bound did not fire (exit 0). Failure: the
+ * first failing battery's token (CAPABILITY_MISSING <battery>) or
+ * SELFTEST_TIMEOUT on stderr, nonzero exit; no skip, no retry.
+ * Post-state: selftest child reaped, no survivors, bound context closed.
  *
  * Dispatch delegates probe/selftest to these entries after the
  * dispatch-owned --limit-ms shape validation and the mode-entry
@@ -73,24 +89,26 @@
 #define DEALPG4_PROBE_BATTERY_BOUNDED_DRAIN   "bounded-drain"
 
 /* === Exit statuses =====================================================
- * The mode entries own their own statuses. These are the probe-emitted
- * integrity-failure statuses; CONFIG_INVALID is shared with dispatch (the
- * probe entry re-runs the mode-entry limits validation so the LIMITS line
- * can never print past a violation). Usage errors (2) are dispatch-owned.
+ * The mode entries own their own statuses. These are the
+ * probe/selftest-emitted integrity-failure statuses; CONFIG_INVALID is
+ * shared with dispatch (the mode entries re-run the mode-entry limits
+ * validation so no mode output can print past a violation). Usage errors
+ * (2) are dispatch-owned.
  */
 #define DEALPG4_EXIT_CONFIG_INVALID     3
 #define DEALPG4_EXIT_CAPABILITY_MISSING 4
 #define DEALPG4_EXIT_PROBE_TIMEOUT      5
+#define DEALPG4_EXIT_SELFTEST_TIMEOUT   6
 
 /*
  * probe/selftest mode entries.
  *
  * limit_ms is the dispatch-validated --limit-ms override, or -1 when the
  * option is absent and the entry applies its mode default (probe 15000;
- * selftest = embedded selftestLimits.selftestTimeoutMs once its body
- * lands). Dispatch owns the argument validation; the entries own the
- * bound semantics. The bound is a bound on the probe/selftest run only —
- * never an invocation/outer limit.
+ * selftest = embedded selftestLimits.selftestTimeoutMs). Dispatch owns
+ * the argument validation; the entries own the bound semantics. The
+ * bound is a bound on the probe/selftest run only — never an
+ * invocation/outer limit.
  */
 int dealpg4_probe_entry(int64_t limit_ms);
 int dealpg4_selftest_entry(int64_t limit_ms);
