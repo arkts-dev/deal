@@ -368,7 +368,7 @@ static int dealpg4_battery_write_all(int fd, const void *buf, size_t len)
 static int dealpg4_battery_monotonic_timer(dealpg4_probe_bound *bound)
 {
     dealpg4_deadline_ctx t;
-    uint64_t t0, t1, deadline, expirations;
+    uint64_t t0, t1, prev, deadline, expirations;
 
     t0 = dealpg4_now_ms();
     if (t0 == 0)
@@ -383,8 +383,10 @@ static int dealpg4_battery_monotonic_timer(dealpg4_probe_bound *bound)
     }
 
     /* Block on the timerfd until the absolute deadline fires; every clock
-     * sample taken during the run must be non-decreasing. */
+     * sample taken during the run must be non-decreasing, checked pairwise
+     * against the previous sample (not only against the first sample). */
     expirations = 0;
+    prev = t0;
     for (;;) {
         struct pollfd pfd;
         uint64_t now, remain, bound_remain;
@@ -395,10 +397,11 @@ static int dealpg4_battery_monotonic_timer(dealpg4_probe_bound *bound)
             return DEALPG4_BATTERY_BOUND;
         }
         now = dealpg4_now_ms();
-        if (now < t0) { /* backwards sample */
+        if (now < t0 || now < prev) { /* backwards sample */
             dealpg4_deadline_close(&t);
             return DEALPG4_BATTERY_FAIL;
         }
+        prev = now;
         remain = deadline > now ? deadline - now : 0;
         if (dealpg4_deadline_armed(&bound->ctx)) {
             bound_remain = dealpg4_deadline_remaining_ms(&bound->ctx);
@@ -432,7 +435,8 @@ static int dealpg4_battery_monotonic_timer(dealpg4_probe_bound *bound)
     }
 
     t1 = dealpg4_now_ms();
-    if (t1 == 0 || t1 < t0) { /* failed read or backwards sample */
+    if (t1 == 0 || t1 < t0 || t1 < prev) {
+        /* failed read or backwards sample */
         dealpg4_deadline_close(&t);
         return DEALPG4_BATTERY_FAIL;
     }
