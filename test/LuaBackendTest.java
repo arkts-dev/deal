@@ -2,6 +2,7 @@ package deal.test;
 
 import deal.ast.*;
 import deal.checker.*;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.codegen.lua.LuaBackend;
 import deal.lexer.*;
 import deal.parser.*;
@@ -63,7 +64,7 @@ public class LuaBackendTest {
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
 
-        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
+        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
 
         CheckResult result;
         if (diags.stream().noneMatch(d -> "error".equals(d.severity()))) {
@@ -104,7 +105,7 @@ public class LuaBackendTest {
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
 
-        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
+        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
 
         CheckResult result;
         if (diags.stream().noneMatch(d -> "error".equals(d.severity()))) {
@@ -132,7 +133,7 @@ public class LuaBackendTest {
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
 
-        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
+        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
 
         CheckResult result;
         if (diags.stream().noneMatch(d -> "error".equals(d.severity()))) {
@@ -226,9 +227,9 @@ public class LuaBackendTest {
 
     private static void assertNoErrors(CompileOutput out, String context) {
         if (out.result != null) {
-            List<Diagnostic> diags = out.result.diagnostics();
+            List<CompilerDiagnostic> diags = out.result.diagnostics();
             if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
-                for (Diagnostic d : diags) {
+                for (CompilerDiagnostic d : diags) {
                     if ("error".equals(d.severity())) {
                         System.err.println("  Error: " + d);
                     }

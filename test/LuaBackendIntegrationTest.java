@@ -2,6 +2,7 @@ package deal.test;
 
 import deal.ast.*;
 import deal.checker.*;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.codegen.lua.LuaBackend;
 import deal.lexer.*;
 import deal.parser.*;
@@ -47,9 +48,9 @@ public class LuaBackendIntegrationTest {
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
 
-        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
+        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
         if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : diags) {
+            for (CompilerDiagnostic d : diags) {
                 if ("error".equals(d.severity()))
                     System.err.println("  Compile error: " + d);
             }
@@ -59,7 +60,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check(filename, symTable, nr, parse.program());
         diags.addAll(result.diagnostics());
         if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : diags) {
+            for (CompilerDiagnostic d : diags) {
                 if ("error".equals(d.severity()))
                     System.err.println("  Type error: " + d);
             }
@@ -405,7 +406,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "class optional: compilation failed");
@@ -467,7 +468,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "class optional delete: compilation failed");
@@ -527,7 +528,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "for-loop: compilation failed");
@@ -594,7 +595,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "closure binding: compilation failed");
@@ -663,7 +664,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "nested closure: compilation failed");
@@ -730,7 +731,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "class export: compilation failed");
@@ -794,7 +795,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "code after try/catch: compilation failed");
@@ -859,7 +860,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "nested try/catch: compilation failed");
@@ -919,7 +920,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "throw default fields: compilation failed");
@@ -985,7 +986,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "nullable comparison: compilation failed");
@@ -1054,7 +1055,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "null return: compilation failed");
@@ -1110,7 +1111,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "int valid: compilation failed");
@@ -1166,7 +1167,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "int non-integer: compilation failed");
@@ -1223,7 +1224,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "int null: compilation failed");
@@ -1279,7 +1280,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "int out of range: compilation failed");
@@ -1335,7 +1336,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "number valid: compilation failed");
@@ -1393,7 +1394,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "number null: compilation failed");
@@ -1479,7 +1480,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "intrinsic function values: compilation failed");
@@ -1546,7 +1547,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "throw valid error: compilation failed");
@@ -1610,7 +1611,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "break in try: compilation failed");
@@ -1674,7 +1675,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "continue in try: compilation failed");
@@ -1740,7 +1741,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "nested break: compilation failed");
@@ -1806,7 +1807,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "nested continue: compilation failed");
@@ -1871,7 +1872,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "continue update: compilation failed");
@@ -1928,7 +1929,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "template literal: compilation failed");
@@ -1989,7 +1990,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "for-of array: compilation failed");
@@ -2050,7 +2051,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "for-of string: compilation failed");
@@ -2112,7 +2113,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "for-of closure: compilation failed");
@@ -2170,7 +2171,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "for-of break: compilation failed");
@@ -2232,7 +2233,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "for-of continue: compilation failed");
@@ -2295,7 +2296,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "for-of nested: compilation failed");
@@ -2361,7 +2362,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "for-of string single eval: compilation failed");
@@ -2421,7 +2422,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "template complex expr: compilation failed");
@@ -2475,7 +2476,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "template string with }: compilation failed");
@@ -2590,7 +2591,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Type error: " + d);
             }
             check(false, "nested template: compilation failed");
@@ -2669,7 +2670,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "for-of try/catch: compilation failed");
@@ -2735,7 +2736,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "for-of string member access: compilation failed");
@@ -2794,7 +2795,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "async simple await: compilation failed");
@@ -2846,7 +2847,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "async sync complete: compilation failed");
@@ -2900,7 +2901,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "async nested: compilation failed");
@@ -2958,7 +2959,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "async throw catch: compilation failed");
@@ -3023,7 +3024,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
 
         if (result.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) System.err.println("  Error: " + d);
             }
             check(false, "async error propagation: compilation failed");
@@ -3079,9 +3080,9 @@ public class LuaBackendIntegrationTest {
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
-        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
+        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
         if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : diags) {
+            for (CompilerDiagnostic d : diags) {
                 if ("error".equals(d.severity()))
                     System.err.println("  Compile error: " + d);
             }
@@ -3090,7 +3091,7 @@ public class LuaBackendIntegrationTest {
         CheckResult result = TypeChecker.check(filename, symTable, nr, parse.program());
         diags.addAll(result.diagnostics());
         if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
-            for (Diagnostic d : diags) {
+            for (CompilerDiagnostic d : diags) {
                 if ("error".equals(d.severity()))
                     System.err.println("  Type error: " + d);
             }

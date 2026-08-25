@@ -2,6 +2,7 @@ package deal.test;
 
 import deal.ast.*;
 import deal.checker.*;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.codegen.SourceMapGenerator;
 import deal.codegen.lua.LuaBackend;
 import deal.lexer.*;
@@ -53,7 +54,7 @@ public class SourceMapTest {
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
 
-        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
+        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
         if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
             fail("Compilation error in source: " + source.substring(0, Math.min(80, source.length())));
             return null;

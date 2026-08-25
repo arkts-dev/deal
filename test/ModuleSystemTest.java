@@ -1,6 +1,7 @@
 package deal.test;
 
 import deal.Main;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.ast.*;
 import deal.checker.*;
 import deal.codegen.lua.LuaBackend;
@@ -2326,7 +2327,7 @@ public class ModuleSystemTest {
     // =========================================================================
 
     /** Parses a source and runs the post-parse ModuleShapeValidator. */
-    private static List<Diagnostic> shapeDiags(String source, boolean isDeclFile) {
+    private static List<CompilerDiagnostic> shapeDiags(String source, boolean isDeclFile) {
         LexResult lex = new Lexer(source, isDeclFile ? "t.d.deal" : "t.deal")
             .tokenize();
         ParseResult parse = new Parser(lex.tokens(),
@@ -2337,7 +2338,7 @@ public class ModuleSystemTest {
 
     private static void testModuleShapeValidV12() {
         System.out.println("-- v1.2 module shape: imports first + main() compiles --");
-        List<Diagnostic> diags = shapeDiags("""
+        List<CompilerDiagnostic> diags = shapeDiags("""
             import * as lib from "./lib"
             export function main(): null { return null; }
             export class Point { x: number = 0.0; }
@@ -2348,7 +2349,7 @@ public class ModuleSystemTest {
 
     private static void testModuleShapeImportAfterDeclaration() {
         System.out.println("-- v1.2 module shape: import after declaration (E1048) --");
-        List<Diagnostic> diags = shapeDiags("""
+        List<CompilerDiagnostic> diags = shapeDiags("""
             export function main(): null { return null; }
             import * as lib from "./lib"
             """, false);
@@ -2359,7 +2360,7 @@ public class ModuleSystemTest {
 
     private static void testModuleShapeTopLevelStatement() {
         System.out.println("-- v1.2 module shape: top-level statement (E1049) --");
-        List<Diagnostic> diags = shapeDiags("""
+        List<CompilerDiagnostic> diags = shapeDiags("""
             let x: int = 1;
             export function main(): null { return null; }
             """, false);
@@ -2370,7 +2371,7 @@ public class ModuleSystemTest {
 
     private static void testModuleShapeNestedExportAndImport() {
         System.out.println("-- v1.2 module shape: nested import/export (E1050) --");
-        List<Diagnostic> diags = shapeDiags("""
+        List<CompilerDiagnostic> diags = shapeDiags("""
             export function main(): null {
               export function inner(): null { return null; }
               return null;
@@ -2397,7 +2398,7 @@ public class ModuleSystemTest {
             "-- v1.2 module shape: import/export inside function expressions (E1050) --");
 
         // Function expression in statement position (variable initializer).
-        List<Diagnostic> diags = shapeDiags("""
+        List<CompilerDiagnostic> diags = shapeDiags("""
             export function main(): null {
               let f = function(): null { import * as x from "./x"; return null; };
               return null;
@@ -2465,7 +2466,7 @@ public class ModuleSystemTest {
     private static void testModuleShapeBodylessInImplementation()
             throws Exception {
         System.out.println("-- v1.2 module shape: bodyless declaration in .deal (E1051) --");
-        List<Diagnostic> diags = shapeDiags(
+        List<CompilerDiagnostic> diags = shapeDiags(
             "export function main(): null;\n", false);
         check(diags.stream().anyMatch(d -> "E1051".equals(d.code())
                 && "error".equals(d.severity())),

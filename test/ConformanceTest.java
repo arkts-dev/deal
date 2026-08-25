@@ -454,7 +454,11 @@ public class ConformanceTest {
                 ExportExtractor extractor =
                     new ExportExtractor(filename, true);
                 extractor.extract(parseResult.program());
-                return new ArrayList<>(extractor.diagnostics());
+                // Transitional ranged-to-legacy boundary conversion (T9
+                // scaffolding, removed in T13): start values derive from
+                // the range start (position-preserving; ranged-to-legacy
+                // only).
+                return toLegacyDiagnostics(extractor.diagnostics());
             }
 
             // DEAL v1.2 module shape gate (spec-v1.2: Syntactic grammar —
@@ -463,8 +467,12 @@ public class ConformanceTest {
             // only imports/functions/classes/exports (E1049), imports and
             // exports are not statements (E1050), and implementation files
             // have no bodyless function declarations (E1051).
-            List<Diagnostic> shapeDiags = ModuleShapeValidator.validate(
-                parseResult.program(), filename, false);
+            // Transitional ranged-to-legacy boundary conversion (T9
+            // scaffolding, removed in T13): start values derive from the
+            // range start (position-preserving; ranged-to-legacy only).
+            List<Diagnostic> shapeDiags = toLegacyDiagnostics(
+                ModuleShapeValidator.validate(
+                    parseResult.program(), filename, false));
             if (shapeDiags.stream().anyMatch(d -> "error".equals(d.severity()))) {
                 return new ArrayList<>(shapeDiags);
             }
@@ -480,10 +488,13 @@ public class ConformanceTest {
                 allDiags.add(Diagnostic.error("E9999", e.getMessage(), filename, 1, 1));
                 return allDiags;
             }
-            allDiags.addAll(nr.diagnostics());
+            // Transitional ranged-to-legacy boundary conversions (T9
+            // scaffolding, removed in T13): start values derive from the
+            // range start (position-preserving; ranged-to-legacy only).
+            allDiags.addAll(toLegacyDiagnostics(nr.diagnostics()));
             CheckResult result = TypeChecker.check(filename, symTable, nr,
                 parseResult.program());
-            allDiags.addAll(result.diagnostics());
+            allDiags.addAll(toLegacyDiagnostics(result.diagnostics()));
             return allDiags;
         } catch (IOException e) {
             return List.of(Diagnostic.error("E9999", "cannot read: " + e.getMessage(),
@@ -744,8 +755,12 @@ public class ConformanceTest {
         // have no bodyless function declarations (E1051).  This mirrors
         // the post-parse pass CompilationOrchestrator runs for every
         // production module.
-        List<Diagnostic> shapeDiags = ModuleShapeValidator.validate(
-            parseResult.program(), filename, false);
+        // Transitional ranged-to-legacy boundary conversion (T9
+        // scaffolding, removed in T13): start values derive from the range
+        // start (position-preserving; ranged-to-legacy only).
+        List<Diagnostic> shapeDiags = toLegacyDiagnostics(
+            ModuleShapeValidator.validate(
+                parseResult.program(), filename, false));
         allDiags.addAll(shapeDiags);
         if (shapeDiags.stream().anyMatch(d -> "error".equals(d.severity()))) {
             return allDiags;
@@ -761,10 +776,13 @@ public class ConformanceTest {
             allDiags.add(Diagnostic.error("E9999", e.getMessage(), filename, 1, 1));
             return allDiags;
         }
-        allDiags.addAll(nr.diagnostics());
+        // Transitional ranged-to-legacy boundary conversions (T9
+        // scaffolding, removed in T13): start values derive from the range
+        // start (position-preserving; ranged-to-legacy only).
+        allDiags.addAll(toLegacyDiagnostics(nr.diagnostics()));
 
         CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
-        allDiags.addAll(result.diagnostics());
+        allDiags.addAll(toLegacyDiagnostics(result.diagnostics()));
 
         return allDiags;
     }

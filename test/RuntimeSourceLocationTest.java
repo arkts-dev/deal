@@ -2,6 +2,7 @@ package deal.test;
 
 import deal.ast.*;
 import deal.checker.*;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.codegen.lua.LuaBackend;
 import deal.lexer.*;
 import deal.module.CompilationOrchestrator;
@@ -60,7 +61,7 @@ public class RuntimeSourceLocationTest {
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
 
-        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
+        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
         if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
             fail("Compilation error: " + diags);
             return null;

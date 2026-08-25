@@ -129,17 +129,35 @@ public class DiagnosticClassificationTest {
             StubModuleResolver resolver = new StubModuleResolver();
             NameResolver nr = new NameResolver(filename, resolver);
             nr.resolve(parse.program());
-            allDiags.addAll(nr.diagnostics());
+            // Transitional ranged-to-legacy boundary conversion (T9
+            // scaffolding, removed in T13): start values derive from the
+            // range start (position-preserving; ranged-to-legacy only).
+            for (CompilerDiagnostic d : nr.diagnostics()) {
+                allDiags.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+            }
         } else {
             StubModuleResolver resolver = new StubModuleResolver();
             NameResolver nr = new NameResolver(filename, resolver);
             SymbolTable symTable = nr.resolve(parse.program());
-            allDiags.addAll(nr.diagnostics());
+            // Transitional ranged-to-legacy boundary conversion (T9
+            // scaffolding, removed in T13): start values derive from the
+            // range start (position-preserving; ranged-to-legacy only).
+            for (CompilerDiagnostic d : nr.diagnostics()) {
+                allDiags.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+            }
 
             if (!hasErrors(allDiags)) {
                 CheckResult result = TypeChecker.check(filename, symTable,
                     nr, parse.program());
-                allDiags.addAll(result.diagnostics());
+                // Transitional ranged-to-legacy boundary conversion (T9
+                // scaffolding, removed in T13): start values derive from the
+                // range start (position-preserving; ranged-to-legacy only).
+                for (CompilerDiagnostic d : result.diagnostics()) {
+                    allDiags.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                        d.file(), d.line(), d.column(), d.diagnosticCode()));
+                }
             }
         }
         return allDiags;

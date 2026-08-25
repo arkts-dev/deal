@@ -1,6 +1,7 @@
 package deal.module;
 
 import deal.ast.*;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.lexer.*;
 import deal.parser.*;
 import deal.types.Type;
@@ -157,7 +158,7 @@ public final class StdlibModuleResolver {
         if (!extractor.diagnostics().isEmpty()) {
             // Log but don't fail — E7001 on .d.deal files with executable
             // statements is a problem but not fatal for export extraction
-            for (Diagnostic d : extractor.diagnostics()) {
+            for (CompilerDiagnostic d : extractor.diagnostics()) {
                 System.err.println("  " + d);
             }
         }

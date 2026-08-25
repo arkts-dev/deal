@@ -48,7 +48,7 @@ public class CheckerTest {
             StubModuleResolver resolver = new StubModuleResolver();
             NameResolver nr = new NameResolver(filename, resolver);
             nr.resolve(parse.program());
-            List<Diagnostic> diags = toLegacyParseDiagnostics(parse.diagnostics());
+            List<CompilerDiagnostic> diags = new ArrayList<>(parse.diagnostics());
             diags.addAll(nr.diagnostics());
             return new CheckerOutput(
                 new CheckResult(Map.of(), new SymbolTable(), diags),
@@ -60,7 +60,7 @@ public class CheckerTest {
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
 
-        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
+        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
         if (!hasErrors(diags)) {
             CheckResult result = TypeChecker.check(filename, symTable, nr, parse.program());
             diags.addAll(result.diagnostics());
@@ -88,7 +88,7 @@ public class CheckerTest {
         if (parse.hasErrors()) {
             NameResolver nr = new NameResolver(filename, resolver);
             nr.resolve(parse.program());
-            List<Diagnostic> diags = toLegacyParseDiagnostics(parse.diagnostics());
+            List<CompilerDiagnostic> diags = new ArrayList<>(parse.diagnostics());
             diags.addAll(nr.diagnostics());
             return new CheckerOutput(
                 new CheckResult(Map.of(), new SymbolTable(), diags),
@@ -99,7 +99,7 @@ public class CheckerTest {
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
 
-        List<Diagnostic> diags = new ArrayList<>(nr.diagnostics());
+        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
         if (!hasErrors(diags)) {
             CheckResult result = TypeChecker.check(filename, symTable, nr, parse.program());
             diags.addAll(result.diagnostics());
@@ -114,31 +114,14 @@ public class CheckerTest {
         );
     }
 
-    private static boolean hasErrors(List<Diagnostic> diags) {
+    private static boolean hasErrors(List<CompilerDiagnostic> diags) {
         return diags.stream().anyMatch(d -> "error".equals(d.severity()));
     }
 
-    /**
-     * Transitional ranged-to-legacy boundary conversion at the parser
-     * aggregation (T4 scaffolding, removed when CheckerTest migrates
-     * natively in T10): file/line/column derive from the range start
-     * (position-preserving; ranged-to-legacy only — never fabricates
-     * offsets, and the legacy side never produces a SOURCE range).
-     */
-    private static List<Diagnostic> toLegacyParseDiagnostics(
-            List<CompilerDiagnostic> parseDiags) {
-        List<Diagnostic> legacy = new ArrayList<>(parseDiags.size());
-        for (CompilerDiagnostic d : parseDiags) {
-            legacy.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                d.file(), d.line(), d.column(), d.diagnosticCode()));
-        }
-        return legacy;
-    }
-
     private static void assertNoErrors(CheckerOutput out, String context) {
-        List<Diagnostic> diags = out.result.diagnostics();
+        List<CompilerDiagnostic> diags = out.result.diagnostics();
         if (!diags.isEmpty()) {
-            for (Diagnostic d : diags) {
+            for (CompilerDiagnostic d : diags) {
                 System.err.println("  Diagnostic: " + d);
             }
         }
@@ -147,7 +130,7 @@ public class CheckerTest {
     }
 
     private static void assertError(CheckerOutput out, String code, String context) {
-        List<Diagnostic> diags = out.result.diagnostics();
+        List<CompilerDiagnostic> diags = out.result.diagnostics();
         boolean found = diags.stream().anyMatch(d -> d.code().equals(code));
         if (!found) {
             System.err.println("  Expected " + code + " but got: " + diags);
@@ -935,7 +918,7 @@ public class CheckerTest {
             "function twoArgs(a: int, b: int): int { return a + b; }\n" +
             "let f: (x: int) => int = twoArgs;"
         );
-        List<Diagnostic> diags = out.result.diagnostics();
+        List<CompilerDiagnostic> diags = out.result.diagnostics();
         boolean hasE5004 = diags.stream().anyMatch(d -> d.code().equals("E5004"));
         boolean hasE3001 = diags.stream().anyMatch(d -> d.code().equals("E3001"));
         check(hasE5004 || hasE3001,
@@ -1590,7 +1573,7 @@ public class CheckerTest {
         CheckerOutput out = checkProgram(
             "function f(): void { return 42; }"
         );
-        List<Diagnostic> diags = out.result.diagnostics();
+        List<CompilerDiagnostic> diags = out.result.diagnostics();
         boolean hasE3004 = diags.stream()
             .anyMatch(d -> d.code().equals("E3004") && d.message().contains("void"));
         check(hasE3004,
@@ -1606,7 +1589,7 @@ public class CheckerTest {
         CheckerOutput out = checkProgram(
             "export function test(): int { return int(3); }"
         );
-        List<Diagnostic> diags = out.result.diagnostics();
+        List<CompilerDiagnostic> diags = out.result.diagnostics();
         boolean hasE5001 = diags.stream()
             .anyMatch(d -> d.code().equals("E5001"));
         check(hasE5001,
@@ -1618,7 +1601,7 @@ public class CheckerTest {
         CheckerOutput out = checkProgram(
             "export function test(): number { return number(true); }"
         );
-        List<Diagnostic> diags = out.result.diagnostics();
+        List<CompilerDiagnostic> diags = out.result.diagnostics();
         boolean hasE5001 = diags.stream()
             .anyMatch(d -> d.code().equals("E5001"));
         check(hasE5001,
@@ -2052,7 +2035,7 @@ public class CheckerTest {
         CheckerOutput out = checkProgram(
             "class Error2 { }"
         );
-        List<Diagnostic> diags = out.result.diagnostics();
+        List<CompilerDiagnostic> diags = out.result.diagnostics();
         boolean hasE4006 = diags.stream().anyMatch(d -> d.code().equals("E4006"));
         check(!hasE4006, "class Error2 should NOT produce E4006");
 
@@ -2091,7 +2074,7 @@ public class CheckerTest {
         assertError(out, "E2008", "dollar in param produces E2008 with null return type");
 
         // Verify null return type is recognized (no E3004 for "null")
-        List<Diagnostic> diags = out.result.diagnostics();
+        List<CompilerDiagnostic> diags = out.result.diagnostics();
         boolean hasE3004ForNull = diags.stream()
             .anyMatch(d -> d.code().equals("E3004") && d.message().contains("null"));
         check(!hasE3004ForNull, "null return type should NOT produce E3004");
@@ -2114,7 +2097,7 @@ public class CheckerTest {
         assertError(out, "E2008", "dollar in import alias produces E2008 with valid module");
 
         // Also verify that the module was found (no E2003)
-        List<Diagnostic> diags = out.result.diagnostics();
+        List<CompilerDiagnostic> diags = out.result.diagnostics();
         boolean hasE2003 = diags.stream().anyMatch(d -> d.code().equals("E2003"));
         check(!hasE2003, "valid module import should NOT produce E2003");
     }
@@ -2257,7 +2240,7 @@ public class CheckerTest {
         // Should get E4007 on A's field (B is not @jsonable), not E4008
         assertError(out, "E4007", "non-@jsonable class field → E4007, not E4008");
         // Also verify no E4008
-        List<Diagnostic> diags = out.result.diagnostics();
+        List<CompilerDiagnostic> diags = out.result.diagnostics();
         boolean hasE4008 = diags.stream().anyMatch(d -> d.code().equals("E4008"));
         check(!hasE4008, "should NOT produce E4008 when B is not @jsonable");
     }
@@ -2571,7 +2554,7 @@ public class CheckerTest {
         );
         // Should not crash. May produce E3013 or E1042 depending on parse order.
         // Just verify no ClassCastException occurred.
-        List<Diagnostic> diags = out.result.diagnostics();
+        List<CompilerDiagnostic> diags = out.result.diagnostics();
         boolean crashed = diags.stream()
             .anyMatch(d -> d.message().contains("ClassCastException")
                         || d.message().contains("cannot be cast"));

@@ -271,8 +271,11 @@ public final class CompilationOrchestrator {
             // import/function/class/export, imports and exports are not
             // nested statements, and implementation files have no bodyless
             // (external) function declarations.
-            List<Diagnostic> shapeDiags = ModuleShapeValidator.validate(
-                parseResult.program(), sourcePath, isDecl);
+            // Transitional position-preserving conversion at the shape
+            // validator boundary (T9 scaffolding, replaced when the
+            // orchestrator migrates to ranged diagnostics in T11).
+            List<Diagnostic> shapeDiags = toLegacyDiagnostics(
+                ModuleShapeValidator.validate(parseResult.program(), sourcePath, isDecl));
             diagnostics.addAll(shapeDiags);
             if (shapeDiags.stream().anyMatch(d -> "error".equals(d.severity()))) {
                 hasErrors = true;
@@ -384,8 +387,11 @@ public final class CompilationOrchestrator {
                 info.isDeclarationFile);
             extractor.setImportModulePaths(importAliasMap);
             info.exports = extractor.extract(info.rawAst);
-            diagnostics.addAll(extractor.diagnostics());
-            if (extractor.diagnostics().stream().anyMatch(
+            // Transitional position-preserving conversion at the export
+            // extractor boundary (T9 scaffolding, replaced in T11).
+            List<Diagnostic> exportDiags = toLegacyDiagnostics(extractor.diagnostics());
+            diagnostics.addAll(exportDiags);
+            if (exportDiags.stream().anyMatch(
                     d -> "error".equals(d.severity()))) {
                 hasErrors = true;
             }
@@ -967,8 +973,11 @@ public final class CompilationOrchestrator {
 
             info.exports = correctedExports;
 
-            diagnostics.addAll(nr.diagnostics());
-            if (hasNameErrors(nr.diagnostics())) {
+            // Transitional position-preserving conversion at the name
+            // resolver boundary (T9 scaffolding, replaced in T11).
+            List<Diagnostic> nameDiags = toLegacyDiagnostics(nr.diagnostics());
+            diagnostics.addAll(nameDiags);
+            if (hasNameErrors(nameDiags)) {
                 hasErrors = true;
                 long modElapsed = System.currentTimeMillis() - modStart;
                 log("  Checked: " + sourcePath + " (name resolution error, " + modElapsed + "ms)");
@@ -978,7 +987,9 @@ public final class CompilationOrchestrator {
             CheckResult result = TypeChecker.check(info.modulePath, symTable,
                 nr, info.rawAst);
             info.checkResult = result;
-            diagnostics.addAll(result.diagnostics());
+            // Transitional position-preserving conversion at the type
+            // checker boundary (T9 scaffolding, replaced in T11).
+            diagnostics.addAll(toLegacyDiagnostics(result.diagnostics()));
             if (result.hasErrors()) {
                 hasErrors = true;
             }

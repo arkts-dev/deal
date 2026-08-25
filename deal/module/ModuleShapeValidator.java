@@ -1,7 +1,7 @@
 package deal.module;
 
 import deal.ast.*;
-import deal.lexer.Diagnostic;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 
 import java.util.ArrayList;
@@ -48,18 +48,17 @@ public final class ModuleShapeValidator {
      *                          declaration file
      * @return diagnostics for every rule violation, in source order
      */
-    public static List<Diagnostic> validate(ProgramNode program, String file,
+    public static List<CompilerDiagnostic> validate(ProgramNode program, String file,
                                             boolean isDeclarationFile) {
-        List<Diagnostic> diagnostics = new ArrayList<>();
+        List<CompilerDiagnostic> diagnostics = new ArrayList<>();
 
         boolean seenNonImportTopLevel = false;
         for (StatementNode stmt : program.statements()) {
             if (stmt instanceof ImportDeclaration imp) {
                 if (seenNonImportTopLevel) {
-                    diagnostics.add(Diagnostic.error(DiagnosticCode.E1048,
+                    diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1048,
                         "Import declaration must precede all other top-level declarations",
-                        imp.span().file(), imp.span().startLine(),
-                        imp.span().startColumn()));
+                        imp.span()));
                 }
             } else if (isTopLevelDeclaration(stmt)) {
                 seenNonImportTopLevel = true;
@@ -73,10 +72,9 @@ public final class ModuleShapeValidator {
             } else if (!isDeclarationFile) {
                 // Everything else (let, if, while, return, expression
                 // statements, ...) is not a module top-level declaration.
-                diagnostics.add(Diagnostic.error(DiagnosticCode.E1049,
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1049,
                     "Only imports, functions, classes, and exports are allowed at module top level",
-                    stmt.span().file(), stmt.span().startLine(),
-                    stmt.span().startColumn()));
+                    stmt.span()));
             }
             // Recurse into the bodies of top-level declarations only;
             // the top-level statement itself is never a nested context.
@@ -92,7 +90,7 @@ public final class ModuleShapeValidator {
     }
 
     private static void checkExportedBody(ExportDeclaration exp,
-                                          List<Diagnostic> diagnostics) {
+                                          List<CompilerDiagnostic> diagnostics) {
         StatementNode decl = exp.declaration();
         if (decl instanceof FunctionDeclaration fd) {
             checkBody(fd, diagnostics);
@@ -104,13 +102,12 @@ public final class ModuleShapeValidator {
      * {@code .d.deal} declaration files (E1051), at any nesting depth.
      */
     private static void checkBody(FunctionDeclaration fd,
-                                  List<Diagnostic> diagnostics) {
+                                  List<CompilerDiagnostic> diagnostics) {
         if (fd.isExternal()) {
-            diagnostics.add(Diagnostic.error(DiagnosticCode.E1051,
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1051,
                 "Function declaration '" + fd.name()
                     + "' must have a body in implementation files",
-                fd.span().file(), fd.span().startLine(),
-                fd.span().startColumn()));
+                fd.span()));
         }
     }
 
@@ -121,7 +118,7 @@ public final class ModuleShapeValidator {
      * no nested contexts at all.
      */
     private static void checkTopLevelBody(StatementNode stmt,
-                                          List<Diagnostic> diagnostics,
+                                          List<CompilerDiagnostic> diagnostics,
                                           boolean isDeclarationFile) {
         switch (stmt) {
             case FunctionDeclaration fd ->
@@ -140,7 +137,7 @@ public final class ModuleShapeValidator {
      * be a function expression whose body is a nested statement context.
      */
     private static void checkFieldDefaults(ClassDeclaration cd,
-                                           List<Diagnostic> diagnostics,
+                                           List<CompilerDiagnostic> diagnostics,
                                            boolean isDeclarationFile) {
         for (ClassField field : cd.fields()) {
             field.defaultExpr().ifPresent(
@@ -159,19 +156,17 @@ public final class ModuleShapeValidator {
      * implementation file are rejected with E1051.
      */
     private static void checkNested(StatementNode stmt,
-                                    List<Diagnostic> diagnostics,
+                                    List<CompilerDiagnostic> diagnostics,
                                     boolean isDeclarationFile) {
         switch (stmt) {
             case ImportDeclaration imp ->
-                diagnostics.add(Diagnostic.error(DiagnosticCode.E1050,
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1050,
                     "Import declarations are only allowed at module top level",
-                    imp.span().file(), imp.span().startLine(),
-                    imp.span().startColumn()));
+                    imp.span()));
             case ExportDeclaration exp ->
-                diagnostics.add(Diagnostic.error(DiagnosticCode.E1050,
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1050,
                     "Export declarations are only allowed at module top level",
-                    exp.span().file(), exp.span().startLine(),
-                    exp.span().startColumn()));
+                    exp.span()));
             case Block b -> {
                 for (StatementNode s : b.statements()) {
                     checkNested(s, diagnostics, isDeclarationFile);
@@ -238,7 +233,7 @@ public final class ModuleShapeValidator {
 
     /** Walks the two for-init alternatives ({@code let} vs assignment). */
     private static void checkForInit(ForInit init,
-                                     List<Diagnostic> diagnostics,
+                                     List<CompilerDiagnostic> diagnostics,
                                      boolean isDeclarationFile) {
         switch (init) {
             case ForInit.VarDecl vd ->
@@ -256,7 +251,7 @@ public final class ModuleShapeValidator {
      * implementation files.
      */
     private static void checkExpression(ExpressionNode expr,
-                                        List<Diagnostic> diagnostics,
+                                        List<CompilerDiagnostic> diagnostics,
                                         boolean isDeclarationFile) {
         switch (expr) {
             case LiteralExpr le -> { /* leaf */ }

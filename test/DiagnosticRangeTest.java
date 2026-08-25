@@ -11,6 +11,10 @@ import deal.diagnostics.DiagnosticNote;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.diagnostics.RangeOrigin;
+import deal.checker.CheckResult;
+import deal.checker.NameResolver;
+import deal.checker.SymbolTable;
+import deal.checker.TypeChecker;
 import deal.lexer.Diagnostic;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
@@ -20,8 +24,13 @@ import deal.parser.Parser;
 import deal.source.ScalarPosition;
 import deal.source.ScalarSourceCursor;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Tests for the non-lossy diagnostic range foundation (ISSUE-0216 /
@@ -84,7 +93,7 @@ public class DiagnosticRangeTest {
     // Test runner
     // =========================================================================
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         System.out.println("=== Running Diagnostic Range Tests ===");
 
         testCursorInitialAndEmpty();
@@ -100,6 +109,7 @@ public class DiagnosticRangeTest {
         testSpanHelperPropagation();
         testPeekPseudoEof();
         testTemplateInterpolationRebasing();
+        testCheckerProducerRanges();
 
         testCarrierRecords();
         testRangeConversions();
@@ -1059,6 +1069,232 @@ public class DiagnosticRangeTest {
                     && json.contains("\"scalarLength\": 0")
                     && json.contains("\"origin\": \"SOURCE\""),
                 "T8: structured E1037 must carry the exact range fields, got: " + json);
+        }
+    }
+
+    // =========================================================================
+    // ISSUE-0225 checker/validator producer migration (verification 6)
+    // =========================================================================
+
+    /** Full frontend checker pipeline: name resolution + type checking. */
+    private static List<CompilerDiagnostic> checkerDiagnostics(String source,
+                                                                String filename) {
+        LexResult lex = new Lexer(source, filename).tokenize();
+        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver(filename, resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
+        CheckResult result = TypeChecker.check(filename, symTable, nr,
+            parse.program());
+        diags.addAll(result.diagnostics());
+        return diags;
+    }
+
+    /** Finds a diagnostic with the given code. */
+    private static CompilerDiagnostic checkerDiag(List<CompilerDiagnostic> diags,
+                                                   String code) {
+        for (CompilerDiagnostic d : diags) {
+            if (d.code().equals(code)) {
+                return d;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Independent recomputation cross-check: the cursor advanced to the
+     * UTF-16 index of {@code needle} (a code-point boundary) and to the
+     * position right after the needle. The diagnostic range must match the
+     * cursor's scalar line/column/offset arithmetic exactly.
+     */
+    private static ScalarSourceCursor cursorAt(String source, int utf16Index) {
+        ScalarSourceCursor cursor = new ScalarSourceCursor(source);
+        int i = 0;
+        while (i < utf16Index) {
+            int codePoint = source.codePointAt(i);
+            cursor.advance();
+            i += Character.charCount(codePoint);
+        }
+        return cursor;
+    }
+
+    /** Asserts the diagnostic range equals the needle's recomputed range. */
+    private static void checkNeedleRange(CompilerDiagnostic d, String source,
+                                         String filename, String needle,
+                                         String context) {
+        if (d == null) {
+            check(false, context + ": diagnostic missing");
+            return;
+        }
+        int startIndex = source.indexOf(needle);
+        int endIndex = startIndex + needle.length();
+        ScalarSourceCursor cs = cursorAt(source, startIndex);
+        ScalarSourceCursor ce = cursorAt(source, endIndex);
+        DiagnosticRange r = d.range();
+        check(r != null, context + ": range present");
+        check(r.origin() == RangeOrigin.SOURCE
+                && filename.equals(r.file())
+                && r.startLine() == cs.line()
+                && r.startColumn() == cs.column()
+                && r.endLine() == ce.line()
+                && r.endColumn() == ce.column()
+                && r.startScalarOffset() == cs.scalarOffset()
+                && r.endScalarOffset() == ce.scalarOffset()
+                && r.scalarLength() == ce.scalarOffset() - cs.scalarOffset(),
+            context + ": range " + r + " vs cursor start (" + cs.line() + ","
+                + cs.column() + ",@" + cs.scalarOffset() + ") end (" + ce.line()
+                + "," + ce.column() + ",@" + ce.scalarOffset() + ")");
+    }
+
+    /**
+     * ISSUE-0225 verification 6: name-resolution and type errors carry
+     * SOURCE ranges that are scalar-exact after astral characters and over
+     * multi-line spans (cross-checked against an independent
+     * {@link ScalarSourceCursor} recomputation), the recorded-span E4008
+     * cycle anchors at the class declaration span, and an E4008 cycle
+     * without a recorded span yields the canonical synthetic range plus a
+     * note naming the cycle-node class.
+     */
+    private static void testCheckerProducerRanges() throws Exception {
+        System.out.println("-- Checker/validator producer ranges (ISSUE-0225) --");
+
+        // 1. Name-resolution error after an astral character: E2000
+        //    'break' outside a loop, anchored at the break keyword on the
+        //    line after the astral variable name. The astral counts one
+        //    scalar, so the break token starts at scalar offset 17 — a
+        //    UTF-16 column would place it one unit later.
+        String src1 = "let \uD83D\uDE00s: int = 1;\nbreak;\n";
+        List<CompilerDiagnostic> d1 = checkerDiagnostics(src1, "nr.deal");
+        CompilerDiagnostic e2000 = checkerDiag(d1, "E2000");
+        check(e2000 != null, "C1: E2000 present, got " + d1);
+        checkNeedleRange(e2000, src1, "nr.deal", "break", "C1");
+
+        // 2. Type error after an astral character on the same line: E2001
+        //    'Undeclared identifier' at the identifier span. The astral in
+        //    the string literal counts one scalar, so 'missing' starts at
+        //    (1,35) with scalar offset 34 — a UTF-16 column would report
+        //    36.
+        String src2 =
+            "let s: string = \"\uD83D\uDE00\"; let y: int = missing;\n";
+        List<CompilerDiagnostic> d2 = checkerDiagnostics(src2, "tc.deal");
+        CompilerDiagnostic e2001 = checkerDiag(d2, "E2001");
+        check(e2001 != null, "C2: E2001 present, got " + d2);
+        checkNeedleRange(e2001, src2, "tc.deal", "missing", "C2");
+
+        // 3. Multi-line span: E3010 on a boolean '+' expression whose
+        //    binary-expression span covers both lines (start of 'true'
+        //    through the end of 'false').
+        String src3 = "let x: boolean = true +\n    false;\n";
+        List<CompilerDiagnostic> d3 = checkerDiagnostics(src3, "ml.deal");
+        CompilerDiagnostic e3010 = checkerDiag(d3, "E3010");
+        check(e3010 != null, "C3: E3010 present, got " + d3);
+        if (e3010 != null) {
+            int start = src3.indexOf("true");
+            int end = src3.indexOf("false") + "false".length();
+            ScalarSourceCursor cs = cursorAt(src3, start);
+            ScalarSourceCursor ce = cursorAt(src3, end);
+            DiagnosticRange r = e3010.range();
+            check(r.origin() == RangeOrigin.SOURCE
+                    && r.startLine() == 1 && r.startColumn() == cs.column()
+                    && r.endLine() == 2 && r.endColumn() == ce.column()
+                    && r.startScalarOffset() == cs.scalarOffset()
+                    && r.endScalarOffset() == ce.scalarOffset()
+                    && r.scalarLength() == ce.scalarOffset() - cs.scalarOffset(),
+                "C3: multi-line span " + r + " vs cursor start (1,"
+                    + cs.column() + ",@" + cs.scalarOffset() + ") end (2,"
+                    + ce.column() + ",@" + ce.scalarOffset() + ")");
+        }
+
+        // 4. Recorded-span E4008: the A <-> B cycle anchors at the class
+        //    declaration span of the cycle-closing node (B).
+        String src4 = "// @jsonable\n"
+            + "export class A { b: B; }\n"
+            + "// @jsonable\n"
+            + "export class B { a: A; }\n";
+        List<CompilerDiagnostic> d4 = checkerDiagnostics(src4, "cyc.deal");
+        CompilerDiagnostic e4008 = checkerDiag(d4, "E4008");
+        check(e4008 != null, "C4: E4008 present, got " + d4);
+        if (e4008 != null) {
+            String classB = "class B { a: A; }";
+            int start = src4.indexOf(classB);
+            int end = start + classB.length();
+            ScalarSourceCursor cs = cursorAt(src4, start);
+            ScalarSourceCursor ce = cursorAt(src4, end);
+            DiagnosticRange r = e4008.range();
+            check(r.origin() == RangeOrigin.SOURCE
+                    && "cyc.deal".equals(r.file())
+                    && r.startLine() == cs.line()
+                    && r.startColumn() == cs.column()
+                    && r.endLine() == ce.line()
+                    && r.endColumn() == ce.column()
+                    && r.startScalarOffset() == cs.scalarOffset()
+                    && r.endScalarOffset() == ce.scalarOffset()
+                    && r.scalarLength() == ce.scalarOffset() - cs.scalarOffset(),
+                "C4: E4008 class-declaration span " + r + " vs cursor ("
+                    + cs.line() + "," + cs.column() + ",@" + cs.scalarOffset()
+                    + ")-(" + ce.line() + "," + ce.column() + ",@"
+                    + ce.scalarOffset() + ")");
+        }
+
+        // 5. E4008 cycle without a recorded span (defensive fallback):
+        //    the canonical synthetic range plus an anchor note naming the
+        //    cycle-node class. Production records the span for every
+        //    walked @jsonable class declaration before its dependencies,
+        //    so the test drives the detector directly with the span map
+        //    empty.
+        String src5 = "// @jsonable\nclass A { a: A; }\n";
+        LexResult lex5 = new Lexer(src5, "fallback.deal").tokenize();
+        ParseResult parse5 = new Parser(lex5.tokens(), "fallback.deal").parse();
+        StubModuleResolver resolver5 = new StubModuleResolver();
+        NameResolver nr5 = new NameResolver("fallback.deal", resolver5);
+        SymbolTable sym5 = nr5.resolve(parse5.program());
+
+        Constructor<TypeChecker> ctor = TypeChecker.class
+            .getDeclaredConstructor(String.class, SymbolTable.class,
+                NameResolver.class, Map.class);
+        ctor.setAccessible(true);
+        TypeChecker checker = ctor.newInstance("fallback.deal", sym5, nr5,
+            nr5.scopeMap());
+
+        Field depsField = TypeChecker.class.getDeclaredField("jsonableClassDeps");
+        depsField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<String, Set<String>> deps =
+            (Map<String, Set<String>>) depsField.get(checker);
+        deps.put("A", Set.of("A"));
+
+        Method detect = TypeChecker.class.getDeclaredMethod("detectJsonableCycles");
+        detect.setAccessible(true);
+        detect.invoke(checker);
+
+        Field diagsField = TypeChecker.class.getDeclaredField("diagnostics");
+        diagsField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        List<CompilerDiagnostic> fallbackDiags =
+            (List<CompilerDiagnostic>) diagsField.get(checker);
+
+        check(fallbackDiags.size() == 1,
+            "C5: fallback emits exactly one diagnostic, got " + fallbackDiags);
+        if (fallbackDiags.size() == 1) {
+            CompilerDiagnostic fb = fallbackDiags.get(0);
+            check("E4008".equals(fb.code()) && "error".equals(fb.severity())
+                    && "Circular @jsonable class dependency: A \u2192 A"
+                        .equals(fb.message()),
+                "C5: E4008 error with the cycle message, got " + fb);
+            DiagnosticRange r = fb.range();
+            check(r.origin() == RangeOrigin.SYNTHETIC
+                    && "fallback.deal".equals(r.file())
+                    && r.startLine() == 1 && r.startColumn() == 1
+                    && r.endLine() == 1 && r.endColumn() == 1
+                    && r.startScalarOffset() == 0 && r.endScalarOffset() == 0
+                    && r.scalarLength() == 0,
+                "C5: canonical synthetic (file,1,1,1,1,0,0,0,SYNTHETIC), got " + r);
+            boolean noteNamesClass = fb.notes().stream().anyMatch(n ->
+                n.range() == null && ("missing anchor: class declaration span"
+                    + " for cycle node 'A'").equals(n.message()));
+            check(noteNamesClass,
+                "C5: anchor note names the cycle-node class, got " + fb.notes());
         }
     }
 

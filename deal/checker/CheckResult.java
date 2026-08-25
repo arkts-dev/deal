@@ -1,7 +1,7 @@
 package deal.checker;
 
 import deal.ast.ExpressionNode;
-import deal.lexer.Diagnostic;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.types.Type;
 
 import java.util.List;
@@ -17,7 +17,7 @@ import java.util.Map;
 public record CheckResult(
     Map<ExpressionNode, Type> typeMap,
     SymbolTable symbolTable,
-    List<Diagnostic> diagnostics
+    List<CompilerDiagnostic> diagnostics
 ) {
     public CheckResult {
         if (typeMap == null) throw new IllegalArgumentException("typeMap must not be null");

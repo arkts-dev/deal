@@ -847,11 +847,20 @@ public class JvmConformanceTest {
                     filename, 1, 1));
                 return all;
             }
-            all.addAll(nr.diagnostics());
+            // Transitional ranged-to-legacy boundary conversions (T9
+            // scaffolding, removed in T13): start values derive from the
+            // range start (position-preserving; ranged-to-legacy only).
+            for (CompilerDiagnostic d : nr.diagnostics()) {
+                all.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+            }
 
             CheckResult result = TypeChecker.check(filename, symTable, nr,
                 parseResult.program());
-            all.addAll(result.diagnostics());
+            for (CompilerDiagnostic d : result.diagnostics()) {
+                all.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+            }
             return all;
         } catch (IOException e) {
             all.add(Diagnostic.error("E9999", "cannot read " + file,

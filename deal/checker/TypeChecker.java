@@ -1,7 +1,7 @@
 package deal.checker;
 
 import deal.ast.*;
-import deal.lexer.Diagnostic;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -24,7 +24,7 @@ public final class TypeChecker {
     private final SymbolTable rootTable;
     private final NameResolver nameResolver;
     private final Map<StatementNode, SymbolTable> scopeMap;
-    private final List<Diagnostic> diagnostics = new ArrayList<>();
+    private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
 
     // -- Accumulated results --
     private final Map<ExpressionNode, Type> typeMap = new HashMap<>();
@@ -358,12 +358,22 @@ public final class TypeChecker {
                 }
 
                 // Use the class declaration span for the node that closes
-                // the cycle. Fall back to a synthetic span if no span is stored.
-                Span span = jsonableClassSpans.getOrDefault(
-                    node, Span.synthetic(modulePath));
-                error(DiagnosticCode.E4008,
-                    "Circular @jsonable class dependency: " + pathStr,
-                    span);
+                // the cycle. When no span is recorded (defensive), the D5
+                // explicit synthetic factory names the cycle-node class —
+                // never a Span.synthetic passthrough to the span factory.
+                Span span = jsonableClassSpans.get(node);
+                if (span != null) {
+                    error(DiagnosticCode.E4008,
+                        "Circular @jsonable class dependency: " + pathStr,
+                        span);
+                } else {
+                    diagnostics.add(CompilerDiagnostic.syntheticError(
+                        DiagnosticCode.E4008,
+                        "Circular @jsonable class dependency: " + pathStr,
+                        modulePath,
+                        "missing anchor: class declaration span for cycle node '"
+                            + node + "'"));
+                }
             } else if (neighborColor == 0) {
                 parent.put(neighbor, node);
                 dfsDetectCycle(neighbor, color, parent);
@@ -1687,7 +1697,6 @@ public final class TypeChecker {
     }
 
     private void error(DiagnosticCode code, String message, Span span) {
-        diagnostics.add(Diagnostic.error(code, message,
-            span.file(), span.startLine(), span.startColumn()));
+        diagnostics.add(CompilerDiagnostic.error(code, message, span));
     }
 }

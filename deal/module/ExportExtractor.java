@@ -1,7 +1,7 @@
 package deal.module;
 
 import deal.ast.*;
-import deal.lexer.Diagnostic;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -21,7 +21,7 @@ import deal.diagnostics.DiagnosticCode;
 public final class ExportExtractor {
 
     private final String modulePath;
-    private final List<Diagnostic> diagnostics = new ArrayList<>();
+    private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     private final Map<String, Type> exports = new LinkedHashMap<>();
     private boolean isDeclarationFile;
 
@@ -70,10 +70,9 @@ public final class ExportExtractor {
             if (stmt instanceof ExportDeclaration exp) {
                 extractExport(exp, classMap);
             } else if (isDeclarationFile && !isAllowedDeclarationFileStmt(stmt)) {
-                diagnostics.add(Diagnostic.error(DiagnosticCode.E7001,
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E7001,
                     "Declaration files may only contain export declarations and class declarations",
-                    stmt.span().file(), stmt.span().startLine(),
-                    stmt.span().startColumn()));
+                    stmt.span()));
             }
         }
 
@@ -126,11 +125,10 @@ public final class ExportExtractor {
                 if (isDeclarationFile && fd.body() != null
                         && fd.body().statements() != null
                         && !fd.body().statements().isEmpty()) {
-                    diagnostics.add(Diagnostic.error(DiagnosticCode.E7001,
+                    diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E7001,
                         "Exported function '" + fd.name()
                             + "' in declaration file must not have a body",
-                        fd.span().file(), fd.span().startLine(),
-                        fd.span().startColumn()));
+                        fd.span()));
                 }
                 Type funcType = resolveFuncType(fd, classMap);
                 exports.put(fd.name(), funcType);
@@ -217,7 +215,7 @@ public final class ExportExtractor {
         };
     }
 
-    public List<Diagnostic> diagnostics() {
+    public List<CompilerDiagnostic> diagnostics() {
         return diagnostics;
     }
 }

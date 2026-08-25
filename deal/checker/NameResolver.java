@@ -1,7 +1,7 @@
 package deal.checker;
 
 import deal.ast.*;
-import deal.lexer.Diagnostic;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -33,7 +33,7 @@ public final class NameResolver {
     private final String modulePath;
     private final ModuleResolver moduleResolver;
     private final SymbolTable root;
-    private final List<Diagnostic> diagnostics = new ArrayList<>();
+    private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
 
     private SymbolTable currentScope;
 
@@ -84,7 +84,7 @@ public final class NameResolver {
     }
 
     /** Returns diagnostics accumulated during resolution. */
-    public List<Diagnostic> diagnostics() {
+    public List<CompilerDiagnostic> diagnostics() {
         return diagnostics;
     }
 
@@ -820,7 +820,6 @@ public final class NameResolver {
     // =======================================================================
 
     private void error(DiagnosticCode code, String message, Span span) {
-        diagnostics.add(Diagnostic.error(code, message,
-            span.file(), span.startLine(), span.startColumn()));
+        diagnostics.add(CompilerDiagnostic.error(code, message, span));
     }
 }

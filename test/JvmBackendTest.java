@@ -478,9 +478,17 @@ public class JvmBackendTest {
         // Post-parse module shape validation (v1.2 module top level:
         // E1048/E1049/E1050/E1051), mirroring the orchestrator pipeline —
         // the parser alone no longer rejects v1.1 module shapes.
-        for (Diagnostic d : ModuleShapeValidator.validate(parse.program(),
+        // Transitional ranged-to-legacy boundary conversion (T9
+        // scaffolding, removed in T13): the severity filter is unchanged;
+        // each retained entry converts into the still-legacy errors list
+        // with start values derived from the range start
+        // (position-preserving).
+        for (CompilerDiagnostic d : ModuleShapeValidator.validate(parse.program(),
                 filename, filename.endsWith(".d.deal"))) {
-            if ("error".equals(d.severity())) errors.add(d);
+            if ("error".equals(d.severity())) {
+                errors.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+            }
         }
         if (!errors.isEmpty()) {
             return new Frontend(null, null, errors);
@@ -494,13 +502,24 @@ public class JvmBackendTest {
             errors.add(Diagnostic.error("E9999", e.getMessage(), filename, 1, 1));
             return new Frontend(null, null, errors);
         }
-        for (Diagnostic d : nr.diagnostics()) {
-            if ("error".equals(d.severity())) errors.add(d);
+        // Transitional ranged-to-legacy boundary conversions (T9
+        // scaffolding, removed in T13): the severity filters are
+        // unchanged; each retained entry converts into the still-legacy
+        // errors list with start values derived from the range start
+        // (position-preserving).
+        for (CompilerDiagnostic d : nr.diagnostics()) {
+            if ("error".equals(d.severity())) {
+                errors.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+            }
         }
 
         CheckResult result = TypeChecker.check(filename, symTable, nr, parse.program());
-        for (Diagnostic d : result.diagnostics()) {
-            if ("error".equals(d.severity())) errors.add(d);
+        for (CompilerDiagnostic d : result.diagnostics()) {
+            if ("error".equals(d.severity())) {
+                errors.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+            }
         }
 
         return new Frontend(parse.program(), result, errors);

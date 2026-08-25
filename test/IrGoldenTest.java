@@ -2,6 +2,7 @@ package deal.test;
 
 import deal.ast.*;
 import deal.checker.*;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.ir.IrDumper;
 import deal.lexer.*;
 import deal.module.ExportExtractor;
@@ -218,7 +219,7 @@ public final class IrGoldenTest {
         }
         if (nr.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
             StringBuilder sb = new StringBuilder("name-resolve errors:");
-            for (Diagnostic d : nr.diagnostics()) {
+            for (CompilerDiagnostic d : nr.diagnostics()) {
                 if ("error".equals(d.severity())) {
                     sb.append("\n    ").append(d);
                 }
@@ -231,7 +232,7 @@ public final class IrGoldenTest {
             parseResult.program());
         if (result.hasErrors()) {
             StringBuilder sb = new StringBuilder("type-check errors:");
-            for (Diagnostic d : result.diagnostics()) {
+            for (CompilerDiagnostic d : result.diagnostics()) {
                 if ("error".equals(d.severity())) {
                     sb.append("\n    ").append(d);
                 }
