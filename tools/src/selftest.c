@@ -85,6 +85,16 @@
  *    is exactly the first 1048576 bytes plus the marker
  *    "\n[STREAM TRUNCATED at 1 MiB]\n" at the cut point, read-side EOF is
  *    observed, and the child is reaped; pipe closed after.
+ *
+ * Fault-injection override installer (ISSUE-0205,
+ * dealpg4-probe-selftest-foundation D5 seam contract): the
+ * selftest-child-only, in-process installer for scripted overrides on
+ * the fi hook table — explicit single-shot or always-on entries with
+ * exact durations, values, and modes; every entry validated against
+ * the named site/target/mode catalog before anything is installed
+ * (unknown tags are installer errors, nothing injects silently); no
+ * CLI/env activation surface and no randomness. See selftest.h for the
+ * installer contract.
  */
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
@@ -1415,4 +1425,230 @@ int dealpg4_selftest_entry(int64_t limit_ms)
     dealpg4_deadline_close(&bound.ctx);
     fprintf(stderr, "CAPABILITY_MISSING selftest-child\n");
     return DEALPG4_EXIT_CAPABILITY_MISSING;
+}
+
+/* === Fault-injection override installer (ISSUE-0205) ===================
+ * The selftest-child-only, in-process installer for scripted overrides
+ * on the fi hook table (fi.h). Contract in selftest.h; the fault battery
+ * (ISSUE-0184) calls it from the selftest child before scenario
+ * execution. The committed binary's mode paths never reach it: dispatch
+ * and the probe/selftest entries above do not call the installer, so the
+ * shipped artifact has no injection activation surface.
+ *
+ * State is the bounded per-hook-kind script storage (entries plus fired
+ * flags) and the swapped hook-table entries. An install is all-or-
+ * nothing: the whole script validates against the catalog first, and
+ * only then is the state populated and the table swapped — a failed
+ * install injects nothing and leaves any previously installed script
+ * untouched.
+ */
+
+/* Script storage: bounded copies of the validated entries plus the
+ * single-shot fired flags. Static (zero-initialized); gated by the
+ * entry counts, so the hooks behave as production defaults whenever no
+ * script is installed. */
+static dealpg4_fi_script_delay
+    dealpg4_fi_script_delays[DEALPG4_FI_SCRIPT_MAX_ENTRIES];
+static unsigned char
+    dealpg4_fi_script_delay_fired[DEALPG4_FI_SCRIPT_MAX_ENTRIES];
+static size_t dealpg4_fi_script_ndelays;
+
+static dealpg4_fi_script_fail
+    dealpg4_fi_script_fails[DEALPG4_FI_SCRIPT_MAX_ENTRIES];
+static unsigned char
+    dealpg4_fi_script_fail_fired[DEALPG4_FI_SCRIPT_MAX_ENTRIES];
+static size_t dealpg4_fi_script_nfails;
+
+static dealpg4_fi_script_congest
+    dealpg4_fi_script_congests[DEALPG4_FI_SCRIPT_MAX_ENTRIES];
+static unsigned char
+    dealpg4_fi_script_congest_fired[DEALPG4_FI_SCRIPT_MAX_ENTRIES];
+static size_t dealpg4_fi_script_ncongests;
+
+/* Script hooks. Entries are scanned in script order; the first entry
+ * whose tags match and whose single shot has not yet fired decides the
+ * call (deterministic, explicit — no randomness). Anything unmatched
+ * falls through to the production behavior. */
+
+static int dealpg4_fi_script_delay_hook(unsigned ms, const char *site)
+{
+    size_t i;
+
+    if (site != NULL) {
+        for (i = 0; i < dealpg4_fi_script_ndelays; i++) {
+            const dealpg4_fi_script_delay *e =
+                &dealpg4_fi_script_delays[i];
+
+            if (strcmp(e->site, site) != 0)
+                continue;
+            if (e->oneshot && dealpg4_fi_script_delay_fired[i])
+                continue; /* single shot spent: next entry / production */
+            dealpg4_fi_script_delay_fired[i] = 1;
+            /* The exact scripted duration replaces the requested ms and
+             * is slept with the real monotonic-bounded default sleep —
+             * the enclosing component's own deadline is untouched, so
+             * the injection consumes it and never extends it. */
+            return dealpg4_fi_default_delay_ms(e->duration_ms, site);
+        }
+    }
+    return dealpg4_fi_default_delay_ms(ms, site);
+}
+
+static int dealpg4_fi_script_fail_hook(int site)
+{
+    size_t i;
+
+    for (i = 0; i < dealpg4_fi_script_nfails; i++) {
+        const dealpg4_fi_script_fail *e = &dealpg4_fi_script_fails[i];
+
+        if (e->site != site)
+            continue;
+        if (e->oneshot && dealpg4_fi_script_fail_fired[i])
+            continue;
+        dealpg4_fi_script_fail_fired[i] = 1;
+        return e->value; /* the exact scripted failure value */
+    }
+    return 0; /* production default: no failure */
+}
+
+static int dealpg4_fi_script_congest_hook(int target, int mode, void *arg)
+{
+    size_t i;
+
+    (void)arg; /* call-site-specific data lands with the call-site
+                * children; the scripted report is the mode tag itself */
+    for (i = 0; i < dealpg4_fi_script_ncongests; i++) {
+        const dealpg4_fi_script_congest *e =
+            &dealpg4_fi_script_congests[i];
+
+        if (e->target != target || e->mode != mode)
+            continue;
+        if (e->oneshot && dealpg4_fi_script_congest_fired[i])
+            continue;
+        dealpg4_fi_script_congest_fired[i] = 1;
+        return e->mode; /* reports exactly the scripted mode */
+    }
+    return 0; /* production default: no congestion */
+}
+
+/* Catalog lookups (named string/int tags; the catalogs are extended by
+ * the children that place call sites). */
+static int dealpg4_fi_catalog_has_str(const char *const *tags, size_t ntags,
+                                      const char *tag)
+{
+    size_t i;
+
+    if (tags == NULL || tag == NULL)
+        return 0;
+    for (i = 0; i < ntags; i++) {
+        if (tags[i] != NULL && strcmp(tags[i], tag) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int dealpg4_fi_catalog_has_int(const int *tags, size_t ntags,
+                                      int tag)
+{
+    size_t i;
+
+    if (tags == NULL)
+        return 0;
+    for (i = 0; i < ntags; i++) {
+        if (tags[i] == tag)
+            return 1;
+    }
+    return 0;
+}
+
+int dealpg4_fi_install_overrides(const dealpg4_fi_script *script,
+                                 const dealpg4_fi_catalog *catalog)
+{
+    size_t i;
+
+    if (script == NULL || catalog == NULL)
+        return -1;
+    if (script->ndelays > DEALPG4_FI_SCRIPT_MAX_ENTRIES ||
+        script->nfails > DEALPG4_FI_SCRIPT_MAX_ENTRIES ||
+        script->ncongests > DEALPG4_FI_SCRIPT_MAX_ENTRIES)
+        return -1;
+    if (script->ndelays > 0 && script->delays == NULL)
+        return -1;
+    if (script->nfails > 0 && script->fails == NULL)
+        return -1;
+    if (script->ncongests > 0 && script->congests == NULL)
+        return -1;
+
+    /* Validate the whole script against the named catalogs before
+     * touching any state: hook misuse (an unknown site/target/mode tag,
+     * a NULL site string, a reserved congestion mode 0, or a oneshot
+     * flag outside {0,1}) is an installer error and injects nothing. */
+    for (i = 0; i < script->ndelays; i++) {
+        const dealpg4_fi_script_delay *e = &script->delays[i];
+
+        if (e->site == NULL)
+            return -1;
+        if (!dealpg4_fi_catalog_has_str(catalog->delay_sites,
+                                        catalog->ndelay_sites, e->site))
+            return -1; /* unknown site: never inject silently */
+        if (e->oneshot != 0 && e->oneshot != 1)
+            return -1;
+    }
+    for (i = 0; i < script->nfails; i++) {
+        const dealpg4_fi_script_fail *e = &script->fails[i];
+
+        if (!dealpg4_fi_catalog_has_int(catalog->fail_sites,
+                                        catalog->nfail_sites, e->site))
+            return -1;
+        if (e->oneshot != 0 && e->oneshot != 1)
+            return -1;
+    }
+    for (i = 0; i < script->ncongests; i++) {
+        const dealpg4_fi_script_congest *e = &script->congests[i];
+
+        if (e->mode == 0)
+            return -1; /* 0 is the production no-congestion report */
+        if (!dealpg4_fi_catalog_has_int(catalog->targets,
+                                        catalog->ntargets, e->target))
+            return -1;
+        if (!dealpg4_fi_catalog_has_int(catalog->modes, catalog->nmodes,
+                                        e->mode))
+            return -1;
+        if (e->oneshot != 0 && e->oneshot != 1)
+            return -1;
+    }
+
+    /* Validated: populate the bounded script state, reset the fired
+     * flags, and swap the hook table entries — all three hooks together,
+     * deterministically. */
+    for (i = 0; i < script->ndelays; i++) {
+        dealpg4_fi_script_delays[i] = script->delays[i];
+        dealpg4_fi_script_delay_fired[i] = 0;
+    }
+    dealpg4_fi_script_ndelays = script->ndelays;
+    for (i = 0; i < script->nfails; i++) {
+        dealpg4_fi_script_fails[i] = script->fails[i];
+        dealpg4_fi_script_fail_fired[i] = 0;
+    }
+    dealpg4_fi_script_nfails = script->nfails;
+    for (i = 0; i < script->ncongests; i++) {
+        dealpg4_fi_script_congests[i] = script->congests[i];
+        dealpg4_fi_script_congest_fired[i] = 0;
+    }
+    dealpg4_fi_script_ncongests = script->ncongests;
+
+    dealpg4_fi_hooks.delay_ms = dealpg4_fi_script_delay_hook;
+    dealpg4_fi_hooks.fail = dealpg4_fi_script_fail_hook;
+    dealpg4_fi_hooks.congest = dealpg4_fi_script_congest_hook;
+    return 0;
+}
+
+void dealpg4_fi_restore_defaults(void)
+{
+    dealpg4_fi_hooks.delay_ms = dealpg4_fi_default_delay_ms;
+    dealpg4_fi_hooks.fail = dealpg4_fi_default_fail;
+    dealpg4_fi_hooks.congest = dealpg4_fi_default_congest;
+    dealpg4_fi_script_ndelays = 0;
+    dealpg4_fi_script_nfails = 0;
+    dealpg4_fi_script_ncongests = 0;
 }
