@@ -21,12 +21,17 @@ import deal.lexer.Lexer;
 import deal.lexer.Token;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
+import deal.source.JsonRangeLexer;
 import deal.source.ScalarPosition;
 import deal.source.ScalarSourceCursor;
+import deal.source.SourceScalarRange;
 
+import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -121,6 +126,14 @@ public class DiagnosticRangeTest {
         testStructuredOutput();
         testFormattedStructuredCrossCheck();
         testToStringDelegation();
+
+        System.out.println();
+        System.out.println("-- JsonRangeLexer section --");
+        testJsonRangeLexerTokenAndMemberRanges();
+        testJsonRangeLexerFaults();
+        testJsonRangeLexerTolerance();
+        testJsonRangeLexerNeverThrows();
+        testDealSourceJdkOnly();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -2332,4 +2345,466 @@ public class DiagnosticRangeTest {
                 "toString must contain the message substring: " + ts);
         }
     }
+    // =========================================================================
+    // JsonRangeLexer section
+    // =========================================================================
+
+    /** Asserts every field of an exact half-open scalar range. */
+    private static void checkRange(String label, SourceScalarRange r,
+                                   int sl, int sc, int el, int ec, int so, int eo) {
+        boolean ok = r.startLine() == sl && r.startColumn() == sc
+            && r.endLine() == el && r.endColumn() == ec
+            && r.startScalarOffset() == so && r.endScalarOffset() == eo;
+        check(ok, label + ": " + r + " != ("
+            + sl + "," + sc + "," + el + "," + ec + "," + so + "," + eo + ")");
+        check(r.scalarLength() == eo - so,
+            label + ": scalarLength() " + r.scalarLength() + " != " + (eo - so));
+    }
+
+    /** Cross-checks a lexer range against an independent cursor recomputation. */
+    private static void checkRangeAgainstCursor(String label, SourceScalarRange r,
+                                                String source) {
+        ScalarSourceCursor start = new ScalarSourceCursor(source);
+        for (int i = 0; i < r.startScalarOffset(); i++) {
+            start.advance();
+        }
+        check(start.line() == r.startLine() && start.column() == r.startColumn()
+                && start.scalarOffset() == r.startScalarOffset(),
+            label + ": start of " + r + " disagrees with cursor start " + start.position());
+        ScalarSourceCursor end = new ScalarSourceCursor(source);
+        for (int i = 0; i < r.endScalarOffset(); i++) {
+            end.advance();
+        }
+        check(end.line() == r.endLine() && end.column() == r.endColumn()
+                && end.scalarOffset() == r.endScalarOffset(),
+            label + ": end of " + r + " disagrees with cursor end " + end.position());
+    }
+
+    private static void testJsonRangeLexerTokenAndMemberRanges() {
+        System.out.println("-- JsonRangeLexer: token/member ranges under Unicode, CRLF, and tabs --");
+
+        // Fixture: astral scalars in key and value, tab after CRLF, nested
+        // object and array, CRLF before the closing brace.
+        String src = "{\r\n\t\"k\uD83D\uDE00y\" : {\"n\" : [1, \"v\uD83D\uDE00\"]}\r\n}";
+        JsonRangeLexer.JsonRangeLexResult r = JsonRangeLexer.lex(src);
+        check(r.faults().isEmpty(), "unicode fixture: unexpected faults " + r.faults());
+        List<JsonRangeLexer.JsonRangeToken> ts = r.orderedTokens();
+        check(ts.size() == 13, "unicode fixture: token count " + ts.size() + " != 13");
+
+        String[] kinds = {"OBJECT_START", "KEY", "COLON", "OBJECT_START", "KEY", "COLON",
+            "ARRAY_START", "NUMBER", "COMMA", "STRING", "ARRAY_END", "OBJECT_END",
+            "OBJECT_END"};
+        for (int i = 0; i < kinds.length; i++) {
+            check(ts.get(i).kind().name().equals(kinds[i]),
+                "unicode token " + i + " kind " + ts.get(i).kind() + " != " + kinds[i]);
+        }
+        checkRange("OBJECT_START", ts.get(0).range(), 1, 1, 1, 2, 0, 1);
+        checkRange("KEY", ts.get(1).range(), 2, 2, 2, 7, 4, 9);
+        check(("k\uD83D\uDE00y").equals(ts.get(1).decodedValue()),
+            "unicode key decoded value: " + ts.get(1).decodedValue());
+        checkRange("COLON", ts.get(2).range(), 2, 8, 2, 9, 10, 11);
+        checkRange("nested OBJECT_START", ts.get(3).range(), 2, 10, 2, 11, 12, 13);
+        checkRange("nested KEY", ts.get(4).range(), 2, 11, 2, 14, 13, 16);
+        check("n".equals(ts.get(4).decodedValue()), "nested key decoded value");
+        checkRange("nested COLON", ts.get(5).range(), 2, 15, 2, 16, 17, 18);
+        checkRange("ARRAY_START", ts.get(6).range(), 2, 17, 2, 18, 19, 20);
+        checkRange("NUMBER", ts.get(7).range(), 2, 18, 2, 19, 20, 21);
+        check(Long.valueOf(1L).equals(ts.get(7).decodedValue()),
+            "NUMBER decoded value " + ts.get(7).decodedValue() + " != 1L");
+        checkRange("COMMA", ts.get(8).range(), 2, 19, 2, 20, 21, 22);
+        checkRange("STRING", ts.get(9).range(), 2, 21, 2, 25, 23, 27);
+        check(("v\uD83D\uDE00").equals(ts.get(9).decodedValue()),
+            "STRING decoded value: " + ts.get(9).decodedValue());
+        checkRange("ARRAY_END", ts.get(10).range(), 2, 25, 2, 26, 27, 28);
+        checkRange("nested OBJECT_END", ts.get(11).range(), 2, 26, 2, 27, 28, 29);
+        checkRange("root OBJECT_END", ts.get(12).range(), 3, 1, 3, 2, 31, 32);
+
+        // Members in value-completion order: the nested member completes first.
+        List<JsonRangeLexer.JsonMemberRange> ms = r.members();
+        check(ms.size() == 2, "unicode fixture: member count " + ms.size() + " != 2");
+        JsonRangeLexer.JsonMemberRange inner = ms.get(0);
+        check(inner.path().equals(List.of("k\uD83D\uDE00y", "n")),
+            "inner member path " + inner.path());
+        check("n".equals(inner.keyText()), "inner member keyText");
+        checkRange("inner keyRange", inner.keyRange(), 2, 11, 2, 14, 13, 16);
+        checkRange("inner valueRange", inner.valueRange(), 2, 17, 2, 26, 19, 28);
+        checkRange("inner memberRange", inner.memberRange(), 2, 11, 2, 26, 13, 28);
+        JsonRangeLexer.JsonMemberRange outer = ms.get(1);
+        check(outer.path().equals(List.of("k\uD83D\uDE00y")),
+            "outer member path " + outer.path());
+        check(("k\uD83D\uDE00y").equals(outer.keyText()), "outer member keyText");
+        checkRange("outer keyRange", outer.keyRange(), 2, 2, 2, 7, 4, 9);
+        checkRange("outer valueRange", outer.valueRange(), 2, 10, 2, 27, 12, 29);
+        checkRange("outer memberRange", outer.memberRange(), 2, 2, 2, 27, 4, 29);
+
+        // Every asserted range is recomputed independently from the source.
+        for (int i = 0; i < ts.size(); i++) {
+            checkRangeAgainstCursor("unicode token " + i, ts.get(i).range(), src);
+        }
+        checkRangeAgainstCursor("inner key", inner.keyRange(), src);
+        checkRangeAgainstCursor("inner value", inner.valueRange(), src);
+        checkRangeAgainstCursor("inner member", inner.memberRange(), src);
+        checkRangeAgainstCursor("outer key", outer.keyRange(), src);
+        checkRangeAgainstCursor("outer value", outer.valueRange(), src);
+        checkRangeAgainstCursor("outer member", outer.memberRange(), src);
+
+        // Null source is treated as empty: no tokens, no members, no faults.
+        JsonRangeLexer.JsonRangeLexResult empty = JsonRangeLexer.lex(null);
+        check(empty.orderedTokens().isEmpty() && empty.members().isEmpty()
+                && empty.faults().isEmpty(), "null source must scan as empty");
+        JsonRangeLexer.JsonRangeLexResult blank = JsonRangeLexer.lex("");
+        check(blank.orderedTokens().isEmpty() && blank.members().isEmpty()
+                && blank.faults().isEmpty(), "empty source must scan as empty");
+    }
+
+    private static void testJsonRangeLexerFaults() {
+        System.out.println("-- JsonRangeLexer: structural faults carry ranges, never throw --");
+
+        // UNEXPECTED_CHARACTER at member start (NBSP is outside the pinned
+        // whitespace set): today's expect('"') throw position.
+        String s1 = "{\u00A0\"a\": 1}";
+        JsonRangeLexer.JsonRangeLexResult r1 = JsonRangeLexer.lex(s1);
+        check(r1.faults().size() == 1,
+            "NBSP member start: fault count " + r1.faults().size() + " != 1");
+        check(r1.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.UNEXPECTED_CHARACTER,
+            "NBSP member start: kind " + r1.faults().get(0).kind());
+        checkRange("NBSP member start fault", r1.faults().get(0).range(), 1, 2, 1, 3, 1, 2);
+        checkRange("NBSP member start OBJECT_START", r1.orderedTokens().get(0).range(),
+            1, 1, 1, 2, 0, 1);
+        check(r1.members().isEmpty(), "NBSP member start: no members");
+
+        // UNEXPECTED_CHARACTER at member start after a completed member.
+        String s2 = "{\"a\": 1, \u00A0\"b\": 2}";
+        JsonRangeLexer.JsonRangeLexResult r2 = JsonRangeLexer.lex(s2);
+        check(r2.faults().size() == 1, "member-start NBSP: fault count " + r2.faults().size());
+        check(r2.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.UNEXPECTED_CHARACTER,
+            "member-start NBSP: kind " + r2.faults().get(0).kind());
+        checkRange("member-start NBSP fault", r2.faults().get(0).range(), 1, 10, 1, 11, 9, 10);
+        check(r2.members().size() == 1 && "a".equals(r2.members().get(0).keyText()),
+            "member-start NBSP: member a completed before the fault");
+        checkRange("member a keyRange", r2.members().get(0).keyRange(), 1, 2, 1, 5, 1, 4);
+        checkRange("member a valueRange", r2.members().get(0).valueRange(), 1, 7, 1, 8, 6, 7);
+        checkRange("member a memberRange", r2.members().get(0).memberRange(), 1, 2, 1, 8, 1, 7);
+
+        // UNEXPECTED_CHARACTER between key and colon (today's expect(':') throw).
+        String s3 = "{\"a\"\u00A0: 1}";
+        JsonRangeLexer.JsonRangeLexResult r3 = JsonRangeLexer.lex(s3);
+        check(r3.faults().size() == 1, "key-colon NBSP: fault count " + r3.faults().size());
+        check(r3.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.UNEXPECTED_CHARACTER,
+            "key-colon NBSP: kind " + r3.faults().get(0).kind());
+        checkRange("key-colon NBSP fault", r3.faults().get(0).range(), 1, 5, 1, 6, 4, 5);
+
+        // EXPECTED_KEY at member-start end of input ('{' at EOF).
+        JsonRangeLexer.JsonRangeLexResult r4 = JsonRangeLexer.lex("{");
+        check(r4.faults().size() == 1
+                && r4.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_KEY,
+            "'{' at EOF: " + r4.faults());
+        checkRange("'{' at EOF fault", r4.faults().get(0).range(), 1, 2, 1, 2, 1, 1);
+
+        // EXPECTED_KEY at member-start end of input after a comma.
+        JsonRangeLexer.JsonRangeLexResult r5 = JsonRangeLexer.lex("{\"a\": 1,");
+        check(r5.faults().size() == 1
+                && r5.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_KEY,
+            "member-start EOF: " + r5.faults());
+        checkRange("member-start EOF fault", r5.faults().get(0).range(), 1, 9, 1, 9, 8, 8);
+        check(r5.members().size() == 1, "member-start EOF: member a completed before the fault");
+
+        // EXPECTED_KEY at a non-KEY token (NUMBER) at member start.
+        JsonRangeLexer.JsonRangeLexResult r6 = JsonRangeLexer.lex("{5: 1}");
+        check(r6.faults().size() == 1
+                && r6.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_KEY,
+            "non-KEY member start: " + r6.faults());
+        checkRange("non-KEY member start fault", r6.faults().get(0).range(), 1, 2, 1, 3, 1, 2);
+
+        // EXPECTED_COLON at end of input.
+        JsonRangeLexer.JsonRangeLexResult r7 = JsonRangeLexer.lex("{\"a\"");
+        check(r7.faults().size() == 1
+                && r7.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_COLON,
+            "missing colon EOF: " + r7.faults());
+        checkRange("missing colon EOF fault", r7.faults().get(0).range(), 1, 5, 1, 5, 4, 4);
+
+        // EXPECTED_COLON at a non-COLON token between key and colon.
+        JsonRangeLexer.JsonRangeLexResult r8 = JsonRangeLexer.lex("{\"a\" 5: 1}");
+        check(r8.faults().size() == 1
+                && r8.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_COLON,
+            "non-COLON between key and colon: " + r8.faults());
+        checkRange("non-COLON fault", r8.faults().get(0).range(), 1, 6, 1, 7, 5, 6);
+
+        // EXPECTED_VALUE at a non-value token in value position (COMMA).
+        JsonRangeLexer.JsonRangeLexResult r9 = JsonRangeLexer.lex("{\"a\": ,}");
+        check(r9.faults().size() == 1
+                && r9.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_VALUE,
+            "invalid value position: " + r9.faults());
+        checkRange("invalid value fault", r9.faults().get(0).range(), 1, 7, 1, 8, 6, 7);
+
+        // EXPECTED_VALUE at an undecodable number (Long and Double both fail).
+        JsonRangeLexer.JsonRangeLexResult r10 = JsonRangeLexer.lex("{\"a\": -}");
+        check(r10.faults().size() == 1
+                && r10.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_VALUE,
+            "undecodable number: " + r10.faults());
+        checkRange("undecodable number fault", r10.faults().get(0).range(), 1, 7, 1, 8, 6, 7);
+        JsonRangeLexer.JsonRangeToken numToken = null;
+        for (JsonRangeLexer.JsonRangeToken t : r10.orderedTokens()) {
+            if (t.kind() == JsonRangeLexer.JsonTokenKind.NUMBER) {
+                numToken = t;
+            }
+        }
+        check(numToken != null && numToken.decodedValue() == null,
+            "undecodable number token carries null decoded value");
+
+        // EXPECTED_COMMA_OR_END at the missing comma (tolerated truncation).
+        JsonRangeLexer.JsonRangeLexResult r11 = JsonRangeLexer.lex("{\"a\":1 \"b\":2}");
+        check(r11.faults().size() == 1
+                && r11.faults().get(0).kind()
+                    == JsonRangeLexer.JsonFaultKind.EXPECTED_COMMA_OR_END,
+            "missing comma: " + r11.faults());
+        checkRange("missing comma fault", r11.faults().get(0).range(), 1, 8, 1, 8, 7, 7);
+        check(r11.members().size() == 1 && "a".equals(r11.members().get(0).keyText()),
+            "missing comma: only member a");
+
+        // UNEXPECTED_CHARACTER after a completed member value (truncation cascade).
+        String s12 = "{\"backend\":\"luajit\"\u00A0\"languageVersion\":\"1.0\"}";
+        JsonRangeLexer.JsonRangeLexResult r12 = JsonRangeLexer.lex(s12);
+        check(r12.faults().size() == 1
+                && r12.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.UNEXPECTED_CHARACTER,
+            "after-value NBSP: " + r12.faults());
+        checkRange("after-value NBSP fault", r12.faults().get(0).range(), 1, 20, 1, 21, 19, 20);
+        check(r12.members().size() == 1
+                && "backend".equals(r12.members().get(0).keyText()),
+            "after-value NBSP: backend-only truncation");
+
+        // EXPECTED_VALUE at end of input (tolerated null value) plus
+        // EXPECTED_END for the unclosed object.
+        JsonRangeLexer.JsonRangeLexResult r13 = JsonRangeLexer.lex("{\"a\":");
+        check(r13.faults().size() == 2
+                && r13.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_VALUE
+                && r13.faults().get(1).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_END,
+            "value at EOF: " + r13.faults());
+        checkRange("value at EOF fault", r13.faults().get(0).range(), 1, 6, 1, 6, 5, 5);
+        checkRange("unclosed object fault", r13.faults().get(1).range(), 1, 6, 1, 6, 5, 5);
+        check(r13.members().size() == 1, "value at EOF: null-value member recorded");
+        checkRange("null-value member valueRange", r13.members().get(0).valueRange(),
+            1, 6, 1, 6, 5, 5);
+        checkRange("null-value member memberRange", r13.members().get(0).memberRange(),
+            1, 2, 1, 6, 1, 5);
+
+        // EXPECTED_VALUE + EXPECTED_END for '[' at end of input.
+        JsonRangeLexer.JsonRangeLexResult r14 = JsonRangeLexer.lex("[");
+        check(r14.faults().size() == 2
+                && r14.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_VALUE
+                && r14.faults().get(1).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_END,
+            "'[' at EOF: " + r14.faults());
+        checkRange("'[' at EOF EXPECTED_VALUE", r14.faults().get(0).range(), 1, 2, 1, 2, 1, 1);
+
+        // EXPECTED_END for an unclosed object after a completed member.
+        JsonRangeLexer.JsonRangeLexResult r15 = JsonRangeLexer.lex("{\"a\":1");
+        check(r15.faults().size() == 1
+                && r15.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_END,
+            "unclosed object: " + r15.faults());
+        checkRange("unclosed object fault", r15.faults().get(0).range(), 1, 7, 1, 7, 6, 6);
+
+        // EXPECTED_END for an unterminated string plus the unclosed object.
+        JsonRangeLexer.JsonRangeLexResult r16 = JsonRangeLexer.lex("{\"a\": \"xy");
+        check(r16.faults().size() == 2
+                && r16.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_END
+                && r16.faults().get(1).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_END,
+            "unterminated string: " + r16.faults());
+        checkRange("unterminated string fault", r16.faults().get(0).range(), 1, 10, 1, 10, 9, 9);
+        check("xy".equals(r16.orderedTokens().get(3).decodedValue()),
+            "unterminated string keeps partial decoded value");
+
+        // INVALID_ESCAPE: unknown escape drops the backslash, keeps the scalar.
+        JsonRangeLexer.JsonRangeLexResult r17 = JsonRangeLexer.lex("{\"a\": \"\\q\"}");
+        check(r17.faults().size() == 1
+                && r17.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.INVALID_ESCAPE,
+            "unknown escape: " + r17.faults());
+        checkRange("unknown escape fault", r17.faults().get(0).range(), 1, 8, 1, 10, 7, 9);
+        check("q".equals(r17.orderedTokens().get(3).decodedValue()),
+            "unknown escape decodes as q");
+
+        // UNPAIRED_SURROGATE passes through with a data fault.
+        JsonRangeLexer.JsonRangeLexResult r18 = JsonRangeLexer.lex("{\"a\": \"\uD800\"}");
+        check(r18.faults().size() == 1
+                && r18.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.UNPAIRED_SURROGATE,
+            "unpaired surrogate: " + r18.faults());
+        checkRange("unpaired surrogate fault", r18.faults().get(0).range(), 1, 8, 1, 9, 7, 8);
+        check("\uD800".equals(r18.orderedTokens().get(3).decodedValue()),
+            "unpaired surrogate passes through into the decoded value");
+
+        // TRAILING_CONTENT after the completed root value.
+        JsonRangeLexer.JsonRangeLexResult r19 = JsonRangeLexer.lex("{} 5");
+        check(r19.faults().size() == 1
+                && r19.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.TRAILING_CONTENT,
+            "trailing content: " + r19.faults());
+        checkRange("trailing content fault", r19.faults().get(0).range(), 1, 4, 1, 4, 3, 3);
+
+        // UNEXPECTED_CHARACTER as trailing content (untokenizable scalar).
+        JsonRangeLexer.JsonRangeLexResult r20 = JsonRangeLexer.lex("{} x");
+        check(r20.faults().size() == 1
+                && r20.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.UNEXPECTED_CHARACTER,
+            "trailing untokenizable: " + r20.faults());
+        checkRange("trailing untokenizable fault", r20.faults().get(0).range(), 1, 4, 1, 5, 3, 4);
+
+        // NON_STRICT_WHITESPACE for U+2028 between key and colon, still skipped.
+        JsonRangeLexer.JsonRangeLexResult r21 = JsonRangeLexer.lex("{\"a\"\u2028: 1}");
+        check(r21.faults().size() == 1
+                && r21.faults().get(0).kind()
+                    == JsonRangeLexer.JsonFaultKind.NON_STRICT_WHITESPACE,
+            "U+2028 whitespace: " + r21.faults());
+        checkRange("U+2028 whitespace fault", r21.faults().get(0).range(), 1, 5, 1, 6, 4, 5);
+        check(r21.members().size() == 1 && "a".equals(r21.members().get(0).keyText()),
+            "U+2028 whitespace: member a still parsed");
+        check(r21.orderedTokens().size() == 5,
+            "U+2028 whitespace: 5 tokens " + r21.orderedTokens().size());
+        checkRange("U+2028 COLON", r21.orderedTokens().get(2).range(), 1, 6, 1, 7, 5, 6);
+
+        // NON_STRICT_WHITESPACE for the VT/FS run between members, still skipped.
+        JsonRangeLexer.JsonRangeLexResult r22 =
+            JsonRangeLexer.lex("{\"a\":1,\u000B\u001C\"b\":2}");
+        check(r22.faults().size() == 1
+                && r22.faults().get(0).kind()
+                    == JsonRangeLexer.JsonFaultKind.NON_STRICT_WHITESPACE,
+            "VT/FS whitespace: " + r22.faults());
+        checkRange("VT/FS whitespace fault", r22.faults().get(0).range(), 1, 8, 1, 10, 7, 9);
+        check(r22.members().size() == 2, "VT/FS whitespace: both members still parsed");
+        check("b".equals(r22.members().get(1).keyText()), "VT/FS whitespace: member b present");
+
+        // RAW_CONTROL_IN_STRING for the raw LF, kept in the decoded value.
+        JsonRangeLexer.JsonRangeLexResult r23 = JsonRangeLexer.lex("{\"a\": \"x\ny\"}");
+        check(r23.faults().size() == 1
+                && r23.faults().get(0).kind()
+                    == JsonRangeLexer.JsonFaultKind.RAW_CONTROL_IN_STRING,
+            "raw control: " + r23.faults());
+        checkRange("raw control fault", r23.faults().get(0).range(), 1, 9, 2, 1, 8, 9);
+        check("x\ny".equals(r23.orderedTokens().get(3).decodedValue()),
+            "raw control kept in decoded value: " + r23.orderedTokens().get(3).decodedValue());
+        checkRange("raw control STRING range", r23.orderedTokens().get(3).range(),
+            1, 7, 2, 3, 6, 11);
+        checkRange("raw control member valueRange", r23.members().get(0).valueRange(),
+            1, 7, 2, 3, 6, 11);
+
+        // Every fault range recomputed independently from its source.
+        checkRangeAgainstCursor("s1 fault", r1.faults().get(0).range(), s1);
+        checkRangeAgainstCursor("s2 fault", r2.faults().get(0).range(), s2);
+        checkRangeAgainstCursor("s3 fault", r3.faults().get(0).range(), s3);
+        checkRangeAgainstCursor("s12 fault", r12.faults().get(0).range(), s12);
+        checkRangeAgainstCursor("s23 fault", r23.faults().get(0).range(),
+            "{\"a\": \"x\ny\"}");
+        checkRangeAgainstCursor("u2028 fault", r21.faults().get(0).range(), "{\"a\"\u2028: 1}");
+    }
+
+    private static void testJsonRangeLexerTolerance() {
+        System.out.println("-- JsonRangeLexer: today's tolerant acceptance surface --");
+
+        // Permissive numbers decode via Long then Double.
+        JsonRangeLexer.JsonRangeLexResult r =
+            JsonRangeLexer.lex("{\"a\": [1., 01, 1e5, -.5, .5]}");
+        check(r.faults().isEmpty(), "permissive numbers: unexpected faults " + r.faults());
+        java.util.List<Object> nums = new java.util.ArrayList<>();
+        for (JsonRangeLexer.JsonRangeToken t : r.orderedTokens()) {
+            if (t.kind() == JsonRangeLexer.JsonTokenKind.NUMBER) {
+                nums.add(t.decodedValue());
+            }
+        }
+        check(nums.size() == 5, "permissive numbers: " + nums.size() + " NUMBER tokens");
+        check(nums.get(0) instanceof Double d && d == 1.0, "1. decodes to 1.0: " + nums.get(0));
+        check(nums.get(1) instanceof Long l && l == 1L, "01 decodes to 1L: " + nums.get(1));
+        check(nums.get(2) instanceof Double d && d == 100000.0, "1e5 decodes: " + nums.get(2));
+        check(nums.get(3) instanceof Double d && d == -0.5, "-.5 decodes: " + nums.get(3));
+        check(nums.get(4) instanceof Double d && d == 0.5, ".5 decodes: " + nums.get(4));
+
+        // Duplicate keys: both members recorded (last-wins is reader policy).
+        JsonRangeLexer.JsonRangeLexResult dup = JsonRangeLexer.lex("{\"a\":1,\"a\":2}");
+        check(dup.faults().isEmpty(), "duplicate keys: unexpected faults " + dup.faults());
+        check(dup.members().size() == 2
+                && dup.members().get(0).path().equals(List.of("a"))
+                && dup.members().get(1).path().equals(List.of("a")),
+            "duplicate keys: both members recorded");
+
+        // Unclosed string value keeps today's partial decode.
+        JsonRangeLexer.JsonRangeLexResult us = JsonRangeLexer.lex("{\"a\": \"xy");
+        check(us.members().size() == 1, "unclosed string: member recorded");
+        check("xy".equals(us.orderedTokens().get(3).decodedValue()),
+            "unclosed string partial value");
+
+        // Unclosed array at EOF keeps the consumed elements.
+        JsonRangeLexer.JsonRangeLexResult ua = JsonRangeLexer.lex("[1,2");
+        check(ua.faults().size() == 1
+                && ua.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_END,
+            "unclosed array: " + ua.faults());
+        checkRange("unclosed array fault", ua.faults().get(0).range(), 1, 5, 1, 5, 4, 4);
+        check(ua.orderedTokens().size() == 4, "unclosed array keeps NUMBER 1, COMMA, NUMBER 2");
+
+        // Boolean blind consumption: 't' alone consumes 5 scalars and decodes
+        // to FALSE; the object then completes partial at end of input.
+        JsonRangeLexer.JsonRangeLexResult b = JsonRangeLexer.lex("{\"a\": t}");
+        check(b.faults().size() == 1
+                && b.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_END,
+            "'t' at value position: " + b.faults());
+        check(Boolean.FALSE.equals(b.orderedTokens().get(3).decodedValue()),
+            "'t' blind-decodes to FALSE: " + b.orderedTokens().get(3).decodedValue());
+        check(b.members().size() == 1, "'t' value: member recorded with the blind FALSE");
+    }
+
+    private static void testJsonRangeLexerNeverThrows() {
+        System.out.println("-- JsonRangeLexer: no input causes an exception --");
+
+        String[] nasty = {
+            "", "\u0000", "\uD800", "\uFFFF", "{\"a\": \"\\", "}}}}", "[[[",
+            "\"\uD800\"", "\u0000{\u0000", "-\u00A0", "\u2028\u2029",
+            "{\"a\": -e5}", "tru", "t", "\uD83D\uDE00", "{\",\",",
+            "\"\uD83D\uDE00\"", "\"\uD800\uDC00\"", "\u001F\u001F\u001F",
+        };
+        for (String input : nasty) {
+            try {
+                JsonRangeLexer.JsonRangeLexResult r = JsonRangeLexer.lex(input);
+                for (JsonRangeLexer.JsonRangeToken t : r.orderedTokens()) {
+                    check(t.range() != null, "token range never null for input: " + input);
+                }
+                for (JsonRangeLexer.JsonLexFault f : r.faults()) {
+                    check(f.range() != null, "fault range never null for input: " + input);
+                }
+                for (JsonRangeLexer.JsonMemberRange m : r.members()) {
+                    check(m.keyRange() != null && m.valueRange() != null
+                            && m.memberRange() != null,
+                        "member ranges never null for input: " + input);
+                }
+            } catch (Throwable t) {
+                fail("lex threw for input " + input + ": " + t);
+            }
+        }
+    }
+
+    private static void testDealSourceJdkOnly() {
+        System.out.println("-- deal/source has no deal.diagnostics reference (JDK-only) --");
+
+        File dir = new File("deal/source");
+        check(dir.isDirectory(), "deal/source directory missing");
+        if (!dir.isDirectory()) {
+            return;
+        }
+        File[] files = dir.listFiles((d, name) -> name.endsWith(".java"));
+        check(files != null && files.length > 0, "no .java files under deal/source");
+        if (files == null) {
+            return;
+        }
+        for (File f : files) {
+            String content;
+            try {
+                content = Files.readString(f.toPath());
+            } catch (IOException e) {
+                fail("cannot read " + f + ": " + e);
+                continue;
+            }
+            check(!content.contains("deal.diagnostics"),
+                f.getName() + " references deal.diagnostics");
+            for (String line : content.split("\n")) {
+                String t = line.trim();
+                if (t.startsWith("import ") && !t.startsWith("import java.")) {
+                    fail(f.getName() + ": non-JDK import: " + t);
+                }
+            }
+        }
+    }
+
 }

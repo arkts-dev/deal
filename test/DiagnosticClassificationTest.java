@@ -295,6 +295,7 @@ public class DiagnosticClassificationTest {
         coverage.put("E2009", "ModuleSystemTest (externals gating)");
         coverage.put("E2010", "ModuleSystemTest (entry module missing main)");
         coverage.put("E2011", "ModuleSystemTest (entry main wrong signature)");
+        coverage.put("E2012", "ModuleSystemTest (manifest configuration errors)");
 
         coverage.put("E3001", "CheckerTest (type mismatch)");
         coverage.put("E3002", "CheckerTest (empty literal inference)");

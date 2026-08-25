@@ -141,7 +141,7 @@ public enum DiagnosticCode {
     E1055(Phase.FRONTEND, "Unsupported DEAL version"),
 
     // =========================================================================
-    // E2xxx — name resolution and module resolution (FRONTEND)
+    // E2xxx — name resolution, module resolution, and project configuration (FRONTEND)
     // =========================================================================
 
     /** break/continue outside loop. */
@@ -170,6 +170,9 @@ public enum DiagnosticCode {
 
     /** Entry module 'main' has the wrong signature. */
     E2011(Phase.FRONTEND, "Entry module 'main' must have non-async signature '(): null'"),
+
+    /** Invalid project configuration. */
+    E2012(Phase.FRONTEND, "Invalid project configuration"),
 
     // =========================================================================
     // E3xxx — type checking (FRONTEND)
