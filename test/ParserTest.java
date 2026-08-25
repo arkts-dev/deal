@@ -3,6 +3,7 @@ package deal.test;
 import deal.ast.*;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
 import deal.lexer.*;
 import deal.parser.*;
@@ -142,6 +143,7 @@ public class ParserTest {
         testTemplateNestedTemplateLiteral();
         testTemplateEscapedBacktick();
         testTemplateMalformedExpression();
+        testTemplateInterpolationRangeAnchors();
 
         // Precedence
         testPrecedenceAddMul();
@@ -1517,6 +1519,183 @@ public class ParserTest {
                     "malformed expr: 3 parts, got " + tl.parts().size());
             }
         }
+    }
+
+    /**
+     * ISSUE-0224 verification 5: template-interpolation scalar rebasing.
+     * Every sub-lexed diagnostic inside ${...} carries a SOURCE range with
+     * exact original scalar offsets; the rebased sub-parser EOF token anchors
+     * end-of-input errors at the expression-end raw position; E1042
+     * pseudo-token and D16 placeholder ranges are raw-positioned. Each
+     * expectation is cross-checked against an independent ScalarSourceCursor
+     * recomputation of the original source.
+     */
+    static void testTemplateInterpolationRangeAnchors() {
+        System.out.println("-- Template Literal: interpolation range anchors (ISSUE-0224) --");
+
+        // 1. End-of-input E1037 inside a terminated interpolation anchors at
+        //    the closing '}' position with SOURCE origin and exact offsets.
+        String src1 = "let x = `${foo +}`;";
+        ParseResult r1 = parse(src1);
+        CompilerDiagnostic e1037 = findDiag(r1.diagnostics(), "E1037");
+        check(e1037 != null, "T1: E1037 present for `${foo +}`");
+        if (e1037 != null) {
+            checkRange(e1037.range(), "test.deal", 1, 17, 1, 17, 16, 16, 0,
+                RangeOrigin.SOURCE, "T1: E1037 at the '}' position");
+            check(e1037.notes().isEmpty(), "T1: SOURCE anchor carries no notes");
+            checkCursorAt(src1, 16, 1, 17, "T1");
+        }
+
+        // 2. End-of-input E1037 in an unterminated interpolation anchors at
+        //    the end of the raw template content (the closing backtick's
+        //    position).
+        String src2 = "let x = `a${foo +`;";
+        ParseResult r2 = parse(src2);
+        CompilerDiagnostic e1042 = findDiag(r2.diagnostics(), "E1042");
+        check(e1042 != null, "T2: E1042 present for unterminated interpolation");
+        if (e1042 != null) {
+            checkRange(e1042.range(), "test.deal", 1, 13, 1, 15, 12, 14, 2,
+                RangeOrigin.SOURCE, "T2: E1042 raw-positioned at the expression start");
+        }
+        CompilerDiagnostic e1037b = findDiag(r2.diagnostics(), "E1037");
+        check(e1037b != null, "T2: E1037 present for unterminated interpolation");
+        if (e1037b != null) {
+            checkRange(e1037b.range(), "test.deal", 1, 18, 1, 18, 17, 17, 0,
+                RangeOrigin.SOURCE, "T2: E1037 at the end of the raw content");
+            check(e1037b.notes().isEmpty(), "T2: SOURCE anchor carries no notes");
+            checkCursorAt(src2, 17, 1, 18, "T2");
+        }
+
+        // 3. A sub-lexer error after a recognized escape rebases through the
+        //    scalar map: the decoded '@' maps to the raw '@' position, not the
+        //    decoded-coordinate position.
+        String src3 = "let x = `${\\$x + @}`;";
+        ParseResult r3 = parse(src3);
+        CompilerDiagnostic e1001 = findDiag(r3.diagnostics(), "E1001");
+        check(e1001 != null, "T3: E1001 present for `${\\$x + @}`");
+        if (e1001 != null) {
+            checkRange(e1001.range(), "test.deal", 1, 18, 1, 19, 17, 18, 1,
+                RangeOrigin.SOURCE, "T3: E1001 rebased to the raw '@' position");
+            checkCursorAt(src3, 17, 1, 18, "T3");
+        }
+        CompilerDiagnostic e1037c = findDiag(r3.diagnostics(), "E1037");
+        check(e1037c != null, "T3: E1037 present after the rebased '@'");
+        if (e1037c != null) {
+            checkRange(e1037c.range(), "test.deal", 1, 19, 1, 19, 18, 18, 0,
+                RangeOrigin.SOURCE, "T3: E1037 at the '}' position");
+        }
+
+        // 4. Astral content before the interpolation: column and offset
+        //    arithmetic count the supplementary character as one scalar.
+        String src4 = "let x = `\uD83D\uDE00${foo +}`;";
+        ParseResult r4 = parse(src4);
+        CompilerDiagnostic e1037d = findDiag(r4.diagnostics(), "E1037");
+        check(e1037d != null, "T4: E1037 present after the astral prefix");
+        if (e1037d != null) {
+            checkRange(e1037d.range(), "test.deal", 1, 18, 1, 18, 17, 17, 0,
+                RangeOrigin.SOURCE, "T4: astral scalar counts one column");
+            checkCursorAt(src4, 17, 1, 18, "T4");
+        }
+
+        // 5. Tab content before the interpolation counts one scalar.
+        String src5 = "let x = `\t${foo +}`;";
+        ParseResult r5 = parse(src5);
+        CompilerDiagnostic e1037e = findDiag(r5.diagnostics(), "E1037");
+        check(e1037e != null, "T5: E1037 present after the tab prefix");
+        if (e1037e != null) {
+            checkRange(e1037e.range(), "test.deal", 1, 18, 1, 18, 17, 17, 0,
+                RangeOrigin.SOURCE, "T5: tab counts one column");
+            checkCursorAt(src5, 17, 1, 18, "T5");
+        }
+
+        // 6. E1042 pseudo-tokens are raw-positioned and scalar-exact.
+        String src6 = "let x = `hi\uD83D\uDE00\\q`;";
+        ParseResult r6 = parse(src6);
+        CompilerDiagnostic e1042b = findDiag(r6.diagnostics(), "E1042");
+        check(e1042b != null, "T6: E1042 present for invalid escape after astral");
+        if (e1042b != null) {
+            checkRange(e1042b.range(), "test.deal", 1, 14, 1, 15, 13, 14, 1,
+                RangeOrigin.SOURCE, "T6: invalid-escape pseudo-token raw-positioned");
+            checkCursorAt(src6, 13, 1, 14, "T6");
+        }
+
+        String src7 = "let x = `hi}there`;";
+        ParseResult r7 = parse(src7);
+        CompilerDiagnostic e1042c = findDiag(r7.diagnostics(), "E1042");
+        check(e1042c != null, "T7: E1042 present for unexpected '}'");
+        if (e1042c != null) {
+            checkRange(e1042c.range(), "test.deal", 1, 12, 1, 13, 11, 12, 1,
+                RangeOrigin.SOURCE, "T7: unexpected-'}' pseudo-token raw-positioned");
+        }
+
+        // 7. Empty expression: E1042 and the D16 placeholder carry zero
+        //    scalar length at the expression-start raw position.
+        String src8 = "let x = `${}`;";
+        ParseResult r8 = parse(src8);
+        CompilerDiagnostic e1042d = findDiag(r8.diagnostics(), "E1042");
+        check(e1042d != null, "T8: E1042 present for empty interpolation");
+        if (e1042d != null) {
+            checkRange(e1042d.range(), "test.deal", 1, 12, 1, 12, 11, 11, 0,
+                RangeOrigin.SOURCE, "T8: empty-expression anchor at the expression start");
+        }
+        VariableDeclaration vd8 = (VariableDeclaration) r8.program().statements().get(0);
+        if (vd8 != null && vd8.initializer() instanceof TemplateLiteralExpr tl8
+                && tl8.parts().size() == 3) {
+            Span placeholderSpan = tl8.parts().get(1).span();
+            check(placeholderSpan.startLine() == 1 && placeholderSpan.startColumn() == 12
+                    && placeholderSpan.endLine() == 1 && placeholderSpan.endColumn() == 12,
+                "T8: D16 placeholder span (1,12)-(1,12), got " + placeholderSpan);
+            check(placeholderSpan.startScalarOffset() == 11
+                    && placeholderSpan.endScalarOffset() == 11,
+                "T8: D16 placeholder offsets (11,11), got ("
+                    + placeholderSpan.startScalarOffset() + ","
+                    + placeholderSpan.endScalarOffset() + ")");
+        }
+    }
+
+    /** Finds the first diagnostic with the given code, or null. */
+    private static CompilerDiagnostic findDiag(List<CompilerDiagnostic> diags, String code) {
+        for (CompilerDiagnostic d : diags) {
+            if (d.code().equals(code)) return d;
+        }
+        return null;
+    }
+
+    /** Asserts a diagnostic range field by field. */
+    private static void checkRange(DiagnosticRange r, String file,
+            int startLine, int startColumn, int endLine, int endColumn,
+            int startScalarOffset, int endScalarOffset, int scalarLength,
+            RangeOrigin origin, String context) {
+        check(r.file().equals(file),
+            context + ": file '" + r.file() + "' != '" + file + "'");
+        check(r.startLine() == startLine && r.startColumn() == startColumn,
+            context + ": start (" + r.startLine() + "," + r.startColumn()
+                + ") != (" + startLine + "," + startColumn + ")");
+        check(r.endLine() == endLine && r.endColumn() == endColumn,
+            context + ": end (" + r.endLine() + "," + r.endColumn()
+                + ") != (" + endLine + "," + endColumn + ")");
+        check(r.startScalarOffset() == startScalarOffset
+                && r.endScalarOffset() == endScalarOffset
+                && r.scalarLength() == scalarLength,
+            context + ": offsets (" + r.startScalarOffset() + ","
+                + r.endScalarOffset() + ",len " + r.scalarLength()
+                + ") != (" + startScalarOffset + "," + endScalarOffset
+                + ",len " + scalarLength + ")");
+        check(r.origin() == origin,
+            context + ": origin " + r.origin() + " != " + origin);
+    }
+
+    /** Cross-checks the cursor position reached at a scalar offset. */
+    private static void checkCursorAt(String source, int scalarOffset,
+            int expectedLine, int expectedColumn, String context) {
+        ScalarSourceCursor cursor = new ScalarSourceCursor(source);
+        for (int i = 0; i < scalarOffset; i++) {
+            cursor.advance();
+        }
+        check(cursor.line() == expectedLine && cursor.column() == expectedColumn,
+            context + ": cursor at offset " + scalarOffset + " is ("
+                + cursor.line() + "," + cursor.column() + ") != ("
+                + expectedLine + "," + expectedColumn + ")");
     }
 
     // =========================================================================

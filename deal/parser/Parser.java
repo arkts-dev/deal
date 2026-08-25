@@ -6,6 +6,7 @@ import deal.diagnostics.DiagnosticNote;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
 import deal.lexer.Token;
+import deal.source.ScalarSourceCursor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -1119,7 +1120,8 @@ public final class Parser {
     private ExpressionNode parseTemplateLiteral() {
         Token token = previous(); // the TEMPLATE_LITERAL token
         String raw = token.lexeme();
-        List<ExpressionNode> parts = splitTemplateLiteral(raw, token.line(), token.column());
+        List<ExpressionNode> parts = splitTemplateLiteral(raw, token.line(),
+            token.column(), token.startScalarOffset());
         return new TemplateLiteralExpr(spanOf(token), parts);
     }
 
@@ -1129,18 +1131,16 @@ public final class Parser {
      * odd-indexed parts are interpolated expressions.
      *
      * <p>Implements escape processing (D11), brace-depth scan (D14),
-     * and sub-lexer re-entry.</p>
+     * sub-lexer re-entry, and the D5 template scalar-map rebasing.</p>
      */
-    private List<ExpressionNode> splitTemplateLiteral(String raw, int baseLine, int baseCol) {
+    private List<ExpressionNode> splitTemplateLiteral(String raw, int baseLine, int baseCol,
+                                                      int templateTokenStartScalarOffset) {
         List<ExpressionNode> parts = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         int pos = 0;
         // Track where the current string accumulation started in the raw content.
         // The raw content begins at source column baseCol + 1 (after the opening backtick).
         int stringStart = 0;
-
-        // Helper to compute the source column for a given offset in the raw content.
-        // Adds 1 because raw[0] is at column baseCol + 1 (just after the opening backtick).
 
         while (pos < raw.length()) {
             char c = raw.charAt(pos);
@@ -1160,9 +1160,14 @@ public final class Parser {
                     case '$'  -> current.append('$');
                     case '\r', '\n' -> { /* handled by lexer — should not occur here */ }
                     default -> {
+                        // D5: the E1042 pseudo-token is raw-positioned —
+                        // column and scalar offset derive from the raw scalar
+                        // count of the prefix; the scalar length is the raw
+                        // run it marks (the escape character, one scalar).
                         error(DiagnosticCode.E1042,
                             "Invalid escape sequence in template literal: '\\" + esc + "'",
-                            new Token(TokenType.IDENTIFIER, "", baseLine, baseCol + 1 + pos, 1));
+                            rawPositionedToken(raw, baseLine, baseCol,
+                                templateTokenStartScalarOffset, pos, 1));
                     }
                 }
                 pos++;
@@ -1179,22 +1184,31 @@ public final class Parser {
                 int exprStart = pos;
 
                 // D14: Find matching '}' using string/template/escape-aware scan
-                int exprEnd = findMatchingBrace(raw, pos, baseLine, baseCol);
+                int exprEnd = findMatchingBrace(raw, pos, baseLine, baseCol,
+                    templateTokenStartScalarOffset);
                 if (exprEnd < 0) {
                     // Unterminated — error already emitted by findMatchingBrace
                     // Use rest of raw as expression for recovery
                     exprEnd = raw.length();
                 }
 
-                String rawExprSource = raw.substring(exprStart, exprEnd);
-                String exprSource = unescapeTemplateExpression(rawExprSource);
+                // D5: decode the expression and build the scalar map in one
+                // pass (an escape's decoded scalar maps to the escape's first
+                // raw scalar).
+                DecodedTemplateExpr decoded = unescapeTemplateExpression(raw, exprStart, exprEnd);
+                TemplateScalarMap map = new TemplateScalarMap(baseLine, baseCol,
+                    templateTokenStartScalarOffset,
+                    ScalarSourceCursor.scalarCount(raw, 0, exprStart),
+                    ScalarSourceCursor.scalarCount(raw, 0, exprEnd),
+                    decoded.rawStarts(), decoded.rawEnds());
 
-                // Calculate position of expression in original source.
-                // +1 because raw content starts at baseCol + 1 (past the opening backtick).
-                int exprLine = baseLine;
-                int exprCol = baseCol + 1 + exprStart;
-
-                ExpressionNode expr = parseEmbeddedExpression(exprSource, exprLine, exprCol);
+                // The rebased sub-parser EOF token sits at the raw position of
+                // the first scalar after the expression: the closing '}' when
+                // the interpolation is terminated, else the end of the raw
+                // template content (the same recovery position
+                // findMatchingBrace already selects).
+                ExpressionNode expr = parseEmbeddedExpression(decoded.source(), map,
+                    ScalarSourceCursor.scalarCount(raw, 0, exprEnd));
                 parts.add(expr);
 
                 pos = exprEnd;
@@ -1210,7 +1224,8 @@ public final class Parser {
             if (c == '}') {
                 error(DiagnosticCode.E1042,
                     "Unexpected '}' in template literal",
-                    new Token(TokenType.IDENTIFIER, "", baseLine, baseCol + 1 + pos, 1));
+                    rawPositionedToken(raw, baseLine, baseCol,
+                        templateTokenStartScalarOffset, pos, 1));
                 pos++;
                 continue;
             }
@@ -1230,7 +1245,8 @@ public final class Parser {
      * D14: Escape-aware, string-literal-aware, nested-template-literal-aware
      * brace-depth scan. Returns the index of the matching '}' or -1 if unterminated.
      */
-    private int findMatchingBrace(String raw, int startPos, int baseLine, int baseCol) {
+    private int findMatchingBrace(String raw, int startPos, int baseLine, int baseCol,
+                                  int templateTokenStartScalarOffset) {
         int depth = 1;
         int scanPos = startPos;
 
@@ -1289,39 +1305,76 @@ public final class Parser {
             scanPos++;
         }
 
-        // Unterminated
+        // Unterminated — the E1042 pseudo-token is raw-positioned (D5): it
+        // marks the two raw scalars at startPos (the expression start, the
+        // historical recovery anchor) with exact scalar offsets.
         error(DiagnosticCode.E1042,
             "Unterminated '${' in template literal",
-            new Token(TokenType.IDENTIFIER, "", baseLine, baseCol + 1 + startPos, 2));
+            rawPositionedToken(raw, baseLine, baseCol,
+                templateTokenStartScalarOffset, startPos, 2));
         return -1;
     }
 
     /**
      * Unescapes template-literal escape sequences in the expression substring
-     * before passing it to the sub-lexer.  This converts {@code \\`} to {@code `},
+     * before passing it to the sub-lexer, and produces the per-decoded-scalar
+     * raw mapping alongside (D5).  This converts {@code \\`} to {@code `},
      * {@code \\$} to {@code $}, {@code \\\\} to {@code \\}, etc., respecting string
      * literal and nested template literal boundaries so that escapes inside strings
      * are preserved verbatim.
+     *
+     * <p>The raw mapping is indexed by decoded Unicode scalar: entry {@code i}
+     * covers the {@code i}-th decoded scalar of the returned source and names
+     * the raw scalar range {@code [rawStarts[i], rawEnds[i])} (indices into the
+     * template's raw content) that produced it. A recognized escape's single
+     * decoded scalar maps to its first raw scalar (the backslash), so the raw
+     * run is two scalars; every verbatim copy maps one-to-one.</p>
      */
-    private String unescapeTemplateExpression(String expr) {
-        StringBuilder sb = new StringBuilder();
+    private DecodedTemplateExpr unescapeTemplateExpression(String raw, int exprStart, int exprEnd) {
+        String expr = raw.substring(exprStart, exprEnd);
+        StringBuilder sb = new StringBuilder(expr.length());
+        List<Integer> rawStarts = new ArrayList<>();
+        List<Integer> rawEnds = new ArrayList<>();
+        // Raw scalar index (into the full raw content) of the current position.
+        int rawIndex = ScalarSourceCursor.scalarCount(raw, 0, exprStart);
         int pos = 0;
         while (pos < expr.length()) {
             char c = expr.charAt(pos);
 
-            // Top-level escape sequence: unescape it
+            // Top-level escape sequence: unescape it (one decoded scalar from
+            // two raw scalars, mapped to the escape's first raw scalar).
             if (c == '\\' && pos + 1 < expr.length()) {
                 char next = expr.charAt(pos + 1);
                 switch (next) {
-                    case 'n'  -> sb.append('\n');
-                    case 't'  -> sb.append('\t');
-                    case '\\' -> sb.append('\\');
-                    case '"'  -> sb.append('"');
-                    case '\''  -> sb.append('\'');
-                    case '`'  -> sb.append('`');
-                    case '$'  -> sb.append('$');
-                    default -> { sb.append(c); sb.append(next); }
+                    case 'n'  -> appendDecoded(sb, rawStarts, rawEnds, '\n', rawIndex, rawIndex + 2);
+                    case 't'  -> appendDecoded(sb, rawStarts, rawEnds, '\t', rawIndex, rawIndex + 2);
+                    case '\\' -> appendDecoded(sb, rawStarts, rawEnds, '\\', rawIndex, rawIndex + 2);
+                    case '"'  -> appendDecoded(sb, rawStarts, rawEnds, '"', rawIndex, rawIndex + 2);
+                    case '\'' -> appendDecoded(sb, rawStarts, rawEnds, '\'', rawIndex, rawIndex + 2);
+                    case '`'  -> appendDecoded(sb, rawStarts, rawEnds, '`', rawIndex, rawIndex + 2);
+                    case '$'  -> appendDecoded(sb, rawStarts, rawEnds, '$', rawIndex, rawIndex + 2);
+                    default -> {
+                        // Unknown escape: backslash and character are kept
+                        // verbatim, one decoded scalar each. A surrogate pair
+                        // after the backslash stays one decoded scalar mapped
+                        // to its one raw scalar.
+                        appendDecoded(sb, rawStarts, rawEnds, c, rawIndex, rawIndex + 1);
+                        if (Character.isHighSurrogate(next) && pos + 2 < expr.length()
+                                && Character.isLowSurrogate(expr.charAt(pos + 2))) {
+                            appendDecoded(sb, rawStarts, rawEnds,
+                                Character.toCodePoint(next, expr.charAt(pos + 2)),
+                                rawIndex + 1, rawIndex + 2);
+                            pos += 3;
+                        } else {
+                            appendDecoded(sb, rawStarts, rawEnds, next,
+                                rawIndex + 1, rawIndex + 2);
+                            pos += 2;
+                        }
+                        rawIndex += 2;
+                        continue;
+                    }
                 }
+                rawIndex += 2;
                 pos += 2;
                 continue;
             }
@@ -1329,21 +1382,36 @@ public final class Parser {
             // String literal: copy verbatim to preserve internal escapes
             if (c == '"' || c == '\'') {
                 char quote = c;
-                sb.append(c);
+                appendDecoded(sb, rawStarts, rawEnds, c, rawIndex, rawIndex + 1);
+                rawIndex++;
                 pos++;
                 while (pos < expr.length()) {
                     char sc = expr.charAt(pos);
                     if (sc == '\\' && pos + 1 < expr.length()) {
-                        sb.append(sc);
-                        sb.append(expr.charAt(pos + 1));
-                        pos += 2;
+                        appendDecoded(sb, rawStarts, rawEnds, sc, rawIndex, rawIndex + 1);
+                        char esc = expr.charAt(pos + 1);
+                        if (Character.isHighSurrogate(esc) && pos + 2 < expr.length()
+                                && Character.isLowSurrogate(expr.charAt(pos + 2))) {
+                            appendDecoded(sb, rawStarts, rawEnds,
+                                Character.toCodePoint(esc, expr.charAt(pos + 2)),
+                                rawIndex + 1, rawIndex + 2);
+                            pos += 3;
+                        } else {
+                            appendDecoded(sb, rawStarts, rawEnds, esc,
+                                rawIndex + 1, rawIndex + 2);
+                            pos += 2;
+                        }
+                        rawIndex += 2;
                     } else if (sc == quote) {
-                        sb.append(sc);
+                        appendDecoded(sb, rawStarts, rawEnds, sc, rawIndex, rawIndex + 1);
+                        rawIndex++;
                         pos++;
                         break;
                     } else {
-                        sb.append(sc);
-                        pos++;
+                        int cp = expr.codePointAt(pos);
+                        appendDecoded(sb, rawStarts, rawEnds, cp, rawIndex, rawIndex + 1);
+                        rawIndex++;
+                        pos += Character.charCount(cp);
                     }
                 }
                 continue;
@@ -1351,32 +1419,59 @@ public final class Parser {
 
             // Nested template literal: copy verbatim (sub-lexer will handle it)
             if (c == '`') {
-                sb.append(c);
+                appendDecoded(sb, rawStarts, rawEnds, c, rawIndex, rawIndex + 1);
+                rawIndex++;
                 pos++;
                 while (pos < expr.length()) {
                     char tc = expr.charAt(pos);
                     if (tc == '\\' && pos + 1 < expr.length()) {
-                        sb.append(tc);
-                        sb.append(expr.charAt(pos + 1));
-                        pos += 2;
+                        appendDecoded(sb, rawStarts, rawEnds, tc, rawIndex, rawIndex + 1);
+                        char esc = expr.charAt(pos + 1);
+                        if (Character.isHighSurrogate(esc) && pos + 2 < expr.length()
+                                && Character.isLowSurrogate(expr.charAt(pos + 2))) {
+                            appendDecoded(sb, rawStarts, rawEnds,
+                                Character.toCodePoint(esc, expr.charAt(pos + 2)),
+                                rawIndex + 1, rawIndex + 2);
+                            pos += 3;
+                        } else {
+                            appendDecoded(sb, rawStarts, rawEnds, esc,
+                                rawIndex + 1, rawIndex + 2);
+                            pos += 2;
+                        }
+                        rawIndex += 2;
                     } else if (tc == '`') {
-                        sb.append(tc);
+                        appendDecoded(sb, rawStarts, rawEnds, tc, rawIndex, rawIndex + 1);
+                        rawIndex++;
                         pos++;
                         break;
                     } else {
-                        sb.append(tc);
-                        pos++;
+                        int cp = expr.codePointAt(pos);
+                        appendDecoded(sb, rawStarts, rawEnds, cp, rawIndex, rawIndex + 1);
+                        rawIndex++;
+                        pos += Character.charCount(cp);
                     }
                 }
                 continue;
             }
 
-            // Regular character
-            sb.append(c);
-            pos++;
+            // Regular character: one decoded scalar, one-to-one raw mapping.
+            int cp = expr.codePointAt(pos);
+            appendDecoded(sb, rawStarts, rawEnds, cp, rawIndex, rawIndex + 1);
+            rawIndex++;
+            pos += Character.charCount(cp);
         }
-        return sb.toString();
+        return new DecodedTemplateExpr(sb.toString(), rawStarts, rawEnds);
     }
+
+    /** Appends one decoded scalar and records its raw scalar run. */
+    private static void appendDecoded(StringBuilder sb, List<Integer> rawStarts,
+                                      List<Integer> rawEnds, int codePoint,
+                                      int rawStart, int rawEnd) {
+        sb.appendCodePoint(codePoint);
+        rawStarts.add(rawStart);
+        rawEnds.add(rawEnd);
+    }
+
     /**
      * Creates a LiteralExpr from an accumulated string part and adds it to the list.
      */
@@ -1387,63 +1482,95 @@ public final class Parser {
     }
 
     /**
+     * D5: a raw-positioned E1042 pseudo-token. Column and scalar offset
+     * derive from the raw scalar count of the raw-content prefix
+     * ({@code baseCol + 1 + rawScalarCount(raw[0..pos))},
+     * {@code templateTokenStartScalarOffset + 1 + rawScalarCount(raw[0..pos))});
+     * the scalar length is the raw run the token marks.
+     */
+    private Token rawPositionedToken(String raw, int baseLine, int baseCol,
+                                     int templateTokenStartScalarOffset,
+                                     int rawUtf16Pos, int runUtf16Length) {
+        int rawScalarIndex = ScalarSourceCursor.scalarCount(raw, 0, rawUtf16Pos);
+        int runScalars = ScalarSourceCursor.scalarCount(raw, rawUtf16Pos,
+            rawUtf16Pos + runUtf16Length);
+        int startOffset = templateTokenStartScalarOffset >= 0
+            ? templateTokenStartScalarOffset + 1 + rawScalarIndex
+            : Token.UNKNOWN_OFFSET;
+        int scalarLength = startOffset >= 0 ? runScalars : Token.UNKNOWN_OFFSET;
+        return new Token(TokenType.IDENTIFIER, "", baseLine, baseCol + 1 + rawScalarIndex,
+            runUtf16Length, startOffset, scalarLength, List.of());
+    }
+
+    /**
      * D11: Sub-lexer re-entry for an embedded expression inside ${...}.
      * Creates a fresh Lexer and Parser for the expression substring,
-     * adjusting token positions back to the original source coordinates.
+     * rebasing every sub-lexed token and diagnostic range through the
+     * {@link TemplateScalarMap} back onto the original source coordinates
+     * (D5).
      *
      * <p>D16: If the expression is syntactically invalid, substitutes a
-     * placeholder LiteralExpr so the rest of the template compiles.</p>
+     * placeholder LiteralExpr so the rest of the template compiles. The
+     * placeholder span is zero scalar length at the expression-start raw
+     * position with exact scalar offsets.</p>
      */
-    private ExpressionNode parseEmbeddedExpression(String source,
-            int baseLine, int baseCol) {
+    private ExpressionNode parseEmbeddedExpression(String source, TemplateScalarMap map,
+                                                   int eofRawScalarIndex) {
+        int baseLine = map.sourceLine();
+
         // 1. Sub-lex the expression substring
         deal.lexer.Lexer subLexer = new deal.lexer.Lexer(source, file);
         deal.lexer.LexResult subResult = subLexer.tokenize();
 
-        // 2. Merge sub-lexer diagnostics with position adjustment. The
-        // sub-lexer emits ranged CompilerDiagnostics over the decoded
-        // expression substring; this rebase maps the range's line/column
-        // coordinates back onto the original source (template
-        // expressions are single-line). The scalar offsets stay in the
-        // sub-source coordinate space until the template scalar-map
-        // rebasing migrates them (T6) — this is the same transitional
-        // position-preserving shape the pre-ranged loop rendered.
-        for (deal.diagnostics.CompilerDiagnostic d : subResult.diagnostics()) {
-            DiagnosticRange r = d.range();
-            DiagnosticRange rebased = new DiagnosticRange(
-                r.file(), baseLine + r.startLine() - 1, baseCol + r.startColumn() - 1,
-                baseLine + r.endLine() - 1, baseCol + r.endColumn() - 1,
-                r.startScalarOffset(), r.endScalarOffset(), r.scalarLength(),
-                r.origin());
-            diagnostics.add(new CompilerDiagnostic(d.code(), d.severity(),
-                d.message(), rebased, d.notes(), d.diagnosticCode()));
+        // 2. Merge sub-lexer diagnostics rebased through the scalar map. A
+        // range that cannot be rebased (defensive: non-SOURCE or offset-less)
+        // is kept as produced by the sub-lexer.
+        for (CompilerDiagnostic d : subResult.diagnostics()) {
+            DiagnosticRange rebased = rebaseSubRange(d.range(), map);
+            if (rebased != null) {
+                diagnostics.add(new CompilerDiagnostic(d.code(), d.severity(),
+                    d.message(), rebased, d.notes(), d.diagnosticCode()));
+            } else {
+                diagnostics.add(d);
+            }
         }
 
-        // 3. Remove trailing EOF token
-        java.util.List<Token> rawTokens = subResult.tokens();
-        java.util.List<Token> subTokens = new java.util.ArrayList<>();
-        for (Token t : rawTokens) {
+        // 3. Rebuild the adjusted token list: the sub-lexer's own EOF token is
+        // discarded; every non-EOF token is rebuilt with explicit rebased
+        // scalar offsets (never via the offset-less constructor); a rebased
+        // EOF token is appended at the raw position of the first scalar after
+        // the expression — the closing '}' position when the interpolation is
+        // terminated, else the end of the raw template content — carrying that
+        // raw position's scalar offset and zero scalar length (D5). The
+        // past-end peek() pseudo-EOF therefore carries exact scalar positions.
+        List<Token> adjusted = new ArrayList<>();
+        for (Token t : subResult.tokens()) {
             if (t.type() == TokenType.EOF) break;
-            subTokens.add(t);
+            adjusted.add(rebaseSubToken(t, map, baseLine));
         }
+        adjusted.add(new Token(TokenType.EOF, "", baseLine,
+            map.sourceColumnAtRawScalar(eofRawScalarIndex), 0,
+            map.sourceOffsetAtRawScalar(eofRawScalarIndex), 0, List.of()));
 
-        if (subTokens.isEmpty()) {
-            // Empty expression: emit error and return a placeholder
+        // 4. Empty-expression detection counts tokens other than the retained
+        // EOF (D5).
+        boolean hasExpressionTokens = false;
+        for (Token t : adjusted) {
+            if (t.type() != TokenType.EOF) {
+                hasExpressionTokens = true;
+                break;
+            }
+        }
+        if (!hasExpressionTokens) {
+            // The E1042 pseudo-token is raw-positioned: zero scalar length at
+            // the expression-start raw position (D5).
+            int rawScalarIndex = map.expressionStartRawScalarIndex();
             error(DiagnosticCode.E1042,
                 "Empty expression in template literal",
-                new Token(TokenType.IDENTIFIER, "", baseLine, baseCol, 0));
-            return new LiteralExpr(
-                new Span(file, baseLine, baseCol, baseLine, baseCol),
-                new LiteralValue.StringLiteral(""));
-        }
-
-        // 4. Adjust token positions to original source coordinates
-        java.util.List<Token> adjusted = new java.util.ArrayList<>();
-        for (Token t : subTokens) {
-            adjusted.add(new Token(t.type(), t.lexeme(),
-                baseLine + t.line() - 1,
-                baseCol + t.column() - 1,
-                t.length()));
+                new Token(TokenType.IDENTIFIER, "", baseLine,
+                    map.sourceColumnAtRawScalar(rawScalarIndex), 0,
+                    map.sourceOffsetAtRawScalar(rawScalarIndex), 0, List.of()));
+            return placeholderLiteral(map);
         }
 
         // 5. Parse expression with a sub-parser
@@ -1451,25 +1578,96 @@ public final class Parser {
         Parser subParser = new Parser(adjusted, file);
         ExpressionNode expr = subParser.parseExpression();
 
-        // 6. Merge sub-parser diagnostics. The adjusted tokens carry
-        // rebased line/column positions but no scalar offsets, so
-        // sub-parser diagnostics convert to SYNTHETIC with anchor notes
-        // naming the rebased token positions — the template scalar-map
-        // rebasing (T6) makes these SOURCE-exact.
+        // 6. Merge sub-parser diagnostics. The adjusted tokens carry rebased
+        // line/column positions and exact original scalar offsets, so
+        // sub-parser diagnostics are already SOURCE-exact in the original
+        // file — including end-of-input errors anchored at the past-end
+        // pseudo-EOF derived from the retained rebased EOF token.
         diagnostics.addAll(subParser.diagnostics);
 
         // D16: Null-safety guard — if the expression is syntactically invalid
         // (e.g., ${@}), parseExpression() returns null. Substitute a placeholder
-        // so the rest of the template and compilation can continue.
+        // so the rest of the template and compilation can continue. The
+        // placeholder span is zero scalar length at the expression-start raw
+        // position with exact scalar offsets (D5).
         if (expr == null) {
-            expr = new LiteralExpr(
-                new Span(file, baseLine, baseCol, baseLine, baseCol),
-                new LiteralValue.StringLiteral(""));
+            expr = placeholderLiteral(map);
         }
 
         return expr;
     }
 
+    /**
+     * Rebases a sub-lexer diagnostic range through the scalar map: the
+     * range's decoded scalar offsets name raw scalar indices, and line/column
+     * come from the single-line template base arithmetic. Returns null when
+     * the range carries no offset information or is not SOURCE — such ranges
+     * cannot be translated into original-source SOURCE coordinates.
+     */
+    private DiagnosticRange rebaseSubRange(DiagnosticRange r, TemplateScalarMap map) {
+        if (r == null || r.origin() != RangeOrigin.SOURCE || !r.hasScalarOffsets()
+                || !map.hasTemplateScalarOffsets()) {
+            return null;
+        }
+        int decodedStart = r.startScalarOffset();
+        int decodedEnd = r.endScalarOffset();
+        int rawStart = map.decodedToRawStart(decodedStart);
+        int rawEnd = decodedEnd > decodedStart
+            ? map.decodedToRawEnd(decodedEnd - 1)
+            : rawStart;
+        int startOffset = map.sourceOffsetAtRawScalar(rawStart);
+        int endOffset = map.sourceOffsetAtRawScalar(rawEnd);
+        return new DiagnosticRange(file, map.sourceLine(),
+            map.sourceColumnAtRawScalar(rawStart),
+            map.sourceLine(), map.sourceColumnAtRawScalar(rawEnd),
+            startOffset, endOffset, endOffset - startOffset, RangeOrigin.SOURCE);
+    }
+
+    /**
+     * Rebuilds one sub-lexer token with rebased coordinates: start column and
+     * scalar offset come from the raw scalar index of the token's first
+     * decoded scalar; the scalar length is the raw run the token covers.
+     * A token without offset information (defensive/test-only) keeps the
+     * line/column rebase and carries UNKNOWN offsets.
+     */
+    private Token rebaseSubToken(Token t, TemplateScalarMap map, int baseLine) {
+        if (!t.hasScalarOffsets()) {
+            return new Token(t.type(), t.lexeme(), baseLine,
+                map.sourceColumnAtRawScalar(map.expressionStartRawScalarIndex())
+                    + t.column() - 1,
+                t.length(), t.directives());
+        }
+        int decodedStart = t.startScalarOffset();
+        int decodedEnd = t.endScalarOffset();
+        int rawStart = map.decodedToRawStart(decodedStart);
+        int rawEnd = decodedEnd > decodedStart
+            ? map.decodedToRawEnd(decodedEnd - 1)
+            : rawStart;
+        return new Token(t.type(), t.lexeme(), baseLine,
+            map.sourceColumnAtRawScalar(rawStart), t.length(),
+            map.sourceOffsetAtRawScalar(rawStart),
+            Math.max(0, rawEnd - rawStart), t.directives());
+    }
+
+    /**
+     * The D16 placeholder: a zero-scalar-length LiteralExpr at the
+     * expression-start raw position with explicit exact scalar offsets
+     * (derived through the map's raw side).
+     */
+    private LiteralExpr placeholderLiteral(TemplateScalarMap map) {
+        int rawScalarIndex = map.expressionStartRawScalarIndex();
+        int line = map.sourceLine();
+        int column = map.sourceColumnAtRawScalar(rawScalarIndex);
+        int offset = map.sourceOffsetAtRawScalar(rawScalarIndex);
+        return new LiteralExpr(
+            new Span(file, line, column, line, column, offset, offset),
+            new LiteralValue.StringLiteral(""));
+    }
+
+    /** Decoded template expression source plus its per-scalar raw mapping. */
+    private record DecodedTemplateExpr(String source, List<Integer> rawStarts,
+                                       List<Integer> rawEnds) {
+    }
 
     private ExpressionNode parseFunctionExpression() {
         boolean isAsync = match(TokenType.ASYNC);

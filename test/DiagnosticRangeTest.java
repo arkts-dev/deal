@@ -1,7 +1,9 @@
 package deal.test;
 
 import deal.ast.Span;
+import deal.ast.TemplateLiteralExpr;
 import deal.ast.TokenType;
+import deal.ast.VariableDeclaration;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 import deal.diagnostics.DiagnosticFormatter;
@@ -10,6 +12,8 @@ import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.diagnostics.RangeOrigin;
 import deal.lexer.Diagnostic;
+import deal.lexer.LexResult;
+import deal.lexer.Lexer;
 import deal.lexer.Token;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
@@ -46,9 +50,14 @@ import java.util.List;
  * SYNTHETIC shape, and both note renderings; {@link
  * DiagnosticStructuredOutput} exact deterministic JSON field order and
  * values; the formatted-vs-structured cross-check; and the {@code
- * CompilerDiagnostic.toString()} canonical-formatter delegation). Later
- * capabilities extend this file with the manifest-range and
- * producer-migration sections.
+ * CompilerDiagnostic.toString()} canonical-formatter delegation), and the
+ * ISSUE-0224 template-interpolation rebasing section (sub-lexed
+ * diagnostic ranges inside ${...} rebased to exact original scalar
+ * offsets, the rebased sub-parser EOF token anchoring end-of-input errors
+ * at the expression-end raw position, and raw-positioned E1042/D16
+ * anchor ranges — each cross-checked against an independent
+ * {@link ScalarSourceCursor} recomputation). Later capabilities extend
+ * this file with the manifest-range and producer-migration sections.
  *
  * <p>Runs via main() using the check() helpers; exits non-zero on failure.
  */
@@ -90,6 +99,7 @@ public class DiagnosticRangeTest {
         testSpanOffsets();
         testSpanHelperPropagation();
         testPeekPseudoEof();
+        testTemplateInterpolationRebasing();
 
         testCarrierRecords();
         testRangeConversions();
@@ -842,6 +852,213 @@ public class DiagnosticRangeTest {
                 "EOF-anchored error offsets must be (9,9) with zero length, got ("
                     + d.range().startScalarOffset() + ","
                     + d.range().endScalarOffset() + ")");
+        }
+    }
+
+    // =========================================================================
+    // ISSUE-0224: template-interpolation scalar rebasing
+    // =========================================================================
+
+    private static ParseResult parseTemplateSource(String source) {
+        LexResult lex = new Lexer(source, "test.deal").tokenize();
+        return new Parser(lex.tokens(), "test.deal").parse();
+    }
+
+    private static CompilerDiagnostic templateDiag(List<CompilerDiagnostic> diags,
+                                                   String code) {
+        for (CompilerDiagnostic d : diags) {
+            if (d.code().equals(code)) {
+                return d;
+            }
+        }
+        return null;
+    }
+
+    /** Cursor recomputation cross-check: the scalar at {@code offset}. */
+    private static void checkTemplateCursor(String source, int offset,
+                                            int expectedLine, int expectedColumn,
+                                            String context) {
+        ScalarSourceCursor cursor = new ScalarSourceCursor(source);
+        for (int i = 0; i < offset; i++) {
+            cursor.advance();
+        }
+        check(cursor.line() == expectedLine && cursor.column() == expectedColumn,
+            context + ": cursor at scalar offset " + offset + " is ("
+                + cursor.line() + "," + cursor.column() + "), expected ("
+                + expectedLine + "," + expectedColumn + ")");
+    }
+
+    /**
+     * ISSUE-0224 verification 5: every sub-lexed diagnostic inside ${...}
+     * rebases through the TemplateScalarMap to exact original scalar
+     * offsets; the adjusted sub-parser token list retains a rebased EOF
+     * token so end-of-input errors anchor at the expression-end raw
+     * position; E1042 pseudo-token and D16 placeholder ranges are
+     * raw-positioned. Each expectation is cross-checked against an
+     * independent ScalarSourceCursor recomputation of the original source.
+     */
+    private static void testTemplateInterpolationRebasing() {
+        System.out.println("-- Template interpolation scalar rebasing (ISSUE-0224) --");
+
+        // 1. End-of-input E1037 anchors at the closing '}' position with
+        //    SOURCE origin and exact scalar offsets — never SYNTHETIC (1,1).
+        String src1 = "let x = `${foo +}`;";
+        ParseResult r1 = parseTemplateSource(src1);
+        CompilerDiagnostic e1037 = templateDiag(r1.diagnostics(), "E1037");
+        check(e1037 != null, "T1: E1037 present for `${foo +}`");
+        if (e1037 != null) {
+            DiagnosticRange r = e1037.range();
+            check(r.origin() == RangeOrigin.SOURCE,
+                "T1: E1037 origin SOURCE, got " + r.origin());
+            check(r.startLine() == 1 && r.startColumn() == 17,
+                "T1: E1037 start (1,17), got (" + r.startLine() + "," + r.startColumn() + ")");
+            check(r.endLine() == 1 && r.endColumn() == 17,
+                "T1: E1037 end (1,17), got (" + r.endLine() + "," + r.endColumn() + ")");
+            check(r.startScalarOffset() == 16 && r.endScalarOffset() == 16
+                    && r.scalarLength() == 0,
+                "T1: E1037 offsets (16,16) len 0, got (" + r.startScalarOffset()
+                    + "," + r.endScalarOffset() + ") len " + r.scalarLength());
+            check(e1037.notes().isEmpty(),
+                "T1: SOURCE anchor carries no notes, got " + e1037.notes());
+        }
+        checkTemplateCursor(src1, 16, 1, 17, "T1");
+
+        // 2. An end-of-input error inside an unterminated interpolation
+        //    anchors at the end of the raw template content (the closing
+        //    backtick's position).
+        String src2 = "let x = `a${foo +`;";
+        ParseResult r2 = parseTemplateSource(src2);
+        CompilerDiagnostic e1037b = templateDiag(r2.diagnostics(), "E1037");
+        check(e1037b != null, "T2: E1037 present for the unterminated interpolation");
+        if (e1037b != null) {
+            DiagnosticRange r = e1037b.range();
+            check(r.origin() == RangeOrigin.SOURCE
+                    && r.startLine() == 1 && r.startColumn() == 18
+                    && r.endLine() == 1 && r.endColumn() == 18
+                    && r.startScalarOffset() == 17 && r.endScalarOffset() == 17
+                    && r.scalarLength() == 0,
+                "T2: E1037 at (1,18)-(1,18) offsets (17,17) len 0, got " + r);
+        }
+        checkTemplateCursor(src2, 17, 1, 18, "T2");
+
+        // 3. A sub-lexer error after a recognized escape rebases through the
+        //    scalar map: an escape's decoded scalar maps to the escape's
+        //    first raw scalar, so the '@' diagnostic lands on the raw '@'
+        //    position, not the decoded-coordinate position.
+        String src3 = "let x = `${\\$x + @}`;";
+        ParseResult r3 = parseTemplateSource(src3);
+        CompilerDiagnostic e1001 = templateDiag(r3.diagnostics(), "E1001");
+        check(e1001 != null, "T3: E1001 present for `${\\$x + @}`");
+        if (e1001 != null) {
+            DiagnosticRange r = e1001.range();
+            check(r.origin() == RangeOrigin.SOURCE
+                    && r.startLine() == 1 && r.startColumn() == 18
+                    && r.endLine() == 1 && r.endColumn() == 19
+                    && r.startScalarOffset() == 17 && r.endScalarOffset() == 18
+                    && r.scalarLength() == 1,
+                "T3: E1001 at (1,18)-(1,19) offsets (17,18) len 1, got " + r);
+        }
+        checkTemplateCursor(src3, 17, 1, 18, "T3");
+
+        // 4. Astral content before the interpolation: the supplementary
+        //    character counts one scalar in column and offset arithmetic.
+        String src4 = "let x = `\uD83D\uDE00${foo +}`;";
+        ParseResult r4 = parseTemplateSource(src4);
+        CompilerDiagnostic e1037c = templateDiag(r4.diagnostics(), "E1037");
+        check(e1037c != null, "T4: E1037 present after the astral prefix");
+        if (e1037c != null) {
+            DiagnosticRange r = e1037c.range();
+            check(r.origin() == RangeOrigin.SOURCE
+                    && r.startLine() == 1 && r.startColumn() == 18
+                    && r.endLine() == 1 && r.endColumn() == 18
+                    && r.startScalarOffset() == 17 && r.endScalarOffset() == 17
+                    && r.scalarLength() == 0,
+                "T4: E1037 at (1,18)-(1,18) offsets (17,17) len 0, got " + r);
+        }
+        checkTemplateCursor(src4, 17, 1, 18, "T4");
+
+        // 5. A tab before the interpolation counts one scalar.
+        String src5 = "let x = `\t${foo +}`;";
+        ParseResult r5 = parseTemplateSource(src5);
+        CompilerDiagnostic e1037d = templateDiag(r5.diagnostics(), "E1037");
+        check(e1037d != null, "T5: E1037 present after the tab prefix");
+        if (e1037d != null) {
+            DiagnosticRange r = e1037d.range();
+            check(r.origin() == RangeOrigin.SOURCE
+                    && r.startLine() == 1 && r.startColumn() == 18
+                    && r.endLine() == 1 && r.endColumn() == 18
+                    && r.startScalarOffset() == 17 && r.endScalarOffset() == 17
+                    && r.scalarLength() == 0,
+                "T5: E1037 at (1,18)-(1,18) offsets (17,17) len 0, got " + r);
+        }
+        checkTemplateCursor(src5, 17, 1, 18, "T5");
+
+        // 6. E1042 pseudo-tokens are raw-positioned and scalar-exact: an
+        //    invalid escape after astral content marks the escape character's
+        //    raw position.
+        String src6 = "let x = `hi\uD83D\uDE00\\q`;";
+        ParseResult r6 = parseTemplateSource(src6);
+        CompilerDiagnostic e1042 = templateDiag(r6.diagnostics(), "E1042");
+        check(e1042 != null, "T6: E1042 present for the invalid escape after astral");
+        if (e1042 != null) {
+            DiagnosticRange r = e1042.range();
+            check(r.origin() == RangeOrigin.SOURCE
+                    && r.startLine() == 1 && r.startColumn() == 14
+                    && r.endLine() == 1 && r.endColumn() == 15
+                    && r.startScalarOffset() == 13 && r.endScalarOffset() == 14
+                    && r.scalarLength() == 1,
+                "T6: E1042 at (1,14)-(1,15) offsets (13,14) len 1, got " + r);
+        }
+        checkTemplateCursor(src6, 13, 1, 14, "T6");
+
+        // 7. Empty expression: E1042 and the D16 placeholder carry zero
+        //    scalar length at the expression-start raw position.
+        String src7 = "let x = `${}`;";
+        ParseResult r7 = parseTemplateSource(src7);
+        CompilerDiagnostic e1042b = templateDiag(r7.diagnostics(), "E1042");
+        check(e1042b != null, "T7: E1042 present for the empty interpolation");
+        if (e1042b != null) {
+            DiagnosticRange r = e1042b.range();
+            check(r.origin() == RangeOrigin.SOURCE
+                    && r.startLine() == 1 && r.startColumn() == 12
+                    && r.endLine() == 1 && r.endColumn() == 12
+                    && r.startScalarOffset() == 11 && r.endScalarOffset() == 11
+                    && r.scalarLength() == 0,
+                "T7: E1042 at (1,12)-(1,12) offsets (11,11) len 0, got " + r);
+        }
+        if (!r7.program().statements().isEmpty()
+                && r7.program().statements().get(0) instanceof VariableDeclaration vd7
+                && vd7.initializer() instanceof TemplateLiteralExpr tl7
+                && tl7.parts().size() == 3) {
+            Span placeholder = tl7.parts().get(1).span();
+            check(placeholder.startLine() == 1 && placeholder.startColumn() == 12
+                    && placeholder.endLine() == 1 && placeholder.endColumn() == 12,
+                "T7: D16 placeholder span (1,12)-(1,12), got " + placeholder);
+            check(placeholder.startScalarOffset() == 11
+                    && placeholder.endScalarOffset() == 11,
+                "T7: D16 placeholder offsets (11,11), got ("
+                    + placeholder.startScalarOffset() + ","
+                    + placeholder.endScalarOffset() + ")");
+        } else {
+            fail("T7: expected a 3-part template literal with a placeholder");
+        }
+
+        // 8. Formatted and structured surfaces of a rebased diagnostic agree
+        //    (formatted-vs-structured cross-check on the E1037 fixture).
+        if (e1037 != null) {
+            String formatted = DiagnosticFormatter.format(e1037);
+            check(formatted.contains("test.deal:1:17-1:17")
+                    && formatted.contains("ERROR E1037")
+                    && formatted.contains("span 0"),
+                "T8: formatted E1037 must name (1,17)-(1,17) with span 0, got: " + formatted);
+            String json = DiagnosticStructuredOutput.toJson(List.of(e1037));
+            check(json.contains("\"startLine\": 1")
+                    && json.contains("\"startColumn\": 17")
+                    && json.contains("\"startScalarOffset\": 16")
+                    && json.contains("\"endScalarOffset\": 16")
+                    && json.contains("\"scalarLength\": 0")
+                    && json.contains("\"origin\": \"SOURCE\""),
+                "T8: structured E1037 must carry the exact range fields, got: " + json);
         }
     }
 
