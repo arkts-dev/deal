@@ -340,6 +340,50 @@ const $rt = {
   numMod: function $numMod(a, b) {
     return a - $Math.floor(a / b) * b;
   },
+
+  // ===== Wrapper factory and conversion intrinsics
+  // (js-backend-runtime-artifact D7) =====
+
+  // function: the canonical wrapper factory — a plain object (prototype
+  // Object.prototype) with exactly the three $-keyed own properties
+  // $kind: "function", $sig: sig (stored verbatim — signature comparison
+  // happens in checkType/checkFunctionSig, which compare the string
+  // exactly), and $f: f (the exact function reference — never re-wrapped,
+  // identity-preserving). The wrapper is the passive shape: function
+  // performs no checks itself; the parameter/return checks live in the
+  // emitted wrapper bodies (js-backend-runtime D6). All $-keys, plain
+  // syntax; no shared wrapper state; the factory is pure
+  // (deal/runtime.lua:516-519).
+  function: function $function(sig, f) {
+    return { $kind: "function", $sig: sig, $f: f };
+  },
+
+  // intConvert: the int(x) conversion intrinsic (deal/runtime.lua:917-926).
+  // A nil-equivalent input (undefined, null, MISSING) raises E8001
+  // "cannot convert null to int" with expected "int"/actual "null"; any
+  // other value passes through the full checkInt contract — kind, NaN,
+  // ±Infinity, non-integer, safe range, -0 normalization (D3). Every
+  // error goes through the D8 spine with the forwarded (file, line,
+  // column); success returns the validated value (pure, no mutation).
+  intConvert: function $intConvert(v, file, line, column) {
+    if ($rt.isNilEquivalent(v)) {
+      $rt.fail("E8001", "cannot convert null to int", file, line, column, "int", "null");
+    }
+    return $rt.checkInt(v, file, line, column);
+  },
+
+  // numberConvert: the number(x) conversion intrinsic
+  // (deal/runtime.lua:927-933). A nil-equivalent input raises E8001
+  // "cannot convert null to number" with expected "number"/actual "null";
+  // any other value passes through checkNumber — NaN and ±Infinity pass
+  // and are returned (spec §Numeric overflow). Same spine, span
+  // forwarding, and purity as intConvert.
+  numberConvert: function $numberConvert(v, file, line, column) {
+    if ($rt.isNilEquivalent(v)) {
+      $rt.fail("E8001", "cannot convert null to number", file, line, column, "number", "null");
+    }
+    return $rt.checkNumber(v, file, line, column);
+  },
 };
 
 module.exports = $rt;
