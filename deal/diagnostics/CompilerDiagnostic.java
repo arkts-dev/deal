@@ -14,7 +14,9 @@ import java.util.List;
  * diagnosticCode)}. The compatibility accessors {@link #file()},
  * {@link #line()}, and {@link #column()} derive from the range start;
  * {@link #code()}, {@link #severity()}, {@link #message()}, and
- * {@link #diagnosticCode()} are the record components.</p>
+ * {@link #diagnosticCode()} are the record components.
+ * {@link #toString()} delegates to the canonical formatter
+ * {@link DiagnosticFormatter#format(CompilerDiagnostic)} (D7/D8).</p>
  *
  * <p>The compact constructor implements every D9 normalization rule and
  * never throws for range, path, or encoding defects:
@@ -285,10 +287,15 @@ public record CompilerDiagnostic(
         return range.startColumn();
     }
 
+    /**
+     * Delegates to the canonical formatter (D7/D8): the rendered string is
+     * identical to {@link DiagnosticFormatter#format(CompilerDiagnostic)}
+     * for the same diagnostic and contains the SEVERITY, code, and message
+     * substrings.
+     */
     @Override
     public String toString() {
-        return String.format("%s: %s: %s (%s:%d:%d)",
-            severity.toUpperCase(), code, message, file(), line(), column());
+        return DiagnosticFormatter.format(this);
     }
 
     // =========================================================================

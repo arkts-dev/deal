@@ -4,8 +4,10 @@ import deal.ast.Span;
 import deal.ast.TokenType;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticFormatter;
 import deal.diagnostics.DiagnosticNote;
 import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.diagnostics.RangeOrigin;
 import deal.lexer.Diagnostic;
 import deal.lexer.Token;
@@ -19,10 +21,10 @@ import java.util.List;
 
 /**
  * Tests for the non-lossy diagnostic range foundation (ISSUE-0216 /
- * ISSUE-0217 / ISSUE-0218).
+ * ISSUE-0217 / ISSUE-0218 / ISSUE-0219).
  *
- * <p>This file is the home of the ISSUE-0216/ISSUE-0217/ISSUE-0218
- * verification suites. It holds the {@link ScalarSourceCursor} /
+ * <p>This file is the home of the ISSUE-0216/ISSUE-0217/ISSUE-0218/
+ * ISSUE-0219 verification suites. It holds the {@link ScalarSourceCursor} /
  * {@link ScalarPosition} section (hand-computed walk expectations for
  * astral characters, tabs, LF, CRLF, and CR line endings, unpaired
  * surrogates, mark/reset lookahead, and the {@code scalarCount}
@@ -38,8 +40,14 @@ import java.util.List;
  * {@code Span.range()}/{@code Token.range()} conversions including the
  * UNKNOWN→SYNTHETIC origin pins, the SOURCE-implies-known-offsets
  * invariant, the D6 synthetic contract with anchor notes, the D9
- * normalization pins, and the D5 factory surface). Later capabilities
- * extend this file with the formatter, manifest-range, and
+ * normalization pins, and the D5 factory surface), and the ISSUE-0219
+ * formatter/structured section ({@link DiagnosticFormatter} exact human
+ * renderings for multi-line and zero-length SOURCE ranges, the canonical
+ * SYNTHETIC shape, and both note renderings; {@link
+ * DiagnosticStructuredOutput} exact deterministic JSON field order and
+ * values; the formatted-vs-structured cross-check; and the {@code
+ * CompilerDiagnostic.toString()} canonical-formatter delegation). Later
+ * capabilities extend this file with the manifest-range and
  * producer-migration sections.
  *
  * <p>Runs via main() using the check() helpers; exits non-zero on failure.
@@ -89,6 +97,10 @@ public class DiagnosticRangeTest {
         testSyntheticContract();
         testD9Normalization();
         testFactorySurface();
+        testFormatter();
+        testStructuredOutput();
+        testFormattedStructuredCrossCheck();
+        testToStringDelegation();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -1467,5 +1479,383 @@ public class DiagnosticRangeTest {
             threw = true;
         }
         check(threw, "error(null DiagnosticCode, ...) must throw IAE");
+    }
+
+    // =========================================================================
+    // ISSUE-0219 formatter/structured section (verification 1)
+    // =========================================================================
+
+    /** The shared multi-line SOURCE fixture: (2,5)-(3,9), offsets [20,24), span 4. */
+    private static CompilerDiagnostic multiLineDiagnostic() {
+        return CompilerDiagnostic.error(DiagnosticCode.E3001, "type mismatch",
+            new DiagnosticRange("src/main.deal", 2, 5, 3, 9, 20, 24, 4,
+                RangeOrigin.SOURCE));
+    }
+
+    private static void testFormatter() {
+        System.out.println("-- DiagnosticFormatter: canonical human format (D8) --");
+
+        // Multi-line SOURCE range, no notes.
+        CompilerDiagnostic multi = multiLineDiagnostic();
+        check(DiagnosticFormatter.format(multi).equals(
+                "src/main.deal:2:5-3:9: ERROR E3001: type mismatch [span 4]"),
+            "multi-line SOURCE format, got: " + DiagnosticFormatter.format(multi));
+
+        // Zero-length SOURCE range at a real anchor.
+        CompilerDiagnostic zero = CompilerDiagnostic.error(DiagnosticCode.E2010,
+            "Entry module must export 'main'",
+            new DiagnosticRange("f.deal", 1, 1, 1, 1, 0, 0, 0, RangeOrigin.SOURCE));
+        check(DiagnosticFormatter.format(zero).equals(
+                "f.deal:1:1-1:1: ERROR E2010: Entry module must export 'main' [span 0]"),
+            "zero-length SOURCE format, got: " + DiagnosticFormatter.format(zero));
+
+        // Canonical SYNTHETIC range with a construct-naming anchor note.
+        CompilerDiagnostic syn = CompilerDiagnostic.syntheticError(DiagnosticCode.E4008,
+            "circular jsonable dependency", "mod.deal",
+            "missing anchor: class declaration span for cycle node 'A'");
+        check(DiagnosticFormatter.format(syn).equals(
+                "mod.deal:1:1-1:1: ERROR E4008: circular jsonable dependency [span 0]\n"
+                    + "    note: missing anchor: class declaration span for cycle node 'A'"),
+            "SYNTHETIC format with construct-naming note, got: " + DiagnosticFormatter.format(syn));
+
+        // Message-only note rendering.
+        CompilerDiagnostic msgOnly = new CompilerDiagnostic("E3001", "warning",
+            "type mismatch", multi.range(),
+            List.of(new DiagnosticNote("consider using number", null)),
+            DiagnosticCode.E3001);
+        check(DiagnosticFormatter.format(msgOnly).equals(
+                "src/main.deal:2:5-3:9: WARNING E3001: type mismatch [span 4]\n"
+                    + "    note: consider using number"),
+            "message-only note rendering, got: " + DiagnosticFormatter.format(msgOnly));
+
+        // Secondary-range note rendering.
+        CompilerDiagnostic secondary = new CompilerDiagnostic("E3001", "error",
+            "type mismatch", multi.range(),
+            List.of(new DiagnosticNote("see declaration",
+                new DiagnosticRange("other.deal", 1, 2, 1, 6, 0, 4, 4,
+                    RangeOrigin.SOURCE))),
+            DiagnosticCode.E3001);
+        check(DiagnosticFormatter.format(secondary).equals(
+                "src/main.deal:2:5-3:9: ERROR E3001: type mismatch [span 4]\n"
+                    + "    note: see declaration (at other.deal:1:2-1:6, span 4)"),
+            "secondary-range note rendering, got: " + DiagnosticFormatter.format(secondary));
+
+        // Both note renderings in one diagnostic, in note order.
+        CompilerDiagnostic both = new CompilerDiagnostic("E3001", "error", "type mismatch",
+            multi.range(),
+            List.of(new DiagnosticNote("first hint", null),
+                new DiagnosticNote("see declaration",
+                    new DiagnosticRange("other.deal", 2, 1, 2, 4, 7, 10, 3,
+                        RangeOrigin.SOURCE))),
+            DiagnosticCode.E3001);
+        check(DiagnosticFormatter.format(both).equals(
+                "src/main.deal:2:5-3:9: ERROR E3001: type mismatch [span 4]\n"
+                    + "    note: first hint\n"
+                    + "    note: see declaration (at other.deal:2:1-2:4, span 3)"),
+            "both note renderings in order, got: " + DiagnosticFormatter.format(both));
+
+        // Determinism: formatting twice yields the identical string.
+        check(DiagnosticFormatter.format(both).equals(DiagnosticFormatter.format(both)),
+            "formatter must be deterministic");
+    }
+
+    private static void testStructuredOutput() {
+        System.out.println("-- DiagnosticStructuredOutput: deterministic JSON v1 (D8) --");
+
+        // Empty diagnostics list; a null list yields the same empty document.
+        String emptyJson = "{\n"
+            + "  \"version\": 1,\n"
+            + "  \"diagnostics\": []\n"
+            + "}";
+        check(DiagnosticStructuredOutput.toJson(List.of()).equals(emptyJson),
+            "empty diagnostics JSON shape, got: " + DiagnosticStructuredOutput.toJson(List.of()));
+        check(DiagnosticStructuredOutput.toJson(null).equals(emptyJson),
+            "null diagnostics list yields the empty document");
+
+        // Single multi-line SOURCE diagnostic, no notes: exact field order
+        // (code, severity, message, range{file, startLine, startColumn,
+        // endLine, endColumn, startScalarOffset, endScalarOffset,
+        // scalarLength, origin}, notes).
+        CompilerDiagnostic multi = multiLineDiagnostic();
+        String multiJson = "{\n"
+            + "  \"version\": 1,\n"
+            + "  \"diagnostics\": [\n"
+            + "    {\n"
+            + "      \"code\": \"E3001\",\n"
+            + "      \"severity\": \"error\",\n"
+            + "      \"message\": \"type mismatch\",\n"
+            + "      \"range\": {\n"
+            + "        \"file\": \"src/main.deal\",\n"
+            + "        \"startLine\": 2,\n"
+            + "        \"startColumn\": 5,\n"
+            + "        \"endLine\": 3,\n"
+            + "        \"endColumn\": 9,\n"
+            + "        \"startScalarOffset\": 20,\n"
+            + "        \"endScalarOffset\": 24,\n"
+            + "        \"scalarLength\": 4,\n"
+            + "        \"origin\": \"SOURCE\"\n"
+            + "      },\n"
+            + "      \"notes\": []\n"
+            + "    }\n"
+            + "  ]\n"
+            + "}";
+        check(DiagnosticStructuredOutput.toJson(List.of(multi)).equals(multiJson),
+            "single-diagnostic JSON field order, got: "
+                + DiagnosticStructuredOutput.toJson(List.of(multi)));
+
+        // Zero-length SOURCE range: positions (1,1)-(1,1), offsets (0,0),
+        // scalar length 0, origin SOURCE.
+        CompilerDiagnostic zero = CompilerDiagnostic.error(DiagnosticCode.E2010,
+            "Entry module must export 'main'",
+            new DiagnosticRange("f.deal", 1, 1, 1, 1, 0, 0, 0, RangeOrigin.SOURCE));
+        String zeroJson = "{\n"
+            + "  \"version\": 1,\n"
+            + "  \"diagnostics\": [\n"
+            + "    {\n"
+            + "      \"code\": \"E2010\",\n"
+            + "      \"severity\": \"error\",\n"
+            + "      \"message\": \"Entry module must export 'main'\",\n"
+            + "      \"range\": {\n"
+            + "        \"file\": \"f.deal\",\n"
+            + "        \"startLine\": 1,\n"
+            + "        \"startColumn\": 1,\n"
+            + "        \"endLine\": 1,\n"
+            + "        \"endColumn\": 1,\n"
+            + "        \"startScalarOffset\": 0,\n"
+            + "        \"endScalarOffset\": 0,\n"
+            + "        \"scalarLength\": 0,\n"
+            + "        \"origin\": \"SOURCE\"\n"
+            + "      },\n"
+            + "      \"notes\": []\n"
+            + "    }\n"
+            + "  ]\n"
+            + "}";
+        check(DiagnosticStructuredOutput.toJson(List.of(zero)).equals(zeroJson),
+            "zero-length SOURCE JSON, got: "
+                + DiagnosticStructuredOutput.toJson(List.of(zero)));
+
+        // Canonical SYNTHETIC range with a construct-naming note: origin
+        // SYNTHETIC, canonical (1,1)-(1,1) shape, the note is message-only
+        // ("range": null).
+        CompilerDiagnostic syn = CompilerDiagnostic.syntheticError(DiagnosticCode.E4008,
+            "circular jsonable dependency", "mod.deal",
+            "missing anchor: class declaration span for cycle node 'A'");
+        String synJson = "{\n"
+            + "  \"version\": 1,\n"
+            + "  \"diagnostics\": [\n"
+            + "    {\n"
+            + "      \"code\": \"E4008\",\n"
+            + "      \"severity\": \"error\",\n"
+            + "      \"message\": \"circular jsonable dependency\",\n"
+            + "      \"range\": {\n"
+            + "        \"file\": \"mod.deal\",\n"
+            + "        \"startLine\": 1,\n"
+            + "        \"startColumn\": 1,\n"
+            + "        \"endLine\": 1,\n"
+            + "        \"endColumn\": 1,\n"
+            + "        \"startScalarOffset\": 0,\n"
+            + "        \"endScalarOffset\": 0,\n"
+            + "        \"scalarLength\": 0,\n"
+            + "        \"origin\": \"SYNTHETIC\"\n"
+            + "      },\n"
+            + "      \"notes\": [\n"
+            + "        {\n"
+            + "          \"message\": \"missing anchor: class declaration span for cycle node 'A'\",\n"
+            + "          \"range\": null\n"
+            + "        }\n"
+            + "      ]\n"
+            + "    }\n"
+            + "  ]\n"
+            + "}";
+        check(DiagnosticStructuredOutput.toJson(List.of(syn)).equals(synJson),
+            "SYNTHETIC JSON with message-only anchor note, got: "
+                + DiagnosticStructuredOutput.toJson(List.of(syn)));
+
+        // Both note shapes: a message-only note ("range": null) and a
+        // secondary-range note (nested range object), in note order.
+        CompilerDiagnostic withNotes = new CompilerDiagnostic("E3001", "error",
+            "type mismatch", multi.range(),
+            List.of(new DiagnosticNote("hint", null),
+                new DiagnosticNote("see declaration",
+                    new DiagnosticRange("other.deal", 1, 2, 1, 6, 0, 4, 4,
+                        RangeOrigin.SOURCE))),
+            DiagnosticCode.E3001);
+        String notesJson = "{\n"
+            + "  \"version\": 1,\n"
+            + "  \"diagnostics\": [\n"
+            + "    {\n"
+            + "      \"code\": \"E3001\",\n"
+            + "      \"severity\": \"error\",\n"
+            + "      \"message\": \"type mismatch\",\n"
+            + "      \"range\": {\n"
+            + "        \"file\": \"src/main.deal\",\n"
+            + "        \"startLine\": 2,\n"
+            + "        \"startColumn\": 5,\n"
+            + "        \"endLine\": 3,\n"
+            + "        \"endColumn\": 9,\n"
+            + "        \"startScalarOffset\": 20,\n"
+            + "        \"endScalarOffset\": 24,\n"
+            + "        \"scalarLength\": 4,\n"
+            + "        \"origin\": \"SOURCE\"\n"
+            + "      },\n"
+            + "      \"notes\": [\n"
+            + "        {\n"
+            + "          \"message\": \"hint\",\n"
+            + "          \"range\": null\n"
+            + "        },\n"
+            + "        {\n"
+            + "          \"message\": \"see declaration\",\n"
+            + "          \"range\": {\n"
+            + "            \"file\": \"other.deal\",\n"
+            + "            \"startLine\": 1,\n"
+            + "            \"startColumn\": 2,\n"
+            + "            \"endLine\": 1,\n"
+            + "            \"endColumn\": 6,\n"
+            + "            \"startScalarOffset\": 0,\n"
+            + "            \"endScalarOffset\": 4,\n"
+            + "            \"scalarLength\": 4,\n"
+            + "            \"origin\": \"SOURCE\"\n"
+            + "          }\n"
+            + "        }\n"
+            + "      ]\n"
+            + "    }\n"
+            + "  ]\n"
+            + "}";
+        check(DiagnosticStructuredOutput.toJson(List.of(withNotes)).equals(notesJson),
+            "both note shapes serialized in order, got: "
+                + DiagnosticStructuredOutput.toJson(List.of(withNotes)));
+
+        // Two diagnostics: comma separation and list order.
+        String two = DiagnosticStructuredOutput.toJson(List.of(multi, zero));
+        check(two.contains("    },\n    {"), "diagnostics separated by a comma in list order");
+        check(two.indexOf("\"code\": \"E3001\"") < two.indexOf("\"code\": \"E2010\""),
+            "diagnostics serialized in list order");
+
+        // String escaping: quotes, backslashes, tab, newline, and a control
+        // character below U+0020.
+        CompilerDiagnostic escaped = CompilerDiagnostic.error(DiagnosticCode.E3001,
+            "bad \"key\" \\ path\tnext\nline\u0007bell", multi.range());
+        String escapedJson = DiagnosticStructuredOutput.toJson(List.of(escaped));
+        check(escapedJson.contains(
+                "\"message\": \"bad \\\"key\\\" \\\\ path\\tnext\\nline"
+                    + "\\" + "u0007bell\""),
+            "JSON string escaping, got: " + escapedJson);
+
+        // Determinism: serializing twice yields the identical document.
+        check(DiagnosticStructuredOutput.toJson(List.of(withNotes))
+                .equals(DiagnosticStructuredOutput.toJson(List.of(withNotes))),
+            "structured output must be deterministic");
+    }
+
+    private static void testFormattedStructuredCrossCheck() {
+        System.out.println("-- Formatted-vs-structured cross-check --");
+
+        CompilerDiagnostic d = new CompilerDiagnostic("E3001", "error", "type mismatch",
+            new DiagnosticRange("src/main.deal", 2, 5, 3, 9, 20, 24, 4,
+                RangeOrigin.SOURCE),
+            List.of(new DiagnosticNote("hint", null),
+                new DiagnosticNote("see declaration",
+                    new DiagnosticRange("other.deal", 1, 2, 1, 6, 0, 4, 4,
+                        RangeOrigin.SOURCE))),
+            DiagnosticCode.E3001);
+        String human = DiagnosticFormatter.format(d);
+        String json = DiagnosticStructuredOutput.toJson(List.of(d));
+
+        // Every field present in both surfaces agrees: file, start/end
+        // positions, span length, severity, code, message.
+        check(human.startsWith("src/main.deal:2:5-3:9:"),
+            "human carries the file/start/end positions: " + human);
+        check(human.contains("ERROR E3001: type mismatch [span 4]"),
+            "human carries severity/code/message/span length: " + human);
+        check(json.contains("\"file\": \"src/main.deal\"")
+                && json.contains("\"startLine\": 2")
+                && json.contains("\"startColumn\": 5")
+                && json.contains("\"endLine\": 3")
+                && json.contains("\"endColumn\": 9"),
+            "structured carries the same file/start/end positions: " + json);
+
+        // Scalar offsets and span length: the structured end - start equals
+        // the human [span N] suffix.
+        check(json.contains("\"startScalarOffset\": 20")
+                && json.contains("\"endScalarOffset\": 24")
+                && json.contains("\"scalarLength\": 4"),
+            "structured carries the same offsets and span length: " + json);
+        check(human.contains("[span 4]"),
+            "human span length agrees with the structured offsets: " + human);
+
+        // Origin: structured-only field, SOURCE for this fixture.
+        check(json.contains("\"origin\": \"SOURCE\""),
+            "structured carries the SOURCE origin: " + json);
+
+        // Notes: the message-only note renders without a range in both
+        // surfaces; the secondary-range note carries the same range in both.
+        check(human.contains("note: hint"),
+            "human carries the message-only note: " + human);
+        check(json.contains("\"message\": \"hint\"") && json.contains("\"range\": null"),
+            "structured carries the message-only note with a null range: " + json);
+        check(human.contains("note: see declaration (at other.deal:1:2-1:6, span 4)"),
+            "human carries the secondary-range note: " + human);
+        check(json.contains("\"message\": \"see declaration\"")
+                && json.contains("\"file\": \"other.deal\"")
+                && json.contains("\"startLine\": 1")
+                && json.contains("\"endColumn\": 6")
+                && json.contains("\"startScalarOffset\": 0")
+                && json.contains("\"endScalarOffset\": 4"),
+            "structured carries the same secondary-range note: " + json);
+
+        // SYNTHETIC fixture: both surfaces carry the canonical (1,1)-(1,1)
+        // zero-length shape; the structured origin is SYNTHETIC.
+        CompilerDiagnostic syn = CompilerDiagnostic.syntheticError(DiagnosticCode.E4008,
+            "circular jsonable dependency", "mod.deal",
+            "missing anchor: class declaration span for cycle node 'A'");
+        String synHuman = DiagnosticFormatter.format(syn);
+        String synJson = DiagnosticStructuredOutput.toJson(List.of(syn));
+        check(synHuman.startsWith("mod.deal:1:1-1:1:")
+                && synHuman.contains("[span 0]"),
+            "synthetic human carries the canonical (1,1)-(1,1) shape: " + synHuman);
+        check(synJson.contains("\"origin\": \"SYNTHETIC\"")
+                && synJson.contains("\"scalarLength\": 0")
+                && synJson.contains("\"startScalarOffset\": 0"),
+            "synthetic structured carries the canonical zero-length shape: " + synJson);
+        check(synHuman.contains("missing anchor: class declaration span for cycle node 'A'")
+                && synJson.contains(
+                    "\"message\": \"missing anchor: class declaration span for cycle node 'A'\""),
+            "both surfaces carry the construct-naming anchor note");
+    }
+
+    private static void testToStringDelegation() {
+        System.out.println("-- CompilerDiagnostic.toString() delegates to the canonical formatter --");
+
+        List<CompilerDiagnostic> fixtures = List.of(
+            multiLineDiagnostic(),
+            CompilerDiagnostic.error(DiagnosticCode.E2010, "Entry module must export 'main'",
+                new DiagnosticRange("f.deal", 1, 1, 1, 1, 0, 0, 0, RangeOrigin.SOURCE)),
+            CompilerDiagnostic.syntheticError(DiagnosticCode.E4008,
+                "circular jsonable dependency", "mod.deal",
+                "missing anchor: class declaration span for cycle node 'A'"),
+            new CompilerDiagnostic("E3001", "warning", "type mismatch",
+                new DiagnosticRange("src/main.deal", 2, 5, 3, 9, 20, 24, 4,
+                    RangeOrigin.SOURCE),
+                List.of(new DiagnosticNote("consider using number", null)),
+                DiagnosticCode.E3001),
+            new CompilerDiagnostic("E3001", "error", "type mismatch",
+                new DiagnosticRange("src/main.deal", 2, 5, 3, 9, 20, 24, 4,
+                    RangeOrigin.SOURCE),
+                List.of(new DiagnosticNote("see declaration",
+                    new DiagnosticRange("other.deal", 1, 2, 1, 6, 0, 4, 4,
+                        RangeOrigin.SOURCE))),
+                DiagnosticCode.E3001));
+
+        for (CompilerDiagnostic d : fixtures) {
+            String ts = d.toString();
+            check(ts.equals(DiagnosticFormatter.format(d)),
+                "toString must equal DiagnosticFormatter.format exactly: " + ts);
+            check(ts.contains(d.severity().toUpperCase()),
+                "toString must contain the SEVERITY substring: " + ts);
+            check(ts.contains(d.code()),
+                "toString must contain the code substring: " + ts);
+            check(ts.contains(d.message()),
+                "toString must contain the message substring: " + ts);
+        }
     }
 }
