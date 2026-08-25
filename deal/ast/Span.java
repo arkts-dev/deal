@@ -1,5 +1,8 @@
 package deal.ast;
 
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
+
 import java.util.Objects;
 
 /**
@@ -68,6 +71,38 @@ public record Span(
      */
     public static Span synthetic(String file) {
         return new Span(file, 1, 1, 1, 1);
+    }
+
+    /**
+     * Converts this span into a {@link DiagnosticRange} (D4): the
+     * inclusive AST end column translates to the half-open range end
+     * exactly once.
+     *
+     * <p>With known offsets, a non-empty span yields
+     * {@code (file, startLine, startColumn, endLine, endColumn + 1,
+     * startScalarOffset, endScalarOffset, endScalarOffset -
+     * startScalarOffset, SOURCE)}; a span with equal start/end positions
+     * and equal offsets yields the zero-length SOURCE range at the start
+     * (end = start, no {@code +1} translation).</p>
+     *
+     * <p>Any span without known offsets — either component negative,
+     * including every {@link #synthetic(String)} span — converts to
+     * {@link DiagnosticRange#synthetic(String)}: the UNKNOWN→SYNTHETIC
+     * rule is absolute, and no span can ever yield a SOURCE range without
+     * computed offsets.</p>
+     */
+    public DiagnosticRange range() {
+        if (!hasScalarOffsets()) {
+            return DiagnosticRange.synthetic(file);
+        }
+        if (startLine == endLine && startColumn == endColumn
+                && startScalarOffset == endScalarOffset) {
+            return new DiagnosticRange(file, startLine, startColumn, startLine, startColumn,
+                startScalarOffset, startScalarOffset, 0, RangeOrigin.SOURCE);
+        }
+        return new DiagnosticRange(file, startLine, startColumn, endLine, endColumn + 1,
+            startScalarOffset, endScalarOffset, endScalarOffset - startScalarOffset,
+            RangeOrigin.SOURCE);
     }
 
     @Override

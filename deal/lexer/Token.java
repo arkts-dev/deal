@@ -1,6 +1,8 @@
 package deal.lexer;
 
 import deal.ast.TokenType;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 
 import java.util.List;
 
@@ -101,6 +103,41 @@ public record Token(
     public Token withDirectives(List<String> d) {
         return new Token(type, lexeme, line, column, length,
             startScalarOffset, scalarLength, List.copyOf(d));
+    }
+
+    /**
+     * Converts this token into a {@link DiagnosticRange} (D4).
+     *
+     * <p>With known offsets the result is the SOURCE range
+     * {@code (file, line, column, line, column + scalarLength,
+     * startScalarOffset, startScalarOffset + scalarLength, scalarLength,
+     * SOURCE)}; a zero-scalar-length token (e.g. the EOF token) yields a
+     * zero-length range at its position. Tokens carry no file, so the file
+     * is supplied by the caller; a {@code null} file becomes the empty
+     * string.</p>
+     *
+     * <p>Any token without known offsets — either component negative —
+     * converts to {@link DiagnosticRange#synthetic(String)}: the
+     * UNKNOWN→SYNTHETIC rule is absolute, and no token can ever yield a
+     * SOURCE range without computed offsets.</p>
+     */
+    public DiagnosticRange range(String file) {
+        String f = file == null ? "" : file;
+        if (!hasScalarOffsets()) {
+            return DiagnosticRange.synthetic(f);
+        }
+        return new DiagnosticRange(f, line, column, line, column + scalarLength,
+            startScalarOffset, startScalarOffset + scalarLength, scalarLength,
+            RangeOrigin.SOURCE);
+    }
+
+    /**
+     * Converts this token into a {@link DiagnosticRange} with the empty
+     * file (no source path is known from the token alone). See
+     * {@link #range(String)}.
+     */
+    public DiagnosticRange range() {
+        return range("");
     }
 
     @Override

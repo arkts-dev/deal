@@ -2,6 +2,11 @@ package deal.test;
 
 import deal.ast.Span;
 import deal.ast.TokenType;
+import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticNote;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.lexer.Diagnostic;
 import deal.lexer.Token;
 import deal.parser.ParseResult;
@@ -9,24 +14,32 @@ import deal.parser.Parser;
 import deal.source.ScalarPosition;
 import deal.source.ScalarSourceCursor;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Tests for the non-lossy diagnostic range foundation (ISSUE-0216 /
- * ISSUE-0217).
+ * ISSUE-0217 / ISSUE-0218).
  *
- * <p>This file is the home of the ISSUE-0216/ISSUE-0217 verification
- * suites. It holds the {@link ScalarSourceCursor} / {@link ScalarPosition}
- * section (hand-computed walk expectations for astral characters, tabs,
- * LF, CRLF, and CR line endings, unpaired surrogates, mark/reset lookahead,
- * and the {@code scalarCount} overloads) and the Token/Span scalar-offset
- * section (the UNKNOWN_OFFSET sentinel on convenience constructors,
- * {@code hasScalarOffsets()}, verbatim offset preservation through
- * {@code Token.withDirectives}, {@code Span.synthetic} UNKNOWN offsets,
- * scalar-count recomputation against {@code ScalarSourceCursor}, parser
- * span-helper propagation, the empty-program (0,0) span, and the past-end
- * {@code peek()} pseudo-EOF position carrying). Later capabilities extend
- * this file with the carrier, formatter, manifest-range, and
+ * <p>This file is the home of the ISSUE-0216/ISSUE-0217/ISSUE-0218
+ * verification suites. It holds the {@link ScalarSourceCursor} /
+ * {@link ScalarPosition} section (hand-computed walk expectations for
+ * astral characters, tabs, LF, CRLF, and CR line endings, unpaired
+ * surrogates, mark/reset lookahead, and the {@code scalarCount}
+ * overloads), the Token/Span scalar-offset section (the UNKNOWN_OFFSET
+ * sentinel on convenience constructors, {@code hasScalarOffsets()},
+ * verbatim offset preservation through {@code Token.withDirectives},
+ * {@code Span.synthetic} UNKNOWN offsets, scalar-count recomputation
+ * against {@code ScalarSourceCursor}, parser span-helper propagation, the
+ * empty-program (0,0) span, and the past-end {@code peek()} pseudo-EOF
+ * position carrying), and the ISSUE-0218 carrier section
+ * ({@link DiagnosticRange}/{@link RangeOrigin}/{@link DiagnosticNote}/
+ * {@link CompilerDiagnostic} record invariants, the D4
+ * {@code Span.range()}/{@code Token.range()} conversions including the
+ * UNKNOWN→SYNTHETIC origin pins, the SOURCE-implies-known-offsets
+ * invariant, the D6 synthetic contract with anchor notes, the D9
+ * normalization pins, and the D5 factory surface). Later capabilities
+ * extend this file with the formatter, manifest-range, and
  * producer-migration sections.
  *
  * <p>Runs via main() using the check() helpers; exits non-zero on failure.
@@ -69,6 +82,13 @@ public class DiagnosticRangeTest {
         testSpanOffsets();
         testSpanHelperPropagation();
         testPeekPseudoEof();
+
+        testCarrierRecords();
+        testRangeConversions();
+        testSourceImpliesKnownOffsets();
+        testSyntheticContract();
+        testD9Normalization();
+        testFactorySurface();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -790,5 +810,662 @@ public class DiagnosticRangeTest {
                 "end-of-input error must anchor at the real EOF token position (3,4), got ("
                     + eofDiags.get(0).line() + "," + eofDiags.get(0).column() + ")");
         }
+    }
+
+    // =========================================================================
+    // ISSUE-0218 carrier section (verification 1 minus formatter/JSON)
+    // =========================================================================
+
+    private static void testCarrierRecords() {
+        System.out.println("-- Carrier records: DiagnosticRange, RangeOrigin, DiagnosticNote --");
+
+        // DiagnosticRange holds every component verbatim.
+        DiagnosticRange r = new DiagnosticRange("f.deal", 2, 3, 2, 8, 4, 9, 5,
+            RangeOrigin.SOURCE);
+        check(r.file().equals("f.deal"), "DiagnosticRange file");
+        check(r.startLine() == 2 && r.startColumn() == 3,
+            "DiagnosticRange start position (2,3), got (" + r.startLine() + "," + r.startColumn() + ")");
+        check(r.endLine() == 2 && r.endColumn() == 8,
+            "DiagnosticRange end position (2,8), got (" + r.endLine() + "," + r.endColumn() + ")");
+        check(r.startScalarOffset() == 4 && r.endScalarOffset() == 9,
+            "DiagnosticRange offsets (4,9), got (" + r.startScalarOffset() + "," + r.endScalarOffset() + ")");
+        check(r.scalarLength() == 5, "DiagnosticRange scalarLength 5");
+        check(r.origin() == RangeOrigin.SOURCE, "DiagnosticRange origin");
+        check(r.scalarLength() == r.endScalarOffset() - r.startScalarOffset(),
+            "scalarLength == endScalarOffset - startScalarOffset invariant");
+        check(r.hasScalarOffsets(), "well-formed range hasScalarOffsets()");
+        check(!r.isCanonicalSynthetic(), "SOURCE range is not canonical synthetic");
+
+        // Plain immutable record: performs no validation and never throws —
+        // nulls, non-positive positions, and negative offsets construct
+        // verbatim (D9 owns normalization).
+        DiagnosticRange raw1 = new DiagnosticRange(null, 0, 0, 0, 0, -1, -1, -1, null);
+        check(raw1.file() == null && raw1.origin() == null,
+            "defective range constructs verbatim (no validation)");
+        DiagnosticRange raw2 = new DiagnosticRange("f", 2, 5, 1, 1, 7, 5, -2, RangeOrigin.SOURCE);
+        check(raw2.scalarLength() == -2 && raw2.endScalarOffset() == 5,
+            "inverted-offset range constructs verbatim (no validation)");
+
+        // DiagnosticRange.synthetic(file): the canonical shape; a null file
+        // becomes the empty string; never throws.
+        DiagnosticRange syn = DiagnosticRange.synthetic("mod.deal");
+        check(syn.file().equals("mod.deal"), "synthetic file");
+        check(syn.startLine() == 1 && syn.startColumn() == 1
+                && syn.endLine() == 1 && syn.endColumn() == 1,
+            "synthetic positions must be (1,1)-(1,1)");
+        check(syn.startScalarOffset() == 0 && syn.endScalarOffset() == 0
+                && syn.scalarLength() == 0,
+            "synthetic offsets and scalarLength must all be 0");
+        check(syn.origin() == RangeOrigin.SYNTHETIC, "synthetic origin");
+        check(syn.isCanonicalSynthetic(), "synthetic must be canonical synthetic");
+        check(syn.hasScalarOffsets(), "synthetic carries known (0,0) offsets");
+        check(DiagnosticRange.synthetic(null).file().equals(""),
+            "synthetic(null) file must be the empty string");
+
+        // RangeOrigin values.
+        check(RangeOrigin.valueOf("SOURCE") == RangeOrigin.SOURCE
+                && RangeOrigin.valueOf("SYNTHETIC") == RangeOrigin.SYNTHETIC,
+            "RangeOrigin values");
+
+        // DiagnosticNote: message required, secondary range nullable.
+        DiagnosticNote msgOnly = new DiagnosticNote("missing anchor: x", null);
+        check(msgOnly.message().equals("missing anchor: x") && msgOnly.range() == null,
+            "message-only note");
+        DiagnosticNote withRange = new DiagnosticNote("hint", r);
+        check(withRange.range() == r, "secondary-range note keeps its range");
+        boolean threw = false;
+        try {
+            new DiagnosticNote(null, null);
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        check(threw, "DiagnosticNote null message must throw IAE");
+    }
+
+    private static void testRangeConversions() {
+        System.out.println("-- D4 conversions: Span.range() and Token.range() --");
+
+        // Span with known offsets, non-empty: the inclusive AST end column
+        // translates to the half-open range end +1 exactly once; offsets are
+        // half-open; scalar length = end - start.
+        Span s = new Span("f.deal", 2, 3, 2, 7, 4, 9);
+        DiagnosticRange sr = s.range();
+        check(sr.origin() == RangeOrigin.SOURCE,
+            "known span range origin must be SOURCE, got " + sr.origin());
+        check(sr.file().equals("f.deal"), "span range file");
+        check(sr.startLine() == 2 && sr.startColumn() == 3, "span range start (2,3)");
+        check(sr.endLine() == 2 && sr.endColumn() == 8,
+            "inclusive end column 7 must translate to half-open end column 8, got "
+                + sr.endColumn());
+        check(sr.startScalarOffset() == 4 && sr.endScalarOffset() == 9,
+            "span range offsets (4,9)");
+        check(sr.scalarLength() == 5, "span range scalar length 9-4=5");
+
+        // Zero-length span (equal start/end positions and equal offsets):
+        // end = start, no +1 translation.
+        Span zero = new Span("f.deal", 1, 1, 1, 1, 0, 0);
+        DiagnosticRange zr = zero.range();
+        check(zr.origin() == RangeOrigin.SOURCE,
+            "zero-length span range origin must be SOURCE");
+        check(zr.startLine() == 1 && zr.startColumn() == 1
+                && zr.endLine() == 1 && zr.endColumn() == 1,
+            "zero-length span range must stay (1,1)-(1,1) with no +1 translation");
+        check(zr.startScalarOffset() == 0 && zr.endScalarOffset() == 0
+                && zr.scalarLength() == 0,
+            "zero-length span range offsets/length must be (0,0,0)");
+
+        // Multi-line span: end line unchanged, end column +1.
+        Span multi = new Span("f.deal", 1, 5, 3, 2, 0, 17);
+        DiagnosticRange mr = multi.range();
+        check(mr.endLine() == 3 && mr.endColumn() == 3,
+            "multi-line span end column +1: (3,2) -> (3,3)");
+        check(mr.scalarLength() == 17, "multi-line span scalar length");
+
+        // UNKNOWN offsets -> canonical SYNTHETIC, never SOURCE (origin pin).
+        Span unknown = new Span("f.deal", 2, 3, 2, 7);
+        DiagnosticRange ur = unknown.range();
+        check(ur.origin() == RangeOrigin.SYNTHETIC,
+            "UNKNOWN-offset span must convert to SYNTHETIC, got " + ur.origin());
+        check(ur.isCanonicalSynthetic(),
+            "UNKNOWN-offset span range must be canonical synthetic: " + ur);
+        check(ur.file().equals("f.deal"),
+            "UNKNOWN-offset span synthetic range keeps the span file");
+
+        // Span.synthetic converts to SYNTHETIC as well (absolute rule).
+        DiagnosticRange synr = Span.synthetic("f.deal").range();
+        check(synr.origin() == RangeOrigin.SYNTHETIC,
+            "Span.synthetic must convert to SYNTHETIC, got " + synr.origin());
+        check(synr.isCanonicalSynthetic(),
+            "Span.synthetic range must be canonical synthetic");
+
+        // Mixed known/UNKNOWN components -> SYNTHETIC.
+        Span mixed = new Span("f.deal", 1, 1, 1, 3, 0, Span.UNKNOWN_OFFSET);
+        check(!mixed.hasScalarOffsets(), "mixed span hasScalarOffsets() must be false");
+        check(mixed.range().origin() == RangeOrigin.SYNTHETIC,
+            "mixed-offset span must convert to SYNTHETIC");
+
+        // Token with known offsets: end column = column + scalarLength;
+        // half-open offsets. 'a' + U+1F600 + 'b' is 3 scalars.
+        Token t = new Token(TokenType.IDENTIFIER, "a\uD83D\uDE00b", 4, 5, 4, 7, 3, List.of());
+        DiagnosticRange tr = t.range("f.deal");
+        check(tr.origin() == RangeOrigin.SOURCE,
+            "known token range origin must be SOURCE, got " + tr.origin());
+        check(tr.file().equals("f.deal"), "token range file");
+        check(tr.startLine() == 4 && tr.startColumn() == 5, "token range start (4,5)");
+        check(tr.endLine() == 4 && tr.endColumn() == 8,
+            "token range end column must be column + scalarLength = 5 + 3, got "
+                + tr.endColumn());
+        check(tr.startScalarOffset() == 7 && tr.endScalarOffset() == 10
+                && tr.scalarLength() == 3,
+            "token range offsets/length must be (7,10,3)");
+
+        // Zero-scalar-length EOF token: zero-length range at its position.
+        Token eof = new Token(TokenType.EOF, "", 3, 4, 0, 9, 0, List.of());
+        DiagnosticRange er = eof.range("f.deal");
+        check(er.origin() == RangeOrigin.SOURCE, "EOF token range origin must be SOURCE");
+        check(er.startLine() == 3 && er.startColumn() == 4
+                && er.endLine() == 3 && er.endColumn() == 4,
+            "zero-length EOF token range must stay at (3,4)-(3,4)");
+        check(er.startScalarOffset() == 9 && er.endScalarOffset() == 9
+                && er.scalarLength() == 0,
+            "EOF token range offsets/length must be (9,9,0)");
+
+        // UNKNOWN-offset token -> SYNTHETIC (origin pin); file defaults to
+        // the empty string for the no-file overload.
+        Token ut = new Token(TokenType.IDENTIFIER, "x", 2, 3, 1);
+        DiagnosticRange utr = ut.range();
+        check(utr.origin() == RangeOrigin.SYNTHETIC,
+            "UNKNOWN-offset token must convert to SYNTHETIC, got " + utr.origin());
+        check(utr.isCanonicalSynthetic(),
+            "UNKNOWN-offset token range must be canonical synthetic");
+        check(utr.file().equals(""), "token range() defaults to the empty file");
+        check(ut.range("g.deal").file().equals("g.deal"),
+            "token range(String file) must use the given file");
+        check(ut.range(null).file().equals(""), "token range(null) must use the empty file");
+    }
+
+    private static void testSourceImpliesKnownOffsets() {
+        System.out.println("-- SOURCE-implies-known-offsets invariant --");
+
+        // Every SOURCE range produced by the D4 conversions carries computed
+        // known offsets and a consistent scalar length.
+        DiagnosticRange[] sources = {
+            new Span("f.deal", 2, 3, 2, 7, 4, 9).range(),
+            new Span("f.deal", 1, 1, 1, 1, 0, 0).range(),
+            new Span("f.deal", 1, 5, 3, 2, 0, 17).range(),
+            new Token(TokenType.IDENTIFIER, "abc", 1, 2, 3, 6, 3, List.of()).range("f.deal"),
+            new Token(TokenType.EOF, "", 3, 4, 0, 9, 0, List.of()).range("f.deal"),
+        };
+        for (DiagnosticRange r : sources) {
+            check(r.origin() == RangeOrigin.SOURCE, "range must be SOURCE: " + r);
+            check(r.hasScalarOffsets(),
+                "SOURCE range must carry known non-negative offsets: " + r);
+            check(r.scalarLength() == r.endScalarOffset() - r.startScalarOffset(),
+                "SOURCE range must satisfy scalarLength == end - start: " + r);
+        }
+
+        // An anchor without computed offsets can never yield SOURCE:
+        // UNKNOWN spans/tokens and synthetic ranges are SYNTHETIC.
+        DiagnosticRange[] synthetic = {
+            new Span("f.deal", 2, 3, 2, 7).range(),
+            Span.synthetic("f.deal").range(),
+            new Span("f.deal", 1, 1, 1, 3, 0, Span.UNKNOWN_OFFSET).range(),
+            new Token(TokenType.IDENTIFIER, "x", 2, 3, 1).range(),
+            DiagnosticRange.synthetic("f.deal"),
+        };
+        for (DiagnosticRange r : synthetic) {
+            check(r.origin() == RangeOrigin.SYNTHETIC,
+                "offset-less anchor must yield SYNTHETIC, got " + r.origin() + " for " + r);
+            check(r.isCanonicalSynthetic(),
+                "offset-less anchor must yield the canonical synthetic shape: " + r);
+        }
+    }
+
+    private static void testSyntheticContract() {
+        System.out.println("-- D6 synthetic contract: canonical shape + anchor note --");
+
+        // syntheticError: canonical synthetic shape plus the provided
+        // construct-naming anchor note.
+        CompilerDiagnostic e = CompilerDiagnostic.syntheticError(DiagnosticCode.E4008,
+            "circular jsonable dependency", "mod.deal",
+            "missing anchor: class declaration span for cycle node 'A'");
+        check(e.code().equals("E4008"), "syntheticError code");
+        check(e.severity().equals("error"), "syntheticError severity");
+        check(e.message().equals("circular jsonable dependency"), "syntheticError message");
+        check(e.diagnosticCode() == DiagnosticCode.E4008, "syntheticError diagnosticCode");
+        check(e.range().isCanonicalSynthetic(),
+            "syntheticError range must be canonical synthetic");
+        check(e.range().file().equals("mod.deal"), "syntheticError range file");
+        check(e.range().origin() == RangeOrigin.SYNTHETIC, "syntheticError origin");
+        check(e.file().equals("mod.deal") && e.line() == 1 && e.column() == 1,
+            "syntheticError accessors derive from the range start");
+        check(e.notes().size() == 1
+                && e.notes().get(0).message().equals(
+                    "missing anchor: class declaration span for cycle node 'A'")
+                && e.notes().get(0).range() == null,
+            "syntheticError must carry the provided construct-naming anchor note, got "
+                + e.notes());
+
+        // syntheticWarning: same contract, warning severity, empty file kept.
+        CompilerDiagnostic w = CompilerDiagnostic.syntheticWarning(DiagnosticCode.E2005,
+            "circular import", "",
+            "missing anchor: import declaration closing the module cycle a -> b -> a");
+        check(w.severity().equals("warning"), "syntheticWarning severity");
+        check(w.range().file().equals(""), "syntheticWarning empty file stays empty");
+        check(w.range().isCanonicalSynthetic(), "syntheticWarning canonical shape");
+        check(w.notes().size() == 1
+                && w.notes().get(0).message().contains("missing anchor"),
+            "syntheticWarning anchor note");
+
+        // The span factory appends the mandatory D4 anchor note when the
+        // conversion yields SYNTHETIC.
+        CompilerDiagnostic spanErr = CompilerDiagnostic.error(DiagnosticCode.E3001,
+            "type mismatch", new Span("src.mod", 2, 3, 2, 8));
+        check(spanErr.range().origin() == RangeOrigin.SYNTHETIC,
+            "UNKNOWN span factory range must be SYNTHETIC");
+        check(spanErr.notes().size() == 1
+                && spanErr.notes().get(0).message().equals("missing anchor: src.mod:2:3"),
+            "span factory must append the mandatory anchor note, got " + spanErr.notes());
+
+        // The token factory appends the mandatory D4 anchor note as well
+        // (tokens carry no file, so the note uses the empty file).
+        CompilerDiagnostic tokWarn = CompilerDiagnostic.warning(DiagnosticCode.E1043,
+            "invalid placement", new Token(TokenType.EXPORT, "export", 2, 1, 6));
+        check(tokWarn.range().origin() == RangeOrigin.SYNTHETIC,
+            "UNKNOWN token factory range must be SYNTHETIC");
+        check(tokWarn.notes().size() == 1
+                && tokWarn.notes().get(0).message().equals("missing anchor: :2:1"),
+            "token factory must append the mandatory anchor note, got " + tokWarn.notes());
+
+        // Known-offset anchors through the same factories: SOURCE range, no
+        // anchor note.
+        CompilerDiagnostic knownSpan = CompilerDiagnostic.error(DiagnosticCode.E3001,
+            "type mismatch", new Span("src.mod", 2, 3, 2, 7, 4, 9));
+        check(knownSpan.range().origin() == RangeOrigin.SOURCE,
+            "known span factory range must be SOURCE");
+        check(knownSpan.notes().isEmpty(),
+            "known span factory must not append an anchor note");
+        CompilerDiagnostic knownTok = CompilerDiagnostic.warning(DiagnosticCode.E1043,
+            "invalid placement", new Token(TokenType.EXPORT, "export", 2, 1, 6, 11, 6, List.of()));
+        check(knownTok.range().origin() == RangeOrigin.SOURCE,
+            "known token factory range must be SOURCE");
+        check(knownTok.range().file().equals(""),
+            "known token factory range uses the empty file (tokens carry no file)");
+        check(knownTok.notes().isEmpty(),
+            "known token factory must not append an anchor note");
+
+        // A null or empty anchor note is a programmer error.
+        boolean threw = false;
+        try {
+            CompilerDiagnostic.syntheticError(DiagnosticCode.E6000, "m", "f", null);
+        } catch (IllegalArgumentException ex) {
+            threw = true;
+        }
+        check(threw, "syntheticError with a null anchor note must throw IAE");
+        threw = false;
+        try {
+            CompilerDiagnostic.syntheticError(DiagnosticCode.E6000, "m", "f", "");
+        } catch (IllegalArgumentException ex) {
+            threw = true;
+        }
+        check(threw, "syntheticError with an empty anchor note must throw IAE");
+    }
+
+    private static void testD9Normalization() {
+        System.out.println("-- D9 normalization: defects become the originating diagnostic --");
+
+        // 1. UNKNOWN (negative) offsets with SOURCE origin: normalized to the
+        // canonical SYNTHETIC shape — never clamped in place as a SOURCE
+        // (1,1,1,1,0,0,0) range (origin pin).
+        CompilerDiagnostic d1 = new CompilerDiagnostic("E3001", "error", "unknown offsets",
+            new DiagnosticRange("f.deal", 1, 1, 1, 5, Span.UNKNOWN_OFFSET, 4, -1,
+                RangeOrigin.SOURCE),
+            null, DiagnosticCode.E3001);
+        check(d1.code().equals("E3001") && d1.message().equals("unknown offsets")
+                && d1.severity().equals("error"),
+            "UNKNOWN-offset normalization keeps code/severity/message");
+        check(d1.diagnosticCode() == DiagnosticCode.E3001,
+            "UNKNOWN-offset normalization keeps diagnosticCode");
+        check(d1.range().origin() == RangeOrigin.SYNTHETIC,
+            "UNKNOWN-offset SOURCE range must normalize to SYNTHETIC origin, got "
+                + d1.range().origin());
+        check(d1.range().isCanonicalSynthetic(),
+            "UNKNOWN-offset range must normalize to the canonical synthetic shape: " + d1.range());
+        check(d1.range().file().equals("f.deal"),
+            "UNKNOWN-offset synthetic keeps the original file");
+        check(d1.notes().size() == 1
+                && d1.notes().get(0).message().equals(
+                    "internal range defect: unknown or negative scalar offsets")
+                && d1.notes().get(0).range() == null,
+            "UNKNOWN-offset normalization appends the defect note, got " + d1.notes());
+
+        // 2. Negative end offset: same SYNTHETIC normalization.
+        CompilerDiagnostic d2 = new CompilerDiagnostic("E3001", "warning", "negative end",
+            new DiagnosticRange("f.deal", 2, 3, 2, 5, 5, -2, -1, RangeOrigin.SOURCE),
+            null, DiagnosticCode.E3001);
+        check(d2.range().origin() == RangeOrigin.SYNTHETIC
+                && d2.range().isCanonicalSynthetic(),
+            "negative-offset range must normalize to canonical SYNTHETIC");
+        check(d2.severity().equals("warning"),
+            "severity kept through offset normalization");
+        check(d2.notes().size() == 1
+                && d2.notes().get(0).message().contains("internal range defect"),
+            "negative-offset normalization appends one defect note");
+
+        // 3. Inverted offsets (end < start, both non-negative): SYNTHETIC.
+        CompilerDiagnostic d3 = new CompilerDiagnostic("E3001", "error", "inverted offsets",
+            new DiagnosticRange("f.deal", 1, 1, 1, 5, 9, 4, 5, RangeOrigin.SOURCE),
+            null, DiagnosticCode.E3001);
+        check(d3.range().origin() == RangeOrigin.SYNTHETIC
+                && d3.range().isCanonicalSynthetic(),
+            "inverted-offset range must normalize to canonical SYNTHETIC, got " + d3.range());
+        check(d3.notes().size() == 1
+                && d3.notes().get(0).message().equals(
+                    "internal range defect: inverted scalar offsets"),
+            "inverted-offset normalization appends the defect note, got " + d3.notes());
+
+        // 4. Null range: canonical synthetic with the empty file.
+        CompilerDiagnostic d4 = new CompilerDiagnostic("E1001", "error", "null range",
+            null, null, DiagnosticCode.E1001);
+        check(d4.range() != null && d4.range().isCanonicalSynthetic()
+                && d4.range().file().equals(""),
+            "null range must fall back to canonical synthetic with the empty file");
+        check(d4.notes().size() == 1
+                && d4.notes().get(0).message().equals("internal range defect: null range"),
+            "null range appends the defect note");
+
+        // 5. Null file: canonical synthetic with the empty file.
+        CompilerDiagnostic d5 = new CompilerDiagnostic("E1001", "error", "null file",
+            new DiagnosticRange(null, 2, 3, 2, 5, 4, 6, 2, RangeOrigin.SOURCE),
+            null, DiagnosticCode.E1001);
+        check(d5.range().isCanonicalSynthetic() && d5.range().file().equals(""),
+            "null file must fall back to canonical synthetic with the empty file");
+        check(d5.notes().size() == 1
+                && d5.notes().get(0).message().equals("internal range defect: null range file"),
+            "null file appends the defect note");
+
+        // 6. Valid offsets with inverted line/column pairs: collapse the end
+        // onto the start — a zero-length SOURCE range at the computed start.
+        CompilerDiagnostic d6 = new CompilerDiagnostic("E3001", "error", "inverted positions",
+            new DiagnosticRange("f.deal", 2, 5, 1, 1, 5, 7, 2, RangeOrigin.SOURCE),
+            null, DiagnosticCode.E3001);
+        check(d6.range().origin() == RangeOrigin.SOURCE,
+            "valid-offset position inversion must collapse to SOURCE, got "
+                + d6.range().origin());
+        check(d6.range().file().equals("f.deal"), "collapsed range keeps the file");
+        check(d6.range().startLine() == 2 && d6.range().startColumn() == 5
+                && d6.range().endLine() == 2 && d6.range().endColumn() == 5,
+            "inverted positions must collapse the end onto the start (2,5)-(2,5), got "
+                + d6.range());
+        check(d6.range().startScalarOffset() == 5 && d6.range().endScalarOffset() == 5
+                && d6.range().scalarLength() == 0,
+            "collapsed range must be zero-length at the computed start offset 5, got "
+                + d6.range());
+        check(d6.notes().size() == 1
+                && d6.notes().get(0).message().equals(
+                    "internal range defect: invalid line or column positions"),
+            "position inversion appends exactly the position defect note, got " + d6.notes());
+
+        // 7. Non-positive start with valid offsets: clamps to (1,1), keeps
+        // the computed start offset as a zero-length range.
+        CompilerDiagnostic d7 = new CompilerDiagnostic("E3001", "error", "non-positive start",
+            new DiagnosticRange("f.deal", 0, 0, 0, 0, 5, 7, 2, RangeOrigin.SOURCE),
+            null, DiagnosticCode.E3001);
+        check(d7.range().origin() == RangeOrigin.SOURCE,
+            "non-positive start collapse keeps SOURCE origin");
+        check(d7.range().startLine() == 1 && d7.range().startColumn() == 1
+                && d7.range().endLine() == 1 && d7.range().endColumn() == 1,
+            "non-positive start must clamp to (1,1)-(1,1), got " + d7.range());
+        check(d7.range().startScalarOffset() == 5 && d7.range().endScalarOffset() == 5
+                && d7.range().scalarLength() == 0,
+            "non-positive start must keep its computed start offset 5 as a zero-length range");
+
+        // 8. scalarLength mismatch: recomputed from the offsets.
+        CompilerDiagnostic d8 = new CompilerDiagnostic("E3001", "error", "length mismatch",
+            new DiagnosticRange("f.deal", 1, 1, 1, 5, 0, 4, 9, RangeOrigin.SOURCE),
+            null, DiagnosticCode.E3001);
+        check(d8.range().origin() == RangeOrigin.SOURCE,
+            "scalarLength mismatch keeps SOURCE origin");
+        check(d8.range().scalarLength() == 4,
+            "scalarLength must recompute to end - start = 4, got " + d8.range().scalarLength());
+        check(d8.range().startScalarOffset() == 0 && d8.range().endScalarOffset() == 4,
+            "scalarLength mismatch keeps the offsets");
+        check(d8.notes().size() == 1
+                && d8.notes().get(0).message().equals(
+                    "internal range defect: scalar length mismatch"),
+            "scalarLength mismatch appends the defect note, got " + d8.notes());
+
+        // 9. Unknown severity: normalizes to "error" with a defect note.
+        CompilerDiagnostic d9 = new CompilerDiagnostic("E3001", "fatal", "unknown severity",
+            new DiagnosticRange("f.deal", 1, 1, 1, 3, 0, 2, 2, RangeOrigin.SOURCE),
+            null, DiagnosticCode.E3001);
+        check(d9.severity().equals("error"),
+            "unknown severity must normalize to \"error\", got " + d9.severity());
+        check(d9.notes().size() == 1
+                && d9.notes().get(0).message().equals("internal range defect: unknown severity"),
+            "unknown severity appends the defect note");
+
+        // 10. Non-canonical synthetic range: normalized to the canonical shape.
+        CompilerDiagnostic d10 = new CompilerDiagnostic("E6000", "error", "non-canonical synthetic",
+            new DiagnosticRange("m.deal", 2, 3, 2, 5, 4, 6, 2, RangeOrigin.SYNTHETIC),
+            null, DiagnosticCode.E6000);
+        check(d10.range().isCanonicalSynthetic()
+                && d10.range().origin() == RangeOrigin.SYNTHETIC,
+            "non-canonical synthetic must normalize to the canonical shape, got " + d10.range());
+        check(d10.range().file().equals("m.deal"),
+            "non-canonical synthetic normalization keeps the file");
+        check(d10.notes().size() == 1
+                && d10.notes().get(0).message().equals(
+                    "internal range defect: non-canonical synthetic range"),
+            "non-canonical synthetic appends the defect note, got " + d10.notes());
+
+        // SYNTHETIC origin with UNKNOWN offsets is non-canonical and
+        // normalizes to the canonical shape as well.
+        CompilerDiagnostic d10b = new CompilerDiagnostic("E6000", "error",
+            "synthetic unknown offsets",
+            new DiagnosticRange("m.deal", 1, 1, 1, 1, Span.UNKNOWN_OFFSET, 0, -1,
+                RangeOrigin.SYNTHETIC),
+            null, DiagnosticCode.E6000);
+        check(d10b.range().isCanonicalSynthetic(),
+            "SYNTHETIC with UNKNOWN offsets must normalize to the canonical shape");
+        check(d10b.notes().size() == 1
+                && d10b.notes().get(0).message().equals(
+                    "internal range defect: non-canonical synthetic range"),
+            "SYNTHETIC with UNKNOWN offsets appends the non-canonical synthetic note");
+
+        // 11. Null origin is a defect too: canonical synthetic + note.
+        CompilerDiagnostic d11 = new CompilerDiagnostic("E3001", "error", "null origin",
+            new DiagnosticRange("f.deal", 1, 1, 1, 3, 0, 2, 2, null),
+            null, DiagnosticCode.E3001);
+        check(d11.range().isCanonicalSynthetic(),
+            "null origin must normalize to the canonical synthetic shape");
+        check(d11.notes().size() == 1
+                && d11.notes().get(0).message().equals("internal range defect: null origin"),
+            "null origin appends the defect note");
+
+        // 12. A valid SOURCE range and a canonical synthetic range pass
+        // through unchanged with no defect notes.
+        DiagnosticRange good = new DiagnosticRange("f.deal", 2, 3, 2, 7, 4, 8, 4,
+            RangeOrigin.SOURCE);
+        CompilerDiagnostic ok = new CompilerDiagnostic("E3001", "warning", "valid",
+            good, null, DiagnosticCode.E3001);
+        check(ok.range() == good, "valid SOURCE range must pass through unchanged");
+        check(ok.notes().isEmpty(), "valid range must carry no defect notes");
+        check(ok.severity().equals("warning"), "valid warning severity unchanged");
+        check(ok.file().equals("f.deal") && ok.line() == 2 && ok.column() == 3,
+            "accessors derive from the range start");
+        DiagnosticRange goodSyn = DiagnosticRange.synthetic("m.deal");
+        CompilerDiagnostic okSyn = new CompilerDiagnostic("E6000", "error", "valid synthetic",
+            goodSyn, null, DiagnosticCode.E6000);
+        check(okSyn.range() == goodSyn, "canonical synthetic must pass through unchanged");
+        check(okSyn.notes().isEmpty(), "canonical synthetic must carry no defect notes");
+
+        // 13. Null/empty code, severity, or message remain immediate
+        // programmer errors (IllegalArgumentException).
+        boolean threw = false;
+        try {
+            new CompilerDiagnostic(null, "error", "m", good, null, DiagnosticCode.E3001);
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        check(threw, "null code must throw IAE");
+        threw = false;
+        try {
+            new CompilerDiagnostic("", "error", "m", good, null, DiagnosticCode.E3001);
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        check(threw, "empty code must throw IAE");
+        threw = false;
+        try {
+            new CompilerDiagnostic("E3001", null, "m", good, null, DiagnosticCode.E3001);
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        check(threw, "null severity must throw IAE");
+        threw = false;
+        try {
+            new CompilerDiagnostic("E3001", "", "m", good, null, DiagnosticCode.E3001);
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        check(threw, "empty severity must throw IAE");
+        threw = false;
+        try {
+            new CompilerDiagnostic("E3001", "error", null, good, null, DiagnosticCode.E3001);
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        check(threw, "null message must throw IAE");
+        threw = false;
+        try {
+            new CompilerDiagnostic("E3001", "error", "", good, null, DiagnosticCode.E3001);
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        check(threw, "empty message must throw IAE");
+
+        // 14. Notes handling: null becomes empty; provided notes are copied
+        // defensively and in order; the result is unmodifiable.
+        List<DiagnosticNote> mutable = new ArrayList<>();
+        mutable.add(new DiagnosticNote("hint", good));
+        CompilerDiagnostic withNotes = new CompilerDiagnostic("E3001", "error", "notes",
+            good, mutable, DiagnosticCode.E3001);
+        check(withNotes.notes().size() == 1
+                && withNotes.notes().get(0).message().equals("hint"),
+            "provided notes are preserved in order");
+        mutable.add(new DiagnosticNote("extra", null));
+        check(withNotes.notes().size() == 1,
+            "notes must be defensively copied (later mutation of the source list has no effect)");
+        boolean addThrew = false;
+        try {
+            withNotes.notes().add(new DiagnosticNote("nope", null));
+        } catch (UnsupportedOperationException e) {
+            addThrew = true;
+        }
+        check(addThrew, "notes() must be unmodifiable (List.copyOf)");
+        CompilerDiagnostic nullNotes = new CompilerDiagnostic("E3001", "error", "null notes",
+            good, null, DiagnosticCode.E3001);
+        check(nullNotes.notes().isEmpty(), "null notes must become an empty list");
+
+        // 15. Defect notes append after the provided notes.
+        CompilerDiagnostic appended = new CompilerDiagnostic("E3001", "error", "appended",
+            new DiagnosticRange("f.deal", 1, 1, 1, 5, 0, 4, 9, RangeOrigin.SOURCE),
+            List.of(new DiagnosticNote("first", null)), DiagnosticCode.E3001);
+        check(appended.notes().size() == 2
+                && appended.notes().get(0).message().equals("first")
+                && appended.notes().get(1).message().equals(
+                    "internal range defect: scalar length mismatch"),
+            "defect notes must append after the provided notes, got " + appended.notes());
+
+        // 16. toString keeps the SEVERITY, code, and message substrings.
+        String ts = ok.toString();
+        check(ts.contains("WARNING") && ts.contains("E3001") && ts.contains("valid"),
+            "toString keeps the SEVERITY, code, and message substrings: " + ts);
+        String tsErr = okSyn.toString();
+        check(tsErr.contains("ERROR") && tsErr.contains("E6000"),
+            "error toString keeps the SEVERITY and code substrings: " + tsErr);
+    }
+
+    @SuppressWarnings("deprecation")
+    private static void testFactorySurface() {
+        System.out.println("-- D5 factory surface: canonical and deprecated factories --");
+
+        // Canonical DiagnosticRange factories.
+        DiagnosticRange r = new DiagnosticRange("f.deal", 1, 2, 1, 5, 3, 6, 3,
+            RangeOrigin.SOURCE);
+        CompilerDiagnostic e = CompilerDiagnostic.error(DiagnosticCode.E3001,
+            "type mismatch", r);
+        check(e.code().equals("E3001") && e.severity().equals("error")
+                && e.message().equals("type mismatch") && e.range() == r
+                && e.diagnosticCode() == DiagnosticCode.E3001,
+            "error(DiagnosticCode, message, range) fields");
+        CompilerDiagnostic w = CompilerDiagnostic.warning(DiagnosticCode.E1043,
+            "placement", r);
+        check(w.severity().equals("warning") && w.code().equals("E1043"),
+            "warning(DiagnosticCode, message, range) fields");
+
+        // Deprecated string-code factories: pseudo codes yield null
+        // diagnosticCode; registered codes resolve.
+        CompilerDiagnostic pseudo = CompilerDiagnostic.error("E9999", "pseudo", r);
+        check(pseudo.code().equals("E9999") && pseudo.severity().equals("error")
+                && pseudo.diagnosticCode() == null,
+            "deprecated string-code error factory: pseudo code yields null diagnosticCode");
+        CompilerDiagnostic pseudoW = CompilerDiagnostic.warning("W0001", "pseudo warning", r);
+        check(pseudoW.code().equals("W0001") && pseudoW.severity().equals("warning")
+                && pseudoW.diagnosticCode() == null,
+            "deprecated string-code warning factory");
+        CompilerDiagnostic registered = CompilerDiagnostic.error("E3001", "registered", r);
+        check(registered.diagnosticCode() == DiagnosticCode.E3001,
+            "deprecated string-code factory resolves registered codes");
+
+        // Deprecated synthetic factory.
+        CompilerDiagnostic syn = CompilerDiagnostic.synthetic("E9999", "warning", "fixture",
+            "fixture.deal", "missing anchor: fixture source 'fixture.deal'");
+        check(syn.code().equals("E9999") && syn.severity().equals("warning")
+                && syn.message().equals("fixture") && syn.diagnosticCode() == null,
+            "deprecated synthetic factory fields");
+        check(syn.range().isCanonicalSynthetic() && syn.range().file().equals("fixture.deal"),
+            "deprecated synthetic factory range");
+        check(syn.notes().size() == 1
+                && syn.notes().get(0).message().equals(
+                    "missing anchor: fixture source 'fixture.deal'"),
+            "deprecated synthetic factory anchor note");
+
+        // The three deprecated methods carry @Deprecated; the canonical
+        // factories do not.
+        try {
+            check(CompilerDiagnostic.class.getMethod("error",
+                    String.class, String.class, DiagnosticRange.class)
+                    .isAnnotationPresent(Deprecated.class),
+                "error(String, String, DiagnosticRange) must be @Deprecated");
+            check(CompilerDiagnostic.class.getMethod("warning",
+                    String.class, String.class, DiagnosticRange.class)
+                    .isAnnotationPresent(Deprecated.class),
+                "warning(String, String, DiagnosticRange) must be @Deprecated");
+            check(CompilerDiagnostic.class.getMethod("synthetic",
+                    String.class, String.class, String.class, String.class, String.class)
+                    .isAnnotationPresent(Deprecated.class),
+                "synthetic(String, String, String, String, String) must be @Deprecated");
+            check(!CompilerDiagnostic.class.getMethod("error",
+                    DiagnosticCode.class, String.class, DiagnosticRange.class)
+                    .isAnnotationPresent(Deprecated.class),
+                "error(DiagnosticCode, String, DiagnosticRange) must not be @Deprecated");
+            check(!CompilerDiagnostic.class.getMethod("syntheticError",
+                    DiagnosticCode.class, String.class, String.class, String.class)
+                    .isAnnotationPresent(Deprecated.class),
+                "syntheticError must not be @Deprecated");
+        } catch (NoSuchMethodException ex) {
+            fail("factory method missing: " + ex);
+        }
+
+        // A null DiagnosticCode is a programmer error.
+        boolean threw = false;
+        try {
+            CompilerDiagnostic.error((DiagnosticCode) null, "m", r);
+        } catch (IllegalArgumentException ex) {
+            threw = true;
+        }
+        check(threw, "error(null DiagnosticCode, ...) must throw IAE");
     }
 }
