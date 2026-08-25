@@ -239,6 +239,20 @@ function $arrayElementDescriptor($descriptor, $file, $line, $column) {
   $rt.fail("E8001", "invalid array descriptor: " + $descriptor, $file, $line, $column);
 }
 
+// $isPlainObject: the class-construction plain-object predicate
+// (js-backend-runtime-artifact D6 step 1). A value is plain exactly when
+// its prototype is Object.prototype or null — the two shapes the emitter
+// produces for defaults thunk results and provided literals. Everything
+// else (Array, Map, function, class instances of other prototypes,
+// primitives) is rejected by the defensive arms of makeClass.
+function $isPlainObject(v) {
+  if (v === null || typeof v !== "object") {
+    return false;
+  }
+  const $proto = Object.getPrototypeOf(v);
+  return $proto === Object.prototype || $proto === null;
+}
+
 const $rt = {
   MISSING: $MISSING,
   NULL: null,
@@ -634,6 +648,90 @@ const $rt = {
   // No check: IEEE arithmetic on two numbers is total.
   numMod: function $numMod(a, b) {
     return a - $Math.floor(a / b) * b;
+  },
+
+  // ===== Class construction (js-backend-runtime-artifact D6) =====
+
+  // makeClass: the mirror of class_ (deal/runtime.lua:859-894) in the JS
+  // representation — a per-construction defaults thunk replaces the Lua
+  // deep copy, and absent optional fields store $MISSING instead of being
+  // removed (the DEAL-observable three-state is identical via optRead/has).
+  //
+  // Step 1: evaluate defaultsThunk() on every construction (fresh mutable
+  // defaults, re-executed call-valued defaults, spec §Construction). The
+  // defensive mirror of class_'s table checks (deal/runtime.lua:861-870):
+  // a non-plain-object thunk result fails with E8001 "class defaults must
+  // be a table"; a null/undefined provided argument is treated as absent
+  // and never errors (Lua's provided ~= nil guard, deal/runtime.lua:868);
+  // any other non-plain-object provided value fails with E8001 "class
+  // field values must be a table". Both arms are defensive — only emitter
+  // mis-emission reaches them (A3) — and raise through fail.
+  //
+  // Step 2: overlay provided own keys in source order. A provided key that
+  // is not an own key of the defaults object fails with E8007
+  // "extra field '<key>' in class '<className>'" — the class_ arm at
+  // deal/runtime.lua:875-879, naming the className argument. Present keys
+  // write via $rt.setProp.
+  //
+  // Step 3: for every remaining declared field (own keys of defaults,
+  // declaration order) write defaults[key] via $rt.setProp — required
+  // fields get their fresh default, absent optionals get $MISSING. Every
+  // declared field materializes as an own property, a field named
+  // __proto__ included (setProp never invokes the inherited accessor), so
+  // field reads never resolve to Object.prototype. No field value
+  // type-checks run here — each provided value already crossed its own
+  // expression-site boundary (class_'s contract, deal/runtime.lua:859-886).
+  //
+  // Step 4: tag via $rt.setProp(instance, "$kind", "class") and
+  // $rt.setProp(instance, "$classname", identity) — the pair class_ step 4
+  // sets on every instance (deal/runtime.lua:889-890) — and return the
+  // instance. Each instance is independent of the defaults template and of
+  // every other instance; no user name can mutate the instance's prototype.
+  makeClass: function $makeClass(className, identity, defaultsThunk, provided, file, line, column) {
+    const $defaults = defaultsThunk();
+    if (!$isPlainObject($defaults)) {
+      $rt.fail("E8001", "class defaults must be a table", file, line, column);
+    }
+    const $instance = {};
+    if (provided !== null && provided !== $undefined) {
+      if (!$isPlainObject(provided)) {
+        $rt.fail("E8001", "class field values must be a table", file, line, column);
+      }
+      const $providedKeys = Object.keys(provided);
+      for (let $i = 0; $i < $providedKeys.length; $i++) {
+        const $key = $providedKeys[$i];
+        if (!Object.prototype.hasOwnProperty.call($defaults, $key)) {
+          $rt.fail("E8007", "extra field '" + $key + "' in class '" + className + "'", file, line, column);
+        }
+        $rt.setProp($instance, $key, provided[$key]);
+      }
+    }
+    const $declaredKeys = Object.keys($defaults);
+    for (let $j = 0; $j < $declaredKeys.length; $j++) {
+      const $key = $declaredKeys[$j];
+      if (provided === null || provided === $undefined || !Object.prototype.hasOwnProperty.call(provided, $key)) {
+        $rt.setProp($instance, $key, $defaults[$key]);
+      }
+    }
+    $rt.setProp($instance, "$kind", "class");
+    $rt.setProp($instance, "$classname", identity);
+    return $instance;
+  },
+
+  // optRead: optional-field reads map MISSING -> null; every other value —
+  // a present null included — passes through unchanged (D6).
+  optRead: function $optRead(v) {
+    return v === $MISSING ? null : v;
+  },
+
+  // has: field presence for the has() intrinsic, checker-restricted to
+  // optional class fields (deal/checker/TypeChecker.java:1401-1441). An
+  // own-property read on a class instance whose every declared field is
+  // materialized (makeClass step 3): MISSING -> false; any present value
+  // including null -> true (the spec three-state). The Map branch is
+  // deliberately absent.
+  has: function $has(obj, field) {
+    return obj[field] !== $MISSING;
   },
 
   // ===== Wrapper factory and conversion intrinsics
