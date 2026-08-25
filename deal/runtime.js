@@ -270,6 +270,76 @@ const $rt = {
     }
     return v;
   },
+
+  // ===== Int arithmetic and the floored remainder =====
+  // (js-backend-runtime-artifact D5; js-backend-runtime D4 — the verbatim
+  // mirror of deal/runtime.lua:478-514) Every int result flows through
+  // checkInt (the D3 contract): -0 normalizes to 0, overflow to ±Infinity
+  // is E8001 "expected int, got infinity" before the E8004 finite-range
+  // arm, and finite values outside ±(2^53-1) are E8004. intDiv/intMod
+  // raise E8005 on a zero divisor before any division; intPow raises
+  // E8006 on a negative exponent. The truncation operations use the T1
+  // $Math capture — $Math.trunc is the math.modf truncation-toward-zero
+  // analog and $Math.floor is the floored-remainder divisor step — and
+  // every error is produced through the T2 spine (fail) with the caller's
+  // (file, line, column) forwarded. numMod is the Lua floored remainder
+  // for number % number with NO check — formula-defined and total
+  // (numMod(x, 0) is NaN, no throw). number / number stays native IEEE
+  // division in the emitter and has no runtime member. Pure functions;
+  // no mutation.
+
+  intAdd: function $intAdd(a, b, file, line, column) {
+    return $rt.checkInt(a + b, file, line, column);
+  },
+
+  intSub: function $intSub(a, b, file, line, column) {
+    return $rt.checkInt(a - b, file, line, column);
+  },
+
+  intMul: function $intMul(a, b, file, line, column) {
+    return $rt.checkInt(a * b, file, line, column);
+  },
+
+  intNeg: function $intNeg(a, file, line, column) {
+    return $rt.checkInt(-a, file, line, column);
+  },
+
+  // intDiv: E8005 on a zero divisor first (no expected/actual, mirroring
+  // the reference _err(nil, nil) pair), then checkInt of the
+  // truncation-toward-zero quotient (deal/runtime.lua:490-494).
+  intDiv: function $intDiv(a, b, file, line, column) {
+    if (b === 0) {
+      $rt.fail("E8005", "integer division by zero", file, line, column);
+    }
+    return $rt.checkInt($Math.trunc(a / b), file, line, column);
+  },
+
+  // intMod: E8005 on a zero divisor first, then checkInt of the truncated
+  // remainder a - trunc(a / b) * b (deal/runtime.lua:497-501).
+  intMod: function $intMod(a, b, file, line, column) {
+    if (b === 0) {
+      $rt.fail("E8005", "integer division by zero", file, line, column);
+    }
+    return $rt.checkInt(a - $Math.trunc(a / b) * b, file, line, column);
+  },
+
+  // intPow: E8006 on a negative exponent, then checkInt of a ** b — so
+  // overflow to ±Infinity is E8001 via the checkInt order and a finite
+  // out-of-range result is E8004 (deal/runtime.lua:504-509).
+  intPow: function $intPow(a, b, file, line, column) {
+    if (b < 0) {
+      $rt.fail("E8006", "integer exponent must be non-negative", file, line, column);
+    }
+    return $rt.checkInt(a ** b, file, line, column);
+  },
+
+  // numMod: a - floor(a / b) * b — the Lua floored remainder for
+  // number % number (native JS % is truncated, so it diverges for mixed
+  // signs; the JVM precedent deal/codegen/jvm/JvmBackend.java:3382).
+  // No check: IEEE arithmetic on two numbers is total.
+  numMod: function $numMod(a, b) {
+    return a - $Math.floor(a / b) * b;
+  },
 };
 
 module.exports = $rt;
