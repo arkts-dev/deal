@@ -3,6 +3,7 @@ package deal.test;
 import deal.ast.*;
 import deal.checker.*;
 import deal.codegen.Backend;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.codegen.jvm.JvmBackend;
 import deal.lexer.*;
 import deal.module.CompilationOrchestrator;
@@ -816,7 +817,13 @@ public class JvmConformanceTest {
             String filename = file.toString();
 
             LexResult lex = new Lexer(source, filename).tokenize();
-            all.addAll(lex.diagnostics());
+            // Transitional ranged-to-legacy boundary conversion (T3
+            // scaffolding, removed in T13): start values derive from the
+            // range start, so every rendered position is preserved.
+            for (CompilerDiagnostic d : lex.diagnostics()) {
+                all.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+            }
             if (lex.hasErrors()) return all;
 
             Parser parser = new Parser(lex.tokens(), filename);

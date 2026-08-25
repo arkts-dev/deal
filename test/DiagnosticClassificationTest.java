@@ -2,6 +2,7 @@ package deal.test;
 
 import deal.ast.*;
 import deal.checker.*;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 import deal.lexer.*;
 import deal.parser.*;
@@ -109,7 +110,13 @@ public class DiagnosticClassificationTest {
         ParseResult parse = new Parser(lex.tokens(), filename).parse();
 
         List<Diagnostic> allDiags = new ArrayList<>();
-        allDiags.addAll(lex.diagnostics());
+        // Transitional ranged-to-legacy boundary conversion at the lexer
+        // aggregation (T3 scaffolding, removed in T13): start values derive
+        // from the range start (position-preserving; ranged-to-legacy only).
+        for (CompilerDiagnostic d : lex.diagnostics()) {
+            allDiags.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                d.file(), d.line(), d.column(), d.diagnosticCode()));
+        }
         allDiags.addAll(parse.diagnostics());
 
         if (parse.hasErrors()) {

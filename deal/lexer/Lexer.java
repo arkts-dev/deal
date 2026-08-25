@@ -1,6 +1,10 @@
 package deal.lexer;
 
 import deal.ast.TokenType;
+import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
+import deal.source.ScalarSourceCursor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,12 +23,21 @@ import deal.diagnostics.DiagnosticCode;
  * and attaches them to the next non-comment token via
  * {@link Token#directives()}.</p>
  *
+ * <p>Position tracking is owned by a {@link ScalarSourceCursor}: every
+ * position and scalar offset is measured in decoded Unicode scalars (a
+ * supplementary character counts one column; CRLF counts two scalars and
+ * one line break; a tab counts one). The lexer retains a UTF-16
+ * {@code pos} index, kept in lockstep with the cursor, for lexeme
+ * substring extraction. Every emitted token carries its computed scalar
+ * offsets; the EOF token carries the final cursor position and zero
+ * scalar length.</p>
+ *
  * <p>Usage:</p>
  * <pre>{@code
  * Lexer lexer = new Lexer(source, "file.deal");
  * LexResult result = lexer.tokenize();
  * for (Token t : result.tokens()) { ... }
- * for (Diagnostic d : result.diagnostics()) { ... }
+ * for (CompilerDiagnostic d : result.diagnostics()) { ... }
  * }</pre>
  */
 public final class Lexer {
@@ -59,15 +72,23 @@ public final class Lexer {
 
     private final String source;
     private final String file;
-    private final List<Diagnostic> diagnostics = new ArrayList<>();
 
-    private int pos;      // current index in source (0-based)
-    private int line;     // current 1-based line
-    private int column;   // current 1-based column
+    /**
+     * The single owner of decoded-scalar position arithmetic (D2/D3):
+     * line/column/offset tracking. The UTF-16 {@link #pos} below is kept
+     * in lockstep with the cursor and serves lexeme substring extraction
+     * only.
+     */
+    private final ScalarSourceCursor cursor;
+
+    private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
+
+    private int pos;      // current UTF-16 index in source (0-based), in lockstep with cursor
 
     // Token start position (set before reading each token)
     private int tokenStartLine;
     private int tokenStartCol;
+    private int tokenStartScalarOffset;
 
     /** Pending compiler directives accumulated from comment lines (D1). */
     private final List<String> pendingDirectives = new ArrayList<>();
@@ -87,9 +108,8 @@ public final class Lexer {
     public Lexer(String source, String file) {
         this.source = source;
         this.file = file;
+        this.cursor = new ScalarSourceCursor(source);
         this.pos = 0;
-        this.line = 1;
-        this.column = 1;
     }
 
     // =========================================================================
@@ -111,14 +131,18 @@ public final class Lexer {
             }
         }
 
-        // Emit EOF token at the current position.
-        // Directives that were never consumed by a following token (a
-        // trailing comment line or a file containing only comments)
-        // attach to the EOF token so the parser still validates their
-        // values.  Placement is enforced at directive inspection time,
-        // not here: a directive with no preceding non-comment token
-        // satisfies "before the first non-comment token" vacuously.
-        Token eof = new Token(TokenType.EOF, "", line, column, 0);
+        // Emit EOF token at the current position: the final cursor position
+        // with zero scalar length (D3).  Directives that were never
+        // consumed by a following token (a trailing comment line or a file
+        // containing only comments) attach to the EOF token so the parser
+        // still validates their values.  Placement is enforced at directive
+        // inspection time, not here: a directive with no preceding
+        // non-comment token satisfies "before the first non-comment token"
+        // vacuously.  Attachment routes through the offset-preserving
+        // withDirectives copy, so the EOF token keeps its final cursor
+        // offsets (D3).
+        Token eof = new Token(TokenType.EOF, "", cursor.line(), cursor.column(), 0,
+            cursor.scalarOffset(), 0, List.of());
         if (!pendingDirectives.isEmpty()) {
             eof = eof.withDirectives(List.copyOf(pendingDirectives));
             pendingDirectives.clear();
@@ -142,8 +166,9 @@ public final class Lexer {
             return null;
         }
 
-        tokenStartLine = line;
-        tokenStartCol = column;
+        tokenStartLine = cursor.line();
+        tokenStartCol = cursor.column();
+        tokenStartScalarOffset = cursor.scalarOffset();
 
         char c = source.charAt(pos);
 
@@ -160,7 +185,10 @@ public final class Lexer {
             token = readOperatorOrPunctuation();
         }
 
-        // Attach pending compiler directives to this token (D1)
+        // Attach pending compiler directives to this token (D1).  The
+        // attachment routes through the offset-preserving withDirectives
+        // copy, so makeToken's computed scalar offsets survive on
+        // directive-bearing tokens (D3).
         if (token != null && !pendingDirectives.isEmpty()) {
             token = token.withDirectives(List.copyOf(pendingDirectives));
             pendingDirectives.clear();
@@ -198,7 +226,7 @@ public final class Lexer {
             if (c == '\r') {
                 newline();
                 if (pos < source.length() && source.charAt(pos) == '\n') {
-                    pos++; // consume LF (no column update, no new line)
+                    skipCrlfLf(); // consume LF (one scalar, no line change)
                 }
                 continue;
             }
@@ -225,17 +253,18 @@ public final class Lexer {
      * <p>Inspects the comment body for recognized compiler directives
      * (currently {@code @jsonable}) and buffers them in
      * {@link #pendingDirectives} for attachment to the next non-comment
-     * token (D1).
+     * token (D1).</p>
      *
-     * <p>Uses bump() for all non-newline characters so column tracking
-     * remains accurate when a line comment ends at EOF.</p>
+     * <p>All non-newline scalars are consumed via {@link #bump()} so column
+     * tracking remains accurate when a line comment ends at EOF.</p>
      */
     private void skipLineComment() {
+        ScalarSourceCursor.Mark commentStart = cursor.mark(); // first '/'
         bump(); // skip first /
         bump(); // skip second /
 
         // Inspect comment body for compiler directives (D1)
-        inspectDirective();
+        inspectDirective(commentStart);
 
         // Consume the rest of the line (existing behavior)
         while (pos < source.length()) {
@@ -247,7 +276,7 @@ public final class Lexer {
             if (c == '\r') {
                 newline();
                 if (pos < source.length() && source.charAt(pos) == '\n') {
-                    pos++;
+                    skipCrlfLf();
                 }
                 return;
             }
@@ -271,69 +300,91 @@ public final class Lexer {
      * ordinary comments; rejecting them is tracked separately
      * (ISSUE-0111).</p>
      *
-     * <p>The inspection peeks at the source without consuming characters
-     * (non-destructive lookahead); the comment body itself is consumed by
-     * {@link #skipLineComment()} afterwards.</p>
+     * <p>The inspection is non-consuming: all lookahead over the name and
+     * argument positions runs on cursor mark/reset snapshots, and the
+     * comment body itself is consumed by {@link #skipLineComment()}
+     * afterwards.</p>
      */
-    private void inspectDirective() {
-        int peekPos = pos;
+    private void inspectDirective(ScalarSourceCursor.Mark commentStart) {
+        ScalarSourceCursor.Mark bodyStart = cursor.mark();
 
-        // Skip optional leading whitespace between // and the directive
-        while (peekPos < source.length()) {
-            char c = source.charAt(peekPos);
-            if (c == ' ' || c == '\t') {
-                peekPos++;
-                continue;
-            }
-            break;
+        // Skip optional leading horizontal whitespace between // and '@'.
+        int scalar;
+        while ((scalar = cursor.peekScalar()) == ' ' || scalar == '\t') {
+            cursor.advance();
         }
 
         // Must start with @ to be a directive
-        if (peekPos >= source.length() || source.charAt(peekPos) != '@') {
+        if (cursor.peekScalar() != '@') {
+            cursor.reset(bodyStart);
             return;
         }
 
-        // Read the directive name: [a-zA-Z0-9-]+
-        int nameStart = peekPos + 1;
-        int nameEnd = nameStart;
-        while (nameEnd < source.length() && isDirectiveNameChar(source.charAt(nameEnd))) {
-            nameEnd++;
+        // Complete directive comment range (parent D6): from the first '/'
+        // of '//' through the last comment scalar — half-open, with the end
+        // at the line terminator's first scalar (or EOF).
+        DiagnosticRange commentRange = completeCommentRange(commentStart);
+
+        // Re-walk for the name and argument (non-consuming).
+        cursor.reset(bodyStart);
+        while ((scalar = cursor.peekScalar()) == ' ' || scalar == '\t') {
+            cursor.advance();
         }
-        if (nameEnd == nameStart) {
+        cursor.advance(); // '@'
+
+        // Read the directive name: [a-zA-Z0-9-]+
+        StringBuilder name = new StringBuilder();
+        while (true) {
+            int s = cursor.peekScalar();
+            if (s < 0 || !isDirectiveNameChar((char) s)) {
+                break;
+            }
+            name.append((char) s);
+            cursor.advance();
+        }
+        if (name.isEmpty()) {
             // '@' with no name does not match CompilerDirectiveComment.
+            cursor.reset(bodyStart);
             return;
         }
-        String name = source.substring(nameStart, nameEnd);
 
         // Read the argument: everything up to the line terminator, with
         // surrounding horizontal whitespace trimmed.
-        String argument = readDirectiveArgument(nameEnd);
+        StringBuilder arg = new StringBuilder();
+        while (true) {
+            int s = cursor.peekScalar();
+            if (s < 0 || s == '\n' || s == '\r') {
+                break;
+            }
+            arg.appendCodePoint(s);
+            cursor.advance();
+        }
+        String argument = arg.toString().trim();
 
-        int directiveLine = line;
-        int directiveCol = column + (nameStart - pos) - 1;
+        cursor.reset(bodyStart);
 
-        switch (name) {
+        switch (name.toString()) {
             case "deal-version" -> {
                 if (dealVersionDirectiveSeen) {
                     error(DiagnosticCode.E1053,
                         "Duplicate @deal-version directive (each file directive may occur at most once)",
-                        directiveLine, directiveCol);
+                        commentRange);
                 }
                 dealVersionDirectiveSeen = true;
                 if (anyNonCommentToken) {
                     error(DiagnosticCode.E1052,
                         "@deal-version must occur before the first non-comment token",
-                        directiveLine, directiveCol);
+                        commentRange);
                 }
                 if (argument.isEmpty()) {
                     error(DiagnosticCode.E1054,
                         "@deal-version requires exactly one non-empty version argument",
-                        directiveLine, directiveCol);
+                        commentRange);
                 } else if (hasInternalWhitespace(argument)) {
                     error(DiagnosticCode.E1054,
                         "@deal-version requires exactly one non-empty version argument, got: '"
                             + argument + "'",
-                        directiveLine, directiveCol);
+                        commentRange);
                 } else {
                     pendingDirectives.add("@deal-version " + argument);
                 }
@@ -352,26 +403,37 @@ public final class Lexer {
         }
     }
 
+    /**
+     * Computes the complete directive comment range without consuming: from
+     * the first {@code /} of {@code //} (the cursor position recorded in
+     * {@code commentStart}) through the last comment scalar, half-open with
+     * the end at the line terminator's first scalar (or EOF). The cursor is
+     * restored to {@code commentStart} before returning.
+     */
+    private DiagnosticRange completeCommentRange(ScalarSourceCursor.Mark commentStart) {
+        cursor.reset(commentStart);
+        int startLine = cursor.line();
+        int startCol = cursor.column();
+        int startOffset = cursor.scalarOffset();
+
+        int s;
+        while ((s = cursor.peekScalar()) >= 0 && s != '\n' && s != '\r') {
+            cursor.advance();
+        }
+        int endOffset = cursor.scalarOffset();
+        DiagnosticRange range = new DiagnosticRange(file, startLine, startCol,
+            cursor.line(), cursor.column(), startOffset, endOffset,
+            endOffset - startOffset, RangeOrigin.SOURCE);
+
+        cursor.reset(commentStart);
+        return range;
+    }
+
     private static boolean isDirectiveNameChar(char c) {
         return (c >= 'a' && c <= 'z')
             || (c >= 'A' && c <= 'Z')
             || (c >= '0' && c <= '9')
             || c == '-';
-    }
-
-    /**
-     * Reads the directive argument starting at the given position: the
-     * substring up to the line terminator or EOF with surrounding
-     * horizontal whitespace trimmed.  Does not consume source characters.
-     */
-    private String readDirectiveArgument(int start) {
-        int end = start;
-        while (end < source.length()) {
-            char c = source.charAt(end);
-            if (c == '\n' || c == '\r') break;
-            end++;
-        }
-        return source.substring(start, end).trim();
     }
 
     private static boolean hasInternalWhitespace(String s) {
@@ -390,11 +452,13 @@ public final class Lexer {
      *
      * <p>All non-newline characters are consumed via {@link #bump()} so
      * that subsequent tokens on the same line report correct column
-     * positions.  Unterminated block comments produce E1004.</p>
+     * positions.  Unterminated block comments produce E1004 anchored at
+     * the complete comment range (comment start through EOF, D5).</p>
      */
     private void skipBlockComment() {
-        int startLine = line;
-        int startCol = column;
+        int startLine = cursor.line();
+        int startCol = cursor.column();
+        int startOffset = cursor.scalarOffset();
         bump(); // skip first /
         bump(); // skip *
 
@@ -417,15 +481,16 @@ public final class Lexer {
             } else if (c == '\r') {
                 newline();
                 if (pos < source.length() && source.charAt(pos) == '\n') {
-                    pos++; // consume LF (part of CRLF, column already reset)
+                    skipCrlfLf(); // consume LF (part of CRLF, column already reset)
                 }
             } else {
                 bump();
             }
         }
 
-        // Unterminated block comment
-        error(DiagnosticCode.E1004, "Unterminated multi-line comment", startLine, startCol);
+        // Unterminated block comment: comment start through EOF (D5).
+        error(DiagnosticCode.E1004, "Unterminated multi-line comment",
+            rangeFromStart(startLine, startCol, startOffset));
     }
 
     // =========================================================================
@@ -460,7 +525,7 @@ public final class Lexer {
                 if (hasDot) {
                     error(DiagnosticCode.E1002,
                         "Malformed number literal: multiple decimal points",
-                        tokenStartLine, tokenStartCol);
+                        tokenStartRange());
                     String lexeme = source.substring(startPos, pos);
                     return makeToken(TokenType.NUMBER_LITERAL, lexeme);
                 }
@@ -478,7 +543,7 @@ public final class Lexer {
                 && pos + 1 < source.length() && isDigit(source.charAt(pos + 1))) {
             error(DiagnosticCode.E1002,
                 "Malformed number literal: multiple decimal points",
-                tokenStartLine, tokenStartCol);
+                tokenStartRange());
         }
 
         // Exponent part
@@ -510,14 +575,14 @@ public final class Lexer {
                     }
                     error(DiagnosticCode.E1002,
                         "Malformed number literal: exponent without digits",
-                        tokenStartLine, tokenStartCol);
+                        tokenStartRange());
                 }
             } else if (hasDot) {
                 hasExponent = true;
                 bump();
                 error(DiagnosticCode.E1002,
                     "Malformed number literal: exponent without digits",
-                    tokenStartLine, tokenStartCol);
+                    tokenStartRange());
             }
         }
 
@@ -546,18 +611,18 @@ public final class Lexer {
 
             if (c == '\n') {
                 error(DiagnosticCode.E1003, "Unterminated string literal: missing closing " + quote,
-                    tokenStartLine, tokenStartCol);
+                    tokenStartRange());
                 String lexeme = source.substring(startPos, pos);
                 newline();
                 return makeToken(TokenType.STRING_LITERAL, lexeme);
             }
             if (c == '\r') {
                 error(DiagnosticCode.E1003, "Unterminated string literal: missing closing " + quote,
-                    tokenStartLine, tokenStartCol);
+                    tokenStartRange());
                 String lexeme = source.substring(startPos, pos);
                 newline();
                 if (pos < source.length() && source.charAt(pos) == '\n') {
-                    pos++;
+                    skipCrlfLf();
                 }
                 return makeToken(TokenType.STRING_LITERAL, lexeme);
             }
@@ -566,7 +631,7 @@ public final class Lexer {
                 bump(); // backslash
                 if (pos >= source.length()) {
                     error(DiagnosticCode.E1003, "Unterminated string literal: escape at end of file",
-                        tokenStartLine, tokenStartCol);
+                        tokenStartRange());
                     String lexeme = source.substring(startPos, pos);
                     return makeToken(TokenType.STRING_LITERAL, lexeme);
                 }
@@ -582,7 +647,7 @@ public final class Lexer {
 
         // Reached EOF without closing quote
         error(DiagnosticCode.E1003, "Unterminated string literal: missing closing " + quote,
-            tokenStartLine, tokenStartCol);
+            tokenStartRange());
         String lexeme = source.substring(startPos, pos);
         return makeToken(TokenType.STRING_LITERAL, lexeme);
     }
@@ -605,9 +670,10 @@ public final class Lexer {
      *       if it is a line terminator, treat it as the terminating newline
      *       rather than as an escaped character.</li>
      *   <li>After calling {@code newline()} for {@code \r}, conditionally
-     *       consume a following {@code \n} with bare {@code pos++}
-     *       (no second {@code newline()}), matching the existing
-     *       {@code readString()} and {@code skipWhitespaceAndComments()} pattern.</li>
+     *       consume a following {@code \n} with {@link #skipCrlfLf()}
+     *       (no second line break), matching the existing
+     *       {@code readString()} and {@code skipWhitespaceAndComments()}
+     *       pattern.</li>
      * </ol>
      */
     private Token readTemplateLiteral() {
@@ -623,7 +689,7 @@ public final class Lexer {
             if (c == '\n') {
                 error(DiagnosticCode.E1003,
                     "Unterminated template literal: missing closing backtick",
-                    tokenStartLine, tokenStartCol);
+                    tokenStartRange());
                 String lexeme = source.substring(contentStart, pos);
                 newline();
                 return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
@@ -631,12 +697,12 @@ public final class Lexer {
             if (c == '\r') {
                 error(DiagnosticCode.E1003,
                     "Unterminated template literal: missing closing backtick",
-                    tokenStartLine, tokenStartCol);
+                    tokenStartRange());
                 String lexeme = source.substring(contentStart, pos);
                 newline();
                 // D19: conditionally consume LF after CR
                 if (pos < source.length() && source.charAt(pos) == '\n') {
-                    pos++;
+                    skipCrlfLf();
                 }
                 return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
             }
@@ -648,7 +714,7 @@ public final class Lexer {
                     // EOF after backslash
                     error(DiagnosticCode.E1003,
                         "Unterminated template literal: escape at end of file",
-                        tokenStartLine, tokenStartCol);
+                        tokenStartRange());
                     String lexeme = source.substring(contentStart, pos);
                     return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
                 }
@@ -657,7 +723,7 @@ public final class Lexer {
                 if (next == '\n') {
                     error(DiagnosticCode.E1003,
                         "Unterminated template literal: missing closing backtick",
-                        tokenStartLine, tokenStartCol);
+                        tokenStartRange());
                     String lexeme = source.substring(contentStart, pos - 1);
                     newline();
                     return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
@@ -665,12 +731,12 @@ public final class Lexer {
                 if (next == '\r') {
                     error(DiagnosticCode.E1003,
                         "Unterminated template literal: missing closing backtick",
-                        tokenStartLine, tokenStartCol);
+                        tokenStartRange());
                     String lexeme = source.substring(contentStart, pos - 1);
                     newline();
                     // D19: conditionally consume LF after CR
                     if (pos < source.length() && source.charAt(pos) == '\n') {
-                        pos++;
+                        skipCrlfLf();
                     }
                     return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
                 }
@@ -694,7 +760,7 @@ public final class Lexer {
         // Reached EOF without closing backtick
         error(DiagnosticCode.E1003,
             "Unterminated template literal: missing closing backtick",
-            tokenStartLine, tokenStartCol);
+            tokenStartRange());
         String lexeme = source.substring(contentStart, pos);
         return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
     }
@@ -830,8 +896,11 @@ public final class Lexer {
 
             default -> {
                 String ch = String.valueOf(c);
+                // E1001 = the offending single scalar (D5): the range covers
+                // exactly the scalar at the current cursor position, before
+                // it is consumed.
                 error(DiagnosticCode.E1001, "Unrecognized character: '" + ch + "'",
-                    line, column);
+                    singleScalarRange(cursor.line(), cursor.column(), cursor.scalarOffset()));
                 bump();
                 yield null;
             }
@@ -862,36 +931,88 @@ public final class Lexer {
     // =========================================================================
 
     /**
-     * Advances past the current non-newline character, incrementing column.
+     * Advances past the current decoded scalar (never a line terminator at
+     * the call sites), incrementing the column by one via the cursor and
+     * keeping the UTF-16 {@code pos} in lockstep with the cursor index.
      */
     private void bump() {
-        pos++;
-        column++;
+        cursor.advance();
+        pos = cursor.index();
     }
 
     /**
-     * Handles a newline (\\n or \\r). Advances past the character,
-     * increments line, and resets column to 1.
+     * Handles a newline (\\n or \\r) through the cursor: one scalar offset;
+     * the line increments and the column resets to 1 (the cursor's CRLF
+     * rule suppresses the line change for an LF following a consumed CR).
+     * Keeps {@code pos} in lockstep.
      */
     private void newline() {
-        pos++;
-        line++;
-        column = 1;
+        cursor.advance();
+        pos = cursor.index();
     }
 
     /**
-     * Creates a token at the current token start position
-     * with the given type and lexeme.
+     * Consumes the LF scalar of a CRLF pair after the CR was already
+     * consumed: one scalar offset with no line/column change (the cursor's
+     * CRLF pairing rule), keeping {@code pos} in lockstep. CRLF counts two
+     * scalars and one line break.
+     */
+    private void skipCrlfLf() {
+        cursor.advance();
+        pos = cursor.index();
+    }
+
+    /**
+     * Creates a token at the current token start position with the given
+     * type and lexeme. Records the token-start scalar offset captured in
+     * {@link #nextToken()} and computes {@code scalarLength} as the cursor
+     * distance consumed since (D3).
      */
     private Token makeToken(TokenType type, String lexeme) {
-        return new Token(type, lexeme, tokenStartLine, tokenStartCol, lexeme.length());
+        int scalarLen = cursor.scalarOffset() - tokenStartScalarOffset;
+        return new Token(type, lexeme, tokenStartLine, tokenStartCol,
+            lexeme.length(), tokenStartScalarOffset, scalarLen, List.of());
     }
 
     // =========================================================================
     // Error reporting
     // =========================================================================
 
-    private void error(DiagnosticCode code, String message, int errLine, int errCol) {
-        diagnostics.add(Diagnostic.error(code, message, file, errLine, errCol));
+    /**
+     * Emits a ranged {@link CompilerDiagnostic} carrying the given complete
+     * SOURCE range built from cursor positions (D5). Codes, messages, and
+     * severities are unchanged.
+     */
+    private void error(DiagnosticCode code, String message, DiagnosticRange range) {
+        diagnostics.add(CompilerDiagnostic.error(code, message, range));
+    }
+
+    /**
+     * The SOURCE range from the current token start through the current
+     * cursor position (half-open): end = the first unconsumed scalar — the
+     * terminator's first scalar for E1002/E1003, EOF for E1004 (D5).
+     */
+    private DiagnosticRange tokenStartRange() {
+        return rangeFromStart(tokenStartLine, tokenStartCol, tokenStartScalarOffset);
+    }
+
+    /**
+     * The SOURCE half-open range from the given start position through the
+     * current cursor position (the first unconsumed scalar).
+     */
+    private DiagnosticRange rangeFromStart(int startLine, int startCol, int startOffset) {
+        int endOffset = cursor.scalarOffset();
+        return new DiagnosticRange(file, startLine, startCol,
+            cursor.line(), cursor.column(), startOffset, endOffset,
+            endOffset - startOffset, RangeOrigin.SOURCE);
+    }
+
+    /**
+     * The SOURCE range covering exactly the single scalar at the given
+     * position (E1001 = the offending single scalar, D5).
+     */
+    private DiagnosticRange singleScalarRange(int line, int col, int offset) {
+        return new DiagnosticRange(file, line, col, line, col + 1,
+            offset, offset + 1, 1, RangeOrigin.SOURCE);
     }
 }
