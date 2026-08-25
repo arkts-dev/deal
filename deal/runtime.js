@@ -350,8 +350,8 @@ const $rt = {
   // plus a trailing newline to the captured stderr and set the captured
   // exitCode to 1. All host-global access goes through the T1 captures.
   reportUncaught: function $reportUncaught(e) {
-    const err = $rt.reifyError(e);
-    $process.stderr.write("DEAL_ERROR_CODE: " + err.code + " " + err.message + "\n");
+    const $err = $rt.reifyError(e);
+    $process.stderr.write("DEAL_ERROR_CODE: " + $err.code + " " + $err.message + "\n");
     $process.exitCode = 1;
   },
 
@@ -776,6 +776,69 @@ const $rt = {
       $rt.fail("E8001", "cannot convert null to number", file, line, column, "number", "null");
     }
     return $rt.checkNumber(v, file, line, column);
+  },
+  // ===== String scalar-value helpers (js-backend-runtime-artifact D9) =====
+  // Code-point measures and ordering. Native JS string iteration walks one
+  // Unicode scalar per step (spec §For-of), so these operate over code
+  // points, not UTF-16 units. The helpers do not re-validate — checkString
+  // above is the boundary (D9) — and assume validated strings (no unpaired
+  // surrogates). Pure, deterministic, no mutation, no I/O.
+
+  // scalarLength: the code-point count.
+  scalarLength: function $scalarLength(s) {
+    let $n = 0;
+    for (const $c of s) {
+      $n++;
+    }
+    return $n;
+  },
+
+  // scalarAt: the 0-based i-th scalar as a one-code-point string (the
+  // std/string.substring convention, std/string.lua); the captured
+  // nil-equivalent $undefined for any i outside [0, scalarLength(s)).
+  scalarAt: function $scalarAt(s, i) {
+    let $n = 0;
+    for (const $c of s) {
+      if ($n === i) return $c;
+      $n++;
+    }
+    return $undefined;
+  },
+
+  // scalars: the array of one-code-point strings in order. Materialized
+  // through the T1 $Array capture — $Array.from on a string iterates one
+  // code point per element, so the result is a real native Array of
+  // one-scalar strings.
+  scalars: function $scalars(s) {
+    return $Array.from(s);
+  },
+
+  // strCompare: scalar-value (code-point) ordering for </<=/>/>=. JS
+  // relational operators compare UTF-16 code units, which diverges from
+  // scalar order for supplementary characters (strCompare('\uE000',
+  // '\u{10000}') < 0 while ('\uE000' < '\u{10000}') === false). Mirrors
+  // the JVM backend's emitted scalarCompare
+  // (deal/codegen/jvm/JvmBackend.java:3389): a codePointAt walk with
+  // per-scalar advancement, returning a negative number / 0 / a positive
+  // number.
+  strCompare: function $strCompare(a, b) {
+    let $ia = 0;
+    let $ib = 0;
+    const $la = a.length;
+    const $lb = b.length;
+    while ($ia < $la && $ib < $lb) {
+      const $ca = a.codePointAt($ia);
+      const $cb = b.codePointAt($ib);
+      if ($ca !== $cb) {
+        return $ca < $cb ? -1 : 1;
+      }
+      $ia += $ca > 0xffff ? 2 : 1;
+      $ib += $cb > 0xffff ? 2 : 1;
+    }
+    if ($ia >= $la) {
+      return $ib >= $lb ? 0 : -1;
+    }
+    return 1;
   },
 };
 
