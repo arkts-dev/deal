@@ -454,6 +454,7 @@ static int dealpg4_battery_subreaper(dealpg4_probe_bound *bound)
     pid_t child, gpid, new_ppid;
     uint64_t local;
     int status;
+    int rc;
 
     if (prctl(PR_SET_CHILD_SUBREAPER, 1) != 0)
         return DEALPG4_BATTERY_FAIL;
@@ -508,29 +509,37 @@ static int dealpg4_battery_subreaper(dealpg4_probe_bound *bound)
     close(pipefd[1]);
 
     local = dealpg4_now_ms() + DEALPG4_BATTERY_LOCAL_DEADLINE_MS;
-    if (dealpg4_read_bounded(pipefd[0], &gpid, sizeof(gpid), local, bound)
-        != 0) {
+    rc = dealpg4_read_bounded(pipefd[0], &gpid, sizeof(gpid), local, bound);
+    if (rc != 0) {
         close(pipefd[0]);
         dealpg4_battery_cleanup(bound);
-        return DEALPG4_BATTERY_FAIL;
+        return rc == DEALPG4_BATTERY_BOUND ? DEALPG4_BATTERY_BOUND
+                                           : DEALPG4_BATTERY_FAIL;
     }
 
     /* Reap the child; its exit is what reparented the grandchild. */
     local = dealpg4_now_ms() + DEALPG4_BATTERY_LOCAL_DEADLINE_MS;
     status = 0;
-    if (dealpg4_waitpid_bounded(child, &status, local, bound) != 0
-        || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    rc = dealpg4_waitpid_bounded(child, &status, local, bound);
+    if (rc == DEALPG4_BATTERY_BOUND) {
+        close(pipefd[0]);
+        dealpg4_battery_cleanup(bound);
+        return DEALPG4_BATTERY_BOUND;
+    }
+    if (rc != 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         close(pipefd[0]);
         dealpg4_battery_cleanup(bound);
         return DEALPG4_BATTERY_FAIL;
     }
 
     local = dealpg4_now_ms() + DEALPG4_BATTERY_LOCAL_DEADLINE_MS;
-    if (dealpg4_read_bounded(pipefd[0], &new_ppid, sizeof(new_ppid), local,
-                             bound) != 0) {
+    rc = dealpg4_read_bounded(pipefd[0], &new_ppid, sizeof(new_ppid), local,
+                              bound);
+    if (rc != 0) {
         close(pipefd[0]);
         dealpg4_battery_cleanup(bound);
-        return DEALPG4_BATTERY_FAIL;
+        return rc == DEALPG4_BATTERY_BOUND ? DEALPG4_BATTERY_BOUND
+                                           : DEALPG4_BATTERY_FAIL;
     }
     close(pipefd[0]);
 
@@ -579,11 +588,12 @@ static int dealpg4_battery_subreaper(dealpg4_probe_bound *bound)
     }
 
     /* No live descendants, no zombie: waitid loop to ECHILD. */
-    if (dealpg4_reap_all_bounded(bound,
-                                 dealpg4_now_ms()
-                                     + DEALPG4_BATTERY_LOCAL_DEADLINE_MS)
-        != 0)
-        return DEALPG4_BATTERY_FAIL;
+    rc = dealpg4_reap_all_bounded(bound,
+                                  dealpg4_now_ms()
+                                      + DEALPG4_BATTERY_LOCAL_DEADLINE_MS);
+    if (rc != 0)
+        return rc == DEALPG4_BATTERY_BOUND ? DEALPG4_BATTERY_BOUND
+                                           : DEALPG4_BATTERY_FAIL;
     return DEALPG4_BATTERY_PASS;
 }
 
@@ -592,6 +602,7 @@ static int dealpg4_battery_parent_death(dealpg4_probe_bound *bound)
     int pipefd[2];
     pid_t a, b;
     int status;
+    int rc;
     uint64_t local;
 
     /* B's reaping relies on subreaper adoption. The subreaper battery
@@ -644,11 +655,13 @@ static int dealpg4_battery_parent_death(dealpg4_probe_bound *bound)
 
     /* B reports ready with its pid. */
     local = dealpg4_now_ms() + DEALPG4_BATTERY_LOCAL_DEADLINE_MS;
-    if (dealpg4_read_bounded(pipefd[0], &b, sizeof(b), local, bound) != 0) {
+    rc = dealpg4_read_bounded(pipefd[0], &b, sizeof(b), local, bound);
+    if (rc != 0) {
         close(pipefd[0]);
         kill(a, SIGKILL); /* A's death delivers B's parent-death signal */
         dealpg4_battery_cleanup(bound);
-        return DEALPG4_BATTERY_FAIL;
+        return rc == DEALPG4_BATTERY_BOUND ? DEALPG4_BATTERY_BOUND
+                                           : DEALPG4_BATTERY_FAIL;
     }
     close(pipefd[0]);
 
@@ -661,8 +674,12 @@ static int dealpg4_battery_parent_death(dealpg4_probe_bound *bound)
 
     local = dealpg4_now_ms() + DEALPG4_BATTERY_LOCAL_DEADLINE_MS;
     status = 0;
-    if (dealpg4_waitpid_bounded(a, &status, local, bound) != 0
-        || !WIFSIGNALED(status) || WTERMSIG(status) != SIGKILL) {
+    rc = dealpg4_waitpid_bounded(a, &status, local, bound);
+    if (rc == DEALPG4_BATTERY_BOUND) {
+        dealpg4_battery_cleanup(bound);
+        return DEALPG4_BATTERY_BOUND;
+    }
+    if (rc != 0 || !WIFSIGNALED(status) || WTERMSIG(status) != SIGKILL) {
         dealpg4_battery_cleanup(bound);
         return DEALPG4_BATTERY_FAIL;
     }
@@ -706,11 +723,12 @@ static int dealpg4_battery_parent_death(dealpg4_probe_bound *bound)
     }
 
     /* Both A and B reaped; no survivors. */
-    if (dealpg4_reap_all_bounded(bound,
-                                 dealpg4_now_ms()
-                                     + DEALPG4_BATTERY_LOCAL_DEADLINE_MS)
-        != 0)
-        return DEALPG4_BATTERY_FAIL;
+    rc = dealpg4_reap_all_bounded(bound,
+                                  dealpg4_now_ms()
+                                      + DEALPG4_BATTERY_LOCAL_DEADLINE_MS);
+    if (rc != 0)
+        return rc == DEALPG4_BATTERY_BOUND ? DEALPG4_BATTERY_BOUND
+                                           : DEALPG4_BATTERY_FAIL;
     return DEALPG4_BATTERY_PASS;
 }
 
@@ -719,6 +737,7 @@ static int dealpg4_battery_negative_pgid(dealpg4_probe_bound *bound)
     int pipefd[2];
     pid_t child, pgid;
     int status;
+    int rc;
     uint64_t local;
 
     if (pipe2(pipefd, O_NONBLOCK | O_CLOEXEC) != 0)
@@ -750,11 +769,12 @@ static int dealpg4_battery_negative_pgid(dealpg4_probe_bound *bound)
     close(pipefd[1]);
 
     local = dealpg4_now_ms() + DEALPG4_BATTERY_LOCAL_DEADLINE_MS;
-    if (dealpg4_read_bounded(pipefd[0], &pgid, sizeof(pgid), local, bound)
-        != 0) {
+    rc = dealpg4_read_bounded(pipefd[0], &pgid, sizeof(pgid), local, bound);
+    if (rc != 0) {
         close(pipefd[0]);
         dealpg4_battery_cleanup(bound);
-        return DEALPG4_BATTERY_FAIL;
+        return rc == DEALPG4_BATTERY_BOUND ? DEALPG4_BATTERY_BOUND
+                                           : DEALPG4_BATTERY_FAIL;
     }
     close(pipefd[0]);
 
@@ -772,8 +792,12 @@ static int dealpg4_battery_negative_pgid(dealpg4_probe_bound *bound)
 
     local = dealpg4_now_ms() + DEALPG4_BATTERY_LOCAL_DEADLINE_MS;
     status = 0;
-    if (dealpg4_waitpid_bounded(child, &status, local, bound) != 0
-        || !WIFSIGNALED(status) || WTERMSIG(status) != SIGTERM) {
+    rc = dealpg4_waitpid_bounded(child, &status, local, bound);
+    if (rc == DEALPG4_BATTERY_BOUND) {
+        dealpg4_battery_cleanup(bound);
+        return DEALPG4_BATTERY_BOUND;
+    }
+    if (rc != 0 || !WIFSIGNALED(status) || WTERMSIG(status) != SIGTERM) {
         dealpg4_battery_cleanup(bound);
         return DEALPG4_BATTERY_FAIL;
     }
@@ -784,11 +808,12 @@ static int dealpg4_battery_negative_pgid(dealpg4_probe_bound *bound)
         return DEALPG4_BATTERY_FAIL;
     }
 
-    if (dealpg4_reap_all_bounded(bound,
-                                 dealpg4_now_ms()
-                                     + DEALPG4_BATTERY_LOCAL_DEADLINE_MS)
-        != 0)
-        return DEALPG4_BATTERY_FAIL;
+    rc = dealpg4_reap_all_bounded(bound,
+                                  dealpg4_now_ms()
+                                      + DEALPG4_BATTERY_LOCAL_DEADLINE_MS);
+    if (rc != 0)
+        return rc == DEALPG4_BATTERY_BOUND ? DEALPG4_BATTERY_BOUND
+                                           : DEALPG4_BATTERY_FAIL;
     return DEALPG4_BATTERY_PASS;
 }
 
@@ -797,6 +822,7 @@ static int dealpg4_battery_bounded_drain(dealpg4_probe_bound *bound)
     int pipefd[2];
     pid_t child;
     int status;
+    int rc;
     dealpg4_drain_ctx dctx;
     uint64_t local;
     size_t i;
@@ -901,17 +927,22 @@ static int dealpg4_battery_bounded_drain(dealpg4_probe_bound *bound)
     /* The writer exited cleanly and is reaped. */
     local = dealpg4_now_ms() + DEALPG4_BATTERY_LOCAL_DEADLINE_MS;
     status = 0;
-    if (dealpg4_waitpid_bounded(child, &status, local, bound) != 0
-        || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    rc = dealpg4_waitpid_bounded(child, &status, local, bound);
+    if (rc == DEALPG4_BATTERY_BOUND) {
+        dealpg4_battery_cleanup(bound);
+        return DEALPG4_BATTERY_BOUND;
+    }
+    if (rc != 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         dealpg4_battery_cleanup(bound);
         return DEALPG4_BATTERY_FAIL;
     }
 
-    if (dealpg4_reap_all_bounded(bound,
-                                 dealpg4_now_ms()
-                                     + DEALPG4_BATTERY_LOCAL_DEADLINE_MS)
-        != 0)
-        return DEALPG4_BATTERY_FAIL;
+    rc = dealpg4_reap_all_bounded(bound,
+                                  dealpg4_now_ms()
+                                      + DEALPG4_BATTERY_LOCAL_DEADLINE_MS);
+    if (rc != 0)
+        return rc == DEALPG4_BATTERY_BOUND ? DEALPG4_BATTERY_BOUND
+                                           : DEALPG4_BATTERY_FAIL;
     return DEALPG4_BATTERY_PASS;
 }
 
