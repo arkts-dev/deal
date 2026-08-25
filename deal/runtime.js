@@ -65,14 +65,14 @@ const $jsonNullTables = new WeakSet();
 // instances are identified by their $kind tag before the Map/Array
 // branches; Maps (the T1 $Map capture) are tables; Arrays (the T1 $Array
 // capture) are arrays; everything else reports the JS typeof name.
-function $kindOf(v) {
-  if (v === $undefined) return "nil";
-  if (v === null) return "null";
-  if (v.$kind === "function") return "function";
-  if (v.$kind === "class") return "class";
-  if (v instanceof $Map) return "table";
-  if ($Array.isArray(v)) return "array";
-  return typeof v;
+function $kindOf($v) {
+  if ($v === $undefined) return "nil";
+  if ($v === null) return "null";
+  if ($v.$kind === "function") return "function";
+  if ($v.$kind === "class") return "class";
+  if ($v instanceof $Map) return "table";
+  if ($Array.isArray($v)) return "array";
+  return typeof $v;
 }
 
 // ===== Descriptor parser (js-backend-runtime-artifact D4) =====
@@ -96,12 +96,12 @@ function $kindOf(v) {
 // cannot-parse state (D4). The non-string guard mirrors parse_descriptor's
 // nil return (deal/runtime.lua:287-290); checkType routes only strict null
 // to its nil arm before this guard ever runs.
-function $parse(descriptor) {
-  if (descriptor === $undefined || descriptor === null || typeof descriptor !== "string") {
+function $parse($descriptor) {
+  if ($descriptor === $undefined || $descriptor === null || typeof $descriptor !== "string") {
     return null;
   }
 
-  const $d = descriptor;
+  const $d = $descriptor;
 
   // (i) Nullable: "?T" prefix (spec form). Must bind before the function
   // branch and before every suffix rule.
@@ -245,11 +245,11 @@ function $arrayElementDescriptor($descriptor, $file, $line, $column) {
 // produces for defaults thunk results and provided literals. Everything
 // else (Array, Map, function, class instances of other prototypes,
 // primitives) is rejected by the defensive arms of makeClass.
-function $isPlainObject(v) {
-  if (v === null || typeof v !== "object") {
+function $isPlainObject($v) {
+  if ($v === null || typeof $v !== "object") {
     return false;
   }
-  const $proto = Object.getPrototypeOf(v);
+  const $proto = Object.getPrototypeOf($v);
   return $proto === Object.prototype || $proto === null;
 }
 
