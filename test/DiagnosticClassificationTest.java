@@ -117,7 +117,13 @@ public class DiagnosticClassificationTest {
             allDiags.add(new Diagnostic(d.code(), d.severity(), d.message(),
                 d.file(), d.line(), d.column(), d.diagnosticCode()));
         }
-        allDiags.addAll(parse.diagnostics());
+        // Transitional ranged-to-legacy boundary conversion (T4
+        // scaffolding, removed in T13): start values derive from the
+        // range start (position-preserving; ranged-to-legacy only).
+        for (CompilerDiagnostic d : parse.diagnostics()) {
+            allDiags.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                d.file(), d.line(), d.column(), d.diagnosticCode()));
+        }
 
         if (parse.hasErrors()) {
             StubModuleResolver resolver = new StubModuleResolver();

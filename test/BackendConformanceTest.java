@@ -1111,8 +1111,16 @@ public class BackendConformanceTest {
 
         Parser parser = new Parser(lex.tokens(), filename);
         ParseResult parseResult = parser.parse();
-        for (Diagnostic d : parseResult.diagnostics()) {
-            if ("error".equals(d.severity())) errors.add(d);
+        // Transitional ranged-to-legacy boundary conversion (T4
+        // scaffolding, removed in T13): the severity filter is unchanged;
+        // each retained entry converts into the still-legacy errors list
+        // with start values derived from the range start
+        // (position-preserving).
+        for (CompilerDiagnostic d : parseResult.diagnostics()) {
+            if ("error".equals(d.severity())) {
+                errors.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+            }
         }
         if (parseResult.hasErrors()) {
             return new FrontendCompile(null, null, null, errors);

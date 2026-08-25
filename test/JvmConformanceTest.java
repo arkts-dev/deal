@@ -828,7 +828,13 @@ public class JvmConformanceTest {
 
             Parser parser = new Parser(lex.tokens(), filename);
             ParseResult parseResult = parser.parse();
-            all.addAll(parseResult.diagnostics());
+            // Transitional ranged-to-legacy boundary conversion (T4
+            // scaffolding, removed in T13): start values derive from the
+            // range start (position-preserving; ranged-to-legacy only).
+            for (CompilerDiagnostic d : parseResult.diagnostics()) {
+                all.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+            }
             if (parseResult.hasErrors()) return all;
 
             FrontendModuleResolver resolver = new FrontendModuleResolver(file);

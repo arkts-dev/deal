@@ -1,7 +1,10 @@
 package deal.parser;
 
 import deal.ast.*;
-import deal.lexer.Diagnostic;
+import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticNote;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.lexer.Token;
 
 import java.util.ArrayList;
@@ -38,7 +41,7 @@ public final class Parser {
 
     private final List<Token> tokens;
     private final String file;
-    private final List<Diagnostic> diagnostics = new ArrayList<>();
+    private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     /** The input list's EOF token, or null when the list has none. */
     private final Token inputEofToken;
     private int pos;          // current index into tokens (0-based)
@@ -1397,24 +1400,23 @@ public final class Parser {
         deal.lexer.Lexer subLexer = new deal.lexer.Lexer(source, file);
         deal.lexer.LexResult subResult = subLexer.tokenize();
 
-        // 2. Merge sub-lexer diagnostics with position adjustment.
-        // The sub-lexer now emits ranged CompilerDiagnostics (T3); this
-        // loop is a transitional ranged-to-legacy conversion — the parser's
-        // own diagnostics list is still the legacy start-only record until
-        // the parser producer migration (T4/T5).  d.file()/d.line()/
-        // d.column() derive from the range start, preserving today's
-        // rendered positions exactly.
+        // 2. Merge sub-lexer diagnostics with position adjustment. The
+        // sub-lexer emits ranged CompilerDiagnostics over the decoded
+        // expression substring; this rebase maps the range's line/column
+        // coordinates back onto the original source (template
+        // expressions are single-line). The scalar offsets stay in the
+        // sub-source coordinate space until the template scalar-map
+        // rebasing migrates them (T6) — this is the same transitional
+        // position-preserving shape the pre-ranged loop rendered.
         for (deal.diagnostics.CompilerDiagnostic d : subResult.diagnostics()) {
-            DiagnosticCode dc = d.diagnosticCode();
-            if (dc == null) {
-                dc = DiagnosticCode.fromCode(d.code());
-            }
-            if (dc != null) {
-                diagnostics.add(Diagnostic.error(
-                    dc, d.message(), d.file(),
-                    baseLine + d.line() - 1,
-                    baseCol + d.column() - 1));
-            }
+            DiagnosticRange r = d.range();
+            DiagnosticRange rebased = new DiagnosticRange(
+                r.file(), baseLine + r.startLine() - 1, baseCol + r.startColumn() - 1,
+                baseLine + r.endLine() - 1, baseCol + r.endColumn() - 1,
+                r.startScalarOffset(), r.endScalarOffset(), r.scalarLength(),
+                r.origin());
+            diagnostics.add(new CompilerDiagnostic(d.code(), d.severity(),
+                d.message(), rebased, d.notes(), d.diagnosticCode()));
         }
 
         // 3. Remove trailing EOF token
@@ -1449,7 +1451,11 @@ public final class Parser {
         Parser subParser = new Parser(adjusted, file);
         ExpressionNode expr = subParser.parseExpression();
 
-        // 6. Merge sub-parser diagnostics (positions already correct)
+        // 6. Merge sub-parser diagnostics. The adjusted tokens carry
+        // rebased line/column positions but no scalar offsets, so
+        // sub-parser diagnostics convert to SYNTHETIC with anchor notes
+        // naming the rebased token positions — the template scalar-map
+        // rebasing (T6) makes these SOURCE-exact.
         diagnostics.addAll(subParser.diagnostics);
 
         // D16: Null-safety guard — if the expression is syntactically invalid
@@ -1744,13 +1750,11 @@ public final class Parser {
     // =======================================================================
 
     private void error(DiagnosticCode code, String message, Token token) {
-        diagnostics.add(Diagnostic.error(code, message, file, token.line(), token.column()));
+        diagnostics.add(fromTokenAnchor(code, "error", message, token));
     }
 
     private void error(DiagnosticCode code, String message, ExpressionNode node) {
-        Span sp = node.span();
-        diagnostics.add(Diagnostic.error(code, message, file,
-                sp.startLine(), sp.startColumn()));
+        diagnostics.add(CompilerDiagnostic.error(code, message, node.span()));
     }
 
 
@@ -1759,13 +1763,33 @@ public final class Parser {
     // =======================================================================
 
     public void warn(DiagnosticCode code, String message, Token token) {
-        diagnostics.add(Diagnostic.warning(code, message, file, token.line(), token.column()));
+        diagnostics.add(fromTokenAnchor(code, "warning", message, token));
     }
 
     public void warn(DiagnosticCode code, String message, ExpressionNode node) {
-        Span sp = node.span();
-        diagnostics.add(Diagnostic.warning(code, message, file,
-                sp.startLine(), sp.startColumn()));
+        diagnostics.add(CompilerDiagnostic.warning(code, message, node.span()));
+    }
+
+    /**
+     * Builds a ranged diagnostic anchored at a token's full half-open
+     * range in this parser's file. Real lexer tokens carry computed
+     * scalar offsets, so the result is a SOURCE range with exact offsets
+     * (D4). Tokens without offset information — the template sub-parser's
+     * adjusted tokens and defensive/test-only inputs — convert to the
+     * canonical SYNTHETIC shape with the mandatory D4 anchor note naming
+     * the anchor's file position; no offset-less token can ever yield a
+     * SOURCE range.
+     */
+    private CompilerDiagnostic fromTokenAnchor(DiagnosticCode code, String severity,
+                                               String message, Token token) {
+        DiagnosticRange range = token.range(file);
+        List<DiagnosticNote> notes = range.origin() == RangeOrigin.SYNTHETIC
+            ? List.of(new DiagnosticNote(
+                "missing anchor: " + file + ":" + token.line() + ":" + token.column(),
+                null))
+            : null;
+        return new CompilerDiagnostic(code.code(), severity, message, range,
+            notes, code);
     }
 
     // =======================================================================

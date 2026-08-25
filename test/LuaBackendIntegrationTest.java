@@ -2577,7 +2577,7 @@ public class LuaBackendIntegrationTest {
         // Should have no parser diagnostics — the unescape fix ensures
         // the sub-lexer receives clean source
         if (!parse.diagnostics().isEmpty()) {
-            for (Diagnostic d : parse.diagnostics()) {
+            for (deal.diagnostics.CompilerDiagnostic d : parse.diagnostics()) {
                 System.err.println("  Parser diagnostic: " + d);
             }
             check(false, "nested template: unexpected parser diagnostics");

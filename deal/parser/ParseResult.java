@@ -1,14 +1,15 @@
 package deal.parser;
 
 import deal.ast.ProgramNode;
-import deal.lexer.Diagnostic;
+import deal.diagnostics.CompilerDiagnostic;
 
 import java.util.List;
 
 /**
- * Result of parsing: a {@link ProgramNode} AST and a list of diagnostics.
+ * Result of parsing: a {@link ProgramNode} AST and a list of ranged
+ * {@link CompilerDiagnostic}s.
  */
-public record ParseResult(ProgramNode program, List<Diagnostic> diagnostics) {
+public record ParseResult(ProgramNode program, List<CompilerDiagnostic> diagnostics) {
 
     public ParseResult {
         if (program == null) throw new IllegalArgumentException("program must not be null");

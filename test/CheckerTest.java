@@ -2,6 +2,7 @@ package deal.test;
 
 import deal.ast.*;
 import deal.checker.*;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.lexer.*;
 import deal.parser.*;
 import deal.types.Type;
@@ -47,7 +48,7 @@ public class CheckerTest {
             StubModuleResolver resolver = new StubModuleResolver();
             NameResolver nr = new NameResolver(filename, resolver);
             nr.resolve(parse.program());
-            List<Diagnostic> diags = new ArrayList<>(parse.diagnostics());
+            List<Diagnostic> diags = toLegacyParseDiagnostics(parse.diagnostics());
             diags.addAll(nr.diagnostics());
             return new CheckerOutput(
                 new CheckResult(Map.of(), new SymbolTable(), diags),
@@ -87,7 +88,7 @@ public class CheckerTest {
         if (parse.hasErrors()) {
             NameResolver nr = new NameResolver(filename, resolver);
             nr.resolve(parse.program());
-            List<Diagnostic> diags = new ArrayList<>(parse.diagnostics());
+            List<Diagnostic> diags = toLegacyParseDiagnostics(parse.diagnostics());
             diags.addAll(nr.diagnostics());
             return new CheckerOutput(
                 new CheckResult(Map.of(), new SymbolTable(), diags),
@@ -115,6 +116,23 @@ public class CheckerTest {
 
     private static boolean hasErrors(List<Diagnostic> diags) {
         return diags.stream().anyMatch(d -> "error".equals(d.severity()));
+    }
+
+    /**
+     * Transitional ranged-to-legacy boundary conversion at the parser
+     * aggregation (T4 scaffolding, removed when CheckerTest migrates
+     * natively in T10): file/line/column derive from the range start
+     * (position-preserving; ranged-to-legacy only — never fabricates
+     * offsets, and the legacy side never produces a SOURCE range).
+     */
+    private static List<Diagnostic> toLegacyParseDiagnostics(
+            List<CompilerDiagnostic> parseDiags) {
+        List<Diagnostic> legacy = new ArrayList<>(parseDiags.size());
+        for (CompilerDiagnostic d : parseDiags) {
+            legacy.add(new Diagnostic(d.code(), d.severity(), d.message(),
+                d.file(), d.line(), d.column(), d.diagnosticCode()));
+        }
+        return legacy;
     }
 
     private static void assertNoErrors(CheckerOutput out, String context) {

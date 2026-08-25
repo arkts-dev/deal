@@ -1,9 +1,12 @@
 package deal.test;
 
 import deal.ast.*;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.RangeOrigin;
 import deal.lexer.*;
 import deal.parser.*;
+import deal.source.ScalarSourceCursor;
 
 import java.util.List;
 import java.util.Optional;
@@ -41,9 +44,9 @@ public class ParserTest {
     }
 
     private static void assertNoParseErrors(ParseResult result, String context) {
-        List<Diagnostic> diags = result.diagnostics();
+        List<CompilerDiagnostic> diags = result.diagnostics();
         if (!diags.isEmpty()) {
-            for (Diagnostic d : diags) {
+            for (CompilerDiagnostic d : diags) {
                 System.err.println("  Diagnostic: " + d);
             }
         }
@@ -51,7 +54,7 @@ public class ParserTest {
     }
 
     private static void assertParseError(ParseResult result, String code, String context) {
-        List<Diagnostic> diags = result.diagnostics();
+        List<CompilerDiagnostic> diags = result.diagnostics();
         boolean found = diags.stream().anyMatch(d -> d.code().equals(code));
         check(found, context + ": expected diagnostic " + code + ", got: " + diags);
     }
@@ -200,6 +203,10 @@ public class ParserTest {
         // @deal-version file directive value validation (DEAL v1.2)
         testDealVersionDirectives();
 
+        // Ranged diagnostic anchors (ISSUE-0223 verification 3)
+        testTrailingDirectiveEofAnchor();
+        testParserDiagnosticScalarExactness();
+
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -223,6 +230,31 @@ public class ParserTest {
         r = parse("// @deal-version 1.1\nclass A { x: int = 0; }");
         assertParseError(r, "E1055", "@deal-version 1.1 rejected");
 
+        // E1055 anchors at the directive-carrying CLASS token's full
+        // range: line 2, column 1, SOURCE with exact scalar offsets —
+        // the comment line "// @deal-version 1.1" is 20 scalars plus the
+        // line break, so CLASS starts at scalar offset 21.
+        CompilerDiagnostic e1055 = r.diagnostics().stream()
+                .filter(d -> d.code().equals("E1055"))
+                .findFirst().orElse(null);
+        check(e1055 != null, "E1055 diagnostic present");
+        if (e1055 != null) {
+            check(e1055.range().origin() == RangeOrigin.SOURCE,
+                "E1055 range must be SOURCE, got " + e1055.range().origin());
+            check(e1055.line() == 2 && e1055.column() == 1,
+                "E1055 must anchor at the CLASS token (2,1), got ("
+                    + e1055.line() + "," + e1055.column() + ")");
+            check(e1055.range().startScalarOffset() == 21,
+                "E1055 start offset must be 21, got "
+                    + e1055.range().startScalarOffset());
+            check(e1055.range().endScalarOffset() == 26,
+                "E1055 end offset must be 26, got "
+                    + e1055.range().endScalarOffset());
+            check(e1055.range().scalarLength() == 5,
+                "E1055 scalar length must be 5 (CLASS lexeme), got "
+                    + e1055.range().scalarLength());
+        }
+
         // Newer major versions are rejected (E1055).
         r = parse("// @deal-version 2.0\nclass A { x: int = 0; }");
         assertParseError(r, "E1055", "@deal-version 2.0 rejected");
@@ -232,10 +264,131 @@ public class ParserTest {
         r = parse("// @deal-version 1.1");
         assertParseError(r, "E1055", "trailing @deal-version 1.1 rejected");
 
+        // The trailing directive attaches to the EOF token: E1055 anchors
+        // at the EOF token's real position — line 1, column 21, scalar
+        // offset 20 — with SOURCE origin and a zero-length range.
+        CompilerDiagnostic e1055Eof = r.diagnostics().stream()
+                .filter(d -> d.code().equals("E1055"))
+                .findFirst().orElse(null);
+        check(e1055Eof != null, "trailing E1055 diagnostic present");
+        if (e1055Eof != null) {
+            check(e1055Eof.range().origin() == RangeOrigin.SOURCE,
+                "trailing E1055 range must be SOURCE, got "
+                    + e1055Eof.range().origin());
+            check(e1055Eof.line() == 1 && e1055Eof.column() == 21,
+                "trailing E1055 must anchor at the EOF token (1,21), got ("
+                    + e1055Eof.line() + "," + e1055Eof.column() + ")");
+            check(e1055Eof.range().startScalarOffset() == 20
+                    && e1055Eof.range().endScalarOffset() == 20
+                    && e1055Eof.range().scalarLength() == 0,
+                "trailing E1055 offsets must be (20,20) with zero length, got ("
+                    + e1055Eof.range().startScalarOffset() + ","
+                    + e1055Eof.range().endScalarOffset() + ")");
+        }
+
         // A trailing valid directive produces no diagnostics.
         r = parse("// @deal-version 1.2");
         assertNoParseErrors(r, "trailing @deal-version 1.2 accepted");
 
+    }
+
+
+    // =========================================================================
+    // Ranged diagnostic anchor fixtures (ISSUE-0223 verification 3)
+    // =========================================================================
+
+    static void testTrailingDirectiveEofAnchor() {
+        System.out.println("-- Trailing directive comment: end-of-input error anchors at the real EOF --");
+
+        // The trailing line is a directive comment, so the directive
+        // attaches to the EOF token; an end-of-input parse error must
+        // anchor at the real EOF position with SOURCE origin and exact
+        // scalar offsets.
+        String source = "let x\u0020: int = \n// @jsonable";
+        ParseResult r = parse(source);
+
+        CompilerDiagnostic d = r.diagnostics().stream()
+                .filter(x -> x.code().equals("E1037"))
+                .findFirst().orElse(null);
+        check(d != null, "end-of-input E1037 present, got " + r.diagnostics());
+        if (d != null) {
+            check(d.range().origin() == RangeOrigin.SOURCE,
+                "end-of-input error range must be SOURCE, got "
+                    + d.range().origin());
+            // The EOF token sits at the end of the trailing comment line:
+            // line 2, column 13 (1 + the 12 comment scalars).
+            check(d.line() == 2 && d.column() == 13,
+                "end-of-input error must anchor at the real EOF (2,13), got ("
+                    + d.line() + "," + d.column() + ")");
+            // The line before the comment is 14 scalars (the trailing
+            // "= " included), the line break is 1, and the comment line
+            // is 12 — the EOF scalar offset is 27.
+            check(ScalarSourceCursor.scalarCount(source) == 27,
+                "fixture scalar count must be 27, got "
+                    + ScalarSourceCursor.scalarCount(source));
+            check(d.range().startScalarOffset() == 27
+                    && d.range().endScalarOffset() == 27
+                    && d.range().scalarLength() == 0,
+                "end-of-input error offsets must be (27,27) with zero length, got ("
+                    + d.range().startScalarOffset() + ","
+                    + d.range().endScalarOffset() + ")");
+        }
+    }
+
+    static void testParserDiagnosticScalarExactness() {
+        System.out.println("-- Parser diagnostic scalar exactness (independent cursor recomputation) --");
+
+        // The first statement holds an astral scalar and a tab inside a
+        // string, so the error in the second statement sits at a
+        // non-trivial scalar offset. The trailing statement reaches the
+        // E1037 default at the ';' token.
+        String source = "let s = \"\uD83D\uDE00\t\";\nlet x\u0020: int = ;";
+        ParseResult r = parse(source);
+
+        CompilerDiagnostic d = r.diagnostics().stream()
+                .filter(x -> x.code().equals("E1037"))
+                .findFirst().orElse(null);
+        check(d != null, "E1037 present, got " + r.diagnostics());
+        if (d != null) {
+            // Independent recomputation: walk a fresh cursor past the
+            // first statement's ';' to the second one, then compare
+            // every coordinate of the E1037 anchor.
+            ScalarSourceCursor c = new ScalarSourceCursor(source);
+            while (!c.atEnd() && c.peekScalar() != ';') {
+                c.advance();
+            }
+            check(!c.atEnd(), "cursor must find the first ';' scalar");
+            c.advance(); // consume the first statement's ';'
+            while (!c.atEnd() && c.peekScalar() != ';') {
+                c.advance();
+            }
+            check(!c.atEnd(), "cursor must find the second ';' scalar");
+            check(d.range().origin() == RangeOrigin.SOURCE,
+                "E1037 range must be SOURCE, got " + d.range().origin());
+            check(d.line() == c.line() && d.column() == c.column(),
+                "E1037 start (" + d.line() + "," + d.column()
+                    + ") != cursor (" + c.line() + "," + c.column() + ")");
+            check(d.range().startScalarOffset() == c.scalarOffset(),
+                "E1037 start offset " + d.range().startScalarOffset()
+                    + " != cursor offset " + c.scalarOffset());
+            check(d.range().scalarLength() == 1,
+                "E1037 scalar length must be 1 (';'), got "
+                    + d.range().scalarLength());
+            check(d.range().endScalarOffset() == c.scalarOffset() + 1,
+                "E1037 end offset " + d.range().endScalarOffset()
+                    + " != cursor offset + 1");
+            check(d.range().endLine() == c.line()
+                    && d.range().endColumn() == c.column() + 1,
+                "E1037 end (" + d.range().endLine() + "," + d.range().endColumn()
+                    + ") != cursor end");
+            // The first statement (string with the astral scalar and
+            // the tab) is 13 scalars plus the line break; the second
+            // statement's prefix ("let x: int = ") is another 14, so
+            // the ';' sits at line 2, column 15.
+            check(d.range().startLine() == 2 && d.range().startColumn() == 15,
+                "E1037 start position must be (2,15), got ("
+                    + d.range().startLine() + "," + d.range().startColumn() + ")");
+        }
     }
 
 
@@ -1376,15 +1529,17 @@ public class ParserTest {
         // Create parser with minimal tokens
         Parser parser = new Parser(List.of(), "test.deal");
 
-        // Test warn with Token
-        Token tok = new Token(TokenType.IDENTIFIER, "test", 5, 3, 4);
+        // Test warn with Token. The token carries explicit scalar offsets
+        // (start 20, length 4): the warning anchor is the token's full
+        // SOURCE range with exact offsets (D4/D5).
+        Token tok = new Token(TokenType.IDENTIFIER, "test", 5, 3, 4, 20, 4, List.of());
         parser.warn(DiagnosticCode.E1001, "warning from token", tok);
 
-        List<Diagnostic> diags = parser.parse().diagnostics();
+        List<CompilerDiagnostic> diags = parser.parse().diagnostics();
         check(diags.size() == 1,
             "warn with token should add 1 diagnostic, got " + diags.size());
         if (!diags.isEmpty()) {
-            Diagnostic d = diags.get(0);
+            CompilerDiagnostic d = diags.get(0);
             check(d.severity().equals("warning"),
                 "severity should be 'warning', got: " + d.severity());
             check(d.code().equals("E1001"),
@@ -1397,10 +1552,26 @@ public class ParserTest {
                 "line from token: " + d.line());
             check(d.column() == 3,
                 "column from token: " + d.column());
+            check(d.range().origin() == RangeOrigin.SOURCE,
+                "token warning range must be SOURCE, got " + d.range().origin());
+            check(d.range().startScalarOffset() == 20,
+                "token warning start offset must be 20, got "
+                    + d.range().startScalarOffset());
+            check(d.range().endScalarOffset() == 24,
+                "token warning end offset must be 24, got "
+                    + d.range().endScalarOffset());
+            check(d.range().scalarLength() == 4,
+                "token warning scalar length must be 4, got "
+                    + d.range().scalarLength());
+            check(d.range().endLine() == 5 && d.range().endColumn() == 7,
+                "token warning range end must be (5,7), got ("
+                    + d.range().endLine() + "," + d.range().endColumn() + ")");
         }
 
-        // Test warn with ExpressionNode (IdentifierExpr)
-        Span span = new Span("test.deal", 10, 2, 10, 8);
+        // Test warn with ExpressionNode (IdentifierExpr). The span carries
+        // explicit scalar offsets (30 to 36): the warning anchor is the
+        // span's SOURCE range (D4/D5).
+        Span span = new Span("test.deal", 10, 2, 10, 8, 30, 36);
         ExpressionNode expr = new IdentifierExpr(span, "myVar");
         parser.warn(DiagnosticCode.E1002, "warning from node", expr);
 
@@ -1408,7 +1579,7 @@ public class ParserTest {
         check(diags.size() == 2,
             "warn with node should add another diagnostic, got " + diags.size());
         if (diags.size() >= 2) {
-            Diagnostic d = diags.get(1);
+            CompilerDiagnostic d = diags.get(1);
             check(d.severity().equals("warning"),
                 "node warning severity should be 'warning'");
             check(d.line() == 10,
@@ -1417,6 +1588,46 @@ public class ParserTest {
                 "node warning column should be 2, got: " + d.column());
             check(d.message().equals("warning from node"),
                 "node warning message preserved");
+            check(d.range().origin() == RangeOrigin.SOURCE,
+                "node warning range must be SOURCE, got " + d.range().origin());
+            check(d.range().startScalarOffset() == 30,
+                "node warning start offset must be 30, got "
+                    + d.range().startScalarOffset());
+            check(d.range().endScalarOffset() == 36,
+                "node warning end offset must be 36, got "
+                    + d.range().endScalarOffset());
+            check(d.range().scalarLength() == 6,
+                "node warning scalar length must be 6, got "
+                    + d.range().scalarLength());
+        }
+
+        // Offset-less anchors (the UNKNOWN sentinel) convert to the
+        // canonical SYNTHETIC shape with the D4 anchor note — never a
+        // SOURCE range (D4/D9).
+        Parser unknownParser = new Parser(List.of(), "test.deal");
+        unknownParser.warn(DiagnosticCode.E1003, "unknown-offset warning",
+            new Token(TokenType.IDENTIFIER, "x", 7, 4, 1));
+        ParseResult unknownResult = unknownParser.parse();
+        check(unknownResult.diagnostics().size() == 1,
+            "unknown-offset warn should add 1 diagnostic, got "
+                + unknownResult.diagnostics().size());
+        if (!unknownResult.diagnostics().isEmpty()) {
+            CompilerDiagnostic d = unknownResult.diagnostics().get(0);
+            check(d.range().origin() == RangeOrigin.SYNTHETIC,
+                "offset-less token warning must convert to SYNTHETIC, got "
+                    + d.range().origin());
+            check(d.range().startLine() == 1 && d.range().startColumn() == 1
+                    && d.range().endLine() == 1 && d.range().endColumn() == 1
+                    && d.range().scalarLength() == 0
+                    && d.range().startScalarOffset() == 0
+                    && d.range().endScalarOffset() == 0,
+                "offset-less token warning must be the canonical synthetic shape, got "
+                    + d.range());
+            check(d.notes().size() == 1
+                    && d.notes().get(0).message()
+                        .equals("missing anchor: test.deal:7:4"),
+                "offset-less token warning must carry the D4 anchor note, got "
+                    + d.notes());
         }
 
         // Verify warnings don't cause parse.hasErrors() to return true
@@ -1517,8 +1728,8 @@ public class ParserTest {
         ParseResult r = parse("// @jsonable\nexport function f(): int { return 0; }");
         assertParseError(r, "E1043", "@jsonable export function");
 
-        List<Diagnostic> diags = r.diagnostics();
-        Diagnostic warnDiag = diags.stream()
+        List<CompilerDiagnostic> diags = r.diagnostics();
+        CompilerDiagnostic warnDiag = diags.stream()
                 .filter(d -> d.code().equals("E1043"))
                 .findFirst().orElse(null);
         check(warnDiag != null, "warning diagnostic present for export function");
@@ -1527,6 +1738,30 @@ public class ParserTest {
                 "severity is warning, got: " + warnDiag.severity());
             check(warnDiag.message().contains("export class"),
                 "message mentions export class: " + warnDiag.message());
+
+            // Verification 3: the E1043 anchor is the attached EXPORT
+            // token's full range at 2:1 — SOURCE with exact scalar
+            // offsets ("// @jsonable" is 12 scalars plus the line break,
+            // so EXPORT starts at scalar offset 13) — never SYNTHETIC
+            // (1,1).
+            check(warnDiag.range().origin() == RangeOrigin.SOURCE,
+                "E1043 range must be SOURCE, got " + warnDiag.range().origin());
+            check(warnDiag.line() == 2 && warnDiag.column() == 1,
+                "E1043 must anchor at the EXPORT token (2,1), got ("
+                    + warnDiag.line() + "," + warnDiag.column() + ")");
+            check(warnDiag.range().startScalarOffset() == 13,
+                "E1043 start offset must be 13, got "
+                    + warnDiag.range().startScalarOffset());
+            check(warnDiag.range().endScalarOffset() == 19,
+                "E1043 end offset must be 19, got "
+                    + warnDiag.range().endScalarOffset());
+            check(warnDiag.range().scalarLength() == 6,
+                "E1043 scalar length must be 6 (EXPORT lexeme), got "
+                    + warnDiag.range().scalarLength());
+            check(warnDiag.range().endLine() == 2 && warnDiag.range().endColumn() == 7,
+                "E1043 range end must be (2,7), got ("
+                    + warnDiag.range().endLine() + ","
+                    + warnDiag.range().endColumn() + ")");
         }
     }
 
@@ -1536,8 +1771,8 @@ public class ParserTest {
         ParseResult r = parse("// @jsonable\nclass C { x: int; }");
         assertParseError(r, "E1043", "@jsonable standalone class");
 
-        List<Diagnostic> diags = r.diagnostics();
-        Diagnostic warnDiag = diags.stream()
+        List<CompilerDiagnostic> diags = r.diagnostics();
+        CompilerDiagnostic warnDiag = diags.stream()
                 .filter(d -> d.code().equals("E1043"))
                 .findFirst().orElse(null);
         check(warnDiag != null, "warning diagnostic present for standalone class");
@@ -1561,8 +1796,8 @@ public class ParserTest {
         ParseResult r = parse("// @jsonable\nfunction f(): int { return 0; }");
         assertParseError(r, "E1043", "@jsonable standalone function");
 
-        List<Diagnostic> diags = r.diagnostics();
-        Diagnostic warnDiag = diags.stream()
+        List<CompilerDiagnostic> diags = r.diagnostics();
+        CompilerDiagnostic warnDiag = diags.stream()
                 .filter(d -> d.code().equals("E1043"))
                 .findFirst().orElse(null);
         check(warnDiag != null, "warning diagnostic present for standalone function");
@@ -1578,8 +1813,8 @@ public class ParserTest {
         ParseResult r = parse("// @jsonable\nlet x: int = 1;");
         assertParseError(r, "E1043", "@jsonable let");
 
-        List<Diagnostic> diags = r.diagnostics();
-        Diagnostic warnDiag = diags.stream()
+        List<CompilerDiagnostic> diags = r.diagnostics();
+        CompilerDiagnostic warnDiag = diags.stream()
                 .filter(d -> d.code().equals("E1043"))
                 .findFirst().orElse(null);
         check(warnDiag != null, "warning diagnostic present for let");
@@ -1605,9 +1840,9 @@ public class ParserTest {
         System.out.println("-- @jsonable warning severity is warning --");
 
         ParseResult r = parse("// @jsonable\nclass C { x: int; }");
-        List<Diagnostic> diags = r.diagnostics();
+        List<CompilerDiagnostic> diags = r.diagnostics();
 
-        for (Diagnostic d : diags) {
+        for (CompilerDiagnostic d : diags) {
             if (d.code().equals("E1043")) {
                 check(d.severity().equals("warning"),
                     "severity should be 'warning', got: '" + d.severity() + "'");
@@ -1817,7 +2052,7 @@ public class ParserTest {
         Parser parser = new Parser(lex.tokens(), "test.deal");
         ParseResult r = parser.parse();
 
-        List<Diagnostic> diags = r.diagnostics();
+        List<CompilerDiagnostic> diags = r.diagnostics();
         boolean foundWarn = diags.stream().anyMatch(
                 d -> d.code().equals("E1043") && d.severity().equals("warning"));
         check(foundWarn, "end-to-end: warning with code E1043 and severity 'warning'");

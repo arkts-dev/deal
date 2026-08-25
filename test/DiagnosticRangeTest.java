@@ -790,17 +790,28 @@ public class DiagnosticRangeTest {
         System.out.println("-- Token/Span offsets: peek() past-end pseudo-EOF position carrying --");
 
         // No EOF token in the input list (defensive/test-only): the
-        // pseudo-EOF keeps the historical (1,1) fallback position. The
-        // end-of-input error anchors there.
+        // pseudo-EOF keeps the historical (1,1) fallback position with no
+        // offset information. The end-of-input error converts to the
+        // canonical SYNTHETIC shape with the D4 anchor note naming the
+        // (1,1) fallback anchor — never a SOURCE range.
         ParseResult noEof = new Parser(List.of(
             new Token(TokenType.LET, "let", 1, 1, 3, 0, 3, List.of())), "f.deal").parse();
-        List<Diagnostic> diags = noEof.diagnostics();
+        List<CompilerDiagnostic> diags = noEof.diagnostics();
         check(diags.size() == 1,
             "no-EOF list: expected exactly 1 diagnostic, got " + diags.size());
         if (!diags.isEmpty()) {
-            check(diags.get(0).line() == 1 && diags.get(0).column() == 1,
+            CompilerDiagnostic d = diags.get(0);
+            check(d.range().origin() == RangeOrigin.SYNTHETIC,
+                "no-EOF pseudo-EOF diagnostic must be SYNTHETIC, got "
+                    + d.range().origin());
+            check(d.line() == 1 && d.column() == 1,
                 "no-EOF pseudo-EOF must keep the (1,1) fallback position, got ("
-                    + diags.get(0).line() + "," + diags.get(0).column() + ")");
+                    + d.line() + "," + d.column() + ")");
+            check(d.notes().size() == 1
+                    && d.notes().get(0).message()
+                        .equals("missing anchor: f.deal:1:1"),
+                "no-EOF pseudo-EOF diagnostic must carry the D4 anchor note, got "
+                    + d.notes());
         }
         // The same parse still yields the explicit empty-program (0,0) span.
         Span emptySpan = noEof.program().span();
@@ -810,17 +821,27 @@ public class DiagnosticRangeTest {
                 + emptySpan.endScalarOffset() + ") != (0,0)");
 
         // EOF token present at a non-(1,1) position: end-of-input errors
-        // anchor at the real EOF-token position (line/column carrying).
+        // anchor at the real EOF-token position — a zero-length SOURCE
+        // range at the EOF token's computed scalar offsets.
         ParseResult withEof = new Parser(List.of(
             new Token(TokenType.LET, "let", 1, 1, 3, 0, 3, List.of()),
             new Token(TokenType.EOF, "", 3, 4, 0, 9, 0, List.of())), "f.deal").parse();
-        List<Diagnostic> eofDiags = withEof.diagnostics();
+        List<CompilerDiagnostic> eofDiags = withEof.diagnostics();
         check(eofDiags.size() == 1,
             "EOF-terminated list: expected exactly 1 diagnostic, got " + eofDiags.size());
         if (!eofDiags.isEmpty()) {
-            check(eofDiags.get(0).line() == 3 && eofDiags.get(0).column() == 4,
+            CompilerDiagnostic d = eofDiags.get(0);
+            check(d.line() == 3 && d.column() == 4,
                 "end-of-input error must anchor at the real EOF token position (3,4), got ("
-                    + eofDiags.get(0).line() + "," + eofDiags.get(0).column() + ")");
+                    + d.line() + "," + d.column() + ")");
+            check(d.range().origin() == RangeOrigin.SOURCE,
+                "EOF-anchored error range must be SOURCE, got " + d.range().origin());
+            check(d.range().startScalarOffset() == 9
+                    && d.range().endScalarOffset() == 9
+                    && d.range().scalarLength() == 0,
+                "EOF-anchored error offsets must be (9,9) with zero length, got ("
+                    + d.range().startScalarOffset() + ","
+                    + d.range().endScalarOffset() + ")");
         }
     }
 

@@ -253,7 +253,7 @@ public final class CompilationOrchestrator {
             }
 
             LexResult lex = new Lexer(source, sourcePath).tokenize();
-            diagnostics.addAll(toLegacyLexDiagnostics(lex.diagnostics()));
+            diagnostics.addAll(toLegacyDiagnostics(lex.diagnostics()));
             if (hasLexErrors(lex)) {
                 hasErrors = true;
                 continue;
@@ -261,7 +261,7 @@ public final class CompilationOrchestrator {
 
             Parser parser = new Parser(lex.tokens(), sourcePath);
             ParseResult parseResult = parser.parse();
-            diagnostics.addAll(parseResult.diagnostics());
+            diagnostics.addAll(toLegacyDiagnostics(parseResult.diagnostics()));
             if (parseResult.hasErrors()) {
                 hasErrors = true;
             }
@@ -335,16 +335,17 @@ public final class CompilationOrchestrator {
     }
 
     /**
-     * Transitional position-preserving conversion at the lexer aggregation
-     * boundary (T3 scaffolding, replaced when the orchestrator migrates to
-     * ranged diagnostics in T11): each ranged lexer diagnostic becomes the
-     * legacy start-only record, deriving file/line/column from the range
-     * start. The conversion is ranged-to-legacy only — it never fabricates
-     * offsets, and the legacy side never produces a SOURCE range (D4/D9).
+     * Transitional position-preserving conversion at the lexer and parser
+     * aggregation boundaries (T3/T4 scaffolding, replaced when the
+     * orchestrator migrates to ranged diagnostics in T11): each ranged
+     * lexer or parser diagnostic becomes the legacy start-only record,
+     * deriving file/line/column from the range start. The conversion is
+     * ranged-to-legacy only — it never fabricates offsets, and the legacy
+     * side never produces a SOURCE range (D4/D9).
      */
-    private static List<Diagnostic> toLegacyLexDiagnostics(List<CompilerDiagnostic> lexDiags) {
-        List<Diagnostic> legacy = new ArrayList<>(lexDiags.size());
-        for (CompilerDiagnostic d : lexDiags) {
+    private static List<Diagnostic> toLegacyDiagnostics(List<CompilerDiagnostic> rangedDiags) {
+        List<Diagnostic> legacy = new ArrayList<>(rangedDiags.size());
+        for (CompilerDiagnostic d : rangedDiags) {
             legacy.add(new Diagnostic(d.code(), d.severity(), d.message(),
                 d.file(), d.line(), d.column(), d.diagnosticCode()));
         }
@@ -1518,14 +1519,14 @@ public final class CompilationOrchestrator {
 
             LexResult lex = new Lexer(source, syntheticPath).tokenize();
             if (hasLexErrors(lex)) {
-                diagnostics.addAll(toLegacyLexDiagnostics(lex.diagnostics()));
+                diagnostics.addAll(toLegacyDiagnostics(lex.diagnostics()));
                 hasErrors = true;
                 return null;
             }
 
             Parser parser = new Parser(lex.tokens(), syntheticPath);
             ParseResult parseResult = parser.parse();
-            diagnostics.addAll(parseResult.diagnostics());
+            diagnostics.addAll(toLegacyDiagnostics(parseResult.diagnostics()));
             if (parseResult.hasErrors()) {
                 hasErrors = true;
             }

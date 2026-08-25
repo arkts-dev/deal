@@ -447,7 +447,7 @@ public class ConformanceTest {
             Parser parser = new Parser(lex.tokens(), filename);
             ParseResult parseResult = parser.parse();
             if (parseResult.hasErrors()) {
-                return new ArrayList<>(parseResult.diagnostics());
+                return toLegacyDiagnostics(parseResult.diagnostics());
             }
 
             if (filename.endsWith(".d.deal")) {
@@ -728,7 +728,10 @@ public class ConformanceTest {
 
         Parser parser = new Parser(lex.tokens(), filename);
         ParseResult parseResult = parser.parse();
-        allDiags.addAll(parseResult.diagnostics());
+        // Transitional ranged-to-legacy boundary conversion (T4
+        // scaffolding, removed in T13): start values derive from the range
+        // start (position-preserving; ranged-to-legacy only).
+        allDiags.addAll(toLegacyDiagnostics(parseResult.diagnostics()));
         if (parseResult.hasErrors()) {
             return allDiags;
         }
