@@ -35,8 +35,10 @@
  *    verifies PR_GET_CHILD_SUBREAPER == 1; forks a child which forks a
  *    grandchild (readiness reported via a pipe); the child exits; success
  *    iff the grandchild reparents to the prober (nearest living
- *    subreaper) and is reaped (waitid loop to ECHILD); no live
- *    descendants, no zombie.
+ *    subreaper) and is reaped by the prober - the prober-side
+ *    waitid(P_PID, gpid) adoption proof (deadline-bounded, loop to
+ *    ECHILD) is the only reparent verification; no live descendants, no
+ *    zombie.
  *  - parent-death: the prober forks intermediate A; A forks probe child
  *    B; B sets PR_SET_PDEATHSIG=SIGKILL, rechecks getppid() equals A's
  *    pid, and reports ready via a pipe; the prober kills A with SIGKILL;
@@ -102,10 +104,6 @@ _Static_assert(DEALPG4_PROBE_CAPS == 31,
 /* Cleanup grace: on a failure path, reap_all waits at most this long for
  * stragglers (each battery's children are self-bounded). */
 #define DEALPG4_BATTERY_CLEANUP_GRACE_MS 10000u
-
-/* Grandchild reparent-wait: 1 ms sleeps, bounded so a stuck reparent can
- * never hang the probe. */
-#define DEALPG4_BATTERY_REPARENT_WAIT_ITERS 2000
 
 /* Pure-sleep slice: fd < 0 polls sleep in short slices so child-state
  * changes are re-checked promptly (a SIGCHLD can be delivered between the
@@ -509,7 +507,7 @@ static int dealpg4_battery_monotonic_timer(dealpg4_probe_bound *bound)
 static int dealpg4_battery_subreaper(dealpg4_probe_bound *bound)
 {
     int pipefd[2];
-    pid_t child, gpid, new_ppid;
+    pid_t child, gpid;
     uint64_t local;
     int status;
     int rc;
@@ -535,29 +533,24 @@ static int dealpg4_battery_subreaper(dealpg4_probe_bound *bound)
         return DEALPG4_BATTERY_FAIL;
     }
     if (child == 0) {
-        /* child: spawn the grandchild and exit at once; the grandchild
-         * then reparents to the prober (the nearest living subreaper). */
+        /* child: spawn the grandchild and exit at once; when the child
+         * exits, the grandchild (still running or already exited - the
+         * zombie reparents too) reparents to the prober (the nearest
+         * living subreaper). */
         pid_t g = fork();
 
         if (g < 0)
             _exit(1);
         if (g == 0) {
-            /* grandchild: report its own pid (readiness), observe the
-             * reparenting (bounded), report the new parent, exit. */
+            /* grandchild: report its own pid (readiness), then exit.
+             * No child-side reparent observation and no fixed
+             * reparent-wait budget: the prober-side waitid(P_PID, gpid)
+             * adoption proof verifies the reparent to the prober and is
+             * deadline-bounded, so a scheduler-delayed child exit can
+             * never exhaust a child-side budget and spuriously fail the
+             * battery. */
             pid_t me = getpid();
-            pid_t before = getppid();
-            int tries = 0;
 
-            if (write(pipefd[1], &me, sizeof(me)) != (ssize_t)sizeof(me))
-                _exit(1);
-            while (getppid() == before
-                   && tries < DEALPG4_BATTERY_REPARENT_WAIT_ITERS) {
-                const struct timespec ts = { 0, 1000000 };
-
-                nanosleep(&ts, NULL);
-                tries++;
-            }
-            me = getppid();
             if (write(pipefd[1], &me, sizeof(me)) != (ssize_t)sizeof(me))
                 _exit(1);
             _exit(0);
@@ -570,15 +563,16 @@ static int dealpg4_battery_subreaper(dealpg4_probe_bound *bound)
     rc = dealpg4_read_bounded(pipefd[0], &gpid, sizeof(gpid), local, bound);
     if (rc != 0) {
         close(pipefd[0]);
-        /* The grandchild's pid is not yet known; killing the child kills
-         * its parent — the grandchild then dies on its own (bounded
-         * reparent loop, or SIGPIPE on its pipe write after this close). */
+        /* The grandchild's pid is not yet known; killing the child makes
+         * the kernel reparent the grandchild (running or already exited)
+         * to the prober, and the kill-reap cleanup collects it. */
         dealpg4_battery_kill_reap_one(bound, child);
         return rc == DEALPG4_BATTERY_BOUND ? DEALPG4_BATTERY_BOUND
                                            : DEALPG4_BATTERY_FAIL;
     }
 
-    /* Reap the child; its exit is what reparented the grandchild. */
+    /* Reap the child; its exit is what reparented the grandchild (the
+     * zombie reparents even when the grandchild already exited). */
     local = dealpg4_now_ms() + DEALPG4_BATTERY_LOCAL_DEADLINE_MS;
     status = 0;
     rc = dealpg4_waitpid_bounded(child, &status, local, bound);
@@ -601,25 +595,12 @@ static int dealpg4_battery_subreaper(dealpg4_probe_bound *bound)
         return DEALPG4_BATTERY_FAIL;
     }
 
-    local = dealpg4_now_ms() + DEALPG4_BATTERY_LOCAL_DEADLINE_MS;
-    rc = dealpg4_read_bounded(pipefd[0], &new_ppid, sizeof(new_ppid), local,
-                              bound);
-    if (rc != 0) {
-        close(pipefd[0]);
-        dealpg4_battery_kill_reap_one(bound, gpid);
-        return rc == DEALPG4_BATTERY_BOUND ? DEALPG4_BATTERY_BOUND
-                                           : DEALPG4_BATTERY_FAIL;
-    }
     close(pipefd[0]);
 
-    /* The grandchild's parent must have become the prober. */
-    if (new_ppid != getpid()) {
-        dealpg4_battery_kill_reap_one(bound, gpid);
-        return DEALPG4_BATTERY_FAIL;
-    }
-
     /* Reap the adopted grandchild: waitid(P_PID) succeeds only for the
-     * prober's own children, so this proves the adoption. */
+     * prober's own children, so this proves the reparent to the prober;
+     * ECHILD here means the grandchild reparented elsewhere and the
+     * battery fails closed. */
     local = dealpg4_now_ms() + DEALPG4_BATTERY_LOCAL_DEADLINE_MS;
     {
         siginfo_t si;
