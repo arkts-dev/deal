@@ -30,6 +30,7 @@ echo "=== Compiling all DEAL sources and tests ==="
 # compile under load).
 javac --release 25 -proc:none -d build \
   -cp /usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar \
+  deal/source/*.java \
   deal/ast/*.java \
   deal/types/*.java \
   deal/diagnostics/*.java \
@@ -43,6 +44,7 @@ javac --release 25 -proc:none -d build \
   deal/module/*.java \
   deal/Main.java \
   test/StubModuleResolver.java \
+  test/DiagnosticRangeTest.java \
   test/DiagnosticClassificationTest.java \
   test/AstAndTypesTest.java \
   test/LexerTest.java \
@@ -74,6 +76,10 @@ fi
 # =========================================================================
 # Run all tests
 # =========================================================================
+
+echo ""
+echo "=== Running Diagnostic Range Tests ==="
+java -ea -cp build deal.test.DiagnosticRangeTest
 
 echo ""
 echo "=== Running Diagnostic Classification Tests ==="
