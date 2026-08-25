@@ -75,6 +75,170 @@ function $kindOf(v) {
   return typeof v;
 }
 
+// ===== Descriptor parser (js-backend-runtime-artifact D4) =====
+// $parse: the module-private mirror of parse_descriptor
+// (deal/runtime.lua:287-415), step-for-step under parse order P:
+// (i) "?T" prefix -> nullable; (ii) async strip + function branch (leading
+// "(", depth-aware top-level "->" scan with ")" immediately before the
+// arrow) — the function branch precedes every suffix rule, so
+// "(int)->int|null" reads Func(ret=Nullable) and "(int)->int[]" reads
+// Func(ret=Array), while the "?T" prefix precedes the function branch, so
+// "?(int)->int" reads Nullable(Func); (iii) "|null" end-anchored top-level
+// suffix (legacy nullable); (iv) "[]" suffix (legacy array); (v) "[T]"
+// prefix (array disambiguation); (vi) "@path/Name" class; (vii) primitives
+// null|boolean|int|number|string|bytes|table — bytes included so its
+// dispatch reaches the defensive E6000 (D3; the reference's primitive set
+// omits it only because its frontend never emits it,
+// deal/runtime.lua:404-412); (viii) bare class-name fallback (the builtin
+// Error parses here). Records are $-keyed: { $t, $inner },
+// { $t, $async, $params, $ret }, { $t, $element }, { $t, $name }. The
+// parser is total over strings — no string descriptor reaches a
+// cannot-parse state (D4). The non-string guard mirrors parse_descriptor's
+// nil return (deal/runtime.lua:287-290); checkType routes only strict null
+// to its nil arm before this guard ever runs.
+function $parse(descriptor) {
+  if (descriptor === $undefined || descriptor === null || typeof descriptor !== "string") {
+    return null;
+  }
+
+  const $d = descriptor;
+
+  // (i) Nullable: "?T" prefix (spec form). Must bind before the function
+  // branch and before every suffix rule.
+  if ($d[0] === "?") {
+    return { $t: "nullable", $inner: $d.slice(1) };
+  }
+
+  // (ii) Function: "(params)->ret" or "async(params)->ret". The "async"
+  // prefix is recognized inside the function branch, after the "?T" prefix
+  // but before any suffix stripping.
+  let $isAsync = false;
+  let $dFn = $d;
+  if ($dFn.slice(0, 5) === "async") {
+    $isAsync = true;
+    $dFn = $dFn.slice(5); // strip "async", leaving "(params)->ret"
+  }
+
+  if ($dFn[0] === "(") {
+    let $arrowPos = null;
+    let $depth = 0;
+    for (let $i = 0; $i < $dFn.length; $i++) {
+      const $c = $dFn[$i];
+      if ($c === "(" || $c === "[") {
+        $depth++;
+      } else if ($c === ")" || $c === "]") {
+        $depth--;
+      } else if ($depth === 0 && $i + 2 <= $dFn.length && $dFn.slice($i, $i + 2) === "->") {
+        $arrowPos = $i;
+        break;
+      }
+    }
+    if ($arrowPos !== null) {
+      const $paramsStr = $dFn.slice(1, $arrowPos - 1); // content between ( and )
+      if ($dFn[$arrowPos - 1] === ")") { // the ")" immediately before the arrow
+        const $retType = $dFn.slice($arrowPos + 2);
+        const $params = [];
+        if ($paramsStr !== "") {
+          // Comma-separated parameters, respecting nesting.
+          $depth = 0;
+          let $start = 0;
+          for (let $i = 0; $i < $paramsStr.length; $i++) {
+            const $c = $paramsStr[$i];
+            if ($c === "(" || $c === "[") {
+              $depth++;
+            } else if ($c === ")" || $c === "]") {
+              $depth--;
+            } else if ($depth === 0 && $c === ",") {
+              $params.push($paramsStr.slice($start, $i));
+              $start = $i + 1;
+            }
+          }
+          $params.push($paramsStr.slice($start));
+        }
+        // Async functions report $ret "null" so the declared return type R
+        // is enforced at the await site, not by the wrapper
+        // (deal/runtime.lua:369-375).
+        if ($isAsync) {
+          return { $t: "function", $async: true, $params: $params, $ret: "null" };
+        }
+        return { $t: "function", $async: false, $params: $params, $ret: $retType };
+      }
+    }
+  }
+
+  // (iii) Nullable: "T|null" legacy suffix (end-anchored, top-level only).
+  // Reached only when the string is not a function descriptor, so a "|null"
+  // inside "(...)->..." can never win over the arrow.
+  let $nullPos = null;
+  let $depth = 0;
+  for (let $i = 0; $i < $d.length; $i++) {
+    const $c = $d[$i];
+    if ($c === "(" || $c === "[") {
+      $depth++;
+    } else if ($c === ")" || $c === "]") {
+      $depth--;
+    } else if ($depth === 0 && $i + 5 <= $d.length && $d.slice($i, $i + 5) === "|null") {
+      const $rest = $d.slice($i + 5);
+      if ($rest === "") {
+        $nullPos = $i;
+        break;
+      }
+    }
+  }
+  if ($nullPos !== null) {
+    return { $t: "nullable", $inner: $d.slice(0, $nullPos) };
+  }
+
+  // (iv) Array: "T[]" legacy suffix.
+  if ($d.length >= 2 && $d.slice(-2) === "[]") {
+    return { $t: "array", $element: $d.slice(0, $d.length - 2) };
+  }
+
+  // (v) Array: "[T]" prefix (spec form).
+  if ($d.length >= 2 && $d[0] === "[" && $d[$d.length - 1] === "]") {
+    return { $t: "array", $element: $d.slice(1, $d.length - 1) };
+  }
+
+  // (vi) Class: "@path/ClassName" format.
+  if ($d[0] === "@") {
+    return { $t: "class", $name: $d };
+  }
+
+  // (vii) Primitive types — bytes included (D4).
+  if ($d === "null" || $d === "boolean" || $d === "int" || $d === "number" ||
+      $d === "string" || $d === "bytes" || $d === "table") {
+    return { $t: "primitive", $name: $d };
+  }
+
+  // (viii) Assume it's a class name (simple identifier) — "ClassName"
+  // without the "@" prefix for local classes; the builtin Error parses
+  // here.
+  return { $t: "class", $name: $d };
+}
+
+// ===== Array element extraction (js-backend-runtime-artifact D3) =====
+// $arrayElementDescriptor: the mirror of array_element_descriptor
+// (deal/runtime.lua:239-254) — "T[]" suffix -> "T", "[T]" prefix -> "T",
+// else the E8001 "invalid array descriptor" error. The strict === null
+// nil arm mirrors the reference's defensive guard (deal/runtime.lua:240-242);
+// reachable only through direct misuse — checkType dispatches checkArray
+// only with the string descriptor it parsed (A3). Non-string descriptors
+// fail loudly via the invalid-arm text, never a raw TypeError.
+function $arrayElementDescriptor($descriptor, $file, $line, $column) {
+  if ($descriptor === null) {
+    $rt.fail("E8001", "internal: nil array descriptor", $file, $line, $column);
+  }
+  if (typeof $descriptor === "string") {
+    if ($descriptor.length >= 2 && $descriptor.slice(-2) === "[]") {
+      return $descriptor.slice(0, $descriptor.length - 2);
+    }
+    if ($descriptor.length >= 2 && $descriptor[0] === "[" && $descriptor[$descriptor.length - 1] === "]") {
+      return $descriptor.slice(1, $descriptor.length - 1);
+    }
+  }
+  $rt.fail("E8001", "invalid array descriptor: " + $descriptor, $file, $line, $column);
+}
+
 const $rt = {
   MISSING: $MISSING,
   NULL: null,
@@ -267,6 +431,137 @@ const $rt = {
   checkTable: function $checkTable(v, file, line, column) {
     if (!(v instanceof $Map)) {
       $rt.fail("E8001", "expected table", file, line, column, "table", $kindOf(v));
+    }
+    return v;
+  },
+
+  // ===== Descriptor dispatch (js-backend-runtime-artifact D3/D4) =====
+
+  // checkNullable: the check_nullable mirror (deal/runtime.lua:229-235,
+  // extended to MISSING per js-backend-runtime D3) — any nil-equivalent
+  // input (undefined, null, MISSING — the isNilEquivalent predicate)
+  // returns DEAL null (JS null) with no error; everything else delegates
+  // to checkType on the inner descriptor.
+  checkNullable: function $checkNullable(inner, v, file, line, column) {
+    if ($rt.isNilEquivalent(v)) {
+      return null;
+    }
+    return $rt.checkType(inner, v, file, line, column);
+  },
+
+  // checkType: descriptor parse (order P via $parse) then dispatch — the
+  // check_type mirror (deal/runtime.lua:417-476). Defensive arms: the
+  // strict === null predicate routes only JS null to the nil arm (DEAL
+  // null is only JS null, D3); undefined and every other non-string
+  // descriptor fail the parse step and take the cannot-parse arm
+  // (String(descriptor) mirrors Lua's tostring(descriptor)). The parser is
+  // total over strings, so the cannot-parse arm is reached exactly through
+  // the parse-nil path and never by a string descriptor.
+  checkType: function $checkType(descriptor, v, file, line, column) {
+    if (descriptor === null) {
+      $rt.fail("E8001", "internal: nil type descriptor", file, line, column);
+    }
+    const $parsed = $parse(descriptor);
+    if ($parsed === null) {
+      $rt.fail("E8001", "internal: cannot parse type descriptor: " + String(descriptor), file, line, column);
+    }
+    if ($parsed.$t === "primitive") {
+      if ($parsed.$name === "null") {
+        return $rt.checkNull(v, file, line, column);
+      }
+      if ($parsed.$name === "boolean") {
+        return $rt.checkBoolean(v, file, line, column);
+      }
+      if ($parsed.$name === "int") {
+        return $rt.checkInt(v, file, line, column);
+      }
+      if ($parsed.$name === "number") {
+        return $rt.checkNumber(v, file, line, column);
+      }
+      if ($parsed.$name === "string") {
+        return $rt.checkString(v, file, line, column);
+      }
+      if ($parsed.$name === "table") {
+        return $rt.checkTable(v, file, line, column);
+      }
+      // bytes: recognized by $parse so its dispatch reaches this
+      // defensive E6000 gate (D3/D4) — no silent acceptance, no int32
+      // pre-implementation (A1; ISSUE-0111). Reached before any check of
+      // v, so it fires for every value.
+      if ($parsed.$name === "bytes") {
+        $rt.fail("E6000", "JS backend: bytes descriptors are not supported (ISSUE-0111)", file, line, column);
+      }
+      $rt.fail("E8001", "unknown primitive type: " + $parsed.$name, file, line, column);
+    }
+    if ($parsed.$t === "nullable") {
+      return $rt.checkNullable($parsed.$inner, v, file, line, column);
+    }
+    if ($parsed.$t === "array") {
+      return $rt.checkArray(descriptor, v, file, line, column);
+    }
+    if ($parsed.$t === "function") {
+      // Function branch: the wrapper $kind tag first, then the exact
+      // signature compare against the full descriptor string
+      // (deal/runtime.lua:450-456). The null/undefined guard keeps the
+      // $kind read total (no raw TypeError from a check, D3).
+      if (v === $undefined || v === null || v.$kind !== "function") {
+        $rt.fail("E8001", "expected function", file, line, column, "function", $kindOf(v));
+      }
+      if (v.$sig !== descriptor) {
+        $rt.fail("E8010", "function signature mismatch: expected " + descriptor + ", got " + v.$sig, file, line, column, descriptor, v.$sig);
+      }
+      return v;
+    }
+    if ($parsed.$t === "class") {
+      // Class branch: the $kind tag, then module-qualified nominal
+      // identity — exact string equality between $classname and the parsed
+      // identity (deal/runtime.lua:459-468; runtime-class-identity D2).
+      if (v === $undefined || v === null || v.$kind !== "class") {
+        $rt.fail("E8001", "expected class instance", file, line, column, "class", $kindOf(v));
+      }
+      if (v.$classname !== $parsed.$name) {
+        $rt.fail("E8001", "expected instance of " + $parsed.$name + ", got " + v.$classname, file, line, column, $parsed.$name, v.$classname);
+      }
+      return v;
+    }
+    // Defensive: the parser is total over strings and every record kind is
+    // dispatched above, so no parsed record reaches this arm (A3).
+    $rt.fail("E8001", "internal: unhandled descriptor kind: " + $parsed.$t, file, line, column);
+  },
+
+  // checkArray: the strict array split (D3) — Array.isArray via the T1
+  // $Array capture (never the bare spelling); a Map, class instance, or
+  // primitive is rejected with "expected array". Element extraction
+  // mirrors array_element_descriptor (deal/runtime.lua:239-254): "T[]"
+  // suffix -> "T", "[T]" prefix -> "T". The element walk is 0-based,
+  // mirroring the reference's 1..#v walk (deal/runtime.lua:256-285) with
+  // the 1-based message index; any element failure is wrapped in E8003
+  // with the inner DEALError's message embedded (the deliberate
+  // stabilization of the reference's tostring(err) of a Lua table —
+  // non-portable address text). Success returns the array unchanged.
+  checkArray: function $checkArray(descriptor, v, file, line, column) {
+    if (!$Array.isArray(v)) {
+      $rt.fail("E8001", "expected array", file, line, column, "array", $kindOf(v));
+    }
+    const $element = $arrayElementDescriptor(descriptor, file, line, column);
+    for (let $i = 0; $i < v.length; $i++) {
+      try {
+        $rt.checkType($element, v[$i], file, line, column);
+      } catch ($e) {
+        const $innerMessage = $e instanceof $DEALError ? $e.message : String($e);
+        $rt.fail("E8003", "array element " + ($i + 1) + " type mismatch: " + $innerMessage, file, line, column, $element, $kindOf(v[$i]));
+      }
+    }
+    return v;
+  },
+
+  // checkFunctionSig: the named surface member the emitter calls where the
+  // value's signature is read directly (D3) — a mismatch raises E8010 with
+  // the two signature strings as expected/actual; a match returns v
+  // (identity, no mutation).
+  checkFunctionSig: function $checkFunctionSig(expectedSig, actualSig, v, file, line, column) {
+    if (expectedSig !== actualSig) {
+      $rt.fail("E8010", "function signature mismatch: expected " + expectedSig + ", got " + actualSig, file, line, column, expectedSig, actualSig);
     }
     return v;
   },
