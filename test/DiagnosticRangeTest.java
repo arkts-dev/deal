@@ -15,7 +15,6 @@ import deal.checker.CheckResult;
 import deal.checker.NameResolver;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
-import deal.lexer.Diagnostic;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.lexer.Token;

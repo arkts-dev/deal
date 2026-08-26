@@ -100,64 +100,34 @@ public class DiagnosticClassificationTest {
     // Trigger-based verification
     // =========================================================================
 
-    private static boolean hasErrors(List<Diagnostic> diags) {
+    private static boolean hasErrors(List<CompilerDiagnostic> diags) {
         return diags.stream().anyMatch(d -> "error".equals(d.severity()));
     }
 
-    private static List<Diagnostic> compileAndGetDiagnostics(String source,
+    private static List<CompilerDiagnostic> compileAndGetDiagnostics(String source,
                                                               String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
         ParseResult parse = new Parser(lex.tokens(), filename).parse();
 
-        List<Diagnostic> allDiags = new ArrayList<>();
-        // Transitional ranged-to-legacy boundary conversion at the lexer
-        // aggregation (T3 scaffolding, removed in T13): start values derive
-        // from the range start (position-preserving; ranged-to-legacy only).
-        for (CompilerDiagnostic d : lex.diagnostics()) {
-            allDiags.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                d.file(), d.line(), d.column(), d.diagnosticCode()));
-        }
-        // Transitional ranged-to-legacy boundary conversion (T4
-        // scaffolding, removed in T13): start values derive from the
-        // range start (position-preserving; ranged-to-legacy only).
-        for (CompilerDiagnostic d : parse.diagnostics()) {
-            allDiags.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                d.file(), d.line(), d.column(), d.diagnosticCode()));
-        }
+        List<CompilerDiagnostic> allDiags = new ArrayList<>();
+        allDiags.addAll(lex.diagnostics());
+        allDiags.addAll(parse.diagnostics());
 
         if (parse.hasErrors()) {
             StubModuleResolver resolver = new StubModuleResolver();
             NameResolver nr = new NameResolver(filename, resolver);
             nr.resolve(parse.program());
-            // Transitional ranged-to-legacy boundary conversion (T9
-            // scaffolding, removed in T13): start values derive from the
-            // range start (position-preserving; ranged-to-legacy only).
-            for (CompilerDiagnostic d : nr.diagnostics()) {
-                allDiags.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                    d.file(), d.line(), d.column(), d.diagnosticCode()));
-            }
+            allDiags.addAll(nr.diagnostics());
         } else {
             StubModuleResolver resolver = new StubModuleResolver();
             NameResolver nr = new NameResolver(filename, resolver);
             SymbolTable symTable = nr.resolve(parse.program());
-            // Transitional ranged-to-legacy boundary conversion (T9
-            // scaffolding, removed in T13): start values derive from the
-            // range start (position-preserving; ranged-to-legacy only).
-            for (CompilerDiagnostic d : nr.diagnostics()) {
-                allDiags.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                    d.file(), d.line(), d.column(), d.diagnosticCode()));
-            }
+            allDiags.addAll(nr.diagnostics());
 
             if (!hasErrors(allDiags)) {
                 CheckResult result = TypeChecker.check(filename, symTable,
                     nr, parse.program());
-                // Transitional ranged-to-legacy boundary conversion (T9
-                // scaffolding, removed in T13): start values derive from the
-                // range start (position-preserving; ranged-to-legacy only).
-                for (CompilerDiagnostic d : result.diagnostics()) {
-                    allDiags.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                        d.file(), d.line(), d.column(), d.diagnosticCode()));
-                }
+                allDiags.addAll(result.diagnostics());
             }
         }
         return allDiags;
@@ -207,7 +177,7 @@ public class DiagnosticClassificationTest {
         for (var entry : triggers.entrySet()) {
             String expectedCode = entry.getKey();
             String source = entry.getValue();
-            List<Diagnostic> diags = compileAndGetDiagnostics(source,
+            List<CompilerDiagnostic> diags = compileAndGetDiagnostics(source,
                 "trigger_" + expectedCode + ".deal");
 
             boolean found = diags.stream()
@@ -244,9 +214,9 @@ public class DiagnosticClassificationTest {
         };
 
         for (String source : programs) {
-            List<Diagnostic> diags = compileAndGetDiagnostics(source,
+            List<CompilerDiagnostic> diags = compileAndGetDiagnostics(source,
                 "unreg_test.deal");
-            for (Diagnostic d : diags) {
+            for (CompilerDiagnostic d : diags) {
                 String code = d.code();
                 if (code == null) {
                     fail("Diagnostic with null code: " + d.message());

@@ -760,7 +760,7 @@ public class JvmConformanceTest {
     private static Outcome runFrontend(Classified classified) {
         TestFile test = classified.test();
         frontendTotal.incrementAndGet();
-        List<Diagnostic> diags = frontendDiagnostics(test.path());
+        List<CompilerDiagnostic> diags = frontendDiagnostics(test.path());
         boolean hasErrors = diags.stream()
             .anyMatch(d -> "error".equals(d.severity()));
         String expected = test.expected();
@@ -768,7 +768,7 @@ public class JvmConformanceTest {
             if (hasErrors) {
                 frontendFailed.incrementAndGet();
                 StringBuilder sb = new StringBuilder();
-                for (Diagnostic d : diags) {
+                for (CompilerDiagnostic d : diags) {
                     if ("error".equals(d.severity())) {
                         sb.append("    ").append(d).append('\n');
                     }
@@ -792,7 +792,7 @@ public class JvmConformanceTest {
         }
         List<String> gotCodes = diags.stream()
             .filter(d -> "error".equals(d.severity()))
-            .map(Diagnostic::code)
+            .map(CompilerDiagnostic::code)
             .toList();
         frontendFailed.incrementAndGet();
         log("  [" + test.relativePath() + "] FAIL (expected " + code
@@ -810,31 +810,19 @@ public class JvmConformanceTest {
      * diagnostics and the compile-error tests fail.
      */
     @SuppressWarnings("deprecation")
-    private static List<Diagnostic> frontendDiagnostics(Path file) {
-        List<Diagnostic> all = new ArrayList<>();
+    private static List<CompilerDiagnostic> frontendDiagnostics(Path file) {
+        List<CompilerDiagnostic> all = new ArrayList<>();
         try {
             String source = Files.readString(file);
             String filename = file.toString();
 
             LexResult lex = new Lexer(source, filename).tokenize();
-            // Transitional ranged-to-legacy boundary conversion (T3
-            // scaffolding, removed in T13): start values derive from the
-            // range start, so every rendered position is preserved.
-            for (CompilerDiagnostic d : lex.diagnostics()) {
-                all.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                    d.file(), d.line(), d.column(), d.diagnosticCode()));
-            }
+            all.addAll(lex.diagnostics());
             if (lex.hasErrors()) return all;
 
             Parser parser = new Parser(lex.tokens(), filename);
             ParseResult parseResult = parser.parse();
-            // Transitional ranged-to-legacy boundary conversion (T4
-            // scaffolding, removed in T13): start values derive from the
-            // range start (position-preserving; ranged-to-legacy only).
-            for (CompilerDiagnostic d : parseResult.diagnostics()) {
-                all.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                    d.file(), d.line(), d.column(), d.diagnosticCode()));
-            }
+            all.addAll(parseResult.diagnostics());
             if (parseResult.hasErrors()) return all;
 
             FrontendModuleResolver resolver = new FrontendModuleResolver(file);
@@ -843,28 +831,27 @@ public class JvmConformanceTest {
             try {
                 symTable = nr.resolve(parseResult.program());
             } catch (Exception e) {
-                all.add(Diagnostic.error("E9999", e.getMessage(),
-                    filename, 1, 1));
+                // E9999 is the test-only pseudo code for an unexpected
+                // NameResolver exception (D5/verification 6): the
+                // deprecated synthetic factory carries the canonical
+                // synthetic range plus an anchor note naming the fixture
+                // file.
+                all.add(CompilerDiagnostic.synthetic("E9999", "error",
+                    e.getMessage(), filename,
+                    "missing anchor: fixture source '" + filename + "'"));
                 return all;
             }
-            // Transitional ranged-to-legacy boundary conversions (T9
-            // scaffolding, removed in T13): start values derive from the
-            // range start (position-preserving; ranged-to-legacy only).
-            for (CompilerDiagnostic d : nr.diagnostics()) {
-                all.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                    d.file(), d.line(), d.column(), d.diagnosticCode()));
-            }
+            all.addAll(nr.diagnostics());
 
             CheckResult result = TypeChecker.check(filename, symTable, nr,
                 parseResult.program());
-            for (CompilerDiagnostic d : result.diagnostics()) {
-                all.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                    d.file(), d.line(), d.column(), d.diagnosticCode()));
-            }
+            all.addAll(result.diagnostics());
             return all;
         } catch (IOException e) {
-            all.add(Diagnostic.error("E9999", "cannot read " + file,
-                file.toString(), 1, 1));
+            String filename = file.toString();
+            all.add(CompilerDiagnostic.synthetic("E9999", "error",
+                "cannot read " + file, filename,
+                "missing anchor: fixture source '" + filename + "'"));
             return all;
         }
     }

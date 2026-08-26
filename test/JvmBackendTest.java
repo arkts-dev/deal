@@ -15,7 +15,6 @@ import deal.types.Type;
 import deal.types.Types;
 import deal.codegen.Backend;
 import deal.codegen.jvm.JvmBackend;
-import deal.lexer.Diagnostic;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.module.ModuleShapeValidator;
@@ -431,11 +430,13 @@ public class JvmBackendTest {
 
     /** Result of the real frontend pipeline (lexer → parser → resolver → checker). */
     private record Frontend(ProgramNode program, CheckResult checkResult,
-                            List<Diagnostic> errors) {}
+                            List<CompilerDiagnostic> errors) {}
 
     // E9999 is the project's test-only pseudo code for a NameResolver
-    // exception (the ConformanceTest precedent); the String-code overload is
-    // deprecated, and this suppression keeps the build warning-free.
+    // exception (the ConformanceTest precedent); it uses the deprecated
+    // synthetic factory with an anchor note naming the fixture source
+    // (D5/verification 6), and this suppression keeps the build
+    // warning-free.
     @SuppressWarnings("deprecation")
     private static Frontend compileFrontend(String source, String filename) {
         return compileFrontend(source, filename,
@@ -448,17 +449,12 @@ public class JvmBackendTest {
     @SuppressWarnings("deprecation")
     private static Frontend compileFrontend(String source, String filename,
                                             ModuleResolver moduleResolver) {
-        List<Diagnostic> errors = new ArrayList<>();
+        List<CompilerDiagnostic> errors = new ArrayList<>();
 
         LexResult lex = new Lexer(source, filename).tokenize();
-        // Transitional ranged-to-legacy boundary conversion (T3 scaffolding,
-        // removed in T13): the severity filter is unchanged; each retained
-        // entry converts into the still-legacy errors list with start values
-        // derived from the range start (position-preserving).
         for (CompilerDiagnostic d : lex.diagnostics()) {
             if ("error".equals(d.severity())) {
-                errors.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+                errors.add(d);
             }
         }
         if (lex.hasErrors()) {
@@ -467,15 +463,9 @@ public class JvmBackendTest {
 
         Parser parser = new Parser(lex.tokens(), filename);
         ParseResult parse = parser.parse();
-        // Transitional ranged-to-legacy boundary conversion (T4
-        // scaffolding, removed in T13): the severity filter is unchanged;
-        // each retained entry converts into the still-legacy errors list
-        // with start values derived from the range start
-        // (position-preserving).
         for (CompilerDiagnostic d : parse.diagnostics()) {
             if ("error".equals(d.severity())) {
-                errors.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+                errors.add(d);
             }
         }
         if (parse.hasErrors()) {
@@ -485,16 +475,10 @@ public class JvmBackendTest {
         // Post-parse module shape validation (v1.2 module top level:
         // E1048/E1049/E1050/E1051), mirroring the orchestrator pipeline —
         // the parser alone no longer rejects v1.1 module shapes.
-        // Transitional ranged-to-legacy boundary conversion (T9
-        // scaffolding, removed in T13): the severity filter is unchanged;
-        // each retained entry converts into the still-legacy errors list
-        // with start values derived from the range start
-        // (position-preserving).
         for (CompilerDiagnostic d : ModuleShapeValidator.validate(parse.program(),
                 filename, filename.endsWith(".d.deal"))) {
             if ("error".equals(d.severity())) {
-                errors.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+                errors.add(d);
             }
         }
         if (!errors.isEmpty()) {
@@ -506,26 +490,21 @@ public class JvmBackendTest {
         try {
             symTable = nr.resolve(parse.program());
         } catch (Exception e) {
-            errors.add(Diagnostic.error("E9999", e.getMessage(), filename, 1, 1));
+            errors.add(CompilerDiagnostic.synthetic("E9999", "error",
+                e.getMessage(), filename,
+                "missing anchor: fixture source '" + filename + "'"));
             return new Frontend(null, null, errors);
         }
-        // Transitional ranged-to-legacy boundary conversions (T9
-        // scaffolding, removed in T13): the severity filters are
-        // unchanged; each retained entry converts into the still-legacy
-        // errors list with start values derived from the range start
-        // (position-preserving).
         for (CompilerDiagnostic d : nr.diagnostics()) {
             if ("error".equals(d.severity())) {
-                errors.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+                errors.add(d);
             }
         }
 
         CheckResult result = TypeChecker.check(filename, symTable, nr, parse.program());
         for (CompilerDiagnostic d : result.diagnostics()) {
             if ("error".equals(d.severity())) {
-                errors.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                    d.file(), d.line(), d.column(), d.diagnosticCode()));
+                errors.add(d);
             }
         }
 
