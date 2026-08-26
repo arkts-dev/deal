@@ -1639,9 +1639,14 @@ public final class JsBackend {
      * the element descriptor, and the write (an index equal to the
      * length appends natively); class field writes route through the
      * own-property-safe {@code $rt.setProp}; table writes are Map
-     * {@code .set} calls; plain targets assign natively. The IIFE
-     * preserves the reference's evaluation order (container, checked
-     * index, bounds, checked value, write) in expression position.
+     * {@code .set} calls (unchecked, the checker's F5 write-context
+     * rule); plain targets assign natively. The IIFE preserves the
+     * reference's evaluation order (container, checked index, bounds,
+     * checked value, write) in expression position. Identifier targets
+     * and class field writes re-validate the assigned value against the
+     * target's declared type at the assignment site (the value's own
+     * boundary check for that transition), mirroring the
+     * declaration-site boundary checks.
      */
     private String emitAssignment(AssignmentExpr assign) {
         String value = emitExpression(assign.value());
@@ -1670,7 +1675,9 @@ public final class JsBackend {
             Type objType = typeOf(mae.object());
             if (objType instanceof Type.Class) {
                 return "$rt.setProp(" + emitExpression(mae.object()) + ", "
-                    + jsStringLiteral(mae.field()) + ", " + value + ")";
+                    + jsStringLiteral(mae.field()) + ", "
+                    + checkedAssignmentValue(value,
+                        typeOf(assign.target()), span) + ")";
             }
             if (objType instanceof Type.Table) {
                 return emitExpression(mae.object()) + ".set("
@@ -1680,12 +1687,35 @@ public final class JsBackend {
                 + " = " + value;
         }
         if (assign.target() instanceof IdentifierExpr id) {
-            return jsName(id.name()) + " = " + value;
+            return jsName(id.name()) + " = "
+                + checkedAssignmentValue(value, typeOf(assign.target()),
+                    span);
         }
         // Defensive plain form: unreachable for checker-accepted
         // programs (E3017 rejects array .length targets, the checker
         // rejects every other unsupported target shape).
         return emitExpression(assign.target()) + " = " + value;
+    }
+
+    /**
+     * The assignment-site re-validation of the assigned value against
+     * the target's declared type (the checker records the target type in
+     * the type map, so a dynamic value like a table read crossing into a
+     * typed binding or field is checked exactly where the transition
+     * happens): a {@code Type.Error}/{@code null} type and the unchecked
+     * table target pass the value through verbatim; every other target
+     * type wraps the value in the runtime typed boundary check with the
+     * assignment-span location. Function targets use the {@code checkType}
+     * E8010 signature check; the arity-extension adapter path replaces it
+     * at T3 (the {@code LuaBackend.emitArityAdapter} mirror).
+     */
+    private String checkedAssignmentValue(String value, Type targetType,
+                                          Span span) {
+        if (targetType == null || targetType instanceof Type.Error
+                || targetType instanceof Type.Table) {
+            return value;
+        }
+        return emitCheckExpr(value, targetType, span);
     }
 
     /**
