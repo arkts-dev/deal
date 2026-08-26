@@ -25,10 +25,9 @@ public enum Backend {
      * functions, primitives, control flow, and {@code std/console} output. */
     JVM("jvm"),
 
-    /** JavaScript backend (ISSUE-0195): the {@code "js"} selection name joins
-     * the seam now, but the emitter lands with the emitter epic (ISSUE-0191).
-     * Until then {@code CompilationOrchestrator} rejects a phase-4 {@code JS}
-     * selection with an E6000 diagnostic and emits no artifacts. */
+    /** Emits CommonJS modules via {@code deal.codegen.js.JsBackend}
+     * (emitter epic ISSUE-0191; the ISSUE-0247 core slice replaced the
+     * ISSUE-0189 staging guard with {@code CompilationOrchestrator.codegenAllJs()}). */
     JS("js");
 
     private final String cliName;

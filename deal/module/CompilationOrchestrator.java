@@ -4,6 +4,7 @@ import deal.ast.*;
 import deal.checker.*;
 import deal.codegen.Backend;
 import deal.codegen.jvm.JvmBackend;
+import deal.codegen.js.JsBackend;
 import deal.codegen.lua.LuaBackend;
 import deal.ir.IrDumper;
 import deal.lexer.*;
@@ -1199,18 +1200,10 @@ public final class CompilationOrchestrator {
             // LuaJIT-specific and skipped here.
             codegenAllJvm();
         } else if (backend == Backend.JS) {
-            // JS staging guard (ISSUE-0195): the JavaScript emitter lands
-            // with the emitter epic (ISSUE-0191). Fail fast with exactly one
-            // E6000 and emit no artifacts -- no module emission, no runtime
-            // copy, no stdlib copy -- so a Backend.JS selection can never
-            // fall into the LuaJIT path and silently miscompile. ISSUE-0191
-            // replaces this arm with codegenAllJs().
-            // Anchorless site: the staging guard has no source construct
-            // anchor; synthetic with a construct-naming note (D5/D6).
-            syntheticError(DiagnosticCode.E6000,
-                "JavaScript backend: compilation for the JavaScript backend is not yet available",
-                entryFile.toString(),
-                "missing anchor: entry program span for the JavaScript backend staging guard");
+            // JS use site (ISSUE-0247 core slice, js-backend-emitter D3):
+            // codegenAllJs() replaces the ISSUE-0189 staging guard with the
+            // two-pass emitter plus the runtime/stdlib deployment copies.
+            codegenAllJs();
         } else {
             // Lua use site: the existing LuaJIT emitter, unchanged.
             for (ModuleInfo info : modules.values()) {
@@ -1442,6 +1435,112 @@ public final class CompilationOrchestrator {
     }
 
     /**
+     * JS use site (ISSUE-0247 core slice, js-backend-emitter D3): the JVM
+     * two-pass model — pass 1 generates every module and merges
+     * diagnostics, pass 2 writes one {@code <modulePath with '/' for
+     * '.'>.js} artifact per clean module — plus the LuaJIT
+     * deployment-copy precedent (copyJsRuntimeLibrary/
+     * copyStdlibJsModules). The per-module import classification mirrors
+     * the LuaJIT use site (codegenLuaModule): a resolved non-declaration
+     * module is a project import, a resolved declaration file that is not
+     * a spec stdlib module is a host module. Backend diagnostics (E6004
+     * for an invalid entry module main at this slice; later slices add
+     * the E6000/E6003 rejection table) fail the compilation with the
+     * standard report; no artifact is written for a rejected module. The
+     * dot→slash artifact mapping is injective over the module-path
+     * domain, so no class-name-collision gate is needed (unlike
+     * codegenAllJvm's). The deployment copies run unconditionally at the
+     * end of phase 4 (Lua deployment parity).
+     */
+    private void codegenAllJs() throws IOException {
+        if (sourceMapExplicit) {
+            // Source-map sidecars (.deal.map.json) are produced only by the
+            // LuaJIT emitter; surface that to the CLI user instead of
+            // silently producing no sidecars. Fired only when --source-map
+            // was explicitly requested: a --dump-ir-derived sourceMap flag
+            // (IR hardening enables source maps with dumps) must not print
+            // the warning.
+            System.err.println("Warning: --source-map produces no source-map "
+                + "sidecars with the JavaScript backend (source maps are "
+                + "LuaJIT-only)");
+        }
+        // Pass 1: generate every module and merge diagnostics. Rejected
+        // modules write no artifact.
+        List<ModuleInfo> cleanModules = new ArrayList<>();
+        Map<ModuleInfo, JsBackend.JsCodegenResult> results =
+            new LinkedHashMap<>();
+        for (ModuleInfo info : modules.values()) {
+            if (info.isDeclarationFile) continue;
+            // Import classification (the LuaJIT use-site shape,
+            // codegenLuaModule): raw import path → module path of the
+            // imported COMPILED module; declaration files that are not
+            // spec stdlib modules become host modules with their declared
+            // export map.
+            Map<String, String> importResolutions = new HashMap<>();
+            Map<String, Map<String, Type>> hostModules = new HashMap<>();
+            if (info.rawAst != null) {
+                for (StatementNode stmt : info.rawAst.statements()) {
+                    if (stmt instanceof ImportDeclaration imp) {
+                        String resolvedSource = resolveImportPath(imp.modulePath(),
+                            Path.of(info.sourcePath), imp.span());
+                        if (resolvedSource != null) {
+                            ModuleInfo imported = modules.get(resolvedSource);
+                            if (imported != null) {
+                                importResolutions.put(imp.modulePath(),
+                                    imported.modulePath);
+                                // Host modules: declaration files that are
+                                // not spec stdlib modules (the LuaJIT use
+                                // site's classification, verbatim).
+                                if (imported.isDeclarationFile
+                                        && !isSpecStdlibModuleInfo(imported)) {
+                                    hostModules.put(imp.modulePath(),
+                                        imported.exports != null
+                                            ? imported.exports : Map.of());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            boolean isEntry = info.sourcePath.equals(entryFile.toString());
+            JsBackend.JsCodegenResult res = JsBackend.generate(
+                info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
+                importResolutions, hostModules, isEntry);
+            // Transitional backend-boundary conversion (removed by T12),
+            // the same ranged-channel zip the LuaJIT/JVM use sites run:
+            // each legacy entry pairs with the parallel range the backend
+            // anchored it at, so rendered positions are preserved.
+            List<CompilerDiagnostic> backendDiags =
+                toBackendDiagnostics(res.diagnostics(), res.diagnosticRanges());
+            diagnostics.addAll(backendDiags);
+            if (backendDiags.stream()
+                    .anyMatch(d -> "error".equals(d.severity()))) {
+                hasErrors = true;
+            }
+            if (res.hasErrors()) {
+                log("  JavaScript backend rejected " + info.modulePath + ": "
+                    + res.diagnostics());
+                continue;
+            }
+            cleanModules.add(info);
+            results.put(info, res);
+        }
+
+        // Pass 2: write artifacts for clean modules only.
+        for (ModuleInfo info : cleanModules) {
+            JsBackend.JsCodegenResult res = results.get(info);
+            Path outputPath = outputRoot.resolve(
+                res.modulePath().replace('.', '/') + ".js");
+            Files.createDirectories(outputPath.getParent());
+            Files.writeString(outputPath, res.source());
+            log("  Generated: " + outputPath);
+        }
+
+        copyJsRuntimeLibrary();
+        copyStdlibJsModules();
+    }
+
+    /**
      * True when the module is a spec-listed stdlib declaration module
      * (filesystem-discovered under the stdlib directory or registered as a
      * classpath resource).  Stdlib imports stay on the trusted raw-require
@@ -1505,6 +1604,78 @@ public final class CompilationOrchestrator {
 
             // Fallback: try classpath resource for bundled stdlib .lua files
             String resourcePath = "std/" + stdlibModule.substring(4) + ".lua";
+            InputStream stream = getClass().getClassLoader()
+                .getResourceAsStream(resourcePath);
+            if (stream != null) {
+                Files.createDirectories(destFile.getParent());
+                Files.copy(stream, destFile);
+                stream.close();
+                log("  Copied stdlib: " + stdlibModule);
+            }
+        }
+    }
+
+    /**
+     * JS deployment copy (js-backend-emitter D10): copies deal/runtime.js
+     * to <output>/deal/runtime.js — classpath resource first, then the
+     * repo-root file, else E6000 — and skips an existing destination
+     * (idempotent). The mirror of copyRuntimeLibrary with the .js
+     * spelling.
+     */
+    private void copyJsRuntimeLibrary() throws IOException {
+        Path runtimeDest = outputRoot.resolve("deal/runtime.js");
+        if (Files.exists(runtimeDest)) return;
+
+        Files.createDirectories(runtimeDest.getParent());
+
+        InputStream runtimeStream = getClass().getClassLoader()
+            .getResourceAsStream("deal/runtime.js");
+        if (runtimeStream != null) {
+            Files.copy(runtimeStream, runtimeDest);
+            runtimeStream.close();
+            log("  Copied runtime: " + runtimeDest);
+            return;
+        }
+
+        Path runtimeSrc = Path.of("deal/runtime.js");
+        if (Files.exists(runtimeSrc)) {
+            Files.copy(runtimeSrc, runtimeDest);
+            log("  Copied runtime: " + runtimeDest);
+            return;
+        }
+
+        // Anchorless site (D5/D6): the note names the missing runtime
+        // library path.
+        syntheticError(DiagnosticCode.E6000,
+            "Runtime library not found: deal/runtime.js", "",
+            "missing anchor: runtime library path 'deal/runtime.js'");
+    }
+
+    /**
+     * Copies the spec-listed stdlib .js implementation files to the
+     * output (the module list is derived from the 6 spec-listed stdlib
+     * modules). Stdlib-directory source first, classpath resource
+     * fallback, a missing source for a module skipped silently;
+     * idempotent. The mirror of copyStdlibModules with the .js spelling
+     * (js-backend-emitter D10).
+     */
+    private void copyStdlibJsModules() throws IOException {
+        for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
+            Path destFile = outputRoot.resolve(stdlibModule + ".js");
+            if (Files.exists(destFile)) continue;
+
+            if (stdlibDir != null) {
+                Path srcFile = stdlibDir.resolve(stdlibModule + ".js");
+                if (Files.exists(srcFile)) {
+                    Files.createDirectories(destFile.getParent());
+                    Files.copy(srcFile, destFile);
+                    log("  Copied stdlib: " + stdlibModule);
+                    continue;
+                }
+            }
+
+            // Fallback: try classpath resource for bundled stdlib .js files
+            String resourcePath = "std/" + stdlibModule.substring(4) + ".js";
             InputStream stream = getClass().getClassLoader()
                 .getResourceAsStream(resourcePath);
             if (stream != null) {

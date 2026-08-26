@@ -40,6 +40,7 @@ javac --release 25 -proc:none -d build \
   deal/codegen/*.java \
   deal/codegen/lua/*.java \
   deal/codegen/jvm/*.java \
+  deal/codegen/js/*.java \
   deal/ir/*.java \
   deal/module/*.java \
   deal/Main.java \
