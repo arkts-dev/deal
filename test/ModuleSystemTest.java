@@ -581,8 +581,8 @@ public class ModuleSystemTest {
         check(r.config() != null && "luajit".equals(r.config().backend()),
             "duplicate backend resolves to the last value");
 
-        // Permissive numbers: 01 decodes as Long 1; 1e5 decodes as a
-        // Double (wrong-typed for the int getter -> absent); both parse.
+        // Permissive numbers: 01 decodes as Long 1; 1e5 and 1. decode
+        // as Doubles (wrong-typed for the int getter -> absent); all parse.
         r = parseManifest("{\"limits\":{\"maxMemory\":01}}");
         check(r.diagnostics().isEmpty(), "leading-zero number tolerated: " + r.diagnostics());
         check(r.config() != null && r.config().limits() != null
@@ -593,6 +593,14 @@ public class ModuleSystemTest {
         check(r.config() != null && r.config().limits() != null
                 && r.config().limits().maxMemory() == null,
             "1e5 decodes as a Double and stays absent for the int getter");
+
+        // Trailing-dot number: 1. decodes as Double 1.0 (wrong-typed for
+        // the int getter -> absent); parses without a diagnostic.
+        r = parseManifest("{\"limits\":{\"maxMemory\":1.}}");
+        check(r.diagnostics().isEmpty(), "trailing-dot number tolerated: " + r.diagnostics());
+        check(r.config() != null && r.config().limits() != null
+                && r.config().limits().maxMemory() == null,
+            "1. decodes as a Double and stays absent for the int getter");
 
         // Non-strict whitespace between key and colon (U+2028, skipped by
         // Character.isWhitespace) is accepted.
@@ -612,6 +620,26 @@ public class ModuleSystemTest {
         r = parseManifest("{\"a\":1\u000B\"b\":2}");
         check(r.diagnostics().isEmpty(), "VT-separated missing comma: " + r.diagnostics());
         check(r.config() != null, "VT-separated truncation yields a config");
+
+        // FS-separated members with a comma are accepted (U+001C, skipped
+        // by Character.isWhitespace).
+        r = parseManifest("{\"a\":1,\u001C\"b\":2}");
+        check(r.diagnostics().isEmpty(), "FS-separated members: " + r.diagnostics());
+        check(r.config() != null, "FS-separated members yield a config");
+
+        // FS-separated known fields parse both members, proving the comma
+        // form is a full parse rather than a truncation.
+        r = parseManifest("{\"backend\":\"luajit\",\u001C\"moduleRoots\":[\"src\"]}");
+        check(r.diagnostics().isEmpty(), "FS-separated known-field members: " + r.diagnostics());
+        check(r.config() != null && "luajit".equals(r.config().backend())
+                && r.config().moduleRoots().equals(List.of("src")),
+            "FS-separated members parse both fields");
+
+        // FS-separated members without a comma truncate exactly as today
+        // (the FS is skipped, the following string breaks the loop).
+        r = parseManifest("{\"a\":1\u001C\"b\":2}");
+        check(r.diagnostics().isEmpty(), "FS-separated missing comma: " + r.diagnostics());
+        check(r.config() != null, "FS-separated truncation yields a config");
 
         // Raw control characters inside strings are kept as-is.
         r = parseManifest("{\"output\": \"x\ny\"}");
