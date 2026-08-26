@@ -108,17 +108,36 @@ import java.util.Set;
  * and {@code .$f} call carries the literal {@code .deal} file/line/column
  * arguments from the AST span.
  *
- * <p>Cluster staging (js-backend-emitter D1): function declarations,
- * import declarations, and export declarations remain tolerated
- * structurally at this slice — no wrapper/binding/export emission, no
- * diagnostic — so T3 (functions and closures) and T4 (modules) populate
- * those sections. Because a DEAL v1.2 module allows only
- * imports/functions/classes/exports at top level (ModuleShapeValidator
- * E1049), the surfaces this slice's merge emits that runnable probes can
- * observe are class declarations (whose defaults thunks exercise the
- * expression lowering) plus the {@code $rt.makeTable} member; the
- * statement-level emission pins become observable from the first
- * function-body emission (T3).
+ * <p>ISSUE-0249 functions-and-closures slice: function declarations
+ * and expressions emit as {@code $rt.function} wrappers with the exact
+ * {@code jsTypeDescriptor} signature, the entry parameter checks in
+ * parameter order with the forwarded {@code $file}/{@code $line}/
+ * {@code $column} span (parameter errors report the call site), the
+ * return-site exit checks on every {@code return} path plus the
+ * validated {@code null} fall-off return for null-typed functions, the
+ * trailing {@code $}-prefixed span parameters (duplicate-free for user
+ * parameters literally named {@code file}/{@code line}/{@code column}),
+ * direct/nested/indirect/member calls through {@code .$f} with the
+ * literal call-site span arguments, recursion/forward calls/mutual
+ * recursion through the predeclare-then-assign pattern (module shape
+ * step 6 plus per-scope {@code let} hoisting for nested functions),
+ * native closure capture, function values crossing function-typed
+ * boundaries through the runtime's exact-{@code $sig} E8010 check, and
+ * arity-extension adapters (a wider function-typed declaration or
+ * assignment context wraps the value in an adapter closure that checks
+ * the extended parameters, drops the extras, and calls the inner
+ * {@code .$f} with the forwarded span — the {@code deal/runtime.lua}
+ * adapter precedent). The header {@code int}/{@code number} wrapper
+ * values are first-class function values with no special casing.
+ *
+ * <p>Cluster staging (js-backend-emitter D1): import declarations and
+ * the export-assignment section remain tolerated structurally at this
+ * slice — no binding/export emission, no diagnostic — so T4 (modules)
+ * populates those sections; an export-wrapped function declaration
+ * emits its wrapper here. Async completion checks and await lowering
+ * are T5's; this slice emits the {@code async function} keyword
+ * structurally for async declarations and leaves the await-site
+ * lowering untouched.
  *
  * <p>The backend consumes the checked AST exactly like
  * {@code JvmBackend} ({@code CheckResult.typeMap()}/{@code symbolTable()})
@@ -365,23 +384,37 @@ public final class JsBackend {
         FunctionDeclaration entryMain = isEntry
             ? scanEntryMain(program) : null;
 
-        // Shape step 6: predeclared class-artifact bindings in
-        // declaration order (the LuaBackend predeclare-then-assign
-        // pattern). Module-level functions join this list at T3.
-        List<String> classNames = new ArrayList<>();
+        // Shape step 6: predeclared function and class-artifact
+        // bindings in declaration order (the LuaBackend
+        // predeclare-then-assign pattern): the binding exists before any
+        // declaration assignment runs, so recursion, forward calls,
+        // mutual recursion, and function bodies referencing
+        // later-declared classes all resolve.
+        List<String> predeclares = new ArrayList<>();
         for (StatementNode stmt : program.statements()) {
-            ClassDeclaration cd = switch (stmt) {
-                case ClassDeclaration c -> c;
-                case ExportDeclaration ed
-                        when ed.declaration() instanceof ClassDeclaration c -> c;
-                default -> null;
-            };
-            if (cd != null) {
-                classNames.add(cd.name());
+            switch (stmt) {
+                case ClassDeclaration cd -> predeclares.add(
+                    "let " + cd.name() + "$new; let " + cd.name() + "$meta;");
+                case ExportDeclaration ed -> {
+                    switch (ed.declaration()) {
+                        case ClassDeclaration cd -> predeclares.add(
+                            "let " + cd.name() + "$new; let "
+                                + cd.name() + "$meta;");
+                        case FunctionDeclaration fd -> predeclares.add(
+                            "let " + jsName(fd.name()) + ";");
+                        default -> {
+                            // Unreachable: ExportDeclaration wraps only
+                            // function/class declarations.
+                        }
+                    }
+                }
+                case FunctionDeclaration fd ->
+                    predeclares.add("let " + jsName(fd.name()) + ";");
+                default -> { }
             }
         }
 
-        emitHeader(classNames);
+        emitHeader(predeclares);
         for (StatementNode stmt : program.statements()) {
             visitStatement(stmt);
         }
@@ -415,7 +448,7 @@ public final class JsBackend {
      * are constructed only through {@code $rt.makeTable}
      * (js-backend-architecture D2, js-backend-emitter D9).
      */
-    private void emitHeader(List<String> classNames) {
+    private void emitHeader(List<String> predeclares) {
         out.append("// Generated by DEAL compiler — JavaScript backend. DO NOT EDIT.\n");
         out.append("// Source: ").append(sourcePath == null ? "" : sourcePath)
             .append("\n");
@@ -459,15 +492,17 @@ public final class JsBackend {
         out.append("// Import bindings (import order).\n");
         out.append("\n");
         // 6. Predeclared lets for module-level functions and class
-        // artifacts in declaration order (functions join at T3).
+        // artifacts in declaration order — recursion, forward calls,
+        // mutual recursion, and function bodies referencing
+        // later-declared classes all resolve through these bindings.
         out.append("// Predeclared function and class-artifact bindings "
             + "(declaration order).\n");
-        for (String name : classNames) {
-            // The artifact names carry the compiler-generated "$" suffix,
-            // so every raw class name — a JS reserved word included —
-            // yields a valid, collision-free strict-mode binding.
-            out.append("let ").append(name).append("$new; let ")
-                .append(name).append("$meta;\n");
+        for (String predeclare : predeclares) {
+            // The class-artifact names carry the compiler-generated "$"
+            // suffix and function names pass through jsName, so every
+            // raw user name — a JS reserved word included — yields a
+            // valid, collision-free strict-mode binding.
+            out.append(predeclare).append("\n");
         }
         out.append("\n");
         // 7. Declarations in source order (the statement walk follows).
@@ -649,29 +684,25 @@ public final class JsBackend {
     // =========================================================================
 
     /**
-     * Statement dispatch. Import declarations (T4), function declarations
-     * (T3), and export declarations (T4 assignments; the wrapped class
-     * declaration emits its artifacts here) are tolerated structurally at
-     * this slice (js-backend-emitter D1); every other statement kind
-     * lowers fully.
+     * Statement dispatch. Import declarations (T4) and export
+     * declarations (T4 assignments; a wrapped function/class
+     * declaration emits its artifacts here) remain tolerated
+     * structurally at this slice (js-backend-emitter D1); every other
+     * statement kind lowers fully.
      */
     private void visitStatement(StatementNode stmt) {
         switch (stmt) {
             case ImportDeclaration imp -> {
                 // T4: import bindings in import order (shape step 5).
             }
-            case FunctionDeclaration fd -> {
-                // T3: predeclared let + wrapper assignment (steps 6-7).
-            }
+            case FunctionDeclaration fd -> visit(fd);
             case ClassDeclaration cd -> visit(cd);
             case ExportDeclaration ed -> {
                 // T4 adds the export assignments (shape step 8); the
                 // wrapped declaration still emits its artifacts.
                 switch (ed.declaration()) {
                     case ClassDeclaration cd -> visit(cd);
-                    case FunctionDeclaration fd -> {
-                        // T3.
-                    }
+                    case FunctionDeclaration fd -> visit(fd);
                     default -> {
                         // Unreachable: ExportDeclaration wraps only
                         // function/class declarations.
@@ -692,6 +723,170 @@ public final class JsBackend {
             case TryStatement ts -> visit(ts);
             case ThrowStatement th -> visit(th);
             case Block b -> visit(b);
+        }
+    }
+
+    /**
+     * Function declaration (js-backend-emitter D4 step 7, D6): the
+     * predeclared {@code let} carries the header (step 6 at module
+     * level) or the enclosing statement scope's hoisting loop (nested
+     * functions); the declaration site assigns the wrapper —
+     * {@code $rt.function} with the exact descriptor signature, the
+     * jsName-translated inner function name {@code <name>$f} (a binding
+     * position), the jsName-translated parameter list plus the trailing
+     * {@code $}-prefixed span parameters (duplicate-free for user
+     * parameters literally named {@code file}/{@code line}/
+     * {@code column} — the {@code LuaBackend.visit(FunctionDeclaration)}
+     * wrapper shape with the js-backend-architecture D5 span-parameter
+     * extension), the entry parameter checks in parameter order with
+     * the forwarded span, the body walk through the T2 lowering, and
+     * the return-site exit checks. The declared return type drives
+     * {@link #currentReturnType} for the body's {@code return}
+     * statements; a null-typed sync function appends the validated
+     * {@code null} fall-off return after the body (control falling off
+     * the end returns the DEAL null). Async declarations emit the
+     * {@code async function} keyword structurally; completion checks
+     * and await lowering are T5's.
+     */
+    private void visit(FunctionDeclaration fd) {
+        String name = fd.name();
+        // Module-level declarations resolve the checker's hoisted
+        // symbol; nested declarations derive the type from the AST —
+        // a nested scope may shadow a module-level function of the same
+        // name with a different signature, which the module table
+        // lookup would silently misreport.
+        Type.Func funcType = atModuleLevel ? getFunctionType(name) : null;
+        if (funcType == null) {
+            funcType = functionTypeFromAst(fd);
+        }
+        String sig = funcType != null ? jsTypeDescriptor(funcType) : "()";
+        Type returnType = funcType != null ? funcType.returnType() : null;
+        boolean isAsync = funcType != null && funcType.isAsync();
+
+        out.append("// Function: ").append(name)
+            .append(" — wrapper with entry parameter checks and")
+            .append(" return-site exit checks.\n");
+        line(jsName(name) + " = $rt.function(" + jsStringLiteral(sig) + ", "
+            + (isAsync ? "async function " : "function ") + jsName(name)
+            + "$f(" + buildParamList(fd.params()) + ") {");
+        indent++;
+        Type savedReturn = currentReturnType;
+        currentReturnType = returnType;
+        try {
+            emitWrappedBody(fd.params(), fd.body(), returnType, isAsync,
+                fd.returnType().span());
+        } finally {
+            currentReturnType = savedReturn;
+            indent--;
+        }
+        line("});");
+        out.append("\n");
+    }
+
+    /**
+     * The checker's module-level function type, resolved from the
+     * module symbol table (the {@code LuaBackend.getFunctionType}
+     * mirror) — consulted only at module level, where the hoisted
+     * symbol carries the checker's exact type.
+     */
+    private Type.Func getFunctionType(String name) {
+        Symbol sym = symbols.resolve(name);
+        if (sym instanceof Symbol.FunctionSymbol fs) {
+            return fs.funcType();
+        }
+        return null;
+    }
+
+    /**
+     * The checker's {@code walkFuncDecl} type construction
+     * (deal/checker/NameResolver.java, the nested-function branch):
+     * the parameter types and the declared return type compose the
+     * function type — used for every nested function declaration, whose
+     * symbols live in function-local scopes the module table cannot see
+     * (and whose name may shadow a module-level function with a
+     * different signature).
+     */
+    private Type.Func functionTypeFromAst(FunctionDeclaration fd) {
+        List<Type> paramTypes = new ArrayList<>();
+        for (Parameter p : fd.params()) {
+            Type pt = resolveTypeNode(p.type());
+            if (pt == Type.Error.INSTANCE) {
+                return null;
+            }
+            paramTypes.add(pt);
+        }
+        Type ret = resolveTypeNode(fd.returnType());
+        if (ret == Type.Error.INSTANCE) {
+            return null;
+        }
+        return new Type.Func(paramTypes, ret, fd.isAsync());
+    }
+
+    /**
+     * The wrapper parameter list both declaration and expression forms
+     * share: jsName-translated user parameters (binding positions) plus
+     * the trailing span parameters {@code $file}/{@code $line}/
+     * {@code $column}. The span triple joins the user list only when
+     * user parameters exist — a zero-parameter wrapper emits
+     * {@code ($file, $line, $column)}, never the invalid leading-comma
+     * form. The {@code $}-prefix keeps the span parameters
+     * duplicate-free for user parameters literally named {@code file}/
+     * {@code line}/{@code column} (all legal DEAL identifiers, while
+     * user identifiers cannot contain {@code $}).
+     */
+    private String buildParamList(List<Parameter> params) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < params.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(jsName(params.get(i).name()));
+        }
+        if (sb.length() > 0) sb.append(", ");
+        sb.append("$file, $line, $column");
+        return sb.toString();
+    }
+
+    /**
+     * The shared wrapper body emission: entry parameter checks in
+     * parameter order against the declared parameter types with the
+     * forwarded {@code $file}/{@code $line}/{@code $column} span (so
+     * parameter errors report the call site, js-backend-runtime D6),
+     * the body statement walk inside a fresh lexical scope with the
+     * parameters declared (mirroring the checker's function scope), and
+     * — for a sync function whose declared return type is {@code null}
+     * — the validated fall-off return after the body (control falling
+     * off the end returns the DEAL null). The body sits below module
+     * level, so a nested class declaration fires the D6 E6000 arm.
+     * Return statements inside the body check against
+     * {@link #currentReturnType} at the return site.
+     */
+    private void emitWrappedBody(List<Parameter> params, Block body,
+                                 Type returnType, boolean isAsync,
+                                 Span fallOffSpan) {
+        for (Parameter param : params) {
+            Type paramType = resolveTypeNode(param.type());
+            if (paramType != null && !(paramType instanceof Type.Error)
+                    && !(paramType instanceof Type.Null)) {
+                line(emitCheckExprForwarded(jsName(param.name()), paramType)
+                    + ";");
+            }
+        }
+        pushLocalScope();
+        try {
+            for (Parameter param : params) {
+                declareLocal(param.name());
+            }
+            boolean savedAtModuleLevel = atModuleLevel;
+            atModuleLevel = false;
+            try {
+                walkStatements(body.statements());
+            } finally {
+                atModuleLevel = savedAtModuleLevel;
+            }
+        } finally {
+            popLocalScope();
+        }
+        if (!isAsync && returnType instanceof Type.Null) {
+            line("return $rt.checkNull(null, " + spanArgs(fallOffSpan) + ");");
         }
     }
 
@@ -822,10 +1017,13 @@ public final class JsBackend {
      * Variable declaration (the
      * {@code LuaBackend.visit(VariableDeclaration)} mirror): the binding
      * position translates through {@link #jsName} (shadowing is native
-     * per-block {@code let}); an annotated declaration checks the
-     * initializer against the declared type, an inferred literal skips
-     * the check, and every other inferred initializer is checked against
-     * its checker-inferred type at the declaration span.
+     * per-block {@code let}); an annotated declaration crosses the
+     * initializer's typed boundary — a function-typed target whose
+     * declared signature is assignably wider than the value's emits the
+     * arity-extension adapter ({@link #boundaryValue}), every other
+     * target the runtime check — an inferred literal skips the check,
+     * and every other inferred initializer is checked against its
+     * checker-inferred type at the declaration span.
      */
     private void visit(VariableDeclaration node) {
         // NameResolver.walkVarDecl defines the name in the current scope
@@ -846,7 +1044,7 @@ public final class JsBackend {
         if (hasAnnotation && targetType != null
                 && !(targetType instanceof Type.Error)) {
             line("let " + name + " = "
-                + emitCheckExpr(init, targetType, span) + ";");
+                + boundaryValue(init, targetType, exprType, span) + ";");
         } else if (!hasAnnotation && exprType != null
                 && node.initializer() instanceof LiteralExpr
                 && (exprType instanceof Type.Int
@@ -1182,9 +1380,28 @@ public final class JsBackend {
 
     /**
      * Walks a statement list directly (no braces): the caller owns the
-     * enclosing scope.
+     * enclosing scope. Every function declaration in the list binds a
+     * predeclared {@code let} before any statement emits — the
+     * {@code LuaBackend.walkStatements} hoisting loop
+     * (deal/codegen/lua/LuaBackend.java:1005-1019), which supports
+     * recursion, forward calls, and mutual recursion for nested
+     * functions while retaining lexical scope (module-level predeclares
+     * carry the header, shape step 6).
      */
     private void walkStatements(List<StatementNode> statements) {
+        for (StatementNode stmt : statements) {
+            FunctionDeclaration function = switch (stmt) {
+                case FunctionDeclaration fd -> fd;
+                case ExportDeclaration ed
+                        when ed.declaration()
+                            instanceof FunctionDeclaration fd -> fd;
+                default -> null;
+            };
+            if (function != null) {
+                line("let " + jsName(function.name()) + ";");
+                declareLocal(function.name());
+            }
+        }
         for (StatementNode stmt : statements) {
             visitStatement(stmt);
         }
@@ -1705,76 +1922,45 @@ public final class JsBackend {
     }
 
     /**
-     * Function expression (minimal T3-shaped lowering — the wrappers,
-     * parameter checks, and completion checks live with T3/T5; this form
-     * keeps a checker-accepted function-typed class-field default
-     * syntactically valid and behaviorally complete): the canonical
-     * wrapper with the exact descriptor signature, the jsName-translated
-     * parameter list plus the {@code $file}/{@code $line}/{@code $column}
-     * span parameters (duplicate-free for user parameters literally named
-     * {@code file}/{@code line}/{@code column}), the entry parameter
-     * checks, the body walk, and the return-site exit checks.
+     * Function expression (js-backend-emitter D6): the inline wrapper
+     * value — {@code $rt.function} with the exact descriptor signature,
+     * the jsName-translated parameter list plus the trailing
+     * {@code $}-prefixed span parameters (duplicate-free for user
+     * parameters literally named {@code file}/{@code line}/
+     * {@code column}), the entry parameter checks with the forwarded
+     * span, the body walk, the return-site exit checks, and the
+     * validated {@code null} fall-off return for null-typed functions —
+     * the identical wrapper shape of a function declaration. Closures
+     * capture natively. Async function expressions emit the
+     * {@code async function} keyword structurally; completion checks and
+     * await lowering are T5's.
      */
     private String emitFunctionExpr(FunctionExpr fe) {
-        StringBuilder paramList = new StringBuilder();
-        for (int i = 0; i < fe.params().size(); i++) {
-            if (i > 0) paramList.append(", ");
-            paramList.append(jsName(fe.params().get(i).name()));
-        }
-        // The span parameters join the user list only when user
-        // parameters exist: a zero-parameter function expression emits
-        // "function($file, $line, $column)", never the invalid
-        // leading-comma "function(, $file, $line, $column)" form.
-        if (paramList.length() > 0) {
-            paramList.append(", ");
-        }
-        paramList.append("$file, $line, $column");
-
         Type funcType = typeOf(fe);
         String sig = funcType instanceof Type.Func f
             ? jsTypeDescriptor(f) : "()";
+        Type returnType = funcType instanceof Type.Func f
+            ? f.returnType() : null;
+        boolean isAsync = funcType instanceof Type.Func f && f.isAsync();
 
         Type savedReturn = currentReturnType;
-        if (funcType instanceof Type.Func f) {
-            currentReturnType = f.returnType();
-        }
+        currentReturnType = returnType;
 
         String body = captureOutput(() -> {
-            // The checker gives the function a scope holding the
-            // parameters (NameResolver.walkFunctionExpr); the body walk
-            // sits below module level, so a nested ClassDeclaration
-            // fires the D6 E6000 arm instead of emitting undeclared
-            // artifact assignments.
-            pushLocalScope();
+            indent++;
             try {
-                for (Parameter param : fe.params()) {
-                    declareLocal(param.name());
-                    Type paramType = resolveTypeNode(param.type());
-                    if (paramType != null
-                            && !(paramType instanceof Type.Error)
-                            && !(paramType instanceof Type.Null)) {
-                        line(emitCheckExpr(jsName(param.name()), paramType,
-                            param.type().span()) + ";");
-                    }
-                }
-                boolean savedAtModuleLevel = atModuleLevel;
-                atModuleLevel = false;
-                try {
-                    walkStatements(fe.body().statements());
-                } finally {
-                    atModuleLevel = savedAtModuleLevel;
-                }
+                emitWrappedBody(fe.params(), fe.body(), returnType,
+                    isAsync, fe.returnType().span());
             } finally {
-                popLocalScope();
+                indent--;
             }
         });
 
         currentReturnType = savedReturn;
 
-        String keyword = funcType instanceof Type.Func f && f.isAsync()
-            ? "async function" : "function";
+        String keyword = isAsync ? "async function" : "function";
         return "$rt.function(\"" + sig + "\", " + keyword + "("
-            + paramList + ") {\n" + body
+            + buildParamList(fe.params()) + ") {\n" + body
             + "  ".repeat(indent) + "})";
     }
 
@@ -1828,7 +2014,8 @@ public final class JsBackend {
                 return "$rt.setProp(" + emitExpression(mae.object()) + ", "
                     + jsStringLiteral(mae.field()) + ", "
                     + checkedAssignmentValue(value,
-                        typeOf(assign.target()), span) + ")";
+                        typeOf(assign.target()), typeOf(assign.value()),
+                        span) + ")";
             }
             if (objType instanceof Type.Table) {
                 return emitExpression(mae.object()) + ".set("
@@ -1840,7 +2027,7 @@ public final class JsBackend {
         if (assign.target() instanceof IdentifierExpr id) {
             return jsName(id.name()) + " = "
                 + checkedAssignmentValue(value, typeOf(assign.target()),
-                    span);
+                    typeOf(assign.value()), span);
         }
         // Defensive plain form: unreachable for checker-accepted
         // programs (E3017 rejects array .length targets, the checker
@@ -1855,18 +2042,126 @@ public final class JsBackend {
      * typed binding or field is checked exactly where the transition
      * happens): a {@code Type.Error}/{@code null} type and the unchecked
      * table target pass the value through verbatim; every other target
-     * type wraps the value in the runtime typed boundary check with the
-     * assignment-span location. Function targets use the {@code checkType}
-     * E8010 signature check; the arity-extension adapter path replaces it
-     * at T3 (the {@code LuaBackend.emitArityAdapter} mirror).
+     * type crosses the runtime typed boundary with the assignment-span
+     * location — function targets via the exact-{@code $sig}
+     * {@code checkType} E8010 check, with the arity-extension adapter
+     * replacing it when the value's declared signature is assignably
+     * narrower ({@link #boundaryValue}, the
+     * {@code LuaBackend.emitArityAdapter} mirror).
      */
     private String checkedAssignmentValue(String value, Type targetType,
-                                          Span span) {
+                                          Type valueType, Span span) {
         if (targetType == null || targetType instanceof Type.Error
                 || targetType instanceof Type.Table) {
             return value;
         }
+        return boundaryValue(value, targetType, valueType, span);
+    }
+
+    /**
+     * The value emission for a typed transition (declaration-site,
+     * assignment-site): an arity-extension pair — a function value whose
+     * declared signature is assignable to the target but declares fewer
+     * parameters — emits the adapter closure (js-backend-emitter D6);
+     * every other value crosses the runtime typed-boundary check —
+     * function targets compare the wrapper's {@code $sig} against the
+     * expected descriptor exactly, so a wrong-signature wrapper surfaces
+     * the E8010 mismatch from the runtime {@code checkType} function
+     * branch (js-backend-runtime D3).
+     */
+    private String boundaryValue(String value, Type targetType,
+                                 Type valueType, Span span) {
+        if (targetType instanceof Type.Func tf
+                && valueType instanceof Type.Func vf
+                && isArityExtension(vf, tf)) {
+            return emitArityAdapter(tf, vf, value, span);
+        }
         return emitCheckExpr(value, targetType, span);
+    }
+
+    /**
+     * Arity-extension detection (the
+     * {@code LuaBackend.isArityExtension} mirror): a function value whose
+     * checker-accepted transition to a wider function target needs an
+     * adapter — assignable but not equal, with fewer declared parameters
+     * than the target.
+     */
+    private boolean isArityExtension(Type valueType, Type targetType) {
+        if (valueType instanceof Type.Func vf
+                && targetType instanceof Type.Func tf) {
+            return Types.isAssignable(vf, tf) && !Types.equals(vf, tf)
+                && vf.paramTypes().size() < tf.paramTypes().size();
+        }
+        return false;
+    }
+
+    /**
+     * The arity-extension adapter closure (js-backend-emitter D6, the
+     * {@code LuaBackend.emitArityAdapter} mirror with the JS span
+     * plumbing): a {@code $rt.function} wrapper carrying the TARGET
+     * descriptor signature, whose body checks every extended parameter
+     * in order (generated {@code $p0}/{@code $p1}/… bindings,
+     * creation-site span — the Lua adapter convention), drops the
+     * extras, and calls the inner wrapper's {@code .$f} with the
+     * overlapping arguments plus the forwarded {@code $file}/
+     * {@code $line}/{@code $column} span. The sync return check
+     * validates the inner result against the target return type at the
+     * creation site; an async adapter returns the inner operation
+     * untouched (T5 refines).
+     */
+    private String emitArityAdapter(Type.Func targetFunc, Type.Func valueFunc,
+                                    String valueExpr, Span span) {
+        StringBuilder params = new StringBuilder();
+        for (int i = 0; i < targetFunc.paramTypes().size(); i++) {
+            if (i > 0) params.append(", ");
+            params.append("$p").append(i);
+        }
+        if (params.length() > 0) params.append(", ");
+        params.append("$file, $line, $column");
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("$rt.function(")
+            .append(jsStringLiteral(jsTypeDescriptor(targetFunc)))
+            .append(", function(").append(params).append(") {\n");
+        String bodyIndent = "  ".repeat(indent + 1);
+        for (int i = 0; i < targetFunc.paramTypes().size(); i++) {
+            sb.append(bodyIndent)
+                .append(emitCheckExpr("$p" + i,
+                    targetFunc.paramTypes().get(i), span))
+                .append(";\n");
+        }
+        String innerCall = adapterInnerCall(valueExpr,
+            valueFunc.paramTypes().size());
+        if (targetFunc.isAsync()) {
+            sb.append(bodyIndent).append("return ").append(innerCall)
+                .append(";\n");
+        } else {
+            sb.append(bodyIndent).append("return ")
+                .append(emitCheckExpr(innerCall,
+                    targetFunc.returnType(), span))
+                .append(";\n");
+        }
+        sb.append("  ".repeat(indent)).append("})");
+        return sb.toString();
+    }
+
+    /**
+     * The adapter's inner {@code .$f} call: the overlapping leading
+     * arguments plus the forwarded span triple; a zero-parameter inner
+     * wrapper emits {@code .$f($file, $line, $column)} — never the
+     * invalid leading-comma form.
+     */
+    private String adapterInnerCall(String valueExpr, int overlapCount) {
+        StringBuilder args = new StringBuilder();
+        for (int i = 0; i < overlapCount; i++) {
+            if (i > 0) args.append(", ");
+            args.append("$p").append(i);
+        }
+        StringBuilder callArgs = new StringBuilder();
+        callArgs.append(args);
+        if (args.length() > 0) callArgs.append(", ");
+        callArgs.append("$file, $line, $column");
+        return valueExpr + ".$f(" + callArgs + ")";
     }
 
     /**
@@ -1979,7 +2274,22 @@ public final class JsBackend {
      */
     private String emitCheckExpr(String valueExpr, Type type, Span span) {
         if (type == null) return valueExpr;
-        String spanParam = spanArgs(span);
+        return emitCheckExprCore(valueExpr, type, spanArgs(span));
+    }
+
+    /**
+     * The wrapper-entry variant of the typed-boundary check: the span
+     * arguments are the forwarded {@code $file}/{@code $line}/
+     * {@code $column} parameters, so a parameter error reports the call
+     * site (js-backend-runtime D6).
+     */
+    private String emitCheckExprForwarded(String valueExpr, Type type) {
+        if (type == null) return valueExpr;
+        return emitCheckExprCore(valueExpr, type, "$file, $line, $column");
+    }
+
+    private String emitCheckExprCore(String valueExpr, Type type,
+                                     String spanParam) {
         return switch (type) {
             case Type.Null ignored ->
                 "$rt.checkNull(" + valueExpr + ", " + spanParam + ")";
