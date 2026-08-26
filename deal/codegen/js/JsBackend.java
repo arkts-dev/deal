@@ -58,8 +58,11 @@ import deal.diagnostics.DiagnosticCode;
 import deal.types.Type;
 import deal.types.Types;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -120,7 +123,14 @@ import java.util.Set;
  * direct/nested/indirect/member calls through {@code .$f} with the
  * literal call-site span arguments, recursion/forward calls/mutual
  * recursion through the predeclare-then-assign pattern (module shape
- * step 6 plus per-scope {@code let} hoisting for nested functions),
+ * step 6 plus per-scope {@code let} hoisting for nested functions —
+ * collision-free in the emitted JS scope: one {@code let} per distinct
+ * name, body/catch statements in the checker's nested block scopes so
+ * hoisted {@code let}s legally shadow parameter and catch bindings, and
+ * a same-list var-before-function pair sharing the hoisted binding
+ * through a plain assignment; {@code require}/{@code module}/
+ * {@code exports} translate in binding positions so the module-scope
+ * capture stays immune per js-backend-architecture D2),
  * native closure capture, function values crossing function-typed
  * boundaries through the runtime's exact-{@code $sig} E8010 check, and
  * arity-extension adapters (a wider function-typed declaration or
@@ -178,9 +188,11 @@ public final class JsBackend {
     // =========================================================================
 
     /**
-     * The ECMAScript reserved words that are not DEAL keywords, plus the
+     * The ECMAScript reserved words that are not DEAL keywords, the
      * strict-mode binding-restricted names {@code eval} and
-     * {@code arguments} (js-backend-architecture D4):
+     * {@code arguments}, and the CommonJS wrapper parameters
+     * {@code require}/{@code module}/{@code exports}
+     * (js-backend-architecture D2/D4):
      * {@link #jsName} appends {@code $} exactly for these spellings in
      * binding positions. Every JS reserved word that is also a DEAL
      * keyword ({@code let class function async await return if else while
@@ -193,7 +205,8 @@ public final class JsBackend {
         "finally", "in", "instanceof", "new", "super", "switch", "this",
         "typeof", "var", "void", "with", "yield", "implements",
         "interface", "package", "private", "protected", "public",
-        "static", "eval", "arguments");
+        "static", "eval", "arguments",
+        "require", "module", "exports");
 
     /**
      * Translates a user identifier for a JS binding position: appends
@@ -202,8 +215,19 @@ public final class JsBackend {
      * passes through unchanged. Binding positions are {@code let}/
      * {@code const} locals, function parameters, function names, and
      * catch parameters; property/export/table keys keep the raw name
-     * (js-backend-architecture D4). Package-visible so a same-package
-     * harness can assert the pins directly.
+     * (js-backend-architecture D4). The three CommonJS wrapper
+     * parameters {@code require}/{@code module}/{@code exports} join the
+     * fixed set (js-backend-architecture D2 capture immunity): a
+     * checker-accepted module-level function named any of the three must
+     * never bind in the module scope — a predeclared
+     * {@code let require;} there would place the Node-injected wrapper
+     * parameter in the temporal dead zone, so the step-2 capture line
+     * {@code const $require = require;} would throw at module load
+     * instead of reading the wrapper parameter. Translating the binding
+     * (and every reference, which {@link #emitIdentifier} shares through
+     * {@code jsName}) keeps the capture immune while
+     * property/export/table keys stay raw. Package-visible so a
+     * same-package harness can assert the pins directly.
      */
     static String jsName(String identifier) {
         return JS_RESERVED_BINDINGS.contains(identifier)
@@ -323,6 +347,21 @@ public final class JsBackend {
      * reference that must lower to the class META artifact.
      */
     private final List<Set<String>> localScopes = new ArrayList<>();
+
+    /**
+     * Stack of hoisted function-name sets for the statement lists
+     * currently being walked (one frame per open
+     * {@link #walkStatements} call, innermost last): a variable
+     * declaration whose name was hoisted in the same statement list
+     * emits a plain assignment into the predeclared binding instead of
+     * a second {@code let} (strict-mode redeclaration would be a
+     * SyntaxError) — the checker accepts the var-before-function pair
+     * in one scope (its walkFuncDecl skips the second define, one
+     * symbol), and the Lua reference emits the same local-then-assign
+     * shape.
+     */
+    private final Deque<Set<String>> hoistedFunctionNames =
+        new ArrayDeque<>();
 
     private JsBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
                       String sourcePath, String modulePath,
@@ -850,11 +889,13 @@ public final class JsBackend {
      * parameter order against the declared parameter types with the
      * forwarded {@code $file}/{@code $line}/{@code $column} span (so
      * parameter errors report the call site, js-backend-runtime D6),
-     * the body statement walk inside a fresh lexical scope with the
-     * parameters declared (mirroring the checker's function scope), and
-     * — for a sync function whose declared return type is {@code null}
-     * — the validated fall-off return after the body (control falling
-     * off the end returns the DEAL null). The body sits below module
+     * the body statement walk inside an additional block scope with
+     * the parameters declared above it (mirroring the checker's
+     * function scope and body Block scope, so per-scope hoisted
+     * {@code let}s legally shadow the parameter bindings), and — for a
+     * sync function whose declared return type is {@code null} — the
+     * validated fall-off return after the block (control falling off
+     * the end returns the DEAL null). The body sits below module
      * level, so a nested class declaration fires the D6 E6000 arm.
      * Return statements inside the body check against
      * {@link #currentReturnType} at the return site.
@@ -870,6 +911,16 @@ public final class JsBackend {
                     + ";");
             }
         }
+        // The body statements emit inside an additional block scope:
+        // the checker gives every function body its own Block scope
+        // below the parameter scope (walkFuncDecl/walkFunctionExpr then
+        // walkBlock), and the emitted block makes the per-scope hoisted
+        // `let`s legally shadow the wrapper's parameter bindings — a
+        // checker-accepted nested function named like a parameter is a
+        // shadow in a child scope, never a strict-mode duplicate of the
+        // parameter in the same scope.
+        line("{");
+        indent++;
         pushLocalScope();
         try {
             for (Parameter param : params) {
@@ -885,6 +936,8 @@ public final class JsBackend {
         } finally {
             popLocalScope();
         }
+        indent--;
+        line("}");
         if (!isAsync && returnType instanceof Type.Null) {
             line("return $rt.checkNull(null, " + spanArgs(fallOffSpan) + ");");
         }
@@ -1031,6 +1084,17 @@ public final class JsBackend {
         // scopes identically, so the tracking mirrors it.
         declareLocal(node.name());
         String name = jsName(node.name());
+        // A checker-accepted var-before-function pair in this statement
+        // list shares the hoisted function's predeclared binding (the
+        // checker's walkFuncDecl skips the second define — one symbol):
+        // the variable emits a plain assignment into that binding, the
+        // Lua local-then-assign shape — a second `let` for the name
+        // would be a strict-mode SyntaxError. Only the current list's
+        // hoisted set counts: a same-named variable in a nested block
+        // is a legal shadow and keeps its own `let`.
+        boolean plainAssign = !hoistedFunctionNames.isEmpty()
+            && hoistedFunctionNames.peek().contains(node.name());
+        String keyword = plainAssign ? "" : "let ";
         boolean hasAnnotation = node.typeAnnotation().isPresent();
         Type targetType = hasAnnotation
             ? resolveTypeNode(node.typeAnnotation().get()) : null;
@@ -1043,7 +1107,7 @@ public final class JsBackend {
 
         if (hasAnnotation && targetType != null
                 && !(targetType instanceof Type.Error)) {
-            line("let " + name + " = "
+            line(keyword + name + " = "
                 + boundaryValue(init, targetType, exprType, span) + ";");
         } else if (!hasAnnotation && exprType != null
                 && node.initializer() instanceof LiteralExpr
@@ -1052,16 +1116,16 @@ public final class JsBackend {
                     || exprType instanceof Type.String
                     || exprType instanceof Type.Number
                     || exprType instanceof Type.Null)) {
-            line("let " + name + " = " + init + ";");
+            line(keyword + name + " = " + init + ";");
         } else {
             Type checkType = targetType != null ? targetType : exprType;
             if (checkType != null
                     && !(checkType instanceof Type.Error)
                     && !(checkType instanceof Type.Null)) {
-                line("let " + name + " = "
+                line(keyword + name + " = "
                     + emitCheckExpr(init, checkType, span) + ";");
             } else {
-                line("let " + name + " = " + init + ";");
+                line(keyword + name + " = " + init + ";");
             }
         }
     }
@@ -1326,7 +1390,18 @@ public final class JsBackend {
         pushLocalScope();
         declareLocal(node.catchVar());
         line("const " + jsName(node.catchVar()) + " = $rt.reifyError($e);");
+        // The catch body statements emit inside an additional block:
+        // the checker's catch-block scope sits below the catch-binding
+        // scope (walkTry), and the emitted block lets the per-scope
+        // hoisted `let`s legally shadow the catch binding — a
+        // checker-accepted nested function named like the catch
+        // variable is a shadow in a child scope, never a strict-mode
+        // duplicate of the `const` above.
+        line("{");
+        indent++;
         walkScopedBlock(node.catchBlock().statements());
+        indent--;
+        line("}");
         popLocalScope();
         indent--;
         line("}");
@@ -1386,9 +1461,18 @@ public final class JsBackend {
      * (deal/codegen/lua/LuaBackend.java:1005-1019), which supports
      * recursion, forward calls, and mutual recursion for nested
      * functions while retaining lexical scope (module-level predeclares
-     * carry the header, shape step 6).
+     * carry the header, shape step 6). The hoisting is collision-free
+     * in the emitted JS scope: one {@code let} per distinct name (two
+     * checker-accepted same-named functions in one list share the
+     * binding — a duplicated {@code let} would be a strict-mode
+     * SyntaxError), and the emitting caller owns the scope, so a
+     * parameter/catch-binding shadow emits in a nested block (the
+     * checker's block scopes) while a same-list var-before-function
+     * pair shares the binding through a plain assignment
+     * ({@link #hoistedFunctionNames}).
      */
     private void walkStatements(List<StatementNode> statements) {
+        Set<String> hoisted = new LinkedHashSet<>();
         for (StatementNode stmt : statements) {
             FunctionDeclaration function = switch (stmt) {
                 case FunctionDeclaration fd -> fd;
@@ -1398,12 +1482,20 @@ public final class JsBackend {
                 default -> null;
             };
             if (function != null) {
-                line("let " + jsName(function.name()) + ";");
-                declareLocal(function.name());
+                hoisted.add(function.name());
             }
         }
-        for (StatementNode stmt : statements) {
-            visitStatement(stmt);
+        for (String name : hoisted) {
+            line("let " + jsName(name) + ";");
+            declareLocal(name);
+        }
+        hoistedFunctionNames.push(hoisted);
+        try {
+            for (StatementNode stmt : statements) {
+                visitStatement(stmt);
+            }
+        } finally {
+            hoistedFunctionNames.pop();
         }
     }
 
