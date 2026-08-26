@@ -8,6 +8,7 @@ import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticRange;
 import deal.lexer.Diagnostic;
 import deal.types.Type;
 import deal.types.Types;
@@ -603,11 +604,16 @@ public final class JvmBackend {
      * compilation of the artifact.
      */
     public record JvmCodegenResult(String className, String source,
-                                   List<Diagnostic> diagnostics) {
+                                   List<Diagnostic> diagnostics,
+                                   List<DiagnosticRange> diagnosticRanges) {
         public JvmCodegenResult {
             Objects.requireNonNull(className, "className must not be null");
             Objects.requireNonNull(source, "source must not be null");
             diagnostics = List.copyOf(diagnostics);
+            // Transitional parallel ranged channel (backend-boundary
+            // conversion, removed by the T12 backend migration): one
+            // range per legacy entry in the same order.
+            diagnosticRanges = List.copyOf(diagnosticRanges);
         }
 
         /** True when at least one error-level diagnostic was recorded. */
@@ -632,6 +638,13 @@ public final class JvmBackend {
      * single-module adapter). */
     private final boolean emitSharedTable;
     private final List<Diagnostic> diagnostics = new ArrayList<>();
+    /**
+     * Transitional parallel ranged channel (backend-boundary conversion,
+     * removed by the T12 backend migration): one {@link DiagnosticRange}
+     * per legacy {@link Diagnostic} entry in the same emission order,
+     * computed from the span the backend anchored each diagnostic at.
+     */
+    private final List<DiagnosticRange> diagnosticRanges = new ArrayList<>();
     /** The generated Java source accumulator. Swapped to a temporary
      * buffer while an inline function-expression body emits (ISSUE-0102),
      * so it cannot be final. */
@@ -1594,7 +1607,8 @@ public final class JvmBackend {
             out.insert(wrapperInsertion, arrayHelpers.toString());
         }
 
-        return new JvmCodegenResult(className, out.toString(), diagnostics);
+        return new JvmCodegenResult(className, out.toString(), diagnostics,
+            diagnosticRanges);
     }
 
     /**
@@ -1633,6 +1647,9 @@ public final class JvmBackend {
                     : "no main export"),
                 program.span().file(), program.span().startLine(),
                 program.span().startColumn()));
+            // Parallel ranged channel: the program span's own range
+            // (SOURCE-exact via the T2 program-span obligation).
+            diagnosticRanges.add(program.span().range());
             return;
         }
         emitLine();
@@ -12605,5 +12622,9 @@ public final class JvmBackend {
         diagnostics.add(Diagnostic.error(DiagnosticCode.E6000,
             "JVM backend (skeleton) does not support " + what + " yet",
             span.file(), span.startLine(), span.startColumn()));
+        // Parallel ranged channel: the span's own range — SOURCE with the
+        // computed offsets for real spans, canonical SYNTHETIC for
+        // Span.synthetic anchors (e.g. the jsonable conversion sites).
+        diagnosticRanges.add(span.range());
     }
 }

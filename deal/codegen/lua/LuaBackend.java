@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticRange;
 
 /**
  * Lua code generator (ISSUE-0007). Walks the typed AST and emits Lua source code
@@ -33,6 +34,16 @@ public final class LuaBackend implements Visitor<Void> {
     private final SymbolTable symbols;
     private StringBuilder out = new StringBuilder();
     private final List<Diagnostic> diagnostics = new ArrayList<>();
+    /**
+     * Transitional parallel ranged channel (backend-boundary conversion,
+     * removed by the T12 backend migration): one {@link DiagnosticRange}
+     * per legacy {@link Diagnostic} entry in the same emission order,
+     * computed from the span/token the backend anchored each diagnostic
+     * at. The orchestrator zips the two channels; a legacy-only entry
+     * would normalize to the synthetic (1,1) shape and change rendered
+     * positions, so every backend diagnostic site must record both.
+     */
+    private final List<DiagnosticRange> diagnosticRanges = new ArrayList<>();
     private int indent = 0;
 
     private final Map<String, String> exportedValues = new LinkedHashMap<>();
@@ -283,7 +294,8 @@ public final class LuaBackend implements Visitor<Void> {
      * into the compilation report so backend rejections (E6004) fail
      * the compilation instead of being silently dropped.
      */
-    public record GenerationResult(String lua, List<Diagnostic> diagnostics) {}
+    public record GenerationResult(String lua, List<Diagnostic> diagnostics,
+                                   List<DiagnosticRange> diagnosticRanges) {}
 
     /**
      * Shared generation core: builds a backend instance, generates the
@@ -309,7 +321,8 @@ public final class LuaBackend implements Visitor<Void> {
         backend.walkStatements(program.statements());
         backend.emitJsonableCode();
         backend.emitExports();
-        return new GenerationResult(backend.out.toString(), backend.diagnostics());
+        return new GenerationResult(backend.out.toString(), backend.diagnostics(),
+            backend.diagnosticRanges());
     }
 
     /**
@@ -562,6 +575,16 @@ public final class LuaBackend implements Visitor<Void> {
         return Collections.unmodifiableList(diagnostics);
     }
 
+    /**
+     * The transitional parallel ranged channel (see
+     * {@link GenerationResult#diagnosticRanges()}): the
+     * {@link DiagnosticRange} of every recorded backend diagnostic in the
+     * same order as {@link #diagnostics()}.
+     */
+    public List<DiagnosticRange> diagnosticRanges() {
+        return Collections.unmodifiableList(diagnosticRanges);
+    }
+
     // =========================================================================
     // Constructor
     // =========================================================================
@@ -793,6 +816,10 @@ public final class LuaBackend implements Visitor<Void> {
     private void addDiagnostic(DiagnosticCode code, String message, Span span) {
         diagnostics.add(Diagnostic.error(code, message,
             span.file(), span.startLine(), span.startColumn()));
+        // Parallel ranged channel (backend-boundary conversion): the
+        // span's own range — SOURCE with the backend-computed offsets for
+        // real spans, canonical SYNTHETIC for Span.synthetic anchors.
+        diagnosticRanges.add(span.range());
     }
 
     /** Returns the current 1-based line number in the output buffer. */

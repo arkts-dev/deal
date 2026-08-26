@@ -1182,7 +1182,8 @@ public class BackendConformanceTest {
     // =========================================================================
 
     /** Result of running the real whole-project pipeline. */
-    private record OrchestratorRun(boolean success, List<Diagnostic> diagnostics,
+    private record OrchestratorRun(boolean success,
+                                   List<CompilerDiagnostic> diagnostics,
                                    String capturedOutput) {}
 
     /**
@@ -1524,7 +1525,7 @@ public class BackendConformanceTest {
                             : "frontend compile-error ")
                         + expectedCompileError + " but got: "
                         + (run.diagnostics().isEmpty() ? "<no errors>"
-                            : run.diagnostics().stream().map(Diagnostic::toString)
+                            : run.diagnostics().stream().map(CompilerDiagnostic::toString)
                                 .toList()));
                     failed.incrementAndGet();
                     return false;
