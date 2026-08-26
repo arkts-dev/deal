@@ -1506,12 +1506,11 @@ public final class CompilationOrchestrator {
             JsBackend.JsCodegenResult res = JsBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
                 importResolutions, hostModules, isEntry);
-            // Transitional backend-boundary conversion (removed by T12),
-            // the same ranged-channel zip the LuaJIT/JVM use sites run:
-            // each legacy entry pairs with the parallel range the backend
-            // anchored it at, so rendered positions are preserved.
-            List<CompilerDiagnostic> backendDiags =
-                toBackendDiagnostics(res.diagnostics(), res.diagnosticRanges());
+            // Native ranged backend list (T12): the backend emits
+            // CompilerDiagnostic entries directly, so the orchestrator
+            // merge needs no boundary conversion — real spans keep their
+            // exact scalar offsets and synthetic anchors keep their notes.
+            List<CompilerDiagnostic> backendDiags = res.diagnostics();
             diagnostics.addAll(backendDiags);
             if (backendDiags.stream()
                     .anyMatch(d -> "error".equals(d.severity()))) {

@@ -11,9 +11,8 @@ import deal.ast.StatementNode;
 import deal.ast.TypeNode;
 import deal.checker.CheckResult;
 import deal.checker.SymbolTable;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
-import deal.diagnostics.DiagnosticRange;
-import deal.lexer.Diagnostic;
 import deal.types.Type;
 
 import java.util.ArrayList;
@@ -58,16 +57,11 @@ public final class JsBackend {
      * place of {@code className}).
      */
     public record JsCodegenResult(String modulePath, String source,
-                                  List<Diagnostic> diagnostics,
-                                  List<DiagnosticRange> diagnosticRanges) {
+                                  List<CompilerDiagnostic> diagnostics) {
         public JsCodegenResult {
             java.util.Objects.requireNonNull(modulePath, "modulePath must not be null");
             java.util.Objects.requireNonNull(source, "source must not be null");
             diagnostics = List.copyOf(diagnostics);
-            // Transitional parallel ranged channel (backend-boundary
-            // conversion, removed by the T12 backend migration): one
-            // range per legacy entry in the same order.
-            diagnosticRanges = List.copyOf(diagnosticRanges);
         }
 
         /** True when at least one error-level diagnostic was recorded. */
@@ -190,15 +184,11 @@ public final class JsBackend {
     private final Map<String, Map<String, Type>> hostModules;
     private final boolean isEntry;
 
-    /** Backend diagnostics; all error-severity by construction. */
-    private final List<Diagnostic> diagnostics = new ArrayList<>();
-    /**
-     * Transitional parallel ranged channel (backend-boundary conversion,
-     * removed by the T12 backend migration): one {@link DiagnosticRange}
-     * per legacy {@link Diagnostic} entry in the same emission order,
-     * computed from the span the backend anchored each diagnostic at.
-     */
-    private final List<DiagnosticRange> diagnosticRanges = new ArrayList<>();
+    /** Backend diagnostics; all error-severity by construction (the
+     * T12-native ranged {@link CompilerDiagnostic} list — the backend
+     * emits ranged entries directly, so the orchestrator merge needs no
+     * boundary conversion). */
+    private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     /** The generated CommonJS source accumulator. */
     private final StringBuilder out = new StringBuilder();
 
@@ -269,8 +259,7 @@ public final class JsBackend {
             emitEntryShim();
         }
 
-        return new JsCodegenResult(modulePath, out.toString(), diagnostics,
-            diagnosticRanges);
+        return new JsCodegenResult(modulePath, out.toString(), diagnostics);
     }
 
     // =========================================================================
@@ -425,16 +414,15 @@ public final class JsBackend {
             }
         }
         if (match == null) {
-            diagnostics.add(Diagnostic.error(DiagnosticCode.E6004,
+            // T12-native ranged factory: the diagnostic is anchored at the
+            // program span (the JvmBackend.emitEntryPoint E6004 pattern,
+            // SOURCE-exact via the program-span range).
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6004,
                 "entry module must export non-async main(): null; found "
                     + (foundAnyMain
                         ? "main with a different signature or an async marker"
                         : "no main export"),
-                program.span().file(), program.span().startLine(),
-                program.span().startColumn()));
-            // Parallel ranged channel: the program span's own range
-            // (SOURCE-exact via the T2 program-span obligation).
-            diagnosticRanges.add(program.span().range());
+                program.span()));
         }
         return match;
     }
