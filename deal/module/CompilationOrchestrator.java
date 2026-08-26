@@ -8,6 +8,9 @@ import deal.codegen.lua.LuaBackend;
 import deal.ir.IrDumper;
 import deal.lexer.*;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticFormatter;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.parser.*;
 import deal.types.Type;
 import deal.types.Types;
@@ -57,8 +60,18 @@ public final class CompilationOrchestrator {
     private final Path stdlibDir;
 
     private final Map<String, ModuleInfo> modules = new LinkedHashMap<>();
-    private final List<Diagnostic> diagnostics = new ArrayList<>();
+    private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     private boolean hasErrors = false;
+
+    /**
+     * The {@code --diagnostics-json} output path, or {@code null} when the
+     * structured document was not requested. When set, the orchestrator
+     * writes the {@link DiagnosticStructuredOutput} document for every
+     * compilation — successful or failed — without changing the exit code;
+     * a write failure is a deterministic compiler I/O diagnostic on
+     * stderr with exit 1 (D8, parent D11 I/O discipline).
+     */
+    private final Path diagnosticsJsonPath;
 
     // Host externals (ISSUE-0082, host-module-abi D5):
     // - externalsDeclarations: raw import path as written → absolute
@@ -145,6 +158,23 @@ public final class CompilationOrchestrator {
                                     boolean sourceMapExplicit, Backend backend,
                                     DealConfig config, List<Path> moduleRoots,
                                     Path stdlibDir) {
+        this(entryFile, outputRoot, verbose, dumpIr, sourceMap,
+            sourceMapExplicit, backend, config, moduleRoots, stdlibDir, null);
+    }
+
+    /**
+     * Full entry point with the structured-output path (D8): when
+     * {@code diagnosticsJsonPath} is non-null, {@link #compile()} writes
+     * the {@link DiagnosticStructuredOutput} document for every
+     * compilation — successful or failed — without changing the exit
+     * code. A write failure is a deterministic compiler I/O diagnostic on
+     * stderr with exit 1.
+     */
+    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
+                                    boolean dumpIr, boolean sourceMap,
+                                    boolean sourceMapExplicit, Backend backend,
+                                    DealConfig config, List<Path> moduleRoots,
+                                    Path stdlibDir, Path diagnosticsJsonPath) {
         this.backend = backend;
         this.entryFile = entryFile.toAbsolutePath().normalize();
         this.outputRoot = outputRoot.toAbsolutePath().normalize();
@@ -154,6 +184,7 @@ public final class CompilationOrchestrator {
         this.sourceMapExplicit = sourceMapExplicit;
         this.moduleRoots = moduleRoots;
         this.stdlibDir = stdlibDir;
+        this.diagnosticsJsonPath = diagnosticsJsonPath;
 
         Map<String, String> declarations = new HashMap<>();
         Map<String, String> modulePaths = new HashMap<>();
@@ -180,6 +211,28 @@ public final class CompilationOrchestrator {
     // =========================================================================
 
     public boolean compile() throws IOException {
+        boolean success = compileInternal();
+
+        // Structured output (D8): the document is written for every
+        // compilation — successful or failed — when --diagnostics-json
+        // was requested, without changing the exit code. A write failure
+        // is a deterministic compiler I/O diagnostic on stderr with exit
+        // 1; no raw path exception escapes (parent D11 I/O discipline).
+        if (diagnosticsJsonPath != null) {
+            try {
+                Files.writeString(diagnosticsJsonPath,
+                    DiagnosticStructuredOutput.toJson(diagnostics));
+            } catch (IOException e) {
+                System.err.println("deal: cannot write diagnostics JSON to '"
+                    + diagnosticsJsonPath + "': " + e.getMessage());
+                return false;
+            }
+        }
+        return success;
+    }
+
+    /** The compilation pipeline proper; see {@link #compile()}. */
+    private boolean compileInternal() throws IOException {
         long startTime = System.currentTimeMillis();
 
         log("Phase 0: Module discovery and parsing");
@@ -215,7 +268,7 @@ public final class CompilationOrchestrator {
         return true;
     }
 
-    public List<Diagnostic> diagnostics() {
+    public List<CompilerDiagnostic> diagnostics() {
         return Collections.unmodifiableList(diagnostics);
     }
 
@@ -235,8 +288,14 @@ public final class CompilationOrchestrator {
 
             Path file = Path.of(sourcePath);
             if (!Files.exists(file)) {
-                error(DiagnosticCode.E2003, "Module not found: " + sourcePath,
-                    file.toString(), 1, 1);
+                // Anchorless site (D5): the discovery queue holds no
+                // import declaration for the entry/nonexistent file, so
+                // the diagnostic is synthetic with a note naming the
+                // unresolved path.
+                syntheticError(DiagnosticCode.E2003,
+                    "Module not found: " + sourcePath, sourcePath,
+                    "missing anchor: unresolved module path '"
+                        + sourcePath + "'");
                 continue;
             }
 
@@ -247,13 +306,20 @@ public final class CompilationOrchestrator {
             try {
                 source = Files.readString(file);
             } catch (IOException e) {
-                error(DiagnosticCode.E2003, "Cannot read module: " + sourcePath + " (" + e.getMessage() + ")",
-                    sourcePath, 1, 1);
+                // Anchorless site (D5): no import declaration span is
+                // available for the unreadable queue file, so the
+                // diagnostic is synthetic with a note naming the
+                // unreadable path.
+                syntheticError(DiagnosticCode.E2003,
+                    "Cannot read module: " + sourcePath + " ("
+                        + e.getMessage() + ")", sourcePath,
+                    "missing anchor: unreadable module path '"
+                        + sourcePath + "'");
                 continue;
             }
 
             LexResult lex = new Lexer(source, sourcePath).tokenize();
-            diagnostics.addAll(toLegacyDiagnostics(lex.diagnostics()));
+            diagnostics.addAll(lex.diagnostics());
             if (hasLexErrors(lex)) {
                 hasErrors = true;
                 continue;
@@ -261,7 +327,7 @@ public final class CompilationOrchestrator {
 
             Parser parser = new Parser(lex.tokens(), sourcePath);
             ParseResult parseResult = parser.parse();
-            diagnostics.addAll(toLegacyDiagnostics(parseResult.diagnostics()));
+            diagnostics.addAll(parseResult.diagnostics());
             if (parseResult.hasErrors()) {
                 hasErrors = true;
             }
@@ -271,11 +337,8 @@ public final class CompilationOrchestrator {
             // import/function/class/export, imports and exports are not
             // nested statements, and implementation files have no bodyless
             // (external) function declarations.
-            // Transitional position-preserving conversion at the shape
-            // validator boundary (T9 scaffolding, replaced when the
-            // orchestrator migrates to ranged diagnostics in T11).
-            List<Diagnostic> shapeDiags = toLegacyDiagnostics(
-                ModuleShapeValidator.validate(parseResult.program(), sourcePath, isDecl));
+            List<CompilerDiagnostic> shapeDiags =
+                ModuleShapeValidator.validate(parseResult.program(), sourcePath, isDecl);
             diagnostics.addAll(shapeDiags);
             if (shapeDiags.stream().anyMatch(d -> "error".equals(d.severity()))) {
                 hasErrors = true;
@@ -304,22 +367,21 @@ public final class CompilationOrchestrator {
                     String resolved = tryResolveImportPath(importPath, file);
                     if (resolved == null) {
                         // Record E2003 with the import statement's span for
-                        // accurate error location.
+                        // accurate error location (D5).
                         error(DiagnosticCode.E2003,
                             "Module not found: '" + importPath
                                 + "'. Searched in: " + describeSearchPaths(importPath, file)
                                 + externalsDeclarationNote(importPath),
-                            imp.span().file(), imp.span().startLine(),
-                            imp.span().startColumn());
+                            imp.span());
                     } else if (isUndeclaredExternalHostModule(importPath, resolved)) {
                         // E2009: a bare import whose resolution lands on a
                         // non-stdlib declaration file that is not listed in
-                        // deal.json externals (host-module-abi D5(3)).
+                        // deal.json externals (host-module-abi D5(3));
+                        // anchored at the import declaration span (D5).
                         error(DiagnosticCode.E2009,
                             "Import of external host module '" + importPath
                                 + "' is not declared in deal.json externals",
-                            imp.span().file(), imp.span().startLine(),
-                            imp.span().startColumn());
+                            imp.span());
                     } else if (!modules.containsKey(resolved)) {
                         pending.add(resolved);
                     }
@@ -335,24 +397,6 @@ public final class CompilationOrchestrator {
 
     private boolean hasLexErrors(LexResult lex) {
         return lex.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()));
-    }
-
-    /**
-     * Transitional position-preserving conversion at the lexer and parser
-     * aggregation boundaries (T3/T4 scaffolding, replaced when the
-     * orchestrator migrates to ranged diagnostics in T11): each ranged
-     * lexer or parser diagnostic becomes the legacy start-only record,
-     * deriving file/line/column from the range start. The conversion is
-     * ranged-to-legacy only — it never fabricates offsets, and the legacy
-     * side never produces a SOURCE range (D4/D9).
-     */
-    private static List<Diagnostic> toLegacyDiagnostics(List<CompilerDiagnostic> rangedDiags) {
-        List<Diagnostic> legacy = new ArrayList<>(rangedDiags.size());
-        for (CompilerDiagnostic d : rangedDiags) {
-            legacy.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                d.file(), d.line(), d.column(), d.diagnosticCode()));
-        }
-        return legacy;
     }
 
     // =========================================================================
@@ -372,7 +416,8 @@ public final class CompilationOrchestrator {
                 for (StatementNode stmt : info.rawAst.statements()) {
                     if (stmt instanceof ImportDeclaration imp) {
                         String resolvedSource = resolveImportPath(
-                            imp.modulePath(), Path.of(info.sourcePath));
+                            imp.modulePath(), Path.of(info.sourcePath),
+                            imp.span());
                         if (resolvedSource != null) {
                             ModuleInfo imported = modules.get(resolvedSource);
                             if (imported != null) {
@@ -387,9 +432,7 @@ public final class CompilationOrchestrator {
                 info.isDeclarationFile);
             extractor.setImportModulePaths(importAliasMap);
             info.exports = extractor.extract(info.rawAst);
-            // Transitional position-preserving conversion at the export
-            // extractor boundary (T9 scaffolding, replaced in T11).
-            List<Diagnostic> exportDiags = toLegacyDiagnostics(extractor.diagnostics());
+            List<CompilerDiagnostic> exportDiags = extractor.diagnostics();
             diagnostics.addAll(exportDiags);
             if (exportDiags.stream().anyMatch(
                     d -> "error".equals(d.severity()))) {
@@ -404,8 +447,12 @@ public final class CompilationOrchestrator {
                         writeIrDump(info.modulePath, irText);
                     }
                 } catch (Exception e) {
-                    error(DiagnosticCode.E6001, "IR dump failed for " + info.sourcePath
-                        + ": " + e.getMessage(), info.sourcePath, 1, 1);
+                    // Anchorless site (D5/D6): an IR-dump failure has no
+                    // source construct anchor; the note names the failed
+                    // module path.
+                    diagnostics.add(e6001IrDumpFailure(info.sourcePath,
+                        e.getMessage()));
+                    hasErrors = true;
                 }
             }
 
@@ -437,19 +484,25 @@ public final class CompilationOrchestrator {
         if (entry == null) return; // discovery already reported E2003
 
         String file = entry.sourcePath;
-        int line = 1;
-        int column = 1;
-        if (entry.rawAst != null && entry.rawAst.span() != null) {
-            line = entry.rawAst.span().startLine();
-            column = entry.rawAst.span().startColumn();
-        }
+        // E2010/E2011 anchor at the entry program span (D5): SOURCE-exact
+        // at the program start via the T2 program-span obligation,
+        // including the empty/whitespace-only entry case
+        // (file,1,1,1,1,0,0,0,SOURCE).
+        Span programSpan = entry.rawAst != null ? entry.rawAst.span() : null;
 
         Type mainType = entry.exports != null
             ? entry.exports.get("main") : null;
         if (mainType == null) {
-            error(DiagnosticCode.E2010,
-                "Entry module must export 'main' with non-async signature '(): null'",
-                file, line, column);
+            if (programSpan != null) {
+                error(DiagnosticCode.E2010,
+                    "Entry module must export 'main' with non-async signature '(): null'",
+                    programSpan);
+            } else {
+                syntheticError(DiagnosticCode.E2010,
+                    "Entry module must export 'main' with non-async signature '(): null'",
+                    file,
+                    "missing anchor: entry program span for module '" + file + "'");
+            }
             return;
         }
 
@@ -458,9 +511,16 @@ public final class CompilationOrchestrator {
             && !f.isAsync()
             && f.returnType() instanceof Type.Null;
         if (!validMain) {
-            error(DiagnosticCode.E2011,
-                "Entry module 'main' must have non-async signature '(): null'",
-                file, line, column);
+            if (programSpan != null) {
+                error(DiagnosticCode.E2011,
+                    "Entry module 'main' must have non-async signature '(): null'",
+                    programSpan);
+            } else {
+                syntheticError(DiagnosticCode.E2011,
+                    "Entry module 'main' must have non-async signature '(): null'",
+                    file,
+                    "missing anchor: entry program span for module '" + file + "'");
+            }
         }
     }
 
@@ -471,21 +531,28 @@ public final class CompilationOrchestrator {
 
     private List<String> buildCheckOrder() {
         Map<String, Set<String>> deps = new LinkedHashMap<>();
+        // The dependency graph retains each import declaration's span
+        // (D5): source path -> (resolved target -> import declaration
+        // span), for the E2005 cycle-edge anchor chain.
+        Map<String, Map<String, Span>> edgeSpans = new LinkedHashMap<>();
         for (Map.Entry<String, ModuleInfo> entry : modules.entrySet()) {
             String sourcePath = entry.getKey();
             ModuleInfo info = entry.getValue();
             Set<String> imports = new LinkedHashSet<>();
+            Map<String, Span> spans = new LinkedHashMap<>();
 
             for (StatementNode stmt : info.rawAst.statements()) {
                 if (stmt instanceof ImportDeclaration imp) {
                     String resolved = resolveImportPath(imp.modulePath(),
-                        Path.of(sourcePath));
+                        Path.of(sourcePath), imp.span());
                     if (resolved != null && modules.containsKey(resolved)) {
                         imports.add(resolved);
+                        spans.put(resolved, imp.span());
                     }
                 }
             }
             deps.put(sourcePath, imports);
+            edgeSpans.put(sourcePath, spans);
         }
 
         List<String> order = new ArrayList<>();
@@ -503,13 +570,14 @@ public final class CompilationOrchestrator {
                 }
             }
             if (!found) {
-                return handleCycle(deps, remaining);
+                return handleCycle(deps, edgeSpans, remaining);
             }
         }
         return order;
     }
 
     private List<String> handleCycle(Map<String, Set<String>> deps,
+                                      Map<String, Map<String, Span>> edgeSpans,
                                       Set<String> remaining) {
         // Find the first cycle
         List<String> cycle = new ArrayList<>();
@@ -523,13 +591,7 @@ public final class CompilationOrchestrator {
 
         // Check if the first cycle has runtime dependencies
         if (!isDeclarationOnlyCycle(cycle, deps)) {
-            StringBuilder cyclePath = new StringBuilder();
-            for (int i = 0; i < cycle.size(); i++) {
-                if (i > 0) cyclePath.append(" -> ");
-                cyclePath.append(cycle.get(i));
-            }
-            error(DiagnosticCode.E2005, "Circular import with runtime dependency: " + cyclePath,
-                cycle.get(0), 1, 1);
+            reportCycleError(cycle, edgeSpans);
             return null;
         }
 
@@ -544,13 +606,7 @@ public final class CompilationOrchestrator {
         while ((additionalCycle = findCycleInSet(deps, nonCycle)) != null
                 && !additionalCycle.isEmpty()) {
             if (!isDeclarationOnlyCycle(additionalCycle, deps)) {
-                StringBuilder cyclePath = new StringBuilder();
-                for (int i = 0; i < additionalCycle.size(); i++) {
-                    if (i > 0) cyclePath.append(" -> ");
-                    cyclePath.append(additionalCycle.get(i));
-                }
-                error(DiagnosticCode.E2005, "Circular import with runtime dependency: " + cyclePath,
-                    additionalCycle.get(0), 1, 1);
+                reportCycleError(additionalCycle, edgeSpans);
                 return null;
             }
             allCycleNodes.addAll(additionalCycle);
@@ -600,6 +656,115 @@ public final class CompilationOrchestrator {
         }
 
         return order;
+    }
+
+    /**
+     * Emits the E2005 runtime-cycle diagnostic with the D5 anchor chain:
+     * the import declaration span of the first cycle module that targets
+     * another cycle member (the dependency graph retains each import
+     * declaration's span), falling back to that module's program span,
+     * then to the canonical synthetic shape with a cycle-edge-naming
+     * anchor note.
+     */
+    private void reportCycleError(List<String> cycle,
+                                  Map<String, Map<String, Span>> edgeSpans) {
+        StringBuilder cyclePath = new StringBuilder();
+        for (int i = 0; i < cycle.size(); i++) {
+            if (i > 0) cyclePath.append(" -> ");
+            cyclePath.append(cycle.get(i));
+        }
+        String message = "Circular import with runtime dependency: " + cyclePath;
+        diagnostics.add(e2005Diagnostic(cycle, edgeSpans,
+            programSpansFor(cycle), message));
+        hasErrors = true;
+    }
+
+    /**
+     * The module program spans of the given cycle, for the E2005 program
+     * span fallback (D5).
+     */
+    private Map<String, Span> programSpansFor(List<String> cycle) {
+        Map<String, Span> spans = new HashMap<>();
+        for (String sourcePath : cycle) {
+            ModuleInfo info = modules.get(sourcePath);
+            if (info != null && info.rawAst != null
+                    && info.rawAst.span() != null) {
+                spans.put(sourcePath, info.rawAst.span());
+            }
+        }
+        return spans;
+    }
+
+    /**
+     * Builds the E2005 runtime-cycle diagnostic with the D5 anchor chain
+     * (public static so the fallback chain is directly pinnable):
+     * <ul>
+     *   <li>the import declaration span of the first cycle module that
+     *       targets another cycle member,</li>
+     *   <li>falling back to that module's program span,</li>
+     *   <li>then to the canonical synthetic shape
+     *       {@code (file,1,1,1,1,0,0,0,SYNTHETIC)} plus an anchor note
+     *       naming the cycle edge
+     *       ({@code missing anchor: import declaration closing the module
+     *       cycle a -> b -> a}) (D5/D6).</li>
+     * </ul>
+     */
+    public static CompilerDiagnostic e2005Diagnostic(List<String> cycle,
+            Map<String, Map<String, Span>> edgeSpans,
+            Map<String, Span> programSpans, String message) {
+        Set<String> cycleSet = new LinkedHashSet<>(cycle);
+        // The chain applies to the first cycle module that targets
+        // another cycle member: its import declaration span, falling back
+        // to that module's program span. Modules without a cycle-member
+        // edge are skipped entirely; when no module has a usable anchor,
+        // the result is the canonical synthetic shape plus the
+        // cycle-edge-naming note.
+        Span anchor = null;
+        for (String sourcePath : cycle) {
+            boolean targetsCycleMember = false;
+            Span edgeSpan = null;
+            Map<String, Span> edges = edgeSpans.get(sourcePath);
+            if (edges != null) {
+                for (Map.Entry<String, Span> edge : edges.entrySet()) {
+                    if (cycleSet.contains(edge.getKey())) {
+                        targetsCycleMember = true;
+                        if (edge.getValue() != null) {
+                            edgeSpan = edge.getValue();
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!targetsCycleMember) {
+                continue;
+            }
+            anchor = edgeSpan != null ? edgeSpan : programSpans.get(sourcePath);
+            break;
+        }
+        if (anchor != null) {
+            return CompilerDiagnostic.error(DiagnosticCode.E2005, message,
+                anchor);
+        }
+        String file = cycle.isEmpty() ? "" : cycle.get(0);
+        return CompilerDiagnostic.syntheticError(DiagnosticCode.E2005, message,
+            file,
+            "missing anchor: import declaration closing the module cycle "
+                + String.join(" -> ", cycle));
+    }
+
+    /**
+     * Builds the E6001 IR-dump-failure diagnostic (public static so the
+     * synthetic contract is directly pinnable): an IR-dump failure has no
+     * source construct anchor, so the diagnostic carries the canonical
+     * synthetic shape {@code (file,1,1,1,1,0,0,0,SYNTHETIC)} plus an
+     * anchor note naming the failed module path (D5/D6).
+     */
+    public static CompilerDiagnostic e6001IrDumpFailure(String sourcePath,
+                                                         String failureMessage) {
+        return CompilerDiagnostic.syntheticError(DiagnosticCode.E6001,
+            "IR dump failed for " + sourcePath + ": " + failureMessage,
+            sourcePath,
+            "missing anchor: IR dump path for module '" + sourcePath + "'");
     }
 
     /**
@@ -672,7 +837,7 @@ public final class CompilationOrchestrator {
             for (StatementNode stmt : info.rawAst.statements()) {
                 if (stmt instanceof ImportDeclaration imp) {
                     String resolved = resolveImportPath(imp.modulePath(),
-                        Path.of(modulePath));
+                        Path.of(modulePath), imp.span());
                     if (resolved != null && cycleSet.contains(resolved)) {
                         if (usesImportAtRuntime(info.rawAst, imp.alias())) {
                             return false;
@@ -973,9 +1138,7 @@ public final class CompilationOrchestrator {
 
             info.exports = correctedExports;
 
-            // Transitional position-preserving conversion at the name
-            // resolver boundary (T9 scaffolding, replaced in T11).
-            List<Diagnostic> nameDiags = toLegacyDiagnostics(nr.diagnostics());
+            List<CompilerDiagnostic> nameDiags = nr.diagnostics();
             diagnostics.addAll(nameDiags);
             if (hasNameErrors(nameDiags)) {
                 hasErrors = true;
@@ -987,9 +1150,7 @@ public final class CompilationOrchestrator {
             CheckResult result = TypeChecker.check(info.modulePath, symTable,
                 nr, info.rawAst);
             info.checkResult = result;
-            // Transitional position-preserving conversion at the type
-            // checker boundary (T9 scaffolding, replaced in T11).
-            diagnostics.addAll(toLegacyDiagnostics(result.diagnostics()));
+            diagnostics.addAll(result.diagnostics());
             if (result.hasErrors()) {
                 hasErrors = true;
             }
@@ -1002,8 +1163,11 @@ public final class CompilationOrchestrator {
                         writeIrDump(info.modulePath, irText);
                     }
                 } catch (Exception e) {
-                    error(DiagnosticCode.E6001, "IR dump failed for " + info.sourcePath
-                        + ": " + e.getMessage(), info.sourcePath, 1, 1);
+                    // Anchorless site (D5/D6): the note names the failed
+                    // module path.
+                    diagnostics.add(e6001IrDumpFailure(info.sourcePath,
+                        e.getMessage()));
+                    hasErrors = true;
                 }
             }
 
@@ -1017,7 +1181,7 @@ public final class CompilationOrchestrator {
         }
     }
 
-    private boolean hasNameErrors(List<Diagnostic> diags) {
+    private boolean hasNameErrors(List<CompilerDiagnostic> diags) {
         return diags.stream().anyMatch(d -> "error".equals(d.severity()));
     }
 
@@ -1041,9 +1205,12 @@ public final class CompilationOrchestrator {
             // copy, no stdlib copy -- so a Backend.JS selection can never
             // fall into the LuaJIT path and silently miscompile. ISSUE-0191
             // replaces this arm with codegenAllJs().
-            error(DiagnosticCode.E6000,
+            // Anchorless site: the staging guard has no source construct
+            // anchor; synthetic with a construct-naming note (D5/D6).
+            syntheticError(DiagnosticCode.E6000,
                 "JavaScript backend: compilation for the JavaScript backend is not yet available",
-                entryFile.toString(), 1, 1);
+                entryFile.toString(),
+                "missing anchor: entry program span for the JavaScript backend staging guard");
         } else {
             // Lua use site: the existing LuaJIT emitter, unchanged.
             for (ModuleInfo info : modules.values()) {
@@ -1073,7 +1240,7 @@ public final class CompilationOrchestrator {
         for (StatementNode stmt : info.rawAst.statements()) {
             if (stmt instanceof ImportDeclaration imp) {
                 String resolvedSource = resolveImportPath(imp.modulePath(),
-                    Path.of(info.sourcePath));
+                    Path.of(info.sourcePath), imp.span());
                 if (resolvedSource != null) {
                     ModuleInfo imported = modules.get(resolvedSource);
                     if (imported != null) {
@@ -1120,8 +1287,16 @@ public final class CompilationOrchestrator {
             info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
             outputRoot, outputPath, sourceMap, importResolutions, hostModules,
             isEntry);
-        diagnostics.addAll(gen.diagnostics());
-        boolean backendError = gen.diagnostics().stream()
+        // Transitional backend-boundary conversion (removed by T12):
+        // each legacy entry zips with its parallel ranged channel into a
+        // CompilerDiagnostic. The range comes from real span data the
+        // backend computed; a legacy-only entry would normalize to the
+        // synthetic (1,1) shape and change rendered positions, so no
+        // offset is ever fabricated here (D4/D9).
+        List<CompilerDiagnostic> backendDiags =
+            toBackendDiagnostics(gen.diagnostics(), gen.diagnosticRanges());
+        diagnostics.addAll(backendDiags);
+        boolean backendError = backendDiags.stream()
             .anyMatch(d -> "error".equals(d.severity()));
         if (backendError) {
             hasErrors = true;
@@ -1189,7 +1364,7 @@ public final class CompilationOrchestrator {
             for (StatementNode stmt : info.rawAst.statements()) {
                 if (stmt instanceof ImportDeclaration imp) {
                     String resolvedSource = resolveImportPath(imp.modulePath(),
-                        Path.of(info.sourcePath));
+                        Path.of(info.sourcePath), imp.span());
                     if (resolvedSource != null) {
                         ModuleInfo imported = modules.get(resolvedSource);
                         if (imported == null) {
@@ -1228,7 +1403,9 @@ public final class CompilationOrchestrator {
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
                 importResolutions, importedClasses, hostModules, isEntry);
-            for (Diagnostic d : res.diagnostics()) {
+            for (CompilerDiagnostic d
+                    : toBackendDiagnostics(res.diagnostics(),
+                        res.diagnosticRanges())) {
                 diagnostics.add(d);
                 hasErrors = true;
             }
@@ -1250,11 +1427,16 @@ public final class CompilationOrchestrator {
             String className = res.className();
             String previousOwner = classOwners.putIfAbsent(className, info.modulePath);
             if (previousOwner != null) {
-                error(DiagnosticCode.E6000,
+                // Anchorless site (D5/D6): the note names the colliding
+                // modules and class name.
+                syntheticError(DiagnosticCode.E6000,
                     "JVM backend: modules '" + previousOwner + "' and '"
                         + info.modulePath + "' both derive the class name '"
                         + className + "' (rename one module)",
-                    info.sourcePath, 1, 1);
+                    info.sourcePath,
+                    "missing anchor: module class-name collision between '"
+                        + previousOwner + "' and '" + info.modulePath
+                        + "' (class '" + className + "')");
                 continue;
             }
             Path outputPath = outputRoot.resolve(className + ".java");
@@ -1300,7 +1482,11 @@ public final class CompilationOrchestrator {
             return;
         }
 
-        error(DiagnosticCode.E6000, "Runtime library not found: deal/runtime.lua", "", 1, 1);
+        // Anchorless site (D5/D6): the note names the missing runtime
+        // library path.
+        syntheticError(DiagnosticCode.E6000,
+            "Runtime library not found: deal/runtime.lua", "",
+            "missing anchor: runtime library path 'deal/runtime.lua'");
     }
 
     /**
@@ -1356,21 +1542,24 @@ public final class CompilationOrchestrator {
     // =========================================================================
 
     /**
-     * Resolves an import path to a source file.  Emits E2003 with the
-     * given file location (defaulting to 1:1) if resolution fails.
+     * Resolves an import path to a source file.  Emits E2003 if
+     * resolution fails; without an import declaration span the re-emission
+     * is synthetic with an anchor note naming the import path (D5).
      *
      * @return the resolved source path, or {@code null} if not found
      */
     public String resolveImportPath(String importPath, Path fromFile) {
-        return resolveImportPath(importPath, fromFile, fromFile.toString(), 1, 1);
+        return resolveImportPath(importPath, fromFile, null);
     }
 
     /**
-     * Resolves an import path to a source file, using the given location
-     * for any E2003 diagnostic.
+     * Resolves an import path to a source file, anchoring any E2003
+     * re-emission at the given import declaration span when present,
+     * falling back to synthetic plus an anchor note naming the import
+     * path (D5).
      */
     private String resolveImportPath(String importPath, Path fromFile,
-                                      String errorFile, int errorLine, int errorCol) {
+                                      Span importSpan) {
         String resolved = tryResolveImportPath(importPath, fromFile);
         if (resolved == null) {
             StringBuilder msg = new StringBuilder("Module not found: '" + importPath
@@ -1381,7 +1570,14 @@ public final class CompilationOrchestrator {
                 msg.append(candidates.get(i));
             }
             msg.append(externalsDeclarationNote(importPath));
-            error(DiagnosticCode.E2003, msg.toString(), errorFile, errorLine, errorCol);
+            if (importSpan != null) {
+                error(DiagnosticCode.E2003, msg.toString(), importSpan);
+            } else {
+                syntheticError(DiagnosticCode.E2003, msg.toString(),
+                    fromFile.toString(),
+                    "missing anchor: import declaration span for import '"
+                        + importPath + "'");
+            }
         }
         return resolved;
     }
@@ -1530,14 +1726,14 @@ public final class CompilationOrchestrator {
 
             LexResult lex = new Lexer(source, syntheticPath).tokenize();
             if (hasLexErrors(lex)) {
-                diagnostics.addAll(toLegacyDiagnostics(lex.diagnostics()));
+                diagnostics.addAll(lex.diagnostics());
                 hasErrors = true;
                 return null;
             }
 
             Parser parser = new Parser(lex.tokens(), syntheticPath);
             ParseResult parseResult = parser.parse();
-            diagnostics.addAll(toLegacyDiagnostics(parseResult.diagnostics()));
+            diagnostics.addAll(parseResult.diagnostics());
             if (parseResult.hasErrors()) {
                 hasErrors = true;
             }
@@ -1625,15 +1821,54 @@ public final class CompilationOrchestrator {
         if (verbose) System.out.println(msg);
     }
 
-    private void error(DiagnosticCode code, String message, String file, int line, int col) {
-        diagnostics.add(Diagnostic.error(code, message, file, line, col));
+    private void error(DiagnosticCode code, String message, DiagnosticRange range) {
+        diagnostics.add(CompilerDiagnostic.error(code, message, range));
         hasErrors = true;
     }
 
+    /** Span overload: {@code span.range()}; a SYNTHETIC conversion
+     * appends the mandatory D4 anchor note. */
+    private void error(DiagnosticCode code, String message, Span span) {
+        diagnostics.add(CompilerDiagnostic.error(code, message, span));
+        hasErrors = true;
+    }
+
+    /** Explicit synthetic factory with a construct-naming anchor note (D6). */
+    private void syntheticError(DiagnosticCode code, String message, String file,
+                                String missingAnchorNote) {
+        diagnostics.add(CompilerDiagnostic.syntheticError(code, message, file,
+            missingAnchorNote));
+        hasErrors = true;
+    }
+
+    /**
+     * Transitional position-preserving backend-boundary conversion
+     * (removed by T12): each legacy backend entry zips with its parallel
+     * ranged channel (same order) into a {@link CompilerDiagnostic}. The
+     * range comes from real span data the backend computed — the
+     * conversion never fabricates offsets from the legacy start-only
+     * record (D4/D9: a legacy-only entry would normalize to the synthetic
+     * (1,1) shape and change rendered positions).
+     */
+    private static List<CompilerDiagnostic> toBackendDiagnostics(
+            List<Diagnostic> legacy, List<DiagnosticRange> ranges) {
+        List<CompilerDiagnostic> converted = new ArrayList<>(legacy.size());
+        for (int i = 0; i < legacy.size(); i++) {
+            Diagnostic d = legacy.get(i);
+            DiagnosticRange range = i < ranges.size() ? ranges.get(i) : null;
+            converted.add(new CompilerDiagnostic(d.code(), d.severity(),
+                d.message(), range, null, d.diagnosticCode()));
+        }
+        return converted;
+    }
+
+    /**
+     * Delegates printing to the canonical formatter (D8); the
+     * error/warning summary counts are unchanged.
+     */
     private void printDiagnostics() {
-        for (Diagnostic d : diagnostics) {
-            System.err.println(d.file() + ":" + d.line() + ":" + d.column()
-                + ": " + d.severity() + " " + d.code() + ": " + d.message());
+        for (CompilerDiagnostic d : diagnostics) {
+            System.err.println(DiagnosticFormatter.format(d));
         }
         long errorCount = diagnostics.stream()
             .filter(d -> "error".equals(d.severity())).count();
@@ -1649,10 +1884,10 @@ public final class CompilationOrchestrator {
     final class ModuleResolverImpl implements ModuleResolver {
 
         private final Map<String, ModuleInfo> modules;
-        private final List<Diagnostic> diagnostics;
+        private final List<CompilerDiagnostic> diagnostics;
 
         ModuleResolverImpl(Map<String, ModuleInfo> modules,
-                           List<Diagnostic> diagnostics) {
+                           List<CompilerDiagnostic> diagnostics) {
             this.modules = modules;
             this.diagnostics = diagnostics;
         }

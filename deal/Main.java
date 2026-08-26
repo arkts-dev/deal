@@ -37,9 +37,9 @@ import java.util.List;
  *   <li>{@code --source-map} — produce source map sidecar files ({@code .deal.map.json})</li>
  *   <li>{@code --diagnostics-json <path>} — write the structured diagnostics
  *       document (version 1) to {@code <path>} for manifest-configuration
- *       failures (the compilation path arrives with the orchestrator
- *       migration); a write failure is a deterministic I/O diagnostic on
- *       stderr with exit 1</li>
+ *       failures and for every compilation (successful or failed); a
+ *       write failure is a deterministic I/O diagnostic on stderr with
+ *       exit 1</li>
  * </ul>
  */
 public final class Main {
@@ -237,9 +237,13 @@ public final class Main {
         // When --dump-ir is passed, also enable source maps since they
         // are part of IR hardening. When --source-map is explicitly passed,
         // enable source maps without enabling IR dumps.
+        // The orchestrator writes the structured diagnostics document for
+        // every compilation — successful or failed — when
+        // --diagnostics-json is set (D8); manifest-configuration failures
+        // are written by this CLI directly above.
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, verbose, dumpIr, dumpIr || sourceMap, sourceMap,
-            backend, config, moduleRoots, stdlibDir);
+            backend, config, moduleRoots, stdlibDir, diagnosticsJsonPath);
 
         boolean success = orchestrator.compile();
 

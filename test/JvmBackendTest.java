@@ -8,6 +8,8 @@ import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticFormatter;
+import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
 import deal.types.Type;
 import deal.types.Types;
@@ -22,6 +24,7 @@ import deal.module.DealConfig;
 import deal.module.DealConfig.DealConfigParseResult;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
+import deal.source.ScalarSourceCursor;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -2970,6 +2973,45 @@ public class JvmBackendTest {
                 + "for-of: " + badOrchestrator.diagnostics());
         check(!Files.exists(badOut.resolve("Refof_bad.java")),
             "no entry artifact when the ref-shape for-of is rejected");
+
+        // Backend-boundary pin: the for-of E6000 arrives through the
+        // transitional ranged channel and renders at its real source
+        // position — SOURCE origin with exact scalar offsets, never
+        // synthetic (1,1). The unsupported call anchors at the for-of
+        // statement's own span.
+        CompilerDiagnostic e6000 = badOrchestrator.diagnostics().stream()
+            .filter(d -> "E6000".equals(d.code())
+                && d.message().contains("function arrays whose signature"))
+            .findFirst().orElse(null);
+        check(e6000 != null, "for-of E6000 present for the boundary pin");
+        if (e6000 != null) {
+            DiagnosticRange range = e6000.range();
+            check(range.origin() == RangeOrigin.SOURCE,
+                "backend-boundary E6000 range origin is SOURCE: " + range);
+            String src = Files.readString(badEntry);
+            int forIdx = src.indexOf("for (let f");
+            check(forIdx >= 0, "fixture contains the for-of statement");
+            int lineStart = src.lastIndexOf('\n', forIdx) + 1;
+            int expectedLine = src.substring(0, forIdx).split("\n", -1).length;
+            int expectedColumn = forIdx - lineStart + 1;
+            int expectedOffset = ScalarSourceCursor.scalarCount(src, 0, forIdx);
+            check(range.startLine() == expectedLine
+                    && range.startColumn() == expectedColumn,
+                "backend-boundary E6000 starts at the for-of statement: "
+                    + range);
+            check(range.startScalarOffset() == expectedOffset,
+                "backend-boundary E6000 start scalar offset is exact ("
+                    + expectedOffset + "): " + range);
+            check(range.endScalarOffset() > range.startScalarOffset()
+                    && range.scalarLength()
+                        == range.endScalarOffset() - range.startScalarOffset(),
+                "backend-boundary E6000 spans the for-of statement: "
+                    + range);
+            String formatted = DiagnosticFormatter.format(e6000);
+            check(formatted.contains("[span "),
+                "the new formatter renders the backend diagnostic span: "
+                    + formatted);
+        }
     }
 
     /** A catch variable captured by a nested function inside the catch
@@ -9537,6 +9579,24 @@ public class JvmBackendTest {
                 .anyMatch(d -> "E6000".equals(d.code())
                     && d.message().contains("both derive")),
             "orchestrator reports the class-name collision: " + orchestrator.diagnostics());
+
+        // Anchorless site (D5/D6): the collision diagnostic carries the
+        // canonical synthetic range plus a construct-naming note.
+        CompilerDiagnostic collision = orchestrator.diagnostics().stream()
+            .filter(d -> "E6000".equals(d.code())
+                && d.message().contains("both derive"))
+            .findFirst().orElse(null);
+        check(collision != null, "collision E6000 present for the synthetic pin");
+        if (collision != null) {
+            check(collision.range().isCanonicalSynthetic()
+                    && collision.range().origin() == RangeOrigin.SYNTHETIC,
+                "collision E6000 range is canonical synthetic: "
+                    + collision.range());
+            check(collision.notes().stream().anyMatch(n -> n.message().contains(
+                    "missing anchor: module class-name collision between '")),
+                "collision E6000 note names the colliding modules: "
+                    + collision.notes());
+        }
     }
 
     /**

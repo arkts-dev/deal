@@ -13,6 +13,7 @@ import deal.lexer.*;
 import deal.module.*;
 import deal.module.DealConfig.DealConfigParseResult;
 import deal.parser.*;
+import deal.source.ScalarSourceCursor;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -63,7 +64,7 @@ public class ModuleSystemTest {
             entryFile, outputDir, false, null, roots, null);
 
         boolean success = orchestrator.compile();
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         boolean hasModuleNotFound = diags.stream()
             .anyMatch(d -> "E2003".equals(d.code()));
         check(!hasModuleNotFound, "Stdlib console: no E2003 module-not-found");
@@ -92,7 +93,7 @@ public class ModuleSystemTest {
             entryFile, outputDir, false, null, roots, null);
 
         boolean success = orchestrator.compile();
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         boolean hasModuleNotFound = diags.stream()
             .anyMatch(d -> "E2003".equals(d.code()));
         check(!hasModuleNotFound, "Stdlib table: no E2003 module-not-found");
@@ -122,7 +123,7 @@ public class ModuleSystemTest {
             entryFile, outputDir, false, null, roots, null);
 
         boolean success = orchestrator.compile();
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         boolean hasModuleNotFound = diags.stream()
             .anyMatch(d -> "E2003".equals(d.code()));
         check(!hasModuleNotFound, "Stdlib json: no E2003 module-not-found");
@@ -156,7 +157,7 @@ public class ModuleSystemTest {
             entryFile, outputDir, false, null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         boolean hasModuleNotFound = diags.stream()
             .anyMatch(d -> "E2003".equals(d.code()));
         check(!hasModuleNotFound, "Stdlib math: no E2003 module-not-found");
@@ -185,7 +186,7 @@ public class ModuleSystemTest {
             entryFile, outputDir, false, null, roots, null);
 
         boolean success = orchestrator.compile();
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         boolean hasModuleNotFound = diags.stream()
             .anyMatch(d -> "E2003".equals(d.code()));
         check(!hasModuleNotFound, "Stdlib time: no E2003 module-not-found");
@@ -218,7 +219,7 @@ public class ModuleSystemTest {
             entryFile, outputDir, false, null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         boolean hasModuleNotFound = diags.stream()
             .anyMatch(d -> "E2003".equals(d.code()));
         check(!hasModuleNotFound, "Stdlib cross-module: no E2003 module-not-found");
@@ -278,7 +279,7 @@ public class ModuleSystemTest {
             entryFile, outputDir, false, null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         boolean hasModuleNotFound = diags.stream()
             .anyMatch(d -> "E2003".equals(d.code()));
         check(!hasModuleNotFound, "Stdlib json round-trip: no E2003 module-not-found");
@@ -1313,7 +1314,7 @@ public class ModuleSystemTest {
         check(Files.exists(outputDir.resolve("ocB.lua")), "ocB.lua exists");
 
         // Verify no E2005 errors (should be declaration-only cycle)
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         boolean hasE2005 = diags.stream().anyMatch(d -> "E2005".equals(d.code()));
         check(!hasE2005, "Module outside cycle: no E2005");
     }
@@ -1343,6 +1344,23 @@ public class ModuleSystemTest {
 
         resolved = orchestrator.resolveImportPath("./nonexistent", mainFile);
         check(resolved == null, "resolveImportPath returns null for nonexistent");
+
+        // D5: a re-emission without an import declaration span falls back
+        // to the canonical synthetic shape plus a note naming the import
+        // path.
+        CompilerDiagnostic fallback = orchestrator.diagnostics().stream()
+            .filter(d -> "E2003".equals(d.code()))
+            .findFirst().orElse(null);
+        check(fallback != null, "resolveImportPath re-emission records E2003");
+        if (fallback != null) {
+            check(fallback.range().isCanonicalSynthetic()
+                    && fallback.range().origin() == RangeOrigin.SYNTHETIC,
+                "resolveImportPath fallback range is canonical synthetic: "
+                    + fallback.range());
+            check(fallback.notes().stream().anyMatch(n -> n.message().equals(
+                    "missing anchor: import declaration span for import './nonexistent'")),
+                "fallback note names the import path: " + fallback.notes());
+        }
     }
 
     // =========================================================================
@@ -1435,7 +1453,7 @@ public class ModuleSystemTest {
         boolean success = orchestrator.compile();
         check(!success, "Compilation with type error should fail");
 
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         boolean hasTypeError = diags.stream().anyMatch(
             d -> "error".equals(d.severity()));
         check(hasTypeError, "Has type error diagnostic");
@@ -1486,7 +1504,7 @@ public class ModuleSystemTest {
             entryFile, outputDir, false, null, moduleRoots, null);
 
         boolean success = orchestrator.compile();
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
 
         // The compilation should succeed — if exprReferencesImport didn't
         // handle AwaitExpression, the import might appear unused and cause
@@ -1542,7 +1560,7 @@ public class ModuleSystemTest {
             entryFile, outputDir, false, null, moduleRoots, null);
 
         boolean success = orchestrator.compile();
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
 
         // The compilation must fail because Lib.compute() is async and called without await
         check(!success, "cross-module async call without await: compilation must fail");
@@ -1584,7 +1602,7 @@ public class ModuleSystemTest {
         boolean success = orchestrator.compile();
         check(!success, "Top-level executable statement should fail in v1.2");
 
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         // v1.2: the top-level `let` is rejected as a module-shape error
         // before any cycle analysis (E1049).  Runtime import cycles can no
         // longer be constructed from source because module top level holds
@@ -1630,7 +1648,7 @@ public class ModuleSystemTest {
         boolean success = orchestrator.compile();
         check(!success, "Class-field-default cycle must fail in v1.2");
 
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         boolean hasE2005 = diags.stream().anyMatch(
             d -> "E2005".equals(d.code()));
         check(hasE2005, "Class-field-default cycle: E2005 diagnostic");
@@ -1666,7 +1684,7 @@ public class ModuleSystemTest {
         check(success, "Declaration-only cycle should succeed");
 
         // Verify no E2005 errors
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         boolean hasE2005 = diags.stream().anyMatch(
             d -> "E2005".equals(d.code()));
         check(!hasE2005, "Declaration-only cycle: no E2005 diagnostic");
@@ -1719,7 +1737,7 @@ public class ModuleSystemTest {
         boolean success = orchestrator.compile();
         check(!success, "Two disconnected cycles (top-level statement): compilation should fail");
 
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         // v1.2: the top-level `let` in tdc_x.deal is an E1049 module-shape
         // error; no E2005 cycle analysis can fire on v1.2 sources.
         boolean hasE1049 = diags.stream().anyMatch(
@@ -1772,7 +1790,7 @@ public class ModuleSystemTest {
         boolean success = orchestrator.compile();
         check(success, "Two disconnected cycles (both decl-only): compilation should succeed");
 
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         boolean hasE2005 = diags.stream().anyMatch(
             d -> "E2005".equals(d.code()));
         check(!hasE2005, "Two disconnected cycles (both decl-only): no E2005");
@@ -1859,7 +1877,7 @@ public class ModuleSystemTest {
         boolean success = orchestrator.compile();
         check(success, "Cross-module class field access: compilation should succeed");
         if (!success) {
-            for (Diagnostic d : orchestrator.diagnostics()) {
+            for (CompilerDiagnostic d : orchestrator.diagnostics()) {
                 System.out.println("  Diag: " + d.code() + ": " + d.message());
             }
         }
@@ -1901,7 +1919,7 @@ public class ModuleSystemTest {
         boolean success = orchestrator.compile();
         check(success, "Cross-module class construction: compilation should succeed");
         if (!success) {
-            for (Diagnostic d : orchestrator.diagnostics()) {
+            for (CompilerDiagnostic d : orchestrator.diagnostics()) {
                 System.out.println("  Diag: " + d.code() + ": " + d.message());
             }
         }
@@ -1937,7 +1955,7 @@ public class ModuleSystemTest {
         boolean success = orchestrator.compile();
         check(success, "Cross-module class has(): compilation should succeed");
         if (!success) {
-            for (Diagnostic d : orchestrator.diagnostics()) {
+            for (CompilerDiagnostic d : orchestrator.diagnostics()) {
                 System.out.println("  Diag: " + d.code() + ": " + d.message());
             }
         }
@@ -1966,7 +1984,7 @@ public class ModuleSystemTest {
         boolean success = orchestrator.compile();
         check(success, "Qualified type annotation: compilation should succeed");
         if (!success) {
-            for (Diagnostic d : orchestrator.diagnostics()) {
+            for (CompilerDiagnostic d : orchestrator.diagnostics()) {
                 System.out.println("  Diag: " + d.code() + ": " + d.message());
             }
         }
@@ -2006,7 +2024,7 @@ public class ModuleSystemTest {
         boolean success = orchestrator.compile();
         check(success, "Cross-module class E2E: compilation should succeed");
         if (!success) {
-            for (Diagnostic d : orchestrator.diagnostics()) {
+            for (CompilerDiagnostic d : orchestrator.diagnostics()) {
                 System.out.println("  Diag: " + d.code() + ": " + d.message());
             }
             return;
@@ -2808,7 +2826,7 @@ public class ModuleSystemTest {
             entryFile, outputDir, true, null, roots, stdlibDir.toAbsolutePath());
 
         boolean success = orchestrator.compile();
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
 
         // Core assertion: import resolution of a stdlib module must succeed
         // (no E2003 "module not found" errors)
@@ -2881,9 +2899,9 @@ public class ModuleSystemTest {
         boolean success = orchestrator.compile();
         check(!success, "E2E error: compilation should fail");
 
-        List<Diagnostic> diags = orchestrator.diagnostics();
+        List<CompilerDiagnostic> diags = orchestrator.diagnostics();
         boolean hasProperDiag = false;
-        for (Diagnostic d : diags) {
+        for (CompilerDiagnostic d : diags) {
             if ("error".equals(d.severity())) {
                 check(d.code() != null && !d.code().isEmpty(),
                     "Diagnostic has code: " + d.code());
@@ -3094,7 +3112,7 @@ public class ModuleSystemTest {
         // End to end: the orchestrator must reject the module instead of
         // silently miscompiling when a function-expression body carries a
         // nested export.
-        List<Diagnostic> orchestratorDiags = compileEntry(
+        List<CompilerDiagnostic> orchestratorDiags = compileEntry(
             "nested_fn_expr_export", """
             export function main(): null {
               let f = function(): null { export function inner(): null { return null; } return null; };
@@ -3168,7 +3186,7 @@ public class ModuleSystemTest {
 
         // End to end: the orchestrator must reject the module that
         // previously compiled cleanly with a dropped signature.
-        List<Diagnostic> orchestratorDiags = compileEntry(
+        List<CompilerDiagnostic> orchestratorDiags = compileEntry(
             "nested_bodyless", """
             export function main(): null {
               function g(): null;
@@ -3182,7 +3200,7 @@ public class ModuleSystemTest {
     }
 
     /** Compiles one entry module and returns orchestrator diagnostics. */
-    private static List<Diagnostic> compileEntry(String name, String source)
+    private static List<CompilerDiagnostic> compileEntry(String name, String source)
             throws Exception {
         writeFile("src/" + name + ".deal", source);
         Path entryFile = tmpDir.resolve("src/" + name + ".deal")
@@ -3199,7 +3217,7 @@ public class ModuleSystemTest {
         System.out.println("-- v1.2 selected-entry main() validation --");
 
         // Missing main → E2010.
-        List<Diagnostic> diags = compileEntry("em_missing",
+        List<CompilerDiagnostic> diags = compileEntry("em_missing",
             "export function run(): int { return 1; }\n");
         check(diags.stream().anyMatch(d -> "E2010".equals(d.code())
                 && "error".equals(d.severity())),
@@ -3235,6 +3253,492 @@ public class ModuleSystemTest {
     }
 
     // =========================================================================
+    // Diagnostic-range pins (orchestrator anchors)
+    // =========================================================================
+
+    /**
+     * Verification-2 program-span pins: E2010/E2011 carry SOURCE ranges
+     * starting at the program start with the exact non-zero start scalar
+     * offset when the first statement does not start at (1,1); an
+     * empty/whitespace-only entry file yields
+     * {@code (file,1,1,1,1,0,0,0,SOURCE)} — never SYNTHETIC, no anchor
+     * note.
+     */
+    private static void testEntryMainProgramSpanAnchors() throws Exception {
+        System.out.println("-- v1.2 entry-main program-span anchors (E2010/E2011) --");
+
+        // A leading comment moves the first statement off (1,1): the
+        // program span (and the E2010 anchor) must start at the export
+        // with the exact scalar offset of the comment prefix.
+        String commented = "// leading comment\n"
+            + "export function run(): int { return 1; }\n";
+        Path commentedFile = writeFile("src/em_anchor.deal", commented)
+            .toAbsolutePath();
+        Path commentedOut = tmpDir.resolve("build/em_anchor");
+        List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        CompilationOrchestrator commentedOrchestrator = new CompilationOrchestrator(
+            commentedFile, commentedOut, false, null, moduleRoots, null);
+        check(!commentedOrchestrator.compile(),
+            "commented entry without main fails compilation");
+        CompilerDiagnostic commentedE2010 = commentedOrchestrator.diagnostics()
+            .stream().filter(d -> "E2010".equals(d.code()))
+            .findFirst().orElse(null);
+        check(commentedE2010 != null, "commented entry produces E2010");
+        if (commentedE2010 != null) {
+            DiagnosticRange range = commentedE2010.range();
+            check(range.origin() == RangeOrigin.SOURCE,
+                "E2010 range origin is SOURCE: " + range);
+            int expectedOffset = ScalarSourceCursor.scalarCount(
+                commented.substring(0, commented.indexOf("export")));
+            check(range.startLine() == 2 && range.startColumn() == 1,
+                "E2010 starts at the program start 2:1: " + range);
+            check(range.startScalarOffset() == expectedOffset,
+                "E2010 start scalar offset is exact (" + expectedOffset
+                    + "): " + range);
+            check(range.endScalarOffset() > range.startScalarOffset(),
+                "E2010 spans the program: " + range);
+            check(range.scalarLength()
+                    == range.endScalarOffset() - range.startScalarOffset(),
+                "E2010 scalar length is offset-consistent: " + range);
+            check(commentedE2010.notes().isEmpty(),
+                "no anchor note on a SOURCE anchor: "
+                    + commentedE2010.notes());
+        }
+
+        // Empty entry file: the pinned zero-length SOURCE program-span
+        // shape, never SYNTHETIC and no anchor note.
+        Path emptyFile = writeFile("src/em_empty.deal", "").toAbsolutePath();
+        CompilationOrchestrator emptyOrchestrator = new CompilationOrchestrator(
+            emptyFile, tmpDir.resolve("build/em_empty"), false, null,
+            moduleRoots, null);
+        emptyOrchestrator.compile();
+        CompilerDiagnostic emptyE2010 = emptyOrchestrator.diagnostics().stream()
+            .filter(d -> "E2010".equals(d.code()))
+            .findFirst().orElse(null);
+        check(emptyE2010 != null, "empty entry produces E2010");
+        if (emptyE2010 != null) {
+            DiagnosticRange range = emptyE2010.range();
+            check(range.origin() == RangeOrigin.SOURCE
+                    && range.startLine() == 1 && range.startColumn() == 1
+                    && range.endLine() == 1 && range.endColumn() == 1
+                    && range.startScalarOffset() == 0
+                    && range.endScalarOffset() == 0
+                    && range.scalarLength() == 0,
+                "empty entry E2010 pins (file,1,1,1,1,0,0,0,SOURCE): "
+                    + range);
+            check(emptyE2010.notes().isEmpty(),
+                "empty entry E2010 carries no anchor note: "
+                    + emptyE2010.notes());
+        }
+
+        // Whitespace-only entry file: the same pinned document-start
+        // shape (zero tokens; the program span is the explicit zero-length
+        // SOURCE range at file start).
+        Path wsFile = writeFile("src/em_ws.deal", " \t\n").toAbsolutePath();
+        CompilationOrchestrator wsOrchestrator = new CompilationOrchestrator(
+            wsFile, tmpDir.resolve("build/em_ws"), false, null,
+            moduleRoots, null);
+        wsOrchestrator.compile();
+        CompilerDiagnostic wsE2010 = wsOrchestrator.diagnostics().stream()
+            .filter(d -> "E2010".equals(d.code()))
+            .findFirst().orElse(null);
+        check(wsE2010 != null, "whitespace-only entry produces E2010");
+        if (wsE2010 != null) {
+            DiagnosticRange range = wsE2010.range();
+            check(range.origin() == RangeOrigin.SOURCE
+                    && range.startLine() == 1 && range.startColumn() == 1
+                    && range.endLine() == 1 && range.endColumn() == 1
+                    && range.startScalarOffset() == 0
+                    && range.endScalarOffset() == 0
+                    && range.scalarLength() == 0,
+                "whitespace-only entry E2010 pins (file,1,1,1,1,0,0,0,SOURCE): "
+                    + range);
+            check(wsE2010.notes().isEmpty(),
+                "whitespace-only entry E2010 carries no anchor note: "
+                    + wsE2010.notes());
+        }
+    }
+
+    /**
+     * D5 anchor pins: E2003 (discovery) and E2009 anchor at the import
+     * declaration span with SOURCE origin and exact scalar offsets.
+     */
+    private static void testImportSpanAnchorPins() throws Exception {
+        System.out.println("-- E2003/E2009 import declaration span anchors --");
+
+        // E2003: an unresolved relative import anchors at the import
+        // declaration's full span.
+        writeFile("src/importspan_main.deal",
+            "import * as X from \"./missing\"\n"
+                + "export function main(): null { return null; }\n");
+        Path entryFile = tmpDir.resolve("src/importspan_main.deal")
+            .toAbsolutePath();
+        List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, tmpDir.resolve("build/importspan"), false, null,
+            moduleRoots, null);
+        check(!orchestrator.compile(), "unresolved import fails compilation");
+        CompilerDiagnostic e2003 = orchestrator.diagnostics().stream()
+            .filter(d -> "E2003".equals(d.code()))
+            .findFirst().orElse(null);
+        check(e2003 != null, "E2003 emitted for the unresolved import");
+        if (e2003 != null) {
+            DiagnosticRange range = e2003.range();
+            // The E2003 range must equal the parser's own import
+            // declaration span (SOURCE-exact, same file/positions/offsets).
+            String src = "import * as X from \"./missing\"\n"
+                + "export function main(): null { return null; }\n";
+            ParseResult parsed = new Parser(
+                new Lexer(src, entryFile.toString()).tokenize().tokens(),
+                entryFile.toString()).parse();
+            Span impSpan = parsed.program().statements().stream()
+                .filter(st -> st instanceof ImportDeclaration)
+                .map(st -> ((ImportDeclaration) st).span())
+                .findFirst().orElse(null);
+            check(impSpan != null, "fixture parses an import declaration");
+            DiagnosticRange expected = impSpan.range();
+            check(range.origin() == RangeOrigin.SOURCE,
+                "E2003 range origin is SOURCE: " + range);
+            check(range.equals(expected),
+                "E2003 range equals the import declaration span: " + range
+                    + " vs " + expected);
+            check(range.file().endsWith("importspan_main.deal"),
+                "E2003 names the importing file: " + range.file());
+        }
+
+        // E2009: the undeclared host import anchors at the import
+        // declaration span (SOURCE-exact).
+        writeFile("src/e2009span/hostmod.d.deal",
+            "export function ping(): int;\n");
+        writeFile("src/e2009span/gate_main.deal",
+            "import * as cfg from \"e2009span/hostmod\"\n"
+                + "export function main(): null { return null; }\n");
+        Path gateEntry = tmpDir.resolve("src/e2009span/gate_main.deal")
+            .toAbsolutePath();
+        CompilationOrchestrator gateOrchestrator = new CompilationOrchestrator(
+            gateEntry, tmpDir.resolve("build/e2009span"), false, null,
+            moduleRoots, null);
+        check(!gateOrchestrator.compile(),
+            "undeclared host import fails compilation");
+        CompilerDiagnostic e2009 = gateOrchestrator.diagnostics().stream()
+            .filter(d -> "E2009".equals(d.code()))
+            .findFirst().orElse(null);
+        check(e2009 != null, "E2009 emitted for the undeclared host import");
+        if (e2009 != null) {
+            DiagnosticRange range = e2009.range();
+            String src = "import * as cfg from \"e2009span/hostmod\"\n"
+                + "export function main(): null { return null; }\n";
+            ParseResult parsed = new Parser(
+                new Lexer(src, gateEntry.toString()).tokenize().tokens(),
+                gateEntry.toString()).parse();
+            Span impSpan = parsed.program().statements().stream()
+                .filter(st -> st instanceof ImportDeclaration)
+                .map(st -> ((ImportDeclaration) st).span())
+                .findFirst().orElse(null);
+            check(impSpan != null, "fixture parses an import declaration");
+            check(range.origin() == RangeOrigin.SOURCE,
+                "E2009 range origin is SOURCE: " + range);
+            check(range.equals(impSpan.range()),
+                "E2009 range equals the import declaration span: " + range
+                    + " vs " + impSpan.range());
+        }
+    }
+
+    /**
+     * D5 anchor pin: E2005 uses the import declaration span of the first
+     * cycle module that targets another cycle member (SOURCE-exact).
+     */
+    private static void testE2005ImportSpanAnchor() throws Exception {
+        System.out.println("-- E2005 import declaration span anchor --");
+
+        writeFile("src/cya.deal",
+            "import * as B from \"./cyb\"\n"
+                + "export function main(): null { return null; }\n"
+                + "export class Holder {\n"
+                + "  seed: int = B.get(1);\n"
+                + "}\n");
+        writeFile("src/cyb.deal",
+            "import * as A from \"./cya\"\n"
+                + "export function get(x: int): int { return x + 1; }\n");
+        Path entryFile = tmpDir.resolve("src/cya.deal").toAbsolutePath();
+        List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, tmpDir.resolve("build/cya"), false, null,
+            moduleRoots, null);
+        check(!orchestrator.compile(), "runtime cycle fails compilation");
+        CompilerDiagnostic e2005 = orchestrator.diagnostics().stream()
+            .filter(d -> "E2005".equals(d.code()))
+            .findFirst().orElse(null);
+        check(e2005 != null, "E2005 emitted for the runtime cycle");
+        if (e2005 != null) {
+            DiagnosticRange range = e2005.range();
+            // The E2005 range must equal the parser's import declaration
+            // span of the first cycle module (cya) targeting another
+            // cycle member (cyb).
+            String src = "import * as B from \"./cyb\"\n"
+                + "export function main(): null { return null; }\n"
+                + "export class Holder {\n"
+                + "  seed: int = B.get(1);\n"
+                + "}\n";
+            ParseResult parsed = new Parser(
+                new Lexer(src, entryFile.toString()).tokenize().tokens(),
+                entryFile.toString()).parse();
+            Span impSpan = parsed.program().statements().stream()
+                .filter(st -> st instanceof ImportDeclaration)
+                .map(st -> ((ImportDeclaration) st).span())
+                .findFirst().orElse(null);
+            check(impSpan != null, "fixture parses an import declaration");
+            check(range.origin() == RangeOrigin.SOURCE,
+                "E2005 range origin is SOURCE: " + range);
+            check(range.equals(impSpan.range()),
+                "E2005 range equals the cycle-edge import declaration span: "
+                    + range + " vs " + impSpan.range());
+            check(range.file().endsWith("cya.deal"),
+                "E2005 anchors in the first cycle module: " + range.file());
+        }
+    }
+
+    /**
+     * Verification-6 fixture: the E2005 anchor fallback chain — import
+     * declaration span, then the module program span, then the canonical
+     * synthetic range plus a cycle-edge-naming note.
+     */
+    private static void testE2005AnchorFallbackChain() {
+        System.out.println("-- E2005 anchor fallback chain (synthetic pin) --");
+
+        List<String> cycle = List.of("a.deal", "b.deal", "a.deal");
+        String message = "Circular import with runtime dependency: "
+            + "a.deal -> b.deal -> a.deal";
+
+        // No edge spans and no program spans: canonical synthetic plus the
+        // cycle-edge-naming note.
+        CompilerDiagnostic fallback = CompilationOrchestrator.e2005Diagnostic(
+            cycle, Map.of(), Map.of(), message);
+        check(fallback.code().equals("E2005")
+                && "error".equals(fallback.severity()),
+            "E2005 fallback keeps code and severity");
+        check(fallback.range().isCanonicalSynthetic()
+                && fallback.range().origin() == RangeOrigin.SYNTHETIC,
+            "E2005 fallback range is canonical synthetic: "
+                + fallback.range());
+        check(fallback.notes().stream().anyMatch(n -> n.message().contains(
+                "missing anchor: import declaration closing the module "
+                    + "cycle a.deal -> b.deal -> a.deal")),
+            "E2005 fallback note names the cycle edge: " + fallback.notes());
+
+        // Import declaration span present: SOURCE at that span.
+        Span importSpan = new Span("a.deal", 1, 1, 1, 29, 0, 29);
+        CompilerDiagnostic anchored = CompilationOrchestrator.e2005Diagnostic(
+            cycle, Map.of("a.deal", Map.of("b.deal", importSpan)),
+            Map.of(), message);
+        check(anchored.range().origin() == RangeOrigin.SOURCE
+                && anchored.range().startScalarOffset() == 0
+                && anchored.range().scalarLength() == 29,
+            "E2005 anchors at the retained import span: "
+                + anchored.range());
+
+        // The first cycle module targets a cycle member but the edge span
+        // is unknown: the module program span is the fallback.
+        Span programSpan = new Span("a.deal", 2, 1, 5, 1, 30, 100);
+        Map<String, Span> aEdges = new HashMap<>();
+        aEdges.put("b.deal", null);
+        CompilerDiagnostic programFallback =
+            CompilationOrchestrator.e2005Diagnostic(
+                cycle, Map.of("a.deal", aEdges), Map.of("a.deal", programSpan),
+                message);
+        check(programFallback.range().origin() == RangeOrigin.SOURCE
+                && programFallback.range().startLine() == 2
+                && programFallback.range().startScalarOffset() == 30,
+            "E2005 falls back to the module program span: "
+                + programFallback.range());
+
+        // No module targets a cycle member at all: the canonical
+        // synthetic fallback regardless of available program spans.
+        CompilerDiagnostic noEdgeFallback =
+            CompilationOrchestrator.e2005Diagnostic(
+                cycle, Map.of("a.deal", Map.of(), "b.deal", Map.of()),
+                Map.of("a.deal", programSpan), message);
+        check(noEdgeFallback.range().isCanonicalSynthetic()
+                && noEdgeFallback.range().origin() == RangeOrigin.SYNTHETIC,
+            "E2005 without any cycle-member edge is synthetic: "
+                + noEdgeFallback.range());
+    }
+
+    /**
+     * Verification-6 fixture: an E6001 IR-dump failure carries the
+     * canonical synthetic range plus a note naming the failed path.
+     */
+    private static void testE6001IrDumpFailureSynthetic() {
+        System.out.println("-- E6001 IR-dump failure synthetic pin --");
+
+        CompilerDiagnostic e6001 =
+            CompilationOrchestrator.e6001IrDumpFailure("/proj/lib.deal", "boom");
+        check(e6001.code().equals("E6001")
+                && "error".equals(e6001.severity()),
+            "E6001 keeps code and severity");
+        check(e6001.range().isCanonicalSynthetic()
+                && e6001.range().origin() == RangeOrigin.SYNTHETIC
+                && e6001.range().file().equals("/proj/lib.deal"),
+            "E6001 range is the canonical synthetic shape: " + e6001.range());
+        check(e6001.notes().stream().anyMatch(n -> n.message().equals(
+                "missing anchor: IR dump path for module '/proj/lib.deal'")),
+            "E6001 note names the failed path: " + e6001.notes());
+        check(e6001.message().equals("IR dump failed for /proj/lib.deal: boom"),
+            "E6001 message unchanged: " + e6001.message());
+    }
+
+    /**
+     * Verification-6 fixtures: a nonexistent queue file and an unreadable
+     * module file yield canonical synthetic ranges plus notes naming the
+     * unresolved path (D5/D6).
+     */
+    private static void testMissingModuleSyntheticNotes() throws Exception {
+        System.out.println("-- Missing/unreadable module file synthetic anchors --");
+
+        // A nonexistent entry file: the discovery queue holds no import
+        // declaration, so "Module not found" is synthetic + note naming
+        // the unresolved path.
+        Path missingEntry = tmpDir.resolve("src/no_such.deal")
+            .toAbsolutePath();
+        List<Path> moduleRoots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        CompilationOrchestrator missingOrchestrator = new CompilationOrchestrator(
+            missingEntry, tmpDir.resolve("build/no_such"), false, null,
+            moduleRoots, null);
+        check(!missingOrchestrator.compile(), "nonexistent entry fails");
+        CompilerDiagnostic missing = missingOrchestrator.diagnostics().stream()
+            .filter(d -> "E2003".equals(d.code()))
+            .findFirst().orElse(null);
+        check(missing != null, "E2003 emitted for the nonexistent entry");
+        if (missing != null) {
+            check(missing.range().isCanonicalSynthetic()
+                    && missing.range().origin() == RangeOrigin.SYNTHETIC,
+                "nonexistent entry E2003 range is canonical synthetic: "
+                    + missing.range());
+            check(missing.range().file().equals(missingEntry.toString()),
+                "synthetic range carries the unresolved path: "
+                    + missing.range().file());
+            check(missing.notes().stream().anyMatch(n -> n.message().equals(
+                    "missing anchor: unresolved module path '"
+                        + missingEntry.toString() + "'")),
+                "note names the unresolved path: " + missing.notes());
+        }
+
+        // An unreadable module file (a directory answering to the
+        // .deal candidate): "Cannot read module" is synthetic + note
+        // naming the unreadable path.
+        Files.createDirectories(tmpDir.resolve("src/unreadable.deal"));
+        writeFile("src/um_main.deal",
+            "import * as U from \"./unreadable\"\n"
+                + "export function main(): null { return null; }\n");
+        Path umEntry = tmpDir.resolve("src/um_main.deal").toAbsolutePath();
+        CompilationOrchestrator unreadableOrchestrator =
+            new CompilationOrchestrator(
+                umEntry, tmpDir.resolve("build/um"), false, null,
+                moduleRoots, null);
+        check(!unreadableOrchestrator.compile(), "unreadable module fails");
+        CompilerDiagnostic unreadable = unreadableOrchestrator.diagnostics()
+            .stream().filter(d -> "E2003".equals(d.code())
+                    && d.message().startsWith("Cannot read module: "))
+            .findFirst().orElse(null);
+        check(unreadable != null, "E2003 emitted for the unreadable module");
+        if (unreadable != null) {
+            check(unreadable.range().isCanonicalSynthetic()
+                    && unreadable.range().origin() == RangeOrigin.SYNTHETIC,
+                "unreadable module E2003 range is canonical synthetic: "
+                    + unreadable.range());
+            String unreadablePath = tmpDir.resolve("src/unreadable.deal")
+                .toString();
+            check(unreadable.notes().stream().anyMatch(n -> n.message().equals(
+                    "missing anchor: unreadable module path '"
+                        + unreadablePath + "'")),
+                "note names the unreadable path: " + unreadable.notes());
+        }
+    }
+
+    /**
+     * End-to-end --diagnostics-json compilation path (D8): a failing
+     * compilation prints through the canonical formatter and writes a
+     * field-exact document with exit 1; a successful compilation writes
+     * the empty document with exit 0; an unwritable path produces the
+     * deterministic I/O diagnostic with exit 1 and no stack trace.
+     */
+    private static void testCliDiagnosticsJsonCompilationPath()
+            throws Exception {
+        System.out.println("-- CLI: --diagnostics-json compilation path --");
+
+        Path entry = writeFile("src/dj_fail.deal",
+            "export function bad(): int { return \"wrong\"; }\n")
+            .toAbsolutePath();
+        Path outJson = tmpDir.resolve("dj_fail.json");
+
+        String[] captured = runCliCapturingErr(new String[] {
+            "compile", entry.toString(),
+            "--output", tmpDir.resolve("build/dj_fail").toString(),
+            "--diagnostics-json", outJson.toString()});
+        check("1".equals(captured[0]),
+            "failing compilation with --diagnostics-json exits 1");
+        check(captured[1].contains("[span "),
+            "human diagnostics print through the canonical formatter: "
+                + captured[1]);
+        check(captured[1].contains("error(s)"),
+            "summary counts print: " + captured[1]);
+
+        // Field-exact against the in-process carrier on the same fixture.
+        ByteArrayOutputStream noise = new ByteArrayOutputStream();
+        PrintStream originalErr = System.err;
+        CompilationOrchestrator orchestrator;
+        try {
+            System.setErr(new PrintStream(noise, true, StandardCharsets.UTF_8));
+            orchestrator = new CompilationOrchestrator(
+                entry, tmpDir.resolve("build/dj_fail_direct"), false,
+                (DealConfig) null, List.of(tmpDir.resolve("src").toAbsolutePath()),
+                null);
+            orchestrator.compile();
+        } finally {
+            System.err.flush();
+            System.setErr(originalErr);
+        }
+        String expectedJson =
+            DiagnosticStructuredOutput.toJson(orchestrator.diagnostics());
+        String written = Files.readString(outJson);
+        check(written.equals(expectedJson),
+            "failing-compilation document is field-exact:\n" + written);
+
+        // Successful compilation: the document with empty diagnostics,
+        // exit 0 (the write does not change the exit code).
+        Path okEntry = writeFile("src/dj_ok.deal",
+            "export function main(): null { return null; }\n")
+            .toAbsolutePath();
+        Path okJson = tmpDir.resolve("dj_ok.json");
+        String[] okCaptured = runCliCapturingErr(new String[] {
+            "compile", okEntry.toString(),
+            "--output", tmpDir.resolve("build/dj_ok").toString(),
+            "--diagnostics-json", okJson.toString()});
+        check("0".equals(okCaptured[0]),
+            "successful compilation with --diagnostics-json exits 0: "
+                + okCaptured[1]);
+        check(Files.readString(okJson).equals(
+                DiagnosticStructuredOutput.toJson(List.of())),
+            "successful compilation writes the empty document: "
+                + Files.readString(okJson));
+
+        // Unwritable path on a failing compilation: deterministic stderr
+        // I/O diagnostic, exit 1, no stack trace, no raw path exception.
+        Path badPath = Path.of("/nonexistent-parent-dir-0413/dj.json");
+        String[] badCaptured = runCliCapturingErr(new String[] {
+            "compile", entry.toString(),
+            "--output", tmpDir.resolve("build/dj_fail_bad").toString(),
+            "--diagnostics-json", badPath.toString()});
+        check("1".equals(badCaptured[0]),
+            "unwritable --diagnostics-json on a failing compilation exits 1");
+        check(badCaptured[1].contains("deal: cannot write diagnostics JSON"),
+            "deterministic I/O diagnostic: " + badCaptured[1]);
+        check(!badCaptured[1].contains("Exception")
+                && !badCaptured[1].contains("\tat "),
+            "no raw exception or stack trace escapes: " + badCaptured[1]);
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -3258,6 +3762,13 @@ public class ModuleSystemTest {
             testModuleShapeNestedInFunctionExpressions();
             testModuleShapeBodylessInImplementation();
             testEntryMainValidation();
+            testEntryMainProgramSpanAnchors();
+            testImportSpanAnchorPins();
+            testE2005ImportSpanAnchor();
+            testE2005AnchorFallbackChain();
+            testE6001IrDumpFailureSynthetic();
+            testMissingModuleSyntheticNotes();
+            testCliDiagnosticsJsonCompilationPath();
             testTopologicalSortDiamond();
             testModuleOutsideCycle();
             testSingleModuleCompilation();

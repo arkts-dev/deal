@@ -1309,7 +1309,7 @@ public class JvmConformanceTest {
     }
 
     private record OrchestratorRun(boolean success,
-                                   List<Diagnostic> diagnostics,
+                                   List<CompilerDiagnostic> diagnostics,
                                    String capturedOutput) {}
 
     /**
