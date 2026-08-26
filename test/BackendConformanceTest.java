@@ -1478,8 +1478,10 @@ public class BackendConformanceTest {
                 }
                 dealJson.append("\n  }\n}\n");
                 Files.writeString(projectRoot.resolve("deal.json"), dealJson);
-                config = DealConfig.load(projectRoot);
-                if (config == null) {
+                DealConfig.DealConfigParseResult configResult =
+                    DealConfig.load(projectRoot);
+                config = configResult.config();
+                if (config == null || !configResult.diagnostics().isEmpty()) {
                     log("  [" + name + "] FAIL: generated deal.json did "
                         + "not load");
                     failed.incrementAndGet();

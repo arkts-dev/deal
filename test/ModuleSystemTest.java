@@ -2,16 +2,22 @@ package deal.test;
 
 import deal.Main;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticFormatter;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.DiagnosticStructuredOutput;
+import deal.diagnostics.RangeOrigin;
 import deal.ast.*;
 import deal.checker.*;
 import deal.codegen.lua.LuaBackend;
 import deal.lexer.*;
 import deal.module.*;
+import deal.module.DealConfig.DealConfigParseResult;
 import deal.parser.*;
 import deal.types.Type;
 import deal.types.Types;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 
@@ -330,7 +336,7 @@ public class ModuleSystemTest {
     // DealConfig Tests
     // =========================================================================
 
-    private static void testDealConfig() {
+    private static void testDealConfig() throws Exception {
         System.out.println("-- DealConfig --");
 
         String json = """
@@ -345,8 +351,12 @@ public class ModuleSystemTest {
               "dependencies": { "items": ["dep1"] }
             }""";
 
-        try {
-            DealConfig config = DealConfig.parse(Path.of("deal.json"), json);
+        DealConfigParseResult result = parseManifest(json);
+        check(result.diagnostics().isEmpty(),
+            "valid manifest carries no diagnostics: " + result.diagnostics());
+        DealConfig config = result.config();
+        check(config != null, "valid manifest yields a config");
+        if (config != null) {
             check(config.moduleRoots().size() == 1, "moduleRoots size");
             check(config.moduleRoots().get(0).equals("src"), "moduleRoots[0]");
             check(config.output().equals("build/lua"), "output");
@@ -361,8 +371,8 @@ public class ModuleSystemTest {
             check(config.dependencies().items().size() == 1, "dependencies.items size");
             check(config.languageVersion().equals("1.2"),
                 "languageVersion parses as '1.2'");
-        } catch (Exception e) {
-            fail("DealConfig parse: " + e.getMessage());
+            check(config.configFile().equals(Path.of("deal.json")),
+                "configFile is the parse path");
         }
 
         // Spec map form: externals entries carry a manifest-relative declaration.
@@ -374,8 +384,12 @@ public class ModuleSystemTest {
                 "host/log": { "declaration": "bindings/host-log.d.deal" }
               }
             }""";
-        try {
-            DealConfig mapConfig = DealConfig.parse(Path.of("deal.json"), mapJson);
+        result = parseManifest(mapJson);
+        check(result.diagnostics().isEmpty(),
+            "externals map manifest carries no diagnostics");
+        DealConfig mapConfig = result.config();
+        check(mapConfig != null, "externals map manifest yields a config");
+        if (mapConfig != null) {
             check(mapConfig.externals().size() == 2, "externals map size");
             check(mapConfig.externals().get("host/cfg")
                     .equals("bindings/host-cfg.d.deal"),
@@ -383,19 +397,11 @@ public class ModuleSystemTest {
             check(mapConfig.externals().get("host/log")
                     .equals("bindings/host-log.d.deal"),
                 "externals map declaration host/log");
-        } catch (Exception e) {
-            fail("DealConfig externals map parse: " + e.getMessage());
         }
 
         // Malformed externals entry: value must be an object with "declaration".
-        String badExternals = "{\"externals\": {\"host/cfg\": \"not-an-object\"}}";
-        try {
-            DealConfig.parse(Path.of("deal.json"), badExternals);
-            fail("Should have thrown for non-object externals entry");
-        } catch (IllegalArgumentException e) {
-            check(e.getMessage().contains("declaration"),
-                "Externals entry error message mentions 'declaration'");
-        }
+        checkManifestFailure("{\"externals\": {\"host/cfg\": \"not-an-object\"}}",
+            "declaration");
 
         // Malformed externals declarations: a missing "declaration" string,
         // an empty path, and a path that is not a host declaration file are
@@ -407,15 +413,7 @@ public class ModuleSystemTest {
                 "{\"externals\": {\"host/cfg\": {\"declaration\": \"\"}}}",
                 "{\"externals\": {\"host/cfg\": {\"declaration\": \"cfg.deal\"}}}",
                 "{\"externals\": {\"host/cfg\": {\"declaration\": \"bindings/cfg.d\"}}}"}) {
-            try {
-                DealConfig.parse(Path.of("deal.json"), badDecl);
-                fail("Should have thrown for malformed externals declaration: "
-                    + badDecl);
-            } catch (IllegalArgumentException e) {
-                check(e.getMessage().contains("declaration"),
-                    "Externals declaration error message mentions 'declaration': "
-                        + e.getMessage());
-            }
+            checkManifestFailure(badDecl, "declaration");
         }
 
         // Non-map, non-list externals shapes are config errors, not silent
@@ -424,46 +422,31 @@ public class ModuleSystemTest {
                 "{\"externals\": 5}",
                 "{\"externals\": \"host/x\"}",
                 "{\"externals\": true}"}) {
-            try {
-                DealConfig.parse(Path.of("deal.json"), badShape);
-                fail("Should have thrown for malformed externals shape: "
-                    + badShape);
-            } catch (IllegalArgumentException e) {
-                check(e.getMessage().contains("externals"),
-                    "Externals shape error message mentions 'externals'");
-            }
+            checkManifestFailure(badShape, "externals");
         }
 
         // ISSUE-0091: the JVM skeleton backend is now a valid manifest value.
-        try {
-            DealConfig config = DealConfig.parse(Path.of("deal.json"),
-                "{\"backend\": \"jvm\"}");
-            check("jvm".equals(config.backend()), "deal.json accepts 'jvm' backend");
-        } catch (IllegalArgumentException e) {
-            fail("deal.json 'jvm' backend must parse: " + e.getMessage());
-        }
+        result = parseManifest("{\"backend\": \"jvm\"}");
+        check(result.diagnostics().isEmpty(), "deal.json 'jvm' backend carries no diagnostics");
+        config = result.config();
+        check(config != null && "jvm".equals(config.backend()),
+            "deal.json accepts 'jvm' backend");
 
         // Unknown backends are still rejected, naming the supported values.
-        String badJson = "{\"backend\": \"wasm\"}";
-        try {
-            DealConfig.parse(Path.of("deal.json"), badJson);
-            fail("Should have thrown for invalid backend");
-        } catch (IllegalArgumentException e) {
-            check(e.getMessage().contains("luajit"), "Invalid backend error message");
-        }
+        checkManifestFailure("{\"backend\": \"wasm\"}", "luajit");
 
         // Missing optional fields
-        String minimal = "{}";
-        try {
-            DealConfig config = DealConfig.parse(Path.of("deal.json"), minimal);
+        result = parseManifest("{}");
+        check(result.diagnostics().isEmpty(), "minimal config carries no diagnostics");
+        config = result.config();
+        check(config != null, "minimal config yields a config");
+        if (config != null) {
             check(config.moduleRoots().isEmpty(), "empty moduleRoots");
             check(config.output() == null, "null output");
             check(config.backend() == null, "null backend");
             // Absent languageVersion assumes the current compiler version.
             check("1.2".equals(config.languageVersion()),
                 "absent languageVersion defaults to '1.2'");
-        } catch (Exception e) {
-            fail("Minimal config: " + e.getMessage());
         }
 
         // DEAL v1.2 is not source-compatible with earlier language
@@ -475,16 +458,422 @@ public class ModuleSystemTest {
                 "{\"languageVersion\": \"2.0\"}",
                 "{\"languageVersion\": \"1\"}",
                 "{\"languageVersion\": \"\"}"}) {
-            try {
-                DealConfig.parse(Path.of("deal.json"), badVersion);
-                fail("Should have thrown for unsupported languageVersion: "
-                    + badVersion);
-            } catch (IllegalArgumentException e) {
-                check(e.getMessage().contains("languageVersion"),
-                    "languageVersion error message mentions 'languageVersion': "
-                        + e.getMessage());
-            }
+            checkManifestFailure(badVersion, "languageVersion");
         }
+
+        testManifestOutOfAlphabetPositions();
+        testManifestToleranceFixtures();
+        testManifestPrecedenceFixtures();
+        testManifestStructuralFixtures();
+        testManifestWhitespaceOnlyAnchor();
+        testAbsentManifestDefaultConfig();
+    }
+
+    /**
+     * Verification-4 out-of-alphabet position fixtures: each produces
+     * exactly one ranged E2012 naming the offending scalar position.
+     */
+    private static void testManifestOutOfAlphabetPositions() {
+        // NBSP at member start (today's expect('"') throw).
+        DealConfigParseResult r = parseManifest("{\u00A0\"a\": 1}");
+        CompilerDiagnostic d = requireSingleE2012(r, "expected string key");
+        checkRange(d, 1, 2, 1, 3, 1, 2, 1);
+
+        // NBSP at member start after a completed member.
+        r = parseManifest("{\"a\": 1, \u00A0\"b\": 2}");
+        d = requireSingleE2012(r, "expected string key");
+        checkRange(d, 1, 10, 1, 11, 9, 10, 1);
+
+        // NBSP between key and colon (today's expect(':') throw).
+        r = parseManifest("{\"a\"\u00A0: 1}");
+        d = requireSingleE2012(r, "expected ':'");
+        checkRange(d, 1, 5, 1, 6, 4, 5, 1);
+
+        // NBSP after a completed member value: the stop-every-enclosing-
+        // container truncation — parses as backend-only, no diagnostic,
+        // languageVersion defaults to 1.2.
+        r = parseManifest("{\"backend\":\"luajit\"\u00A0\"languageVersion\":\"1.0\"}");
+        check(r.diagnostics().isEmpty(),
+            "after-value NBSP truncates with no diagnostic: " + r.diagnostics());
+        DealConfig config = r.config();
+        check(config != null, "after-value truncation still yields a config");
+        if (config != null) {
+            check("luajit".equals(config.backend()),
+                "backend member read before the truncation");
+            check("1.2".equals(config.languageVersion()),
+                "truncated languageVersion defaults to 1.2");
+        }
+    }
+
+    /**
+     * Verification-4 tolerance fixtures: every construct today's parser
+     * tolerates still parses without a diagnostic.
+     */
+    private static void testManifestToleranceFixtures() {
+        // Missing comma truncates the object read silently.
+        DealConfigParseResult r = parseManifest("{\"a\":1 \"b\":2}");
+        check(r.diagnostics().isEmpty(), "missing comma truncates: " + r.diagnostics());
+        check(r.config() != null, "truncated object yields a config");
+
+        // The truncation is observable: the second member is never read,
+        // so an unsupported languageVersion behind the missing comma is
+        // not validated.
+        r = parseManifest("{\"backend\":\"luajit\" \"languageVersion\":\"1.1\"}");
+        check(r.diagnostics().isEmpty(),
+            "truncated languageVersion is not validated: " + r.diagnostics());
+        check(r.config() != null && "luajit".equals(r.config().backend())
+                && "1.2".equals(r.config().languageVersion()),
+            "missing-comma truncation keeps backend-only semantics");
+
+        // Out-of-alphabet scalar after a completed member value: same
+        // stop-every-enclosing-container cascade.
+        r = parseManifest("{\"backend\":\"luajit\"\u00A0\"languageVersion\":\"1.1\"}");
+        check(r.diagnostics().isEmpty(),
+            "after-value NBSP cascade carries no diagnostic: " + r.diagnostics());
+        check(r.config() != null && "luajit".equals(r.config().backend())
+                && "1.2".equals(r.config().languageVersion()),
+            "after-value cascade keeps backend-only semantics");
+
+        // Unclosed object at EOF: partial structure accepted.
+        r = parseManifest("{\"a\":1");
+        check(r.diagnostics().isEmpty(), "unclosed object at EOF: " + r.diagnostics());
+        check(r.config() != null, "unclosed object yields a config");
+
+        // Unclosed array at EOF: partial list accepted.
+        r = parseManifest("{\"moduleRoots\":[\"src\"");
+        check(r.diagnostics().isEmpty(), "unclosed array at EOF: " + r.diagnostics());
+        check(r.config() != null && r.config().moduleRoots().equals(List.of("src")),
+            "unclosed array keeps the partial list");
+
+        // Value position at EOF: null value, member tolerated.
+        r = parseManifest("{\"a\":");
+        check(r.diagnostics().isEmpty(), "value at EOF is a null value: " + r.diagnostics());
+        check(r.config() != null, "null-value member yields a config");
+
+        // Unclosed string at EOF: partial string accepted.
+        r = parseManifest("{\"moduleRoots\":[\"sr");
+        check(r.diagnostics().isEmpty(), "unclosed string at EOF: " + r.diagnostics());
+        check(r.config() != null && r.config().moduleRoots().equals(List.of("sr")),
+            "unclosed string keeps the partial value");
+
+        // Unknown escape: backslash dropped, character kept.
+        r = parseManifest("{\"output\": \"build\\q\"}");
+        check(r.diagnostics().isEmpty(), "unknown escape tolerated: " + r.diagnostics());
+        check(r.config() != null && "buildq".equals(r.config().output()),
+            "unknown escape drops the backslash and keeps the character");
+
+        // Unpaired surrogate passed through.
+        r = parseManifest("{\"output\": \"x\uD800y\"}");
+        check(r.diagnostics().isEmpty(), "unpaired surrogate tolerated: " + r.diagnostics());
+        check(r.config() != null && r.config().output() != null
+                && r.config().output().charAt(1) == '\uD800',
+            "unpaired surrogate kept in the decoded value");
+
+        // Trailing content after the root is ignored.
+        r = parseManifest("{\"moduleRoots\":[\"src\"]} trailing garbage");
+        check(r.diagnostics().isEmpty(), "trailing content tolerated: " + r.diagnostics());
+        check(r.config() != null && r.config().moduleRoots().equals(List.of("src")),
+            "trailing content does not disturb the decoded root");
+
+        // Duplicate keys: last-wins.
+        r = parseManifest("{\"backend\":\"wasm\",\"backend\":\"luajit\"}");
+        check(r.diagnostics().isEmpty(), "duplicate keys last-wins: " + r.diagnostics());
+        check(r.config() != null && "luajit".equals(r.config().backend()),
+            "duplicate backend resolves to the last value");
+
+        // Permissive numbers: 01 decodes as Long 1; 1e5 decodes as a
+        // Double (wrong-typed for the int getter -> absent); both parse.
+        r = parseManifest("{\"limits\":{\"maxMemory\":01}}");
+        check(r.diagnostics().isEmpty(), "leading-zero number tolerated: " + r.diagnostics());
+        check(r.config() != null && r.config().limits() != null
+                && r.config().limits().maxMemory() == 1,
+            "01 decodes as 1");
+        r = parseManifest("{\"limits\":{\"maxMemory\":1e5}}");
+        check(r.diagnostics().isEmpty(), "exponent number tolerated: " + r.diagnostics());
+        check(r.config() != null && r.config().limits() != null
+                && r.config().limits().maxMemory() == null,
+            "1e5 decodes as a Double and stays absent for the int getter");
+
+        // Non-strict whitespace between key and colon (U+2028, skipped by
+        // Character.isWhitespace) is accepted.
+        r = parseManifest("{\"a\"\u2028: 1}");
+        check(r.diagnostics().isEmpty(), "U+2028 between key and colon: " + r.diagnostics());
+        check(r.config() != null, "U+2028-skipped manifest yields a config");
+
+        // VT-separated members with a comma are accepted.
+        r = parseManifest("{\"backend\":\"luajit\",\u000B\"moduleRoots\":[\"src\"]}");
+        check(r.diagnostics().isEmpty(), "VT-separated members: " + r.diagnostics());
+        check(r.config() != null && "luajit".equals(r.config().backend())
+                && r.config().moduleRoots().equals(List.of("src")),
+            "VT-separated members parse both fields");
+
+        // VT-separated members without a comma truncate exactly as today
+        // (the VT is skipped, the following string breaks the loop).
+        r = parseManifest("{\"a\":1\u000B\"b\":2}");
+        check(r.diagnostics().isEmpty(), "VT-separated missing comma: " + r.diagnostics());
+        check(r.config() != null, "VT-separated truncation yields a config");
+
+        // Raw control characters inside strings are kept as-is.
+        r = parseManifest("{\"output\": \"x\ny\"}");
+        check(r.diagnostics().isEmpty(), "raw LF in string: " + r.diagnostics());
+        check(r.config() != null && "x\ny".equals(r.config().output()),
+            "raw control characters kept in the decoded value");
+
+        // Legacy externals list form is retired to an empty map.
+        r = parseManifest("{\"externals\": [1,2]}");
+        check(r.diagnostics().isEmpty(), "legacy externals list: " + r.diagnostics());
+        check(r.config() != null && r.config().externals().isEmpty(),
+            "legacy externals list yields an empty map");
+
+        // JSON null externals is absent.
+        r = parseManifest("{\"externals\": null}");
+        check(r.diagnostics().isEmpty(), "null externals tolerated: " + r.diagnostics());
+        check(r.config() != null && r.config().externals().isEmpty(),
+            "null externals yields an empty map");
+
+        // Trimmed languageVersion spellings and wrong-typed optionals.
+        r = parseManifest("{\"languageVersion\": \" 1.2 \"}");
+        check(r.diagnostics().isEmpty(), "trimmed languageVersion: " + r.diagnostics());
+        check(r.config() != null && "1.2".equals(r.config().languageVersion()),
+            "trimmed '1.2' validates");
+        r = parseManifest("{\"languageVersion\": 1.2}");
+        check(r.diagnostics().isEmpty(), "wrong-typed languageVersion: " + r.diagnostics());
+        check(r.config() != null && "1.2".equals(r.config().languageVersion()),
+            "wrong-typed languageVersion defaults to 1.2");
+        r = parseManifest("{\"backend\": \" JVM \"}");
+        check(r.diagnostics().isEmpty(), "case-insensitive backend: " + r.diagnostics());
+        check(r.config() != null && " JVM ".equals(r.config().backend()),
+            "backend spelling kept as written");
+
+        // Wrong-typed list entries become absent/empty via the getters.
+        r = parseManifest("{\"moduleRoots\": [\"src\", 5]}");
+        check(r.diagnostics().isEmpty(), "wrong-typed list entry: " + r.diagnostics());
+        check(r.config() != null && r.config().moduleRoots().equals(List.of("src")),
+            "only string list entries survive");
+    }
+
+    /**
+     * Verification-4 precedence fixtures: multi-error manifests report
+     * today's first-error precedence (languageVersion -> externals ->
+     * backend), independent of member document order.
+     */
+    private static void testManifestPrecedenceFixtures() {
+        // languageVersion beats backend, regardless of member order.
+        DealConfigParseResult r = parseManifest("{\"backend\":\"wasm\",\"languageVersion\":\"1.1\"}");
+        CompilerDiagnostic d = requireSingleE2012(r, "languageVersion");
+        check(!d.message().contains("unsupported backend"),
+            "backend message absent under languageVersion precedence: " + d.message());
+        r = parseManifest("{\"languageVersion\":\"1.1\",\"backend\":\"wasm\"}");
+        d = requireSingleE2012(r, "languageVersion");
+        check(!d.message().contains("unsupported backend"),
+            "precedence independent of member document order: " + d.message());
+
+        // externals beats backend.
+        r = parseManifest("{\"backend\":\"wasm\",\"externals\":5}");
+        d = requireSingleE2012(r, "'externals' must be an object");
+        check(!d.message().contains("unsupported backend"),
+            "backend message absent under externals precedence: " + d.message());
+        r = parseManifest("{\"externals\":5,\"backend\":\"wasm\"}");
+        d = requireSingleE2012(r, "'externals' must be an object");
+        check(!d.message().contains("unsupported backend"),
+            "externals precedence independent of member order: " + d.message());
+
+        // languageVersion beats externals.
+        r = parseManifest("{\"externals\":5,\"languageVersion\":\"1.1\"}");
+        d = requireSingleE2012(r, "languageVersion");
+        check(!d.message().contains("'externals'"),
+            "externals message absent under languageVersion precedence: " + d.message());
+
+        // Within externals, entries validate in member order: the first
+        // malformed entry in member order wins.
+        r = parseManifest("{\"externals\":{\"a\":\"x\",\"b\":\"y\"}}");
+        d = requireSingleE2012(r, "externals entry 'a'");
+        check(d.message().contains("'a'"), "first member-order entry reported");
+    }
+
+    /**
+     * Verification-4 structural fixtures: member-start EOF, invalid value
+     * positions, undecodable numbers, and non-object roots.
+     */
+    private static void testManifestStructuralFixtures() {
+        // Member-start EOF inside the root object.
+        DealConfigParseResult r = parseManifest("{");
+        CompilerDiagnostic d = requireSingleE2012(r, "expected string key");
+        checkRange(d, 1, 2, 1, 2, 1, 1, 0);
+
+        // Member-start EOF after a completed member.
+        r = parseManifest("{\"a\": 1,");
+        d = requireSingleE2012(r, "expected string key");
+        checkRange(d, 1, 9, 1, 9, 8, 8, 0);
+
+        // Invalid value position with input present (today's raw
+        // NumberFormatException path).
+        r = parseManifest("{\"a\": :}");
+        d = requireSingleE2012(r, "expected value");
+        checkRange(d, 1, 7, 1, 8, 6, 7, 1);
+
+        // Undecodable number.
+        r = parseManifest("{\"a\": 1e}");
+        d = requireSingleE2012(r, "expected value");
+        checkRange(d, 1, 7, 1, 9, 6, 8, 2);
+
+        // Non-object roots: scalar, array, string, and null.
+        r = parseManifest("5");
+        d = requireSingleE2012(r, "deal.json: invalid JSON");
+        checkRange(d, 1, 1, 1, 2, 0, 1, 1);
+        checkManifestFailure("[1,2]", "deal.json: invalid JSON");
+        checkManifestFailure("\"x\"", "deal.json: invalid JSON");
+        checkManifestFailure("null", "deal.json: invalid JSON");
+    }
+
+    /**
+     * Verification-4 whitespace-only anchor: empty and whitespace-only
+     * manifests pin the document-start zero-length SOURCE range
+     * {@code (file,1,1,1,1,0,0,0)} with known offsets (0,0), cross-checked
+     * between the formatted and structured outputs.
+     */
+    private static void testManifestWhitespaceOnlyAnchor() {
+        for (String input : new String[] {"", " \t\n", "\u2028 \u2028"}) {
+            DealConfigParseResult r = parseManifest(input);
+            CompilerDiagnostic d = requireSingleE2012(r, "deal.json: invalid JSON");
+            DiagnosticRange range = d.range();
+            check(range.startLine() == 1 && range.startColumn() == 1
+                    && range.endLine() == 1 && range.endColumn() == 1,
+                "pinned document-start positions (1,1)-(1,1): " + range);
+            check(range.startScalarOffset() == 0 && range.endScalarOffset() == 0
+                    && range.scalarLength() == 0,
+                "pinned document-start offsets (0,0,0): " + range);
+            check(range.origin() == RangeOrigin.SOURCE,
+                "document-start anchor is SOURCE, never synthetic: " + range);
+            check(range.file().equals("deal.json"),
+                "document-start anchor carries the manifest path: " + range.file());
+            check(d.notes().isEmpty(),
+                "no anchor note on the real document-start anchor: " + d.notes());
+            checkSourceRange(range, Path.of("deal.json"));
+            checkFormattedStructuredCross(d);
+        }
+    }
+
+    /**
+     * Verification-4 absent-manifest pin: a project directory without
+     * deal.json compiles with today's default configuration, no E2012, no
+     * diagnostic output, and today's exit code.
+     */
+    private static void testAbsentManifestDefaultConfig() throws Exception {
+        Path entryFile = writeFile("no_manifest_proj/src/nm_main.deal",
+            "export function main(): null { return null; }\n"
+                + "export function run(): int { return 7; }\n")
+            .toAbsolutePath();
+        Path outputDir = tmpDir.resolve("build/no_manifest").toAbsolutePath();
+
+        // load returns (config = null, diagnostics = empty) — absent is
+        // not invalid.
+        DealConfigParseResult loadResult = DealConfig.load(entryFile.getParent());
+        check(loadResult.config() == null, "absent manifest yields no config");
+        check(loadResult.diagnostics().isEmpty(),
+            "absent manifest yields empty diagnostics: " + loadResult.diagnostics());
+
+        String[] captured = runCliCapturingErr(new String[] {
+            "compile", entryFile.toString(), "--output", outputDir.toString()});
+        check("0".equals(captured[0]),
+            "manifest-less compile exits 0, got " + captured[0] + ": " + captured[1]);
+        check(!captured[1].contains("E2012") && !captured[1].contains("deal.json"),
+            "no manifest diagnostic output: " + captured[1]);
+        check(Files.exists(outputDir.resolve("nm_main.lua")),
+            "default LuaJIT backend writes the .lua artifact");
+    }
+
+    // =========================================================================
+    // Manifest diagnostic helpers (T5 record -> T3 carrier conversion pins)
+    // =========================================================================
+
+    private static DealConfigParseResult parseManifest(String json) {
+        return DealConfig.parse(Path.of("deal.json"), json);
+    }
+
+    /** Asserts the exact single-E2012 shape plus the conversion pin. */
+    private static CompilerDiagnostic requireSingleE2012(DealConfigParseResult result,
+                                                         String messageSubstring) {
+        check(result.config() == null, "invalid manifest yields no config");
+        check(result.diagnostics().size() == 1,
+            "exactly one diagnostic: " + result.diagnostics());
+        if (result.diagnostics().size() != 1) {
+            return null;
+        }
+        CompilerDiagnostic d = result.diagnostics().get(0);
+        check("E2012".equals(d.code()), "E2012 code, got " + d.code());
+        check("error".equals(d.severity()), "error severity, got " + d.severity());
+        check(d.message().contains(messageSubstring),
+            "message contains '" + messageSubstring + "': " + d.message());
+        check(d.notes().isEmpty(), "no notes on a manifest E2012: " + d.notes());
+        checkSourceRange(d.range(), Path.of("deal.json"));
+        checkFormattedStructuredCross(d);
+        return d;
+    }
+
+    private static void checkManifestFailure(String json, String messageSubstring) {
+        requireSingleE2012(parseManifest(json), messageSubstring);
+    }
+
+    /** The T5->T3 conversion pin: SOURCE origin, manifest file, known offsets. */
+    private static void checkSourceRange(DiagnosticRange range, Path file) {
+        check(range.origin() == RangeOrigin.SOURCE,
+            "origin SOURCE, got " + range.origin());
+        check(range.file().equals(file.toString()),
+            "range file equals the manifest path '" + file + "', got '" + range.file() + "'");
+        check(range.startScalarOffset() >= 0 && range.endScalarOffset() >= 0,
+            "known (non-UNKNOWN) scalar offsets");
+        check(range.endScalarOffset() >= range.startScalarOffset(),
+            "non-inverted scalar offsets");
+        check(range.scalarLength() == range.endScalarOffset() - range.startScalarOffset(),
+            "scalarLength == endScalarOffset - startScalarOffset");
+        check(range.startLine() >= 1 && range.startColumn() >= 1
+                && range.endLine() >= 1 && range.endColumn() >= 1,
+            "positive line/column positions");
+    }
+
+    /** Asserts one exact zero/one-scalar range. */
+    private static void checkRange(CompilerDiagnostic d, int sLine, int sCol,
+                                   int eLine, int eCol, int start, int end, int len) {
+        if (d == null) return;
+        DiagnosticRange range = d.range();
+        check(range.startLine() == sLine && range.startColumn() == sCol,
+            "range start (" + sLine + "," + sCol + "), got ("
+                + range.startLine() + "," + range.startColumn() + ")");
+        check(range.endLine() == eLine && range.endColumn() == eCol,
+            "range end (" + eLine + "," + eCol + "), got ("
+                + range.endLine() + "," + range.endColumn() + ")");
+        check(range.startScalarOffset() == start && range.endScalarOffset() == end,
+            "scalar offsets (" + start + "," + end + "), got ("
+                + range.startScalarOffset() + "," + range.endScalarOffset() + ")");
+        check(range.scalarLength() == len,
+            "scalar length " + len + ", got " + range.scalarLength());
+    }
+
+    /** Formatted-vs-structured cross-check on one diagnostic. */
+    private static void checkFormattedStructuredCross(CompilerDiagnostic d) {
+        DiagnosticRange range = d.range();
+        String formatted = DiagnosticFormatter.format(d);
+        String positionPrefix = range.file() + ":" + range.startLine() + ":"
+            + range.startColumn() + "-" + range.endLine() + ":" + range.endColumn();
+        check(formatted.startsWith(positionPrefix),
+            "formatted carries the complete range positions: " + formatted);
+        check(formatted.contains("[span " + range.scalarLength() + "]"),
+            "formatted carries the span length: " + formatted);
+        String json = DiagnosticStructuredOutput.toJson(List.of(d));
+        check(json.contains("\"file\": \"" + range.file() + "\""),
+            "structured carries the manifest file: " + json);
+        check(json.contains("\"startLine\": " + range.startLine())
+                && json.contains("\"startColumn\": " + range.startColumn())
+                && json.contains("\"endLine\": " + range.endLine())
+                && json.contains("\"endColumn\": " + range.endColumn()),
+            "structured carries the complete range positions: " + json);
+        check(json.contains("\"startScalarOffset\": " + range.startScalarOffset())
+                && json.contains("\"endScalarOffset\": " + range.endScalarOffset())
+                && json.contains("\"scalarLength\": " + range.scalarLength()),
+            "structured carries the scalar offsets and length: " + json);
+        check(json.contains("\"origin\": \"SOURCE\""),
+            "structured carries the SOURCE origin: " + json);
     }
 
     // =========================================================================
@@ -1539,7 +1928,7 @@ public class ModuleSystemTest {
         Path outputDir = tmpDir.resolve("build/ext_host");
         List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
 
-        DealConfig config = DealConfig.load(tmpDir);
+        DealConfig config = DealConfig.load(tmpDir).config();
         check(config != null, "deal.json loaded");
         check(config.externals().containsKey("host/cfg"), "externals map has host/cfg");
         check(config.externals().get("host/cfg").equals("bindings/host-cfg.d.deal"),
@@ -1607,7 +1996,7 @@ public class ModuleSystemTest {
         Path outputDir = tmpDir.resolve("build/gate");
         List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
 
-        DealConfig config = DealConfig.load(tmpDir);
+        DealConfig config = DealConfig.load(tmpDir).config();
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, config, roots, null);
 
@@ -1644,7 +2033,7 @@ public class ModuleSystemTest {
         Path outputDir = tmpDir.resolve("build/missing");
         List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
 
-        DealConfig config = DealConfig.load(tmpDir);
+        DealConfig config = DealConfig.load(tmpDir).config();
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, config, roots, null);
 
@@ -1698,7 +2087,7 @@ public class ModuleSystemTest {
         Path outputDir = tmpDir.resolve("build/host_smoke");
         List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
 
-        DealConfig config = DealConfig.load(tmpDir);
+        DealConfig config = DealConfig.load(tmpDir).config();
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, config, roots, null);
 
@@ -1798,7 +2187,7 @@ public class ModuleSystemTest {
         Path outputDir = tmpDir.resolve("build/backslash_smoke");
         List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
 
-        DealConfig config = DealConfig.load(tmpDir);
+        DealConfig config = DealConfig.load(tmpDir).config();
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, config, roots, null);
 
@@ -1917,7 +2306,7 @@ public class ModuleSystemTest {
         Path outputDir = tmpDir.resolve("build/jsonable_host");
         List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
 
-        DealConfig config = DealConfig.load(tmpDir);
+        DealConfig config = DealConfig.load(tmpDir).config();
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, config, roots, null);
 
@@ -2018,6 +2407,81 @@ public class ModuleSystemTest {
         check(exitCode == 0, "Valid compile -> exit 0");
         check(Files.exists(outputDir.resolve("cli_test.lua")),
             "Output file exists");
+    }
+
+    /**
+     * CLI --diagnostics-json end-to-end on manifest-configuration failures
+     * (D8/D10): the flag is parsed here because manifest failures occur
+     * before the orchestrator exists. A missing argument is a CLI usage
+     * diagnostic; a successful write is field-exact with exit 1 unchanged;
+     * an unwritable path is a deterministic I/O diagnostic with exit 1 and
+     * no raw exception.
+     */
+    private static void testCliDiagnosticsJson() throws Exception {
+        System.out.println("-- CLI: --diagnostics-json --");
+
+        // Missing argument: usage diagnostic, exit 1.
+        String[] missing = runCliCapturingErr(new String[] {
+            "compile", "--diagnostics-json"});
+        check("1".equals(missing[0]), "--diagnostics-json without a path exits 1");
+        check(missing[1].contains("--diagnostics-json requires a path argument"),
+            "missing-argument usage diagnostic: " + missing[1]);
+
+        // Usage text documents the flag.
+        String[] noArgs = runCliCapturingErr(new String[] {});
+        check("1".equals(noArgs[0]), "no-args usage exits 1");
+        check(noArgs[1].contains("--diagnostics-json <path>"),
+            "usage documents --diagnostics-json: " + noArgs[1]);
+
+        // Manifest-configuration failure: the structured document is
+        // field-exact, the human diagnostic prints on stderr, exit 1.
+        Path manifest = writeFile("json_err_proj/deal.json", "{\"backend\": \"wasm\"}");
+        Path entry = writeFile("json_err_proj/main.deal",
+            "export function main(): null { return null; }\n").toAbsolutePath();
+        Path outJson = tmpDir.resolve("diag.json");
+
+        String[] captured = runCliCapturingErr(new String[] {
+            "compile", entry.toString(), "--diagnostics-json", outJson.toString()});
+        check("1".equals(captured[0]),
+            "manifest failure with --diagnostics-json exits 1: " + captured[1]);
+        check(captured[1].contains("E2012") && captured[1].contains("deal.json"),
+            "human E2012 prints on stderr through the formatter: " + captured[1]);
+
+        DealConfigParseResult expected = DealConfig.parse(manifest,
+            "{\"backend\": \"wasm\"}");
+        String expectedJson = DiagnosticStructuredOutput.toJson(expected.diagnostics());
+        String written = Files.readString(outJson);
+        check(written.equals(expectedJson),
+            "structured document is field-exact:\n" + written);
+
+        // Unwritable path: deterministic I/O diagnostic, exit 1, no stack
+        // trace, no raw path exception.
+        Path badPath = Path.of("/nonexistent-parent-dir-0413/out.json");
+        String[] capturedBad = runCliCapturingErr(new String[] {
+            "compile", entry.toString(), "--diagnostics-json", badPath.toString()});
+        check("1".equals(capturedBad[0]),
+            "unwritable --diagnostics-json exits 1");
+        check(capturedBad[1].contains("deal: cannot write diagnostics JSON"),
+            "deterministic I/O diagnostic: " + capturedBad[1]);
+        check(!capturedBad[1].contains("Exception")
+                && !capturedBad[1].contains("\tat "),
+            "no raw exception or stack trace escapes: " + capturedBad[1]);
+    }
+
+    /** Runs the CLI with System.err captured; returns {exitCode, stderr}. */
+    private static String[] runCliCapturingErr(String[] args) throws IOException {
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        PrintStream originalErr = System.err;
+        int exitCode;
+        try {
+            System.setErr(new PrintStream(err, true, StandardCharsets.UTF_8));
+            exitCode = Main.run(args);
+            System.err.flush();
+        } finally {
+            System.setErr(originalErr);
+        }
+        return new String[] {String.valueOf(exitCode),
+            err.toString(StandardCharsets.UTF_8)};
     }
 
     // =========================================================================
@@ -2641,6 +3105,7 @@ public class ModuleSystemTest {
             testHostModuleBackslashExternalsKeyE2E();
             testHostModuleBackslashExternalsKeyJsonableE2E();
             testCli();
+            testCliDiagnosticsJson();
             testEndToEndSingleModule();
             testEndToEndMultiModule();
             testEndToEndStdlib();

@@ -1148,8 +1148,10 @@ public class JvmConformanceTest {
                 dealJson.append("\n  }\n}\n");
                 Files.writeString(projectRoot.resolve("deal.json"),
                     dealJson);
-                config = DealConfig.load(projectRoot);
-                if (config == null) {
+                DealConfig.DealConfigParseResult configResult =
+                    DealConfig.load(projectRoot);
+                config = configResult.config();
+                if (config == null || !configResult.diagnostics().isEmpty()) {
                     throw new IllegalStateException(
                         "generated deal.json did not load");
                 }

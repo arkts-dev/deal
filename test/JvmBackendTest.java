@@ -8,6 +8,7 @@ import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.RangeOrigin;
 import deal.types.Type;
 import deal.types.Types;
 import deal.codegen.Backend;
@@ -18,6 +19,7 @@ import deal.lexer.Lexer;
 import deal.module.ModuleShapeValidator;
 import deal.module.CompilationOrchestrator;
 import deal.module.DealConfig;
+import deal.module.DealConfig.DealConfigParseResult;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
 
@@ -6608,7 +6610,7 @@ public class JvmBackendTest {
         Path outputDir = tmpDir.resolve("build/jvm");
         List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
 
-        DealConfig config = DealConfig.load(tmpDir);
+        DealConfig config = DealConfig.load(tmpDir).config();
         check(config != null && "jvm".equals(config.backend()),
             "deal.json backend jvm parsed");
 
@@ -8830,7 +8832,7 @@ public class JvmBackendTest {
         Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
         Path outputDir = tmpDir.resolve("build/host_abi");
         List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
-        DealConfig config = DealConfig.load(tmpDir);
+        DealConfig config = DealConfig.load(tmpDir).config();
         check(config != null, "deal.json with externals loads");
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
@@ -9626,38 +9628,62 @@ public class JvmBackendTest {
         System.out.println("-- DealConfig backend field --");
 
         try {
-            DealConfig c = DealConfig.parse(Path.of("deal.json"),
+            DealConfigParseResult r = DealConfig.parse(Path.of("deal.json"),
                 "{\"backend\": \"jvm\"}");
-            check("jvm".equals(c.backend()), "deal.json accepts 'jvm'");
-            DealConfig lua = DealConfig.parse(Path.of("deal.json"),
+            check(r.diagnostics().isEmpty(),
+                "deal.json 'jvm' carries no diagnostics: " + r.diagnostics());
+            check(r.config() != null && "jvm".equals(r.config().backend()),
+                "deal.json accepts 'jvm'");
+            DealConfigParseResult lua = DealConfig.parse(Path.of("deal.json"),
                 "{\"backend\": \"luajit\"}");
-            check("luajit".equals(lua.backend()), "deal.json accepts 'luajit'");
+            check(lua.diagnostics().isEmpty(),
+                "deal.json 'luajit' carries no diagnostics");
+            check(lua.config() != null && "luajit".equals(lua.config().backend()),
+                "deal.json accepts 'luajit'");
             // ISSUE-0091 rework round 3: the CLI accepts --backend lua as a
             // LuaJIT alias; deal.json must accept the same name.
-            DealConfig alias = DealConfig.parse(Path.of("deal.json"),
+            DealConfigParseResult alias = DealConfig.parse(Path.of("deal.json"),
                 "{\"backend\": \"lua\"}");
-            check("lua".equals(alias.backend()), "deal.json accepts 'lua' alias");
+            check(alias.diagnostics().isEmpty(),
+                "deal.json 'lua' carries no diagnostics");
+            check(alias.config() != null && "lua".equals(alias.config().backend()),
+                "deal.json accepts 'lua' alias");
             // Case-insensitive spellings, mirroring Backend.fromCliName: the
             // CLI accepts --backend JVM / Lua, so the manifest must accept
             // the same spellings (round-8 review flaw).
-            DealConfig upper = DealConfig.parse(Path.of("deal.json"),
+            DealConfigParseResult upper = DealConfig.parse(Path.of("deal.json"),
                 "{\"backend\": \"JVM\"}");
-            check("JVM".equals(upper.backend()), "deal.json accepts 'JVM'");
-            DealConfig mixed = DealConfig.parse(Path.of("deal.json"),
+            check(upper.diagnostics().isEmpty(),
+                "deal.json 'JVM' carries no diagnostics");
+            check(upper.config() != null && "JVM".equals(upper.config().backend()),
+                "deal.json accepts 'JVM'");
+            DealConfigParseResult mixed = DealConfig.parse(Path.of("deal.json"),
                 "{\"backend\": \"  Lua \"}");
-            check("  Lua ".equals(mixed.backend()),
+            check(mixed.diagnostics().isEmpty(),
+                "deal.json ' Lua ' carries no diagnostics");
+            check(mixed.config() != null
+                    && "  Lua ".equals(mixed.config().backend()),
                 "deal.json accepts ' Lua ' with surrounding whitespace");
         } catch (Exception e) {
             fail("DealConfig jvm parse: " + e.getMessage());
         }
 
-        try {
-            DealConfig.parse(Path.of("deal.json"), "{\"backend\": \"wasm\"}");
-            fail("unsupported backend must throw");
-        } catch (IllegalArgumentException e) {
-            check(e.getMessage().contains("luajit")
-                    && e.getMessage().contains("jvm"),
-                "error message names supported backends: " + e.getMessage());
+        // Unknown backends are a ranged E2012 naming the supported values.
+        DealConfigParseResult bad = DealConfig.parse(Path.of("deal.json"),
+            "{\"backend\": \"wasm\"}");
+        check(bad.config() == null, "unsupported backend yields no config");
+        check(bad.diagnostics().size() == 1,
+            "unsupported backend yields exactly one diagnostic: " + bad.diagnostics());
+        if (bad.diagnostics().size() == 1) {
+            CompilerDiagnostic d = bad.diagnostics().get(0);
+            check("E2012".equals(d.code()) && "error".equals(d.severity()),
+                "unsupported backend is an E2012 error: " + d);
+            check(d.message().contains("luajit")
+                    && d.message().contains("jvm"),
+                "error message names supported backends: " + d.message());
+            check(d.range().origin() == RangeOrigin.SOURCE
+                    && "deal.json".equals(d.range().file()),
+                "backend E2012 is SOURCE-anchored at the manifest path: " + d.range());
         }
 
         // End to end: a deal.json "backend": "lua" selects LuaJIT through the

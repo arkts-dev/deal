@@ -1,9 +1,12 @@
 package deal;
 
 import deal.codegen.Backend;
+import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticFormatter;
+import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.module.CompilationOrchestrator;
 import deal.module.DealConfig;
-import deal.lexer.Diagnostic;
+import deal.module.DealConfig.DealConfigParseResult;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -17,7 +20,7 @@ import java.util.List;
  *
  * <p>Usage:
  * <pre>{@code
- * deal compile <entry.deal> [--output <dir>] [--backend <lua|jvm|js>] [--verbose] [--dump-ir] [--source-map]
+ * deal compile <entry.deal> [--output <dir>] [--backend <lua|jvm|js>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]
  * }</pre>
  *
  * <p>Options:
@@ -32,6 +35,11 @@ import java.util.List;
  *   <li>{@code --verbose} / {@code -v} — verbose output with per-module timing</li>
  *   <li>{@code --dump-ir} — produce IR dump files at {@code <outputDir>/<module-path>.ir.txt}</li>
  *   <li>{@code --source-map} — produce source map sidecar files ({@code .deal.map.json})</li>
+ *   <li>{@code --diagnostics-json <path>} — write the structured diagnostics
+ *       document (version 1) to {@code <path>} for manifest-configuration
+ *       failures (the compilation path arrives with the orchestrator
+ *       migration); a write failure is a deterministic I/O diagnostic on
+ *       stderr with exit 1</li>
  * </ul>
  */
 public final class Main {
@@ -70,6 +78,7 @@ public final class Main {
         boolean verbose = false;
         boolean dumpIr = false;
         boolean sourceMap = false;
+        Path diagnosticsJsonPath = null;
 
         int i = 0;
         while (i < remaining.length) {
@@ -88,6 +97,13 @@ public final class Main {
                         return 1;
                     }
                     backendName = remaining[++i];
+                }
+                case "--diagnostics-json" -> {
+                    if (i + 1 >= remaining.length) {
+                        System.err.println("deal: --diagnostics-json requires a path argument");
+                        return 1;
+                    }
+                    diagnosticsJsonPath = Path.of(remaining[++i]);
                 }
                 case "--verbose", "-v" -> verbose = true;
                 case "--dump-ir" -> dumpIr = true;
@@ -119,13 +135,32 @@ public final class Main {
             return 1;
         }
 
-        // Try to load deal.json from the entry file's directory
+        // Try to load deal.json from the entry file's directory. An absent
+        // manifest keeps today's null-config default path; invalid content
+        // is exactly one ranged E2012 printed through the canonical
+        // formatter with exit 1 (D10). Filesystem read failures still
+        // throw IOException (explicit exclusion until ISSUE-0154).
         Path projectDir = entryFile.getParent();
-        DealConfig config = null;
-        try {
-            config = DealConfig.load(projectDir);
-        } catch (IllegalArgumentException e) {
-            System.err.println("deal: " + e.getMessage());
+        DealConfig config;
+        DealConfigParseResult configResult = DealConfig.load(projectDir);
+        config = configResult.config();
+        if (!configResult.diagnostics().isEmpty()) {
+            for (CompilerDiagnostic diagnostic : configResult.diagnostics()) {
+                System.err.println(DiagnosticFormatter.format(diagnostic));
+            }
+            if (diagnosticsJsonPath != null) {
+                try {
+                    Files.writeString(diagnosticsJsonPath,
+                        DiagnosticStructuredOutput.toJson(
+                            configResult.diagnostics()));
+                } catch (IOException e) {
+                    // Deterministic I/O diagnostic: no raw path exception
+                    // escapes (D8, parent D11).
+                    System.err.println("deal: cannot write diagnostics JSON to '"
+                        + diagnosticsJsonPath + "': " + e.getMessage());
+                    return 1;
+                }
+            }
             return 1;
         }
 
@@ -216,7 +251,7 @@ public final class Main {
     }
 
     private static void printUsage() {
-        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--backend <lua|jvm|js>] [--verbose] [--dump-ir] [--source-map]");
+        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--backend <lua|jvm|js>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]");
         System.err.println();
         System.err.println("Options:");
         System.err.println("  --output, -o <dir>   Output directory (default: ./build/lua, ./build/jvm with --backend jvm, or ./build/js with --backend js)");
@@ -224,5 +259,6 @@ public final class Main {
         System.err.println("  --verbose, -v        Verbose output with per-module timing");
         System.err.println("  --dump-ir            Produce IR dump files at <outputDir>/<module-path>.ir.txt");
         System.err.println("  --source-map         Produce source map sidecar files (.deal.map.json)");
+        System.err.println("  --diagnostics-json <path>  Write the structured diagnostics document (version 1)");
     }
 }
