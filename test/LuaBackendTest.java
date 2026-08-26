@@ -3,7 +3,10 @@ package deal.test;
 import deal.ast.*;
 import deal.checker.*;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.codegen.lua.LuaBackend;
+import deal.source.ScalarSourceCursor;
 import deal.lexer.*;
 import deal.parser.*;
 import deal.types.Type;
@@ -50,7 +53,7 @@ public class LuaBackendTest {
 
     /** Extended compile output that also captures codegen diagnostics. */
     private record CompileOutputDiag(String lua, CheckResult result,
-                                      ProgramNode program, List<Diagnostic> codegenDiags) {}
+                                      ProgramNode program, List<CompilerDiagnostic> codegenDiags) {}
 
     private static CompileOutput compile(String source) {
         return compile(source, "test.deal");
@@ -121,7 +124,7 @@ public class LuaBackendTest {
 
         LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable(), filename);
         String lua = backend.generateFromInstance(parse.program(), true);
-        List<Diagnostic> codegenDiags = backend.diagnostics();
+        List<CompilerDiagnostic> codegenDiags = backend.diagnostics();
         return new CompileOutputDiag(lua, result, parse.program(), codegenDiags);
     }
 
@@ -149,7 +152,7 @@ public class LuaBackendTest {
 
         LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable(), filename);
         String lua = backend.generateFromInstance(parse.program());
-        List<Diagnostic> codegenDiags = backend.diagnostics();
+        List<CompilerDiagnostic> codegenDiags = backend.diagnostics();
         return new CompileOutputDiag(lua, result, parse.program(), codegenDiags);
     }
 
@@ -242,7 +245,7 @@ public class LuaBackendTest {
 
     private static void assertHasDiagnostic(CompileOutputDiag out, String code, String context) {
         if (out.codegenDiags() != null) {
-            for (Diagnostic d : out.codegenDiags()) {
+            for (CompilerDiagnostic d : out.codegenDiags()) {
                 if (d.code().equals(code)) {
                     passed++;
                     return;
@@ -1746,7 +1749,7 @@ public class LuaBackendTest {
 
         assertNotContains(lua, "E6002", "no E6002 in generated code");
 
-        for (Diagnostic d : backend.diagnostics()) {
+        for (CompilerDiagnostic d : backend.diagnostics()) {
             if ("E6002".equals(d.code())) {
                 check(false, "E6002 diagnostic should not be emitted");
                 return;
@@ -1928,16 +1931,66 @@ public class LuaBackendTest {
             .anyMatch(d -> "E6004".equals(d.code()));
         check(hasE6004, "missing main rejected with E6004");
         assertNotContains(out.lua, "exports.main.f()", "no invocation emitted for invalid entry");
+
+        // T12 verification-6 fixture: no main declaration exists, so the
+        // E6004 records through the explicit synthetic factory — the
+        // canonical (file,1,1,1,1,0,0,0,SYNTHETIC) range plus the
+        // missing-main anchor note (never a Span.synthetic passthrough).
+        CompilerDiagnostic e6004 = out.codegenDiags().stream()
+            .filter(d -> "E6004".equals(d.code()))
+            .findFirst().orElse(null);
+        if (e6004 != null) {
+            DiagnosticRange range = e6004.range();
+            check(range.origin() == RangeOrigin.SYNTHETIC
+                    && range.startLine() == 1 && range.startColumn() == 1
+                    && range.endLine() == 1 && range.endColumn() == 1
+                    && range.startScalarOffset() == 0
+                    && range.endScalarOffset() == 0
+                    && range.scalarLength() == 0,
+                "missing-main E6004 carries the canonical synthetic range: "
+                    + range);
+            check(e6004.notes().size() == 1
+                    && e6004.notes().get(0).message().equals(
+                        "missing anchor: main declaration span in entry module"),
+                "missing-main E6004 note names the missing main span: "
+                    + e6004.notes());
+        }
     }
 
     static void testEntryMainWrongSignatureE6004() {
         System.out.println("-- Entry Module: main with parameters → E6004 --");
-        CompileOutputDiag out = compileEntry(
-            "export function main(x: int): null { return null; }");
+        String src = "export function main(x: int): null { return null; }";
+        CompileOutputDiag out = compileEntry(src);
         boolean hasE6004 = out.codegenDiags().stream()
             .anyMatch(d -> "E6004".equals(d.code()));
         check(hasE6004, "parameterized main rejected with E6004");
         assertNotContains(out.lua, "exports.main.f()", "no invocation emitted for invalid entry");
+
+        // T12 verification-6 counterpart: the main declaration exists
+        // (wrong signature), so the E6004 anchors at the recorded
+        // mainDeclSpan — SOURCE origin with exact scalar offsets.
+        CompilerDiagnostic e6004 = out.codegenDiags().stream()
+            .filter(d -> "E6004".equals(d.code()))
+            .findFirst().orElse(null);
+        if (e6004 != null) {
+            DiagnosticRange range = e6004.range();
+            check(range.origin() == RangeOrigin.SOURCE,
+                "wrong-signature E6004 anchors SOURCE at the main declaration: "
+                    + range);
+            int fnIdx = src.indexOf("function");
+            check(range.startColumn() == fnIdx + 1
+                    && range.startLine() == 1,
+                "wrong-signature E6004 starts at the 'function' keyword: "
+                    + range);
+            check(range.startScalarOffset()
+                    == ScalarSourceCursor.scalarCount(src, 0, fnIdx),
+                "wrong-signature E6004 start scalar offset is exact ("
+                    + fnIdx + "): " + range);
+            check(range.endScalarOffset() > range.startScalarOffset()
+                    && range.scalarLength()
+                        == range.endScalarOffset() - range.startScalarOffset(),
+                "wrong-signature E6004 spans the main declaration: " + range);
+        }
     }
 
     static void testEntryMainAsyncE6004() {

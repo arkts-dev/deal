@@ -368,6 +368,8 @@ public class JvmBackendTest {
             // scalar-value string for-of, and boundary string validation.
             testEntryModuleEmitsJvmEntryPoint();
             testEntryGateBackendE6004();
+            testEntryE6004ProgramSpanAnchors();
+            testJsonableSyntheticE6000Anchor();
             testStringForOfScalarIteration();
             testArrayForOfRefElementShapes();
             testCatchVarCapturedByNestedFunction();
@@ -2675,6 +2677,149 @@ public class JvmBackendTest {
     }
 
     /**
+     * T12 verification-2 remainder: the JVM E6004 anchors at the program
+     * span (SOURCE-exact via the T2 program-span obligation). An entry
+     * program whose first statement does not start at (1,1) pins the
+     * exact non-zero program-start scalar offset; an empty entry file
+     * pins the zero-length SOURCE range (file,1,1,1,1,0,0,0,SOURCE) —
+     * never SYNTHETIC, no anchor note.
+     */
+    private static void testEntryE6004ProgramSpanAnchors() {
+        System.out.println("-- Entry gate E6004 program-span anchors (JVM backend) --");
+
+        // A leading comment plus a blank line: the first statement (the
+        // export) starts at 3:1, and the program span starts there too.
+        String leading =
+            "// leading comment\n"
+            + "\n"
+            + "export function helper(): int { return 1; }";
+        Frontend f = compileFrontend(leading, "jvmtest-e6004-span.deal");
+        check(f.errors().isEmpty(), "e6004-span probe frontend clean: "
+            + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-e6004-span.deal",
+                "main", Map.of(), Map.of(), Map.of(), true);
+            CompilerDiagnostic e6004 = res.diagnostics().stream()
+                .filter(d -> "E6004".equals(d.code()))
+                .findFirst().orElse(null);
+            check(e6004 != null, "E6004 present for the non-(1,1) entry: "
+                + res.diagnostics());
+            if (e6004 != null) {
+                DiagnosticRange range = e6004.range();
+                check(range.origin() == RangeOrigin.SOURCE,
+                    "E6004 program-span origin is SOURCE: " + range);
+                check(range.startLine() == 3 && range.startColumn() == 1,
+                    "E6004 starts at 3:1 (the program start, never 1:1): "
+                        + range);
+                int expectedStart = ScalarSourceCursor.scalarCount(leading, 0,
+                    leading.indexOf("export"));
+                check(range.startScalarOffset() == expectedStart,
+                    "E6004 start scalar offset is exact (" + expectedStart
+                        + "): " + range);
+                check(range.endScalarOffset() > range.startScalarOffset()
+                        && range.scalarLength()
+                            == range.endScalarOffset() - range.startScalarOffset(),
+                    "E6004 spans the whole program: " + range);
+                check(e6004.notes().isEmpty(),
+                    "the SOURCE-anchored E6004 carries no anchor note: "
+                        + e6004.notes());
+            }
+        }
+
+        // Empty entry file: the program span is the explicit zero-length
+        // SOURCE range at file start — never SYNTHETIC, no anchor note.
+        Frontend empty = compileFrontend("", "jvmtest-e6004-empty.deal");
+        check(empty.errors().isEmpty(), "empty-entry probe frontend clean: "
+            + empty.errors());
+        if (empty.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                empty.program(), empty.checkResult(), "jvmtest-e6004-empty.deal",
+                "main", Map.of(), Map.of(), Map.of(), true);
+            CompilerDiagnostic e6004 = res.diagnostics().stream()
+                .filter(d -> "E6004".equals(d.code()))
+                .findFirst().orElse(null);
+            check(e6004 != null, "E6004 present for the empty entry: "
+                + res.diagnostics());
+            if (e6004 != null) {
+                DiagnosticRange range = e6004.range();
+                check(range.origin() == RangeOrigin.SOURCE
+                        && range.file().equals("jvmtest-e6004-empty.deal")
+                        && range.startLine() == 1 && range.startColumn() == 1
+                        && range.endLine() == 1 && range.endColumn() == 1
+                        && range.startScalarOffset() == 0
+                        && range.endScalarOffset() == 0
+                        && range.scalarLength() == 0,
+                    "empty-entry E6004 is (file,1,1,1,1,0,0,0,SOURCE): "
+                        + range);
+                check(e6004.notes().isEmpty(),
+                    "the empty-entry SOURCE E6004 carries no anchor note: "
+                        + e6004.notes());
+            }
+        }
+    }
+
+    /**
+     * T12 verification-6 fixture: the jsonable conversion sites that hold
+     * only a converted class (no source span) record E6000 through the
+     * explicit synthetic factory — the canonical
+     * (file,1,1,1,1,0,0,0,SYNTHETIC) range plus a note naming the class.
+     * The defensive locality guard of the builtin Error class type
+     * reaches jsonClassRefSynthetic (the fromJson side of a @jsonable
+     * class field); the checker rejects Error-typed @jsonable fields with
+     * E4007 (Error$fromJson is never exported), so the fixture drives the
+     * backend directly over the parsed and checked AST — the same
+     * defensive path any checker-gated unreachable program exercises.
+     */
+    private static void testJsonableSyntheticE6000Anchor() {
+        System.out.println("-- @jsonable conversion sites: synthetic E6000 anchor notes --");
+
+        String source = """
+            // @jsonable
+            export class Holder {
+              e: Error;
+            }
+            export function main(): null { return null; }
+            """;
+        LexResult lex = new Lexer(source, "jvmtest-jsonable-synth.deal").tokenize();
+        check(!lex.hasErrors(), "synthetic-E6000 probe lexes clean: "
+            + lex.diagnostics());
+        ParseResult parse = new Parser(lex.tokens(), "jvmtest-jsonable-synth.deal").parse();
+        check(!parse.hasErrors(), "synthetic-E6000 probe parses clean: "
+            + parse.diagnostics());
+        NameResolver nr = new NameResolver("jvmtest-jsonable-synth.deal",
+            new BackendConformanceTest.StubModuleResolver());
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("jvmtest-jsonable-synth.deal",
+            symTable, nr, parse.program());
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+            parse.program(), result, "jvmtest-jsonable-synth.deal", "main",
+            Map.of(), Map.of(), Map.of(), false);
+        CompilerDiagnostic e6000 = res.diagnostics().stream()
+            .filter(d -> "E6000".equals(d.code())
+                && d.range().origin() == RangeOrigin.SYNTHETIC)
+            .findFirst().orElse(null);
+        check(e6000 != null, "synthetic E6000 present: " + res.diagnostics());
+        if (e6000 != null) {
+            DiagnosticRange range = e6000.range();
+            check(range.origin() == RangeOrigin.SYNTHETIC
+                    && range.startLine() == 1 && range.startColumn() == 1
+                    && range.endLine() == 1 && range.endColumn() == 1
+                    && range.startScalarOffset() == 0
+                    && range.endScalarOffset() == 0
+                    && range.scalarLength() == 0,
+                "synthetic E6000 carries the canonical synthetic range: "
+                    + range);
+            check(e6000.message().contains("values of class type 'Error'")
+                    && e6000.notes().size() == 1
+                    && e6000.notes().get(0).message().equals(
+                        "missing anchor: class declaration span for class 'Error'"),
+                "synthetic E6000 message and note name the class: "
+                    + e6000.message() + " | " + e6000.notes());
+        }
+    }
+
+    /**
      * ISSUE-0106 v1.2 Unicode scalar-value string for-of: each iteration
      * yields one string containing exactly one scalar value, in order —
      * a supplementary character (U+1F600) is ONE iteration, not two UTF-16
@@ -2974,11 +3119,11 @@ public class JvmBackendTest {
         check(!Files.exists(badOut.resolve("Refof_bad.java")),
             "no entry artifact when the ref-shape for-of is rejected");
 
-        // Backend-boundary pin: the for-of E6000 arrives through the
-        // transitional ranged channel and renders at its real source
-        // position — SOURCE origin with exact scalar offsets, never
-        // synthetic (1,1). The unsupported call anchors at the for-of
-        // statement's own span.
+        // Backend-boundary pin (T12): the for-of E6000 arrives through
+        // the backend's native List<CompilerDiagnostic> and renders at
+        // its real source position — SOURCE origin with exact scalar
+        // offsets, never synthetic (1,1). The unsupported call anchors at
+        // the for-of statement's own span.
         CompilerDiagnostic e6000 = badOrchestrator.diagnostics().stream()
             .filter(d -> "E6000".equals(d.code())
                 && d.message().contains("function arrays whose signature"))

@@ -8,8 +8,7 @@ import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.diagnostics.DiagnosticCode;
-import deal.diagnostics.DiagnosticRange;
-import deal.lexer.Diagnostic;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -604,16 +603,11 @@ public final class JvmBackend {
      * compilation of the artifact.
      */
     public record JvmCodegenResult(String className, String source,
-                                   List<Diagnostic> diagnostics,
-                                   List<DiagnosticRange> diagnosticRanges) {
+                                   List<CompilerDiagnostic> diagnostics) {
         public JvmCodegenResult {
             Objects.requireNonNull(className, "className must not be null");
             Objects.requireNonNull(source, "source must not be null");
             diagnostics = List.copyOf(diagnostics);
-            // Transitional parallel ranged channel (backend-boundary
-            // conversion, removed by the T12 backend migration): one
-            // range per legacy entry in the same order.
-            diagnosticRanges = List.copyOf(diagnosticRanges);
         }
 
         /** True when at least one error-level diagnostic was recorded. */
@@ -637,14 +631,7 @@ public final class JvmBackend {
      * class (the orchestrator's selected entry module or the standalone
      * single-module adapter). */
     private final boolean emitSharedTable;
-    private final List<Diagnostic> diagnostics = new ArrayList<>();
-    /**
-     * Transitional parallel ranged channel (backend-boundary conversion,
-     * removed by the T12 backend migration): one {@link DiagnosticRange}
-     * per legacy {@link Diagnostic} entry in the same emission order,
-     * computed from the span the backend anchored each diagnostic at.
-     */
-    private final List<DiagnosticRange> diagnosticRanges = new ArrayList<>();
+    private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     /** The generated Java source accumulator. Swapped to a temporary
      * buffer while an inline function-expression body emits (ISSUE-0102),
      * so it cannot be final. */
@@ -1607,8 +1594,7 @@ public final class JvmBackend {
             out.insert(wrapperInsertion, arrayHelpers.toString());
         }
 
-        return new JvmCodegenResult(className, out.toString(), diagnostics,
-            diagnosticRanges);
+        return new JvmCodegenResult(className, out.toString(), diagnostics);
     }
 
     /**
@@ -1640,16 +1626,12 @@ public final class JvmBackend {
             }
         }
         if (mainDecl == null) {
-            diagnostics.add(Diagnostic.error(DiagnosticCode.E6004,
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6004,
                 "entry module must export non-async main(): null; found "
                 + (foundAnyMain
                     ? "main with a different signature or an async marker"
                     : "no main export"),
-                program.span().file(), program.span().startLine(),
-                program.span().startColumn()));
-            // Parallel ranged channel: the program span's own range
-            // (SOURCE-exact via the T2 program-span obligation).
-            diagnosticRanges.add(program.span().range());
+                program.span()));
             return;
         }
         emitLine();
@@ -4631,6 +4613,25 @@ public final class JvmBackend {
         return classNameFor(module);
     }
 
+    /** Synthetic-anchor variant of
+     * {@link #importedClassModuleRef(Type.Class, Span)} (D6): same note
+     * rule as {@link #jsonClassRefSynthetic(Type.Class)}. */
+    private String importedClassModuleRefSynthetic(Type.Class cls) {
+        String module = cls.modulePath();
+        Map<String, ClassDeclaration> decls = importedClasses.get(module);
+        if (!importAliases.containsValue(module)
+                || decls == null || !decls.containsKey(cls.name())) {
+            unsupportedSynthetic("values of imported class type '" + cls.name()
+                + "' from module '" + module + "' (the module is not an "
+                + "imported compiled project module of this module, or "
+                + "its class declaration is unavailable)",
+                "missing anchor: class declaration span for class '"
+                    + cls.name() + "'");
+            return null;
+        }
+        return classNameFor(module);
+    }
+
     /** The emitted Java name of the per-class array wrapper for DEAL
      * class {@code name} ({@code $Array$<Name>}, extending the emitted
      * {@code __RefArray} so {@code instanceof} proves the element type).
@@ -5181,6 +5182,27 @@ public final class JvmBackend {
         return importedModule + "." + classNameForClass(c.name());
     }
 
+    /** Synthetic-anchor variant of
+     * {@link #jsonClassRef(Type.Class, Span)} (D6): the jsonable
+     * toJson/fromJson/boxed-type conversion sites hold only the converted
+     * class, no source span, so the E6000 rejection records through the
+     * explicit synthetic factory with a note naming the class. */
+    private String jsonClassRefSynthetic(Type.Class c) {
+        if (isLocalClassType(c)) {
+            if (!moduleClasses.containsKey(c.name())) {
+                unsupportedSynthetic("values of class type '" + c.name()
+                    + "' (only local module-level classes are supported)",
+                    "missing anchor: class declaration span for class '"
+                        + c.name() + "'");
+                return null;
+            }
+            return classNameForClass(c.name());
+        }
+        String importedModule = importedClassModuleRefSynthetic(c);
+        if (importedModule == null) return null;
+        return importedModule + "." + classNameForClass(c.name());
+    }
+
     /** The Missing-sentinel reference for a class whose generated helpers
      * this module emits — always this module's {@code $MISSING}
      * (imported-class construction of optional fields stays E6000, so no
@@ -5413,7 +5435,7 @@ public final class JvmBackend {
                 emitLine(arrVar + ".add(" + eVar + ");");
             case Type.Nullable ne -> {
                 if (ne.inner() instanceof Type.Class c) {
-                    String ref = jsonClassRef(c, Span.synthetic(modulePath));
+                    String ref = jsonClassRefSynthetic(c);
                     emitLine(arrVar + ".add(" + eVar + " == null ? null : "
                         + ref + ".$toJsonValue((" + ref + ") " + eVar + "));");
                 } else {
@@ -5421,7 +5443,7 @@ public final class JvmBackend {
                 }
             }
             case Type.Class c -> {
-                String ref = jsonClassRef(c, Span.synthetic(modulePath));
+                String ref = jsonClassRefSynthetic(c);
                 emitLine(arrVar + ".add(" + ref + ".$toJsonValue((" + ref
                     + ") " + eVar + "));");
             }
@@ -5629,7 +5651,7 @@ public final class JvmBackend {
                 emitLine(targetVar + " = ($DealRt.Table) __jsonTableValue(" + rawVar + ", 0);");
             }
             case Type.Class c -> {
-                String ref = jsonClassRef(c, Span.synthetic(modulePath));
+                String ref = jsonClassRefSynthetic(c);
                 emitLine(ref + " cv" + idx + " = " + ref
                     + ".$fromJsonValue(" + rawVar + ");");
                 emitLine("if (cv" + idx + " == null) return null;");
@@ -5650,8 +5672,10 @@ public final class JvmBackend {
                     + "(a" + idx + ");");
             }
             default -> {
-                unsupported("@jsonable value conversion of type "
-                    + typeName(t), Span.synthetic(modulePath));
+                unsupportedSynthetic("@jsonable value conversion of type "
+                    + typeName(t),
+                    "missing anchor: source span for @jsonable value "
+                        + "conversion of type '" + typeName(t) + "'");
                 emitLine(targetVar + " = null;");
             }
         }
@@ -5701,7 +5725,7 @@ public final class JvmBackend {
             case Type.Boolean ignored -> "java.lang.Boolean";
             case Type.String ignored -> "java.lang.String";
             case Type.Class c -> {
-                String ref = jsonClassRef(c, Span.synthetic(modulePath));
+                String ref = jsonClassRefSynthetic(c);
                 yield ref == null ? "java.lang.Object" : ref;
             }
             default -> "java.lang.Object";
@@ -12617,14 +12641,21 @@ public final class JvmBackend {
         out.append(s).append('\n');
     }
 
-    /** Records an E6000 backend diagnostic for an out-of-scope construct. */
+    /** Records an E6000 backend diagnostic for an out-of-scope construct
+     * at a real source span (D5). */
     private void unsupported(String what, Span span) {
-        diagnostics.add(Diagnostic.error(DiagnosticCode.E6000,
+        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6000,
             "JVM backend (skeleton) does not support " + what + " yet",
-            span.file(), span.startLine(), span.startColumn()));
-        // Parallel ranged channel: the span's own range — SOURCE with the
-        // computed offsets for real spans, canonical SYNTHETIC for
-        // Span.synthetic anchors (e.g. the jsonable conversion sites).
-        diagnosticRanges.add(span.range());
+            span));
+    }
+
+    /** Records an E6000 backend diagnostic with the canonical synthetic
+     * shape and a construct-naming anchor note (D6): the jsonable
+     * conversion sites hold only the converted class or type, no source
+     * span, so the anchor is synthetic with a note naming the construct. */
+    private void unsupportedSynthetic(String what, String missingAnchorNote) {
+        diagnostics.add(CompilerDiagnostic.syntheticError(DiagnosticCode.E6000,
+            "JVM backend (skeleton) does not support " + what + " yet",
+            modulePath, missingAnchorNote));
     }
 }

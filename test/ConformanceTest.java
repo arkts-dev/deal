@@ -822,7 +822,7 @@ public class ConformanceTest {
         boolean backendErrors = mainArtifact.backendDiagnostics().stream()
             .anyMatch(d -> "error".equals(d.severity()));
         if (backendErrors) {
-            for (Diagnostic d : mainArtifact.backendDiagnostics()) {
+            for (CompilerDiagnostic d : mainArtifact.backendDiagnostics()) {
                 if ("error".equals(d.severity())) {
                     System.out.println("    " + d);
                 }
@@ -1252,7 +1252,7 @@ public class ConformanceTest {
             SymbolTable symbolTable,
             NameResolver nameResolver,
             Set<Path> companionDependencies,
-            List<Diagnostic> backendDiagnostics
+            List<CompilerDiagnostic> backendDiagnostics
         ) {}
 
         private final Map<Path, Artifact> cache = new LinkedHashMap<>();

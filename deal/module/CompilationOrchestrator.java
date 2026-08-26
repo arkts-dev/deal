@@ -1287,14 +1287,11 @@ public final class CompilationOrchestrator {
             info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
             outputRoot, outputPath, sourceMap, importResolutions, hostModules,
             isEntry);
-        // Transitional backend-boundary conversion (removed by T12):
-        // each legacy entry zips with its parallel ranged channel into a
-        // CompilerDiagnostic. The range comes from real span data the
-        // backend computed; a legacy-only entry would normalize to the
-        // synthetic (1,1) shape and change rendered positions, so no
-        // offset is ever fabricated here (D4/D9).
-        List<CompilerDiagnostic> backendDiags =
-            toBackendDiagnostics(gen.diagnostics(), gen.diagnosticRanges());
+        // Native ranged backend list (T12): the backend emits
+        // CompilerDiagnostic entries directly, so the orchestrator merge
+        // needs no boundary conversion — real spans keep their exact
+        // scalar offsets and synthetic anchors keep their notes.
+        List<CompilerDiagnostic> backendDiags = gen.diagnostics();
         diagnostics.addAll(backendDiags);
         boolean backendError = backendDiags.stream()
             .anyMatch(d -> "error".equals(d.severity()));
@@ -1403,9 +1400,7 @@ public final class CompilationOrchestrator {
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
                 importResolutions, importedClasses, hostModules, isEntry);
-            for (CompilerDiagnostic d
-                    : toBackendDiagnostics(res.diagnostics(),
-                        res.diagnosticRanges())) {
+            for (CompilerDiagnostic d : res.diagnostics()) {
                 diagnostics.add(d);
                 hasErrors = true;
             }
@@ -1839,27 +1834,6 @@ public final class CompilationOrchestrator {
         diagnostics.add(CompilerDiagnostic.syntheticError(code, message, file,
             missingAnchorNote));
         hasErrors = true;
-    }
-
-    /**
-     * Transitional position-preserving backend-boundary conversion
-     * (removed by T12): each legacy backend entry zips with its parallel
-     * ranged channel (same order) into a {@link CompilerDiagnostic}. The
-     * range comes from real span data the backend computed — the
-     * conversion never fabricates offsets from the legacy start-only
-     * record (D4/D9: a legacy-only entry would normalize to the synthetic
-     * (1,1) shape and change rendered positions).
-     */
-    private static List<CompilerDiagnostic> toBackendDiagnostics(
-            List<Diagnostic> legacy, List<DiagnosticRange> ranges) {
-        List<CompilerDiagnostic> converted = new ArrayList<>(legacy.size());
-        for (int i = 0; i < legacy.size(); i++) {
-            Diagnostic d = legacy.get(i);
-            DiagnosticRange range = i < ranges.size() ? ranges.get(i) : null;
-            converted.add(new CompilerDiagnostic(d.code(), d.severity(),
-                d.message(), range, null, d.diagnosticCode()));
-        }
-        return converted;
     }
 
     /**
