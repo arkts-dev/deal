@@ -1,7 +1,6 @@
 package deal.checker;
 
 import deal.ast.*;
-import deal.lexer.Diagnostic;
 import deal.types.Type;
 import deal.types.Types;
 

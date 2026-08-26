@@ -2,8 +2,10 @@ package deal.test;
 
 import deal.ast.*;
 import deal.types.*;
-import deal.lexer.Diagnostic;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import java.util.List;
 import java.util.Optional;
 
@@ -88,11 +90,15 @@ public class AstAndTypesTest {
 
     @SuppressWarnings("deprecation")
     static void testDiagnosticWarning() {
-        System.out.println("-- Diagnostic warning factory --");
+        System.out.println("-- Diagnostic factory tests --");
 
-        // Test warning via DiagnosticCode (preferred)
-        Diagnostic w1 = Diagnostic.warning(DiagnosticCode.E1001,
-            "test warning", "test.deal", 3, 7);
+        // Test warning via DiagnosticCode with a SOURCE range (preferred):
+        // the range-carrying factory keeps the code/severity/message pins,
+        // and the compatibility accessors derive from the range start.
+        DiagnosticRange w1Range = new DiagnosticRange("test.deal", 3, 7, 3, 12,
+            10, 15, 5, RangeOrigin.SOURCE);
+        CompilerDiagnostic w1 = CompilerDiagnostic.warning(DiagnosticCode.E1001,
+            "test warning", w1Range);
         check(w1.severity().equals("warning"),
             "warning severity should be 'warning'");
         check(w1.code().equals("E1001"),
@@ -101,46 +107,71 @@ public class AstAndTypesTest {
             "warning message preserved");
         check(w1.file().equals("test.deal"),
             "warning file preserved");
+        check(w1.file().equals(w1Range.file())
+                && w1.line() == w1Range.startLine()
+                && w1.column() == w1Range.startColumn(),
+            "warning accessors derive from the range start");
         check(w1.line() == 3,
             "warning line preserved: " + w1.line());
         check(w1.column() == 7,
             "warning column preserved: " + w1.column());
         check(w1.diagnosticCode() == DiagnosticCode.E1001,
             "warning diagnosticCode should be E1001");
+        check(w1.range() == w1Range,
+            "warning range preserved");
 
         // Test warning via string code (deprecated path)
-        Diagnostic w2 = Diagnostic.warning("W0001", "string-code warning",
-            "test.deal", 5, 2);
+        DiagnosticRange w2Range = new DiagnosticRange("test.deal", 5, 2, 5, 6,
+            3, 7, 4, RangeOrigin.SOURCE);
+        CompilerDiagnostic w2 = CompilerDiagnostic.warning("W0001",
+            "string-code warning", w2Range);
         check(w2.severity().equals("warning"),
             "string-code warning severity should be 'warning'");
         check(w2.code().equals("W0001"),
             "string-code warning code preserved");
         check(w2.message().equals("string-code warning"),
             "string-code warning message preserved");
+        check(w2.file().equals(w2Range.file())
+                && w2.line() == w2Range.startLine()
+                && w2.column() == w2Range.startColumn(),
+            "string-code warning accessors derive from the range start");
 
         // Test that error() still produces 'error' severity (no regression)
-        Diagnostic e1 = Diagnostic.error(DiagnosticCode.E1001,
-            "test error", "test.deal", 1, 1);
+        DiagnosticRange e1Range = new DiagnosticRange("test.deal", 1, 1, 1, 5,
+            0, 4, 4, RangeOrigin.SOURCE);
+        CompilerDiagnostic e1 = CompilerDiagnostic.error(DiagnosticCode.E1001,
+            "test error", e1Range);
         check(e1.severity().equals("error"),
             "error severity should still be 'error'");
         check(e1.code().equals("E1001"),
             "error code preserved");
+        check(e1.file().equals(e1Range.file())
+                && e1.line() == e1Range.startLine()
+                && e1.column() == e1Range.startColumn(),
+            "error accessors derive from the range start");
 
-        Diagnostic e2 = Diagnostic.error("E9999", "string error",
-            "test.deal", 1, 1);
+        CompilerDiagnostic e2 = CompilerDiagnostic.error("E9999",
+            "string error", e1Range);
         check(e2.severity().equals("error"),
             "string-code error severity should still be 'error'");
 
-        // Test toString formatting
+        // Test toString formatting (canonical formatter delegation): the
+        // SEVERITY, code, and message substrings are pinned (D7).
         String ws = w1.toString();
         check(ws.contains("WARNING"),
             "warning toString contains WARNING: " + ws);
         check(ws.contains("E1001"),
             "warning toString contains code: " + ws);
+        check(ws.contains("test warning"),
+            "warning toString contains message: " + ws);
 
         String es = e1.toString();
         check(es.contains("ERROR"),
             "error toString contains ERROR: " + es);
+        check(es.contains("E1001"),
+            "error toString contains code: " + es);
+        check(es.contains("test error"),
+            "error toString contains message: " + es);
     }
 
     // -----------------------------------------------------------------------

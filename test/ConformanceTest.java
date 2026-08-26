@@ -390,11 +390,11 @@ public class ConformanceTest {
     // =========================================================================
 
     private static void runCompanion(TestFile test) throws Exception {
-        List<Diagnostic> diags = compileCompanion(test);
+        List<CompilerDiagnostic> diags = compileCompanion(test);
         boolean hasErrors = diags.stream().anyMatch(d -> "error".equals(d.severity()));
         if (hasErrors) {
             System.out.println("FAIL (companion support module does not compile)");
-            for (Diagnostic d : diags) {
+            for (CompilerDiagnostic d : diags) {
                 if ("error".equals(d.severity())) {
                     System.out.println("    " + d);
                 }
@@ -404,23 +404,6 @@ public class ConformanceTest {
             System.out.println("COMPANION (classified support module; compiles)");
             record(test, State.COMPANION, "companion compiles");
         }
-    }
-
-    /**
-     * Transitional ranged-to-legacy conversion at the harness lexer
-     * boundary (T3 scaffolding, removed when T13 migrates this harness
-     * natively): file/line/column derive from the range start, preserving
-     * every rendered position. The conversion never fabricates offsets and
-     * the legacy side never produces a SOURCE range (D4/D9).
-     */
-    private static List<Diagnostic> toLegacyDiagnostics(
-            List<CompilerDiagnostic> rangedDiags) {
-        List<Diagnostic> legacy = new ArrayList<>(rangedDiags.size());
-        for (CompilerDiagnostic d : rangedDiags) {
-            legacy.add(new Diagnostic(d.code(), d.severity(), d.message(),
-                d.file(), d.line(), d.column(), d.diagnosticCode()));
-        }
-        return legacy;
     }
 
     /**
@@ -434,31 +417,27 @@ public class ConformanceTest {
      * declarations have no body to type-check.
      */
     @SuppressWarnings("deprecation")
-    private static List<Diagnostic> compileCompanion(TestFile test) {
+    private static List<CompilerDiagnostic> compileCompanion(TestFile test) {
         try {
             String source = Files.readString(test.path());
             String filename = test.path().toString();
 
             LexResult lex = new Lexer(source, filename).tokenize();
             if (lex.hasErrors()) {
-                return toLegacyDiagnostics(lex.diagnostics());
+                return lex.diagnostics();
             }
 
             Parser parser = new Parser(lex.tokens(), filename);
             ParseResult parseResult = parser.parse();
             if (parseResult.hasErrors()) {
-                return toLegacyDiagnostics(parseResult.diagnostics());
+                return parseResult.diagnostics();
             }
 
             if (filename.endsWith(".d.deal")) {
                 ExportExtractor extractor =
                     new ExportExtractor(filename, true);
                 extractor.extract(parseResult.program());
-                // Transitional ranged-to-legacy boundary conversion (T9
-                // scaffolding, removed in T13): start values derive from
-                // the range start (position-preserving; ranged-to-legacy
-                // only).
-                return toLegacyDiagnostics(extractor.diagnostics());
+                return extractor.diagnostics();
             }
 
             // DEAL v1.2 module shape gate (spec-v1.2: Syntactic grammar —
@@ -467,17 +446,14 @@ public class ConformanceTest {
             // only imports/functions/classes/exports (E1049), imports and
             // exports are not statements (E1050), and implementation files
             // have no bodyless function declarations (E1051).
-            // Transitional ranged-to-legacy boundary conversion (T9
-            // scaffolding, removed in T13): start values derive from the
-            // range start (position-preserving; ranged-to-legacy only).
-            List<Diagnostic> shapeDiags = toLegacyDiagnostics(
+            List<CompilerDiagnostic> shapeDiags =
                 ModuleShapeValidator.validate(
-                    parseResult.program(), filename, false));
+                    parseResult.program(), filename, false);
             if (shapeDiags.stream().anyMatch(d -> "error".equals(d.severity()))) {
                 return new ArrayList<>(shapeDiags);
             }
 
-            List<Diagnostic> allDiags = new ArrayList<>();
+            List<CompilerDiagnostic> allDiags = new ArrayList<>();
             ConformanceModuleResolver resolver =
                 new ConformanceModuleResolver(test.path(), null);
             NameResolver nr = new NameResolver(filename, resolver);
@@ -485,20 +461,26 @@ public class ConformanceTest {
             try {
                 symTable = nr.resolve(parseResult.program());
             } catch (Exception e) {
-                allDiags.add(Diagnostic.error("E9999", e.getMessage(), filename, 1, 1));
+                // E9999 is the test-only pseudo code for an unexpected
+                // NameResolver exception (D5/verification 6): the
+                // deprecated synthetic factory carries the canonical
+                // synthetic range plus an anchor note naming the fixture
+                // source.
+                allDiags.add(CompilerDiagnostic.synthetic("E9999", "error",
+                    e.getMessage(), filename,
+                    "missing anchor: fixture source '" + filename + "'"));
                 return allDiags;
             }
-            // Transitional ranged-to-legacy boundary conversions (T9
-            // scaffolding, removed in T13): start values derive from the
-            // range start (position-preserving; ranged-to-legacy only).
-            allDiags.addAll(toLegacyDiagnostics(nr.diagnostics()));
+            allDiags.addAll(nr.diagnostics());
             CheckResult result = TypeChecker.check(filename, symTable, nr,
                 parseResult.program());
-            allDiags.addAll(toLegacyDiagnostics(result.diagnostics()));
+            allDiags.addAll(result.diagnostics());
             return allDiags;
         } catch (IOException e) {
-            return List.of(Diagnostic.error("E9999", "cannot read: " + e.getMessage(),
-                test.path().toString(), 1, 1));
+            String filename = test.path().toString();
+            return List.of(CompilerDiagnostic.synthetic("E9999", "error",
+                "cannot read: " + e.getMessage(), filename,
+                "missing anchor: fixture source '" + filename + "'"));
         }
     }
 
@@ -536,7 +518,7 @@ public class ConformanceTest {
      */
     private static RunProbe probeMode(TestFile test, String mode) throws Exception {
         if (mode.equals("compile-ok")) {
-            List<Diagnostic> diags = compileAndGetDiagnostics(test, null);
+            List<CompilerDiagnostic> diags = compileAndGetDiagnostics(test, null);
             boolean hasErrors = diags.stream()
                 .anyMatch(d -> "error".equals(d.severity()));
             return new RunProbe(!hasErrors, false,
@@ -548,7 +530,7 @@ public class ConformanceTest {
         }
         if (mode.startsWith("compile-error ")) {
             String code = mode.substring("compile-error ".length()).trim();
-            List<Diagnostic> diags = compileAndGetDiagnostics(test, null);
+            List<CompilerDiagnostic> diags = compileAndGetDiagnostics(test, null);
             boolean found = "any".equals(code)
                 ? diags.stream().anyMatch(d -> "error".equals(d.severity()))
                 : diags.stream().anyMatch(d -> "error".equals(d.severity())
@@ -565,9 +547,9 @@ public class ConformanceTest {
         return new RunProbe(false, false, "unsupported known-fail mode: " + mode);
     }
 
-    private static List<String> errorCodes(List<Diagnostic> diags) {
+    private static List<String> errorCodes(List<CompilerDiagnostic> diags) {
         List<String> codes = new ArrayList<>();
-        for (Diagnostic d : diags) {
+        for (CompilerDiagnostic d : diags) {
             if ("error".equals(d.severity())) {
                 codes.add(d.code());
             }
@@ -580,11 +562,11 @@ public class ConformanceTest {
     // =========================================================================
 
     private static void runCompileOk(TestFile test) throws Exception {
-        List<Diagnostic> diags = compileAndGetDiagnostics(test, null);
+        List<CompilerDiagnostic> diags = compileAndGetDiagnostics(test, null);
         boolean hasErrors = diags.stream().anyMatch(d -> "error".equals(d.severity()));
         if (hasErrors) {
             System.out.println("FAIL (unexpected compile errors)");
-            for (Diagnostic d : diags) {
+            for (CompilerDiagnostic d : diags) {
                 if ("error".equals(d.severity())) {
                     System.out.println("    " + d);
                 }
@@ -622,7 +604,7 @@ public class ConformanceTest {
         }
 
         CompanionCatalog catalog = new CompanionCatalog();
-        List<Diagnostic> diags = compileAndGetDiagnostics(test, catalog);
+        List<CompilerDiagnostic> diags = compileAndGetDiagnostics(test, catalog);
         boolean hasErrors = diags.stream().anyMatch(d -> "error".equals(d.severity()));
         if (hasErrors) {
             return new RunProbe(false, false,
@@ -647,7 +629,7 @@ public class ConformanceTest {
     // =========================================================================
 
     private static void runCompileError(TestFile test, String expectedCode) throws Exception {
-        List<Diagnostic> diags = compileAndGetDiagnostics(test, null);
+        List<CompilerDiagnostic> diags = compileAndGetDiagnostics(test, null);
         boolean found = diags.stream().anyMatch(
             d -> "error".equals(d.severity()) && expectedCode.equals(d.code()));
         if (found) {
@@ -687,7 +669,7 @@ public class ConformanceTest {
         }
 
         CompanionCatalog catalog = new CompanionCatalog();
-        List<Diagnostic> diags = compileAndGetDiagnostics(test, catalog);
+        List<CompilerDiagnostic> diags = compileAndGetDiagnostics(test, catalog);
         boolean hasErrors = diags.stream().anyMatch(d -> "error".equals(d.severity()));
         if (hasErrors) {
             return new RunProbe(false, false,
@@ -726,23 +708,20 @@ public class ConformanceTest {
     // =========================================================================
 
     @SuppressWarnings("deprecation")
-    private static List<Diagnostic> compileAndGetDiagnostics(TestFile test,
+    private static List<CompilerDiagnostic> compileAndGetDiagnostics(TestFile test,
             CompanionCatalog catalog) throws Exception {
         String source = Files.readString(test.path());
         String filename = test.path().toString();
 
         LexResult lex = new Lexer(source, filename).tokenize();
-        List<Diagnostic> allDiags = toLegacyDiagnostics(lex.diagnostics());
+        List<CompilerDiagnostic> allDiags = new ArrayList<>(lex.diagnostics());
         if (lex.hasErrors()) {
             return allDiags;
         }
 
         Parser parser = new Parser(lex.tokens(), filename);
         ParseResult parseResult = parser.parse();
-        // Transitional ranged-to-legacy boundary conversion (T4
-        // scaffolding, removed in T13): start values derive from the range
-        // start (position-preserving; ranged-to-legacy only).
-        allDiags.addAll(toLegacyDiagnostics(parseResult.diagnostics()));
+        allDiags.addAll(parseResult.diagnostics());
         if (parseResult.hasErrors()) {
             return allDiags;
         }
@@ -755,12 +734,9 @@ public class ConformanceTest {
         // have no bodyless function declarations (E1051).  This mirrors
         // the post-parse pass CompilationOrchestrator runs for every
         // production module.
-        // Transitional ranged-to-legacy boundary conversion (T9
-        // scaffolding, removed in T13): start values derive from the range
-        // start (position-preserving; ranged-to-legacy only).
-        List<Diagnostic> shapeDiags = toLegacyDiagnostics(
+        List<CompilerDiagnostic> shapeDiags =
             ModuleShapeValidator.validate(
-                parseResult.program(), filename, false));
+                parseResult.program(), filename, false);
         allDiags.addAll(shapeDiags);
         if (shapeDiags.stream().anyMatch(d -> "error".equals(d.severity()))) {
             return allDiags;
@@ -773,16 +749,19 @@ public class ConformanceTest {
         try {
             symTable = nr.resolve(parseResult.program());
         } catch (Exception e) {
-            allDiags.add(Diagnostic.error("E9999", e.getMessage(), filename, 1, 1));
+            // E9999 is the test-only pseudo code for an unexpected
+            // NameResolver exception (D5/verification 6): the deprecated
+            // synthetic factory carries the canonical synthetic range plus
+            // an anchor note naming the fixture source.
+            allDiags.add(CompilerDiagnostic.synthetic("E9999", "error",
+                e.getMessage(), filename,
+                "missing anchor: fixture source '" + filename + "'"));
             return allDiags;
         }
-        // Transitional ranged-to-legacy boundary conversions (T9
-        // scaffolding, removed in T13): start values derive from the range
-        // start (position-preserving; ranged-to-legacy only).
-        allDiags.addAll(toLegacyDiagnostics(nr.diagnostics()));
+        allDiags.addAll(nr.diagnostics());
 
         CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
-        allDiags.addAll(toLegacyDiagnostics(result.diagnostics()));
+        allDiags.addAll(result.diagnostics());
 
         return allDiags;
     }
