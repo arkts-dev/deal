@@ -70,8 +70,14 @@ import java.util.Set;
  * offsets, the rebased sub-parser EOF token anchoring end-of-input errors
  * at the expression-end raw position, and raw-positioned E1042/D16
  * anchor ranges — each cross-checked against an independent
- * {@link ScalarSourceCursor} recomputation). Later capabilities extend
- * this file with the manifest-range and producer-migration sections.
+ * {@link ScalarSourceCursor} recomputation), and the ISSUE-0220
+ * JsonRangeLexer section ({@link JsonRangeLexer} token/member/fault
+ * ranges — every asserted range is an exact half-open
+ * {@link SourceScalarRange} recomputed against an independent
+ * {@link ScalarSourceCursor} — the pinned permissive acceptance surface,
+ * the never-throws sweep, and the {@code deal/source} JDK-only package
+ * scan). Later capabilities extend this file with the DealConfig
+ * migration and producer-migration sections.
  *
  * <p>Runs via main() using the check() helpers; exits non-zero on failure.
  */
