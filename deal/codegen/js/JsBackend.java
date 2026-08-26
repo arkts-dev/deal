@@ -1462,7 +1462,12 @@ public final class JsBackend {
                     yield "$rt.intNeg(" + expr + ", "
                         + spanArgs(un.span()) + ")";
                 }
-                yield expr.startsWith("-") ? "(-" + expr + ")" : "-" + expr;
+                // Never form the "--" token: the inner expression is
+                // parenthesized after the negation sign, so a negated
+                // negated operand emits "-(-x)" / "-(-5.0)" — plain
+                // IEEE double negation, not a pre-decrement (or a
+                // SyntaxError on literals).
+                yield expr.startsWith("-") ? "-(" + expr + ")" : "-" + expr;
             }
         };
     }
@@ -1484,16 +1489,25 @@ public final class JsBackend {
             if (i > 0) args.append(", ");
             args.append(emitExpression(call.args().get(i)));
         }
+        // The span triple joins the user arguments with a separator only
+        // when user arguments exist: a zero-argument call must emit
+        // ".$f(<file>, <line>, <column>)" — never the invalid
+        // ".$f(, <file>, ...)" leading-comma form.
+        StringBuilder callArgs = new StringBuilder();
+        callArgs.append(args);
+        if (args.length() > 0) {
+            callArgs.append(", ");
+        }
+        callArgs.append(spanArgs(call.span()));
         if (call.callee() instanceof IdentifierExpr id) {
             Symbol sym = symbols.resolve(id.name());
             if (sym instanceof Symbol.IntrinsicSymbol) {
-                return emitExpression(call.callee()) + ".$f(" + args
-                    + ", " + spanArgs(call.span()) + ")";
+                return emitExpression(call.callee()) + ".$f(" + callArgs
+                    + ")";
             }
         }
         if (calleeType instanceof Type.Func) {
-            return emitExpression(call.callee()) + ".$f(" + args
-                + ", " + spanArgs(call.span()) + ")";
+            return emitExpression(call.callee()) + ".$f(" + callArgs + ")";
         }
         // Defensive plain call: the checker rejects non-callable callees
         // (E3008), so only checker-error programs reach this form.
