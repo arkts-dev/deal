@@ -59,6 +59,7 @@ import deal.types.Type;
 import deal.types.Types;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -281,6 +282,29 @@ public final class JsBackend {
      * it. */
     private Type currentReturnType = null;
 
+    /**
+     * True while the walk sits at module level; false inside a
+     * function-expression body walk. The D6 rejection table fires its
+     * nested-class E6000 arm when a {@link ClassDeclaration} is met
+     * below module level (js-backend-emitter D8) — function-expression
+     * bodies ARE walked at this slice (function-typed class defaults),
+     * so the arm is live.
+     */
+    private boolean atModuleLevel = true;
+
+    /**
+     * Stack of user-declared local names visible at the current walk
+     * position (function parameters, {@code let} declarations, loop and
+     * catch bindings), mirroring the checker's lexical scoping
+     * ({@code NameResolver.walkFunctionExpr/walkBlock/walkFor/walkForOf/
+     * walkTry}: a declaration defines its name before the initializer
+     * walk, and every block/loop body opens its own scope).
+     * {@link #emitIdentifier} consults it to decide whether a reference
+     * is a shadowing local variable or a module-level class-symbol
+     * reference that must lower to the class META artifact.
+     */
+    private final List<Set<String>> localScopes = new ArrayList<>();
+
     private JsBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
                       String sourcePath, String modulePath,
                       Map<String, String> importResolutions,
@@ -293,6 +317,7 @@ public final class JsBackend {
         this.importResolutions = importResolutions;
         this.hostModules = hostModules;
         this.isEntry = isEntry;
+        localScopes.add(new HashSet<>());
     }
 
     // =========================================================================
@@ -412,8 +437,8 @@ public final class JsBackend {
         // builtin-Error defaults/constructor pair (neither is exported).
         out.append("// Intrinsic header wrappers: int/number are first-class function\n");
         out.append("// values with the seeded static signatures (number)->int and\n");
-        out.append("// (int)->number; the builtin-Error defaults/constructor pair stays\n");
-        out.append("// private (never reaches the export surface).\n");
+        out.append("// (int)->number; the builtin-Error defaults/constructor/META\n");
+        out.append("// artifacts stay private (never reach the export surface).\n");
         out.append("const int = $rt.function(\"(number)->int\", "
             + "(v, $file, $line, $column) => $rt.intConvert(v, $file, $line, $column));\n");
         out.append("const number = $rt.function(\"(int)->number\", "
@@ -423,6 +448,12 @@ public final class JsBackend {
         out.append("const Error$new = (provided, $file, $line, $column) => "
             + "$rt.makeClass(\"Error\", \"Error\", $ErrorDefaults, provided, "
             + "$file, $line, $column);\n");
+        // The builtin-Error META pair member: `Error` as a value is
+        // checker-accepted class metadata exactly like any declared
+        // class's — module-private, identity `Error` bare, the inline
+        // META shape of js-backend-emitter D4 step 7.
+        out.append("const Error$meta = { $kind: \"class\", "
+            + "$classname: \"Error\" };\n");
         out.append("\n");
         // 5. Import bindings in import order (populated by T4).
         out.append("// Import bindings (import order).\n");
@@ -672,11 +703,22 @@ public final class JsBackend {
      * construction, with {@code $rt.MISSING} for absent optional fields —
      * and the inline META pair. The identity is the module-qualified
      * descriptor {@code @<modulePath>/<Name>} (runtime-class-identity
-     * D1-D2). Nested (non-module-level) class declarations are
-     * unreachable at this slice (no function body is emitted) and are
-     * the T6 rejection surface.
+     * D1-D2). A nested (non-module-level) class declaration is the D6
+     * rejection table's E6000 arm: the walk meets it through
+     * function-expression bodies (function-typed class defaults), which
+     * ARE emitted at this slice, and the arm fires at the declaration
+     * site instead of emitting assignments to undeclared
+     * {@code <C>$new}/{@code <C>$meta} bindings — never a silent
+     * miscompile (js-backend-emitter D8).
      */
     private void visit(ClassDeclaration cd) {
+        if (!atModuleLevel) {
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6000,
+                "JavaScript backend: nested class declarations are not "
+                    + "supported (ISSUE-0169 skeleton)",
+                cd.span()));
+            return;
+        }
         out.append("// Class: ").append(cd.name())
             .append(" — construction closure, defaults thunk, and metadata.\n");
         line(cd.name() + "$new = (provided, $file, $line, $column) => "
@@ -786,6 +828,10 @@ public final class JsBackend {
      * its checker-inferred type at the declaration span.
      */
     private void visit(VariableDeclaration node) {
+        // NameResolver.walkVarDecl defines the name in the current scope
+        // BEFORE walking the initializer — the emitted JS `let` binding
+        // scopes identically, so the tracking mirrors it.
+        declareLocal(node.name());
         String name = jsName(node.name());
         boolean hasAnnotation = node.typeAnnotation().isPresent();
         Type targetType = hasAnnotation
@@ -855,7 +901,7 @@ public final class JsBackend {
         line("if ($rt.checkBoolean(" + emitExpression(node.condition())
             + ", " + spanArgs(node.condition().span()) + ")) {");
         indent++;
-        walkStatements(node.thenBlock().statements());
+        walkScopedBlock(node.thenBlock().statements());
         indent--;
         if (node.elseBranch().isPresent()) {
             emitElseChain(node);
@@ -876,14 +922,14 @@ public final class JsBackend {
                     + emitExpression(elseIf.condition()) + ", "
                     + spanArgs(elseIf.condition().span()) + ")) {");
                 indent++;
-                walkStatements(elseIf.thenBlock().statements());
+                walkScopedBlock(elseIf.thenBlock().statements());
                 indent--;
                 emitElseChain(elseIf);
             }
             case Either.Right<IfStatement, Block> right -> {
                 line("} else {");
                 indent++;
-                walkStatements(right.value().statements());
+                walkScopedBlock(right.value().statements());
                 indent--;
                 line("}");
             }
@@ -898,7 +944,7 @@ public final class JsBackend {
         line("while ($rt.checkBoolean(" + emitExpression(node.condition())
             + ", " + spanArgs(node.condition().span()) + ")) {");
         indent++;
-        walkStatements(node.body().statements());
+        walkScopedBlock(node.body().statements());
         indent--;
         line("}");
     }
@@ -912,11 +958,13 @@ public final class JsBackend {
      * the boolean boundary; an absent condition is {@code true}.
      */
     private void visit(ForStatement node) {
+        pushLocalScope();
         String initPart = "";
         if (node.init().isPresent()) {
             switch (node.init().get()) {
                 case ForInit.VarDecl vd -> {
                     VariableDeclaration decl = vd.decl();
+                    declareLocal(decl.name());
                     Type varType = decl.typeAnnotation().isPresent()
                         ? resolveTypeNode(decl.typeAnnotation().get()) : null;
                     String initExpr = emitExpression(decl.initializer());
@@ -946,9 +994,10 @@ public final class JsBackend {
         line("for (" + initPart + "; " + condPart + "; " + updatePart
             + ") {");
         indent++;
-        walkStatements(node.body().statements());
+        walkScopedBlock(node.body().statements());
         indent--;
         line("}");
+        popLocalScope();
     }
 
     /**
@@ -972,7 +1021,9 @@ public final class JsBackend {
         String varName = jsName(node.varName());
         line("{");
         indent++;
+        pushLocalScope();
         line("const $iter = " + emitExpression(node.iterable()) + ";");
+        declareLocal(node.varName());
         if (iterableType instanceof Type.Array) {
             line("for (let $i = 0; $i < $iter.length; $i++) {");
             indent++;
@@ -980,7 +1031,7 @@ public final class JsBackend {
             line("let " + varName + " = $iter[$i];");
             line("{");
             indent++;
-            walkStatements(node.body().statements());
+            walkScopedBlock(node.body().statements());
             indent--;
             line("}");
             indent--;
@@ -988,10 +1039,11 @@ public final class JsBackend {
         } else {
             line("for (let " + varName + " of $rt.scalars($iter)) {");
             indent++;
-            walkStatements(node.body().statements());
+            walkScopedBlock(node.body().statements());
             indent--;
             line("}");
         }
+        popLocalScope();
         indent--;
         line("}");
     }
@@ -1069,12 +1121,15 @@ public final class JsBackend {
     private void visit(TryStatement node) {
         line("try {");
         indent++;
-        walkStatements(node.tryBlock().statements());
+        walkScopedBlock(node.tryBlock().statements());
         indent--;
         line("} catch ($e) {");
         indent++;
+        pushLocalScope();
+        declareLocal(node.catchVar());
         line("const " + jsName(node.catchVar()) + " = $rt.reifyError($e);");
-        walkStatements(node.catchBlock().statements());
+        walkScopedBlock(node.catchBlock().statements());
+        popLocalScope();
         indent--;
         line("}");
     }
@@ -1120,7 +1175,7 @@ public final class JsBackend {
     private void visit(Block node) {
         line("{");
         indent++;
-        walkStatements(node.statements());
+        walkScopedBlock(node.statements());
         indent--;
         line("}");
     }
@@ -1133,6 +1188,51 @@ public final class JsBackend {
         for (StatementNode stmt : statements) {
             visitStatement(stmt);
         }
+    }
+
+    // =========================================================================
+    // Lexical scope tracking (class-META disambiguation)
+    // =========================================================================
+
+    /**
+     * Walks a statement list inside one fresh lexical scope, restoring
+     * the scope stack afterwards — the checker gives every block, loop
+     * body, and try/catch arm its own scope
+     * ({@code NameResolver.walkBlock/walkFor/walkForOf/walkTry}), and
+     * the emitted braces are JS block scopes, so a {@code let} declared
+     * inside a branch must not shadow a module-level class reference
+     * after the branch closes.
+     */
+    private void walkScopedBlock(List<StatementNode> statements) {
+        pushLocalScope();
+        try {
+            walkStatements(statements);
+        } finally {
+            popLocalScope();
+        }
+    }
+
+    private void pushLocalScope() {
+        localScopes.add(new HashSet<>());
+    }
+
+    private void popLocalScope() {
+        localScopes.remove(localScopes.size() - 1);
+    }
+
+    private void declareLocal(String name) {
+        localScopes.get(localScopes.size() - 1).add(name);
+    }
+
+    /** True when the identifier is bound by a declaration visible at
+     * the current walk position (any frame of the scope stack). */
+    private boolean isLocalName(String name) {
+        for (int i = localScopes.size() - 1; i >= 0; i--) {
+            if (localScopes.get(i).contains(name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // =========================================================================
@@ -1180,11 +1280,24 @@ public final class JsBackend {
     /**
      * Identifier reference: the binding-position translation (a variable
      * named {@code static}/{@code eval} binds and references as
-     * {@code static$}/{@code eval$}). Class-symbol references (a class
-     * META as a value, {@code let c = User;}) are the T4 export-surface
-     * refinement; no function body reaches this slice's artifact.
+     * {@code static$}/{@code eval$}). A module-level class-symbol
+     * reference in expression position (a class META as a value —
+     * checker-accepted, spec §Export forms: exporting a class exports
+     * class metadata) lowers to the predeclared {@code <C>$meta}
+     * artifact (the header-seeded {@code Error$meta} for the builtin
+     * Error) — never a bare unbound identifier, because the artifact
+     * binds only {@code <C>$new}/{@code <C>$meta}. The lexical scope
+     * stack disambiguates shadowing locals (a function parameter or
+     * {@code let} named like a class resolves to its variable binding),
+     * mirroring the checker's scoping.
      */
     private String emitIdentifier(IdentifierExpr id) {
+        if (!isLocalName(id.name())) {
+            Symbol sym = symbols.resolve(id.name());
+            if (sym instanceof Symbol.ClassSymbol) {
+                return id.name() + "$meta";
+            }
+        }
         return jsName(id.name());
     }
 
@@ -1594,7 +1707,14 @@ public final class JsBackend {
             if (i > 0) paramList.append(", ");
             paramList.append(jsName(fe.params().get(i).name()));
         }
-        paramList.append(", $file, $line, $column");
+        // The span parameters join the user list only when user
+        // parameters exist: a zero-parameter function expression emits
+        // "function($file, $line, $column)", never the invalid
+        // leading-comma "function(, $file, $line, $column)" form.
+        if (paramList.length() > 0) {
+            paramList.append(", ");
+        }
+        paramList.append("$file, $line, $column");
 
         Type funcType = typeOf(fe);
         String sig = funcType instanceof Type.Func f
@@ -1606,16 +1726,33 @@ public final class JsBackend {
         }
 
         String body = captureOutput(() -> {
-            for (Parameter param : fe.params()) {
-                Type paramType = resolveTypeNode(param.type());
-                if (paramType != null
-                        && !(paramType instanceof Type.Error)
-                        && !(paramType instanceof Type.Null)) {
-                    line(emitCheckExpr(jsName(param.name()), paramType,
-                        param.type().span()) + ";");
+            // The checker gives the function a scope holding the
+            // parameters (NameResolver.walkFunctionExpr); the body walk
+            // sits below module level, so a nested ClassDeclaration
+            // fires the D6 E6000 arm instead of emitting undeclared
+            // artifact assignments.
+            pushLocalScope();
+            try {
+                for (Parameter param : fe.params()) {
+                    declareLocal(param.name());
+                    Type paramType = resolveTypeNode(param.type());
+                    if (paramType != null
+                            && !(paramType instanceof Type.Error)
+                            && !(paramType instanceof Type.Null)) {
+                        line(emitCheckExpr(jsName(param.name()), paramType,
+                            param.type().span()) + ";");
+                    }
                 }
+                boolean savedAtModuleLevel = atModuleLevel;
+                atModuleLevel = false;
+                try {
+                    walkStatements(fe.body().statements());
+                } finally {
+                    atModuleLevel = savedAtModuleLevel;
+                }
+            } finally {
+                popLocalScope();
             }
-            walkStatements(fe.body().statements());
         });
 
         currentReturnType = savedReturn;
