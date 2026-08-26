@@ -55,6 +55,7 @@ import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.module.StdlibModuleResolver;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -140,14 +141,33 @@ import java.util.Set;
  * adapter precedent). The header {@code int}/{@code number} wrapper
  * values are first-class function values with no special casing.
  *
- * <p>Cluster staging (js-backend-emitter D1): import declarations and
- * the export-assignment section remain tolerated structurally at this
- * slice — no binding/export emission, no diagnostic — so T4 (modules)
- * populates those sections; an export-wrapped function declaration
- * emits its wrapper here. Async completion checks and await lowering
- * are T5's; this slice emits the {@code async function} keyword
- * structurally for async declarations and leaves the await-site
- * lowering untouched.
+ * <p>ISSUE-0250 modules slice: import bindings in import order (shape
+ * step 5) — spec-stdlib raw paths ({@code std/<name>} in the
+ * {@code StdlibModuleResolver} spec list) emit
+ * {@code <relpath>/std/<name>} and project modules emit the relative
+ * specifier between the emitting module's artifact directory and the
+ * imported module's artifact directory (sibling {@code ./lib}, nested
+ * {@code ../sub/util}), the extension omitted; export assignments in
+ * declaration order (shape step 8) via the own-property-safe
+ * {@code $rt.setProp} with raw keys — the visible class META export
+ * plus the hidden compiler-generated {@code <C>$new} export for every
+ * exported class (imported construction runs the declaring module's
+ * closure, so defaults evaluate in the declaring module's scope);
+ * imported class-typed literals construct through
+ * {@code <alias>.<C>$new}; imported optional field reads map
+ * {@code MISSING} through {@code $rt.optRead}; module-member
+ * writes/deletes (checker-accepted mutations of the export table,
+ * the LuaJIT plain-assignment/nil-out semantics) route through
+ * {@code $rt.setProp} instead of the Map method calls; and the entry
+ * shim's {@code $exports.main.$f()} reaches the exported {@code main}.
+ *
+ * <p>Cluster staging (js-backend-emitter D1): async completion checks
+ * and await lowering are T5's — this slice emits the {@code async
+ * function} keyword structurally for async declarations and leaves the
+ * await-site lowering untouched. The E6000 host-ABI and E6003
+ * {@code @extern-c} rejections are T6's: an import the classification
+ * cannot place positively emits no binding and no diagnostic at this
+ * slice (T6 owns those arms).
  *
  * <p>The backend consumes the checked AST exactly like
  * {@code JvmBackend} ({@code CheckResult.typeMap()}/{@code symbolTable()})
@@ -311,6 +331,10 @@ public final class JsBackend {
     private final Map<String, Map<String, Type>> hostModules;
     private final boolean isEntry;
 
+    /** Shape step 8: the export assignments collected during the
+     * declaration walk in declaration order, emitted by
+     * {@link #emitExportsSection} after the walk. */
+    private final List<String> exportAssignments = new ArrayList<>();
     /** Backend diagnostics; all error-severity by construction (the
      * T12-native ranged {@link CompilerDiagnostic} list — the backend
      * emits ranged entries directly, so the orchestrator merge needs no
@@ -453,7 +477,25 @@ public final class JsBackend {
             }
         }
 
-        emitHeader(predeclares);
+        // Shape step 5: import bindings in import order — a
+        // spec-stdlib raw path emits <relpath>/std/<name>, an
+        // importResolutions entry a project-module relative require;
+        // unclassified imports (non-stdlib declaration files,
+        // unresolved paths) emit no binding at this slice (T6 owns the
+        // E6000/E6003 rejections).
+        List<String> importBindings = new ArrayList<>();
+        for (StatementNode stmt : program.statements()) {
+            if (stmt instanceof ImportDeclaration imp) {
+                String specifier = importRequireSpecifier(imp);
+                if (specifier != null) {
+                    importBindings.add("const " + jsName(imp.alias())
+                        + " = $require(" + jsStringLiteral(specifier)
+                        + ");");
+                }
+            }
+        }
+
+        emitHeader(predeclares, importBindings);
         for (StatementNode stmt : program.statements()) {
             visitStatement(stmt);
         }
@@ -473,9 +515,9 @@ public final class JsBackend {
 
     /**
      * Emits the canonical CommonJS module shape, steps 1-7 in exact order.
-     * Step 5 (import bindings) and the function predeclares are populated
-     * by T3/T4; step 6 carries the predeclared class-artifact {@code let}s
-     * of this slice; step 8's section header is emitted by
+     * Step 5 carries the import bindings built in declaration order by the
+     * caller; step 6 carries the predeclared function and class-artifact
+     * {@code let}s; step 8's section is emitted by
      * {@link #emitExportsSection()} after the declaration walk. Source
      * comments precede generated statement groups (js-backend-architecture
      * D8).
@@ -487,7 +529,8 @@ public final class JsBackend {
      * are constructed only through {@code $rt.makeTable}
      * (js-backend-architecture D2, js-backend-emitter D9).
      */
-    private void emitHeader(List<String> predeclares) {
+    private void emitHeader(List<String> predeclares,
+                           List<String> importBindings) {
         out.append("// Generated by DEAL compiler — JavaScript backend. DO NOT EDIT.\n");
         out.append("// Source: ").append(sourcePath == null ? "" : sourcePath)
             .append("\n");
@@ -527,8 +570,15 @@ public final class JsBackend {
         out.append("const Error$meta = { $kind: \"class\", "
             + "$classname: \"Error\" };\n");
         out.append("\n");
-        // 5. Import bindings in import order (populated by T4).
+        // 5. Import bindings in import order: spec-stdlib raw paths
+        // require <relpath>/std/<name>, project modules the relative
+        // artifact path (extension omitted). The bindings precede the
+        // predeclares, so every imported module initializes
+        // (depth-first) before any declaration initializer runs.
         out.append("// Import bindings (import order).\n");
+        for (String binding : importBindings) {
+            out.append(binding).append("\n");
+        }
         out.append("\n");
         // 6. Predeclared lets for module-level functions and class
         // artifacts in declaration order — recursion, forward calls,
@@ -550,12 +600,22 @@ public final class JsBackend {
     }
 
     /**
-     * Shape step 8's section header: the export assignments in
-     * declaration order follow the declaration walk in the artifact
-     * (T4 populates the assignments themselves).
+     * Shape step 8: the export assignments follow the declaration walk
+     * in the artifact, in declaration order, every write
+     * own-property-safe via {@code $rt.setProp} with the raw export key
+     * (a module exporting {@code __proto__} works exactly like any other
+     * name; property/export keys keep raw names — no {@code jsName}
+     * translation). An exported class additionally exports the hidden
+     * compiler-generated {@code <C>$new} closure, so imported
+     * construction runs the declaring module's closure; a
+     * non-exported class's {@code <C>$new} stays module-private. No
+     * bare {@code module.exports} spelling appears.
      */
     private void emitExportsSection() {
         out.append("// Export assignments (declaration order).\n");
+        for (String assignment : exportAssignments) {
+            out.append(assignment).append("\n");
+        }
     }
 
     /**
@@ -567,22 +627,104 @@ public final class JsBackend {
      * {@code app.sub.main}, and so on.
      */
     private String runtimeRequireSpecifier() {
-        String artifactPath = (modulePath == null ? "" : modulePath)
+        return relativeSpecifier("deal/runtime");
+    }
+
+    /**
+     * The relative CommonJS require specifier from the emitting module's
+     * artifact directory to a target artifact (js-backend-architecture
+     * D2): sibling artifacts emit {@code ./<name>}, a nested target
+     * {@code ./<dir>/<name>}, a target outside the emitting directory
+     * {@code ../.../<name>}, the extension omitted (Node resolution).
+     * The dotted target path carries the artifact path with {@code '/'}
+     * for {@code '.'} (e.g. {@code deal/runtime}, {@code app/util},
+     * {@code lib}).
+     */
+    private String relativeSpecifier(String dottedTargetPath) {
+        String moduleArtifact = (modulePath == null ? "" : modulePath)
             .replace('.', '/');
-        int lastSlash = artifactPath.lastIndexOf('/');
-        String moduleDir = lastSlash < 0 ? ""
-            : artifactPath.substring(0, lastSlash);
-        if (moduleDir.isEmpty()) {
-            return "./deal/runtime";
+        String targetArtifact = dottedTargetPath.replace('.', '/');
+        int moduleLast = moduleArtifact.lastIndexOf('/');
+        String moduleDir = moduleLast < 0 ? ""
+            : moduleArtifact.substring(0, moduleLast);
+        int targetLast = targetArtifact.lastIndexOf('/');
+        String targetDir = targetLast < 0 ? ""
+            : targetArtifact.substring(0, targetLast);
+        String targetName = targetLast < 0 ? targetArtifact
+            : targetArtifact.substring(targetLast + 1);
+        List<String> moduleSegs = moduleDir.isEmpty() ? List.of()
+            : List.of(moduleDir.split("/", -1));
+        List<String> targetSegs = targetDir.isEmpty() ? List.of()
+            : List.of(targetDir.split("/", -1));
+        int common = 0;
+        while (common < moduleSegs.size() && common < targetSegs.size()
+                && moduleSegs.get(common).equals(targetSegs.get(common))) {
+            common++;
         }
-        int depth = moduleDir.split("/", -1).length;
         StringBuilder specifier = new StringBuilder();
-        specifier.append("..");
-        for (int i = 1; i < depth; i++) {
-            specifier.append("/..");
+        for (int i = common; i < moduleSegs.size(); i++) {
+            if (specifier.length() > 0) specifier.append('/');
+            specifier.append("..");
         }
-        specifier.append("/deal/runtime");
-        return specifier.toString();
+        for (int i = common; i < targetSegs.size(); i++) {
+            if (specifier.length() > 0) specifier.append('/');
+            specifier.append(targetSegs.get(i));
+        }
+        if (specifier.length() > 0) specifier.append('/');
+        specifier.append(targetName);
+        String relative = specifier.toString();
+        return relative.startsWith(".") ? relative : "./" + relative;
+    }
+
+    /**
+     * The emitted require specifier for one import declaration
+     * (js-backend-emitter D4 step 5, D8 import classification): a
+     * spec-stdlib raw path (bare {@code std/<name>}, the
+     * {@code StdlibModuleResolver} spec list) emits
+     * {@code <relpath>/std/<name>} — {@code ./std/console} for a root
+     * module, {@code ../std/string} for a nested one; an
+     * {@code importResolutions} entry is a project module whose
+     * relative specifier runs between the emitting module's artifact
+     * directory and the imported module's artifact directory (sibling
+     * {@code main} importing {@code lib} → {@code ./lib}; root
+     * {@code main} importing {@code app.util} → {@code ./app/util};
+     * nested {@code app.main} importing {@code sub.util} →
+     * {@code ../sub/util}). Every other import — a non-stdlib
+     * declaration file (a {@code hostModules} entry, the T6 host-ABI
+     * E6000 — also present in {@code importResolutions}, so the host
+     * check precedes the project branch) or an unresolved path —
+     * returns {@code null}: no binding is emitted and T6 owns the
+     * diagnostic. Declaration files emit no artifact, so a require of
+     * one can never resolve at runtime; a rejected module writes no
+     * artifact at all (js-backend-emitter D8).
+     */
+    private String importRequireSpecifier(ImportDeclaration imp) {
+        String raw = imp.modulePath();
+        if (StdlibModuleResolver.isSpecStdlibModule(raw)) {
+            return relativeSpecifier(raw);
+        }
+        if (hostModules.containsKey(raw)) {
+            return null;
+        }
+        String resolved = importResolutions.get(raw);
+        if (resolved != null) {
+            return relativeSpecifier(resolved);
+        }
+        return null;
+    }
+
+    /**
+     * True when the identifier expression is the module-alias binding
+     * of an import declaration visible at the current walk position:
+     * the module symbol table resolves the name to a
+     * {@link Symbol.ModuleSymbol} and no local declaration shadows it
+     * (a checker-accepted function-local {@code let} of the alias name
+     * carries its own type — reads/writes must follow that local, never
+     * the module-export surface).
+     */
+    private boolean isModuleAliasRef(IdentifierExpr id) {
+        if (isLocalName(id.name())) return false;
+        return symbols.resolve(id.name()) instanceof Symbol.ModuleSymbol;
     }
 
     /**
@@ -732,16 +874,37 @@ public final class JsBackend {
     private void visitStatement(StatementNode stmt) {
         switch (stmt) {
             case ImportDeclaration imp -> {
-                // T4: import bindings in import order (shape step 5).
+                // Shape step 5 emitted the binding in the header; the
+                // walk itself emits no statement. Unclassified imports
+                // (host modules, unresolved paths) emitted no binding —
+                // T6 owns those rejections.
             }
             case FunctionDeclaration fd -> visit(fd);
             case ClassDeclaration cd -> visit(cd);
             case ExportDeclaration ed -> {
-                // T4 adds the export assignments (shape step 8); the
-                // wrapped declaration still emits its artifacts.
+                // Shape step 8: the wrapped declaration emits its
+                // artifacts here; the export assignments (raw keys,
+                // own-property-safe writes) collect in declaration
+                // order for the section emitted after the walk. An
+                // exported class additionally exports the hidden
+                // compiler-generated <C>$new closure (imported
+                // construction runs the declaring module's closure).
                 switch (ed.declaration()) {
-                    case ClassDeclaration cd -> visit(cd);
-                    case FunctionDeclaration fd -> visit(fd);
+                    case ClassDeclaration cd -> {
+                        visit(cd);
+                        exportAssignments.add("$rt.setProp($exports, "
+                            + jsStringLiteral(cd.name()) + ", "
+                            + cd.name() + "$meta);");
+                        exportAssignments.add("$rt.setProp($exports, "
+                            + jsStringLiteral(cd.name() + "$new") + ", "
+                            + cd.name() + "$new);");
+                    }
+                    case FunctionDeclaration fd -> {
+                        visit(fd);
+                        exportAssignments.add("$rt.setProp($exports, "
+                            + jsStringLiteral(fd.name()) + ", "
+                            + jsName(fd.name()) + ");");
+                    }
                     default -> {
                         // Unreachable: ExportDeclaration wraps only
                         // function/class declarations.
@@ -1343,6 +1506,18 @@ public final class JsBackend {
                 return;
             }
             if (containerType instanceof Type.Table) {
+                // Module-alias index delete (checker F5 accepts the
+                // target): nil-out the export-table entry via
+                // $rt.setProp with the nil-equivalent — the LuaJIT
+                // lib[k] = nil semantics — never the Map .delete call
+                // the plain object does not carry.
+                if (idx.array() instanceof IdentifierExpr id
+                        && isModuleAliasRef(id)) {
+                    line("$rt.setProp(" + emitExpression(idx.array())
+                        + ", " + emitExpression(idx.index())
+                        + ", $rt.undefined);");
+                    return;
+                }
                 line(emitExpression(idx.array()) + ".delete("
                     + emitExpression(idx.index()) + ");");
                 return;
@@ -1350,16 +1525,22 @@ public final class JsBackend {
         }
         if (node.target() instanceof MemberAccessExpr mae) {
             Type objType = typeOf(mae.object());
+            if (mae.object() instanceof IdentifierExpr id
+                    && isModuleAliasRef(id)) {
+                // Module-member delete: nil-out the export entry via
+                // $rt.setProp with the nil-equivalent (the LuaJIT
+                // lib.x = nil semantics); a later read yields the
+                // nil-equivalent exactly like the reference.
+                line("$rt.setProp(" + emitExpression(mae.object()) + ", "
+                    + jsStringLiteral(mae.field()) + ", $rt.undefined);");
+                return;
+            }
             if (objType instanceof Type.Class) {
                 line("$rt.setProp(" + emitExpression(mae.object()) + ", "
                     + jsStringLiteral(mae.field()) + ", $rt.MISSING);");
                 return;
             }
             if (objType instanceof Type.Table) {
-                // Module aliases type as Table (getDeclaredType of a
-                // ModuleSymbol); deleting a module export is a T4
-                // refinement surface — no function body reaches this
-                // slice's artifact.
                 line(emitExpression(mae.object()) + ".delete("
                     + jsStringLiteral(mae.field()) + ");");
                 return;
@@ -1830,9 +2011,10 @@ public final class JsBackend {
      * optional-field reads through {@code $rt.optRead} (MISSING → null);
      * table field reads are Map {@code .get} calls (a missing key yields
      * the nil-equivalent {@code undefined} — the contextual target check
-     * decides); module members (the T4 bindings) stay plain property
-     * accesses. Property positions keep the raw name — a field spelled
-     * {@code static}/{@code eval}/{@code __proto__} reads as written.
+     * decides); module members (the import bindings, shape step 5) stay
+     * plain property accesses. Property positions keep the raw name — a
+     * field spelled {@code static}/{@code eval}/{@code __proto__} reads
+     * as written.
      */
     private String emitMemberAccess(MemberAccessExpr mae) {
         String obj = emitExpression(mae.object());
@@ -1843,16 +2025,36 @@ public final class JsBackend {
         }
         // Module members: the alias identifier types as Table
         // (getDeclaredType of a ModuleSymbol) but its members are plain
-        // export-table properties, never Map keys.
-        if (mae.object() instanceof IdentifierExpr id) {
-            Symbol sym = symbols.resolve(id.name());
-            if (sym instanceof Symbol.ModuleSymbol) {
-                return obj + "." + field;
-            }
+        // export-table properties, never Map keys — the guard excludes
+        // a checker-accepted local shadowing the alias (that local's
+        // own type drives the read).
+        if (mae.object() instanceof IdentifierExpr id
+                && isModuleAliasRef(id)) {
+            return obj + "." + field;
         }
-        if (objType instanceof Type.Class cls) {
+        // A member access through a nullable class reference reads the
+        // declared field of the inner class (the checker's cross-module
+        // unwrap, TypeChecker.checkMemberAccess).
+        Type classTarget = objType;
+        if (objType instanceof Type.Nullable nullable
+                && nullable.inner() instanceof Type.Class) {
+            classTarget = nullable.inner();
+        }
+        if (classTarget instanceof Type.Class cls) {
             ClassField cf = findClassField(cls, field);
-            if (cf != null && cf.optional()) {
+            if (cf != null) {
+                return cf.optional()
+                    ? "$rt.optRead(" + obj + "." + field + ")"
+                    : obj + "." + field;
+            }
+            // Imported class field: the ClassSymbol of a cross-module
+            // class is unreachable through CheckResult, but a
+            // nullable-typed read may surface the MISSING sentinel of
+            // an absent optional field — $rt.optRead maps it to DEAL
+            // null, and is identity for required fields (they never
+            // store MISSING), so the optional three-state holds for
+            // imported classes exactly like local ones.
+            if (typeOf(mae) instanceof Type.Nullable) {
                 return "$rt.optRead(" + obj + "." + field + ")";
             }
             return obj + "." + field;
@@ -1865,10 +2067,11 @@ public final class JsBackend {
 
     /**
      * Looks up a class field declaration for the class type's symbol
-     * (local classes and the seeded builtin Error); imported classes
-     * resolve through the T4 import surface — no function body reaches
-     * this slice's artifact, so the plain-read fallback is deterministic
-     * here.
+     * (local classes and the seeded builtin Error). Imported classes
+     * return {@code null}: their ClassSymbol lives in the declaring
+     * module's symbol table and is unreachable through CheckResult, so
+     * {@link #emitMemberAccess} derives the optional three-state from
+     * the checker-recorded read type instead.
      */
     private ClassField findClassField(Type.Class cls, String field) {
         Symbol sym = symbols.resolve(cls.name());
@@ -1967,10 +2170,12 @@ public final class JsBackend {
         }
         String alias = findImportAliasForClass(cls.name(), mp);
         if (alias != null) {
-            return alias + "." + cls.name() + "$new";
+            return jsName(alias) + "." + cls.name() + "$new";
         }
-        // Defensive fallback (import bindings land at T4): the reference
-        // is still the declaring module's exported closure.
+        // Defensive fallback (the alias scan covers every
+        // checker-accepted import; only checker-error programs reach
+        // this form): the reference remains the declaring module's
+        // exported closure.
         return cls.name() + "$new";
     }
 
@@ -2096,12 +2301,37 @@ public final class JsBackend {
                     + emitCheckExpr(value, arrT.element(), span) + "; })()";
             }
             if (containerType instanceof Type.Table) {
+                // Module-alias index write (checker F5 accepts any
+                // table-typed index target in write context, module
+                // aliases included): the export-table mutation via
+                // $rt.setProp, never the Map .set call the plain
+                // object does not carry.
+                if (idx.array() instanceof IdentifierExpr id
+                        && isModuleAliasRef(id)) {
+                    return "$rt.setProp(" + emitExpression(idx.array())
+                        + ", " + emitExpression(idx.index()) + ", "
+                        + value + ")";
+                }
                 return emitExpression(idx.array()) + ".set("
                     + emitExpression(idx.index()) + ", " + value + ")";
             }
         }
         if (assign.target() instanceof MemberAccessExpr mae) {
             Type objType = typeOf(mae.object());
+            // Module-member write: a checker-accepted mutation of the
+            // export table (the LuaJIT plain-assignment semantics) —
+            // own-property-safe via $rt.setProp with the raw key, the
+            // assigned value re-validated against the declared export
+            // type at the assignment site (the established
+            // typed-boundary pattern).
+            if (mae.object() instanceof IdentifierExpr id
+                    && isModuleAliasRef(id)) {
+                return "$rt.setProp(" + emitExpression(mae.object())
+                    + ", " + jsStringLiteral(mae.field()) + ", "
+                    + checkedAssignmentValue(value,
+                        typeOf(assign.target()), typeOf(assign.value()),
+                        span) + ")";
+            }
             if (objType instanceof Type.Class) {
                 return "$rt.setProp(" + emitExpression(mae.object()) + ", "
                     + jsStringLiteral(mae.field()) + ", "
