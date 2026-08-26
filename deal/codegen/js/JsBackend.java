@@ -1,19 +1,62 @@
 package deal.codegen.js;
 
+import deal.ast.ArrayType;
+import deal.ast.AssignmentExpr;
+import deal.ast.ArrayLiteralExpr;
+import deal.ast.AwaitExpression;
+import deal.ast.BinaryExpr;
+import deal.ast.BinaryOp;
+import deal.ast.Block;
+import deal.ast.BreakStatement;
+import deal.ast.CallExpr;
 import deal.ast.ClassDeclaration;
+import deal.ast.ClassField;
+import deal.ast.ContinueStatement;
+import deal.ast.DeleteStatement;
+import deal.ast.Either;
 import deal.ast.ExportDeclaration;
 import deal.ast.ExpressionNode;
+import deal.ast.ExpressionStatement;
+import deal.ast.ForInit;
+import deal.ast.ForOfStatement;
+import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
+import deal.ast.FunctionExpr;
+import deal.ast.FunctionType;
+import deal.ast.FunctionTypeParam;
+import deal.ast.HasExpr;
+import deal.ast.IdentifierExpr;
+import deal.ast.IfStatement;
 import deal.ast.ImportDeclaration;
+import deal.ast.IndexExpr;
+import deal.ast.LiteralExpr;
+import deal.ast.LiteralValue;
+import deal.ast.MemberAccessExpr;
 import deal.ast.NamedType;
+import deal.ast.NullableType;
+import deal.ast.ObjectLiteralExpr;
+import deal.ast.Parameter;
 import deal.ast.ProgramNode;
+import deal.ast.Property;
+import deal.ast.QualifiedType;
+import deal.ast.ReturnStatement;
+import deal.ast.Span;
 import deal.ast.StatementNode;
+import deal.ast.TemplateLiteralExpr;
+import deal.ast.ThrowStatement;
+import deal.ast.TryStatement;
 import deal.ast.TypeNode;
+import deal.ast.UnaryExpr;
+import deal.ast.UnaryOp;
+import deal.ast.VariableDeclaration;
+import deal.ast.WhileStatement;
 import deal.checker.CheckResult;
+import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 import deal.types.Type;
+import deal.types.Types;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -31,11 +74,50 @@ import java.util.Set;
  * and the export assignments), the {@link #jsName} binding-position
  * translation and {@link #jsTypeDescriptor} descriptor foundations, the
  * entry shim with the location-embedding catch body, and the E6004 entry
- * backstop. The walker tolerates every checker-valid statement
- * structurally at this slice — no lowering, no diagnostic — so a
- * checker-valid entry module compiles today; no in-scope construct is
- * rejected merely because its lowering lands later (js-backend-emitter
- * D1).
+ * backstop.
+ *
+ * <p>ISSUE-0248 data slice: the full expression/statement lowering —
+ * literals (template literals lower to string concatenation), variables
+ * with the checker's inferred types and {@code jsName}-translated
+ * binding positions, checked int arithmetic via the {@code $rt} int
+ * members (E8001/E8004/E8005/E8006 in the runtime) and
+ * {@code number % number} through {@code $rt.numMod}, comparisons with
+ * {@code $rt.strCompare} for string ordering and native
+ * {@code ===}/{@code !==}, {@code &&}/{@code ||}, if/else/while/C-style
+ * for/break/continue, array and string for-of (fresh per-iteration
+ * {@code let} bindings; array for-of is index-based and stops before the
+ * first {@code $rt.undefined}), arrays (literals, guarded
+ * reads/writes/appends, {@code .length}, element delete with the
+ * E8002-bounded {@code $rt.undefined} write and no write at
+ * {@code i === length}), {@code T | null} boundaries via
+ * {@code $rt.checkNullable}, tables (the coordinated {@code $rt.makeTable}
+ * runtime member — js-backend-emitter D9 — plus literals via
+ * computed-key entry objects and contextual reads/writes/delete via
+ * {@code .get}/{@code .set}/{@code .delete}), class declarations (the
+ * predeclared artifact {@code let}s, the construction closure with the
+ * per-construction defaults thunk, the inline META pair) and contextual
+ * class-typed literals (the builtin {@code Error} through the header
+ * {@code Error$new} pair), field reads/writes/{@code has()}/delete with
+ * the optional three-state ({@code $rt.optRead}/{@code $rt.has}/
+ * {@code $rt.MISSING}), the two throw forms ({@code $rt.errorValue} with
+ * per-property {@code ""} default filling; the non-literal
+ * {@code throw <expr>;} rethrow), try/catch via {@code $rt.reifyError},
+ * {@code int()}/{@code number()} conversion calls through the header
+ * wrapper values, and Unicode scalar-value strings. Every emitted check
+ * and {@code .$f} call carries the literal {@code .deal} file/line/column
+ * arguments from the AST span.
+ *
+ * <p>Cluster staging (js-backend-emitter D1): function declarations,
+ * import declarations, and export declarations remain tolerated
+ * structurally at this slice — no wrapper/binding/export emission, no
+ * diagnostic — so T3 (functions and closures) and T4 (modules) populate
+ * those sections. Because a DEAL v1.2 module allows only
+ * imports/functions/classes/exports at top level (ModuleShapeValidator
+ * E1049), the surfaces this slice's merge emits that runnable probes can
+ * observe are class declarations (whose defaults thunks exercise the
+ * expression lowering) plus the {@code $rt.makeTable} member; the
+ * statement-level emission pins become observable from the first
+ * function-body emission (T3).
  *
  * <p>The backend consumes the checked AST exactly like
  * {@code JvmBackend} ({@code CheckResult.typeMap()}/{@code symbolTable()})
@@ -171,15 +253,16 @@ public final class JsBackend {
     // =========================================================================
 
     // The checker state the seam consumes (CheckResult.typeMap()/
-    // symbolTable()): this slice stores it like JvmBackend does; later
-    // slices read it for their lowering.
+    // symbolTable()): the type of every expression, the module-level
+    // symbol table, the source/module paths, and the import
+    // classification maps supplied by the orchestrator.
     private final Map<ExpressionNode, Type> typeMap;
     private final SymbolTable symbols;
     private final String sourcePath;
     private final String modulePath;
     // Import classification (raw import path → imported module path /
-    // declared export map), supplied by the orchestrator: consumed by the
-    // import-binding and rejection slices (T4/T6).
+    // declared export map): consumed by the import-binding and rejection
+    // slices (T4/T6); retained here for the module shape.
     private final Map<String, String> importResolutions;
     private final Map<String, Map<String, Type>> hostModules;
     private final boolean isEntry;
@@ -190,7 +273,13 @@ public final class JsBackend {
      * boundary conversion). */
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     /** The generated CommonJS source accumulator. */
-    private final StringBuilder out = new StringBuilder();
+    private StringBuilder out = new StringBuilder();
+    /** Statement-level emission indent (two spaces per level). */
+    private int indent = 0;
+    /** The declared return type of the innermost function body being
+     * emitted; {@code return} statements check their expression against
+     * it. */
+    private Type currentReturnType = null;
 
     private JsBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
                       String sourcePath, String modulePath,
@@ -251,10 +340,29 @@ public final class JsBackend {
         FunctionDeclaration entryMain = isEntry
             ? scanEntryMain(program) : null;
 
-        emitHeader();
+        // Shape step 6: predeclared class-artifact bindings in
+        // declaration order (the LuaBackend predeclare-then-assign
+        // pattern). Module-level functions join this list at T3.
+        List<String> classNames = new ArrayList<>();
+        for (StatementNode stmt : program.statements()) {
+            ClassDeclaration cd = switch (stmt) {
+                case ClassDeclaration c -> c;
+                case ExportDeclaration ed
+                        when ed.declaration() instanceof ClassDeclaration c -> c;
+                default -> null;
+            };
+            if (cd != null) {
+                classNames.add(cd.name());
+            }
+        }
+
+        emitHeader(classNames);
         for (StatementNode stmt : program.statements()) {
             visitStatement(stmt);
         }
+        // Shape step 8: the export-assignment section follows the
+        // declarations in the artifact (T4 populates it).
+        emitExportsSection();
         if (isEntry && entryMain != null) {
             emitEntryShim();
         }
@@ -267,19 +375,22 @@ public final class JsBackend {
     // =========================================================================
 
     /**
-     * Emits the canonical CommonJS module shape, steps 1-8 in exact order.
-     * Steps 5-8 are structurally empty at this slice: later slices
-     * populate the import bindings, the predeclared {@code let}s, the
-     * declarations, and the export assignments. Source comments precede
-     * generated statement groups (js-backend-architecture D8).
+     * Emits the canonical CommonJS module shape, steps 1-7 in exact order.
+     * Step 5 (import bindings) and the function predeclares are populated
+     * by T3/T4; step 6 carries the predeclared class-artifact {@code let}s
+     * of this slice; step 8's section header is emitted by
+     * {@link #emitExportsSection()} after the declaration walk. Source
+     * comments precede generated statement groups (js-backend-architecture
+     * D8).
      *
-     * <p>Host-global hygiene holds from the first merge: after the
-     * capture line generated code never spells bare {@code require}/
-     * {@code module}/{@code exports}, and never spells a bare host-global
-     * name anywhere; the nil-equivalent value is the runtime member
-     * {@code $rt.undefined} (js-backend-architecture D2).
+     * <p>Host-global hygiene holds: after the capture line generated code
+     * never spells bare {@code require}/{@code module}/{@code exports},
+     * and never spells a bare host-global name anywhere; the nil-equivalent
+     * value is the runtime member {@code $rt.undefined}, and table values
+     * are constructed only through {@code $rt.makeTable}
+     * (js-backend-architecture D2, js-backend-emitter D9).
      */
-    private void emitHeader() {
+    private void emitHeader(List<String> classNames) {
         out.append("// Generated by DEAL compiler — JavaScript backend. DO NOT EDIT.\n");
         out.append("// Source: ").append(sourcePath == null ? "" : sourcePath)
             .append("\n");
@@ -317,14 +428,28 @@ public final class JsBackend {
         out.append("// Import bindings (import order).\n");
         out.append("\n");
         // 6. Predeclared lets for module-level functions and class
-        // artifacts in declaration order (populated by T2/T3).
+        // artifacts in declaration order (functions join at T3).
         out.append("// Predeclared function and class-artifact bindings "
             + "(declaration order).\n");
+        for (String name : classNames) {
+            // The artifact names carry the compiler-generated "$" suffix,
+            // so every raw class name — a JS reserved word included —
+            // yields a valid, collision-free strict-mode binding.
+            out.append("let ").append(name).append("$new; let ")
+                .append(name).append("$meta;\n");
+        }
         out.append("\n");
-        // 7. Declarations in source order (populated by T2/T3).
+        // 7. Declarations in source order (the statement walk follows).
         out.append("// Declarations (source order).\n");
         out.append("\n");
-        // 8. Export assignments in declaration order (populated by T4).
+    }
+
+    /**
+     * Shape step 8's section header: the export assignments in
+     * declaration order follow the declaration walk in the artifact
+     * (T4 populates the assignments themselves).
+     */
+    private void emitExportsSection() {
         out.append("// Export assignments (declaration order).\n");
     }
 
@@ -428,40 +553,76 @@ public final class JsBackend {
     }
 
     /**
-     * Minimal type-node resolution for this slice's only consumer, the
-     * E6004 backstop: a {@code NamedType} primitive resolves to its
-     * {@link Type} enum; every other form resolves to
-     * {@link Type.Error#INSTANCE} — a non-null return type is exactly the
-     * signature mismatch the backstop rejects. Later slices extend this
-     * resolver alongside their lowering.
+     * Resolves an AST type node to the internal {@link Type} without
+     * re-checking (the {@code LuaBackend.resolveTypeNode} mirror,
+     * deal/codegen/lua/LuaBackend.java:2934-2985): primitive names
+     * (the builtin {@code Error} included, module path empty), local
+     * classes through the module symbol table, qualified cross-module
+     * class references through the module exports, and the array/
+     * nullable/function compositions. Unresolvable nodes resolve to
+     * {@link Type.Error#INSTANCE} — the checker has already rejected
+     * those programs.
      */
     private Type resolveTypeNode(TypeNode typeNode) {
-        if (typeNode instanceof NamedType nt) {
-            return switch (nt.name()) {
+        return switch (typeNode) {
+            case NamedType nt -> switch (nt.name()) {
                 case "null" -> Type.Null.INSTANCE;
                 case "boolean" -> Type.Boolean.INSTANCE;
                 case "int" -> Type.Int.INSTANCE;
                 case "number" -> Type.Number.INSTANCE;
                 case "string" -> Type.String.INSTANCE;
                 case "table" -> Type.Table.INSTANCE;
-                default -> Type.Error.INSTANCE;
+                case "Error" -> Types.classType("Error", "");
+                default -> {
+                    Symbol sym = symbols.resolve(nt.name());
+                    if (sym instanceof Symbol.ClassSymbol cs) {
+                        yield Types.classType(nt.name(), cs.modulePath());
+                    }
+                    yield Type.Error.INSTANCE;
+                }
             };
-        }
-        return Type.Error.INSTANCE;
+            case QualifiedType qt -> {
+                Symbol sym = symbols.resolve(qt.moduleName());
+                if (sym instanceof Symbol.ModuleSymbol ms) {
+                    Type exportType = ms.exports().get(qt.typeName());
+                    if (exportType != null) yield exportType;
+                }
+                yield Types.classType(qt.typeName(), qt.moduleName());
+            }
+            case ArrayType at -> {
+                Type elem = resolveTypeNode(at.elementType());
+                if (elem == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
+                yield new Type.Array(elem);
+            }
+            case NullableType nt2 -> {
+                Type inner = resolveTypeNode(nt2.innerType());
+                if (inner == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
+                yield new Type.Nullable(inner);
+            }
+            case FunctionType ft -> {
+                List<Type> paramTypes = new ArrayList<>();
+                for (FunctionTypeParam ftp : ft.params()) {
+                    Type pt = resolveTypeNode(ftp.type());
+                    if (pt == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
+                    paramTypes.add(pt);
+                }
+                Type ret = resolveTypeNode(ft.returnType());
+                if (ret == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
+                yield new Type.Func(paramTypes, ret, ft.isAsync());
+            }
+        };
     }
 
     // =========================================================================
-    // Structural staging walk (js-backend-emitter D1)
+    // Statement walking
     // =========================================================================
 
     /**
-     * Structural staging walk (ISSUE-0247 core slice, js-backend-emitter
-     * D1): every statement kind of a checker-valid module is tolerated
-     * here without lowering and without a diagnostic — import
-     * declarations, function/class declarations, export declarations, and
-     * their bodies included. Later slices replace the no-op arms with
-     * their lowering and populate the module-shape sections; no in-scope
-     * construct is rejected merely because its lowering lands later.
+     * Statement dispatch. Import declarations (T4), function declarations
+     * (T3), and export declarations (T4 assignments; the wrapped class
+     * declaration emits its artifacts here) are tolerated structurally at
+     * this slice (js-backend-emitter D1); every other statement kind
+     * lowers fully.
      */
     private void visitStatement(StatementNode stmt) {
         switch (stmt) {
@@ -469,20 +630,1233 @@ public final class JsBackend {
                 // T4: import bindings in import order (shape step 5).
             }
             case FunctionDeclaration fd -> {
-                // T2/T3: predeclared let + wrapper assignment (steps 6-7).
+                // T3: predeclared let + wrapper assignment (steps 6-7).
             }
-            case ClassDeclaration cd -> {
-                // T2/T3: predeclared artifact lets + artifact assignments
-                // (steps 6-7).
-            }
+            case ClassDeclaration cd -> visit(cd);
             case ExportDeclaration ed -> {
-                // T4: export assignments via $rt.setProp (shape step 8).
+                // T4 adds the export assignments (shape step 8); the
+                // wrapped declaration still emits its artifacts.
+                switch (ed.declaration()) {
+                    case ClassDeclaration cd -> visit(cd);
+                    case FunctionDeclaration fd -> {
+                        // T3.
+                    }
+                    default -> {
+                        // Unreachable: ExportDeclaration wraps only
+                        // function/class declarations.
+                    }
+                }
             }
-            default -> {
-                // Every other checker-valid construct (variables, control
-                // flow, errors, ...) is owned by a later slice and is
-                // tolerated structurally at this slice.
+            case VariableDeclaration vd -> visit(vd);
+            case ReturnStatement rs -> visit(rs);
+            case IfStatement is -> visit(is);
+            case WhileStatement ws -> visit(ws);
+            case ForStatement fs -> visit(fs);
+            case ForOfStatement fos -> visit(fos);
+            case BreakStatement bs -> line("break;");
+            case ContinueStatement cs -> line("continue;");
+            case ExpressionStatement es ->
+                line(emitExpression(es.expr()) + ";");
+            case DeleteStatement ds -> visit(ds);
+            case TryStatement ts -> visit(ts);
+            case ThrowStatement th -> visit(th);
+            case Block b -> visit(b);
+        }
+    }
+
+    /**
+     * Class declaration (js-backend-emitter D4 step 7): the predeclared
+     * artifact {@code let}s carry the header (step 6); the declaration
+     * site assigns the construction closure — a zero-arg defaults thunk
+     * builds the defaults object with computed keys, fresh per
+     * construction, with {@code $rt.MISSING} for absent optional fields —
+     * and the inline META pair. The identity is the module-qualified
+     * descriptor {@code @<modulePath>/<Name>} (runtime-class-identity
+     * D1-D2). Nested (non-module-level) class declarations are
+     * unreachable at this slice (no function body is emitted) and are
+     * the T6 rejection surface.
+     */
+    private void visit(ClassDeclaration cd) {
+        out.append("// Class: ").append(cd.name())
+            .append(" — construction closure, defaults thunk, and metadata.\n");
+        line(cd.name() + "$new = (provided, $file, $line, $column) => "
+            + "$rt.makeClass(" + jsStringLiteral(cd.name()) + ", "
+            + jsStringLiteral(qualifiedClassName(cd.name())) + ", "
+            + classDefaultsThunk(cd) + ", provided, $file, $line, $column);");
+        line(cd.name() + "$meta = { $kind: \"class\", $classname: "
+            + jsStringLiteral(qualifiedClassName(cd.name())) + " };");
+        out.append("\n");
+    }
+
+    /**
+     * The module-qualified runtime class identity for a class declared in
+     * this module: bare name when the module path is empty, else
+     * {@code @<modulePath>/<name>} (runtime-class-identity D1-D2, the
+     * {@code LuaBackend.qualifiedClassName} mirror).
+     */
+    private String qualifiedClassName(String name) {
+        String mp = modulePath != null ? modulePath : sourcePath;
+        if (mp == null || mp.isEmpty()) {
+            return name;
+        }
+        return "@" + mp + "/" + name;
+    }
+
+    /**
+     * The per-construction defaults thunk: a zero-arg closure returning a
+     * computed-key object literal — every user-named key computed, so a
+     * {@code __proto__} field name creates an own property and never
+     * invokes the inherited accessor (js-backend-architecture D4) — with
+     * every declared field present. Absent optional fields store
+     * {@code $rt.MISSING}; default expressions evaluate fresh on every
+     * construction (spec §Construction); the remaining required fields
+     * carry their zero-value placeholders (dead entries — the checker's
+     * E4001 requires every literal to provide them).
+     */
+    private String classDefaultsThunk(ClassDeclaration cd) {
+        StringBuilder sb = new StringBuilder("() => ({");
+        boolean first = true;
+        for (ClassField field : cd.fields()) {
+            if (!first) sb.append(",");
+            first = false;
+            sb.append(" [").append(jsStringLiteral(field.name()))
+                .append("]: ").append(fieldDefault(field));
+        }
+        sb.append(" })");
+        return sb.toString();
+    }
+
+    /**
+     * One field's defaults-thunk entry (the
+     * {@code LuaBackend.visit(ClassDeclaration)} order,
+     * deal/codegen/lua/LuaBackend.java:1076-1096): absent optional →
+     * {@code $rt.MISSING}; default expression → the expression verbatim
+     * (its own checks travel inside — {@code $rt.intAdd}, the conversions,
+     * the table/array literals); required nullable without default →
+     * {@code null}; otherwise the type-node zero value.
+     */
+    private String fieldDefault(ClassField field) {
+        if (field.optional() && field.defaultExpr().isEmpty()) {
+            return "$rt.MISSING";
+        }
+        if (field.defaultExpr().isPresent()) {
+            return emitExpression(field.defaultExpr().get());
+        }
+        if (field.nullable()) {
+            return "null";
+        }
+        return defaultValueForTypeNode(field.type());
+    }
+
+    /**
+     * The JS zero value for a type node with no default expression (the
+     * {@code LuaBackend.defaultValueForTypeNode} mirror): {@code 0},
+     * {@code 0.0}, {@code false}, {@code ""}, {@code null}, a fresh empty
+     * Map via {@code $rt.makeTable({})} for tables, a fresh {@code []}
+     * for arrays, and {@code {}} for the remaining dead-entry shapes
+     * (class-typed and function-typed required fields are provided at
+     * every literal — checker E4001 — so their defaults entries are never
+     * read).
+     */
+    private String defaultValueForTypeNode(TypeNode typeNode) {
+        return switch (typeNode) {
+            case NamedType nt -> switch (nt.name()) {
+                case "int" -> "0";
+                case "number" -> "0.0";
+                case "boolean" -> "false";
+                case "string" -> "\"\"";
+                case "null" -> "null";
+                case "table" -> "$rt.makeTable({})";
+                default -> "{}";
+            };
+            case NullableType ignored -> "null";
+            case ArrayType ignored -> "[]";
+            case FunctionType ignored -> "{}";
+            default -> "{}";
+        };
+    }
+
+    /**
+     * Variable declaration (the
+     * {@code LuaBackend.visit(VariableDeclaration)} mirror): the binding
+     * position translates through {@link #jsName} (shadowing is native
+     * per-block {@code let}); an annotated declaration checks the
+     * initializer against the declared type, an inferred literal skips
+     * the check, and every other inferred initializer is checked against
+     * its checker-inferred type at the declaration span.
+     */
+    private void visit(VariableDeclaration node) {
+        String name = jsName(node.name());
+        boolean hasAnnotation = node.typeAnnotation().isPresent();
+        Type targetType = hasAnnotation
+            ? resolveTypeNode(node.typeAnnotation().get()) : null;
+        Type exprType = typeOf(node.initializer());
+        String init = emitExpression(node.initializer());
+
+        Span span = hasAnnotation
+            ? node.typeAnnotation().get().span()
+            : node.initializer().span();
+
+        if (hasAnnotation && targetType != null
+                && !(targetType instanceof Type.Error)) {
+            line("let " + name + " = "
+                + emitCheckExpr(init, targetType, span) + ";");
+        } else if (!hasAnnotation && exprType != null
+                && node.initializer() instanceof LiteralExpr
+                && (exprType instanceof Type.Int
+                    || exprType instanceof Type.Boolean
+                    || exprType instanceof Type.String
+                    || exprType instanceof Type.Number
+                    || exprType instanceof Type.Null)) {
+            line("let " + name + " = " + init + ";");
+        } else {
+            Type checkType = targetType != null ? targetType : exprType;
+            if (checkType != null
+                    && !(checkType instanceof Type.Error)
+                    && !(checkType instanceof Type.Null)) {
+                line("let " + name + " = "
+                    + emitCheckExpr(init, checkType, span) + ";");
+            } else {
+                line("let " + name + " = " + init + ";");
             }
         }
+    }
+
+    /**
+     * Return statement: the expression crosses the declared return type
+     * boundary at the return site (the wrapper's exit check); a bare
+     * return in a {@code null}-typed function returns the DEAL null
+     * ({@code null}), every other bare return is the defensive plain
+     * form (checker E5002 already rejected missing returns elsewhere).
+     */
+    private void visit(ReturnStatement node) {
+        if (node.expr().isPresent()) {
+            String expr = emitExpression(node.expr().get());
+            if (currentReturnType != null
+                    && !(currentReturnType instanceof Type.Error)
+                    && !(currentReturnType instanceof Type.Null)) {
+                expr = emitCheckExpr(expr, currentReturnType,
+                    node.expr().get().span());
+            }
+            line("return " + expr + ";");
+        } else {
+            line(currentReturnType instanceof Type.Null
+                ? "return null;" : "return;");
+        }
+    }
+
+    /**
+     * If/else: the condition crosses a boolean boundary via
+     * {@code $rt.checkBoolean} (the reference's condition check,
+     * deal/codegen/lua/LuaBackend.java:1305-1346); every branch is a
+     * brace scope, so branch-level shadowing is native.
+     */
+    private void visit(IfStatement node) {
+        line("if ($rt.checkBoolean(" + emitExpression(node.condition())
+            + ", " + spanArgs(node.condition().span()) + ")) {");
+        indent++;
+        walkStatements(node.thenBlock().statements());
+        indent--;
+        if (node.elseBranch().isPresent()) {
+            emitElseChain(node);
+        } else {
+            line("}");
+        }
+    }
+
+    /**
+     * The else-if / else chain: each {@code else if} condition crosses
+     * the boolean boundary; the chain closes exactly once.
+     */
+    private void emitElseChain(IfStatement node) {
+        switch (node.elseBranch().get()) {
+            case Either.Left<IfStatement, Block> left -> {
+                IfStatement elseIf = left.value();
+                line("} else if ($rt.checkBoolean("
+                    + emitExpression(elseIf.condition()) + ", "
+                    + spanArgs(elseIf.condition().span()) + ")) {");
+                indent++;
+                walkStatements(elseIf.thenBlock().statements());
+                indent--;
+                emitElseChain(elseIf);
+            }
+            case Either.Right<IfStatement, Block> right -> {
+                line("} else {");
+                indent++;
+                walkStatements(right.value().statements());
+                indent--;
+                line("}");
+            }
+        }
+    }
+
+    /**
+     * While loop: the per-iteration condition crosses the boolean
+     * boundary (mirroring the reference's condition check).
+     */
+    private void visit(WhileStatement node) {
+        line("while ($rt.checkBoolean(" + emitExpression(node.condition())
+            + ", " + spanArgs(node.condition().span()) + ")) {");
+        indent++;
+        walkStatements(node.body().statements());
+        indent--;
+        line("}");
+    }
+
+    /**
+     * C-style for: native JS semantics with a {@code let} head binding —
+     * per-iteration fresh for closures, the condition/update see the
+     * current iteration's binding, and the body scope can shadow the
+     * loop variable exactly like the checker's scope model. A
+     * let-declared init checks its initializer; the condition crosses
+     * the boolean boundary; an absent condition is {@code true}.
+     */
+    private void visit(ForStatement node) {
+        String initPart = "";
+        if (node.init().isPresent()) {
+            switch (node.init().get()) {
+                case ForInit.VarDecl vd -> {
+                    VariableDeclaration decl = vd.decl();
+                    Type varType = decl.typeAnnotation().isPresent()
+                        ? resolveTypeNode(decl.typeAnnotation().get()) : null;
+                    String initExpr = emitExpression(decl.initializer());
+                    Span initSpan = decl.typeAnnotation().isPresent()
+                        ? decl.typeAnnotation().get().span()
+                        : decl.initializer().span();
+                    if (varType != null
+                            && !(varType instanceof Type.Error)) {
+                        initPart = "let " + jsName(decl.name()) + " = "
+                            + emitCheckExpr(initExpr, varType, initSpan);
+                    } else {
+                        initPart = "let " + jsName(decl.name())
+                            + " = " + initExpr;
+                    }
+                }
+                case ForInit.AssignExpr ae ->
+                    initPart = emitAssignment(ae.expr());
+            }
+        }
+        String condPart = node.condition().isPresent()
+            ? "$rt.checkBoolean("
+                + emitExpression(node.condition().get()) + ", "
+                + spanArgs(node.condition().get().span()) + ")"
+            : "true";
+        String updatePart = node.update().isPresent()
+            ? emitExpression(node.update().get()) : "";
+        line("for (" + initPart + "; " + condPart + "; " + updatePart
+            + ") {");
+        indent++;
+        walkStatements(node.body().statements());
+        indent--;
+        line("}");
+    }
+
+    /**
+     * For-of. Array iteration (js-backend-architecture D6): index-based
+     * over {@code 0..length-1} via the generated {@code $i} loop
+     * variable, the iterable hoisted to a generated {@code $iter} local
+     * for single evaluation, the loop breaking before the first element
+     * equal to the runtime nil-equivalent {@code $rt.undefined} (the
+     * LuaJIT {@code ipairs} stop-at-first-nil semantics — a {@code null}
+     * element is a value and iterates), and the fresh per-iteration
+     * element binding as a {@code let} declared inside the loop body
+     * (never {@code const} — a checker-accepted mutation of the element
+     * variable must not throw). The body statements sit in a nested
+     * block scope so a checker-accepted shadowing of the loop variable
+     * stays a legal strict-mode redeclaration in a child scope. String
+     * iteration walks one Unicode scalar value per step through
+     * {@code $rt.scalars}.
+     */
+    private void visit(ForOfStatement node) {
+        Type iterableType = typeOf(node.iterable());
+        String varName = jsName(node.varName());
+        line("{");
+        indent++;
+        line("const $iter = " + emitExpression(node.iterable()) + ";");
+        if (iterableType instanceof Type.Array) {
+            line("for (let $i = 0; $i < $iter.length; $i++) {");
+            indent++;
+            line("if ($iter[$i] === $rt.undefined) { break; }");
+            line("let " + varName + " = $iter[$i];");
+            line("{");
+            indent++;
+            walkStatements(node.body().statements());
+            indent--;
+            line("}");
+            indent--;
+            line("}");
+        } else {
+            line("for (let " + varName + " of $rt.scalars($iter)) {");
+            indent++;
+            walkStatements(node.body().statements());
+            indent--;
+            line("}");
+        }
+        indent--;
+        line("}");
+    }
+
+    /**
+     * Delete statement. Array element delete (js-backend-architecture
+     * D6, the {@code LuaBackend.visit(DeleteStatement)} mirror,
+     * deal/codegen/lua/LuaBackend.java:1696-1715): the array and the
+     * {@code $rt.checkInt}-validated index hoist to generated locals, a
+     * negative or beyond-length index raises E8002 "array index out of
+     * bounds", an index equal to the length performs no write (a JS
+     * write at index {@code length} would append and grow the array —
+     * the reference's nil-write to a non-existent key is a no-op), and
+     * any other index writes the runtime-captured nil-equivalent
+     * {@code $rt.undefined}. Class field delete writes
+     * {@code $rt.MISSING} via the own-property-safe {@code $rt.setProp};
+     * table delete is the Map {@code .delete} call.
+     */
+    private void visit(DeleteStatement node) {
+        if (node.target() instanceof IndexExpr idx) {
+            Type containerType = typeOf(idx.array());
+            if (containerType instanceof Type.Array) {
+                line("{");
+                indent++;
+                line("const $arr = " + emitExpression(idx.array()) + ";");
+                line("const $idx = $rt.checkInt("
+                    + emitExpression(idx.index()) + ", "
+                    + spanArgs(idx.span()) + ");");
+                line("if ($idx < 0 || $idx > $arr.length) { "
+                    + "$rt.fail(\"E8002\", \"array index out of bounds\", "
+                    + spanArgs(idx.span()) + "); }");
+                line("if ($idx !== $arr.length) { $arr[$idx] = $rt.undefined; }");
+                indent--;
+                line("}");
+                return;
+            }
+            if (containerType instanceof Type.Table) {
+                line(emitExpression(idx.array()) + ".delete("
+                    + emitExpression(idx.index()) + ");");
+                return;
+            }
+        }
+        if (node.target() instanceof MemberAccessExpr mae) {
+            Type objType = typeOf(mae.object());
+            if (objType instanceof Type.Class) {
+                line("$rt.setProp(" + emitExpression(mae.object()) + ", "
+                    + jsStringLiteral(mae.field()) + ", $rt.MISSING);");
+                return;
+            }
+            if (objType instanceof Type.Table) {
+                // Module aliases type as Table (getDeclaredType of a
+                // ModuleSymbol); deleting a module export is a T4
+                // refinement surface — no function body reaches this
+                // slice's artifact.
+                line(emitExpression(mae.object()) + ".delete("
+                    + jsStringLiteral(mae.field()) + ");");
+                return;
+            }
+        }
+        // Defensive arm: unreachable for checker-accepted programs
+        // (E3017 rejects array .length deletes, E4004 required class
+        // fields); fails loudly rather than silently miscompiling.
+        line("$rt.fail(\"E6000\", \"unsupported delete target\", "
+            + spanArgs(node.span()) + ");");
+    }
+
+    /**
+     * Try/catch (js-backend-runtime D7): native try/catch with a
+     * generated {@code $e} raw catch parameter and the user binding
+     * (jsName-translated) initialized from the total
+     * {@code $rt.reifyError} conversion. Native JS control flow makes
+     * the reference's return/break/continue-through-try machinery
+     * unnecessary. Flow continues after the catch block natively.
+     */
+    private void visit(TryStatement node) {
+        line("try {");
+        indent++;
+        walkStatements(node.tryBlock().statements());
+        indent--;
+        line("} catch ($e) {");
+        indent++;
+        line("const " + jsName(node.catchVar()) + " = $rt.reifyError($e);");
+        walkStatements(node.catchBlock().statements());
+        indent--;
+        line("}");
+    }
+
+    /**
+     * Throw statement (js-backend-runtime D7, the
+     * {@code LuaBackend.visit(ThrowStatement)} mirror,
+     * deal/codegen/lua/LuaBackend.java:1852-1880): an Error literal emits
+     * {@code $rt.errorValue} with the per-property {@code ""} default
+     * filling (an omitted {@code code}/{@code message} passes the empty
+     * string — the checker's E4002 already excludes extra fields), plus
+     * the throw-site location arguments; every other Error-typed
+     * expression — a rethrow {@code throw e;} included — emits the
+     * non-literal {@code throw <expr>;} form verbatim (the thrown value
+     * is already a tagged Error instance that {@code $rt.reifyError}
+     * passes through unchanged).
+     */
+    private void visit(ThrowStatement node) {
+        Span throwSpan = node.span();
+        if (node.expr() instanceof ObjectLiteralExpr objLit) {
+            String codeExpr = "\"\"";
+            String messageExpr = "\"\"";
+            for (Property prop : objLit.properties()) {
+                if (prop.name().equals("code")) {
+                    codeExpr = emitExpression(prop.value());
+                } else if (prop.name().equals("message")) {
+                    messageExpr = emitExpression(prop.value());
+                }
+            }
+            line("throw $rt.errorValue(" + codeExpr + ", " + messageExpr
+                + ", " + spanArgs(throwSpan) + ");");
+        } else {
+            line("throw " + emitExpression(node.expr()) + ";");
+        }
+    }
+
+    /**
+     * Bare block: a brace scope of its own, so per-block {@code let}
+     * shadowing (the checker's Block scopes) stays legal strict-mode
+     * code. Branch/loop/catch bodies walk their statements directly —
+     * their braces already form the scope.
+     */
+    private void visit(Block node) {
+        line("{");
+        indent++;
+        walkStatements(node.statements());
+        indent--;
+        line("}");
+    }
+
+    /**
+     * Walks a statement list directly (no braces): the caller owns the
+     * enclosing scope.
+     */
+    private void walkStatements(List<StatementNode> statements) {
+        for (StatementNode stmt : statements) {
+            visitStatement(stmt);
+        }
+    }
+
+    // =========================================================================
+    // Expression emission
+    // =========================================================================
+
+    private String emitExpression(ExpressionNode expr) {
+        return switch (expr) {
+            case LiteralExpr lit -> emitLiteral(lit);
+            case IdentifierExpr id -> emitIdentifier(id);
+            case BinaryExpr bin -> emitBinary(bin);
+            case UnaryExpr un -> emitUnary(un);
+            case CallExpr call -> emitCall(call);
+            case MemberAccessExpr mae -> emitMemberAccess(mae);
+            case IndexExpr idx -> emitIndex(idx);
+            case ArrayLiteralExpr arr -> emitArrayLiteral(arr);
+            case ObjectLiteralExpr obj -> emitObjectLiteral(obj);
+            case FunctionExpr fe -> emitFunctionExpr(fe);
+            case HasExpr has -> emitHas(has);
+            case AssignmentExpr assign -> emitAssignment(assign);
+            case AwaitExpression await ->
+                "await " + emitExpression(await.callee());
+            case TemplateLiteralExpr tl -> emitTemplateLiteral(tl);
+        };
+    }
+
+    private String emitLiteral(LiteralExpr lit) {
+        return switch (lit.value()) {
+            case LiteralValue.NullLiteral n -> "null";
+            case LiteralValue.BooleanLiteral b -> b.value() ? "true" : "false";
+            case LiteralValue.IntLiteral i -> Long.toString(i.value());
+            case LiteralValue.NumberLiteral n -> {
+                double v = n.value();
+                // No bare host-global spelling: NaN/Infinity emit as
+                // IEEE-arithmetic expressions (the LuaBackend (0/0) /
+                // (1/0) precedent).
+                if (Double.isNaN(v)) yield "(0/0)";
+                if (Double.isInfinite(v)) yield v > 0 ? "(1/0)" : "(-1/0)";
+                yield Double.toString(v);
+            }
+            case LiteralValue.StringLiteral s -> jsStringLiteral(s.value());
+        };
+    }
+
+    /**
+     * Identifier reference: the binding-position translation (a variable
+     * named {@code static}/{@code eval} binds and references as
+     * {@code static$}/{@code eval$}). Class-symbol references (a class
+     * META as a value, {@code let c = User;}) are the T4 export-surface
+     * refinement; no function body reaches this slice's artifact.
+     */
+    private String emitIdentifier(IdentifierExpr id) {
+        return jsName(id.name());
+    }
+
+    /**
+     * Binary expressions. Checked int arithmetic routes through the
+     * {@code $rt.intAdd}/{@code intSub}/{@code intMul}/{@code intDiv}/
+     * {@code intMod}/{@code intPow} members with the operator-span
+     * location (E8001/E8004/E8005/E8006 in the runtime, the check_int
+     * ±Infinity-before-range order included); {@code number % number}
+     * routes through the floored {@code $rt.numMod} while the remaining
+     * number ops stay native IEEE; string ordering compares Unicode
+     * scalar values via {@code $rt.strCompare}; equality and inequality
+     * are native {@code ===}/{@code !==}; {@code &&}/{@code ||} are
+     * native short-circuit. The two nullable special forms mirror the
+     * reference's nil-aware equality byte-for-byte
+     * (deal/codegen/lua/LuaBackend.java:2007-2030): a nullable operand
+     * compared against a {@code null} literal, and two nullable operands
+     * compared against each other, map the nil-equivalent values
+     * ({@code undefined}/{@code null}/{@code MISSING}) through
+     * {@code $rt.isNilEquivalent} so an out-of-bounds or deleted-element
+     * read compares equal to DEAL null exactly like LuaJIT's nil.
+     */
+    private String emitBinary(BinaryExpr bin) {
+        Type leftType = typeOf(bin.left());
+        Type rightType = typeOf(bin.right());
+        String left = emitExpression(bin.left());
+        String right = emitExpression(bin.right());
+        BinaryOp op = bin.op();
+        String spanParam = spanArgs(bin.span());
+
+        if (op == BinaryOp.ADD && leftType instanceof Type.String
+                && rightType instanceof Type.String) {
+            return "(" + left + " + " + right + ")";
+        }
+
+        if (leftType instanceof Type.Int && rightType instanceof Type.Int) {
+            return switch (op) {
+                case ADD -> "$rt.intAdd(" + left + ", " + right + ", "
+                    + spanParam + ")";
+                case SUB -> "$rt.intSub(" + left + ", " + right + ", "
+                    + spanParam + ")";
+                case MUL -> "$rt.intMul(" + left + ", " + right + ", "
+                    + spanParam + ")";
+                case DIV -> "$rt.intDiv(" + left + ", " + right + ", "
+                    + spanParam + ")";
+                case MOD -> "$rt.intMod(" + left + ", " + right + ", "
+                    + spanParam + ")";
+                case POW -> "$rt.intPow(" + left + ", " + right + ", "
+                    + spanParam + ")";
+                case EQ -> "(" + left + " === " + right + ")";
+                case NEQ -> "(" + left + " !== " + right + ")";
+                case LT -> "(" + left + " < " + right + ")";
+                case LTE -> "(" + left + " <= " + right + ")";
+                case GT -> "(" + left + " > " + right + ")";
+                case GTE -> "(" + left + " >= " + right + ")";
+                case AND -> "(" + left + " && " + right + ")";
+                case OR -> "(" + left + " || " + right + ")";
+            };
+        }
+
+        if (leftType instanceof Type.Number
+                || rightType instanceof Type.Number) {
+            return switch (op) {
+                case ADD -> "(" + left + " + " + right + ")";
+                case SUB -> "(" + left + " - " + right + ")";
+                case MUL -> "(" + left + " * " + right + ")";
+                case DIV -> "(" + left + " / " + right + ")";
+                case MOD -> "$rt.numMod(" + left + ", " + right + ")";
+                case POW -> "(" + left + " ** " + right + ")";
+                case EQ -> "(" + left + " === " + right + ")";
+                case NEQ -> "(" + left + " !== " + right + ")";
+                case LT -> "(" + left + " < " + right + ")";
+                case LTE -> "(" + left + " <= " + right + ")";
+                case GT -> "(" + left + " > " + right + ")";
+                case GTE -> "(" + left + " >= " + right + ")";
+                case AND -> "(" + left + " && " + right + ")";
+                case OR -> "(" + left + " || " + right + ")";
+            };
+        }
+
+        // Nullable-vs-nullable equality: nil-equivalent pairs compare
+        // equal (the reference's nil-aware form).
+        if (leftType instanceof Type.Nullable
+                && rightType instanceof Type.Nullable) {
+            if (op == BinaryOp.EQ) {
+                return "((" + left + " === " + right + ") || ("
+                    + "$rt.isNilEquivalent(" + left + ") && "
+                    + "$rt.isNilEquivalent(" + right + ")))";
+            }
+            if (op == BinaryOp.NEQ) {
+                return "!((" + left + " === " + right + ") || ("
+                    + "$rt.isNilEquivalent(" + left + ") && "
+                    + "$rt.isNilEquivalent(" + right + ")))";
+            }
+        }
+
+        // Nullable-vs-null equality: the null literal compares equal to
+        // every nil-equivalent value.
+        if (op == BinaryOp.EQ && isNullLiteral(bin.right())
+                && leftType instanceof Type.Nullable) {
+            return "$rt.isNilEquivalent(" + left + ")";
+        }
+        if (op == BinaryOp.EQ && isNullLiteral(bin.left())
+                && rightType instanceof Type.Nullable) {
+            return "$rt.isNilEquivalent(" + right + ")";
+        }
+        if (op == BinaryOp.NEQ && isNullLiteral(bin.right())
+                && leftType instanceof Type.Nullable) {
+            return "!$rt.isNilEquivalent(" + left + ")";
+        }
+        if (op == BinaryOp.NEQ && isNullLiteral(bin.left())
+                && rightType instanceof Type.Nullable) {
+            return "!$rt.isNilEquivalent(" + right + ")";
+        }
+
+        // String ordering: scalar-value order via the runtime helper (JS
+        // relational operators order UTF-16 code units, which diverges
+        // for supplementary characters).
+        if (leftType instanceof Type.String
+                && rightType instanceof Type.String) {
+            return switch (op) {
+                case LT -> "($rt.strCompare(" + left + ", " + right + ") < 0)";
+                case LTE -> "($rt.strCompare(" + left + ", " + right + ") <= 0)";
+                case GT -> "($rt.strCompare(" + left + ", " + right + ") > 0)";
+                case GTE -> "($rt.strCompare(" + left + ", " + right + ") >= 0)";
+                default -> "(" + left + " " + opSymbolJs(op) + " " + right + ")";
+            };
+        }
+
+        return "(" + left + " " + opSymbolJs(op) + " " + right + ")";
+    }
+
+    private String opSymbolJs(BinaryOp op) {
+        return switch (op) {
+            case ADD -> "+"; case SUB -> "-"; case MUL -> "*";
+            case DIV -> "/"; case MOD -> "%"; case POW -> "**";
+            case EQ -> "==="; case NEQ -> "!=="; case LT -> "<";
+            case LTE -> "<="; case GT -> ">"; case GTE -> ">=";
+            case AND -> "&&"; case OR -> "||";
+        };
+    }
+
+    private boolean isNullLiteral(ExpressionNode expr) {
+        return expr instanceof LiteralExpr lit
+            && lit.value() instanceof LiteralValue.NullLiteral;
+    }
+
+    /**
+     * Unary expressions: boolean {@code !} native; int negation routes
+     * through the checked {@code $rt.intNeg}; number negation stays
+     * native IEEE ({@code -x}, parenthesized only when the operand's
+     * emission itself starts with {@code -} so no {@code --} token can
+     * form).
+     */
+    private String emitUnary(UnaryExpr un) {
+        String expr = emitExpression(un.expr());
+        return switch (un.op()) {
+            case NOT -> "(!" + expr + ")";
+            case NEG -> {
+                Type operandType = typeOf(un.expr());
+                if (operandType instanceof Type.Int) {
+                    yield "$rt.intNeg(" + expr + ", "
+                        + spanArgs(un.span()) + ")";
+                }
+                yield expr.startsWith("-") ? "(-" + expr + ")" : "-" + expr;
+            }
+        };
+    }
+
+    /**
+     * Calls. The {@code int}/{@code number} conversion intrinsics route
+     * through the header wrapper values ({@code int.$f(x, <file>, <line>,
+     * <column>)} — the nullable-input overloads included: the runtime
+     * raises E8001 "cannot convert null to int/number" on nil-equivalent
+     * inputs inside {@code intConvert}/{@code numberConvert}); every
+     * other function-typed callee — direct, indirect, or member — is a
+     * wrapper whose {@code .$f} entry receives the call-site span
+     * arguments (js-backend-emitter D6).
+     */
+    private String emitCall(CallExpr call) {
+        Type calleeType = typeOf(call.callee());
+        StringBuilder args = new StringBuilder();
+        for (int i = 0; i < call.args().size(); i++) {
+            if (i > 0) args.append(", ");
+            args.append(emitExpression(call.args().get(i)));
+        }
+        if (call.callee() instanceof IdentifierExpr id) {
+            Symbol sym = symbols.resolve(id.name());
+            if (sym instanceof Symbol.IntrinsicSymbol) {
+                return emitExpression(call.callee()) + ".$f(" + args
+                    + ", " + spanArgs(call.span()) + ")";
+            }
+        }
+        if (calleeType instanceof Type.Func) {
+            return emitExpression(call.callee()) + ".$f(" + args
+                + ", " + spanArgs(call.span()) + ")";
+        }
+        // Defensive plain call: the checker rejects non-callable callees
+        // (E3008), so only checker-error programs reach this form.
+        return emitExpression(call.callee()) + "(" + args + ")";
+    }
+
+    /**
+     * Member access. Array {@code .length} reads the native length;
+     * class field reads are plain own-property reads (every declared
+     * field is materialized as an own property at construction), with
+     * optional-field reads through {@code $rt.optRead} (MISSING → null);
+     * table field reads are Map {@code .get} calls (a missing key yields
+     * the nil-equivalent {@code undefined} — the contextual target check
+     * decides); module members (the T4 bindings) stay plain property
+     * accesses. Property positions keep the raw name — a field spelled
+     * {@code static}/{@code eval}/{@code __proto__} reads as written.
+     */
+    private String emitMemberAccess(MemberAccessExpr mae) {
+        String obj = emitExpression(mae.object());
+        Type objType = typeOf(mae.object());
+        String field = mae.field();
+        if (field.equals("length") && objType instanceof Type.Array) {
+            return obj + ".length";
+        }
+        // Module members: the alias identifier types as Table
+        // (getDeclaredType of a ModuleSymbol) but its members are plain
+        // export-table properties, never Map keys.
+        if (mae.object() instanceof IdentifierExpr id) {
+            Symbol sym = symbols.resolve(id.name());
+            if (sym instanceof Symbol.ModuleSymbol) {
+                return obj + "." + field;
+            }
+        }
+        if (objType instanceof Type.Class cls) {
+            ClassField cf = findClassField(cls, field);
+            if (cf != null && cf.optional()) {
+                return "$rt.optRead(" + obj + "." + field + ")";
+            }
+            return obj + "." + field;
+        }
+        if (objType instanceof Type.Table) {
+            return obj + ".get(" + jsStringLiteral(field) + ")";
+        }
+        return obj + "." + field;
+    }
+
+    /**
+     * Looks up a class field declaration for the class type's symbol
+     * (local classes and the seeded builtin Error); imported classes
+     * resolve through the T4 import surface — no function body reaches
+     * this slice's artifact, so the plain-read fallback is deterministic
+     * here.
+     */
+    private ClassField findClassField(Type.Class cls, String field) {
+        Symbol sym = symbols.resolve(cls.name());
+        if (sym instanceof Symbol.ClassSymbol cs) {
+            for (ClassField cf : cs.fields()) {
+                if (cf.name().equals(field)) {
+                    return cf;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Index expression. Array reads emit the {@code $rt.checkInt} index
+     * check, the E8002 "negative array index" fail for negative indexes,
+     * and the raw element read — an out-of-bounds read yields the
+     * nil-equivalent {@code undefined}, which the contextual target check
+     * decides (nullable → DEAL null via {@code $rt.checkNullable};
+     * non-nullable → E8001) (js-backend-architecture D3/D6). Table
+     * reads are Map {@code .get} calls. The arrow IIFE evaluates the
+     * index (checked) before the container, exactly the reference's
+     * evaluation order.
+     */
+    private String emitIndex(IndexExpr idx) {
+        Type containerType = typeOf(idx.array());
+        String arr = emitExpression(idx.array());
+        String index = emitExpression(idx.index());
+        Span span = idx.span();
+        if (containerType instanceof Type.Array) {
+            return "(() => { const $idx = $rt.checkInt(" + index + ", "
+                + spanArgs(span) + "); if ($idx < 0) { "
+                + "$rt.fail(\"E8002\", \"negative array index\", "
+                + spanArgs(span) + "); } return " + arr + "[$idx]; })()";
+        }
+        if (containerType instanceof Type.Table) {
+            return arr + ".get(" + index + ")";
+        }
+        return arr + "[" + index + "]";
+    }
+
+    private String emitArrayLiteral(ArrayLiteralExpr arr) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < arr.elements().size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(emitExpression(arr.elements().get(i)));
+        }
+        sb.append("]");
+        return sb.toString();
+    }
+
+    /**
+     * Object literal: a class-typed literal constructs through the
+     * class's {@code $new} closure (the builtin {@code Error} through the
+     * header {@code Error$new}); every other object literal is a table
+     * literal constructed through the coordinated {@code $rt.makeTable}
+     * member (js-backend-emitter D9) with computed keys — a
+     * {@code __proto__} key creates an own property on the entries
+     * object, never the inherited accessor; values evaluate in source
+     * order, duplicate keys last-win.
+     */
+    private String emitObjectLiteral(ObjectLiteralExpr obj) {
+        Type expectedType = typeOf(obj);
+        if (expectedType instanceof Type.Class cls) {
+            return emitClassConstruction(cls, obj);
+        }
+        return "$rt.makeTable(" + providedObject(obj) + ")";
+    }
+
+    /**
+     * Class-typed literal construction (the
+     * {@code LuaBackend.emitClassConstruction} mirror): the computed-key
+     * provided object plus the literal-span location arguments to the
+     * construction closure. Provided values carry their own
+     * expression-site boundary checks (js-backend-runtime D5).
+     */
+    private String emitClassConstruction(Type.Class cls, ObjectLiteralExpr obj) {
+        return constructionRef(cls) + "(" + providedObject(obj) + ", "
+            + spanArgs(obj.span()) + ")";
+    }
+
+    /**
+     * The construction closure reference for a class type: the header
+     * {@code Error$new} for the builtin Error (module path empty), the
+     * module-private {@code <C>$new} binding for a local class, and the
+     * declaring module's exported {@code <alias>.<C>$new} for an
+     * imported class (T4 materializes the alias binding).
+     */
+    private String constructionRef(Type.Class cls) {
+        String mp = cls.modulePath();
+        if (mp == null || mp.isEmpty()) {
+            return "Error$new";
+        }
+        if (mp.equals(modulePath)) {
+            return cls.name() + "$new";
+        }
+        String alias = findImportAliasForClass(cls.name(), mp);
+        if (alias != null) {
+            return alias + "." + cls.name() + "$new";
+        }
+        // Defensive fallback (import bindings land at T4): the reference
+        // is still the declaring module's exported closure.
+        return cls.name() + "$new";
+    }
+
+    /**
+     * Searches the module symbol table for a ModuleSymbol whose exports
+     * include the class with the exact module path; returns the import
+     * alias or {@code null} (the
+     * {@code LuaBackend.findImportAliasForClass} mirror).
+     */
+    private String findImportAliasForClass(String className, String modulePath) {
+        for (Map.Entry<String, Symbol> entry : symbols.symbols().entrySet()) {
+            Symbol sym = entry.getValue();
+            if (sym instanceof Symbol.ModuleSymbol ms) {
+                Type exportType = ms.exports().get(className);
+                if (exportType instanceof Type.Class tc
+                        && tc.modulePath().equals(modulePath)) {
+                    return entry.getKey();
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The computed-key user-named object literal both construction forms
+     * share: provided-field objects for class literals and entry objects
+     * for table literals (the canonical user-keyed literal shape,
+     * js-backend-emitter D5/D9).
+     */
+    private String providedObject(ObjectLiteralExpr obj) {
+        StringBuilder sb = new StringBuilder("{");
+        boolean first = true;
+        for (Property prop : obj.properties()) {
+            if (!first) sb.append(",");
+            first = false;
+            sb.append(" [").append(jsStringLiteral(prop.name())).append("]: ")
+                .append(emitExpression(prop.value()));
+        }
+        sb.append(" }");
+        return sb.toString();
+    }
+
+    /**
+     * Function expression (minimal T3-shaped lowering — the wrappers,
+     * parameter checks, and completion checks live with T3/T5; this form
+     * keeps a checker-accepted function-typed class-field default
+     * syntactically valid and behaviorally complete): the canonical
+     * wrapper with the exact descriptor signature, the jsName-translated
+     * parameter list plus the {@code $file}/{@code $line}/{@code $column}
+     * span parameters (duplicate-free for user parameters literally named
+     * {@code file}/{@code line}/{@code column}), the entry parameter
+     * checks, the body walk, and the return-site exit checks.
+     */
+    private String emitFunctionExpr(FunctionExpr fe) {
+        StringBuilder paramList = new StringBuilder();
+        for (int i = 0; i < fe.params().size(); i++) {
+            if (i > 0) paramList.append(", ");
+            paramList.append(jsName(fe.params().get(i).name()));
+        }
+        paramList.append(", $file, $line, $column");
+
+        Type funcType = typeOf(fe);
+        String sig = funcType instanceof Type.Func f
+            ? jsTypeDescriptor(f) : "()";
+
+        Type savedReturn = currentReturnType;
+        if (funcType instanceof Type.Func f) {
+            currentReturnType = f.returnType();
+        }
+
+        String body = captureOutput(() -> {
+            for (Parameter param : fe.params()) {
+                Type paramType = resolveTypeNode(param.type());
+                if (paramType != null
+                        && !(paramType instanceof Type.Error)
+                        && !(paramType instanceof Type.Null)) {
+                    line(emitCheckExpr(jsName(param.name()), paramType,
+                        param.type().span()) + ";");
+                }
+            }
+            walkStatements(fe.body().statements());
+        });
+
+        currentReturnType = savedReturn;
+
+        String keyword = funcType instanceof Type.Func f && f.isAsync()
+            ? "async function" : "function";
+        return "$rt.function(\"" + sig + "\", " + keyword + "("
+            + paramList + ") {\n" + body
+            + "  ".repeat(indent) + "})";
+    }
+
+    private String emitHas(HasExpr has) {
+        return "$rt.has(" + emitExpression(has.object()) + ", "
+            + jsStringLiteral(has.field()) + ")";
+    }
+
+    /**
+     * Assignment expression. Array element writes emit the
+     * {@code $rt.checkInt} index check, the E8002 bounds fail for
+     * negative or beyond-length indexes, the element-value check against
+     * the element descriptor, and the write (an index equal to the
+     * length appends natively); class field writes route through the
+     * own-property-safe {@code $rt.setProp}; table writes are Map
+     * {@code .set} calls; plain targets assign natively. The IIFE
+     * preserves the reference's evaluation order (container, checked
+     * index, bounds, checked value, write) in expression position.
+     */
+    private String emitAssignment(AssignmentExpr assign) {
+        String value = emitExpression(assign.value());
+        Span span = assign.span();
+
+        if (assign.target() instanceof IndexExpr idx) {
+            Type containerType = typeOf(idx.array());
+            if (containerType instanceof Type.Array arrT) {
+                String arr = emitExpression(idx.array());
+                String index = emitExpression(idx.index());
+                return "(() => { const $arr = " + arr
+                    + "; const $idx = $rt.checkInt(" + index + ", "
+                    + spanArgs(idx.span()) + "); "
+                    + "if ($idx < 0 || $idx > $arr.length) { "
+                    + "$rt.fail(\"E8002\", \"array index out of bounds\", "
+                    + spanArgs(idx.span()) + "); } "
+                    + "return $arr[$idx] = "
+                    + emitCheckExpr(value, arrT.element(), span) + "; })()";
+            }
+            if (containerType instanceof Type.Table) {
+                return emitExpression(idx.array()) + ".set("
+                    + emitExpression(idx.index()) + ", " + value + ")";
+            }
+        }
+        if (assign.target() instanceof MemberAccessExpr mae) {
+            Type objType = typeOf(mae.object());
+            if (objType instanceof Type.Class) {
+                return "$rt.setProp(" + emitExpression(mae.object()) + ", "
+                    + jsStringLiteral(mae.field()) + ", " + value + ")";
+            }
+            if (objType instanceof Type.Table) {
+                return emitExpression(mae.object()) + ".set("
+                    + jsStringLiteral(mae.field()) + ", " + value + ")";
+            }
+            return emitExpression(mae.object()) + "." + mae.field()
+                + " = " + value;
+        }
+        if (assign.target() instanceof IdentifierExpr id) {
+            return jsName(id.name()) + " = " + value;
+        }
+        // Defensive plain form: unreachable for checker-accepted
+        // programs (E3017 rejects array .length targets, the checker
+        // rejects every other unsupported target shape).
+        return emitExpression(assign.target()) + " = " + value;
+    }
+
+    /**
+     * Template literal lowering (the JVM concatenation approach,
+     * js-backend-architecture D6): string parts concatenate with the
+     * interpolated expressions via native string {@code +}; empty string
+     * parts are skipped (the {@code LuaBackend} precedent); a template
+     * with no interpolations is the plain string literal.
+     */
+    private String emitTemplateLiteral(TemplateLiteralExpr tl) {
+        List<ExpressionNode> parts = tl.parts();
+        if (parts.size() == 1) {
+            return emitExpression(parts.get(0));
+        }
+        StringBuilder sb = new StringBuilder("(");
+        boolean first = true;
+        for (int i = 0; i < parts.size(); i++) {
+            ExpressionNode part = parts.get(i);
+            if (i % 2 == 0) {
+                if (part instanceof LiteralExpr lit
+                        && lit.value() instanceof LiteralValue.StringLiteral s
+                        && s.value().isEmpty()) {
+                    continue;
+                }
+                if (!first) sb.append(" + ");
+                sb.append(emitExpression(part));
+                first = false;
+            } else {
+                if (!first) sb.append(" + ");
+                sb.append(emitExpression(part));
+                first = false;
+            }
+        }
+        if (first) {
+            // Every part was an empty string part.
+            return "\"\"";
+        }
+        sb.append(")");
+        return sb.toString();
+    }
+
+    // =========================================================================
+    // Emission helpers
+    // =========================================================================
+
+    /** Appends one indented source line to the accumulator. */
+    private void line(String s) {
+        out.append("  ".repeat(indent)).append(s).append("\n");
+    }
+
+    /**
+     * Captures the output of a sub-emission (function-expression bodies)
+     * into a returned string, restoring the accumulator and indent
+     * afterwards (the {@code LuaBackend.captureOutput} pattern).
+     */
+    private String captureOutput(Runnable action) {
+        StringBuilder saved = out;
+        int savedIndent = indent;
+        out = new StringBuilder();
+        try {
+            action.run();
+            return out.toString();
+        } finally {
+            out = saved;
+            indent = savedIndent;
+        }
+    }
+
+    /**
+     * The literal {@code .deal} source-location argument triple every
+     * check and {@code .$f} call forwards: the span's file (an absolute
+     * path when compiled through the production CLI), its 1-based start
+     * line, and its 1-based start column (js-backend-architecture D8).
+     */
+    private String spanArgs(Span span) {
+        if (span == null) {
+            return "void 0, void 0, void 0";
+        }
+        return jsStringLiteral(span.file()) + ", "
+            + span.startLine() + ", " + span.startColumn();
+    }
+
+    private Type typeOf(ExpressionNode expr) {
+        Type t = typeMap.get(expr);
+        if (t == null && expr instanceof LiteralExpr lit) {
+            return literalType(lit);
+        }
+        return t;
+    }
+
+    private Type literalType(LiteralExpr lit) {
+        return switch (lit.value()) {
+            case LiteralValue.NullLiteral n -> Type.Null.INSTANCE;
+            case LiteralValue.BooleanLiteral b -> Type.Boolean.INSTANCE;
+            case LiteralValue.IntLiteral i -> Type.Int.INSTANCE;
+            case LiteralValue.NumberLiteral n -> Type.Number.INSTANCE;
+            case LiteralValue.StringLiteral s -> Type.String.INSTANCE;
+        };
+    }
+
+    /**
+     * The runtime typed-boundary check for a value crossing into a
+     * declared type: the primitive members ({@code $rt.checkNull}/
+     * {@code checkBoolean}/{@code checkInt}/{@code checkNumber}/
+     * {@code checkString}/{@code checkTable}), the descriptor-driven
+     * {@code $rt.checkArray}/{@code checkNullable}/{@code checkType}
+     * members, and the literal source location (js-backend-runtime D3).
+     * {@link Type.Error} values pass through unchecked (the checker has
+     * already failed the module).
+     */
+    private String emitCheckExpr(String valueExpr, Type type, Span span) {
+        if (type == null) return valueExpr;
+        String spanParam = spanArgs(span);
+        return switch (type) {
+            case Type.Null ignored ->
+                "$rt.checkNull(" + valueExpr + ", " + spanParam + ")";
+            case Type.Boolean ignored ->
+                "$rt.checkBoolean(" + valueExpr + ", " + spanParam + ")";
+            case Type.Int ignored ->
+                "$rt.checkInt(" + valueExpr + ", " + spanParam + ")";
+            case Type.Number ignored ->
+                "$rt.checkNumber(" + valueExpr + ", " + spanParam + ")";
+            case Type.String ignored ->
+                "$rt.checkString(" + valueExpr + ", " + spanParam + ")";
+            case Type.Table ignored ->
+                "$rt.checkTable(" + valueExpr + ", " + spanParam + ")";
+            case Type.Error ignored -> valueExpr;
+            case Type.Array arr ->
+                "$rt.checkArray(\"" + jsTypeDescriptor(type) + "\", "
+                    + valueExpr + ", " + spanParam + ")";
+            case Type.Nullable n ->
+                "$rt.checkNullable(\"" + jsTypeDescriptor(n.inner()) + "\", "
+                    + valueExpr + ", " + spanParam + ")";
+            case Type.Class cls ->
+                "$rt.checkType(\"" + jsTypeDescriptor(cls) + "\", "
+                    + valueExpr + ", " + spanParam + ")";
+            case Type.Func f ->
+                "$rt.checkType(\"" + jsTypeDescriptor(f) + "\", "
+                    + valueExpr + ", " + spanParam + ")";
+        };
+    }
+
+    /**
+     * A JS double-quoted string literal: backslash, quote, the C-style
+     * escapes, control characters, and U+2028/U+2029 escape; every other
+     * code unit (surrogate pairs included) passes through — valid JS
+     * source, round-trip exact.
+     */
+    private static String jsStringLiteral(String s) {
+        StringBuilder sb = new StringBuilder();
+        sb.append('"');
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                default -> {
+                    if (c < 0x20 || c == 0x2028 || c == 0x2029) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        sb.append('"');
+        return sb.toString();
     }
 }

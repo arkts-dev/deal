@@ -274,6 +274,29 @@ const $rt = {
     });
     return target;
   },
+  // makeTable: the coordinated additive table-construction member
+  // (js-backend-emitter D9) — the single addition to the ISSUE-0190
+  // 41-member surface. Returns a fresh Map built through the
+  // module-private $Map capture (generated code never spells the bare Map
+  // global) carrying the own enumerable string keys of the plain-object
+  // entries in own-key enumeration order; values are stored as-is — each
+  // value already crossed its own expression-site boundary (the makeClass
+  // step-2 precedent, js-backend-runtime D5). A non-plain-object entries
+  // argument raises the defensive E8001; only emitter mis-emission
+  // reaches it (js-backend-runtime-artifact A3). No mutation of the
+  // entries object; the Map is independent; no shared state.
+  makeTable: function $makeTable(entries) {
+    if (!$isPlainObject(entries)) {
+      $rt.fail("E8001", "table entries must be a table");
+    }
+    const $map = new $Map();
+    const $keys = Object.keys(entries);
+    for (let $i = 0; $i < $keys.length; $i++) {
+      const $key = $keys[$i];
+      $map.set($key, entries[$key]);
+    }
+    return $map;
+  },
 
   // The mark members require a Map argument: WeakSet.add on a primitive
   // input throws the native TypeError — the documented defensive exception
