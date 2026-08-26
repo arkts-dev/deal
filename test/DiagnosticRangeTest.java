@@ -2579,6 +2579,56 @@ public class DiagnosticRangeTest {
                 && "backend".equals(r12.members().get(0).keyText()),
             "after-value NBSP: backend-only truncation");
 
+        // Marker-crossing cascade (review cycle 2 finding): the scalar
+        // after the innermost break is the ENCLOSING container's close
+        // marker. Today's parser breaks only the innermost container
+        // without consuming the scalar; the enclosing container then
+        // consumes the marker as its own close and scanning continues
+        // above it — post-break members are still scanned.
+        String s12b = "{\"k\": [{\"b\":1,\"c\":2], \"backend\": \"wasm\"}";
+        JsonRangeLexer.JsonRangeLexResult r12b = JsonRangeLexer.lex(s12b);
+        check(r12b.faults().size() == 1
+                && r12b.faults().get(0).kind()
+                    == JsonRangeLexer.JsonFaultKind.EXPECTED_COMMA_OR_END,
+            "marker crossing: " + r12b.faults());
+        checkRange("marker crossing fault", r12b.faults().get(0).range(),
+            1, 20, 1, 20, 19, 19);
+        check(r12b.orderedTokens().size() == 18,
+            "marker crossing token count " + r12b.orderedTokens().size());
+        check(r12b.orderedTokens().get(12).kind()
+                == JsonRangeLexer.JsonTokenKind.ARRAY_END,
+            "enclosing array consumes the close marker");
+        check(r12b.orderedTokens().get(14).kind() == JsonRangeLexer.JsonTokenKind.KEY
+                && "backend".equals(r12b.orderedTokens().get(14).decodedValue()),
+            "post-break member key scanned");
+        check(r12b.orderedTokens().get(17).kind() == JsonRangeLexer.JsonTokenKind.OBJECT_END,
+            "root object closes after the post-break member");
+        check(r12b.members().size() == 4,
+            "marker crossing members " + r12b.members().size());
+        check("backend".equals(r12b.members().get(3).keyText()),
+            "post-break member paired");
+
+        // Multi-level cascade: three object breaks on the same array close
+        // marker; the array consumes it and the root keeps parsing.
+        String s12c = "{\"k\": [{\"a\": {\"b\": {\"c\": 1], \"backend\": \"luajit\"}";
+        JsonRangeLexer.JsonRangeLexResult r12c = JsonRangeLexer.lex(s12c);
+        check(r12c.faults().size() == 3,
+            "multi-level cascade faults " + r12c.faults().size());
+        check(r12c.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_COMMA_OR_END
+                && r12c.faults().get(1).kind()
+                    == JsonRangeLexer.JsonFaultKind.EXPECTED_COMMA_OR_END
+                && r12c.faults().get(2).kind()
+                    == JsonRangeLexer.JsonFaultKind.EXPECTED_COMMA_OR_END,
+            "multi-level cascade fault kinds " + r12c.faults());
+        checkRange("multi-level cascade fault", r12c.faults().get(0).range(),
+            1, 27, 1, 27, 26, 26);
+        check(r12c.orderedTokens().get(14).kind()
+                == JsonRangeLexer.JsonTokenKind.ARRAY_END,
+            "array consumes the marker after three object breaks");
+        check(r12c.members().size() == 5
+                && "backend".equals(r12c.members().get(4).keyText()),
+            "post-break member paired after the multi-level cascade");
+
         // EXPECTED_VALUE at end of input (tolerated null value) plus
         // EXPECTED_END for the unclosed object.
         JsonRangeLexer.JsonRangeLexResult r13 = JsonRangeLexer.lex("{\"a\":");

@@ -463,6 +463,7 @@ public class ModuleSystemTest {
 
         testManifestOutOfAlphabetPositions();
         testManifestToleranceFixtures();
+        testManifestMarkerCrossingCascade();
         testManifestPrecedenceFixtures();
         testManifestStructuralFixtures();
         testManifestWhitespaceOnlyAnchor();
@@ -678,6 +679,67 @@ public class ModuleSystemTest {
         check(r.diagnostics().isEmpty(), "wrong-typed list entry: " + r.diagnostics());
         check(r.config() != null && r.config().moduleRoots().equals(List.of("src")),
             "only string list entries survive");
+    }
+
+    /**
+     * Marker-crossing after-value cascade fixtures (review cycle 2
+     * finding): when the scalar after a completed member value is the
+     * close marker of an ENCLOSING container, today's parser breaks only
+     * the innermost container without consuming the scalar — the
+     * enclosing container then consumes the marker as its own close and
+     * the container above it keeps parsing. Following members are read,
+     * validated, and diagnosed exactly as today.
+     */
+    private static void testManifestMarkerCrossingCascade() {
+        // Old-throw row: the post-break 'backend' member is still read and
+        // validated — exactly one ranged E2012 at the backend value.
+        DealConfigParseResult r =
+            parseManifest("{\"k\": [{\"b\":1,\"c\":2], \"backend\": \"wasm\"}");
+        CompilerDiagnostic d = requireSingleE2012(r, "unsupported backend");
+        checkRange(d, 1, 34, 1, 40, 33, 39, 6);
+
+        // Old-throw row: the post-break 'languageVersion' member is still
+        // read and validated.
+        r = parseManifest("{\"k\": {\"k2\": [1, \"x\"}, \"languageVersion\": \"1.1\"}");
+        d = requireSingleE2012(r, "languageVersion");
+        checkRange(d, 1, 43, 1, 48, 42, 47, 5);
+
+        // Old-throw row: an empty version string behind the cascade.
+        r = parseManifest("{\"dependencies\":[\"wasm\",{\"1\":\"wasm\",\"1e\":null],"
+            + " \"languageVersion\": \"\"}");
+        d = requireSingleE2012(r, "languageVersion");
+        checkRange(d, 1, 68, 1, 70, 67, 69, 2);
+
+        // Old-config row: identical config fields behind the cascade.
+        r = parseManifest("{\"k\": {\"k2\": [1, \"x\"}, \"backend\": \"luajit\"}");
+        check(r.diagnostics().isEmpty(),
+            "marker-crossing cascade carries no diagnostic: " + r.diagnostics());
+        check(r.config() != null && "luajit".equals(r.config().backend()),
+            "post-break backend member read exactly as today");
+
+        // Old-config row: every post-break optional field is still read.
+        r = parseManifest("{\"k\": [{\"b\":1,\"c\":2], \"output\": \"build/lua\","
+            + " \"backend\": \"luajit\", \"moduleRoots\": [\"src\"]}");
+        check(r.diagnostics().isEmpty(),
+            "marker-crossing full-parse cascade: " + r.diagnostics());
+        check(r.config() != null
+                && "build/lua".equals(r.config().output())
+                && "luajit".equals(r.config().backend())
+                && r.config().moduleRoots().equals(List.of("src")),
+            "post-break output/backend/moduleRoots read exactly as today");
+
+        // Multi-level cascade: three object loop breaks on the array's
+        // close marker, then the array closes and the root keeps parsing.
+        r = parseManifest("{\"k\": [{\"a\": {\"b\": {\"c\": 1], \"backend\": \"luajit\"}");
+        check(r.diagnostics().isEmpty(),
+            "multi-level marker crossing: " + r.diagnostics());
+        check(r.config() != null && "luajit".equals(r.config().backend()),
+            "backend read after the three-level marker crossing");
+
+        // Multi-level cascade with a validation failure behind it.
+        r = parseManifest("{\"k\": [{\"a\": {\"b\": {\"c\": 1], \"languageVersion\": \"1.1\"}");
+        d = requireSingleE2012(r, "languageVersion");
+        checkRange(d, 1, 49, 1, 54, 48, 53, 5);
     }
 
     /**

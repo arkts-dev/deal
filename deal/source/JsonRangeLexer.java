@@ -75,9 +75,16 @@ import java.util.Locale;
  *   <li>after a completed member value: a scalar that is neither the
  *       container's close marker nor a comma records
  *       {@code EXPECTED_COMMA_OR_END} (token-start scalars) or
- *       {@code UNEXPECTED_CHARACTER} (out-of-alphabet scalars) and stops
- *       the scan — the stop-every-enclosing-container truncation of
- *       today's loop break;</li>
+ *       {@code UNEXPECTED_CHARACTER} (out-of-alphabet scalars) and
+ *       truncates only the innermost container without consuming the
+ *       pending scalar (today's loop break); each enclosing container
+ *       then re-checks the same pending scalar against its own close
+ *       marker or comma — a container that consumes it closes and
+ *       scanning continues in the container above it, while a container
+ *       that does not match breaks in turn. When the cascade reaches
+ *       the root container, the root is truncated and all remaining
+ *       input is ignored (today's stop-every-enclosing-container
+ *       truncation);</li>
  *   <li>end of input with unclosed objects/arrays/strings records one
  *       {@code EXPECTED_END} fault per unclosed construct at a zero-length
  *       end-of-input range, completing each container with its consumed
@@ -94,8 +101,9 @@ import java.util.Locale;
  * {@code RAW_CONTROL_IN_STRING}, {@code INVALID_ESCAPE},
  * {@code UNPAIRED_SURROGATE}, {@code TRAILING_CONTENT},
  * {@code EXPECTED_END}, and the {@code EXPECTED_VALUE}-at-end-of-input
- * signature) do not stop the scan; positional hard-failure faults and the
- * after-value truncation do, mirroring today's parser exactly.
+ * signature) do not stop the scan; positional hard-failure faults do, and
+ * the after-value truncation stops only when the cascade reaches the root
+ * container, mirroring today's parser exactly.
  *
  * <p>Object members are paired as {@link JsonMemberRange} records for every
  * member at every nesting depth, listed in value-completion order; the
@@ -465,6 +473,23 @@ public final class JsonRangeLexer {
 
         /** Completes the innermost container at end of input (partial value). */
         private void completeContainerAtEof() {
+            truncateInnermostContainer(false);
+        }
+
+        /**
+         * Truncates the innermost container at a loop break without
+         * consuming the pending scalar: the container completes as a value
+         * in the enclosing context, which then re-checks the same pending
+         * scalar. When the cascade reaches the root container, the root is
+         * complete as consumed so far and today's parser ignores
+         * everything after the root loop break, so the scan stops without
+         * recording trailing-content faults for the ignored remainder.
+         */
+        private void truncateInnermostContainer() {
+            truncateInnermostContainer(true);
+        }
+
+        private void truncateInnermostContainer(boolean stopAtRoot) {
             Context top = stack.remove(stack.size() - 1);
             ScalarSourceCursor.Mark e = cursor.mark();
             SourceScalarRange valueRange = new SourceScalarRange(
@@ -473,6 +498,9 @@ public final class JsonRangeLexer {
                 top.containerStart.startScalarOffset(), e.scalarOffset());
             if (stack.isEmpty()) {
                 rootDone = true;
+                if (stopAtRoot) {
+                    stopped = true;
+                }
             } else {
                 afterValue(valueRange);
             }
@@ -480,8 +508,16 @@ public final class JsonRangeLexer {
 
         /**
          * After-value position with a scalar that is neither the container
-         * close marker nor a comma: record the fault and stop the scan
-         * (today's loop break truncating every enclosing container).
+         * close marker nor a comma: record the fault and truncate only the
+         * innermost container without consuming the pending scalar (today's
+         * loop break). Each enclosing container then re-checks the same
+         * pending scalar against its own close marker or comma: a container
+         * that consumes it closes and scanning continues in the container
+         * above it — subsequent members are then parsed, validated, and
+         * diagnosed exactly as today. A container that does not match
+         * breaks in turn, and when the cascade reaches the root container
+         * the scan stops with the remaining input ignored (today's
+         * stop-every-enclosing-container truncation).
          */
         private void breakFault() {
             int cp = cursor.peekScalar();
@@ -492,7 +528,7 @@ public final class JsonRangeLexer {
                 fault(JsonFaultKind.UNEXPECTED_CHARACTER, peekRange(),
                     "expected ',' or container end, found U+" + hex(cp));
             }
-            stopped = true;
+            truncateInnermostContainer();
         }
 
         /** Scans the offending token, records the positional fault, and stops. */
