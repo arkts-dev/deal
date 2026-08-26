@@ -43,10 +43,21 @@ import java.util.Locale;
  *       optional {@code e}/{@code E} plus optional sign plus digits) and
  *       decode {@code Long.parseLong} then {@code Double.parseDouble} over
  *       the consumed span; when both decodes fail the token carries a null
- *       decoded value and an {@code EXPECTED_VALUE} fault.</li>
- *   <li><b>Booleans</b> consume 4 scalars when the next four scalars spell
- *       {@code true} and 5 scalars otherwise (blind, clamped at end of
- *       input); <b>null</b> consumes 4 scalars blindly.</li>
+ *       decoded value and an {@code EXPECTED_VALUE} fault. Digit
+ *       classification is today's char-based {@code Character.isDigit}
+ *       over the UTF-16 unit at the cursor index, so an astral digit
+ *       scalar never continues a number — it stops the scan exactly as
+ *       today's high-surrogate char did.</li>
+ *   <li><b>Booleans</b> and <b>null</b> reproduce today's blind
+ *       consumption exactly: the hand-rolled parser advanced its UTF-16
+ *       index by 4 code units when the next four units spell {@code true}
+ *       and by 5 otherwise (null by 4), with no bound check (later reads
+ *       clamp at end of input). An astral scalar inside the window counts
+ *       as two units; when today's index arithmetic lands between a
+ *       surrogate pair's two units, only the high surrogate is consumed
+ *       and the lone low surrogate remains pending for the next scan step.
+ *       Token ranges are derived in decoded scalars over the actually
+ *       consumed span.</li>
  * </ul>
  *
  * <p>Structural positions record today's failure surface as positional
@@ -632,9 +643,40 @@ public final class JsonRangeLexer {
             return t;
         }
 
-        private void consumeBlindly(int scalars) {
-            for (int i = 0; i < scalars && !cursor.atEnd(); i++) {
-                cursor.advance();
+        /**
+         * Today's blind 4/5-character boolean/null consumption advances
+         * the hand-rolled parser's UTF-16 index by exactly {@code units}
+         * code units ({@code i += 4} / {@code i += 5}) with no bound
+         * check; later reads treat any position at or past the end of
+         * input as EOF. Reproduce that arithmetic here: the blind window
+         * ends at UTF-16 position {@code start + units} (clamped at end
+         * of input). An astral scalar inside the window counts as two
+         * units, and when today's index arithmetic lands between a
+         * surrogate pair's two units only the high surrogate is consumed
+         * — the lone low surrogate then scans as today's parser sees it.
+         * The token range is derived in decoded scalars over the actually
+         * consumed span.
+         */
+        private void consumeBlindly(int units) {
+            int target = cursor.index() + units;
+            if (target > source.length()) {
+                target = source.length();
+            }
+            while (cursor.index() < target) {
+                int cp = cursor.peekScalar();
+                if (Character.charCount(cp) == 2 && cursor.index() + 2 > target) {
+                    // The target lands between the surrogate pair's two
+                    // units: today's index arithmetic consumed only the
+                    // high surrogate and left the lone low surrogate
+                    // pending for the next scan step. Emulate the same
+                    // single-unit consumption (one recovery scalar: line
+                    // unchanged, column and offset +1).
+                    cursor.reset(new ScalarSourceCursor.Mark(
+                        cursor.line(), cursor.column() + 1,
+                        cursor.scalarOffset() + 1, cursor.index() + 1));
+                } else {
+                    cursor.advance();
+                }
             }
         }
 
@@ -644,12 +686,12 @@ public final class JsonRangeLexer {
             if (!cursor.atEnd() && cursor.peekScalar() == '-') {
                 cursor.advance();
             }
-            while (!cursor.atEnd() && Character.isDigit(cursor.peekScalar())) {
+            while (nextCharIsDigit()) {
                 cursor.advance();
             }
             if (!cursor.atEnd() && cursor.peekScalar() == '.') {
                 cursor.advance();
-                while (!cursor.atEnd() && Character.isDigit(cursor.peekScalar())) {
+                while (nextCharIsDigit()) {
                     cursor.advance();
                 }
             }
@@ -663,7 +705,7 @@ public final class JsonRangeLexer {
                             cursor.advance();
                         }
                     }
-                    while (!cursor.atEnd() && Character.isDigit(cursor.peekScalar())) {
+                    while (nextCharIsDigit()) {
                         cursor.advance();
                     }
                 }
@@ -683,6 +725,16 @@ public final class JsonRangeLexer {
             JsonRangeToken t = new JsonRangeToken(JsonTokenKind.NUMBER, range(s, e), decoded);
             tokens.add(t);
             return t;
+        }
+
+        /**
+         * Today's char-based digit test: {@code parseNumber} classified
+         * digits via {@code Character.isDigit(char)} over UTF-16 units, so
+         * an astral digit scalar (a surrogate pair) never continues a
+         * number — the test runs on the raw unit at the cursor index.
+         */
+        private boolean nextCharIsDigit() {
+            return !cursor.atEnd() && Character.isDigit(source.charAt(cursor.index()));
         }
 
         /** Permissive string scan with today's escape policy and data faults. */
@@ -799,8 +851,16 @@ public final class JsonRangeLexer {
             return List.copyOf(result);
         }
 
+        /**
+         * Today's char-based number-start classification: only a BMP digit
+         * char (as {@code parseNumber}'s {@code Character.isDigit(char)}
+         * sees it) starts a number; an astral digit scalar is an
+         * out-of-alphabet scalar everywhere, exactly as today's parser saw
+         * its high surrogate.
+         */
         private static boolean isNumberStart(int cp) {
-            return cp == '-' || cp == '.' || Character.isDigit(cp);
+            return cp == '-' || cp == '.'
+                || (cp < 0x10000 && Character.isDigit(cp));
         }
 
         private static boolean isValueStart(int cp) {

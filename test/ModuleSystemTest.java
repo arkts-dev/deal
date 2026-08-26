@@ -464,6 +464,7 @@ public class ModuleSystemTest {
         testManifestOutOfAlphabetPositions();
         testManifestToleranceFixtures();
         testManifestMarkerCrossingCascade();
+        testManifestBlindConsumptionWindow();
         testManifestPrecedenceFixtures();
         testManifestStructuralFixtures();
         testManifestWhitespaceOnlyAnchor();
@@ -740,6 +741,94 @@ public class ModuleSystemTest {
         r = parseManifest("{\"k\": [{\"a\": {\"b\": {\"c\": 1], \"languageVersion\": \"1.1\"}");
         d = requireSingleE2012(r, "languageVersion");
         checkRange(d, 1, 49, 1, 54, 48, 53, 5);
+    }
+
+    /**
+     * Blind-consumption window fixtures (review cycle 3 finding): today's
+     * hand-rolled parser advanced its UTF-16 index by exactly 4 or 5 code
+     * units for boolean/null values ({@code i += 4} / {@code i += 5}), so
+     * an astral scalar inside the blind window counts as two units and a
+     * window ending between a surrogate pair's two units consumes only
+     * the high surrogate, leaving the lone low surrogate for the next
+     * loop check. The fixtures pin today's member-read/validation
+     * outcomes on both sides of the boundary.
+     */
+    private static void testManifestBlindConsumptionWindow() {
+        // 4-unit null window ends mid-pair: only the high surrogate is
+        // consumed, the lone low surrogate breaks the loop, and the
+        // post-window member is never read — languageVersion defaults
+        // exactly as today.
+        DealConfigParseResult r = parseManifest(
+            "{\"a\": nul\uD83D\uDE00, \"languageVersion\": \"1.1\"}");
+        check(r.diagnostics().isEmpty(),
+            "mid-pair null window carries no diagnostic: " + r.diagnostics());
+        check(r.config() != null && "1.2".equals(r.config().languageVersion()),
+            "mid-pair null window truncates before languageVersion");
+
+        // 5-unit false window ends mid-pair: same truncation.
+        r = parseManifest("{\"a\": f0uu\uD83D\uDE00, \"languageVersion\": \"1.1\"}");
+        check(r.diagnostics().isEmpty(),
+            "mid-pair false window carries no diagnostic: " + r.diagnostics());
+        check(r.config() != null && "1.2".equals(r.config().languageVersion()),
+            "mid-pair false window truncates before languageVersion");
+
+        // 5-unit false window ends mid-pair after 'fals': same truncation.
+        r = parseManifest("{\"a\": fals\uD83D\uDE00, \"languageVersion\": \"1.1\"}");
+        check(r.diagnostics().isEmpty(),
+            "'fals'+astral window carries no diagnostic: " + r.diagnostics());
+        check(r.config() != null && "1.2".equals(r.config().languageVersion()),
+            "'fals'+astral window truncates before languageVersion");
+
+        // The 4-unit true window is exact: the astral scalar after the
+        // window triggers the truncation cascade, so the backend member
+        // is never read and the default backend survives.
+        r = parseManifest("{\"a\": true\uD83D\uDE00, \"backend\": \"wasm\"}");
+        check(r.diagnostics().isEmpty(),
+            "true+astral window carries no diagnostic: " + r.diagnostics());
+        check(r.config() != null && r.config().backend() == null,
+            "true+astral window truncates before the backend member");
+
+        // Pair fully inside the 5-unit false window: the window ends
+        // exactly at the comma and the backend member IS read and
+        // validated — today's unsupported-backend failure as exactly one
+        // E2012 at the backend value range.
+        r = parseManifest("{\"output\": tru\uD83D\uDE00, \"backend\": \"wasm\"}");
+        CompilerDiagnostic d = requireSingleE2012(r, "unsupported backend");
+        checkRange(d, 1, 29, 1, 35, 28, 34, 6);
+
+        // Pair fully inside the 5-unit false window with a valid
+        // post-window member: both members parse and the config surface
+        // matches today exactly.
+        r = parseManifest(
+            "{\"backend\": tru\uD83D\uDE00, \"moduleRoots\":[\"src\"]}");
+        check(r.diagnostics().isEmpty(),
+            "in-window pair with post-window member: " + r.diagnostics());
+        check(r.config() != null && r.config().backend() == null
+                && r.config().moduleRoots().equals(List.of("src")),
+            "post-window moduleRoots read, backend stays default");
+
+        // Pair fully inside the 5-unit false window followed by a
+        // validation failure — today's unsupported-languageVersion.
+        r = parseManifest("{\"a\": fal\uD83D\uDE00, \"languageVersion\":\"1.1\"}");
+        d = requireSingleE2012(r, "languageVersion");
+        checkRange(d, 1, 31, 1, 36, 30, 35, 5);
+
+        // Pair fully inside the 4-unit null window: the window ends
+        // exactly at the comma and the post-window member is read and
+        // validated.
+        r = parseManifest("{\"a\": n\uD83D\uDE00l, \"languageVersion\": \"1.1\"}");
+        d = requireSingleE2012(r, "languageVersion");
+        checkRange(d, 1, 31, 1, 36, 30, 35, 5);
+
+        // Astral digit after a number never continues the number scan
+        // (today's char-based isDigit): the number decodes as 1 and the
+        // out-of-alphabet astral digit triggers the truncation cascade.
+        r = parseManifest("{\"limits\":{\"maxMemory\":1\uD835\uDFD8}}");
+        check(r.diagnostics().isEmpty(),
+            "astral digit after a number: " + r.diagnostics());
+        check(r.config() != null && r.config().limits() != null
+                && r.config().limits().maxMemory() == 1,
+            "astral digit does not continue the number scan");
     }
 
     /**

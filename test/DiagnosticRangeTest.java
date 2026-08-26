@@ -137,6 +137,7 @@ public class DiagnosticRangeTest {
         System.out.println("-- JsonRangeLexer section --");
         testJsonRangeLexerTokenAndMemberRanges();
         testJsonRangeLexerFaults();
+        testJsonRangeLexerBlindWindows();
         testJsonRangeLexerTolerance();
         testJsonRangeLexerNeverThrows();
         testDealSourceJdkOnly();
@@ -2749,6 +2750,108 @@ public class DiagnosticRangeTest {
         checkRangeAgainstCursor("u2028 fault", r21.faults().get(0).range(), "{\"a\"\u2028: 1}");
     }
 
+    /**
+     * Blind boolean/null windows under astral scalars (review cycle 3
+     * finding): today's hand-rolled parser advanced its UTF-16 index by
+     * exactly 4 or 5 code units for boolean/null values, so an astral
+     * scalar inside the window counts as two units, and a window ending
+     * between a surrogate pair's two units consumes only the high
+     * surrogate — the lone low surrogate then scans as today's parser
+     * sees it. Token ranges are derived in decoded scalars over the
+     * actually consumed span.
+     */
+    private static void testJsonRangeLexerBlindWindows() {
+        System.out.println(
+            "-- JsonRangeLexer: blind boolean/null windows under astral scalars --");
+
+        // 4-unit null window ends mid-pair: the consumed span is
+        // n,u,l,HIGH (4 units = 4 scalars — the high surrogate is one
+        // recovery scalar) and the lone low surrogate breaks the scan
+        // (today's index arithmetic lands mid-pair; the following
+        // members are never read).
+        String s1 = "{\"a\": nul\uD83D\uDE00, \"x\": 1}";
+        JsonRangeLexer.JsonRangeLexResult r1 = JsonRangeLexer.lex(s1);
+        check(r1.orderedTokens().size() == 4,
+            "mid-pair null window: token count " + r1.orderedTokens().size());
+        check(r1.orderedTokens().get(3).kind() == JsonRangeLexer.JsonTokenKind.NULL,
+            "mid-pair null window: NULL token");
+        checkRange("mid-pair null token", r1.orderedTokens().get(3).range(),
+            1, 7, 1, 11, 6, 10);
+        check(r1.faults().size() == 1
+                && r1.faults().get(0).kind()
+                    == JsonRangeLexer.JsonFaultKind.UNEXPECTED_CHARACTER,
+            "mid-pair null window: " + r1.faults());
+        checkRange("mid-pair null fault", r1.faults().get(0).range(),
+            1, 11, 1, 12, 10, 11);
+        check(r1.faults().get(0).message().contains("U+DE00"),
+            "mid-pair null window names the lone low surrogate: "
+                + r1.faults().get(0).message());
+        check(r1.members().size() == 1 && "a".equals(r1.members().get(0).keyText()),
+            "mid-pair null window: only member a");
+        checkRangeAgainstCursor("mid-pair null token",
+            r1.orderedTokens().get(3).range(), s1);
+        checkRangeAgainstCursor("mid-pair null fault",
+            r1.faults().get(0).range(), s1);
+
+        // Pair fully inside the 5-unit false window: the window spans
+        // t,r,HIGH,LOW,r (5 units = 4 scalars) and ends exactly at the
+        // comma — the post-window member is scanned and paired.
+        String s2 = "{\"a\": tr\uD83D\uDE00r, \"x\": 1}";
+        JsonRangeLexer.JsonRangeLexResult r2 = JsonRangeLexer.lex(s2);
+        check(r2.orderedTokens().size() == 9,
+            "in-window pair: token count " + r2.orderedTokens().size());
+        check(r2.orderedTokens().get(3).kind() == JsonRangeLexer.JsonTokenKind.FALSE
+                && Boolean.FALSE.equals(r2.orderedTokens().get(3).decodedValue()),
+            "in-window pair: FALSE token");
+        checkRange("in-window pair FALSE", r2.orderedTokens().get(3).range(),
+            1, 7, 1, 11, 6, 10);
+        check(r2.faults().isEmpty(), "in-window pair: no faults " + r2.faults());
+        check(r2.members().size() == 2 && "x".equals(r2.members().get(1).keyText()),
+            "in-window pair: post-window member x paired");
+        checkRangeAgainstCursor("in-window pair FALSE",
+            r2.orderedTokens().get(3).range(), s2);
+
+        // The 4-unit true window is exact: the astral scalar after the
+        // window is the out-of-alphabet scalar that triggers the
+        // truncation cascade — the post-window member is never scanned.
+        String s3 = "{\"a\": true\uD83D\uDE00, \"x\": 1}";
+        JsonRangeLexer.JsonRangeLexResult r3 = JsonRangeLexer.lex(s3);
+        check(r3.orderedTokens().size() == 4,
+            "true window: token count " + r3.orderedTokens().size());
+        check(Boolean.TRUE.equals(r3.orderedTokens().get(3).decodedValue()),
+            "true window: TRUE token");
+        checkRange("true window TRUE", r3.orderedTokens().get(3).range(),
+            1, 7, 1, 11, 6, 10);
+        check(r3.faults().size() == 1
+                && r3.faults().get(0).kind()
+                    == JsonRangeLexer.JsonFaultKind.UNEXPECTED_CHARACTER,
+            "true window: " + r3.faults());
+        checkRange("true window fault", r3.faults().get(0).range(),
+            1, 11, 1, 12, 10, 11);
+        check(r3.faults().get(0).message().contains("U+1F600"),
+            "true window names the astral scalar: "
+                + r3.faults().get(0).message());
+        check(r3.members().size() == 1, "true window: only member a");
+
+        // Astral digit after a number never continues the number scan
+        // (today's char-based isDigit): the number decodes as 1 and the
+        // out-of-alphabet astral digit triggers the truncation cascade.
+        String s4 = "{\"a\": 1\uD835\uDFD8}";
+        JsonRangeLexer.JsonRangeLexResult r4 = JsonRangeLexer.lex(s4);
+        check(Long.valueOf(1L).equals(r4.orderedTokens().get(3).decodedValue()),
+            "astral digit: NUMBER decodes to 1L: "
+                + r4.orderedTokens().get(3).decodedValue());
+        checkRange("astral digit NUMBER", r4.orderedTokens().get(3).range(),
+            1, 7, 1, 8, 6, 7);
+        check(r4.faults().size() == 1
+                && r4.faults().get(0).kind()
+                    == JsonRangeLexer.JsonFaultKind.UNEXPECTED_CHARACTER
+                && r4.faults().get(0).message().contains("U+1D7D8"),
+            "astral digit: " + r4.faults());
+        checkRange("astral digit fault", r4.faults().get(0).range(),
+            1, 8, 1, 9, 7, 8);
+    }
+
     private static void testJsonRangeLexerTolerance() {
         System.out.println("-- JsonRangeLexer: today's tolerant acceptance surface --");
 
@@ -2791,8 +2894,9 @@ public class DiagnosticRangeTest {
         checkRange("unclosed array fault", ua.faults().get(0).range(), 1, 5, 1, 5, 4, 4);
         check(ua.orderedTokens().size() == 4, "unclosed array keeps NUMBER 1, COMMA, NUMBER 2");
 
-        // Boolean blind consumption: 't' alone consumes 5 scalars and decodes
-        // to FALSE; the object then completes partial at end of input.
+        // Boolean blind consumption: 't' alone consumes 5 code units
+        // (clamped at end of input) and decodes to FALSE; the object then
+        // completes partial at end of input.
         JsonRangeLexer.JsonRangeLexResult b = JsonRangeLexer.lex("{\"a\": t}");
         check(b.faults().size() == 1
                 && b.faults().get(0).kind() == JsonRangeLexer.JsonFaultKind.EXPECTED_END,
@@ -2810,6 +2914,8 @@ public class DiagnosticRangeTest {
             "\"\uD800\"", "\u0000{\u0000", "-\u00A0", "\u2028\u2029",
             "{\"a\": -e5}", "tru", "t", "\uD83D\uDE00", "{\",\",",
             "\"\uD83D\uDE00\"", "\"\uD800\uDC00\"", "\u001F\u001F\u001F",
+            "{\"a\": nul\uD83D\uDE00", "{\"a\": tr\uD83D\uDE00r",
+            "{\"a\": 1\uD835\uDFD8}",
         };
         for (String input : nasty) {
             try {
