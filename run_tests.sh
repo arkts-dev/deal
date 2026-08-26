@@ -75,6 +75,36 @@ else
 fi
 
 # =========================================================================
+# Migration gate (verification 7): the legacy start-only record is gone
+# (compile-time enforced: deal/lexer/Diagnostic.java is deleted, so any
+# leftover start-only call site fails compilation), and two source scans
+# assert that (1) no reference to deal.lexer.Diagnostic remains anywhere
+# in deal/ or test/ and (2) no production source creates an
+# internal-defect note outside the D9 normalization carrier in
+# deal/diagnostics/CompilerDiagnostic.java. Either scan tripping fails
+# the gate.
+# =========================================================================
+echo ""
+echo "=== Migration Gate: legacy diagnostic surface scans ==="
+if [ -e deal/lexer/Diagnostic.java ]; then
+  echo "  ERROR: deal/lexer/Diagnostic.java still exists; the legacy start-only record must be deleted."
+  exit 1
+fi
+LEGACY_REFS="$(grep -rn 'deal\.lexer\.Diagnostic' deal test --include='*.java' 2>/dev/null || true)"
+if [ -n "$LEGACY_REFS" ]; then
+  echo "  ERROR: references to the legacy deal.lexer.Diagnostic record remain:"
+  echo "$LEGACY_REFS"
+  exit 1
+fi
+DEFECT_NOTES="$(grep -rn '"internal range defect' deal --include='*.java' 2>/dev/null | grep -v '^deal/diagnostics/CompilerDiagnostic.java:' || true)"
+if [ -n "$DEFECT_NOTES" ]; then
+  echo "  ERROR: production sources create internal-defect notes outside the D9 normalization carrier:"
+  echo "$DEFECT_NOTES"
+  exit 1
+fi
+echo "  Migration gate scans pass (no legacy record, no legacy references, no production defect-note creation)."
+
+# =========================================================================
 # Run all tests
 # =========================================================================
 

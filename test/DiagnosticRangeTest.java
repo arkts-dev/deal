@@ -4,6 +4,7 @@ import deal.ast.Span;
 import deal.ast.TemplateLiteralExpr;
 import deal.ast.TokenType;
 import deal.ast.VariableDeclaration;
+import deal.codegen.jvm.JvmBackend;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 import deal.diagnostics.DiagnosticFormatter;
@@ -18,6 +19,7 @@ import deal.checker.TypeChecker;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.lexer.Token;
+import deal.module.CompilationOrchestrator;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
 import deal.source.JsonRangeLexer;
@@ -25,13 +27,18 @@ import deal.source.ScalarPosition;
 import deal.source.ScalarSourceCursor;
 import deal.source.SourceScalarRange;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -69,7 +76,17 @@ import java.util.Set;
  * offsets, the rebased sub-parser EOF token anchoring end-of-input errors
  * at the expression-end raw position, and raw-positioned E1042/D16
  * anchor ranges — each cross-checked against an independent
- * {@link ScalarSourceCursor} recomputation), and the ISSUE-0220
+ * {@link ScalarSourceCursor} recomputation), the ISSUE-0225
+ * checker/validator producer section (name/type error ranges after
+ * astral characters, tabs, and CRLF line endings and over multi-line
+ * expression spans, each cross-checked against an independent cursor
+ * recomputation and against the formatted and structured surfaces),
+ * the combined program-span anchor section (E2010/E2011 entry-main
+ * validation and JvmBackend E6004 sharing the program-span anchor: a
+ * non-(1,1) first statement carries the exact non-zero start scalar
+ * offset and an empty/whitespace-only entry pins
+ * {@code (file,1,1,1,1,0,0,0,SOURCE)} — never SYNTHETIC, no anchor
+ * note), and the ISSUE-0220
  * JsonRangeLexer section ({@link JsonRangeLexer} token/member/fault
  * ranges — every asserted range is an exact half-open
  * {@link SourceScalarRange} recomputed against an independent
@@ -120,6 +137,7 @@ public class DiagnosticRangeTest {
         testPeekPseudoEof();
         testTemplateInterpolationRebasing();
         testCheckerProducerRanges();
+        testProgramSpanAnchorsCombined();
 
         testCarrierRecords();
         testRangeConversions();
@@ -1167,13 +1185,49 @@ public class DiagnosticRangeTest {
     }
 
     /**
+     * Cross-checks the canonical formatted and structured surfaces of one
+     * diagnostic against its carrier range (D8): the human rendering
+     * carries the exact range header and {@code [span N]} suffix, and the
+     * structured document carries the same file, start/end positions,
+     * scalar offsets, span length, and origin.
+     */
+    private static void checkFormattedStructuredAgree(CompilerDiagnostic d,
+                                                      String context) {
+        if (d == null) {
+            check(false, context + ": diagnostic missing for cross-check");
+            return;
+        }
+        DiagnosticRange r = d.range();
+        String human = DiagnosticFormatter.format(d);
+        String json = DiagnosticStructuredOutput.toJson(List.of(d));
+        check(human.startsWith(r.file() + ":" + r.startLine() + ":"
+                + r.startColumn() + "-" + r.endLine() + ":" + r.endColumn()
+                + ": " + d.severity().toUpperCase() + " " + d.code() + ":"),
+            context + ": formatted carries the exact range header: " + human);
+        check(human.contains("[span " + r.scalarLength() + "]"),
+            context + ": formatted carries the span length: " + human);
+        check(json.contains("\"file\": \"" + r.file() + "\"")
+                && json.contains("\"startLine\": " + r.startLine())
+                && json.contains("\"startColumn\": " + r.startColumn())
+                && json.contains("\"endLine\": " + r.endLine())
+                && json.contains("\"endColumn\": " + r.endColumn())
+                && json.contains("\"startScalarOffset\": " + r.startScalarOffset())
+                && json.contains("\"endScalarOffset\": " + r.endScalarOffset())
+                && json.contains("\"scalarLength\": " + r.scalarLength())
+                && json.contains("\"origin\": \"" + r.origin() + "\""),
+            context + ": structured carries the same range fields: " + json);
+    }
+
+    /**
      * ISSUE-0225 verification 6: name-resolution and type errors carry
-     * SOURCE ranges that are scalar-exact after astral characters and over
-     * multi-line spans (cross-checked against an independent
-     * {@link ScalarSourceCursor} recomputation), the recorded-span E4008
-     * cycle anchors at the class declaration span, and an E4008 cycle
-     * without a recorded span yields the canonical synthetic range plus a
-     * note naming the cycle-node class.
+     * SOURCE ranges that are scalar-exact after astral characters, tabs,
+     * and CRLF line endings and over multi-line expression spans — each
+     * cross-checked against an independent {@link ScalarSourceCursor}
+     * recomputation and against the formatted and structured surfaces
+     * (D8) — the recorded-span E4008 cycle anchors at the class
+     * declaration span, and an E4008 cycle without a recorded span yields
+     * the canonical synthetic range plus a note naming the cycle-node
+     * class.
      */
     private static void testCheckerProducerRanges() throws Exception {
         System.out.println("-- Checker/validator producer ranges (ISSUE-0225) --");
@@ -1188,6 +1242,7 @@ public class DiagnosticRangeTest {
         CompilerDiagnostic e2000 = checkerDiag(d1, "E2000");
         check(e2000 != null, "C1: E2000 present, got " + d1);
         checkNeedleRange(e2000, src1, "nr.deal", "break", "C1");
+        checkFormattedStructuredAgree(e2000, "C1");
 
         // 2. Type error after an astral character on the same line: E2001
         //    'Undeclared identifier' at the identifier span. The astral in
@@ -1200,6 +1255,7 @@ public class DiagnosticRangeTest {
         CompilerDiagnostic e2001 = checkerDiag(d2, "E2001");
         check(e2001 != null, "C2: E2001 present, got " + d2);
         checkNeedleRange(e2001, src2, "tc.deal", "missing", "C2");
+        checkFormattedStructuredAgree(e2001, "C2");
 
         // 3. Multi-line span: E3010 on a boolean '+' expression whose
         //    binary-expression span covers both lines (start of 'true'
@@ -1223,6 +1279,7 @@ public class DiagnosticRangeTest {
                 "C3: multi-line span " + r + " vs cursor start (1,"
                     + cs.column() + ",@" + cs.scalarOffset() + ") end (2,"
                     + ce.column() + ",@" + ce.scalarOffset() + ")");
+            checkFormattedStructuredAgree(e3010, "C3");
         }
 
         // 4. Recorded-span E4008: the A <-> B cycle anchors at the class
@@ -1315,6 +1372,326 @@ public class DiagnosticRangeTest {
             check(noteNamesClass,
                 "C5: anchor note names the cycle-node class, got " + fb.notes());
         }
+
+        // 6. Error position after a CRLF line break: CRLF counts two
+        //    scalars and one line break, so the E2000 'break' anchor on
+        //    line 2 starts at scalar offset 17 (15 line-1 scalars + 2 CRLF
+        //    scalars) — pinned against the independent cursor
+        //    recomputation.
+        String src6 = "let x: int = 1;\r\nbreak;\r\n";
+        List<CompilerDiagnostic> d6 = checkerDiagnostics(src6, "crlf.deal");
+        CompilerDiagnostic e2000crlf = checkerDiag(d6, "E2000");
+        check(e2000crlf != null, "C6: E2000 present after CRLF, got " + d6);
+        checkNeedleRange(e2000crlf, src6, "crlf.deal", "break", "C6");
+        if (e2000crlf != null) {
+            DiagnosticRange r6 = e2000crlf.range();
+            check(r6.startLine() == 2 && r6.startColumn() == 1
+                    && r6.startScalarOffset() == 17,
+                "C6: E2000 starts at 2:1 with scalar offset 17 (CRLF = two scalars): "
+                    + r6);
+            checkFormattedStructuredAgree(e2000crlf, "C6");
+        }
+
+        // 7. Multi-line expression span across a CRLF break: the E3010
+        //    boolean '+' binary-expression span covers line 1's 'true'
+        //    through line 2's 'false'; the CRLF contributes two scalars
+        //    to the offsets and exactly one line increment to the end
+        //    position.
+        String src7 = "let x: boolean = true +\r\n    false;\r\n";
+        List<CompilerDiagnostic> d7 = checkerDiagnostics(src7, "mlcrlf.deal");
+        CompilerDiagnostic e3010crlf = checkerDiag(d7, "E3010");
+        check(e3010crlf != null, "C7: E3010 present across CRLF, got " + d7);
+        if (e3010crlf != null) {
+            int start = src7.indexOf("true");
+            int end = src7.indexOf("false") + "false".length();
+            ScalarSourceCursor cs = cursorAt(src7, start);
+            ScalarSourceCursor ce = cursorAt(src7, end);
+            DiagnosticRange r = e3010crlf.range();
+            check(r.origin() == RangeOrigin.SOURCE
+                    && r.startLine() == 1 && r.startColumn() == cs.column()
+                    && r.endLine() == 2 && r.endColumn() == ce.column()
+                    && r.startScalarOffset() == cs.scalarOffset()
+                    && r.endScalarOffset() == ce.scalarOffset()
+                    && r.scalarLength() == ce.scalarOffset() - cs.scalarOffset(),
+                "C7: CRLF multi-line span " + r + " vs cursor start (1,"
+                    + cs.column() + ",@" + cs.scalarOffset() + ") end (2,"
+                    + ce.column() + ",@" + ce.scalarOffset() + ")");
+            check(r.endScalarOffset() - r.startScalarOffset() >= 8,
+                "C7: the CRLF break contributes two scalars to the span length: "
+                    + r);
+            checkFormattedStructuredAgree(e3010crlf, "C7");
+        }
+
+        // 8. Error position after a tab: the tab counts exactly one
+        //    scalar, so the E2000 'break' anchor on line 2 starts at
+        //    column 2 with scalar offset 17 (15 line-1 scalars + LF + one
+        //    tab scalar).
+        String src8 = "let x: int = 1;\n\tbreak;\n";
+        List<CompilerDiagnostic> d8 = checkerDiagnostics(src8, "tab.deal");
+        CompilerDiagnostic e2000tab = checkerDiag(d8, "E2000");
+        check(e2000tab != null, "C8: E2000 present after the tab, got " + d8);
+        checkNeedleRange(e2000tab, src8, "tab.deal", "break", "C8");
+        if (e2000tab != null) {
+            DiagnosticRange r8 = e2000tab.range();
+            check(r8.startLine() == 2 && r8.startColumn() == 2
+                    && r8.startScalarOffset() == 17,
+                "C8: E2000 starts at 2:2 with scalar offset 17 (tab = one scalar): "
+                    + r8);
+            checkFormattedStructuredAgree(e2000tab, "C8");
+        }
+    }
+
+    // =========================================================================
+    // Combined program-span anchor section (verification 2)
+    // =========================================================================
+
+    /**
+     * Verification-2 combined program-span fixture: E2010/E2011
+     * ({@link CompilationOrchestrator} entry-main validation) and
+     * JvmBackend E6004 share the parser's program-span anchor. A first
+     * statement that does not start at (1,1) carries a SOURCE range
+     * starting at the program start with the exact non-zero start scalar
+     * offset; an empty or whitespace-only entry pins
+     * {@code (file,1,1,1,1,0,0,0,SOURCE)} — never SYNTHETIC, no anchor
+     * note. Each SOURCE anchor is also cross-checked against the
+     * formatted and structured surfaces (D8).
+     */
+    private static void testProgramSpanAnchorsCombined() throws Exception {
+        System.out.println("-- Program-span anchors: E2010/E2011/E6004 combined fixture --");
+
+        Path tmp = Files.createTempDirectory("deal_range_progspan_");
+        try {
+            Path srcDir = Files.createDirectories(tmp.resolve("src"));
+            List<Path> moduleRoots = List.of(srcDir.toAbsolutePath());
+
+            // PS1: E2010 — an entry without main whose first statement
+            // starts at 2:1 after a leading comment. The orchestrator
+            // prints failed-compilation diagnostics on stderr; capture it
+            // so the gate output stays clean.
+            String commented = "// leading comment\n"
+                + "export function run(): int { return 1; }\n";
+            Path commentedEntry = srcDir.resolve("ps_e2010.deal");
+            Files.writeString(commentedEntry, commented);
+            CompilationOrchestrator e2010Orch = new CompilationOrchestrator(
+                commentedEntry.toAbsolutePath(), tmp.resolve("build/e2010"),
+                false, null, moduleRoots, null);
+            boolean ps1Failed;
+            PrintStream originalErr = System.err;
+            try {
+                System.setErr(new PrintStream(new ByteArrayOutputStream(), true,
+                    StandardCharsets.UTF_8));
+                ps1Failed = !e2010Orch.compile();
+            } finally {
+                System.setErr(originalErr);
+            }
+            check(ps1Failed, "PS1: commented entry without main fails compilation");
+            CompilerDiagnostic e2010 = firstCode(e2010Orch.diagnostics(), "E2010");
+            check(e2010 != null, "PS1: E2010 present: " + e2010Orch.diagnostics());
+            if (e2010 != null) {
+                int expectedStart = ScalarSourceCursor.scalarCount(commented, 0,
+                    commented.indexOf("export"));
+                DiagnosticRange r = e2010.range();
+                check(r.origin() == RangeOrigin.SOURCE
+                        && r.startLine() == 2 && r.startColumn() == 1
+                        && r.startScalarOffset() == expectedStart
+                        && r.endScalarOffset() > r.startScalarOffset()
+                        && r.scalarLength() == r.endScalarOffset() - r.startScalarOffset(),
+                    "PS1: E2010 anchors SOURCE at 2:1 with the exact non-zero start offset ("
+                        + expectedStart + "): " + r);
+                check(e2010.notes().isEmpty(),
+                    "PS1: the SOURCE-anchored E2010 carries no anchor note: "
+                        + e2010.notes());
+                checkFormattedStructuredAgree(e2010, "PS1");
+            }
+
+            // PS2: E2011 — a main with a wrong signature after the same
+            // leading comment; the entry-main validation anchors at the
+            // program span, so the range starts at the export at 2:1.
+            String badMain = "// leading comment\n"
+                + "export function main(x: int): null { return null; }\n";
+            Path badMainEntry = srcDir.resolve("ps_e2011.deal");
+            Files.writeString(badMainEntry, badMain);
+            CompilationOrchestrator e2011Orch = new CompilationOrchestrator(
+                badMainEntry.toAbsolutePath(), tmp.resolve("build/e2011"),
+                false, null, moduleRoots, null);
+            boolean ps2Failed;
+            try {
+                System.setErr(new PrintStream(new ByteArrayOutputStream(), true,
+                    StandardCharsets.UTF_8));
+                ps2Failed = !e2011Orch.compile();
+            } finally {
+                System.setErr(originalErr);
+            }
+            check(ps2Failed, "PS2: wrong-signature main fails compilation");
+            CompilerDiagnostic e2011 = firstCode(e2011Orch.diagnostics(), "E2011");
+            check(e2011 != null, "PS2: E2011 present: " + e2011Orch.diagnostics());
+            if (e2011 != null) {
+                int expectedStart = ScalarSourceCursor.scalarCount(badMain, 0,
+                    badMain.indexOf("export"));
+                DiagnosticRange r = e2011.range();
+                check(r.origin() == RangeOrigin.SOURCE
+                        && r.startLine() == 2 && r.startColumn() == 1
+                        && r.startScalarOffset() == expectedStart
+                        && r.endScalarOffset() > r.startScalarOffset()
+                        && r.scalarLength() == r.endScalarOffset() - r.startScalarOffset(),
+                    "PS2: E2011 anchors SOURCE at 2:1 with the exact non-zero start offset ("
+                        + expectedStart + "): " + r);
+                check(e2011.notes().isEmpty(),
+                    "PS2: the SOURCE-anchored E2011 carries no anchor note: "
+                        + e2011.notes());
+                checkFormattedStructuredAgree(e2011, "PS2");
+            }
+
+            // PS3: E2010 for an empty entry pins the explicit zero-length
+            // SOURCE range at file start — never SYNTHETIC, no note.
+            Path emptyEntry = srcDir.resolve("ps_empty.deal");
+            Files.writeString(emptyEntry, "");
+            CompilationOrchestrator emptyOrch = new CompilationOrchestrator(
+                emptyEntry.toAbsolutePath(), tmp.resolve("build/ps_empty"),
+                false, null, moduleRoots, null);
+            boolean ps3Failed;
+            try {
+                System.setErr(new PrintStream(new ByteArrayOutputStream(), true,
+                    StandardCharsets.UTF_8));
+                ps3Failed = !emptyOrch.compile();
+            } finally {
+                System.setErr(originalErr);
+            }
+            check(ps3Failed, "PS3: empty entry fails compilation");
+            CompilerDiagnostic emptyE2010 = firstCode(emptyOrch.diagnostics(), "E2010");
+            check(emptyE2010 != null,
+                "PS3: empty entry produces E2010: " + emptyOrch.diagnostics());
+            if (emptyE2010 != null) {
+                DiagnosticRange r = emptyE2010.range();
+                check(r.origin() == RangeOrigin.SOURCE
+                        && r.startLine() == 1 && r.startColumn() == 1
+                        && r.endLine() == 1 && r.endColumn() == 1
+                        && r.startScalarOffset() == 0
+                        && r.endScalarOffset() == 0
+                        && r.scalarLength() == 0,
+                    "PS3: empty entry E2010 pins (file,1,1,1,1,0,0,0,SOURCE): " + r);
+                check(emptyE2010.notes().isEmpty(),
+                    "PS3: empty entry E2010 carries no anchor note: "
+                        + emptyE2010.notes());
+                checkFormattedStructuredAgree(emptyE2010, "PS3");
+            }
+
+            // PS4: whitespace-only entry — the same pinned document-start
+            // shape (zero tokens; the program span is the explicit
+            // zero-length SOURCE range at file start).
+            Path wsEntry = srcDir.resolve("ps_ws.deal");
+            Files.writeString(wsEntry, " \t\n");
+            CompilationOrchestrator wsOrch = new CompilationOrchestrator(
+                wsEntry.toAbsolutePath(), tmp.resolve("build/ps_ws"),
+                false, null, moduleRoots, null);
+            boolean ps4Failed;
+            try {
+                System.setErr(new PrintStream(new ByteArrayOutputStream(), true,
+                    StandardCharsets.UTF_8));
+                ps4Failed = !wsOrch.compile();
+            } finally {
+                System.setErr(originalErr);
+            }
+            check(ps4Failed, "PS4: whitespace-only entry fails compilation");
+            CompilerDiagnostic wsE2010 = firstCode(wsOrch.diagnostics(), "E2010");
+            check(wsE2010 != null,
+                "PS4: whitespace-only entry produces E2010: " + wsOrch.diagnostics());
+            if (wsE2010 != null) {
+                DiagnosticRange r = wsE2010.range();
+                check(r.origin() == RangeOrigin.SOURCE
+                        && r.startLine() == 1 && r.startColumn() == 1
+                        && r.endLine() == 1 && r.endColumn() == 1
+                        && r.startScalarOffset() == 0
+                        && r.endScalarOffset() == 0
+                        && r.scalarLength() == 0,
+                    "PS4: whitespace-only entry E2010 pins (file,1,1,1,1,0,0,0,SOURCE): "
+                        + r);
+                check(wsE2010.notes().isEmpty(),
+                    "PS4: whitespace-only entry E2010 carries no anchor note: "
+                        + wsE2010.notes());
+            }
+
+            // PS5: JvmBackend E6004 on the same commented program shape —
+            // the backend's entry gate anchors at program.span(), which
+            // is SOURCE-exact through the parser's spanBetween
+            // construction.
+            JvmBackend.JvmCodegenResult res = jvmEntryGenerate(commented,
+                "ps_e6004.deal");
+            CompilerDiagnostic e6004 = firstCode(res.diagnostics(), "E6004");
+            check(e6004 != null, "PS5: E6004 present: " + res.diagnostics());
+            if (e6004 != null) {
+                int expectedStart = ScalarSourceCursor.scalarCount(commented, 0,
+                    commented.indexOf("export"));
+                DiagnosticRange r = e6004.range();
+                check(r.origin() == RangeOrigin.SOURCE
+                        && r.startLine() == 2 && r.startColumn() == 1
+                        && r.startScalarOffset() == expectedStart
+                        && r.endScalarOffset() > r.startScalarOffset()
+                        && r.scalarLength() == r.endScalarOffset() - r.startScalarOffset(),
+                    "PS5: E6004 anchors SOURCE at 2:1 with the exact non-zero start offset ("
+                        + expectedStart + "): " + r);
+                check(e6004.notes().isEmpty(),
+                    "PS5: the SOURCE-anchored E6004 carries no anchor note: "
+                        + e6004.notes());
+                checkFormattedStructuredAgree(e6004, "PS5");
+            }
+
+            // PS6: JvmBackend E6004 for an empty program pins the
+            // explicit zero-length SOURCE range at file start.
+            JvmBackend.JvmCodegenResult emptyRes = jvmEntryGenerate("",
+                "ps_e6004_empty.deal");
+            CompilerDiagnostic emptyE6004 = firstCode(emptyRes.diagnostics(), "E6004");
+            check(emptyE6004 != null,
+                "PS6: empty program produces E6004: " + emptyRes.diagnostics());
+            if (emptyE6004 != null) {
+                DiagnosticRange r = emptyE6004.range();
+                check(r.origin() == RangeOrigin.SOURCE
+                        && r.startLine() == 1 && r.startColumn() == 1
+                        && r.endLine() == 1 && r.endColumn() == 1
+                        && r.startScalarOffset() == 0
+                        && r.endScalarOffset() == 0
+                        && r.scalarLength() == 0,
+                    "PS6: empty-program E6004 pins (file,1,1,1,1,0,0,0,SOURCE): " + r);
+                check(emptyE6004.notes().isEmpty(),
+                    "PS6: empty-program E6004 carries no anchor note: "
+                        + emptyE6004.notes());
+            }
+        } finally {
+            try {
+                Files.walk(tmp).sorted(Comparator.reverseOrder()).forEach(f -> {
+                    try {
+                        Files.deleteIfExists(f);
+                    } catch (IOException ignored) {
+                    }
+                });
+            } catch (IOException ignored) {
+            }
+        }
+    }
+
+    /** JVM backend entry gate over the full frontend pipeline. */
+    private static JvmBackend.JvmCodegenResult jvmEntryGenerate(String source,
+                                                                String filename) {
+        LexResult lex = new Lexer(source, filename).tokenize();
+        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver(filename, resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check(filename, symTable, nr,
+            parse.program());
+        return JvmBackend.generate(parse.program(), result, filename, "main",
+            Map.of(), Map.of(), Map.of(), true);
+    }
+
+    /** First diagnostic with the given code, or null. */
+    private static CompilerDiagnostic firstCode(List<CompilerDiagnostic> diags,
+                                                String code) {
+        for (CompilerDiagnostic d : diags) {
+            if (d.code().equals(code)) {
+                return d;
+            }
+        }
+        return null;
     }
 
     // =========================================================================
