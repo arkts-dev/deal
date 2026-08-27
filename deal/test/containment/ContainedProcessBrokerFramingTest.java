@@ -145,6 +145,34 @@ public final class ContainedProcessBrokerFramingTest {
                 reportBase + repeat('c', maxToken + 1),
                 "record REPORT line exceeds the 8192-byte cap");
 
+        /* HELLO_OK version: the canonical VERSION_4 field class is
+         * decimal with value exactly 4 (protocol.c
+         * DEALPG4_F_VERSION_4) — leading zeros are valid ("04", "004")
+         * and string equality with "4" is not the check; a version
+         * whose decimal value is not 4, a non-decimal version, or an
+         * int64-overflowing version is a framing defect. Both parsers
+         * classify these identically (C-verified). */
+        expectAccepted("HELLO_OK version: leading-zero decimal '04' is exactly 4",
+                "DEALPG4 HELLO_OK 04 63", "HELLO_OK");
+        expectAccepted("HELLO_OK version: leading-zero decimal '004' is exactly 4",
+                "DEALPG4 HELLO_OK 004 63", "HELLO_OK");
+        expectAccepted("HELLO_OK version: '00004' is exactly 4",
+                "DEALPG4 HELLO_OK 00004 63", "HELLO_OK");
+        expectProtocolError("HELLO_OK version: decimal value 5 is not exactly 4",
+                "DEALPG4 HELLO_OK 5 63");
+        expectProtocolError("HELLO_OK version: decimal value 40 is not exactly 4",
+                "DEALPG4 HELLO_OK 40 63");
+        expectProtocolError("HELLO_OK version: decimal value 3 is not exactly 4",
+                "DEALPG4 HELLO_OK 3 63");
+        expectProtocolError("HELLO_OK version: '4x' is not a decimal",
+                "DEALPG4 HELLO_OK 4x 63");
+        expectProtocolError("HELLO_OK version: '-4' is not a decimal",
+                "DEALPG4 HELLO_OK -4 63");
+        expectProtocolError("HELLO_OK version: empty field is not a decimal",
+                "DEALPG4 HELLO_OK  63");
+        expectProtocolError("HELLO_OK version: int64 overflow",
+                "DEALPG4 HELLO_OK 99999999999999999999999999 63");
+
         /* The global 131072-byte cap still fires first for a line
          * beyond it (canonical check order). */
         expectOversize("global cap: 200000-hex-char OUT line",

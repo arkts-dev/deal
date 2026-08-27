@@ -114,6 +114,24 @@ static void group1_framing_defects_close_channel(void)
           == DEALPG4_CLASS_PROTOCOL_ERROR); /* bad final */
     CHECK(classify_line("DEALPG4 DONE cleanish\n")
           == DEALPG4_CLASS_PROTOCOL_ERROR); /* bad outer status */
+    /* HELLO_OK version: the VERSION_4 field class is decimal with
+     * value exactly 4 -- leading zeros are valid, string equality with
+     * "4" is not the check, and a version whose decimal value is not
+     * 4, a non-decimal version, or an int64-overflowing version is a
+     * framing defect. The Java broker client must classify these
+     * identically (cross-validation negative set). */
+    CHECK(classify_line("DEALPG4 HELLO_OK 5 31\n")
+          == DEALPG4_CLASS_PROTOCOL_ERROR);
+    CHECK(classify_line("DEALPG4 HELLO_OK 40 31\n")
+          == DEALPG4_CLASS_PROTOCOL_ERROR);
+    CHECK(classify_line("DEALPG4 HELLO_OK 4x 31\n")
+          == DEALPG4_CLASS_PROTOCOL_ERROR);
+    CHECK(classify_line("DEALPG4 HELLO_OK -4 31\n")
+          == DEALPG4_CLASS_PROTOCOL_ERROR);
+    CHECK(classify_line("DEALPG4 HELLO_OK 99999999999999999999999999 31\n")
+          == DEALPG4_CLASS_PROTOCOL_ERROR);
+    CHECK(parse_line("DEALPG4 HELLO_OK 04 31\n", &p) == DEALPG4_PARSE_OK);
+    CHECK(parse_line("DEALPG4 HELLO_OK 004 31\n", &p) == DEALPG4_PARSE_OK);
     /* Field-count violations. */
     CHECK(classify_line("DEALPG4 STARTED 1 2\n")
           == DEALPG4_CLASS_PROTOCOL_ERROR);
@@ -470,6 +488,12 @@ static void group6_serialization(void)
     {
         const dealpg4_field_value hello_ok[] = { FIELD("4"), FIELD("31") };
         roundtrip(DEALPG4_REC_HELLO_OK, hello_ok, 2);
+    }
+    {
+        /* Leading-zero decimal version: the VERSION_4 field class
+         * accepts any decimal text whose value is exactly 4. */
+        const dealpg4_field_value hello_ok_v04[] = { FIELD("04"), FIELD("31") };
+        roundtrip(DEALPG4_REC_HELLO_OK, hello_ok_v04, 2);
     }
     {
         const dealpg4_field_value feature_ready[] = { FIELD(nonce32) };

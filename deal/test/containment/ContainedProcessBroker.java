@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Authenticated DEALPG4 v4 broker client (JEP 380 Unix-domain transport).
@@ -70,6 +71,16 @@ import java.util.Objects;
  * stream ({@code CLEAN cancelled} on success, {@code REJECT ...
  * CANCEL_AUTH_FAILED} otherwise), which the running {@code run()} call
  * consumes and surfaces.
+ *
+ * <p>Nonce retention for CANCEL: the invocation nonce is outer-generated
+ * and reaches the coordinator exclusively through the {@code STUB_READY}
+ * relay (outer-coordinator-and-broker D4), so {@code run()} retains it
+ * per live invocationId — populated at {@code STUB_READY}, cleared at
+ * the terminal {@code CLEAN}/{@code FAILED} record — and exposes it
+ * during that live window through {@link #invocationNonce(long)} and
+ * {@link #cancelLive(String)}. The required nonce-bound
+ * {@code CANCEL <invocationId> <nonce>} flow is therefore reachable
+ * with the exact nonce the outer will accept.
  */
 public final class ContainedProcessBroker implements AutoCloseable {
 
@@ -135,6 +146,16 @@ public final class ContainedProcessBroker implements AutoCloseable {
     private boolean closed;
     private boolean featureReadySent;
     private boolean byeSent;
+    /**
+     * Retained {@code STUB_READY} nonce per live invocationId —
+     * populated when {@code run()} parses STUB_READY, cleared when it
+     * consumes the terminal CLEAN/FAILED record (the exact live window
+     * in which the outer accepts a nonce-bound CANCEL for the record).
+     * Concurrent map: {@link #cancelLive(String)} may be called from
+     * another thread while {@code run()} owns the read stream.
+     */
+    private final ConcurrentHashMap<Long, String> invocationNonces =
+            new ConcurrentHashMap<>();
 
     private ContainedProcessBroker(SocketChannel channel, String coordinatorNonce) {
         this.channel = channel;
@@ -151,7 +172,9 @@ public final class ContainedProcessBroker implements AutoCloseable {
      * @throws ContainmentException on any handshake-stage failure:
      *         missing environment, a malformed nonce, connection loss
      *         before HELLO_OK (the outer rejected the peer or the nonce),
-     *         a HELLO_OK version field that is not exactly 4 (framing
+     *         a HELLO_OK version field whose decimal value is not
+     *         exactly 4 (canonical VERSION_4 field class: decimal with
+     *         value exactly 4 — leading zeros accepted; framing
      *         defect, {@code PROTOCOL_ERROR}), a HELLO_OK capability
      *         bitmask missing any expected bit ({@code
      *         CAPABILITY_MISSING}), or any other framing defect
@@ -364,6 +387,13 @@ public final class ContainedProcessBroker implements AutoCloseable {
                     + " != INVOKED invocationId " + invocationId);
         }
         String stubNonce = record.fields[4];
+        /* Retain the STUB_READY nonce for the live window: it is the
+         * outer-generated invocation nonce (the only nonce the outer
+         * accepts for a CANCEL of this record, outer-coordinator-and-
+         * broker D4/D7) and reaches the coordinator exclusively through
+         * this relay, so without retention no conforming caller could
+         * ever obtain it. Cleared at the terminal record. */
+        invocationNonces.put(invocationId, stubNonce);
         send("ACK", String.valueOf(invocationId), stubNonce);
 
         /* Post-ACK phase: STARTED|EXEC_FAILED, OUT/OUT_END, REPORT,
@@ -445,11 +475,13 @@ public final class ContainedProcessBroker implements AutoCloseable {
                     checkInvocationId(record, invocationId, "CLEAN");
                     requireTerminalEvidence(invocationId, reportSeen, accumulated, report,
                             locallyTruncated);
+                    invocationNonces.remove(invocationId);
                     return buildResult(invocationId, record.fields[1], report, accumulated);
                 case "FAILED":
                     checkInvocationId(record, invocationId, "FAILED");
                     requireTerminalEvidence(invocationId, reportSeen, accumulated, report,
                             locallyTruncated);
+                    invocationNonces.remove(invocationId);
                     return buildFailedResult(invocationId, record.fields[1], report, accumulated);
                 default:
                     throw new BrokerProtocolException(
@@ -469,6 +501,12 @@ public final class ContainedProcessBroker implements AutoCloseable {
      * {@link BrokerRejectionException} ({@code CANCEL_AUTH_FAILED} or
      * another reason token) — the channel stays open and the record is
      * untouched (canonical CANCEL rule); never swallowed, never retried.
+     *
+     * <p>The invocation nonce is outer-generated and reaches the
+     * coordinator exclusively through the {@code STUB_READY} relay;
+     * callers that do not hold it should use {@link #cancelLive(String)}
+     * (or read {@link #invocationNonce(long)}), which uses the nonce
+     * {@link #run} retained from {@code STUB_READY}.
      *
      * @throws ContainmentException on a malformed invocationId or nonce
      *         (a malformed CANCEL is never emitted) or on a channel
@@ -522,6 +560,7 @@ public final class ContainedProcessBroker implements AutoCloseable {
             }
             closed = true;
         }
+        invocationNonces.clear();
         try {
             channel.close();
         } catch (IOException e) {
@@ -533,6 +572,69 @@ public final class ContainedProcessBroker implements AutoCloseable {
     /** The coordinator nonce bound at connect time (32 lowercase hex). */
     public String coordinatorNonce() {
         return coordinatorNonce;
+    }
+
+    /**
+     * The retained {@code STUB_READY} nonce of a live invocation, or
+     * {@code null} when the id is not live from this client's view: no
+     * {@code STUB_READY} for the id has been observed yet, or the
+     * terminal {@code CLEAN}/{@code FAILED} record has already cleared
+     * it (populated at {@code STUB_READY}, cleared at the terminal
+     * record — the exact window in which the outer accepts a
+     * nonce-bound {@code CANCEL} for the record,
+     * outer-coordinator-and-broker D4/D7).
+     */
+    public String invocationNonce(long invocationId) {
+        return invocationNonces.get(invocationId);
+    }
+
+    /**
+     * Sends {@code CANCEL <invocationId> <nonce>} for a live invocation
+     * using the retained {@code STUB_READY} nonce — the required CANCEL
+     * flow with the {@code STUB_READY} nonce for a live invocation
+     * (outer-coordinator-and-broker D4/D7: the invocation nonce is
+     * outer-generated and reaches the coordinator exclusively through
+     * the {@code STUB_READY} relay, so this retained nonce is the only
+     * nonce the outer will accept for the record).
+     *
+     * <p>The outcome is surfaced exactly like {@link #cancel(String,
+     * String)}: an accepted CANCEL completes the running {@link #run}
+     * call with {@code CLEAN cancelled}, and a rejection surfaces as a
+     * {@link BrokerRejectionException} carrying its reason token —
+     * never swallowed, never retried.
+     *
+     * @throws ContainmentException ({@code CANCEL_AUTH_FAILED}) when no
+     *         {@code STUB_READY} nonce is retained for
+     *         {@code invocationId} (not live from this client's view):
+     *         the CANCEL is refused client-side before any write — a
+     *         guessed nonce would be answered {@code REJECT ...
+     *         CANCEL_AUTH_FAILED} by the outer anyway, and this client
+     *         never emits a CANCEL it cannot nonce-bind to the record.
+     * @throws ContainmentException on a malformed invocationId (a
+     *         malformed CANCEL is never emitted) or on a channel write
+     *         failure.
+     */
+    public void cancelLive(String invocationId) {
+        Objects.requireNonNull(invocationId, "invocationId");
+        requireSessionState("CANCEL");
+        requireDecimal(invocationId, "CANCEL invocationId");
+        long id = parseDecimalLong(invocationId, "CANCEL invocationId");
+        if (id < 1) {
+            throw new BrokerProtocolException("CANCEL invocationId " + invocationId + " < 1");
+        }
+        String nonce = invocationNonces.get(id);
+        if (nonce == null) {
+            throw new ContainmentException("CANCEL_AUTH_FAILED",
+                    "no live invocation " + id + " with a retained STUB_READY nonce; "
+                            + "refusing to emit a CANCEL with a guessed nonce (the outer "
+                            + "would answer REJECT ... CANCEL_AUTH_FAILED)");
+        }
+        send("CANCEL", String.valueOf(id), nonce);
+    }
+
+    /** {@link #cancelLive(String)} for a numeric invocation id. */
+    public void cancelLive(long invocationId) {
+        cancelLive(String.valueOf(invocationId));
     }
 
     /* === INVOKE emission ============================================== */
@@ -799,10 +901,16 @@ public final class ContainedProcessBroker implements AutoCloseable {
         switch (type) {
             case "HELLO_OK":
                 requireFieldCount(type, fields, 2);
-                if (!fields[0].equals(String.valueOf(PROTOCOL_VERSION))) {
+                /* Canonical VERSION_4 field class (protocol.c
+                 * DEALPG4_F_VERSION_4): decimal text whose parsed value
+                 * is exactly 4 — "04"/"004" are valid, string equality
+                 * with "4" is not the check. */
+                requireDecimal(fields[0], "HELLO_OK version");
+                if (parseDecimalLong(fields[0], "HELLO_OK version") != PROTOCOL_VERSION) {
                     throw new BrokerProtocolException(
                             "HELLO_OK version '" + fields[0] + "' is not exactly "
-                                    + PROTOCOL_VERSION + " (canonical VERSION_4 field class)");
+                                    + PROTOCOL_VERSION + " (canonical VERSION_4 field class: "
+                                    + "decimal with value exactly 4)");
                 }
                 requireDecimal(fields[1], "HELLO_OK caps");
                 return;
