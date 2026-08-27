@@ -498,15 +498,21 @@ public class JsBackendTest {
         check(!Files.exists(defaultOut.resolve("cli_js_main.lua")),
             "no .lua artifact under the js backend");
 
-        // The deployed entry runs under node (main(): null exits 0).
-        ProcessBuilder node = new ProcessBuilder("node", "cli_js_main.js");
-        node.directory(defaultOut.toFile());
-        node.redirectErrorStream(true);
-        Process np = node.start();
-        String nout = new String(np.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8).trim();
-        int nrc = np.waitFor();
-        check(nrc == 0, "node entry run exits 0: " + nout);
+        // The deployed entry runs under node (main(): null exits 0) —
+        // a node-dependent sub-check guarded like every node semantic
+        // case: node unavailability skips it, never fails it.
+        if (nodeAvailable) {
+            ProcessBuilder node = new ProcessBuilder("node", "cli_js_main.js");
+            node.directory(defaultOut.toFile());
+            node.redirectErrorStream(true);
+            Process np = node.start();
+            String nout = new String(np.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8).trim();
+            int nrc = np.waitFor();
+            check(nrc == 0, "node entry run exits 0: " + nout);
+        } else {
+            skipNode("CLI --backend js default-output node run");
+        }
 
         deleteDir(proj);
     }
@@ -1837,17 +1843,23 @@ public class JsBackendTest {
         }
 
         // The deployed project runs under the real node binary: the entry
-        // shim invokes main, prints, and exits 0.
-        ProcessBuilder node = new ProcessBuilder("node", "orch_main.js");
-        node.directory(outputDir.toFile());
-        node.redirectErrorStream(true);
-        Process np = node.start();
-        String nout = new String(np.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8).trim();
-        int nrc = np.waitFor();
-        check(nrc == 0 && nout.equals("js-orchestrator-main"),
-            "node <output>/orch_main.js runs the entry shim: exit " + nrc
-                + ", output '" + nout + "'");
+        // shim invokes main, prints, and exits 0 — a node-dependent
+        // sub-check guarded like every node semantic case: node
+        // unavailability skips it, never fails it.
+        if (nodeAvailable) {
+            ProcessBuilder node = new ProcessBuilder("node", "orch_main.js");
+            node.directory(outputDir.toFile());
+            node.redirectErrorStream(true);
+            Process np = node.start();
+            String nout = new String(np.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8).trim();
+            int nrc = np.waitFor();
+            check(nrc == 0 && nout.equals("js-orchestrator-main"),
+                "node <output>/orch_main.js runs the entry shim: exit " + nrc
+                    + ", output '" + nout + "'");
+        } else {
+            skipNode("orchestrator Backend.JS node run");
+        }
     }
 
     private static void testOrchestratorJsNestedModule() throws Exception {
@@ -1896,16 +1908,23 @@ public class JsBackendTest {
                 "app/lib.js requires ../deal/runtime");
         }
 
-        ProcessBuilder node = new ProcessBuilder("node", "app/main.js");
-        node.directory(outputDir.toFile());
-        node.redirectErrorStream(true);
-        Process np = node.start();
-        String nout = new String(np.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8).trim();
-        int nrc = np.waitFor();
-        check(nrc == 0 && nout.equals("nested-module-ok"),
-            "node app/main.js runs the nested entry chain: exit " + nrc
-                + ", output '" + nout + "'");
+        // The deployed nested entry runs under the real node binary — a
+        // node-dependent sub-check guarded like every node semantic case:
+        // node unavailability skips it, never fails it.
+        if (nodeAvailable) {
+            ProcessBuilder node = new ProcessBuilder("node", "app/main.js");
+            node.directory(outputDir.toFile());
+            node.redirectErrorStream(true);
+            Process np = node.start();
+            String nout = new String(np.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8).trim();
+            int nrc = np.waitFor();
+            check(nrc == 0 && nout.equals("nested-module-ok"),
+                "node app/main.js runs the nested entry chain: exit " + nrc
+                    + ", output '" + nout + "'");
+        } else {
+            skipNode("orchestrator nested-module node run");
+        }
     }
 
     private static void testOrchestratorJsRejectsUnsupported() throws Exception {
