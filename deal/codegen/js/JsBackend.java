@@ -1299,7 +1299,8 @@ public final class JsBackend {
         if (hasAnnotation && targetType != null
                 && !(targetType instanceof Type.Error)) {
             line(keyword + name + " = "
-                + boundaryValue(init, targetType, exprType, span) + ";");
+                + boundaryValue(init, node.initializer(), targetType,
+                    exprType, span) + ";");
         } else if (!hasAnnotation && exprType != null
                 && node.initializer() instanceof LiteralExpr
                 && (exprType instanceof Type.Int
@@ -1778,17 +1779,25 @@ public final class JsBackend {
 
     /**
      * Await lowering (js-backend-architecture D5, js-backend-emitter
-     * D6): {@code await E} emits {@code await <emitted callee>}. The
-     * awaited callee is a {@link CallExpr} (the parser enforces E1042,
-     * the checker E3013 against non-async callees), so its emission is
-     * the wrapper call {@code <callee>.$f(<args>, <file>, <line>,
-     * <column>)} with the literal call-site span arguments — a direct
-     * awaited call lowers to {@code await base.$f(<file>, <line>,
-     * <column>)} and an awaited indirect function-typed value to
-     * {@code await g.$f(...)}. No completion check is emitted at the
-     * await site: the async wrapper checks its declared return inside
-     * its own {@code async function} body before the Promise resolves,
-     * so the completion value crosses its typed boundary exactly once
+     * D6): {@code await E} emits the parenthesized awaited result
+     * {@code (await <emitted callee>)}. The awaited callee is a
+     * {@link CallExpr} (the parser enforces E1042, the checker E3013
+     * against non-async callees), so its emission is the wrapper call
+     * {@code <callee>.$f(<args>, <file>, <line>, <column>)} with the
+     * literal call-site span arguments — a direct awaited call lowers
+     * to {@code (await base.$f(<file>, <line>, <column>))} and an
+     * awaited indirect function-typed value to {@code (await
+     * g.$f(...))}. The parentheses make the emission position-aware:
+     * {@code await} binds at unary precedence, so an unparenthesized
+     * awaited result composed into a postfix position binds the
+     * postfix to the Promise instead of the awaited value —
+     * {@code (await getU()).name} must emit {@code (await
+     * getU.$f(...)).name}, never {@code await getU.$f(...).name}
+     * (which reads {@code .name} off the Promise before awaiting).
+     * No completion check is emitted at the await site: the async
+     * wrapper checks its declared return inside its own {@code async
+     * function} body before the Promise resolves, so the completion
+     * value crosses its typed boundary exactly once
      * (js-backend-runtime D6). Errors raised by the awaited operation
      * propagate natively at the await site (Promise rejection), and
      * evaluation before an await precedes evaluation after it — native
@@ -1796,7 +1805,42 @@ public final class JsBackend {
      * value: the wrapper shape stays the only source-visible form.
      */
     private String emitAwait(AwaitExpression await) {
-        return "await " + emitExpression(await.callee());
+        return "(await " + emitExpression(await.callee()) + ")";
+    }
+
+    /**
+     * True when the expression subtree contains an await outside every
+     * nested {@link FunctionExpr} body — the awaited call must then be
+     * evaluated at the enclosing async function's level, never inside a
+     * generated non-async closure (node rejects the {@code await}
+     * keyword inside non-async function bodies at load). Awaits inside
+     * a function expression are lexically inside that expression's own
+     * (async) body and are safe in non-async positions.
+     */
+    private boolean containsAwait(ExpressionNode expr) {
+        return switch (expr) {
+            case AwaitExpression a -> true;
+            case FunctionExpr fe -> false;
+            case BinaryExpr b ->
+                containsAwait(b.left()) || containsAwait(b.right());
+            case UnaryExpr u -> containsAwait(u.expr());
+            case CallExpr c ->
+                containsAwait(c.callee())
+                    || c.args().stream().anyMatch(this::containsAwait);
+            case MemberAccessExpr m -> containsAwait(m.object());
+            case IndexExpr ix ->
+                containsAwait(ix.array()) || containsAwait(ix.index());
+            case ArrayLiteralExpr al ->
+                al.elements().stream().anyMatch(this::containsAwait);
+            case ObjectLiteralExpr ol -> ol.properties().stream()
+                .anyMatch(p -> containsAwait(p.value()));
+            case HasExpr h -> containsAwait(h.object());
+            case AssignmentExpr as ->
+                containsAwait(as.target()) || containsAwait(as.value());
+            case TemplateLiteralExpr tl ->
+                tl.parts().stream().anyMatch(this::containsAwait);
+            default -> false;
+        };
     }
 
     private String emitLiteral(LiteralExpr lit) {
@@ -2144,7 +2188,13 @@ public final class JsBackend {
      * non-nullable → E8001) (js-backend-architecture D3/D6). Table
      * reads are Map {@code .get} calls. The arrow IIFE evaluates the
      * index (checked) before the container, exactly the reference's
-     * evaluation order.
+     * evaluation order. An await-bearing container or index cannot land
+     * inside that IIFE — it is a non-async closure and node rejects
+     * {@code await} in non-async function bodies at load — so those
+     * subexpressions hoist out as IIFE arguments, evaluated at the
+     * enclosing async function's level; the argument order keeps the
+     * reference's index-before-container order (the checked index
+     * argument first, the container argument second).
      */
     private String emitIndex(IndexExpr idx) {
         Type containerType = typeOf(idx.array());
@@ -2152,10 +2202,27 @@ public final class JsBackend {
         String index = emitExpression(idx.index());
         Span span = idx.span();
         if (containerType instanceof Type.Array) {
-            return "(() => { const $idx = $rt.checkInt(" + index + ", "
-                + spanArgs(span) + "); if ($idx < 0) { "
+            boolean arrHasAwait = containsAwait(idx.array());
+            boolean idxHasAwait = containsAwait(idx.index());
+            if (!arrHasAwait && !idxHasAwait) {
+                return "(() => { const $idx = $rt.checkInt(" + index + ", "
+                    + spanArgs(span) + "); if ($idx < 0) { "
+                    + "$rt.fail(\"E8002\", \"negative array index\", "
+                    + spanArgs(span) + "); } return " + arr + "[$idx]; })()";
+            }
+            StringBuilder params = new StringBuilder("$idxRaw");
+            StringBuilder args = new StringBuilder(index);
+            String arrRef = arr;
+            if (arrHasAwait) {
+                params.append(", $arr");
+                args.append(", ").append(arr);
+                arrRef = "$arr";
+            }
+            return "((" + params + ") => { const $idx = $rt.checkInt("
+                + "$idxRaw, " + spanArgs(span) + "); if ($idx < 0) { "
                 + "$rt.fail(\"E8002\", \"negative array index\", "
-                + spanArgs(span) + "); } return " + arr + "[$idx]; })()";
+                + spanArgs(span) + "); } return " + arrRef
+                + "[$idx]; })(" + args + ")";
         }
         if (containerType instanceof Type.Table) {
             return arr + ".get(" + index + ")";
@@ -2330,11 +2397,17 @@ public final class JsBackend {
      * {@code .set} calls (unchecked, the checker's F5 write-context
      * rule); plain targets assign natively. The IIFE preserves the
      * reference's evaluation order (container, checked index, bounds,
-     * checked value, write) in expression position. Identifier targets
-     * and class field writes re-validate the assigned value against the
-     * target's declared type at the assignment site (the value's own
-     * boundary check for that transition), mirroring the
-     * declaration-site boundary checks.
+     * checked value, write) in expression position. An await-bearing
+     * container, index, or value cannot land inside that IIFE — it is
+     * a non-async closure and node rejects {@code await} in non-async
+     * function bodies at load — so those subexpressions hoist out as
+     * IIFE arguments, evaluated at the enclosing async function's
+     * level, in the reference's order (container, index, value); the
+     * index check, bounds gate, and value check stay inside the body.
+     * Identifier targets and class field writes re-validate the
+     * assigned value against the target's declared type at the
+     * assignment site (the value's own boundary check for that
+     * transition), mirroring the declaration-site boundary checks.
      */
     private String emitAssignment(AssignmentExpr assign) {
         String value = emitExpression(assign.value());
@@ -2345,14 +2418,42 @@ public final class JsBackend {
             if (containerType instanceof Type.Array arrT) {
                 String arr = emitExpression(idx.array());
                 String index = emitExpression(idx.index());
-                return "(() => { const $arr = " + arr
-                    + "; const $idx = $rt.checkInt(" + index + ", "
-                    + spanArgs(idx.span()) + "); "
+                boolean arrHasAwait = containsAwait(idx.array());
+                boolean idxHasAwait = containsAwait(idx.index());
+                boolean valueHasAwait = containsAwait(assign.value());
+                if (!arrHasAwait && !idxHasAwait && !valueHasAwait) {
+                    return "(() => { const $arr = " + arr
+                        + "; const $idx = $rt.checkInt(" + index + ", "
+                        + spanArgs(idx.span()) + "); "
+                        + "if ($idx < 0 || $idx > $arr.length) { "
+                        + "$rt.fail(\"E8002\", \"array index out of bounds\", "
+                        + spanArgs(idx.span()) + "); } "
+                        + "return $arr[$idx] = "
+                        + emitCheckExpr(value, arrT.element(), span)
+                        + "; })()";
+                }
+                StringBuilder params = new StringBuilder("$arr");
+                StringBuilder args = new StringBuilder(arr);
+                String idxRef = index;
+                if (idxHasAwait || valueHasAwait) {
+                    params.append(", $idxRaw");
+                    args.append(", ").append(index);
+                    idxRef = "$idxRaw";
+                }
+                String valueRef = value;
+                if (valueHasAwait) {
+                    params.append(", $v");
+                    args.append(", ").append(value);
+                    valueRef = "$v";
+                }
+                return "((" + params + ") => { const $idx = $rt.checkInt("
+                    + idxRef + ", " + spanArgs(idx.span()) + "); "
                     + "if ($idx < 0 || $idx > $arr.length) { "
                     + "$rt.fail(\"E8002\", \"array index out of bounds\", "
                     + spanArgs(idx.span()) + "); } "
                     + "return $arr[$idx] = "
-                    + emitCheckExpr(value, arrT.element(), span) + "; })()";
+                    + emitCheckExpr(valueRef, arrT.element(), span)
+                    + "; })(" + args + ")";
             }
             if (containerType instanceof Type.Table) {
                 // Module-alias index write (checker F5 accepts any
@@ -2382,14 +2483,14 @@ public final class JsBackend {
                     && isModuleAliasRef(id)) {
                 return "$rt.setProp(" + emitExpression(mae.object())
                     + ", " + jsStringLiteral(mae.field()) + ", "
-                    + checkedAssignmentValue(value,
+                    + checkedAssignmentValue(value, assign.value(),
                         typeOf(assign.target()), typeOf(assign.value()),
                         span) + ")";
             }
             if (objType instanceof Type.Class) {
                 return "$rt.setProp(" + emitExpression(mae.object()) + ", "
                     + jsStringLiteral(mae.field()) + ", "
-                    + checkedAssignmentValue(value,
+                    + checkedAssignmentValue(value, assign.value(),
                         typeOf(assign.target()), typeOf(assign.value()),
                         span) + ")";
             }
@@ -2402,8 +2503,8 @@ public final class JsBackend {
         }
         if (assign.target() instanceof IdentifierExpr id) {
             return jsName(id.name()) + " = "
-                + checkedAssignmentValue(value, typeOf(assign.target()),
-                    typeOf(assign.value()), span);
+                + checkedAssignmentValue(value, assign.value(),
+                    typeOf(assign.target()), typeOf(assign.value()), span);
         }
         // Defensive plain form: unreachable for checker-accepted
         // programs (E3017 rejects array .length targets, the checker
@@ -2425,13 +2526,15 @@ public final class JsBackend {
      * narrower ({@link #boundaryValue}, the
      * {@code LuaBackend.emitArityAdapter} mirror).
      */
-    private String checkedAssignmentValue(String value, Type targetType,
-                                          Type valueType, Span span) {
+    private String checkedAssignmentValue(String value,
+                                          ExpressionNode valueNode,
+                                          Type targetType, Type valueType,
+                                          Span span) {
         if (targetType == null || targetType instanceof Type.Error
                 || targetType instanceof Type.Table) {
             return value;
         }
-        return boundaryValue(value, targetType, valueType, span);
+        return boundaryValue(value, valueNode, targetType, valueType, span);
     }
 
     /**
@@ -2445,12 +2548,14 @@ public final class JsBackend {
      * the E8010 mismatch from the runtime {@code checkType} function
      * branch (js-backend-runtime D3).
      */
-    private String boundaryValue(String value, Type targetType,
-                                 Type valueType, Span span) {
+    private String boundaryValue(String value, ExpressionNode valueNode,
+                                 Type targetType, Type valueType,
+                                 Span span) {
         if (targetType instanceof Type.Func tf
                 && valueType instanceof Type.Func vf
                 && isArityExtension(vf, tf)) {
-            return emitArityAdapter(tf, vf, value, span);
+            return emitArityAdapter(tf, vf, value, containsAwait(valueNode),
+                span);
         }
         return emitCheckExpr(value, targetType, span);
     }
@@ -2488,10 +2593,19 @@ public final class JsBackend {
      * exactly, so the inner check validates the target return type),
      * and the awaiting caller observes the inner Promise, so the
      * completion value crosses its typed boundary exactly once
-     * (js-backend-runtime D6).
+     * (js-backend-runtime D6). An await-bearing inner value cannot land
+     * inside the adapter's non-async body — node rejects {@code await}
+     * in non-async function bodies at load — so the awaited value is
+     * captured once at the creation site: the adapter emission wraps in
+     * {@code (($fn) => <adapter>)}, the generated {@code $fn} parameter
+     * binding the evaluated value outside the closure (an inline
+     * {@code valueExpr} inside the body would re-evaluate the await per
+     * adapter call as well).
      */
     private String emitArityAdapter(Type.Func targetFunc, Type.Func valueFunc,
-                                    String valueExpr, Span span) {
+                                    String valueExpr, boolean valueHasAwait,
+                                    Span span) {
+        String innerRef = valueHasAwait ? "$fn" : valueExpr;
         StringBuilder params = new StringBuilder();
         for (int i = 0; i < targetFunc.paramTypes().size(); i++) {
             if (i > 0) params.append(", ");
@@ -2511,7 +2625,7 @@ public final class JsBackend {
                     targetFunc.paramTypes().get(i), span))
                 .append(";\n");
         }
-        String innerCall = adapterInnerCall(valueExpr,
+        String innerCall = adapterInnerCall(innerRef,
             valueFunc.paramTypes().size());
         if (targetFunc.isAsync()) {
             sb.append(bodyIndent).append("return ").append(innerCall)
@@ -2523,7 +2637,11 @@ public final class JsBackend {
                 .append(";\n");
         }
         sb.append("  ".repeat(indent)).append("})");
-        return sb.toString();
+        String adapter = sb.toString();
+        if (valueHasAwait) {
+            return "(($fn) => " + adapter + ")(" + valueExpr + ")";
+        }
+        return adapter;
     }
 
     /**
