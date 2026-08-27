@@ -205,6 +205,14 @@ else
 fi
 
 echo ""
+echo "=== Running Standard Library JS Tests ==="
+if command -v node &> /dev/null; then
+  node test_stdlib_js.js
+else
+  echo "WARNING: node not found, skipping standard library JS tests"
+fi
+
+echo ""
 echo ""
 echo "=== Running Async Nesting Stress Tests ==="
 if command -v luajit &> /dev/null; then
