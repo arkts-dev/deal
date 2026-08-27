@@ -72,7 +72,9 @@ javac --release 25 -proc:none -d build \
   test/LuaAbiTest.java \
   test/LuaAbiBackendTest.java \
   test/CrossModuleTypingTest.java \
-  test/ProtectedPathOpsTest.java
+  test/ProtectedPathOpsTest.java \
+  deal/test/containment/ContainedProcessBroker.java \
+  deal/test/containment/PreflightCoordinator.java
   touch "$STAMP"
 else
   echo "=== DEAL sources and tests unchanged since the last build; reusing build/ ==="

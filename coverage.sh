@@ -85,7 +85,9 @@ javac --release 22 -d build \
   test/ConformanceTest.java \
   test/LuaAbiTest.java \
   test/LuaAbiBackendTest.java \
-  test/CrossModuleTypingTest.java
+  test/CrossModuleTypingTest.java \
+  deal/test/containment/ContainedProcessBroker.java \
+  deal/test/containment/PreflightCoordinator.java
 
 # Runs a JVM suite under the JaCoCo agent.
 run_java() {
