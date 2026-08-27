@@ -1,27 +1,37 @@
 "use strict";
 
-// DEAL Standard Library: std/json (JavaScript backend).
-// The hand-written CommonJS stdlib module (js-stdlib-modules D1-D3, D7-D8):
-// parse = native JSON.parse plus the two decode-side parity scans and the
-// recursive marked-Map shape conversion under the (string)->table boundary;
-// stringify = the widened instance-aware entry gate, the validation/
-// conversion walk mirroring encode_value, the cycle check, and native
-// JSON.stringify on the converted graph. Exports exactly the .d.deal
-// members as $rt.function wrappers with the pinned sig strings, parameter
-// checks inside the body, and the declared-return check at exit; the
-// trailing span parameters are declared and forwarded to every in-body
-// check and the exit check. Loads from the deployed location
-// <output>/std/json.js (../deal/runtime -> <output>/deal/runtime.js) and
-// from the repo-root std/ directory (../deal/runtime -> repo-root
-// deal/runtime.js) — the dual-location loadability the direct tests rely
-// on (js-stdlib-modules D1).
+// DEAL Standard Library: std/json — JavaScript backend (std/json.js).
+// JSON decode/encode over the runtime's marked-Map table representation
+// (js-stdlib-modules D1-D3, D7-D8; js-backend-runtime D9):
+//
+//   parse     — native $JSON.parse plus the two decode-side parity scans
+//               (the pre-parse string-literal-aware raw-control scan and
+//               the in-conversion unpaired-surrogate scan) and the
+//               recursive marked-Map shape conversion, under the
+//               "(string)->table" boundary (entry checkString, exit
+//               checkTable);
+//   stringify — the widened instance-aware entry gate (a Map or a class
+//               instance passes; everything else fails through
+//               $rt.checkTable with E8001 "expected table"), the $encode
+//               validation/conversion walk mirroring std/json.lua's
+//               encode_value with the cycle check, and native
+//               $JSON.stringify on the converted graph, under the
+//               "(table)->string" boundary (exit checkString).
+//
+// Hand-written and trusted: the module captures the host globals it uses
+// at module top under $-names (js-stdlib-modules D3) — $JSON, $Array,
+// $Map, and the nil-equivalent $undefined. Object/String may be spelled
+// bare inside trusted files (the runtime's own D10 note; String appears
+// in the pinned parse conversion, D7); the ±Infinity check avoids the
+// bare Infinity spelling via the Double.MAX_VALUE magnitude bound. The
+// module is pure and stateless; beyond the checks/error spine it consults
+// makeTable (the only Map construction path), setProp (own-property-safe
+// object writes — a __proto__ key becomes an own property and
+// serializes), the four JSON shape marks (runtime-private WeakSets,
+// unspoofable — consulted only through the $rt members), and MISSING
+// (the absent-optional sentinel the class arm omits).
 
 // ===== Host-global capture (js-stdlib-modules D3) =====
-// The only module-scope bindings of the host globals this module uses;
-// Object (js-backend-runtime-artifact D10: not in the capture list, may
-// be spelled bare inside trusted files) and Infinity (spelled bare in the
-// runtime's own trusted scope, e.g. checkInt) follow the trusted-file
-// convention — nothing else is spelled bare.
 const $JSON = JSON;
 const $Array = Array;
 const $Map = Map;
@@ -29,301 +39,342 @@ const $undefined = void 0;
 
 const $rt = require("../deal/runtime");
 
-// ===== Module-private helpers (js-stdlib-modules D3: $ sigil by
-// convention — no user bindings exist in hand-written scope) =====
+// ===== Decode-side parity scans (js-stdlib-modules D7) =====
 
-// $walkSurrogates: the shared unpaired-surrogate unit walk (the
-// $rt.checkString loop, deal/runtime.js:446-460) raising the caller's
-// needle. A high surrogate (U+D800..U+DBFF) not followed by a low
-// surrogate (U+DC00..U+DFFF), or a lone low surrogate, raises E8001 with
-// the given message at the forwarded span; valid pairs advance two units.
-function $walkSurrogates($s, $message, $file, $line, $column) {
+// $scanRawControls: the string-literal-aware pre-parse walk. An in-string,
+// unescaped UTF-16 unit below 0x20 raises the pinned raw-control needle
+// through the E8001 spine with the forwarded call-site span. A backslash
+// consumes the following unit as an escape pair (\\, \" and \uXXXX all
+// stay in-string); raw DEL 0x7F is outside the rejection range; raw
+// controls outside strings are left to native $JSON.parse (tab/LF/CR are
+// legal JSON whitespace there). The scan can never widen acceptance: any
+// in-string raw control it misses is still rejected by the native arm.
+function $scanRawControls($text, $file, $line, $column) {
+  let $inString = false;
+  let $i = 0;
+  const $len = $text.length;
+  while ($i < $len) {
+    const $c = $text.charCodeAt($i);
+    if ($inString) {
+      if ($c === 0x22) { // closing quote: end of the string literal
+        $inString = false;
+        $i++;
+      } else if ($c === 0x5c) { // backslash: consume the escape pair
+        $i += 2;
+        if ($i <= $len && $text.charCodeAt($i - 1) === 0x75) {
+          $i += 4; // \uXXXX: consume the four hex units
+        }
+      } else if ($c < 0x20) {
+        $rt.fail("E8001", "JSON parse error: raw control character in string (must be escaped)", $file, $line, $column);
+      } else {
+        $i++;
+      }
+    } else {
+      if ($c === 0x22) { // opening quote: enter a string literal
+        $inString = true;
+      }
+      $i++;
+    }
+  }
+}
+
+// $scanSurrogates: the conversion-side unpaired-surrogate scan — the same
+// surrogate-pair unit walk as $rt.checkString's loop (deal/runtime.js
+// checkString) but raising the parse-side needle (D7). $rt.checkString is
+// deliberately not reused: its message is the boundary needle ("expected
+// string, got invalid UTF-8 encoding"), not the parse-side one. The scan
+// is faithful: the entry checkString already rejected unpaired surrogates
+// in the raw input text, so any unpaired surrogate in a converted string
+// necessarily came from a \uXXXX escape — exactly the case the reference
+// rejects (std/json.lua lone-low/lone-high/uncombined-high arms); valid
+// pairs pass.
+function $scanSurrogates($s, $file, $line, $column) {
   for (let $i = 0; $i < $s.length; $i++) {
     const $c = $s.charCodeAt($i);
     if ($c >= 0xd800 && $c <= 0xdbff) {
       const $next = $i + 1 < $s.length ? $s.charCodeAt($i + 1) : -1;
       if ($next < 0xdc00 || $next > 0xdfff) {
-        $rt.fail("E8001", $message, $file, $line, $column);
+        $rt.fail("E8001", "JSON parse error: unpaired surrogate code unit in unicode escape", $file, $line, $column);
       }
       $i++; // skip the low surrogate of a valid pair
     } else if ($c >= 0xdc00 && $c <= 0xdfff) {
-      $rt.fail("E8001", $message, $file, $line, $column);
+      $rt.fail("E8001", "JSON parse error: unpaired surrogate code unit in unicode escape", $file, $line, $column);
     }
   }
 }
 
-// $scanSurrogates: the parse-side unpaired-surrogate rejection
-// (js-stdlib-modules D7) — the converted-output scan, deliberately not
-// $rt.checkString (whose message is the boundary needle, not the parse
-// needle). Faithful: the entry checkString already rejected raw unpaired
-// surrogates in the input text, so any unpaired surrogate in a converted
-// string necessarily came from a \uXXXX escape — exactly the case the
-// reference rejects; valid pairs pass both layers.
-function $scanSurrogates($s, $file, $line, $column) {
-  $walkSurrogates($s, "JSON parse error: unpaired surrogate code unit in unicode escape", $file, $line, $column);
-}
+// ===== Parse shape conversion (js-stdlib-modules D7) =====
 
-// $scanEncodeString: the stringify-side string-validity rejection
-// (js-stdlib-modules D8 step 2 and the object-form key scan of step 5) —
-// the mirror of encode_value's escape-side utf8_valid rejection
-// (lua-std-json-unicode-conformance D6).
-function $scanEncodeString($s, $file, $line, $column) {
-  $walkSurrogates($s, "cannot encode invalid UTF-8 as JSON", $file, $line, $column);
-}
-
-// $scanRawControls: the pre-parse string-literal-aware raw-control scan
-// (js-stdlib-modules D7) — the message-parity and determinism layer for
-// the pinned raw-control needle. An in-string, unescaped UTF-16 unit
-// < 0x20 raises "JSON parse error: raw control character in string (must
-// be escaped)"; a backslash consumes the following unit as an escape pair
-// (\\, \", \uXXXX all stay in-string); raw DEL 0x7F is outside the
-// rejection range; raw controls outside strings are left to native
-// JSON.parse (tab/CR/LF are legal JSON whitespace there). The scan can
-// never widen acceptance: any in-string raw control it misses is still
-// rejected by the native arm.
-function $scanRawControls($text, $file, $line, $column) {
-  let $inString = false;
-  for (let $i = 0; $i < $text.length; $i++) {
-    const $c = $text.charCodeAt($i);
-    if ($inString) {
-      if ($c === 0x22) {
-        $inString = false; // closing quote
-      } else if ($c === 0x5c) {
-        $i++; // backslash: consume the escaped unit — the pair stays in-string
-      } else if ($c < 0x20) {
-        $rt.fail("E8001", "JSON parse error: raw control character in string (must be escaped)", $file, $line, $column);
-      }
-    } else if ($c === 0x22) {
-      $inString = true; // opening quote
-    }
-  }
-}
-
-// $fromJson: the recursive JSON shape conversion (js-stdlib-modules D7).
-// JSON null -> a fresh empty Map registered via markJsonNullTable at
-// every depth; JSON array -> a fresh Map with the string keys "1".."n" in
-// element order registered via markJsonArrayTable (an empty array
-// registers an empty marked Map); JSON object -> a fresh Map of the own
-// enumerable string keys (Object.keys — never for…in, which walks the
-// prototype chain; JSON.parse creates __proto__ as an own data property,
-// so a __proto__ key converts like any other and round-trips). Every
-// converted string — object keys and nested values at every depth,
-// including a top-level string before the exit check — passes the
-// unpaired-surrogate scan. number/boolean/string scalars pass through.
-// Maps are constructed via $rt.makeTable({}) plus .set calls — the only
-// Map constructor path, so the products pass checkTable and the mark
+// $fromJson: recursive conversion of a native $JSON.parse result into the
+// runtime's table representation. JSON null -> a fresh empty Map
+// registered via $rt.markJsonNullTable at every depth (the reference's
+// __NULL, std/json.lua:226); JSON array -> a fresh Map with the string
+// keys "1".."n" in element order, registered via $rt.markJsonArrayTable
+// (an empty array registers an empty marked Map); JSON object -> a fresh
+// Map iterating own enumerable string keys (Object.keys — never for...in,
+// which walks the prototype chain; $JSON.parse creates __proto__ as an
+// own data property, so a __proto__ key converts like any other);
+// number/boolean/string scalars pass through. Every converted string —
+// object keys and nested values at every depth, including a top-level
+// string before the exit check — crosses $scanSurrogates first, so a
+// lone-surrogate \uXXXX escape reports the parse-side needle (D7). Maps
+// are constructed via $rt.makeTable({}) plus .set calls — the only Map
+// construction path — so the products pass $rt.checkTable and the mark
 // members accept them by construction. Fresh Maps, independent of inputs;
 // a parsed JSON null never aliases a shared sentinel.
-function $fromJson($v, $file, $line, $column) {
-  if ($v === null) {
+function $fromJson($value, $file, $line, $column) {
+  if ($value === null) {
     return $rt.markJsonNullTable($rt.makeTable({}));
   }
-  if ($Array.isArray($v)) {
+  if (typeof $value === "string") {
+    $scanSurrogates($value, $file, $line, $column);
+    return $value;
+  }
+  if ($Array.isArray($value)) {
     const $t = $rt.makeTable({});
-    for (let $i = 0; $i < $v.length; $i++) {
-      $t.set("" + ($i + 1), $fromJson($v[$i], $file, $line, $column));
+    for (let $i = 0; $i < $value.length; $i++) {
+      $t.set(String($i + 1), $fromJson($value[$i], $file, $line, $column));
     }
     return $rt.markJsonArrayTable($t);
   }
-  if (typeof $v === "object") {
+  if (typeof $value === "object") {
     const $t = $rt.makeTable({});
-    const $keys = Object.keys($v);
+    const $keys = Object.keys($value);
     for (let $i = 0; $i < $keys.length; $i++) {
       const $key = $keys[$i];
       $scanSurrogates($key, $file, $line, $column);
-      $t.set($key, $fromJson($v[$key], $file, $line, $column));
+      $t.set($key, $fromJson($value[$key], $file, $line, $column));
     }
     return $t;
   }
-  if (typeof $v === "string") {
-    $scanSurrogates($v, $file, $line, $column);
-    return $v;
-  }
-  return $v; // number / boolean
+  // number / boolean scalars pass through.
+  return $value;
 }
 
-// $encodeObjectForm: the object-form arm shared by the plain Map and the
-// array-marked mixed-key fallback (js-stdlib-modules D8 step 5). A fresh
-// {} whose entries are written via $rt.setProp — never a bare
-// key: value assignment, so a __proto__ key becomes an own property and
-// serializes (naive assignment invokes the inherited
-// Object.prototype.__proto__ accessor; JSON.stringify(new Map(...)) is
-// "{}"). Every key receives the unpaired-surrogate scan — the reference
-// escapes every string key through escape(k), whose first act is the
-// utf8_valid rejection (std/json.lua object branch, key_str =
-// '"' .. escape(k) .. '"'), pinned by test_stdlib.lua's key rejection.
-function $encodeObjectForm($m, $path, $file, $line, $column) {
-  const $obj = {};
-  for (const $key of $m.keys()) {
-    $scanEncodeString($key, $file, $line, $column);
-    $rt.setProp($obj, $key, $encode($m.get($key), $path, $file, $line, $column));
-  }
-  return $obj;
-}
+// ===== Stringify validation and conversion (js-stdlib-modules D8) =====
 
-// $encodeArrayMarked: the array-marked Map arm (js-stdlib-modules D8
-// step 5). The JSON array form exactly when every key is an integer-string
-// matching ^[1-9][0-9]*$ and the maximum index is > 0 — elements 1..max in
-// order, a missing index (a get that is $undefined) serializing as null;
-// otherwise (mixed keys, a "0" key, or max index 0) the object form with
-// the keys as-is. Array-form keys are integer-strings and cannot carry
-// surrogates, so the key scan is vacuous there.
-function $encodeArrayMarked($m, $path, $file, $line, $column) {
-  let $max = 0;
-  for (const $key of $m.keys()) {
-    if (!/^[1-9][0-9]*$/.test($key)) {
-      return $encodeObjectForm($m, $path, $file, $line, $column);
-    }
-    const $n = +$key;
-    if ($n > $max) {
-      $max = $n;
+// $scanStringValidity: the encode-side scalar-validity scan (D8 steps 2
+// and 5) — the same surrogate-pair unit walk with the encode needle
+// "cannot encode invalid UTF-8 as JSON" (the mirror of encode_value's
+// escape-side utf8_valid rejection, lua-std-json-unicode-conformance D6).
+// Defensive for string values — conforming DEAL programs cannot construct
+// such a leaf (every string crossed a checkString boundary) — and the
+// pinned reference behavior for object-form keys (test_stdlib.lua
+// "json.stringify rejects invalid UTF-8 keys with E8001").
+function $scanStringValidity($s, $file, $line, $column) {
+  for (let $i = 0; $i < $s.length; $i++) {
+    const $c = $s.charCodeAt($i);
+    if ($c >= 0xd800 && $c <= 0xdbff) {
+      const $next = $i + 1 < $s.length ? $s.charCodeAt($i + 1) : -1;
+      if ($next < 0xdc00 || $next > 0xdfff) {
+        $rt.fail("E8001", "cannot encode invalid UTF-8 as JSON", $file, $line, $column);
+      }
+      $i++; // skip the low surrogate of a valid pair
+    } else if ($c >= 0xdc00 && $c <= 0xdfff) {
+      $rt.fail("E8001", "cannot encode invalid UTF-8 as JSON", $file, $line, $column);
     }
   }
-  if ($max === 0) {
-    return $encodeObjectForm($m, $path, $file, $line, $column);
-  }
-  const $arr = new $Array($max);
-  for (let $i = 1; $i <= $max; $i++) {
-    const $elem = $m.get("" + $i);
-    $arr[$i - 1] = $elem === $undefined ? null : $encode($elem, $path, $file, $line, $column);
-  }
-  return $arr;
 }
 
-// $encode: the stringify validation/conversion walk mirroring encode_value
-// (js-stdlib-modules D8 steps 1-9). $path is the cycle-check stack — the
-// Maps, Arrays, and class instances currently being walked; a value
-// already on the path raises E8001 "circular reference in JSON encoding"
-// (path-based tracking admits shared non-cyclic subgraphs, which serialize
-// by duplication exactly as JSON requires). The converted graph is acyclic
-// and contains only null/booleans/numbers/strings/Arrays/plain objects, so
-// the final JSON.stringify cannot raise its own circular error and emits
-// strictly conforming JSON text.
+// $arrayFormIndex: the array-form key predicate (D8 step 5) — returns the
+// integer index for a key that is an integer-string matching
+// ^[1-9][0-9]*$ (a positive integer string without leading zeros) and
+// null otherwise. A manual unit walk keeps the predicate free of
+// RegExp/Number host-global spellings, and a non-string key is never
+// coerced — only integer-strings count as array-form keys.
+function $arrayFormIndex($key) {
+  if (typeof $key !== "string" || $key === "") {
+    return null;
+  }
+  const $c0 = $key.charCodeAt(0);
+  if ($c0 < 0x31 || $c0 > 0x39) {
+    return null;
+  }
+  let $n = $c0 - 0x30;
+  for (let $i = 1; $i < $key.length; $i++) {
+    const $c = $key.charCodeAt($i);
+    if ($c < 0x30 || $c > 0x39) {
+      return null;
+    }
+    $n = $n * 10 + ($c - 0x30);
+  }
+  return $n;
+}
+
+// $encode: the validation/conversion walk mirroring std/json.lua's
+// encode_value. $path is the cycle-check stack: the Maps, Arrays, and
+// class instances currently being walked (push before recursing, pop
+// after — the finally arms), so a value already on the path raises E8001
+// "circular reference in JSON encoding" while shared (non-cyclic)
+// subgraphs serialize by duplication. Steps 1-9:
+//   1. null -> JSON null;
+//   2. string -> $scanStringValidity first, then pass through (escaped
+//      later by native $JSON.stringify);
+//   3. boolean -> pass through;
+//   4. number -> NaN/±Infinity E8001 arms, otherwise pass through
+//      (native shortest round-trip formatting);
+//   5. Map -> null-marked first (the mark always wins, checked before
+//      any shape walk); array-marked -> the JSON array form exactly when
+//      every key is an integer-string matching ^[1-9][0-9]*$ and the
+//      maximum index is > 0 — elements 1..max in order, a missing index
+//      (a get that is $undefined) serializing as null — else the object
+//      form with the keys as-is (the mixed-key fallback); plain Map ->
+//      the object form: a fresh {} whose entries are written via
+//      $rt.setProp (never a bare key: value assignment — a __proto__ key
+//      becomes an own property and serializes). Object-form key validity
+//      (both object-form arms): every string key crosses
+//      $scanStringValidity before its entry is written; array-form keys
+//      are integer strings and cannot carry surrogates, so the scan is
+//      vacuous there;
+//   6. Array -> element-wise recursion, a nil-equivalent element (the
+//      array-delete write) serializing as null, the result a fresh
+//      Array;
+//   7. class instance -> a fresh object of the instance's own properties
+//      with every entry written via $rt.setProp: the tags under the
+//      reference key spellings, then the declared fields keyed as-is —
+//      the walk enumerates Object.keys and excludes the instance's own
+//      runtime tag properties "$kind"/"$classname" first, skips any
+//      remaining field key equal to __kind/__classname (the tag-clobber
+//      skip), omits a $rt.MISSING-valued absent optional, encodes a null
+//      field as JSON null, and writes a declared __proto__ field via
+//      $rt.setProp as an ordinary key; field keys are ASCII grammar
+//      identifiers and the tag keys are fixed spellings, so no key scan
+//      is needed in this arm;
+//   8. wrapper ($kind === "function") -> E8001 "unsupported type for
+//      JSON encoding: function";
+//   9. a standalone $rt.MISSING, $undefined, or any other object ->
+//      E8001 "unsupported type for JSON encoding".
 function $encode($v, $path, $file, $line, $column) {
-  // 1. null -> JSON null.
   if ($v === null) {
     return null;
   }
-  // 2. string -> unpaired-surrogate scan first (the mirror of
-  // encode_value's escape-side validity rejection) then pass through —
-  // escaped later by native JSON.stringify. Defensive for values
-  // (conforming DEAL programs cannot construct such a leaf); the identical
-  // scan is the pinned reference behavior for object-form keys (step 5).
-  if (typeof $v === "string") {
-    $scanEncodeString($v, $file, $line, $column);
+  const $type = typeof $v;
+  if ($type === "string") {
+    $scanStringValidity($v, $file, $line, $column);
     return $v;
   }
-  // 3. boolean -> pass through.
-  if (typeof $v === "boolean") {
+  if ($type === "boolean") {
     return $v;
   }
-  // 4. number -> NaN / ±Infinity E8001 (std/json.lua:76-79); otherwise
-  // pass through (native shortest round-trip formatting).
-  if (typeof $v === "number") {
+  if ($type === "number") {
     if ($v !== $v) {
       $rt.fail("E8001", "cannot encode NaN as JSON", $file, $line, $column);
     }
-    if ($v === Infinity || $v === -Infinity) {
+    // ±Infinity without the bare host-global spelling: every finite IEEE
+    // double has magnitude <= 1.7976931348623157e308 (Double.MAX_VALUE),
+    // so a larger magnitude is exactly ±Infinity.
+    if ($v > 1.7976931348623157e308 || $v < -1.7976931348623157e308) {
       $rt.fail("E8001", "cannot encode Infinity as JSON", $file, $line, $column);
     }
     return $v;
   }
-  // 5. Map -> null-marked first (the mark wins, checked before any shape
-  // walk) -> array-marked -> plain Map object form.
   if ($v instanceof $Map) {
+    // Null-marked first: the mark always wins, checked before any shape
+    // walk — a null-marked Map serializes as null and never recurses, so
+    // it can never false-positive the cycle check.
     if ($rt.isJsonNullTable($v)) {
       return null;
     }
-    if ($path.indexOf($v) !== -1) {
+    if ($path.includes($v)) {
       $rt.fail("E8001", "circular reference in JSON encoding", $file, $line, $column);
     }
     $path.push($v);
-    const $result = $rt.isJsonArrayTable($v)
-      ? $encodeArrayMarked($v, $path, $file, $line, $column)
-      : $encodeObjectForm($v, $path, $file, $line, $column);
-    $path.pop();
-    return $result;
+    try {
+      if ($rt.isJsonArrayTable($v)) {
+        let $max = 0;
+        let $arrayForm = true;
+        for (const $key of $v.keys()) {
+          const $index = $arrayFormIndex($key);
+          if ($index === null) {
+            $arrayForm = false;
+            break;
+          }
+          if ($index > $max) {
+            $max = $index;
+          }
+        }
+        if ($arrayForm && $max > 0) {
+          const $arr = [];
+          for (let $i = 1; $i <= $max; $i++) {
+            const $element = $v.get(String($i));
+            $arr.push($element === $undefined ? null : $encode($element, $path, $file, $line, $column));
+          }
+          return $arr;
+        }
+      }
+      const $obj = {};
+      for (const $key of $v.keys()) {
+        if (typeof $key === "string") {
+          $scanStringValidity($key, $file, $line, $column);
+        }
+        $rt.setProp($obj, $key, $encode($v.get($key), $path, $file, $line, $column));
+      }
+      return $obj;
+    } finally {
+      $path.pop();
+    }
   }
-  // 6. Array -> recurse element-wise; a nil-equivalent element (the
-  // array-delete write) serializes as null; the result is a fresh Array.
   if ($Array.isArray($v)) {
-    if ($path.indexOf($v) !== -1) {
+    if ($path.includes($v)) {
       $rt.fail("E8001", "circular reference in JSON encoding", $file, $line, $column);
     }
     $path.push($v);
-    const $result = new $Array($v.length);
-    for (let $i = 0; $i < $v.length; $i++) {
-      $result[$i] = $v[$i] === $undefined ? null : $encode($v[$i], $path, $file, $line, $column);
+    try {
+      const $arr = [];
+      for (let $i = 0; $i < $v.length; $i++) {
+        const $element = $v[$i];
+        $arr.push($element === $undefined ? null : $encode($element, $path, $file, $line, $column));
+      }
+      return $arr;
+    } finally {
+      $path.pop();
     }
-    $path.pop();
-    return $result;
   }
-  // 7. Class instance -> a fresh object of the instance's own properties;
-  // every entry of that fresh object — the mapped tags and each emitted
-  // field — is written via $rt.setProp (Object.defineProperty, never the
-  // inherited Object.prototype.__proto__ accessor). The tags use the
-  // reference key spellings __kind/__classname; the field walk enumerates
-  // Object.keys($v) and excludes the instance's own runtime tag properties
-  // "$kind"/"$classname" first (makeClass step 4 wrote them as enumerable
-  // own properties; emitting them would add $-keyed JSON fields the
-  // reference output does not have; no user field can be named
-  // $kind/$classname since user identifiers cannot contain $). Any
-  // remaining field key equal to __kind/__classname is then skipped (the
-  // tag-clobber skip: the reference's class_ tags every instance after the
-  // field copy, so the mapped tag value is emitted once — identical JSON
-  // text). A MISSING-valued absent optional is omitted; a field holding
-  // null serializes as JSON null; nested values recurse. Field keys are
-  // declared grammar identifiers (ASCII) and the tag keys are the fixed
-  // spellings, so no key scan is needed in this arm.
-  if (typeof $v === "object" && $v !== null && $v.$kind === "class") {
-    if ($path.indexOf($v) !== -1) {
+  if ($type === "object" && $v.$kind === "class") {
+    if ($path.includes($v)) {
       $rt.fail("E8001", "circular reference in JSON encoding", $file, $line, $column);
     }
     $path.push($v);
-    const $obj = {};
-    $rt.setProp($obj, "__kind", "class");
-    $rt.setProp($obj, "__classname", $v.$classname);
-    const $keys = Object.keys($v);
-    for (let $i = 0; $i < $keys.length; $i++) {
-      const $key = $keys[$i];
-      if ($key === "$kind" || $key === "$classname") {
-        continue; // field-walk exclusion — the instance's runtime tag properties
+    try {
+      const $obj = {};
+      $rt.setProp($obj, "__kind", "class");
+      $rt.setProp($obj, "__classname", $v.$classname);
+      const $keys = Object.keys($v);
+      for (let $i = 0; $i < $keys.length; $i++) {
+        const $key = $keys[$i];
+        if ($key === "$kind" || $key === "$classname") {
+          continue; // field-walk exclusion: the instance's runtime tag properties
+        }
+        if ($key === "__kind" || $key === "__classname") {
+          continue; // tag-clobber skip: the mapped tag value is emitted once
+        }
+        const $value = $v[$key];
+        if ($value === $rt.MISSING) {
+          continue; // absent optional omitted
+        }
+        $rt.setProp($obj, $key, $encode($value, $path, $file, $line, $column));
       }
-      if ($key === "__kind" || $key === "__classname") {
-        continue; // tag-clobber skip — the mapped tag value is emitted once
-      }
-      const $val = $v[$key];
-      if ($val === $rt.MISSING) {
-        continue; // absent optional omitted
-      }
-      $rt.setProp($obj, $key, $encode($val, $path, $file, $line, $column));
+      return $obj;
+    } finally {
+      $path.pop();
     }
-    $path.pop();
-    return $obj;
   }
-  // 8. Wrapper -> E8001 "unsupported type for JSON encoding: function"
-  // (the reference's message for function values, std/json.lua:120 — the
-  // pinned json-stringify-function-e8001.deal contract, whose fixture
-  // stores the wrapper as a nested value).
-  if (typeof $v === "object" && $v !== null && $v.$kind === "function") {
+  if ($type === "object" && $v.$kind === "function") {
     $rt.fail("E8001", "unsupported type for JSON encoding: function", $file, $line, $column);
   }
-  // 9. A standalone MISSING, undefined, or any other object.
   $rt.fail("E8001", "unsupported type for JSON encoding", $file, $line, $column);
 }
 
-// ===== Export object: exactly the .d.deal members =====
+// ===== Module export: exactly the .d.deal members as $rt.function
+// wrappers (js-stdlib-modules D1-D2) =====
 const $json = {};
 
-// stringify: the widened instance-aware entry gate (js-stdlib-modules D8)
-// — a Map (plain, array-marked, or null-marked) or a class instance
-// ($kind === "class") passes; everything else — Array, wrapper, plain
-// object, a standalone MISSING, undefined, primitives — falls through
-// checkTable with E8001 "expected table" and the runtime's $kindOf actual
-// label (the strict table/array split; the bare checkTable would raise
-// before the class-instance arm, so the gate is the pinned widening). The
-// declared-return check runs at exit on the native JSON.stringify of the
-// converted graph.
+// stringify: the widened instance-aware entry gate — a Map or a class
+// instance passes; everything else (Array, wrapper, plain object, a
+// standalone MISSING, undefined, primitives) falls through $rt.checkTable
+// with E8001 "expected table" and the runtime's $kindOf actual label —
+// then the $encode walk, native $JSON.stringify on the converted graph,
+// and the declared-return checkString at exit.
 $json.stringify = $rt.function("(table)->string", function(v, $file, $line, $column) {
   if (!(v instanceof $Map) && !(typeof v === "object" && v !== null && v.$kind === "class")) {
     $rt.checkTable(v, $file, $line, $column);
@@ -331,26 +382,19 @@ $json.stringify = $rt.function("(table)->string", function(v, $file, $line, $col
   return $rt.checkString($JSON.stringify($encode(v, [], $file, $line, $column)), $file, $line, $column);
 });
 
-// parse: native JSON.parse plus the two decode-side parity scans and the
-// recursive marked-Map shape conversion (js-stdlib-modules D7). Order of
-// operations: the entry checkString (the boundary needle for raw unpaired
-// surrogates in the input text), the pre-parse string-literal-aware
-// raw-control scan, the catch converting every native JSON.parse failure —
-// unknown escapes, malformed \uXXXX, structural errors, raw controls
-// outside strings, in-string raw controls as the fallback arm,
-// deep-nesting RangeError — to the E8001 "JSON parse error: <native
-// message>" envelope, the $fromJson conversion with the unpaired-surrogate
-// scan of every converted string, and the declared-return table check at
-// exit — a top-level scalar fails "expected table", and the scan arms fire
+// parse: entry checkString, the pre-parse raw-control scan, native
+// $JSON.parse with every failure converted to the E8001 "JSON parse
+// error" envelope, the recursive $fromJson conversion (with the
+// unpaired-surrogate scan), and the declared-return checkTable at exit —
+// a top-level scalar fails with "expected table" while the scan arms fire
 // before the exit check, so a top-level lone-surrogate string reports the
-// parse error, not "expected table". On node v24.13.0 native $JSON.parse
-// is iterative and does NOT raise the deep-nesting RangeError the
-// reference contract names — the recursion limit moved into $fromJson
-// itself — so a second narrow arm converts any non-DEAL error out of the
-// conversion walk (the deep-nesting stack overflow) into the same E8001
-// "JSON parse error" envelope with the span; DEALErrors from the scan
-// arms ($dealCode set) are re-thrown unchanged, so the pinned needles are
-// never re-wrapped.
+// parse error. On node v24.13.0 native $JSON.parse is iterative and does
+// NOT raise the deep-nesting RangeError the reference contract names —
+// the recursion limit moved into $fromJson itself — so a second narrow
+// arm converts any non-DEAL error out of the conversion walk (the
+// deep-nesting stack overflow) into the same E8001 "JSON parse error"
+// envelope with the span; DEALErrors from the scan arms ($dealCode set)
+// are re-thrown unchanged, so the pinned needles are never re-wrapped.
 $json.parse = $rt.function("(string)->table", function(text, $file, $line, $column) {
   $rt.checkString(text, $file, $line, $column);
   $scanRawControls(text, $file, $line, $column);
