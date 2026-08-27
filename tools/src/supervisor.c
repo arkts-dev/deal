@@ -988,7 +988,13 @@ static void dealpg4_supervisor_note_started(dealpg4_supervisor_state *state)
  * cannot be queued at the 1 MiB cap is dropped — the stream's
  * truncation consequence (D5(d)/D7) — and the relay advances past it;
  * draining continues past the cap until EOF or the terminal
- * classification. */
+ * classification. The relay freezes at the terminal classification
+ * (finalize's relay catch-up runs before terminal_queued is set): on a
+ * DRAIN_FAILED/PROOF_TIMEOUT/OVERALL_TIMEOUT/survivor-token path a late
+ * stream EOF or new bytes never queue OUT chunks or the previously
+ * withheld OUT_END behind the already-queued REPORT and terminal record
+ * — the relayed chunk sequence simply ends there, and no OUT_END is
+ * ever queued after REPORT (D5(d)). */
 static void dealpg4_supervisor_relay_stream(
     dealpg4_supervisor_state *state, dealpg4_supervisor_relay *relay)
 {
@@ -1000,7 +1006,7 @@ static void dealpg4_supervisor_relay_stream(
     char tag[4];
 
     if (state->control_fd < 0 || state->protocol_aborted
-        || !state->started_published)
+        || !state->started_published || state->terminal_queued)
         return;
 
     snprintf(idbuf, sizeof idbuf, "%lld", (long long)state->invocation_id);
