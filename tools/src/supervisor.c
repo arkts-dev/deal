@@ -1442,6 +1442,17 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
      * publication lands with the channel machine. */
     (void)emit_ready_frame;
 
+    /* Observability reset, before any side effect or refusal path
+     * (supervisor.h result contract): a core call refused before fork
+     * — validation-class CONFIG_INVALID or capability-class — leaves
+     * a zeroed result and empty drain contexts, never the previous
+     * invocation's view. */
+    memset(&dealpg4_supervisor_last_result, 0,
+           sizeof dealpg4_supervisor_last_result);
+    dealpg4_supervisor_last_result.stub_pid = -1;
+    dealpg4_drain_init(&dealpg4_supervisor_drain_stdout_ctx);
+    dealpg4_drain_init(&dealpg4_supervisor_drain_stderr_ctx);
+
     /* Fail-closed core-entry validation, before any side effect (D1).
      * The mode entries validate the same shapes on their surfaces; the
      * core re-validates so in-process callers (the selftest battery)
@@ -1475,14 +1486,6 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
      * blocked. With a NULL set the call only queries the current mask
      * and cannot fail. */
     (void)sigprocmask(SIG_SETMASK, NULL, &dealpg4_supervisor_entry_mask);
-
-    /* Observability reset: refusal paths leave a zeroed result and
-     * empty drain contexts. */
-    memset(&dealpg4_supervisor_last_result, 0,
-           sizeof dealpg4_supervisor_last_result);
-    dealpg4_supervisor_last_result.stub_pid = -1;
-    dealpg4_drain_init(&dealpg4_supervisor_drain_stdout_ctx);
-    dealpg4_drain_init(&dealpg4_supervisor_drain_stderr_ctx);
 
     /* Subreaper set + read-back before any fork, never assumed
      * inherited (parent D2): failure or unsupported capability is
