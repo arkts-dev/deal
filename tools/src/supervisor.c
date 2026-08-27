@@ -1499,6 +1499,16 @@ static void dealpg4_supervisor_evaluate(dealpg4_supervisor_state *state)
          * at finalization). */
         if (!state->status_eof || !state->stub_reaped)
             return;
+        /* This branch is the startup-phase terminal classification for
+         * the silent pre-release stub exits and the release-write
+         * races: anchor startupMs at the classification (D7 — the
+         * observed successful release write, or the startup-phase
+         * terminal classification; the cancel/AUTH_FAILED paths anchor
+         * with the same guard, so a later classification never
+         * overwrites their value). */
+        if (state->phase == DEALPG4_PHASE_STARTUP
+            && state->startup_ms == 0)
+            state->startup_ms = (int64_t)dealpg4_now_ms() - state->t0;
         if (state->cancel_requested) {
             state->classification = DEALPG4_SUP_CLASS_CALLER_LOST;
             return;
