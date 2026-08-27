@@ -1,0 +1,40 @@
+import * as c from "std/console";
+
+function maybeHalf(x: int): int | null {
+  if (x % 2 === 0) { return x / 2; }
+  return null;
+}
+
+export function main(): null {
+  let n: int | null = 21;
+  if (n !== null) {
+    let i: int = n;
+    if (i !== 21) { throw { code: "TEST_FAIL", message: "narrowing value mismatch" }; }
+  }
+
+  let h: int | null = maybeHalf(10);
+  if (h === null) { throw { code: "TEST_FAIL", message: "nullable return was null" }; }
+  if (h !== null) {
+    let v: int = h;
+    if (v !== 5) { throw { code: "TEST_FAIL", message: "narrowed return value mismatch" }; }
+  }
+  if (maybeHalf(3) !== null) { throw { code: "TEST_FAIL", message: "nullable return non-null on odd input" }; }
+
+  let xs: (int | null)[] = [];
+  xs[0] = 1;
+  xs[1] = null;
+  xs[2] = 3;
+  if (xs[1] !== null) { throw { code: "TEST_FAIL", message: "present null element read mismatch" }; }
+  let oob: int | null = xs[9];
+  if (oob !== null) { throw { code: "TEST_FAIL", message: "nullable-array OOB read must yield null" }; }
+
+  let t: table = { present: "yes" };
+  let before: string | null = t.present;
+  if (before === null) { throw { code: "TEST_FAIL", message: "present table field read as null" }; }
+  delete t.present;
+  let after: string | null = t.present;
+  if (after !== null) { throw { code: "TEST_FAIL", message: "deleted table field must read as null" }; }
+
+  c.log("nullable flow ok");
+  return null;
+}

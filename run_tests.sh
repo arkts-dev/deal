@@ -56,6 +56,8 @@ javac --release 25 -proc:none -d build \
   test/TypeDescriptorTest.java \
   test/BackendConformanceTest.java \
   test/JvmBackendTest.java \
+  test/JsBackendTest.java \
+  test/JsE2eTest.java \
   test/LuaBackendTest.java \
   test/LuaBackendIntegrationTest.java \
   test/ModuleSystemTest.java \
@@ -151,6 +153,14 @@ java -ea -cp build deal.test.BackendConformanceTest
 echo ""
 echo "=== Running JVM Backend Tests ==="
 java -ea -cp build deal.test.JvmBackendTest
+
+echo ""
+echo "=== Running JS Backend Unit Tests ==="
+java -ea -cp build deal.test.JsBackendTest
+
+echo ""
+echo "=== Running JS E2E Tests ==="
+java -ea -cp build deal.test.JsE2eTest
 
 echo ""
 echo "=== Running Lua Backend Tests ==="

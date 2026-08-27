@@ -1,0 +1,27 @@
+import * as c from "std/console";
+
+export function main(): null {
+  let a: int = 20;
+  let b: int = 3;
+  if (a + b !== 23) { throw { code: "TEST_FAIL", message: "int +" }; }
+  if (a - b !== 17) { throw { code: "TEST_FAIL", message: "int -" }; }
+  if (a * b !== 60) { throw { code: "TEST_FAIL", message: "int *" }; }
+  if (a / b !== 6) { throw { code: "TEST_FAIL", message: "int / truncates toward zero" }; }
+  if (a % b !== 2) { throw { code: "TEST_FAIL", message: "int %" }; }
+  if (2 ** 10 !== 1024) { throw { code: "TEST_FAIL", message: "int **" }; }
+  if ((0 - 1) ** 2 !== 1) { throw { code: "TEST_FAIL", message: "negative base int **" }; }
+  let r: number = -5.0 % 2.0;
+  if (r !== 1.0) { throw { code: "TEST_FAIL", message: "floored number % number" }; }
+  let r2: number = 5.0 % -2.0;
+  if (r2 !== -1.0) { throw { code: "TEST_FAIL", message: "floored number % number sign" }; }
+  let d: number = 7.5 / 2.0;
+  if (d !== 3.75) { throw { code: "TEST_FAIL", message: "number /" }; }
+  let ix: int = int(3.0);
+  if (ix !== 3) { throw { code: "TEST_FAIL", message: "int() conversion" }; }
+  let nx: number = number(5);
+  if (nx !== 5.0) { throw { code: "TEST_FAIL", message: "number() conversion" }; }
+  let iy: int = int(-2.0);
+  if (iy !== -2) { throw { code: "TEST_FAIL", message: "int() negative conversion" }; }
+  c.log("int arithmetic ok: floored number remainder -5.0 % 2.0 == 1.0");
+  return null;
+}

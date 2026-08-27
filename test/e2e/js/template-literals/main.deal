@@ -1,0 +1,26 @@
+import * as c from "std/console";
+
+export function main(): null {
+  let name: string = "World";
+  let greeting: string = `Hello, ${name}!`;
+  if (greeting !== "Hello, World!") { throw { code: "TEST_FAIL", message: "interpolation" }; }
+
+  let inner: string = "in";
+  let nested: string = `[${ \`x${inner}y\` }]`;
+  if (nested !== "[xiny]") { throw { code: "TEST_FAIL", message: "nested template literal" }; }
+
+  let a: string = "A";
+  let b: string = "B";
+  let joined: string = `left ${a} mid ${b} right`;
+  if (joined !== "left A mid B right") { throw { code: "TEST_FAIL", message: "multi interpolation" }; }
+
+  let empty: string = ``;
+  if (empty !== "") { throw { code: "TEST_FAIL", message: "empty template literal" }; }
+
+  let chain: string = "1" + "2";
+  let lowered: string = `x${chain}y`;
+  if (lowered !== "x12y") { throw { code: "TEST_FAIL", message: "concat lowering" }; }
+
+  c.log("template literals ok");
+  return null;
+}

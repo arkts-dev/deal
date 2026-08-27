@@ -1,0 +1,18 @@
+import * as c from "std/console";
+import * as lib from "./lib";
+
+export function main(): null {
+  let made: lib.Widget = lib.makeWidget(11);
+  if (made.size !== 11) { throw { code: "TEST_FAIL", message: "imported function result" }; }
+  if (made.label !== "made") { throw { code: "TEST_FAIL", message: "imported function result label" }; }
+
+  let w: lib.Widget = { size: 7 };
+  if (w.size !== 7) { throw { code: "TEST_FAIL", message: "imported class construction" }; }
+  if (w.label !== "w") { throw { code: "TEST_FAIL", message: "imported class default evaluated in the declaring module" }; }
+
+  if (lib.greet() !== "lib hello") { throw { code: "TEST_FAIL", message: "imported function call" }; }
+  if (lib.__proto__() !== 99) { throw { code: "TEST_FAIL", message: "imported __proto__ export" }; }
+
+  c.log("modules ok: main invoked");
+  return null;
+}

@@ -1,0 +1,46 @@
+import * as c from "std/console";
+
+function produce(): Error {
+  try {
+    throw { code: "E_ROUND", message: "roundtrip" };
+  } catch (e) {
+    return e;
+  }
+}
+
+function rethrower(): null {
+  try {
+    throw { code: "E_KEEP", message: "keep me" };
+  } catch (e) {
+    throw e;
+  }
+}
+
+export function main(): null {
+  let e: Error = produce();
+  if (e.code !== "E_ROUND") { throw { code: "TEST_FAIL", message: "error code roundtrip" }; }
+  if (e.message !== "roundtrip") { throw { code: "TEST_FAIL", message: "error message roundtrip" }; }
+
+  try {
+    throw { message: "no code" };
+  } catch (err) {
+    let c2: Error = err;
+    if (c2.code !== "") { throw { code: "TEST_FAIL", message: "omitted code must default to empty string" }; }
+    if (c2.message !== "no code") { throw { code: "TEST_FAIL", message: "omitted-code error message" }; }
+  }
+
+  let ctx: Error = { message: "contextual" };
+  if (ctx.code !== "") { throw { code: "TEST_FAIL", message: "contextual Error literal code default" }; }
+  if (ctx.message !== "contextual") { throw { code: "TEST_FAIL", message: "contextual Error literal message" }; }
+
+  let kept: string = "";
+  try {
+    rethrower();
+  } catch (err2) {
+    kept = err2.code;
+  }
+  if (kept !== "E_KEEP") { throw { code: "TEST_FAIL", message: "rethrow must preserve the code" }; }
+
+  c.log("errors ok");
+  return null;
+}

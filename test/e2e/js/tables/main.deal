@@ -1,0 +1,25 @@
+import * as c from "std/console";
+import * as tables from "std/table";
+
+export function main(): null {
+  let t: table = { x: 42 };
+  let v: int = t.x;
+  if (v !== 42) { throw { code: "TEST_FAIL", message: "contextual int read" }; }
+
+  t.name = "deal";
+  let name: string = t.name;
+  if (name !== "deal") { throw { code: "TEST_FAIL", message: "table write then read" }; }
+
+  delete t.x;
+  let after: int | null = t.x;
+  if (after !== null) { throw { code: "TEST_FAIL", message: "deleted field reads as null" }; }
+
+  let t2: table = { b: 2, a: 1 };
+  let ks: string[] = tables.keys(t2);
+  if (ks.length !== 2) { throw { code: "TEST_FAIL", message: "keys length" }; }
+  if (ks[0] !== "b") { throw { code: "TEST_FAIL", message: "keys insertion order 0" }; }
+  if (ks[1] !== "a") { throw { code: "TEST_FAIL", message: "keys insertion order 1" }; }
+
+  c.log("tables ok");
+  return null;
+}

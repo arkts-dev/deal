@@ -1,0 +1,39 @@
+import * as c from "std/console";
+
+class Counter {
+  items: int[] = [];
+}
+
+class User {
+  name: string = "";
+  nick?: string | null;
+  __proto__: int = 0;
+}
+
+export function main(): null {
+  let a: Counter = {};
+  let b: Counter = {};
+  a.items[0] = 7;
+  if (b.items.length !== 0) { throw { code: "TEST_FAIL", message: "per-construction defaults are fresh" }; }
+
+  let u: User = { name: "Ada", __proto__: 7 };
+  if (u.name !== "Ada") { throw { code: "TEST_FAIL", message: "provided name field" }; }
+  if (u.__proto__ !== 7) { throw { code: "TEST_FAIL", message: "provided __proto__ field" }; }
+  u.__proto__ = 9;
+  if (u.__proto__ !== 9) { throw { code: "TEST_FAIL", message: "__proto__ field write" }; }
+
+  if (has(u.nick)) { throw { code: "TEST_FAIL", message: "missing optional field reported present" }; }
+  u.nick = null;
+  if (!has(u.nick)) { throw { code: "TEST_FAIL", message: "present-null optional field reported missing" }; }
+  let n1: string | null = u.nick;
+  if (n1 !== null) { throw { code: "TEST_FAIL", message: "present-null read mismatch" }; }
+  u.nick = "ada";
+  if (!has(u.nick)) { throw { code: "TEST_FAIL", message: "present-value optional field reported missing" }; }
+  delete u.nick;
+  if (has(u.nick)) { throw { code: "TEST_FAIL", message: "deleted optional field reported present" }; }
+  let n2: string | null = u.nick;
+  if (n2 !== null) { throw { code: "TEST_FAIL", message: "deleted optional field reads as null" }; }
+
+  c.log("classes optionals ok");
+  return null;
+}

@@ -1,0 +1,8 @@
+import * as c from "std/console";
+
+export function main(): null {
+  let t: table = { ok: 1 };
+  c.log("about to fail");
+  let v: int = t.missing;
+  return null;
+}

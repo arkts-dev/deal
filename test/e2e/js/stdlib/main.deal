@@ -1,0 +1,76 @@
+import * as c from "std/console";
+import * as str from "std/string";
+import * as math from "std/math";
+import * as json from "std/json";
+import * as time from "std/time";
+
+class Item {
+  name: string = "";
+  tag?: string | null;
+}
+
+export function main(): null {
+  if (str.length("héllo") !== 5) { throw { code: "TEST_FAIL", message: "scalar string length" }; }
+  if (str.substring("hello", 1, 4) !== "ell") { throw { code: "TEST_FAIL", message: "substring" }; }
+  if (str.contains("hello", "ell") !== true) { throw { code: "TEST_FAIL", message: "contains" }; }
+  if (str.startsWith("hello", "he") !== true) { throw { code: "TEST_FAIL", message: "startsWith" }; }
+  if (str.endsWith("hello", "lo") !== true) { throw { code: "TEST_FAIL", message: "endsWith" }; }
+  if (str.replace("hello", "l", "L") !== "heLLo") { throw { code: "TEST_FAIL", message: "replace" }; }
+  let parts: string[] = str.split("a,b", ",");
+  if (parts.length !== 2) { throw { code: "TEST_FAIL", message: "split length" }; }
+  if (parts[0] !== "a" || parts[1] !== "b") { throw { code: "TEST_FAIL", message: "split parts" }; }
+  if (str.trim("  x ") !== "x") { throw { code: "TEST_FAIL", message: "trim" }; }
+
+  if (math.floor(3.7) !== 3.0) { throw { code: "TEST_FAIL", message: "floor" }; }
+  if (math.ceil(3.2) !== 4.0) { throw { code: "TEST_FAIL", message: "ceil" }; }
+  if (math.sqrt(16.0) !== 4.0) { throw { code: "TEST_FAIL", message: "sqrt" }; }
+  if (math.absInt(-5) !== 5) { throw { code: "TEST_FAIL", message: "absInt" }; }
+  if (math.absNumber(-2.5) !== 2.5) { throw { code: "TEST_FAIL", message: "absNumber" }; }
+  if (math.minInt(3, 1) !== 1) { throw { code: "TEST_FAIL", message: "minInt" }; }
+  if (math.maxInt(3, 1) !== 3) { throw { code: "TEST_FAIL", message: "maxInt" }; }
+
+  let printer: (x: string) => null = c.log;
+  printer("console as a value line");
+
+  let now: int = time.nowMillis();
+  if (now > 0) { c.log("time structural invariant ok"); } else { throw { code: "TEST_FAIL", message: "nowMillis must be positive" }; }
+
+  if (json.stringify(json.parse("null")) !== "null") { throw { code: "TEST_FAIL", message: "top-level null roundtrip" }; }
+  if (json.stringify(json.parse("[1,2]")) !== "[1,2]") { throw { code: "TEST_FAIL", message: "top-level array roundtrip" }; }
+
+  let t: table = { __proto__: "own", plain: 1 };
+  let tj: string = json.stringify(t);
+  if (json.stringify(json.parse(tj)) !== tj) { throw { code: "TEST_FAIL", message: "__proto__ table key roundtrip" }; }
+  let back: table = json.parse(tj);
+  let pv: string = back.__proto__;
+  if (pv !== "own") { throw { code: "TEST_FAIL", message: "__proto__ key value after roundtrip" }; }
+
+  let item: Item = { name: "n", tag: "t" };
+  let holder: table = { item: item };
+  let holderJson: string = json.stringify(holder);
+  let parsed: table = json.parse(holderJson);
+  let inner: table = parsed.item;
+  let kind: string = inner.__kind;
+  if (kind !== "class") { throw { code: "TEST_FAIL", message: "class instance __kind tag" }; }
+  let cls: string = inner.__classname;
+  if (cls !== "@main/Item") { throw { code: "TEST_FAIL", message: "class instance __classname tag" }; }
+  let nm: string = inner.name;
+  if (nm !== "n") { throw { code: "TEST_FAIL", message: "class instance encoded field" }; }
+
+  let item2: Item = {};
+  let holder2: table = { item: item2 };
+  let holder2Json: string = json.stringify(holder2);
+  if (str.contains(holder2Json, "tag") !== false) { throw { code: "TEST_FAIL", message: "MISSING optional must be omitted" }; }
+
+  let fnHolder: table = { f: printer };
+  let caught: string = "";
+  try {
+    json.stringify(fnHolder);
+  } catch (e) {
+    caught = e.code;
+  }
+  if (caught !== "E8001") { throw { code: "TEST_FAIL", message: "stored function value must raise E8001" }; }
+
+  c.log("stdlib ok");
+  return null;
+}

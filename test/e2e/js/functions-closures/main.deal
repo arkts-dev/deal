@@ -1,0 +1,60 @@
+import * as c from "std/console";
+
+function add(a: int, b: int): int { return a + b; }
+
+function makeCounter(): () => int {
+  let count: int = 0;
+  return function(): int {
+    count = count + 1;
+    return count;
+  };
+}
+
+function apply(f: (x: int) => int, x: int): int { return f(x); }
+
+function applyNumber(f: (x: int) => number, x: int): number { return f(x); }
+
+function inc(x: int): int { return x + 1; }
+
+// A function whose user parameters are literally named file/line/column.
+function locate(file: string, line: int, column: int): string {
+  return file;
+}
+
+export function main(): null {
+  let f: (x: int, y: int) => int = add;
+  if (f(2, 3) !== 5) { throw { code: "TEST_FAIL", message: "function value call" }; }
+  if (apply(inc, 41) !== 42) { throw { code: "TEST_FAIL", message: "indirect callback call" }; }
+
+  let g: (x: int, y: int, z: int) => int = add;
+  if (g(10, 1, 1) !== 11) { throw { code: "TEST_FAIL", message: "arity extension" }; }
+
+  let counter: () => int = makeCounter();
+  if (counter() !== 1) { throw { code: "TEST_FAIL", message: "closure counter 1" }; }
+  if (counter() !== 2) { throw { code: "TEST_FAIL", message: "closure counter 2" }; }
+  if (counter() !== 3) { throw { code: "TEST_FAIL", message: "closure counter 3" }; }
+
+  let fs: (() => int)[] = [
+    function(): int { return -1; },
+    function(): int { return -1; },
+    function(): int { return -1; },
+  ];
+  for (let i: int = 0; i < 3; i = i + 1) {
+    fs[i] = function(): int { return i; };
+  }
+  if (fs[0]() + fs[1]() + fs[2]() !== 3) { throw { code: "TEST_FAIL", message: "per-iteration capture" }; }
+
+  let toInt: (x: number) => int = int;
+  if (toInt(3.0) !== 3) { throw { code: "TEST_FAIL", message: "int intrinsic as value" }; }
+  let toNumber: (x: int) => number = number;
+  if (toNumber(7) !== 7.0) { throw { code: "TEST_FAIL", message: "number intrinsic as value" }; }
+  if (applyNumber(number, 7) !== 7.0) { throw { code: "TEST_FAIL", message: "intrinsic as callback" }; }
+  let wide: (x: number, y: number) => int = int;
+  if (wide(9.0, 1.0) !== 9) { throw { code: "TEST_FAIL", message: "intrinsic arity extension" }; }
+
+  let where: string = locate("main.deal", 12, 3);
+  if (where !== "main.deal") { throw { code: "TEST_FAIL", message: "file/line/column parameter names" }; }
+
+  c.log("functions closures ok");
+  return null;
+}

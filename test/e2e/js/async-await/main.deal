@@ -1,0 +1,22 @@
+import * as c from "std/console";
+
+async function compute(x: int): int {
+  let v: int = x * 2;
+  return v;
+}
+
+async function maybe(x: int): int {
+  return x;
+}
+
+export async function demo_async(): int {
+  let a: int = await compute(21);
+  let b: int = await compute(1);
+  let c2: int = await maybe(0);
+  return a + b + c2;
+}
+
+export function main(): null {
+  c.log("async sample main ran");
+  return null;
+}

@@ -1,0 +1,66 @@
+import * as c from "std/console";
+
+export function main(): null {
+  let xs: int[] = [1, 2, 3];
+  if (xs.length !== 3) { throw { code: "TEST_FAIL", message: "array literal length" }; }
+  if (xs[1] !== 2) { throw { code: "TEST_FAIL", message: "array read" }; }
+  xs[1] = 20;
+  if (xs[1] !== 20) { throw { code: "TEST_FAIL", message: "array write" }; }
+  xs[xs.length] = 40;
+  if (xs.length !== 4) { throw { code: "TEST_FAIL", message: "array append at .length" }; }
+  if (xs[3] !== 40) { throw { code: "TEST_FAIL", message: "appended element read" }; }
+
+  let grid: int[][] = [[1, 2], [3, 4]];
+  if (grid[1][0] !== 3) { throw { code: "TEST_FAIL", message: "nested array read" }; }
+
+  let ny: (int | null)[] = [];
+  ny[0] = 7;
+  let first: int | null = ny[0];
+  if (first !== null) {
+    let w: int = first;
+    if (w !== 7) { throw { code: "TEST_FAIL", message: "nullable-array write then read" }; }
+  }
+  let v: int | null = ny[5];
+  if (v !== null) { throw { code: "TEST_FAIL", message: "nullable-array OOB read yields null" }; }
+
+  let caught1: string = "";
+  try {
+    delete xs[-1];
+  } catch (e) {
+    caught1 = e.code;
+  }
+  if (caught1 !== "E8002") { throw { code: "TEST_FAIL", message: "negative element delete raises E8002" }; }
+
+  let caught2: string = "";
+  try {
+    delete xs[9];
+  } catch (e) {
+    caught2 = e.code;
+  }
+  if (caught2 !== "E8002") { throw { code: "TEST_FAIL", message: "beyond-length element delete raises E8002" }; }
+
+  let before: int = xs.length;
+  delete xs[xs.length];
+  if (xs.length !== before) { throw { code: "TEST_FAIL", message: "at-length delete is a no-op with no write" }; }
+
+  delete xs[0];
+  if (xs.length !== 4) { throw { code: "TEST_FAIL", message: "delete keeps length" }; }
+  let miss: int | null = xs[0];
+  if (miss !== null) { throw { code: "TEST_FAIL", message: "deleted element reads as null at a nullable target" }; }
+  let caught3: string = "";
+  try {
+    let bad: int = xs[0];
+  } catch (e) {
+    caught3 = e.code;
+  }
+  if (caught3 !== "E8001") { throw { code: "TEST_FAIL", message: "deleted element read at a non-nullable target raises E8001" }; }
+
+  let n: int = 0;
+  for (let x: int of xs) {
+    n = n + 1;
+  }
+  if (n !== 0) { throw { code: "TEST_FAIL", message: "array for-of stops at the deleted element" }; }
+
+  c.log("arrays ok");
+  return null;
+}

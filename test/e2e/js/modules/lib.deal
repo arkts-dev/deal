@@ -1,0 +1,16 @@
+export class Widget {
+  size: int = 5;
+  label: string = "w";
+}
+
+export function makeWidget(sz: int): Widget {
+  return { size: sz, label: "made" };
+}
+
+export function __proto__(): int {
+  return 99;
+}
+
+export function greet(): string {
+  return "lib hello";
+}
