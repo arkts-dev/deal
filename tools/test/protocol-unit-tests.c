@@ -153,6 +153,33 @@ static void group1_framing_defects_close_channel(void)
     line[pos] = '\0';
     CHECK(classify_line(line) == DEALPG4_CLASS_PROTOCOL_ERROR);
     CHECK(parse_line(line, &p) == DEALPG4_PARSE_ERR_OVERSIZE_OUT_CHUNK);
+    /* Cross-validation negatives (broker-client review finding): the
+     * same oversize inputs the Java broker client's read path must
+     * reject identically -- an OUT line with an 80000-hex-char chunk
+     * (over the 65536+64 line cap) and a REPORT whose 9000-char
+     * failureToken pushes the line past the 8192-byte cap. */
+    pos = 0;
+    memcpy(line + pos, "DEALPG4 OUT 7 out ", 18);
+    pos += 18;
+    memset(line + pos, 'a', 80000);
+    pos += 80000;
+    line[pos++] = '\n';
+    line[pos] = '\0';
+    CHECK(classify_line(line) == DEALPG4_CLASS_PROTOCOL_ERROR);
+    CHECK(parse_line(line, &p) == DEALPG4_PARSE_ERR_OVERSIZE_LINE);
+    {
+        static const char report_prefix[] =
+            "DEALPG4 REPORT 0 0 1 2 3 4 5 6 7 8 9 10 11 0 0 1 1 1 ";
+        pos = 0;
+        memcpy(line + pos, report_prefix, sizeof(report_prefix) - 1);
+        pos += sizeof(report_prefix) - 1;
+        memset(line + pos, 'c', 9000);
+        pos += 9000;
+        line[pos++] = '\n';
+        line[pos] = '\0';
+    }
+    CHECK(classify_line(line) == DEALPG4_CLASS_PROTOCOL_ERROR);
+    CHECK(parse_line(line, &p) == DEALPG4_PARSE_ERR_OVERSIZE_LINE);
     /* A record unexpected in the configured channel state. */
     CHECK(parse_line("DEALPG4 DONE clean\n", &p) == DEALPG4_PARSE_OK);
     dealpg4_expectation_set_init(&expected);

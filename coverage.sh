@@ -87,7 +87,8 @@ javac --release 22 -d build \
   test/LuaAbiBackendTest.java \
   test/CrossModuleTypingTest.java \
   deal/test/containment/ContainedProcessBroker.java \
-  deal/test/containment/PreflightCoordinator.java
+  deal/test/containment/PreflightCoordinator.java \
+  deal/test/containment/ContainedProcessBrokerFramingTest.java
 
 # Runs a JVM suite under the JaCoCo agent.
 run_java() {
@@ -97,6 +98,10 @@ run_java() {
 # =========================================================================
 # Run all suites under the agent
 # =========================================================================
+
+echo ""
+echo "=== Running ContainedProcessBroker Framing Tests ==="
+run_java deal.test.containment.ContainedProcessBrokerFramingTest
 
 echo ""
 echo "=== Running Diagnostic Classification Tests ==="

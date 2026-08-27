@@ -37,9 +37,14 @@ import java.util.Objects;
  * frame sequence contract on outer-coordinator-and-broker). Every
  * coordinator-side write is validated against the canonical v4 framing
  * grammar before it is emitted (a malformed record is never sent), and
- * every received record is validated strictly — a framing defect, an
- * unknown type, or a record unexpected in the current channel state is a
- * hard {@link BrokerProtocolException} ({@code PROTOCOL_ERROR}); a
+ * every received record is validated strictly, including the
+ * canonical per-type size caps enforced exactly as the canonical parser
+ * enforces them (OUT chunk at most 65536 hex chars, OUT line at most
+ * 65536+64 bytes, every other record at most 8192 bytes, each cap
+ * counting the LF terminator; the global cap is 131072 bytes) — a
+ * framing defect, an unknown type, or a record unexpected in the
+ * current channel state is a hard {@link BrokerProtocolException}
+ * ({@code PROTOCOL_ERROR}); a
  * well-formed {@code REJECT} is surfaced as a hard
  * {@link BrokerRejectionException} carrying its reason token — never
  * swallowed, never retried, never skipped.
@@ -99,6 +104,15 @@ public final class ContainedProcessBroker implements AutoCloseable {
     public static final int MAX_INVOKE_ARGV_RAW_BYTES = 65536;
     /** Global record line cap: INVOKE <= 131072 bytes (catalog size caps). */
     public static final int MAX_RECORD_LINE_BYTES = 131072;
+    /** OUT record line cap: 65536 hex chars + 64 bytes
+     * (tools/src/protocol.h DEALPG4_MAX_LINE_OUT_BYTES). */
+    public static final int MAX_OUT_LINE_BYTES = 65536 + 64;
+    /** Line cap of every non-INVOKE, non-OUT record
+     * (tools/src/protocol.h DEALPG4_MAX_LINE_OTHER_BYTES). */
+    public static final int MAX_OTHER_LINE_BYTES = 8192;
+    /** OUT hexChunk cap: <= 65536 hex chars = 32 KiB raw
+     * (tools/src/protocol.h DEALPG4_OUT_MAX_HEX_CHARS). */
+    public static final int MAX_OUT_HEX_CHARS = 65536;
 
     /** OUT stream designators (catalog STREAM field class). */
     public static final String STREAM_OUT = "out";
@@ -610,7 +624,10 @@ public final class ContainedProcessBroker implements AutoCloseable {
                     throw new BrokerProtocolException("record line contains CR");
                 }
                 buffer.write(b);
-                if (buffer.size() > MAX_RECORD_LINE_BYTES) {
+                /* Canonical global line bound (protocol.c dealpg4_parse):
+                 * the bound counts the LF, so the content-only buffer is
+                 * modeled as size + 1. */
+                if (buffer.size() + 1 > MAX_RECORD_LINE_BYTES) {
                     throw new BrokerProtocolException(
                             "record line exceeds the " + MAX_RECORD_LINE_BYTES + "-byte cap");
                 }
@@ -625,6 +642,15 @@ public final class ContainedProcessBroker implements AutoCloseable {
     }
 
     static Record parseRecord(byte[] lineBytes) {
+        /* Canonical global line bound first (protocol.c dealpg4_parse
+         * checks it before the prefix; the bound counts the LF, so the
+         * content-only line is modeled as length + 1). readRecord()
+         * enforces the same bound during accumulation; this check keeps
+         * the seam self-contained. */
+        if (lineBytes.length + 1 > MAX_RECORD_LINE_BYTES) {
+            throw new BrokerProtocolException(
+                    "record line exceeds the " + MAX_RECORD_LINE_BYTES + "-byte cap");
+        }
         for (byte value : lineBytes) {
             if (value < 0) {
                 throw new BrokerProtocolException("record line contains a non-ASCII byte");
@@ -643,6 +669,7 @@ public final class ContainedProcessBroker implements AutoCloseable {
         }
         String type = parts[0];
         String[] fields = Arrays.copyOfRange(parts, 1, parts.length);
+        requireIncomingLineCapped(type, lineBytes.length + 1);
         validateIncoming(type, fields);
         return new Record(type, fields);
     }
@@ -654,6 +681,40 @@ public final class ContainedProcessBroker implements AutoCloseable {
         Record(String type, String[] fields) {
             this.type = type;
             this.fields = fields;
+        }
+    }
+
+    /**
+     * Canonical per-type line caps on the read path (protocol.c
+     * dealpg4_parse: applied after the type token and before field
+     * validation; each bound counts the LF, so the content-only line is
+     * modeled as {@code lineLengthIncludingLf}): OUT lines at most
+     * {@value #MAX_OUT_LINE_BYTES} bytes (65536 hex chars + 64), every
+     * other record at most {@value #MAX_OTHER_LINE_BYTES} bytes; INVOKE
+     * is bounded by the global cap (and is never expected on this
+     * channel anyway). A violation is a framing defect classified
+     * {@code PROTOCOL_ERROR} with channel close, exactly as the
+     * canonical parser classifies {@code
+     * DEALPG4_PARSE_ERR_OVERSIZE_LINE}.
+     */
+    private static void requireIncomingLineCapped(String type, int lineLengthIncludingLf) {
+        switch (type) {
+            case "OUT":
+                if (lineLengthIncludingLf > MAX_OUT_LINE_BYTES) {
+                    throw new BrokerProtocolException("OUT record line exceeds the "
+                            + MAX_OUT_LINE_BYTES + "-byte cap (canonical "
+                            + MAX_OUT_HEX_CHARS + " hex chars + 64, LF counted)");
+                }
+                return;
+            case "INVOKE":
+                /* Bounded by the global cap (131072 bytes incl LF). */
+                return;
+            default:
+                if (lineLengthIncludingLf > MAX_OTHER_LINE_BYTES) {
+                    throw new BrokerProtocolException("record " + type + " line exceeds the "
+                            + MAX_OTHER_LINE_BYTES + "-byte cap (LF counted)");
+                }
+                return;
         }
     }
 
@@ -760,6 +821,11 @@ public final class ContainedProcessBroker implements AutoCloseable {
                 requireDecimal(fields[0], "OUT invocationId");
                 requireStream(fields[1]);
                 requireHex(fields[2], "OUT chunk");
+                if (fields[2].length() > MAX_OUT_HEX_CHARS) {
+                    throw new BrokerProtocolException("OUT chunk exceeds the "
+                            + MAX_OUT_HEX_CHARS + "-hex-char cap (canonical "
+                            + (MAX_OUT_HEX_CHARS / 2) + "-byte raw chunk)");
+                }
                 return;
             case "OUT_END":
                 requireFieldCount(type, fields, 2);
