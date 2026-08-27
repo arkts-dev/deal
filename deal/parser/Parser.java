@@ -529,7 +529,15 @@ public final class Parser {
 
         optionalSemicolon();
         Span sp = spanBetween(importToken, previousOrCurrent());
-        return new ImportDeclaration(sp, aliasToken.lexeme(), modulePath);
+        // ISSUE-0252 @extern-c marker surface (js-backend-emitter D8): the
+        // import token carries the lexer-attached compiler directives
+        // (@extern-c among them) and the AST record propagates them — the
+        // @jsonable -> ClassDeclaration.isJsonable() export-path precedent
+        // (parseExportDeclaration). The checker reads only alias()/
+        // modulePath(), so the new component is checker-inert; placement
+        // and C-FFI-metadata validation stay with the C-FFI frontend epic.
+        return new ImportDeclaration(sp, aliasToken.lexeme(), modulePath,
+            importToken.directives());
     }
 
     // -- Export --

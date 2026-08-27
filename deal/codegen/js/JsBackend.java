@@ -61,8 +61,10 @@ import deal.types.Types;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -182,10 +184,32 @@ import java.util.Set;
  * adapter returns the inner operation untouched — the inner async
  * body's completion check is the boundary crossing, exactly once.
  * Sync wrappers and the entry gate (non-async {@code main(): null},
- * E2010/E2011) are unchanged. The E6000 host-ABI and E6003
- * {@code @extern-c} rejections are T6's: an import the classification
- * cannot place positively emits no binding and no diagnostic at this
- * slice (T6 owns those arms).
+ * E2010/E2011) are unchanged.
+ *
+ * <p>ISSUE-0252 rejection pass: the full D8 rejection table with exact
+ * error-severity diagnostics at their documented sites — a
+ * {@code @extern-c}-marked import is E6003 containing
+ * {@code FFI_UNSUPPORTED_BACKEND} at the import statement, keyed on
+ * the parser-propagated {@code ImportDeclaration.directives()} marker
+ * component ({@link #rejectUnsupportedImport}, live at this merge,
+ * never a dead placeholder, and preceding the host-ABI arm when both
+ * apply); a non-stdlib declaration-file import (a {@code hostModules}
+ * entry) is E6000 (host ABI deferred) at the import statement;
+ * {@code @jsonable} on an exported class is E6000 (generated
+ * {@code C$fromJson}/{@code C$toJson} deferred) at the declaration
+ * site, keyed on {@code ClassDeclaration.isJsonable()}; a nested
+ * (below-module-level) class declaration is E6000 at the declaration
+ * site (the arm fires through walked function-expression bodies); and
+ * the defensive {@code bytes} arm (js-backend-architecture A1 — the
+ * frontend cannot produce a bytes program today) keys on the AST
+ * spelling: a {@link NamedType} spelled {@code bytes} or a
+ * {@link CallExpr} whose callee is the identifier {@code bytes}
+ * reports E6000 at the use site, once per site. Every rejection makes
+ * {@code hasErrors()} hold, so the orchestrator's two-pass
+ * {@code codegenAllJs()} writes no artifact for the rejected module —
+ * a clean sibling's artifact is unaffected — and the compilation
+ * fails with the standard diagnostic report. The explicit
+ * {@code --source-map} CLI warning is orchestrator-side (T1).
  *
  * <p>The backend consumes the checked AST exactly like
  * {@code JvmBackend} ({@code CheckResult.typeMap()}/{@code symbolTable()})
@@ -378,6 +402,19 @@ public final class JsBackend {
     private boolean atModuleLevel = true;
 
     /**
+     * Identity-deduplicated defensive {@code bytes} rejection sites
+     * (the js-backend-architecture A1 arm keys on the AST spelling — a
+     * {@link NamedType} spelled {@code bytes} or a {@link CallExpr}
+     * whose callee is the identifier {@code bytes}). One type node is
+     * resolved several times (entry scan, declaration walk, descriptor
+     * building), and each distinct site must report exactly one E6000.
+     */
+    private final Set<NamedType> reportedBytesTypes =
+        Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<CallExpr> reportedBytesCalls =
+        Collections.newSetFromMap(new IdentityHashMap<>());
+
+    /**
      * Stack of user-declared local names visible at the current walk
      * position (function parameters, {@code let} declarations, loop and
      * catch bindings), mirroring the checker's lexical scoping
@@ -497,13 +534,17 @@ public final class JsBackend {
 
         // Shape step 5: import bindings in import order — a
         // spec-stdlib raw path emits <relpath>/std/<name>, an
-        // importResolutions entry a project-module relative require;
-        // unclassified imports (non-stdlib declaration files,
-        // unresolved paths) emit no binding at this slice (T6 owns the
-        // E6000/E6003 rejections).
+        // importResolutions entry a project-module relative require.
+        // The rejection pass runs first: a @extern-c-marked import
+        // (E6003) or a non-stdlib declaration-file import (E6000 host
+        // ABI) emits its diagnostic and no binding — a rejected import
+        // never reaches the require path (js-backend-emitter D8).
         List<String> importBindings = new ArrayList<>();
         for (StatementNode stmt : program.statements()) {
             if (stmt instanceof ImportDeclaration imp) {
+                if (rejectUnsupportedImport(imp)) {
+                    continue;
+                }
                 String specifier = importRequireSpecifier(imp);
                 if (specifier != null) {
                     importBindings.add("const " + jsName(imp.alias())
@@ -707,14 +748,18 @@ public final class JsBackend {
      * {@code main} importing {@code lib} → {@code ./lib}; root
      * {@code main} importing {@code app.util} → {@code ./app/util};
      * nested {@code app.main} importing {@code sub.util} →
-     * {@code ../sub/util}). Every other import — a non-stdlib
-     * declaration file (a {@code hostModules} entry, the T6 host-ABI
-     * E6000 — also present in {@code importResolutions}, so the host
-     * check precedes the project branch) or an unresolved path —
-     * returns {@code null}: no binding is emitted and T6 owns the
-     * diagnostic. Declaration files emit no artifact, so a require of
-     * one can never resolve at runtime; a rejected module writes no
-     * artifact at all (js-backend-emitter D8).
+     * {@code ../sub/util}). A non-stdlib declaration file (a
+     * {@code hostModules} entry — also present in
+     * {@code importResolutions}, so the host check precedes the
+     * project branch) or an unresolved path returns {@code null}: no
+     * binding is emitted. The host-ABI and {@code @extern-c} E6000/
+     * E6003 diagnostics themselves fire earlier in
+     * {@link #rejectUnsupportedImport}, before this method is
+     * consulted; the host check here stays as the defensive guard for
+     * classification-driven emission (a {@code @extern-c}-marked
+     * import never reaches it). Declaration files emit no artifact, so
+     * a require of one can never resolve at runtime; a rejected module
+     * writes no artifact at all (js-backend-emitter D8).
      */
     private String importRequireSpecifier(ImportDeclaration imp) {
         String raw = imp.modulePath();
@@ -729,6 +774,40 @@ public final class JsBackend {
             return relativeSpecifier(resolved);
         }
         return null;
+    }
+
+    /**
+     * The D8 import-classification rejections, fired before any import
+     * binding is computed (js-backend-emitter D8). A
+     * {@code @extern-c}-marked import — keyed on the
+     * parser-propagated {@code ImportDeclaration.directives()}
+     * component — is E6003 containing {@code FFI_UNSUPPORTED_BACKEND}
+     * at the import statement
+     * (deal-v1.2-directives-and-c-ffi-declarations D8: an incapable
+     * backend rejects {@code @extern-c} before any artifact write);
+     * a non-stdlib declaration-file import (a {@code hostModules}
+     * entry) is the E6000 host-ABI rejection at the import statement.
+     * The E6003 arm precedes the host-ABI arm when both apply — the
+     * more specific rejection wins, deterministic. Spec-stdlib raw
+     * paths and {@code importResolutions} entries are never rejected
+     * here.
+     */
+    private boolean rejectUnsupportedImport(ImportDeclaration imp) {
+        if (imp.directives().contains("@extern-c")) {
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6003,
+                "JavaScript backend: @extern-c imports are not supported "
+                    + "(FFI_UNSUPPORTED_BACKEND, ISSUE-0169 skeleton)",
+                imp.span()));
+            return true;
+        }
+        if (hostModules.containsKey(imp.modulePath())) {
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6000,
+                "JavaScript backend: host-module imports (host ABI) are "
+                    + "not supported (ISSUE-0169 skeleton)",
+                imp.span()));
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -839,6 +918,21 @@ public final class JsBackend {
                 case "table" -> Type.Table.INSTANCE;
                 case "Error" -> Types.classType("Error", "");
                 default -> {
+                    // ISSUE-0252 rejection pass (js-backend-architecture
+                    // A1): the defensive bytes arm keys on the AST
+                    // spelling — the frontend cannot produce a bytes
+                    // program today (no bytes case in deal/types/Type),
+                    // so a bytes-spelled named type is reported exactly
+                    // once at its use site instead of being silently
+                    // treated as an error type.
+                    if (nt.name().equals("bytes")
+                            && reportedBytesTypes.add(nt)) {
+                        diagnostics.add(CompilerDiagnostic.error(
+                            DiagnosticCode.E6000,
+                            "JavaScript backend: bytes is not supported "
+                                + "(ISSUE-0169 skeleton)",
+                            nt.span()));
+                    }
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol cs) {
                         yield Types.classType(nt.name(), cs.modulePath());
@@ -892,10 +986,10 @@ public final class JsBackend {
     private void visitStatement(StatementNode stmt) {
         switch (stmt) {
             case ImportDeclaration imp -> {
-                // Shape step 5 emitted the binding in the header; the
-                // walk itself emits no statement. Unclassified imports
-                // (host modules, unresolved paths) emitted no binding —
-                // T6 owns those rejections.
+                // Shape step 5 emitted the binding in the header (a
+                // rejected import — @extern-c E6003 or host-ABI E6000 —
+                // was already diagnosed there and emitted no binding);
+                // the walk itself emits no statement.
             }
             case FunctionDeclaration fd -> visit(fd);
             case ClassDeclaration cd -> visit(cd);
@@ -909,6 +1003,25 @@ public final class JsBackend {
                 // construction runs the declaring module's closure).
                 switch (ed.declaration()) {
                     case ClassDeclaration cd -> {
+                        // ISSUE-0252 rejection pass: @jsonable on an
+                        // exported class is the D8 table's E6000 row at
+                        // the declaration site (generated
+                        // C$fromJson/C$toJson deferred) — the arm keys
+                        // on the parser-propagated
+                        // ClassDeclaration.isJsonable() marker
+                        // (js-backend-emitter D8). The rejected module
+                        // emits no artifact, so the class artifacts and
+                        // the export assignments are skipped.
+                        if (cd.isJsonable()) {
+                            diagnostics.add(CompilerDiagnostic.error(
+                                DiagnosticCode.E6000,
+                                "JavaScript backend: @jsonable classes "
+                                    + "are not supported (generated "
+                                    + "C$fromJson/C$toJson deferred, "
+                                    + "ISSUE-0169 skeleton)",
+                                cd.span()));
+                            return;
+                        }
                         visit(cd);
                         exportAssignments.add("$rt.setProp($exports, "
                             + jsStringLiteral(cd.name()) + ", "
@@ -2067,6 +2180,21 @@ public final class JsBackend {
      * arguments (js-backend-emitter D6).
      */
     private String emitCall(CallExpr call) {
+        // ISSUE-0252 rejection pass: the defensive bytes(n) intrinsic
+        // arm keys on the AST spelling — a call whose callee is the
+        // identifier bytes is reported exactly once at the use site
+        // (the frontend has no bytes intrinsic today,
+        // js-backend-architecture A1). The call itself then emits
+        // through the checker-error path; the module carries an error
+        // diagnostic, so no artifact is written.
+        if (call.callee() instanceof IdentifierExpr id
+                && id.name().equals("bytes")
+                && reportedBytesCalls.add(call)) {
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6000,
+                "JavaScript backend: bytes is not supported "
+                    + "(ISSUE-0169 skeleton)",
+                call.span()));
+        }
         Type calleeType = typeOf(call.callee());
         StringBuilder args = new StringBuilder();
         for (int i = 0; i < call.args().size(); i++) {
