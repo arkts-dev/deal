@@ -76,7 +76,8 @@ javac --release 25 -proc:none -d build \
   deal/test/containment/ContainedProcessBroker.java \
   deal/test/containment/PreflightCoordinator.java \
   deal/test/containment/ContainedProcessBrokerFramingTest.java \
-  deal/test/containment/ContainedProcessBrokerStateTest.java
+  deal/test/containment/ContainedProcessBrokerStateTest.java \
+  deal/project/ProjectLocatorTest.java
   touch "$STAMP"
 else
   echo "=== DEAL sources and tests unchanged since the last build; reusing build/ ==="
@@ -143,6 +144,10 @@ java -ea -cp build deal.project.StrictManifestParserTest
 echo ""
 echo "=== Running Output Config Resolver Tests (ISSUE-0264 T3) ==="
 java -ea -cp build deal.project.OutputConfigResolverTest
+
+echo ""
+echo "=== Running Project Locator Tests (ISSUE-0265 T4) ==="
+java -ea -cp build deal.project.ProjectLocatorTest
 
 echo ""
 echo "=== Running AST/Types Tests ==="
