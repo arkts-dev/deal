@@ -161,10 +161,28 @@ import java.util.Set;
  * {@code $rt.setProp} instead of the Map method calls; and the entry
  * shim's {@code $exports.main.$f()} reaches the exported {@code main}.
  *
- * <p>Cluster staging (js-backend-emitter D1): async completion checks
- * and await lowering are T5's — this slice emits the {@code async
- * function} keyword structurally for async declarations and leaves the
- * await-site lowering untouched. The E6000 host-ABI and E6003
+ * <p>ISSUE-0251 async/await slice: the full D5 lowering — async
+ * function declarations and expressions emit as native
+ * {@code async function} bodies inside the {@code $rt.function}
+ * wrapper with the exact {@code async(...)} descriptor signature
+ * (the {@code async} prefix from {@link #jsTypeDescriptor}, the T3
+ * wrapper mechanics intact), {@code await E} lowers to
+ * {@code await <callee>.$f(<args>, <file>, <line>, <column>)} with
+ * the literal call-site span arguments (the direct and the indirect
+ * function-typed forms; {@link #emitAwait}), the declared-return
+ * check runs inside the async body on every return path — the
+ * fall-off path of a {@code null}-returning async wrapper included,
+ * where the trailing validated {@code null} return closes the body
+ * before the Promise resolves — no completion check is added at any
+ * await site, errors raised by an awaited operation propagate
+ * natively at the await site (Promise rejection), async function
+ * values cross function-typed boundaries with the exact
+ * {@code async(...)} sig (E8010 on any mismatch, the runtime's
+ * function-branch exact compare), and an async arity-extension
+ * adapter returns the inner operation untouched — the inner async
+ * body's completion check is the boundary crossing, exactly once.
+ * Sync wrappers and the entry gate (non-async {@code main(): null},
+ * E2010/E2011) are unchanged. The E6000 host-ABI and E6003
  * {@code @extern-c} rejections are T6's: an import the classification
  * cannot place positively emits no binding and no diagnostic at this
  * slice (T6 owns those arms).
@@ -944,11 +962,15 @@ public final class JsBackend {
      * the forwarded span, the body walk through the T2 lowering, and
      * the return-site exit checks. The declared return type drives
      * {@link #currentReturnType} for the body's {@code return}
-     * statements; a null-typed sync function appends the validated
+     * statements; a null-typed function appends the validated
      * {@code null} fall-off return after the body (control falling off
      * the end returns the DEAL null). Async declarations emit the
-     * {@code async function} keyword structurally; completion checks
-     * and await lowering are T5's.
+     * native {@code async function} keyword, the declared-return check
+     * runs inside the async body on every return path (the fall-off
+     * {@code null} completion included), and the body's awaits lower
+     * through {@link #emitAwait} — the completion value crosses its
+     * typed boundary exactly once, before the Promise resolves
+     * (js-backend-architecture D5).
      */
     private void visit(FunctionDeclaration fd) {
         String name = fd.name();
@@ -975,7 +997,7 @@ public final class JsBackend {
         Type savedReturn = currentReturnType;
         currentReturnType = returnType;
         try {
-            emitWrappedBody(fd.params(), fd.body(), returnType, isAsync,
+            emitWrappedBody(fd.params(), fd.body(), returnType,
                 fd.returnType().span());
         } finally {
             currentReturnType = savedReturn;
@@ -1056,16 +1078,22 @@ public final class JsBackend {
      * the parameters declared above it (mirroring the checker's
      * function scope and body Block scope, so per-scope hoisted
      * {@code let}s legally shadow the parameter bindings), and — for a
-     * sync function whose declared return type is {@code null} — the
+     * function whose declared return type is {@code null} — the
      * validated fall-off return after the block (control falling off
-     * the end returns the DEAL null). The body sits below module
-     * level, so a nested class declaration fires the D6 E6000 arm.
-     * Return statements inside the body check against
+     * the end returns the DEAL null). For an async wrapper the
+     * trailing fall-off return sits inside the {@code async function}
+     * body, so the implicit completion crosses the declared-return
+     * boundary before the Promise resolves (js-backend-architecture
+     * D5) — without it the Promise would resolve with the nil
+     * equivalent {@code undefined} and the awaiter's {@code null}
+     * boundary would raise E8001, where the reference maps the
+     * coroutine's nil fall-off to DEAL null. The body sits below
+     * module level, so a nested class declaration fires the D6 E6000
+     * arm. Return statements inside the body check against
      * {@link #currentReturnType} at the return site.
      */
     private void emitWrappedBody(List<Parameter> params, Block body,
-                                 Type returnType, boolean isAsync,
-                                 Span fallOffSpan) {
+                                 Type returnType, Span fallOffSpan) {
         for (Parameter param : params) {
             Type paramType = resolveTypeNode(param.type());
             if (paramType != null && !(paramType instanceof Type.Error)
@@ -1101,7 +1129,7 @@ public final class JsBackend {
         }
         indent--;
         line("}");
-        if (!isAsync && returnType instanceof Type.Null) {
+        if (returnType instanceof Type.Null) {
             line("return $rt.checkNull(null, " + spanArgs(fallOffSpan) + ");");
         }
     }
@@ -1743,10 +1771,32 @@ public final class JsBackend {
             case FunctionExpr fe -> emitFunctionExpr(fe);
             case HasExpr has -> emitHas(has);
             case AssignmentExpr assign -> emitAssignment(assign);
-            case AwaitExpression await ->
-                "await " + emitExpression(await.callee());
+            case AwaitExpression await -> emitAwait(await);
             case TemplateLiteralExpr tl -> emitTemplateLiteral(tl);
         };
+    }
+
+    /**
+     * Await lowering (js-backend-architecture D5, js-backend-emitter
+     * D6): {@code await E} emits {@code await <emitted callee>}. The
+     * awaited callee is a {@link CallExpr} (the parser enforces E1042,
+     * the checker E3013 against non-async callees), so its emission is
+     * the wrapper call {@code <callee>.$f(<args>, <file>, <line>,
+     * <column>)} with the literal call-site span arguments — a direct
+     * awaited call lowers to {@code await base.$f(<file>, <line>,
+     * <column>)} and an awaited indirect function-typed value to
+     * {@code await g.$f(...)}. No completion check is emitted at the
+     * await site: the async wrapper checks its declared return inside
+     * its own {@code async function} body before the Promise resolves,
+     * so the completion value crosses its typed boundary exactly once
+     * (js-backend-runtime D6). Errors raised by the awaited operation
+     * propagate natively at the await site (Promise rejection), and
+     * evaluation before an await precedes evaluation after it — native
+     * async semantics. The awaited value is not a source-language
+     * value: the wrapper shape stays the only source-visible form.
+     */
+    private String emitAwait(AwaitExpression await) {
+        return "await " + emitExpression(await.callee());
     }
 
     private String emitLiteral(LiteralExpr lit) {
@@ -2228,9 +2278,13 @@ public final class JsBackend {
      * span, the body walk, the return-site exit checks, and the
      * validated {@code null} fall-off return for null-typed functions —
      * the identical wrapper shape of a function declaration. Closures
-     * capture natively. Async function expressions emit the
-     * {@code async function} keyword structurally; completion checks and
-     * await lowering are T5's.
+     * capture natively. Async function expressions emit the native
+     * {@code async function} keyword with the declared-return check
+     * inside the async body on every return path (the fall-off
+     * {@code null} completion included) and the body's awaits lowered
+     * through {@link #emitAwait} — the completion value crosses its
+     * typed boundary exactly once, before the Promise resolves
+     * (js-backend-architecture D5).
      */
     private String emitFunctionExpr(FunctionExpr fe) {
         Type funcType = typeOf(fe);
@@ -2247,7 +2301,7 @@ public final class JsBackend {
             indent++;
             try {
                 emitWrappedBody(fe.params(), fe.body(), returnType,
-                    isAsync, fe.returnType().span());
+                    fe.returnType().span());
             } finally {
                 indent--;
             }
@@ -2429,7 +2483,12 @@ public final class JsBackend {
      * {@code $line}/{@code $column} span. The sync return check
      * validates the inner result against the target return type at the
      * creation site; an async adapter returns the inner operation
-     * untouched (T5 refines).
+     * untouched — the inner async body's own declared-return check is
+     * the completion boundary (the arity-extension return types match
+     * exactly, so the inner check validates the target return type),
+     * and the awaiting caller observes the inner Promise, so the
+     * completion value crosses its typed boundary exactly once
+     * (js-backend-runtime D6).
      */
     private String emitArityAdapter(Type.Func targetFunc, Type.Func valueFunc,
                                     String valueExpr, Span span) {
