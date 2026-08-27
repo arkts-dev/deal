@@ -2187,14 +2187,20 @@ public final class JsBackend {
      * decides (nullable → DEAL null via {@code $rt.checkNullable};
      * non-nullable → E8001) (js-backend-architecture D3/D6). Table
      * reads are Map {@code .get} calls. The arrow IIFE evaluates the
-     * index (checked) before the container, exactly the reference's
-     * evaluation order. An await-bearing container or index cannot land
-     * inside that IIFE — it is a non-async closure and node rejects
-     * {@code await} in non-async function bodies at load — so those
-     * subexpressions hoist out as IIFE arguments, evaluated at the
-     * enclosing async function's level; the argument order keeps the
-     * reference's index-before-container order (the checked index
-     * argument first, the container argument second).
+     * index (checked) before the container — the exact
+     * {@code LuaBackend.emitIndex} pinned sequence: evaluate the index,
+     * run {@code checkInt}, raise E8002 for a negative index, and only
+     * then evaluate the container and read
+     * (deal/codegen/lua/LuaBackend.java:2116-2121). An await-bearing
+     * container or index cannot land inside a non-async closure (node
+     * rejects {@code await} in non-async function bodies at load), so
+     * the await-bearing form keeps the operands inline inside an async
+     * arrow IIFE that the enclosing level awaits — the body re-runs the
+     * pinned sequence, so the awaited index runs and the E8002 gate
+     * fires before an await-bearing container evaluates (the reference
+     * raises E8002 before the container's side effects run), never
+     * with hoisted IIFE arguments that would evaluate the container
+     * before the gate.
      */
     private String emitIndex(IndexExpr idx) {
         Type containerType = typeOf(idx.array());
@@ -2202,27 +2208,18 @@ public final class JsBackend {
         String index = emitExpression(idx.index());
         Span span = idx.span();
         if (containerType instanceof Type.Array) {
-            boolean arrHasAwait = containsAwait(idx.array());
-            boolean idxHasAwait = containsAwait(idx.index());
-            if (!arrHasAwait && !idxHasAwait) {
+            boolean hasAwait = containsAwait(idx.array())
+                || containsAwait(idx.index());
+            if (!hasAwait) {
                 return "(() => { const $idx = $rt.checkInt(" + index + ", "
                     + spanArgs(span) + "); if ($idx < 0) { "
                     + "$rt.fail(\"E8002\", \"negative array index\", "
                     + spanArgs(span) + "); } return " + arr + "[$idx]; })()";
             }
-            StringBuilder params = new StringBuilder("$idxRaw");
-            StringBuilder args = new StringBuilder(index);
-            String arrRef = arr;
-            if (arrHasAwait) {
-                params.append(", $arr");
-                args.append(", ").append(arr);
-                arrRef = "$arr";
-            }
-            return "((" + params + ") => { const $idx = $rt.checkInt("
-                + "$idxRaw, " + spanArgs(span) + "); if ($idx < 0) { "
+            return "(await (async () => { const $idx = $rt.checkInt("
+                + index + ", " + spanArgs(span) + "); if ($idx < 0) { "
                 + "$rt.fail(\"E8002\", \"negative array index\", "
-                + spanArgs(span) + "); } return " + arrRef
-                + "[$idx]; })(" + args + ")";
+                + spanArgs(span) + "); } return " + arr + "[$idx]; })())";
         }
         if (containerType instanceof Type.Table) {
             return arr + ".get(" + index + ")";
@@ -2398,12 +2395,18 @@ public final class JsBackend {
      * rule); plain targets assign natively. The IIFE preserves the
      * reference's evaluation order (container, checked index, bounds,
      * checked value, write) in expression position. An await-bearing
-     * container, index, or value cannot land inside that IIFE — it is
-     * a non-async closure and node rejects {@code await} in non-async
-     * function bodies at load — so those subexpressions hoist out as
-     * IIFE arguments, evaluated at the enclosing async function's
-     * level, in the reference's order (container, index, value); the
-     * index check, bounds gate, and value check stay inside the body.
+     * container, index, or value cannot land inside a non-async
+     * closure (node rejects {@code await} in non-async function bodies
+     * at load), so the await-bearing form keeps the operands inline
+     * inside an async arrow IIFE that the enclosing level awaits — the
+     * body re-runs the pinned
+     * {@code LuaBackend.emitAssignment} sequence
+     * (deal/codegen/lua/LuaBackend.java:2358-2378): evaluate the
+     * container, evaluate and {@code checkInt} the index, raise E8002
+     * on the bounds gate, and only then evaluate and check the value —
+     * the reference raises E8002 before an await-bearing value's side
+     * effects run, never with hoisted IIFE arguments that would
+     * evaluate the value before the gate.
      * Identifier targets and class field writes re-validate the
      * assigned value against the target's declared type at the
      * assignment site (the value's own boundary check for that
@@ -2418,10 +2421,10 @@ public final class JsBackend {
             if (containerType instanceof Type.Array arrT) {
                 String arr = emitExpression(idx.array());
                 String index = emitExpression(idx.index());
-                boolean arrHasAwait = containsAwait(idx.array());
-                boolean idxHasAwait = containsAwait(idx.index());
-                boolean valueHasAwait = containsAwait(assign.value());
-                if (!arrHasAwait && !idxHasAwait && !valueHasAwait) {
+                boolean hasAwait = containsAwait(idx.array())
+                    || containsAwait(idx.index())
+                    || containsAwait(assign.value());
+                if (!hasAwait) {
                     return "(() => { const $arr = " + arr
                         + "; const $idx = $rt.checkInt(" + index + ", "
                         + spanArgs(idx.span()) + "); "
@@ -2432,28 +2435,15 @@ public final class JsBackend {
                         + emitCheckExpr(value, arrT.element(), span)
                         + "; })()";
                 }
-                StringBuilder params = new StringBuilder("$arr");
-                StringBuilder args = new StringBuilder(arr);
-                String idxRef = index;
-                if (idxHasAwait || valueHasAwait) {
-                    params.append(", $idxRaw");
-                    args.append(", ").append(index);
-                    idxRef = "$idxRaw";
-                }
-                String valueRef = value;
-                if (valueHasAwait) {
-                    params.append(", $v");
-                    args.append(", ").append(value);
-                    valueRef = "$v";
-                }
-                return "((" + params + ") => { const $idx = $rt.checkInt("
-                    + idxRef + ", " + spanArgs(idx.span()) + "); "
+                return "(await (async () => { const $arr = " + arr
+                    + "; const $idx = $rt.checkInt(" + index + ", "
+                    + spanArgs(idx.span()) + "); "
                     + "if ($idx < 0 || $idx > $arr.length) { "
                     + "$rt.fail(\"E8002\", \"array index out of bounds\", "
                     + spanArgs(idx.span()) + "); } "
                     + "return $arr[$idx] = "
-                    + emitCheckExpr(valueRef, arrT.element(), span)
-                    + "; })(" + args + ")";
+                    + emitCheckExpr(value, arrT.element(), span)
+                    + "; })())";
             }
             if (containerType instanceof Type.Table) {
                 // Module-alias index write (checker F5 accepts any
@@ -2593,19 +2583,29 @@ public final class JsBackend {
      * exactly, so the inner check validates the target return type),
      * and the awaiting caller observes the inner Promise, so the
      * completion value crosses its typed boundary exactly once
-     * (js-backend-runtime D6). An await-bearing inner value cannot land
-     * inside the adapter's non-async body — node rejects {@code await}
-     * in non-async function bodies at load — so the awaited value is
-     * captured once at the creation site: the adapter emission wraps in
-     * {@code (($fn) => <adapter>)}, the generated {@code $fn} parameter
-     * binding the evaluated value outside the closure (an inline
-     * {@code valueExpr} inside the body would re-evaluate the await per
-     * adapter call as well).
+     * (js-backend-runtime D6). The value expression is evaluated per
+     * adapter call like the reference, which embeds
+     * {@code <valueLua>.f(...)} inside the per-call closure
+     * (deal/codegen/lua/LuaBackend.java:2405-2420 — the compiled Lua
+     * re-awaits per call). An await-bearing inner value re-awaits on
+     * every call through an {@code async function} body carrying the
+     * inlined value expression, with the wrapper {@code $sig} staying
+     * the target descriptor; node rejects {@code await} in non-async
+     * function bodies, so only an async body can host the inlined
+     * await. A sync target keeps the creation-time capture
+     * {@code (($fn) => <adapter>)(<valueExpr>)}: its {@code $f} must
+     * stay sync under the sync {@code $sig} (a Promise returned by a
+     * sync-sig wrapper would leak the async operation through a sync
+     * call site — js-backend-architecture D5), and a sync JS function
+     * cannot suspend, so the awaited value evaluates once at the
+     * creation site — the source-level assignment semantics.
      */
     private String emitArityAdapter(Type.Func targetFunc, Type.Func valueFunc,
                                     String valueExpr, boolean valueHasAwait,
                                     Span span) {
-        String innerRef = valueHasAwait ? "$fn" : valueExpr;
+        boolean asyncBody = valueHasAwait && targetFunc.isAsync();
+        String innerRef = asyncBody ? valueExpr
+            : (valueHasAwait ? "$fn" : valueExpr);
         StringBuilder params = new StringBuilder();
         for (int i = 0; i < targetFunc.paramTypes().size(); i++) {
             if (i > 0) params.append(", ");
@@ -2617,7 +2617,9 @@ public final class JsBackend {
         StringBuilder sb = new StringBuilder();
         sb.append("$rt.function(")
             .append(jsStringLiteral(jsTypeDescriptor(targetFunc)))
-            .append(", function(").append(params).append(") {\n");
+            .append(", ")
+            .append(asyncBody ? "async function(" : "function(")
+            .append(params).append(") {\n");
         String bodyIndent = "  ".repeat(indent + 1);
         for (int i = 0; i < targetFunc.paramTypes().size(); i++) {
             sb.append(bodyIndent)
@@ -2638,7 +2640,7 @@ public final class JsBackend {
         }
         sb.append("  ".repeat(indent)).append("})");
         String adapter = sb.toString();
-        if (valueHasAwait) {
+        if (valueHasAwait && !asyncBody) {
             return "(($fn) => " + adapter + ")(" + valueExpr + ")";
         }
         return adapter;
