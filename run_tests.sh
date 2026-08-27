@@ -125,6 +125,10 @@ echo "=== Running Protected Path Ops Tests (ISSUE-0262) ==="
 java -ea -cp build deal.test.ProtectedPathOpsTest
 
 echo ""
+echo "=== Running Strict Manifest Parser Tests (ISSUE-0263 T2) ==="
+java -ea -cp build deal.project.StrictManifestParserTest
+
+echo ""
 echo "=== Running AST/Types Tests ==="
 java -ea -cp build deal.test.AstAndTypesTest
 
