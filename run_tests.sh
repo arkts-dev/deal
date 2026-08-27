@@ -129,6 +129,10 @@ echo "=== Running Strict Manifest Parser Tests (ISSUE-0263 T2) ==="
 java -ea -cp build deal.project.StrictManifestParserTest
 
 echo ""
+echo "=== Running Output Config Resolver Tests (ISSUE-0264 T3) ==="
+java -ea -cp build deal.project.OutputConfigResolverTest
+
+echo ""
 echo "=== Running AST/Types Tests ==="
 java -ea -cp build deal.test.AstAndTypesTest
 
