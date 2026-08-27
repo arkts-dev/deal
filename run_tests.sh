@@ -43,6 +43,7 @@ javac --release 25 -proc:none -d build \
   deal/codegen/js/*.java \
   deal/ir/*.java \
   deal/module/*.java \
+  deal/project/*.java \
   deal/Main.java \
   test/StubModuleResolver.java \
   test/DiagnosticRangeTest.java \
@@ -70,7 +71,8 @@ javac --release 25 -proc:none -d build \
   test/JvmConformanceTest.java \
   test/LuaAbiTest.java \
   test/LuaAbiBackendTest.java \
-  test/CrossModuleTypingTest.java
+  test/CrossModuleTypingTest.java \
+  test/ProtectedPathOpsTest.java
   touch "$STAMP"
 else
   echo "=== DEAL sources and tests unchanged since the last build; reusing build/ ==="
@@ -117,6 +119,10 @@ java -ea -cp build deal.test.DiagnosticRangeTest
 echo ""
 echo "=== Running Diagnostic Classification Tests ==="
 java -ea -cp build deal.test.DiagnosticClassificationTest
+
+echo ""
+echo "=== Running Protected Path Ops Tests (ISSUE-0262) ==="
+java -ea -cp build deal.test.ProtectedPathOpsTest
 
 echo ""
 echo "=== Running AST/Types Tests ==="
