@@ -5,10 +5,12 @@ import deal.checker.*;
 import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.codegen.jvm.JvmBackend;
+import deal.codegen.js.JsBackend;
 import deal.codegen.lua.LuaBackend;
 import deal.module.CompilationOrchestrator;
 import deal.module.ModuleShapeValidator;
 import deal.module.DealConfig;
+import deal.module.StdlibModuleResolver;
 import deal.ir.IrDumper;
 import deal.lexer.*;
 import deal.parser.*;
@@ -32,8 +34,14 @@ import javax.tools.ToolProvider;
 /**
  * Loads backend-neutral JSON fixture tests from
  * {@code test/conformance/fixtures/} and executes them against the
- * LuaJIT backend and (ISSUE-0091, ISSUE-0092, ISSUE-0093, ISSUE-0094,
- * ISSUE-0096, ISSUE-0097) the JVM backend. The
+ * LuaJIT backend, (ISSUE-0091, ISSUE-0092, ISSUE-0093, ISSUE-0094,
+ * ISSUE-0096, ISSUE-0097) the JVM backend, and (ISSUE-0193,
+ * js-backend-conformance-e2e D1) the JS backend — the {@code js}
+ * single-source slice fixtures live in
+ * {@code test/conformance/fixtures/js-skeleton.json} and run through the
+ * real {@link deal.codegen.js.JsBackend} plus a deployed
+ * {@code deal/runtime.js}/{@code std/*.js} artifact set under the probed
+ * {@code node} binary (see {@link #runJsAssertions}). The
  * ISSUE-0092 semantic-slice fixtures live in
  * {@code test/conformance/fixtures/jvm-semantic-slice.json} (while loops,
  * template literals, and the surrounding primitive surface — JVM-only,
@@ -334,6 +342,8 @@ public class BackendConformanceTest {
     private static final AtomicInteger luajitFailed = new AtomicInteger();
     private static final AtomicInteger jvmPassed = new AtomicInteger();
     private static final AtomicInteger jvmFailed = new AtomicInteger();
+    private static final AtomicInteger jsPassed = new AtomicInteger();
+    private static final AtomicInteger jsFailed = new AtomicInteger();
     /**
      * Known-fail cases are drained on the main thread after every worker
      * fixture file has completed: their outcome bookkeeping snapshots the
@@ -344,6 +354,7 @@ public class BackendConformanceTest {
         pendingKnownFail = new java.util.concurrent.ConcurrentLinkedQueue<>();
     private static boolean luajitAvailable;
     private static boolean jvmAvailable;
+    private static boolean nodeAvailable;
 
     // Sentinel for JSON null (distinct from Java null)
     private static final Object JSON_NULL = new Object() {
@@ -369,13 +380,16 @@ public class BackendConformanceTest {
         }
 
         jvmAvailable = probeJvm();
+        nodeAvailable = probeNode();
 
         System.out.println("=== Backend Conformance Test — DEAL v1.2 "
-            + "(LuaJIT + JVM backend-runtime gates) ===");
+            + "(LuaJIT + JVM + JS backend-runtime gates) ===");
         System.out.println("LuaJIT: " + (luajitAvailable ? "available" :
             "NOT available (runtime tests will be skipped)"));
         System.out.println("JVM (javac + java): " + (jvmAvailable ? "available" :
             "NOT available (JVM runtime tests will be skipped)"));
+        System.out.println("Node.js: " + (nodeAvailable ? "available" :
+            "NOT available (JS runtime tests will be skipped)"));
         System.out.println();
 
         Path fixturesDir = Path.of("test/conformance/fixtures/");
@@ -444,6 +458,9 @@ public class BackendConformanceTest {
         int jvmTotal = jvmPassed.get() + jvmFailed.get();
         System.out.println("  JVM backend-runtime: " + jvmPassed.get()
             + "/" + jvmTotal + " passed, " + jvmFailed.get() + " failed");
+        int jsTotal = jsPassed.get() + jsFailed.get();
+        System.out.println("  JS backend-runtime: " + jsPassed.get()
+            + "/" + jsTotal + " passed, " + jsFailed.get() + " failed");
         if (skipped.get() > 0) {
             System.out.println("  Skips: " + skipped.get()
                 + " (toolchain-availability only — there are no unclassified skips)");
@@ -474,6 +491,21 @@ public class BackendConformanceTest {
             Process java = new ProcessBuilder("java", "-version")
                 .redirectErrorStream(true).start();
             return java.waitFor() == 0;
+        } catch (IOException | InterruptedException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Probes that the {@code node} binary is invocable and functional
+     * (the {@link #probeJvm} pattern): a broken-but-present node must
+     * make the JS runtime fixtures skip, not fail.
+     */
+    private static boolean probeNode() {
+        try {
+            Process node = new ProcessBuilder("node", "--version")
+                .redirectErrorStream(true).start();
+            return node.waitFor() == 0;
         } catch (IOException | InterruptedException e) {
             return false;
         }
@@ -847,6 +879,7 @@ public class BackendConformanceTest {
         int p0 = passed.get(), f0 = failed.get(), s0 = skipped.get();
         int lp0 = luajitPassed.get(), lf0 = luajitFailed.get();
         int jp0 = jvmPassed.get(), jf0 = jvmFailed.get();
+        int sp0 = jsPassed.get(), sf0 = jsFailed.get();
         boolean stale = false;
         try {
             runTestCaseInner(fixtureName, test);
@@ -860,6 +893,8 @@ public class BackendConformanceTest {
             luajitFailed.set(lf0);
             jvmPassed.set(jp0);
             jvmFailed.set(jf0);
+            jsPassed.set(sp0);
+            jsFailed.set(sf0);
             stale = (deltaF == 0 && deltaS == 0 && deltaP > 0);
         } finally {
             FILE_OUTPUT.set(saved);
@@ -1020,6 +1055,7 @@ public class BackendConformanceTest {
 
             boolean appliesToLuajit = backends.contains("luajit");
             boolean appliesToJvm = backends.contains("jvm");
+            boolean appliesToJs = backends.contains("js");
             boolean ranAny = false;
 
             if (appliesToLuajit) {
@@ -1040,6 +1076,18 @@ public class BackendConformanceTest {
                             () -> runJvmAssertions(name, fc, expectedOutput,
                                 expectedNotOutput, expectedError,
                                 expectedExitCode))) {
+                        return; // failure already reported
+                    }
+                    ranAny = true;
+                }
+            }
+
+            if (appliesToJs) {
+                if (nodeAvailable) {
+                    if (!runBackendTracked("js",
+                            () -> runJsAssertions(name, source,
+                                expectedOutput, expectedNotOutput,
+                                expectedError, expectedExitCode))) {
                         return; // failure already reported
                     }
                     ranAny = true;
@@ -1087,13 +1135,28 @@ public class BackendConformanceTest {
      * {@code JvmBackendTest.testEntryModuleEmitsJvmEntryPoint}, which
      * compiles and runs the emitted entry point directly.
      */
+    private static FrontendCompile compileFrontend(String source, String filename) {
+        return compileFrontend(source, filename, filename);
+    }
+
+    /**
+     * Frontend compile with an explicit checker module path (the JS
+     * adapter): the NameResolver/TypeChecker module path seeds every
+     * local {@code Type.Class} module path, which the JS runtime class
+     * identity descriptor must match byte-for-byte (the backend seeds
+     * its instance tags from its own modulePath — {@code Main} in the
+     * single-source adapter), while the lexer filename keeps seeding the
+     * span files. Identical pipeline to {@link #compileFrontend(String, String)};
+     * no bypass.
+     */
     // E9999 is the project's test-only pseudo code for a NameResolver
     // exception (the ConformanceTest precedent); it uses the deprecated
     // synthetic factory with an anchor note naming the fixture source
     // (D5/verification 6), and this suppression keeps the build
     // warning-free.
     @SuppressWarnings("deprecation")
-    private static FrontendCompile compileFrontend(String source, String filename) {
+    private static FrontendCompile compileFrontend(String source, String filename,
+                                                   String modulePath) {
         List<CompilerDiagnostic> errors = new ArrayList<>();
 
         LexResult lex = new Lexer(source, filename).tokenize();
@@ -1131,7 +1194,7 @@ public class BackendConformanceTest {
         }
 
         StubModuleResolver resolver = new StubModuleResolver();
-        NameResolver nr = new NameResolver(filename, resolver);
+        NameResolver nr = new NameResolver(modulePath, resolver);
         SymbolTable symTable;
         try {
             symTable = nr.resolve(parseResult.program());
@@ -1147,7 +1210,7 @@ public class BackendConformanceTest {
             }
         }
 
-        CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
+        CheckResult result = TypeChecker.check(modulePath, symTable, nr, parseResult.program());
         for (CompilerDiagnostic d : result.diagnostics()) {
             if ("error".equals(d.severity())) {
                 errors.add(d);
@@ -1312,7 +1375,7 @@ public class BackendConformanceTest {
     /** Assertion block shared by the single-module and multi-module JVM
      * adapters: the same {@code DEAL_ERROR_CODE} contract and exit-code
      * check as the LuaJIT runner. Returns true when every assertion holds. */
-    private static boolean assertJvmRun(String name, String output, int actualExitCode,
+    private static boolean assertRuntimeContract(String name, String output, int actualExitCode,
                                         Object expectedOutput, List<String> expectedNotOutput,
                                         Object expectedError, Object expectedExitCode) {
         if (expectedOutput != null && expectedOutput != JSON_NULL) {
@@ -1395,12 +1458,19 @@ public class BackendConformanceTest {
     private static boolean runBackendTracked(String backend,
             java.util.function.BooleanSupplier task) {
         boolean ok = task.getAsBoolean();
-        if ("luajit".equals(backend)) {
-            if (ok) luajitPassed.incrementAndGet();
-            else luajitFailed.incrementAndGet();
-        } else {
-            if (ok) jvmPassed.incrementAndGet();
-            else jvmFailed.incrementAndGet();
+        switch (backend) {
+            case "luajit" -> {
+                if (ok) luajitPassed.incrementAndGet();
+                else luajitFailed.incrementAndGet();
+            }
+            case "jvm" -> {
+                if (ok) jvmPassed.incrementAndGet();
+                else jvmFailed.incrementAndGet();
+            }
+            default -> {
+                if (ok) jsPassed.incrementAndGet();
+                else jsFailed.incrementAndGet();
+            }
         }
         return ok;
     }
@@ -1712,7 +1782,7 @@ public class BackendConformanceTest {
             String output = new String(p2.getInputStream().readAllBytes()).trim();
             int actualExitCode = p2.waitFor();
 
-            if (!assertJvmRun(name, output, actualExitCode, expectedOutput,
+            if (!assertRuntimeContract(name, output, actualExitCode, expectedOutput,
                     List.of(), expectedError, expectedExitCode)) {
                 return false; // failure already reported
             }
@@ -1904,7 +1974,7 @@ public class BackendConformanceTest {
             int actualExitCode = p2.waitFor();
 
             // 4. Assertions — same observable contract as the LuaJIT runner.
-            return assertJvmRun(name, output, actualExitCode, expectedOutput,
+            return assertRuntimeContract(name, output, actualExitCode, expectedOutput,
                 expectedNotOutput, expectedError, expectedExitCode);
         } catch (Exception e) {
             log("  [" + name + "] FAIL: JVM execution exception: "
@@ -2053,6 +2123,228 @@ public class BackendConformanceTest {
 
     private static boolean isNullReturnType(TypeNode t) {
         return t instanceof NamedType nt && "null".equals(nt.name());
+    }
+
+    // =========================================================================
+    // JS adapter (js-backend-conformance-e2e D1)
+    // =========================================================================
+
+    /**
+     * The real JS path: DEAL frontend (re-run with the adapter's checker
+     * module path {@code Main}, so every local class identity descriptor
+     * matches the backend's instance tags byte-for-byte — the backend
+     * seeds {@code $classname} from its modulePath, and the checker seeds
+     * {@code Type.Class.modulePath()} from its own; the two must agree) →
+     * {@link JsBackend} codegen → temp-dir deployment of the emitted
+     * {@code Main.js} plus {@code deal/runtime.js} and the six
+     * {@code std/*.js} (the same files the orchestrator deploys,
+     * js-backend-architecture D8) → a generated {@code JsConformanceRunner.js}
+     * requiring the module, skipping {@code $}-named exports (compiler-
+     * generated helper exports such as {@code C$new}), auto-invoking the
+     * zero-arity exported wrappers in declaration order, printing non-null
+     * results, and awaiting thenable results (async exports resolve before
+     * printing/rejection — the JS analog of the JVM runner's blocking
+     * invocation) → {@code node} subprocess execution → the shared
+     * assertion contract ({@code DEAL_ERROR_CODE: <code>} stderr + exit 1).
+     * Every stage must genuinely run: a bypassed codegen leaves no
+     * {@code Main.js} artifact (asserted), and a bypassed node execution
+     * produces no output.
+     */
+    private static boolean runJsAssertions(String name, String source,
+                                           Object expectedOutput,
+                                           List<String> expectedNotOutput,
+                                           Object expectedError,
+                                           Object expectedExitCode) {
+        // The checker-module-path alignment re-runs the real frontend
+        // pipeline (the same lexer → parser → resolver → checker stages)
+        // with modulePath "Main"; it never re-checks backend decisions and
+        // cannot act as a checker bypass (the shared fc already ran the
+        // compile-error gate and the IR assertions).
+        FrontendCompile jsFc = compileFrontend(source, "fixture-" + name + ".deal", "Main");
+        if (jsFc.hasErrors()) {
+            log("  [" + name + "] FAIL: JS frontend errors: " + jsFc.errors());
+            failed.incrementAndGet();
+            return false;
+        }
+
+        // 1. Codegen with the real JS backend (modulePath "Main", the
+        //    single-source adapter convention). Errors (E6000/E6003 for
+        //    out-of-skeleton constructs) fail the fixture.
+        JsBackend.JsCodegenResult res = JsBackend.generate(
+            jsFc.program(), jsFc.checkResult(), "fixture-" + name + ".deal",
+            "Main", Map.of(), Map.of(), false);
+        if (res.hasErrors()) {
+            log("  [" + name + "] FAIL: JS codegen diagnostics: "
+                + res.diagnostics());
+            failed.incrementAndGet();
+            return false;
+        }
+        // Artifact-presence assertion: the canonical CommonJS capture
+        // lines must exist in the generated source (the JVM
+        // .class-presence analog).
+        if (!res.source().contains("\"use strict\"")
+                || !res.source().contains("const $require = require; "
+                    + "const $module = module; const $exports = exports;")) {
+            log("  [" + name + "] FAIL: JS codegen produced no CommonJS "
+                + "module capture (use strict / $require/$module/$exports)");
+            failed.incrementAndGet();
+            return false;
+        }
+
+        Path tmpDir = null;
+        try {
+            tmpDir = Files.createTempDirectory("deal_backend_conf_js_");
+            Path moduleFile = tmpDir.resolve("Main.js");
+            Files.writeString(moduleFile, res.source());
+            if (!Files.exists(moduleFile)) {
+                log("  [" + name + "] FAIL: JS codegen produced no "
+                    + "'Main.js' artifact");
+                failed.incrementAndGet();
+                return false;
+            }
+
+            // 2. Deploy the runtime and the six stdlib .js modules (the
+            //    same files the orchestrator's copyJsRuntimeLibrary/
+            //    copyStdlibJsModules deploy).
+            deployJsSupport(tmpDir);
+
+            // 3. The runner: require the module, skip $-named exports,
+            //    auto-invoke zero-arity exported wrappers in declaration
+            //    order, print non-null results, await thenables, and map
+            //    uncaught errors to the shared DEAL_ERROR_CODE contract.
+            Files.writeString(tmpDir.resolve("JsConformanceRunner.js"),
+                buildJsRunner(jsFc.program()));
+
+            // 4. Execute the deployed artifact set with node.
+            ProcessBuilder pb = new ProcessBuilder("node",
+                "JsConformanceRunner.js");
+            pb.directory(tmpDir.toFile());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String output = new String(p.getInputStream().readAllBytes()).trim();
+            int actualExitCode = p.waitFor();
+
+            // 5. Assertions — same observable contract as the LuaJIT/JVM
+            //    runners.
+            return assertRuntimeContract(name, output, actualExitCode,
+                expectedOutput, expectedNotOutput, expectedError,
+                expectedExitCode);
+        } catch (Exception e) {
+            log("  [" + name + "] FAIL: JS execution exception: "
+                + e.getMessage());
+            e.printStackTrace(System.out);
+            failed.incrementAndGet();
+            return false;
+        } finally {
+            if (tmpDir != null) {
+                try {
+                    Files.walk(tmpDir).sorted(Comparator.reverseOrder())
+                        .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+                } catch (IOException ignored) {}
+            }
+        }
+    }
+
+    /**
+     * Deploys the JS runtime support files a single-module fixture
+     * needs: {@code deal/runtime.js} and the six spec stdlib
+     * {@code std/*.js} modules — the same file set the orchestrator's
+     * JS deployment copies ship ({@code copyJsRuntimeLibrary}/
+     * {@code copyStdlibJsModules}).
+     */
+    static void deployJsSupport(Path dir) throws IOException {
+        Path runtimeDir = dir.resolve("deal");
+        Files.createDirectories(runtimeDir);
+        Files.copy(Path.of("deal/runtime.js"), runtimeDir.resolve("runtime.js"));
+
+        Path stdDir = dir.resolve("std");
+        Files.createDirectories(stdDir);
+        for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
+            Path src = Path.of(stdlibModule + ".js");
+            if (Files.exists(src)) {
+                Files.copy(src, stdDir.resolve(
+                    stdlibModule.substring(4) + ".js"));
+            }
+        }
+    }
+
+    /**
+     * Builds the JS conformance runner source for a fixture: requires the
+     * emitted module and the runtime, iterates the module's own export
+     * keys in declaration order (the {@code $rt.setProp} insertion
+     * order), SKIPS {@code $}-named exports (compiler-generated helper
+     * exports such as the hidden {@code C$new} closures — the Lua
+     * harness's {@code $}-skip rule of the runner builders,
+     * test/ConformanceTest.java), auto-invokes the remaining zero-arity
+     * exported wrappers (the zero-arity set derived from the real
+     * parser's export list) in declaration order, prints each non-null
+     * result with Node's default formatting, and AWAITS thenable results
+     * before printing/rejection (async exports resolve before
+     * assertions — the JS analog of the JVM runner's blocking
+     * invocation). A thrown error or a rejected Promise routes through
+     * {@code $rt.reportUncaught} into the shared
+     * {@code DEAL_ERROR_CODE: <code> <message>} stderr + exit-1 contract;
+     * a module-load error (an initialization-time throw inside the
+     * required module) takes the same contract because the require sits
+     * inside the guarded async body.
+     *
+     * <p>Cross-backend invocation contract — identical asymmetry rules to
+     * the JVM runner ({@link #buildJvmRunner}): result formatting is
+     * Node-default and backend-dependent, fixtures with multiple
+     * zero-arity exports must not depend on cross-backend invocation
+     * order, and cross-backend fixtures must route every observable
+     * output through {@code std/console}.
+     */
+    static String buildJsRunner(ProgramNode program) {
+        List<String> zeroAry = new ArrayList<>();
+        for (StatementNode stmt : program.statements()) {
+            if (stmt instanceof ExportDeclaration ed
+                    && ed.declaration() instanceof FunctionDeclaration fd
+                    && fd.params().isEmpty()
+                    && !fd.name().contains("$")) {
+                zeroAry.add(fd.name());
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("// Generated by deal.test.BackendConformanceTest — JS conformance runner.\n");
+        sb.append("// Requires the emitted module, skips $-named exports, auto-invokes\n");
+        sb.append("// zero-arity exported wrappers in declaration order, prints non-null\n");
+        sb.append("// results, and awaits thenable results before asserting.\n");
+        sb.append("\"use strict\";\n");
+        sb.append("const $rt = require(\"./deal/runtime\");\n");
+        sb.append("const $zeroAry = [");
+        for (int i = 0; i < zeroAry.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append("\"").append(zeroAry.get(i)).append("\"");
+        }
+        sb.append("];\n");
+        sb.append("(async () => {\n");
+        sb.append("  const $mod = require(\"./Main\");\n");
+        sb.append("  for (const $k of Object.keys($mod)) {\n");
+        sb.append("    if ($k.indexOf(\"$\") !== -1) { continue; }\n");
+        sb.append("    const $v = $mod[$k];\n");
+        sb.append("    if ($v && $v.$kind === \"function\" "
+            + "&& $zeroAry.indexOf($k) !== -1) {\n");
+        sb.append("      const $r = await $v.$f();\n");
+        sb.append("      if ($r !== null && $r !== $rt.undefined) {\n");
+        sb.append("        console.log($r);\n");
+        sb.append("      }\n");
+        sb.append("    }\n");
+        sb.append("  }\n");
+        // The catch mirrors the entry shim's location-embedding body
+        // (js-backend-architecture D7): a located error composes its
+        // file/line/column into the message before reportUncaught, so
+        // fixtures observe the same DEAL_ERROR_CODE line the production
+        // entry shim prints.
+        sb.append("})().catch((e) => {\n");
+        sb.append("  const $err = $rt.reifyError(e);\n");
+        sb.append("  $rt.reportUncaught($err.file !== $rt.undefined\n");
+        sb.append("    ? $rt.errorValue($err.code, $err.message + \" at \" + $err.file\n");
+        sb.append("        + \":\" + $err.line + \":\" + $err.column, $err.file,\n");
+        sb.append("        $err.line, $err.column)\n");
+        sb.append("    : $err);\n");
+        sb.append("});\n");
+        return sb.toString();
     }
 
     // =========================================================================
