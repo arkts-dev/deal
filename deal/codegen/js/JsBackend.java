@@ -924,8 +924,13 @@ public final class JsBackend {
                     // program today (no bytes case in deal/types/Type),
                     // so a bytes-spelled named type is reported exactly
                     // once at its use site instead of being silently
-                    // treated as an error type.
+                    // treated as an error type. The unknown-symbol guard
+                    // keeps the arm defensive-only: a checker-accepted
+                    // user class named bytes resolves to its ClassSymbol
+                    // and is never rejected (bytes is not a DEAL keyword
+                    // today).
                     if (nt.name().equals("bytes")
+                            && symbols.resolve(nt.name()) == null
                             && reportedBytesTypes.add(nt)) {
                         diagnostics.add(CompilerDiagnostic.error(
                             DiagnosticCode.E6000,
@@ -2184,11 +2189,16 @@ public final class JsBackend {
         // arm keys on the AST spelling — a call whose callee is the
         // identifier bytes is reported exactly once at the use site
         // (the frontend has no bytes intrinsic today,
-        // js-backend-architecture A1). The call itself then emits
-        // through the checker-error path; the module carries an error
-        // diagnostic, so no artifact is written.
+        // js-backend-architecture A1). The guards keep the arm
+        // defensive-only: a checker-accepted user function named bytes
+        // (module-level symbol) or a shadowing local bytes binding
+        // never fires it — bytes is not a DEAL keyword today. The call
+        // itself then emits through the checker-error path; the module
+        // carries an error diagnostic, so no artifact is written.
         if (call.callee() instanceof IdentifierExpr id
                 && id.name().equals("bytes")
+                && !isLocalName(id.name())
+                && symbols.resolve(id.name()) == null
                 && reportedBytesCalls.add(call)) {
             diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6000,
                 "JavaScript backend: bytes is not supported "
