@@ -75,7 +75,8 @@ javac --release 25 -proc:none -d build \
   test/ProtectedPathOpsTest.java \
   deal/test/containment/ContainedProcessBroker.java \
   deal/test/containment/PreflightCoordinator.java \
-  deal/test/containment/ContainedProcessBrokerFramingTest.java
+  deal/test/containment/ContainedProcessBrokerFramingTest.java \
+  deal/test/containment/ContainedProcessBrokerStateTest.java
   touch "$STAMP"
 else
   echo "=== DEAL sources and tests unchanged since the last build; reusing build/ ==="
@@ -118,6 +119,10 @@ echo "  Migration gate scans pass (no legacy record, no legacy references, no pr
 echo ""
 echo "=== Running ContainedProcessBroker Framing Tests ==="
 java -ea -cp build deal.test.containment.ContainedProcessBrokerFramingTest
+
+echo ""
+echo "=== Running ContainedProcessBroker State Tests ==="
+java -ea -cp build deal.test.containment.ContainedProcessBrokerStateTest
 
 echo ""
 echo "=== Running Diagnostic Range Tests ==="

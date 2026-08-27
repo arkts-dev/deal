@@ -230,18 +230,30 @@ public final class ContainedProcessBroker implements AutoCloseable {
      * Sends {@code FEATURE_READY <nonce>} (the nonce bound at connect
      * time) and waits for the matching {@code READY_ACK}.
      *
-     * <p>May only be called once, before any invocation. The capability
-     * bitmask has already been verified by the handshake, so this method
-     * is never reached when a capability bit is missing — the readiness
-     * omission criterion is enforced structurally.
+     * <p>May only be called once, before any invocation and before
+     * {@link #bye()}: a duplicate {@code FEATURE_READY} or one issued
+     * after the session terminator is refused client-side
+     * ({@code PROTOCOL_ERROR}) before any write, so the canonical frame
+     * sequence (HELLO → HELLO_OK → FEATURE_READY → READY_ACK → repeated
+     * invocations → DONE → BYE) can never emit out-of-order records. The
+     * capability bitmask has already been verified by the handshake, so
+     * this method is never reached when a capability bit is missing —
+     * the readiness omission criterion is enforced structurally.
      *
      * @throws ContainmentException on a broker close before READY_ACK
      *         ({@code AUTH_FAILED}), a nonce mismatch in the READY_ACK
      *         ({@code AUTH_FAILED}), or a framing/state defect
-     *         ({@code PROTOCOL_ERROR}).
+     *         ({@code PROTOCOL_ERROR}), including a duplicate
+     *         {@code FEATURE_READY} or one issued after {@code BYE}.
      */
     public void featureReady() {
         synchronized (writeLock) {
+            if (byeSent) {
+                throw new ContainmentException("PROTOCOL_ERROR",
+                        "FEATURE_READY after BYE would be out of order (the canonical frame "
+                                + "sequence emits FEATURE_READY/READY_ACK before any "
+                                + "invocation, and BYE terminates the session)");
+            }
             if (featureReadySent) {
                 throw new ContainmentException("PROTOCOL_ERROR",
                         "FEATURE_READY was already sent (a duplicate would be out of order)");
@@ -476,10 +488,20 @@ public final class ContainedProcessBroker implements AutoCloseable {
 
     /**
      * Sends the session-level {@code BYE} record (canonical frame
-     * sequence terminator). Call once after all invocations completed.
+     * sequence terminator). Call once after {@link #featureReady()} and
+     * after all invocations completed: a {@code BYE} before
+     * {@code FEATURE_READY} or a duplicate {@code BYE} is refused
+     * client-side ({@code PROTOCOL_ERROR}) before any write, so the
+     * session terminator can never be emitted out of order.
      */
     public void bye() {
         synchronized (writeLock) {
+            if (!featureReadySent) {
+                throw new ContainmentException("PROTOCOL_ERROR",
+                        "BYE before FEATURE_READY would be out of order (the canonical frame "
+                                + "sequence emits FEATURE_READY/READY_ACK before the session "
+                                + "terminator)");
+            }
             if (byeSent) {
                 throw new ContainmentException("PROTOCOL_ERROR",
                         "BYE was already sent (a duplicate would be out of order)");
