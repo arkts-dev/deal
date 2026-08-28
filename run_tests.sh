@@ -56,6 +56,7 @@ javac --release 25 -proc:none -d build \
   test/FailureContractRegistryTest.java \
   test/CanonicalJsonTest.java \
   test/SemanticIrValidatorTest.java \
+  test/SemanticIrDumperTest.java \
   test/AstAndTypesTest.java \
   test/LexerTest.java \
   test/ParserTest.java \
@@ -164,6 +165,10 @@ java -ea -cp build deal.test.CanonicalJsonTest
 echo ""
 echo "=== Running Semantic IR Validator Tests (ISSUE-0286) ==="
 java -ea -cp build deal.test.SemanticIrValidatorTest
+
+echo ""
+echo "=== Running Semantic IR Dumper / ID Allocator Tests (ISSUE-0287) ==="
+java -ea -cp build deal.test.SemanticIrDumperTest
 
 echo ""
 echo "=== Running Protected Path Ops Tests (ISSUE-0262) ==="

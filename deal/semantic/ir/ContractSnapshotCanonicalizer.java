@@ -153,6 +153,37 @@ public final class ContractSnapshotCanonicalizer {
     }
 
     // =========================================================================
+    // General canonical JSON serialization (the single serializer entry)
+    // =========================================================================
+
+    /**
+     * Serializes an arbitrary canonical JSON value to canonical JSON UTF-8
+     * bytes through the single serializer of this component. This is the
+     * general-value serialization entry every whole-document producer
+     * (the dumper, the validator's digest recomputations) consumes: the
+     * canonicalizer remains the one component that touches the
+     * serializer, so whole documents and snapshots can never diverge in
+     * encoding rules (S2; foundation F8).
+     *
+     * @param value the canonical JSON value; non-null
+     * @return the canonical JSON bytes
+     */
+    public static byte[] serializeJson(CanonicalJson.Value value) {
+        return CanonicalJson.serializeBytes(Objects.requireNonNull(value, "value must not be null"));
+    }
+
+    /**
+     * Serializes an arbitrary canonical JSON value to canonical JSON text
+     * (UTF-8; debug/observation surface only).
+     *
+     * @param value the canonical JSON value; non-null
+     * @return the canonical JSON text
+     */
+    public static String serializeText(CanonicalJson.Value value) {
+        return new String(serializeJson(value), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    // =========================================================================
     // Parser (exact inverse)
     // =========================================================================
 
