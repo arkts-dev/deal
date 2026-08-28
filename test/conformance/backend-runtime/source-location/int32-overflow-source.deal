@@ -1,0 +1,15 @@
+// @spec: Runtime execution model — Source locations for integer arithmetic errors
+// @description: Int32 overflow reports the expected runtime error code E8004 at the overflowing expression (v1.2)
+// @expected: runtime-error E8004
+// @features: source-location, runtime, int, overflow, v1.2
+
+export function test_source_location_int32_overflow(): int {
+  let max: int = 2147483647;
+  let one: int = 1;
+  let sum: int = max + one;
+  return sum;
+}
+
+export function main(): null {
+  return null;
+}

@@ -75,8 +75,8 @@ function __rt.check_int(v, file, line, column)
   if v % 1 ~= 0 then
     error(__rt._err("E8001", "expected int, got non-integer number", file, line, column, "int", "number"))
   end
-  if v < -9007199254740991 or v > 9007199254740991 then
-    error(__rt._err("E8004", "int out of safe range", file, line, column, nil, nil))
+  if v < -2147483648 or v > 2147483647 then
+    error(__rt._err("E8004", "int out of range", file, line, column, nil, nil))
   end
   return v
 end
@@ -498,7 +498,12 @@ function __rt.int_mod(a, b, file, line, column)
   if b == 0 then
     error(__rt._err("E8005", "integer division by zero", file, line, column, nil, nil))
   end
-  return __rt.check_int(a - math.modf(a / b) * b, file, line, column)
+  -- Gate the truncating quotient first: MIN_VALUE % -1 raises E8004 because
+  -- the truncated quotient (2147483648) leaves the int32 range, even though
+  -- the mathematical remainder (0) is representable (runtime page D1).
+  local q = math.modf(a / b)
+  __rt.check_int(q, file, line, column)
+  return __rt.check_int(a - q * b, file, line, column)
 end
 
 function __rt.int_pow(a, b, file, line, column)
@@ -506,6 +511,72 @@ function __rt.int_pow(a, b, file, line, column)
     error(__rt._err("E8006", "integer exponent must be non-negative", file, line, column, nil, nil))
   end
   return __rt.check_int(a ^ b, file, line, column)
+end
+
+function __rt.int_neg(a, file, line, column)
+  return __rt.check_int(-a, file, line, column)
+end
+
+-- ===== Bytes runtime =====
+
+local ffi = require("ffi")
+
+--- Fail-closed bytes object validation shared by the bytes entries.
+local function check_bytes(b, file, line, column)
+  if type(b) ~= "table" or b.__kind ~= "bytes" then
+    error(__rt._err("E8001", "expected bytes", file, line, column, "bytes", type(b)))
+  end
+  return b
+end
+
+--- Allocate a fresh zero-filled DEAL bytes buffer of `length` bytes.
+-- ffi.new zero-fills uint8_t storage. A zero-length buffer still allocates
+-- one byte so its storage is stable for borrowed native calls (runtime
+-- page D2). Allocation failure raises E8001 "bytes allocation failed" and
+-- publishes no object.
+function __rt.bytes_new(length, file, line, column)
+  local n = __rt.check_int(length, file, line, column)
+  if n < 0 then
+    error(__rt._err("E8012", "bytes length must be non-negative", file, line, column, nil, nil))
+  end
+  local ok, data = pcall(ffi.new, "uint8_t[?]", math.max(n, 1))
+  if not ok then
+    error(__rt._err("E8001", "bytes allocation failed", file, line, column, nil, nil))
+  end
+  return { __kind = "bytes", __data = data, __len = n }
+end
+
+--- The immutable signed-int32 logical length of a bytes buffer.
+function __rt.bytes_length(b, file, line, column)
+  check_bytes(b, file, line, column)
+  return b.__len
+end
+
+--- Read the unsigned byte (0..255) at index i, 0 <= i < b.length.
+function __rt.bytes_get(b, i, file, line, column)
+  check_bytes(b, file, line, column)
+  local idx = __rt.check_int(i, file, line, column)
+  if idx < 0 or idx >= b.__len then
+    error(__rt._err("E8012", "bytes index out of bounds", file, line, column, nil, nil))
+  end
+  return b.__data[idx]
+end
+
+--- Write the byte value v (0..255) at index i and return the written value.
+-- A failed write (E8012 index, E8013 value range, E8001 non-int index or
+-- value) changes no storage.
+function __rt.bytes_set(b, i, v, file, line, column)
+  check_bytes(b, file, line, column)
+  local idx = __rt.check_int(i, file, line, column)
+  if idx < 0 or idx >= b.__len then
+    error(__rt._err("E8012", "bytes index out of bounds", file, line, column, nil, nil))
+  end
+  local val = __rt.check_int(v, file, line, column)
+  if val < 0 or val > 255 then
+    error(__rt._err("E8013", "bytes value out of range", file, line, column, nil, nil))
+  end
+  b.__data[idx] = val
+  return val
 end
 
 -- ===== Function infrastructure =====
@@ -1564,7 +1635,7 @@ function __rt._json_to_value(fdesc, v, seen, depth)
     return v
   elseif jtype == "int" then
     -- check_int: E8001 for non-number/NaN/Infinity/non-integer,
-    -- E8004 "int out of safe range" beyond the safe range — the int
+    -- E8004 "int out of range" beyond the signed-int32 range — the int
     -- type contract (see check_int above).
     return __rt.check_int(v)
   elseif jtype == "number" then

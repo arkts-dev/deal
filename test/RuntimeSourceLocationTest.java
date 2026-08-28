@@ -253,6 +253,7 @@ public class RuntimeSourceLocationTest {
         }
 
         testDivisionByZero();
+        testInt32Overflow();
         testThrowStatement();
         testArrayOutOfBounds();
         testTypeMismatch();
@@ -306,6 +307,43 @@ public class RuntimeSourceLocationTest {
         } else {
             System.out.println("  Note: column is nil (no span for binary op)");
         }
+    }
+
+    // =========================================================================
+    // Test: Int32 overflow reports correct location
+    // =========================================================================
+
+    static void testInt32Overflow() throws Exception {
+        System.out.println("-- Int32 Overflow --");
+
+        // The overflowing expression `max + one` is on line 4 and starts
+        // at column 18 (the start of the `max` operand); the emitted
+        // __rt.int_add carries the binary expression's span. The overflow
+        // lives inside main() because the location wrapper only invokes
+        // the exported main.
+        String source =
+            "export function main(): int {\n" +       // line 1
+            "  let max: int = 2147483647;\n" +        // line 2
+            "  let one: int = 1;\n" +                 // line 3
+            "  let sum: int = max + one;\n" +         // line 4 (error here)
+            "  return sum;\n" +                       // line 5
+            "}\n";
+
+        String output = compileAndRunExpectError(source, "test_overflow.deal");
+        if (output == null) return;
+
+        Map<String, String> err = parseErrorOutput(output);
+        System.out.println("  Error output: " + output);
+
+        check("E8004".equals(err.get("code")),
+            "int32 overflow error code is E8004, got: " + err.get("code"));
+        check("test_overflow.deal".equals(err.get("file")),
+            "file is test_overflow.deal, got: " + err.get("file"));
+        check("4".equals(err.get("line")),
+            "int32 overflow line is 4, got: " + err.get("line"));
+        check("18".equals(err.get("column")),
+            "int32 overflow column is 18 (overflowing expression start), got: "
+                + err.get("column"));
     }
 
     // =========================================================================

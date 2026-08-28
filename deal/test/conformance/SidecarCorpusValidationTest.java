@@ -74,9 +74,12 @@ import java.util.stream.Stream;
  *       {@code code, message, sourceFile, line, column, expected,
  *       actual, frames, cause}, minimal RFC 8259 §7 escaping, raw UTF-8,
  *       canonical decimal integers, no whitespace between tokens.</li>
- *   <li>The two tracked {@code known-fail runtime-*} fixtures carry no
- *       sidecar (they receive sidecars only at the zero-skip flip); the
- *       known-fail population is exactly the two tracked fixtures.</li>
+ *   <li>The one tracked {@code known-fail runtime-*} fixture carries no
+ *       sidecar (it receives its sidecar only at the zero-skip flip); the
+ *       known-fail population is exactly the one tracked fixture. The
+ *       promoted {@code int-add-overflow.deal} received its runtime-error
+ *       sidecar in the same change that dropped its known-fail marker
+ *       (ISSUE-0332).</li>
  *   <li>All other fixtures ({@code compile-ok}, {@code compile-error},
  *       {@code companion}, frontend fixtures) carry no sidecar except
  *       the Diagnostics-bullet fixtures.</li>
@@ -116,8 +119,15 @@ public class SidecarCorpusValidationTest {
     /** The exact runtime-ok population (ISSUE-0349 completeness). */
     private static final int RUNTIME_OK_COUNT = 192;
 
-    /** The exact runtime-error population (ISSUE-0350 completeness). */
-    private static final int RUNTIME_ERROR_COUNT = 63;
+    /**
+     * The exact runtime-error population (ISSUE-0350 completeness, plus
+     * the five int32 E8004 fixtures ISSUE-0332 promoted/added: the
+     * promoted int-add-overflow and the new int-sub-overflow,
+     * int-mul-overflow, int-conversion-out-of-range, and
+     * source-location/int32-overflow-source fixtures each land their
+     * sidecar in the same change as their expectation).
+     */
+    private static final int RUNTIME_ERROR_COUNT = 68;
 
     /** The G4.6 lane error framing prefixes. */
     private static final String DEAL_ERROR_CODE_LINE = "DEAL_ERROR_CODE: ";
@@ -768,8 +778,9 @@ public class SidecarCorpusValidationTest {
             + "exactly " + RUNTIME_ERROR_COUNT + " runtime-error fixtures "
             + "with sidecars, found " + runtimeError);
 
-        // The tracked known-fail population is exactly the two fixtures that
-        // receive sidecars only at the zero-skip flip.
+        // The tracked known-fail population is exactly the one fixture that
+        // receives its sidecar only at the zero-skip flip
+        // (int-add-overflow was promoted by ISSUE-0332).
         Set<String> knownFail = new TreeSet<>();
         for (Fixture fixture : fixtures) {
             if (fixture.corpusPath().startsWith("backend-runtime/")
@@ -778,7 +789,6 @@ public class SidecarCorpusValidationTest {
             }
         }
         Set<String> expectedKnownFail = new TreeSet<>(Set.of(
-            "backend-runtime/arithmetic/int-add-overflow.deal",
             "backend-runtime/bytes/bytes-buffer-ops.deal"));
         check(knownFail.equals(expectedKnownFail),
             "the tracked known-fail population must be exactly "

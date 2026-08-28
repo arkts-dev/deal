@@ -153,6 +153,35 @@ public class JvmConformanceTest {
         skip("backend-runtime/type-system/dynamic-array-element-e8003.deal",
             "json.parse of a mixed array.", "JVM-GAP-STDJSON");
 
+        // ---- JVM-GAP-INT32: the signed-int32 runtime gate (ISSUE-0277) ----
+        // The v1.2 corpus pins int as [-2147483648, 2147483647] with E8004
+        // on every out-of-range arithmetic result and conversion. The JVM
+        // backend retains the ±(2^53−1) safe range until JVM v1.2
+        // completion (ISSUE-0277), so the LuaJIT-owned int32 expectations
+        // below cannot pass on JVM yet. Once JVM int32 lands, the probes
+        // start passing and the stale-skip gate forces these entries out
+        // (ISSUE-0277 promotion).
+        skip("backend-runtime/arithmetic/int-add-overflow.deal",
+            "E8004 for 2147483647 + 1 requires the signed-int32 gate; "
+                + "JvmBackend retains the ±(2^53−1) safe range "
+                + "(ISSUE-0277).", "JVM-GAP-INT32");
+        skip("backend-runtime/arithmetic/int-sub-overflow.deal",
+            "E8004 for -2147483648 - 1 requires the signed-int32 gate; "
+                + "JvmBackend retains the ±(2^53−1) safe range "
+                + "(ISSUE-0277).", "JVM-GAP-INT32");
+        skip("backend-runtime/arithmetic/int-mul-overflow.deal",
+            "E8004 for 65536 * 65536 requires the signed-int32 gate; "
+                + "JvmBackend retains the ±(2^53−1) safe range "
+                + "(ISSUE-0277).", "JVM-GAP-INT32");
+        skip("backend-runtime/arithmetic/int-conversion-out-of-range.deal",
+            "E8004 for int(2147483648.0) / int(-2147483649.0) requires "
+                + "the signed-int32 gate; JvmBackend retains the "
+                + "±(2^53−1) safe range (ISSUE-0277).", "JVM-GAP-INT32");
+        skip("backend-runtime/source-location/int32-overflow-source.deal",
+            "E8004 from the int32-overflowing expression requires the "
+                + "signed-int32 gate; JvmBackend retains the ±(2^53−1) "
+                + "safe range (ISSUE-0277).", "JVM-GAP-INT32");
+
         // ---- JVM-GAP-JSONABLE-RESIDUAL: residual @jsonable JVM defects ----
         skip("backend-runtime/jsonable/jsonable-complex-roundtrip.deal",
             "E6000: member access as a value and NEQ over an error-typed "
@@ -283,7 +312,11 @@ public class JvmConformanceTest {
             + "array wrapper classes cannot cross module boundaries "
             + "(javac-rejected artifact; a missed E6000 guard)",
         "JVM-GAP-ASYNC-FNEXPR", "async function expressions and "
-            + "block-level async functions (E6000)"
+            + "block-level async functions (E6000)",
+        "JVM-GAP-INT32", "signed-int32 runtime gate — JvmBackend retains "
+            + "the ±(2^53−1) safe range until JVM v1.2 completion "
+            + "(ISSUE-0277); the int32-overflow E8004 expectations "
+            + "pass only on LuaJIT"
     );
 
     // =========================================================================

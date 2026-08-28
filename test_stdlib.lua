@@ -1024,23 +1024,21 @@ end)
 
 local timelib = require("std.time")
 
-test("time.nowMillis returns a reasonable timestamp in milliseconds", function()
-  local ts = timelib.nowMillis.f()
-  assert(type(ts) == "number")
-  assert(ts % 1 == 0, "timestamp should be an integer")
-  -- Should be sometime after 2010-01-01 in milliseconds (1262304000000)
-  assert(ts > 1262304000000, "timestamp should be after 2010, got " .. tostring(ts))
-  -- Should be before 2100-01-01 in milliseconds (4102444800000)
-  assert(ts < 4102444800000, "timestamp should be before 2100, got " .. tostring(ts))
+-- The locked time selector (luajit-v1.2-stdlib-contracts D6): the retained
+-- ()->int implementation computes os.time() * 1000 (~1.7e12 for contemporary
+-- epoch milliseconds), which deterministically raises E8004 under the
+-- signed-int32 gate landed by ISSUE-0332. This is the design-sanctioned
+-- staged state (gate page D3: the gate validity condition stays unsatisfied
+-- until the ISSUE-0237 resolution lands its disposition pair); the TIME
+-- child owns the final disposition of these pins.
+test("time.nowMillis raises E8004 under the signed-int32 gate (locked selector, ISSUE-0237)", function()
+  assert_error_code(function() timelib.nowMillis.f() end, "E8004")
 end)
 
-test("time.nowMillis returns value ~1000x os.time()", function()
-  local ts = timelib.nowMillis.f()
-  local raw = os.time()
-  -- The millisecond value should be roughly 1000x the seconds value
-  local ratio = ts / math.max(raw, 1)
-  assert(ratio >= 990 and ratio <= 1010,
-    "nowMillis should be ~1000x os.time(), got ratio " .. tostring(ratio))
+test("time.nowMillis E8004 carries the canonical int-out-of-range message", function()
+  local err = assert_error_code(function() timelib.nowMillis.f() end, "E8004")
+  assert(err.message == "int out of range",
+    "expected 'int out of range', got " .. tostring(err.message))
 end)
 
 -- ===========================================================================

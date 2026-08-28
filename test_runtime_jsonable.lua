@@ -2144,7 +2144,7 @@ test("json_to_json encode matrix: int field", function()
   end, "E8001", "expected int, got infinity")
   assert_error(function()
     __rt.json_to_json("C", { n = 9007199254740992, __classname = "C", __kind = "class" }, fields)
-  end, "E8004", "int out of safe range")
+  end, "E8004", "int out of range")
 end)
 
 test("json_to_json encode matrix: number field", function()
