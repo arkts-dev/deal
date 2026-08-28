@@ -1,5 +1,7 @@
 package deal.module;
 
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
 import deal.project.ConfiguredModuleRoot;
 import deal.project.ExternalEntry;
 import deal.project.ProjectContext;
@@ -31,6 +33,12 @@ import java.util.Objects;
  * eligibility gates, the {@code CanonicalClassIdentityIndex}, and the
  * intrinsic {@code Error} synthesis consume the resolved-source stream in
  * the identity-assembly half of this epic.</p>
+ *
+ * <p>The identity carriers this classifier produces are the neutral
+ * JDK-only shapes pinned by {@code deal.identity}
+ * ({@link CanonicalModuleIdentity}, {@link ProjectModuleIdentity}) —
+ * this layer is their producer and performs the classification; the
+ * carrier package itself pins shapes only.</p>
  *
  * <h2>Classifier rules (D6, fixed order)</h2>
  * <ol>
@@ -233,7 +241,8 @@ public final class ModuleIdentityResolver {
         }
         if (builtin) {
             return new ModuleClassification(
-                new CanonicalModuleIdentity.BuiltinModule(), null, Issue.NONE);
+                CanonicalModuleIdentity.BuiltinModule.INSTANCE, null,
+                Issue.NONE);
         }
         if (externalKey != null) {
             return new ModuleClassification(

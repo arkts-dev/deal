@@ -1,5 +1,7 @@
 package deal.module;
 
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
 import deal.project.CliOverrides;
 import deal.project.ConfiguredModuleRoot;
 import deal.project.ExternalEntry;
@@ -329,9 +331,9 @@ public final class ModuleIdentityResolverTest {
         check(!new CanonicalModuleIdentity.ExternalModule("host/x")
                 .equals(new CanonicalModuleIdentity.ExternalModule("host/y")),
             "ExternalModule distinguishes raw import specifiers");
-        check(new CanonicalModuleIdentity.BuiltinModule()
-                .equals(new CanonicalModuleIdentity.BuiltinModule()),
-            "BuiltinModule equality is structural");
+        check(CanonicalModuleIdentity.BuiltinModule.INSTANCE
+                .equals(CanonicalModuleIdentity.BuiltinModule.INSTANCE),
+            "BuiltinModule is the singleton builtin instance");
         checkThrowsIllegalArgument(() ->
                 new CanonicalModuleIdentity.ExternalModule(null),
             "ExternalModule rejects a null raw import specifier");
@@ -340,7 +342,7 @@ public final class ModuleIdentityResolverTest {
         // present exactly for the ProjectModule form and must equal it.
         checkThrowsIllegalArgument(() ->
                 new ModuleIdentityResolver.ModuleClassification(
-                    new CanonicalModuleIdentity.BuiltinModule(), identity,
+                    CanonicalModuleIdentity.BuiltinModule.INSTANCE, identity,
                     ModuleIdentityResolver.Issue.NONE),
             "ModuleClassification rejects a projectIdentity without ProjectModule");
         checkThrowsIllegalArgument(() ->
