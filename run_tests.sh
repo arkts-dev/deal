@@ -325,6 +325,10 @@ java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar 
 echo ""
 echo "=== Running Module System Tests ==="
 java -ea -cp build deal.test.ModuleSystemTest
+echo ""
+echo "=== Running Source Module Resolver Tests (ISSUE-0267 T6) ==="
+java -ea -cp build deal.module.SourceModuleResolverTest
+
 
 echo ""
 echo "=== Running Stdlib .d.deal Parse Tests ==="
