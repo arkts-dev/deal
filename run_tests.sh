@@ -52,6 +52,7 @@ javac --release 25 -proc:none -d build \
   test/LoweringFoundationTest.java \
   test/SemanticIrSchemaTest.java \
   test/FailureContractRegistryTest.java \
+  test/CanonicalJsonTest.java \
   test/AstAndTypesTest.java \
   test/LexerTest.java \
   test/ParserTest.java \
@@ -148,6 +149,10 @@ java -ea -cp build deal.test.SemanticIrSchemaTest
 echo ""
 echo "=== Running Failure Contract Registry Tests (ISSUE-0285) ==="
 java -ea -cp build deal.test.FailureContractRegistryTest
+
+echo ""
+echo "=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ==="
+java -ea -cp build deal.test.CanonicalJsonTest
 
 echo ""
 echo "=== Running Protected Path Ops Tests (ISSUE-0262) ==="
