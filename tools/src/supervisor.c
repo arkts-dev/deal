@@ -1,31 +1,30 @@
 /*
- * DEALPG4 nested supervisor: serve/run mode-entry surfaces and the
- * in-process core entry (ISSUE-0243, epic Sequencing steps 2-3).
+ * DEALPG4 nested supervisor: serve/run mode-entry surfaces, the
+ * in-process core entry, the nested control-channel state machine,
+ * the serve-mode OUT/OUT_END stream relay, REPORT/CLEAN/FAILED, the
+ * TERM/KILL/adoption/proof escalation, and the run-mode passthrough
+ * surface (ISSUE-0244, epic Sequencing steps 4-5).
  *
- * See supervisor.h for the pinned surfaces and the stage invariants.
- * This child owns exactly the containment engine: subreaper set +
- * read-back before any fork, entry capability refusal, the blocked
- * stub state machine (parent D3 steps 1-8), the status/release/stream
- * pipes, STUB_FORKED through the minimal non-blocking pending slot,
- * the single-threaded ppoll event loop, the phase timerfd/signalfd
- * engine, the bounded drains, the release write, and the STARTED
- * three-condition exec-evidence classification. The record surface
- * (REPORT/CLEAN/FAILED/OUT relay, the channel machine, the proof
- * loop) lands with the channel machine (epic Sequencing step 4), so
- * after the stage's classification the invocation ends with the
- * temporary nonzero stage-terminal status with the stub reaped, the
- * drains at EOF, and every supervisor fd closed.
- *
- * Release authorization at this stage: run mode releases on the
- * verified STUB_IDENTITY nonce ownership (the CLI nonce); serve mode
- * has no ACK handling yet and never releases — serve ends at T1 with
- * the STARTUP_TIMEOUT classification.
+ * See supervisor.h for the pinned surfaces and semantics
+ * (dealpg4-supervisor-engine D5/D7/D8, native-supervisor-containment
+ * D1-D10). This child completes the engine on top of the steps-2-3
+ * machinery: subreaper set + read-back, the blocked stub state
+ * machine, the status/release/stream pipes, the single-threaded ppoll
+ * loop, the phase recipe, the bounded drains, the release write, and
+ * the STARTED three-condition exec-evidence classification — plus
+ * everything the channel machine owns: ACK/CANCEL with the canonical
+ * rejection split, per-state cancel/channel-loss/PROTOCOL_ERROR
+ * semantics, the OUT/OUT_END stream relay with the conditional
+ * OUT_END rule, the bounded write-side queue, the canonical REPORT,
+ * the terminal records, the proof loop, the mid-run TIMER_FAILED
+ * path, and the run-mode passthrough surface.
  */
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 
 #include "supervisor.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -65,27 +64,16 @@
 /* The run-mode --ready-frame flag, valid only at argv[4] (D4). */
 #define DEALPG4_RUN_READY_FRAME_FLAG "--ready-frame"
 
-/* Internal core-refusal status for the timerfd_create entry failure
- * (D8): the serve entry maps it to the capability-class exit 4 and the
- * run entry prints the named token and exits 2. It is not a process
- * exit status of its own. */
-#define DEALPG4_SUPERVISOR_ENTRY_TIMER_FAILED 5
-
-/* Temporary stage-terminal status for a classified invocation:
- * nonzero, distinct from the run usage status (2) and the entry
- * refusals (3/4/5), and not part of the final exit-status map — the
- * channel machine replaces it with the record-bearing statuses (D3/D4)
- * in the next sequencing step. */
-#define DEALPG4_SUPERVISOR_STAGE_TERMINAL 1
-
 /* Status-pipe line buffer: the raw stub records are catalog records
  * capped at DEALPG4_MAX_LINE_OTHER_BYTES including the LF, so the
  * stored content (before the LF) never exceeds the cap minus one. */
 #define DEALPG4_SUPERVISOR_STATUS_BUF_BYTES DEALPG4_MAX_LINE_OTHER_BYTES
 
-/* STUB_FORKED pending-slot line buffer: "DEALPG4 STUB_FORKED" + a
- * 19-digit decimal id + a 10-digit decimal pid + LF fits comfortably. */
-#define DEALPG4_SUPERVISOR_CHANNEL_LINE_BYTES 96
+/* Control-channel read buffer: one complete record line. A record
+ * longer than the largest catalog cap (the INVOKE line cap) is an
+ * oversize framing defect — the reader aborts PROTOCOL_ERROR before
+ * the buffer overruns. */
+#define DEALPG4_SUPERVISOR_CTRL_BUF_BYTES (DEALPG4_MAX_LINE_INVOKE_BYTES + 1)
 
 /* === Exec-hygiene capture (D8) ========================================== */
 
@@ -175,8 +163,8 @@ static void dealpg4_run_print_usage(void)
 }
 
 /* Restore the captured F_GETFL flag sets on stdout/stderr (D8 fd-flag
- * discipline: the originals are restored before every exit on this
- * child's exit paths). */
+ * discipline: the originals are restored before every exit on the run
+ * entry's exit paths). */
 static void dealpg4_run_restore_stdio_flags(int stdout_flags,
                                             int stderr_flags)
 {
@@ -430,7 +418,206 @@ static void dealpg4_stub_run(const dealpg4_stub_cfg *cfg)
     }
 }
 
-/* === Supervisor state and phases ======================================== */
+/* === Bounded per-record pending queue (parent D1 write-side) ============ */
+
+/* The per-record pending queue of the control channel: one FIFO of
+ * serialized record lines. OUT chunk lines count toward the 1 MiB
+ * relay-queue cap (DEALPG4_RELAY_QUEUE_CAP_BYTES == the drain
+ * retention cap); catalog-bounded control records (STUB_FORKED,
+ * STUB_READY, STARTED, EXEC_FAILED, OUT_END, REPORT, CLEAN/FAILED,
+ * REJECT — at most a bounded handful per invocation, each <= 8192
+ * bytes) never count toward the cap and are never dropped by queue
+ * pressure. The arena is static (one invocation per core call); items
+ * may wrap the arena end as two fragments. */
+#define DEALPG4_SUP_QUEUE_CTRL_RESERVE_BYTES 131072
+/* The queue holds at most the D7 retention budget per stream — 1 MiB of
+ * retained raw payload per stream (hex-encoded into OUT lines: 2 chars
+ * per raw byte plus the per-record prefix) plus catalog-bounded control
+ * records. "Queued bytes never exceed retained bytes" (drain.h): the cap
+ * is per-stream raw payload, so a stream's queued OUT payload never
+ * exceeds what its drain context retained. */
+#define DEALPG4_SUP_QUEUE_ARENA_BYTES \
+    (2 * (2 * DEALPG4_DRAIN_CAP_BYTES + 2 * DEALPG4_MAX_LINE_OTHER_BYTES) \
+     + DEALPG4_SUP_QUEUE_CTRL_RESERVE_BYTES)
+#define DEALPG4_SUP_QUEUE_MAX_ITEMS 96
+
+typedef struct dealpg4_sup_qfrag {
+    size_t start;
+    size_t len;
+} dealpg4_sup_qfrag;
+
+typedef struct dealpg4_sup_qitem {
+    dealpg4_sup_qfrag frags[2];
+    size_t off;   /* bytes already written of this item */
+    int kind;     /* 0 = OUT line (counts toward the stream's raw cap),
+                     1 = control record (never dropped by pressure) */
+    int stream;   /* OUT: 0 = stdout, 1 = stderr; ctrl: -1 */
+    size_t raw;   /* OUT: the chunk's raw payload bytes */
+} dealpg4_sup_qitem;
+
+typedef struct dealpg4_supervisor_queue {
+    unsigned char *arena;
+    dealpg4_sup_qitem items[DEALPG4_SUP_QUEUE_MAX_ITEMS];
+    int head;              /* item slot of the oldest item */
+    int tail;              /* item slot of the next free item */
+    int n_items;
+    size_t n_bytes;        /* total line bytes queued */
+    size_t data_raw[2];    /* queued OUT raw payload per stream (the
+                              per-stream retention-budget cap) */
+    size_t free_start;     /* arena offset where the next item starts */
+} dealpg4_supervisor_queue;
+
+static unsigned char
+    dealpg4_supervisor_queue_arena[DEALPG4_SUP_QUEUE_ARENA_BYTES];
+
+static void dealpg4_supervisor_queue_init(dealpg4_supervisor_queue *q)
+{
+    q->arena = dealpg4_supervisor_queue_arena;
+    q->head = 0;
+    q->tail = 0;
+    q->n_items = 0;
+    q->n_bytes = 0;
+    q->data_raw[0] = 0;
+    q->data_raw[1] = 0;
+    q->free_start = 0;
+}
+
+static int dealpg4_supervisor_queue_empty(
+    const dealpg4_supervisor_queue *q)
+{
+    return q->n_items == 0;
+}
+
+/* Append one serialized record line. OUT lines (kind 0) are refused —
+ * and the caller drops the payload with the stream's truncation
+ * consequence — when the payload would push the stream's queued raw
+ * payload past its cap (the stream's retained bytes: the D7 retention
+ * budget, at most 1 MiB plus the truncation marker per stream).
+ * Control records (kind 1) fit by construction (bounded count x 8192
+ * <= the reserve). Returns 0 on success, -1 on refusal or a structural
+ * overflow (defect-bounded). */
+static int dealpg4_supervisor_queue_append(dealpg4_supervisor_queue *q,
+                                           const char *line, size_t len,
+                                           int kind, int stream,
+                                           size_t raw_len,
+                                           size_t raw_cap)
+{
+    dealpg4_sup_qitem *item;
+    size_t start0;
+    size_t len0;
+    size_t len1;
+
+    if (q->n_items >= DEALPG4_SUP_QUEUE_MAX_ITEMS)
+        return -1;
+    if (len > DEALPG4_SUP_QUEUE_ARENA_BYTES - q->n_bytes)
+        return -1;
+    if (kind == 0
+        && q->data_raw[stream] + raw_len > raw_cap)
+        return -1; /* the stream's cap reached: payload dropped */
+    item = &q->items[q->tail];
+    start0 = q->free_start;
+    if (start0 + len <= DEALPG4_SUP_QUEUE_ARENA_BYTES) {
+        len0 = len;
+        len1 = 0;
+    } else {
+        len0 = DEALPG4_SUP_QUEUE_ARENA_BYTES - start0;
+        len1 = len - len0;
+    }
+    memcpy(q->arena + start0, line, len0);
+    if (len1 > 0)
+        memcpy(q->arena, line + len0, len1);
+    item->frags[0].start = start0;
+    item->frags[0].len = len0;
+    item->frags[1].start = 0;
+    item->frags[1].len = len1;
+    item->off = 0;
+    item->kind = kind;
+    item->stream = kind == 0 ? stream : -1;
+    item->raw = kind == 0 ? raw_len : 0;
+    q->tail = (q->tail + 1) % DEALPG4_SUP_QUEUE_MAX_ITEMS;
+    q->n_items++;
+    q->n_bytes += len;
+    if (kind == 0)
+        q->data_raw[stream] += raw_len;
+    /* == (start0 + len) mod the arena size: len1 when the item wrapped
+     * the arena end, start0 + len otherwise. */
+    q->free_start = (start0 + len) % DEALPG4_SUP_QUEUE_ARENA_BYTES;
+    return 0;
+}
+
+/* Drop every undelivered record (channel close / loss / abort). */
+static void dealpg4_supervisor_queue_clear(dealpg4_supervisor_queue *q)
+{
+    q->head = 0;
+    q->tail = 0;
+    q->n_items = 0;
+    q->n_bytes = 0;
+    q->data_raw[0] = 0;
+    q->data_raw[1] = 0;
+    q->free_start = 0;
+}
+
+/* Flush queued records to the fd with non-blocking writes (the
+ * write-side contract: a write never blocks). Returns 0 when the
+ * queue drained, 1 when a write hit EAGAIN (the owner polls POLLOUT),
+ * -1 on EPIPE or any other write error (channel loss). */
+static int dealpg4_supervisor_queue_flush(dealpg4_supervisor_queue *q,
+                                          int fd)
+{
+    while (q->n_items > 0) {
+        dealpg4_sup_qitem *item = &q->items[q->head];
+        size_t total = item->frags[0].len + item->frags[1].len;
+        size_t off = item->off;
+        size_t base = 0;
+        size_t fi;
+
+        if (off >= total) {
+            /* fully written: pop */
+            if (item->kind == 0)
+                q->data_raw[item->stream] -= item->raw;
+            q->n_bytes -= total;
+            q->head = (q->head + 1) % DEALPG4_SUP_QUEUE_MAX_ITEMS;
+            q->n_items--;
+            if (q->n_items == 0) {
+                q->head = 0;
+                q->tail = 0;
+                q->free_start = 0;
+            }
+            continue;
+        }
+        for (fi = 0; fi < 2; fi++) {
+            if (off < base + item->frags[fi].len)
+                break;
+            base += item->frags[fi].len;
+        }
+        if (fi >= 2) {
+            /* Unreachable: off < total implies a matching fragment. */
+            item->off = total;
+            continue;
+        }
+        for (;;) {
+            ssize_t r = write(fd,
+                              q->arena + item->frags[fi].start
+                                  + (off - base),
+                              item->frags[fi].len - (off - base));
+
+            if (r > 0) {
+                item->off += (size_t)r;
+                if (item->off >= total)
+                    break;
+                continue;
+            }
+            if (r < 0 && errno == EINTR)
+                continue;
+            if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+                return 1;
+            return -1; /* EPIPE or any other error: channel loss */
+        }
+    }
+    return 0;
+}
+
+/* === Supervisor state =================================================== */
 
 typedef enum dealpg4_supervisor_phase {
     DEALPG4_PHASE_STARTUP = 0, /* waiting for the release; deadline T1 */
@@ -440,6 +627,38 @@ typedef enum dealpg4_supervisor_phase {
     DEALPG4_PHASE_FINALIZE     /* deadline T5 */
 } dealpg4_supervisor_phase;
 
+/* Channel states (dealpg4-supervisor-engine D5): PRE_RELEASE expects
+ * {ACK, CANCEL} from STUB_FORKED until the release write; RELEASED
+ * expects {CANCEL} from the observed successful release write until
+ * the terminal record is queued; TERMINAL expects {CANCEL} while the
+ * terminal record is queued until delivery and channel close. */
+typedef enum dealpg4_channel_state {
+    DEALPG4_CHAN_PRE_RELEASE = 0,
+    DEALPG4_CHAN_RELEASED,
+    DEALPG4_CHAN_TERMINAL
+} dealpg4_channel_state;
+
+/* Per-stream relay state (serve mode). */
+typedef struct dealpg4_supervisor_relay {
+    dealpg4_drain_ctx *drain;
+    size_t relay_off;       /* retained bytes already queued as OUT */
+    int out_end_queued;     /* the single OUT_END queued (drain EOF) */
+    int queue_dropped;      /* an OUT payload was dropped at the queue
+                               cap: the stream's truncation consequence */
+    int is_out;             /* 1 = stdout tag "out", 0 = "err" */
+    uint64_t chunks;        /* OUT chunks queued (in-process view) */
+} dealpg4_supervisor_relay;
+
+/* Bounded survivor view from one /proc scan pass. */
+typedef struct dealpg4_sup_survivors {
+    pid_t pids[DEALPG4_SUP_SURVIVOR_VIEW_MAX];
+    size_t count;
+    int group_found;
+    int session_found;
+    int adopted_found;
+    int ok;   /* the /proc scan itself completed (no opendir failure) */
+} dealpg4_sup_survivors;
+
 typedef struct dealpg4_supervisor_state {
     /* Invocation surface. */
     const char **argv;
@@ -448,6 +667,10 @@ typedef struct dealpg4_supervisor_state {
     int64_t invocation_id;
     int64_t budget_t;
     int control_fd;
+    int serve_mode;   /* the invocation entered with a control channel:
+                         the exit-status map and stdio discipline stay
+                         serve-mode even after channel loss closes the fd */
+    int emit_ready_frame;
 
     /* Monotonic engine. */
     int64_t t0;
@@ -468,13 +691,14 @@ typedef struct dealpg4_supervisor_state {
     pid_t stub_sid;
     int identity_seen;
     int identity_verified;
-    int identity_failed;
 
     /* Release. */
     int release_fd; /* supervisor write end */
     int release_write_done;
     int release_write_ok; /* the single write(2) returned 1 */
     int release_recv_pid_match;
+    int release_frozen;   /* the release path is frozen (cancel / AUTH_FAILED
+                             / TIMER_FAILED pre-release): never a byte */
 
     /* Status pipe (supervisor read end) and the raw record line reader. */
     int status_fd;
@@ -493,84 +717,336 @@ typedef struct dealpg4_supervisor_state {
     int stub_reaped;
     int stub_si_code;
     int stub_si_status;
+    int64_t reap_count;
+    int64_t adopt_count;
 
     /* Drains. */
     dealpg4_drain_ctx *drain_out;
     dealpg4_drain_ctx *drain_err;
     int stream_out_fd;
     int stream_err_fd;
+    int drains_active; /* the stream pipes exist and are drained */
 
-    /* Control channel (serve): the STUB_FORKED minimal pending slot. */
-    char ch_line[DEALPG4_SUPERVISOR_CHANNEL_LINE_BYTES];
-    size_t ch_len;
-    size_t ch_off;
-    int ch_pending;
-    int channel_lost; /* observed; no cancel semantics at this stage */
+    /* Channel machine. */
+    dealpg4_channel_state channel_state;
+    dealpg4_expectation_set expect;
+    int ack_applied;
+    int cancel_requested;  /* a valid CANCEL or channel loss applied the
+                              cancel path */
+    int channel_lost;
+    int protocol_aborted;
+    char ctrl_buf[DEALPG4_SUPERVISOR_CTRL_BUF_BYTES];
+    size_t ctrl_buf_len;
 
-    /* Classification and termination. */
+    /* Write-side queue + relay. */
+    dealpg4_supervisor_queue queue;
+    dealpg4_supervisor_relay relay_out;
+    dealpg4_supervisor_relay relay_err;
+
+    /* Proof. */
+    int proof_first_pass;
+    int proof_done;
+    int64_t proof_first_pass_ms;
+    int64_t proof_next_pass_ms; /* bounded proof-pass throttle */
+    int group_clean;
+    int session_clean;
+    int drain_ok;
+    int proof_failed_class; /* DRAIN_FAILED/PROOF_TIMEOUT/OVERALL_TIMEOUT
+                               or a survivor token: REPORT.drainEof = 0 */
+
+    /* REPORT timings. */
+    int64_t startup_ms;
+    int64_t exec_ms;
+    int64_t term_ms;
+    int64_t kill_ms;
+    int64_t proof_ms;
+    int64_t final_ms;
+
+    /* Run-mode passthrough + ready frame + REPORT line. */
+    size_t pass_out_off;
+    size_t pass_err_off;
+    int pass_out_lost;
+    int pass_err_lost;
+    char ready_line[64];
+    size_t ready_len;
+    size_t ready_off;
+    int ready_pending;
+    char report_line[DEALPG4_MAX_LINE_OTHER_BYTES];
+    size_t report_len;
+    size_t report_off;
+    int report_pending;
+    int report_lead;        /* a leading LF keeps the canonical REPORT a
+                               line of its own when the stderr
+                               passthrough tail lacked one */
+    int report_sep_done;    /* the lead decision was made (one-shot) */
+
+    /* Terminal records. */
+    dealpg4_supervise_terminal final_kind;
+    char failure_token[32];
+    int terminal_queued;
+    int started_published;
+    /* TERMINAL close linger: after the per-record queue drains, the
+     * channel stays open for one bounded quiet pass so a terminal
+     * CANCEL the outer sent upon observing the terminal record is
+     * still read — its REJECT queues behind the terminal record and
+     * flushes before the channel close (D5 flush-before-close). The
+     * linger is consumed inside T5 (never an extension) and ends at
+     * channel loss / T5 / the outer's close. */
+    int close_lingering;
+    int64_t close_linger_deadline_ms;
     dealpg4_supervise_class classification;
     int done;
+
+    /* Survivor identity list (bounded, in-process view). */
+    pid_t survivor_pids[DEALPG4_SUP_SURVIVOR_VIEW_MAX];
+    size_t survivor_count;
 } dealpg4_supervisor_state;
 
-/* === Channel write (STUB_FORKED minimal pending slot) =================== */
 
-/* Write the STUB_FORKED record immediately after fork returns (parent
- * D3), non-blocking through the single minimal pending slot: on EAGAIN
- * the record stays pending and the loop flushes it on POLLOUT (the
- * full bounded per-record queue lands with the channel machine). The
- * write never blocks. */
-static void dealpg4_supervisor_channel_flush(dealpg4_supervisor_state *state)
+/* Forward declarations (definition order: publication, relay, release,
+ * identity, status, reaping, deadlines, proof, channel, report). */
+static void dealpg4_supervisor_timer_failed(dealpg4_supervisor_state *state);
+static void dealpg4_supervisor_finalize(dealpg4_supervisor_state *state);
+static int dealpg4_supervisor_proof_pending(
+    const dealpg4_supervisor_state *state);
+static void dealpg4_supervisor_proof_deadline(
+    dealpg4_supervisor_state *state);
+
+/* === Record publication ================================================= */
+
+/* Publish one catalog-bounded control record on the control channel
+ * (serve mode only; suppressed after a PROTOCOL_ERROR close). The
+ * record is serialized and appended to the bounded queue — control
+ * records are never dropped by queue pressure. A serialization
+ * refusal is a defect: no malformed line is ever emitted. */
+static void dealpg4_supervisor_publish(dealpg4_supervisor_state *state,
+                                       dealpg4_record_type type,
+                                       const dealpg4_field_value *fields,
+                                       size_t nfields)
 {
-    if (!state->ch_pending)
-        return;
-    for (;;) {
-        ssize_t r = write(state->control_fd, state->ch_line + state->ch_off,
-                          state->ch_len - state->ch_off);
+    char line[DEALPG4_MAX_LINE_OTHER_BYTES];
+    size_t written = 0;
 
-        if (r > 0) {
-            state->ch_off += (size_t)r;
-            if (state->ch_off >= state->ch_len) {
-                state->ch_pending = 0;
-                return;
-            }
-            continue;
-        }
-        if (r < 0 && errno == EINTR)
-            continue;
-        if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-            return; /* keep pending; POLLOUT retries */
-        /* EPIPE or any other error: stage-temporary drop (the
-         * channel-loss write semantics land with the channel machine);
-         * the invocation continues bounded under its own deadlines. */
-        state->ch_pending = 0;
+    if (state->control_fd < 0 || state->protocol_aborted)
         return;
-    }
+    if (dealpg4_serialize(type, fields, nfields, line, sizeof line,
+                          &written) != 0)
+        return;
+    (void)dealpg4_supervisor_queue_append(&state->queue, line, written,
+                                          1, -1, 0, 0);
 }
 
+/* Two-decimal-field records (STUB_FORKED, EXEC_FAILED, OUT_END tag
+ * variants handled separately). */
+static void dealpg4_supervisor_publish_two_decimal(
+    dealpg4_supervisor_state *state, dealpg4_record_type type,
+    int64_t a, int64_t b)
+{
+    char abuf[32];
+    char bbuf[32];
+    dealpg4_field_value fields[2];
+
+    snprintf(abuf, sizeof abuf, "%lld", (long long)a);
+    snprintf(bbuf, sizeof bbuf, "%lld", (long long)b);
+    fields[0].data = abuf;
+    fields[0].len = strlen(abuf);
+    fields[1].data = bbuf;
+    fields[1].len = strlen(bbuf);
+    dealpg4_supervisor_publish(state, type, fields, 2);
+}
+
+/* STUB_FORKED <invocationId> <stubPid> — queued immediately after fork
+ * returns (parent D3). */
 static void dealpg4_supervisor_publish_stub_forked(
+    dealpg4_supervisor_state *state)
+{
+    dealpg4_supervisor_publish_two_decimal(
+        state, DEALPG4_REC_STUB_FORKED, state->invocation_id,
+        (int64_t)state->stub_pid);
+}
+
+/* STUB_READY <invocationId> <stubPid> <pgid> <sid> <nonce> — published
+ * only after the identity cross-verification passed (parent D9). */
+static void dealpg4_supervisor_publish_stub_ready(
     dealpg4_supervisor_state *state)
 {
     char idbuf[32];
     char pidbuf[32];
-    dealpg4_field_value fields[2];
-    size_t written = 0;
+    char pgidbuf[32];
+    char sidbuf[32];
+    dealpg4_field_value fields[5];
 
-    if (state->control_fd < 0)
-        return; /* run mode: no channel, no id-bearing records */
     snprintf(idbuf, sizeof idbuf, "%lld", (long long)state->invocation_id);
     snprintf(pidbuf, sizeof pidbuf, "%ld", (long)state->stub_pid);
+    snprintf(pgidbuf, sizeof pgidbuf, "%ld", (long)state->stub_pgid);
+    snprintf(sidbuf, sizeof sidbuf, "%ld", (long)state->stub_sid);
     fields[0].data = idbuf;
     fields[0].len = strlen(idbuf);
     fields[1].data = pidbuf;
     fields[1].len = strlen(pidbuf);
-    if (dealpg4_serialize(DEALPG4_REC_STUB_FORKED, fields, 2,
-                          state->ch_line, sizeof state->ch_line,
-                          &written) != 0)
+    fields[2].data = pgidbuf;
+    fields[2].len = strlen(pgidbuf);
+    fields[3].data = sidbuf;
+    fields[3].len = strlen(sidbuf);
+    fields[4].data = state->nonce;
+    fields[4].len = DEALPG4_NONCE_HEX_CHARS;
+    dealpg4_supervisor_publish(state, DEALPG4_REC_STUB_READY, fields, 5);
+}
+
+/* STARTED <invocationId> — only under the parent D3 three-condition
+ * exec-confirmation rule (published once, never retracted). */
+static void dealpg4_supervisor_publish_started(
+    dealpg4_supervisor_state *state)
+{
+    char idbuf[32];
+    dealpg4_field_value fields[1];
+
+    snprintf(idbuf, sizeof idbuf, "%lld", (long long)state->invocation_id);
+    fields[0].data = idbuf;
+    fields[0].len = strlen(idbuf);
+    dealpg4_supervisor_publish(state, DEALPG4_REC_STARTED, fields, 1);
+}
+
+/* OUT_END <invocationId> out|err — exactly one per stream, only at that
+ * stream's drain EOF. */
+static void dealpg4_supervisor_publish_out_end(
+    dealpg4_supervisor_state *state, const dealpg4_supervisor_relay *relay)
+{
+    char idbuf[32];
+    char tag[4];
+    dealpg4_field_value fields[2];
+
+    snprintf(idbuf, sizeof idbuf, "%lld", (long long)state->invocation_id);
+    memcpy(tag, relay->is_out ? "out" : "err", 4);
+    fields[0].data = idbuf;
+    fields[0].len = strlen(idbuf);
+    fields[1].data = tag;
+    fields[1].len = 3;
+    dealpg4_supervisor_publish(state, DEALPG4_REC_OUT_END, fields, 2);
+}
+
+/* REJECT <invocationId> - CANCEL_AUTH_FAILED — the record-level answer
+ * to a mismatched or terminal CANCEL (channel stays open, invocation
+ * untouched). The invocation id is the CANCEL record's own id field. */
+static void dealpg4_supervisor_publish_reject(
+    dealpg4_supervisor_state *state, int64_t record_id)
+{
+    char idbuf[32];
+    static const char dash[] = "-";
+    static const char reason[] = "CANCEL_AUTH_FAILED";
+    dealpg4_field_value fields[3];
+
+    snprintf(idbuf, sizeof idbuf, "%lld", (long long)record_id);
+    fields[0].data = idbuf;
+    fields[0].len = strlen(idbuf);
+    fields[1].data = dash;
+    fields[1].len = 1;
+    fields[2].data = reason;
+    fields[2].len = sizeof(reason) - 1;
+    dealpg4_supervisor_publish(state, DEALPG4_REC_REJECT, fields, 3);
+}
+
+/* === Stream relay (serve mode, D5(d)) =================================== */
+
+static void dealpg4_supervisor_relay_stream(
+    dealpg4_supervisor_state *state, dealpg4_supervisor_relay *relay);
+
+/* Exec confirmation established (parent D3 condition 3): publish
+ * STARTED exactly once and begin the stream relay with the bytes
+ * drained so far; the run-mode ready frame (if requested) is queued on
+ * stdout before any target passthrough. execMs anchors here — the
+ * status-pipe EOF read for condition 3(i), the reaped-status
+ * classification for 3(ii)/3(iii). */
+static void dealpg4_supervisor_note_started(dealpg4_supervisor_state *state)
+{
+    if (state->started_published)
         return;
-    state->ch_len = written;
-    state->ch_off = 0;
-    state->ch_pending = 1;
-    dealpg4_supervisor_channel_flush(state);
+    state->started_published = 1;
+    if (state->exec_ms == 0)
+        state->exec_ms = (int64_t)dealpg4_now_ms() - state->t0;
+    if (state->serve_mode) {
+        dealpg4_supervisor_publish_started(state);
+    } else if (state->emit_ready_frame) {
+        int n = snprintf(state->ready_line, sizeof state->ready_line,
+                         "DEALPG4 STARTED %s\n", state->nonce);
+
+        if (n > 0 && (size_t)n < sizeof state->ready_line) {
+            state->ready_len = (size_t)n;
+            state->ready_off = 0;
+            state->ready_pending = 1;
+        }
+    }
+    dealpg4_supervisor_relay_stream(state, &state->relay_out);
+    dealpg4_supervisor_relay_stream(state, &state->relay_err);
+}
+
+/* Relay one stream's drained retained content as OUT chunks (hex
+ * encoded, <= DEALPG4_OUT_MAX_HEX_CHARS hex chars = 32768 raw bytes
+ * per chunk, stream tag never mixed) and the single OUT_END at that
+ * stream's drain EOF. Bytes drained before STARTED remain in the drain
+ * context and are relayed when the relay begins. A chunk whose payload
+ * cannot be queued at the 1 MiB cap is dropped — the stream's
+ * truncation consequence (D5(d)/D7) — and the relay advances past it;
+ * draining continues past the cap until EOF or the terminal
+ * classification. The relay freezes at the terminal classification
+ * (finalize's relay catch-up runs before terminal_queued is set): on a
+ * DRAIN_FAILED/PROOF_TIMEOUT/OVERALL_TIMEOUT/survivor-token path a late
+ * stream EOF or new bytes never queue OUT chunks or the previously
+ * withheld OUT_END behind the already-queued REPORT and terminal record
+ * — the relayed chunk sequence simply ends there, and no OUT_END is
+ * ever queued after REPORT (D5(d)). */
+static void dealpg4_supervisor_relay_stream(
+    dealpg4_supervisor_state *state, dealpg4_supervisor_relay *relay)
+{
+    static const char hexdigits[16] = "0123456789abcdef";
+    dealpg4_drain_ctx *drain = relay->drain;
+    char line[DEALPG4_MAX_LINE_OUT_BYTES];
+    char hexbuf[DEALPG4_OUT_MAX_HEX_CHARS];
+    char idbuf[32];
+    char tag[4];
+
+    if (state->control_fd < 0 || state->protocol_aborted
+        || !state->started_published || state->terminal_queued)
+        return;
+
+    snprintf(idbuf, sizeof idbuf, "%lld", (long long)state->invocation_id);
+    memcpy(tag, relay->is_out ? "out" : "err", 4);
+
+    while (relay->relay_off < drain->retained_len) {
+        size_t chunk = drain->retained_len - relay->relay_off;
+        size_t i;
+        dealpg4_field_value fields[3];
+        size_t written = 0;
+
+        if (chunk > DEALPG4_OUT_MAX_HEX_CHARS / 2)
+            chunk = DEALPG4_OUT_MAX_HEX_CHARS / 2;
+        for (i = 0; i < chunk; i++) {
+            unsigned char b = drain->retained[relay->relay_off + i];
+
+            hexbuf[2 * i] = hexdigits[b >> 4];
+            hexbuf[2 * i + 1] = hexdigits[b & 0x0f];
+        }
+        fields[0].data = idbuf;
+        fields[0].len = strlen(idbuf);
+        fields[1].data = tag;
+        fields[1].len = 3;
+        fields[2].data = hexbuf;
+        fields[2].len = 2 * chunk;
+        if (dealpg4_serialize(DEALPG4_REC_OUT, fields, 3, line,
+                              sizeof line, &written) != 0)
+            return; /* defect: a malformed OUT line is never emitted */
+        relay->relay_off += chunk;
+        relay->chunks++;
+        if (dealpg4_supervisor_queue_append(
+                &state->queue, line, written, 0, relay->is_out ? 0 : 1,
+                chunk, drain->retained_len) != 0)
+            relay->queue_dropped = 1;
+    }
+    if (drain->eof && relay->relay_off >= drain->retained_len
+        && !relay->out_end_queued) {
+        relay->out_end_queued = 1;
+        dealpg4_supervisor_publish_out_end(state, relay);
+    }
 }
 
 /* === Identity cross-verification and the release write ================== */
@@ -612,35 +1088,74 @@ static int dealpg4_proc_stat_identity(pid_t pid, pid_t *ppid, pid_t *pgrp,
     return 0;
 }
 
+static void dealpg4_supervisor_release(dealpg4_supervisor_state *state);
+
 /* The single release write (parent D3/D9): exactly one write(2) of one
- * byte on the O_NONBLOCK write end, only after the verified identity
- * and only before T1. The observed-success fact (write returned 1) is
- * recorded; any other result is classified by the EOF-before-release
- * rule. The successful write ends the startup phase. */
+ * byte on the O_NONBLOCK write end. The observed-success fact (write
+ * returned 1) is recorded; any other result is classified by the
+ * EOF-before-release rule. The successful write ends the startup phase
+ * and moves the channel to RELEASED. A frozen release path (pre-release
+ * cancel / AUTH_FAILED / TIMER_FAILED) never writes the byte. */
 static void dealpg4_supervisor_release(dealpg4_supervisor_state *state)
 {
     char byte = 'R';
     ssize_t r;
 
-    if (state->release_write_done)
-        return; /* at most once, by construction */
+    if (state->release_write_done || state->release_frozen
+        || state->cancel_requested || state->protocol_aborted)
+        return; /* at most once, and never after the freeze */
+    if (state->release_fd < 0)
+        return;
     state->release_write_done = 1;
     r = write(state->release_fd, &byte, 1);
     if (r == 1) {
         state->release_write_ok = 1;
         state->phase = DEALPG4_PHASE_RUN;
-        (void)dealpg4_deadline_arm(&state->timer,
-                                   (uint64_t)state->dl.t2);
+        state->startup_ms = (int64_t)dealpg4_now_ms() - state->t0;
+        state->channel_state = DEALPG4_CHAN_RELEASED;
+        dealpg4_expectation_set_init(&state->expect);
+        dealpg4_expectation_set_add(&state->expect, DEALPG4_REC_CANCEL);
+        if (dealpg4_deadline_arm(&state->timer, (uint64_t)state->dl.t2)
+            != 0)
+            dealpg4_supervisor_timer_failed(state);
     }
 }
+
+/* The release point: the end of one event-processing batch. The ACK
+ * application and the release write are deliberately separate so a
+ * second ACK (or a CANCEL) processed in the same batch observes the
+ * still-pre-release state — the D5(a) post-ACK-pre-release window. */
+static void dealpg4_supervisor_maybe_release(dealpg4_supervisor_state *state)
+{
+    if (state->release_write_done || state->release_frozen
+        || state->cancel_requested || state->protocol_aborted)
+        return;
+    if (state->classification != DEALPG4_SUP_CLASS_NONE)
+        return;
+    if (state->phase != DEALPG4_PHASE_STARTUP)
+        return;
+    if ((int64_t)dealpg4_now_ms() >= state->dl.t1)
+        return; /* never a release byte past T1 */
+    if (state->control_fd >= 0) {
+        if (state->ack_applied)
+            dealpg4_supervisor_release(state);
+    } else if (state->identity_verified) {
+        dealpg4_supervisor_release(state);
+    }
+}
+
+static void dealpg4_supervisor_classify_auth_failed(
+    dealpg4_supervisor_state *state);
 
 /* STUB_IDENTITY cross-verification (parent D9): nonce echo equality,
  * getpgid/getsid agreement, /proc/<pid>/stat fields 4/5/6 agreement,
  * reserved PID/PGID/session rejection, and pid == stubPid (setsid
  * makes pgid == sid == stubPid). Only a verified identity may precede
- * the release. A failed verification terminates the invocation
- * AUTH_FAILED with the retained stub killed pre-release (TERM now,
- * KILL at the absolute T3). */
+ * the release; serve publishes STUB_READY only after this verification.
+ * A failed verification is the record-level AUTH_FAILED path: the
+ * release path freezes, the release pipe closes (the stub exits
+ * pre-exec on EOF), the retained stub is TERM'd (KILL at the absolute
+ * T3), reaped, and proven clean — never a release byte. */
 static void dealpg4_supervisor_identity(dealpg4_supervisor_state *state,
                                         const dealpg4_parsed *p)
 {
@@ -687,13 +1202,7 @@ static void dealpg4_supervisor_identity(dealpg4_supervisor_state *state,
         ok = 0;
 
     if (!ok) {
-        state->identity_failed = 1;
-        if (state->classification == DEALPG4_SUP_CLASS_NONE) {
-            state->classification = DEALPG4_SUP_CLASS_AUTH_FAILED;
-            if (!state->stub_reaped
-                && kill(state->stub_pid, SIGTERM) == 0)
-                state->signals_issued_to_target = 1;
-        }
+        dealpg4_supervisor_classify_auth_failed(state);
         return;
     }
 
@@ -701,15 +1210,46 @@ static void dealpg4_supervisor_identity(dealpg4_supervisor_state *state,
     state->stub_pgid = (pid_t)pgid;
     state->stub_sid = (pid_t)sid;
 
-    /* Release authorization at this stage: run mode (control_fd == -1)
-     * releases on the verified identity nonce ownership; serve mode has
-     * no ACK handling and never releases. Never a release byte after
-     * T1 without an observed successful release write. */
-    if (state->control_fd == -1
-        && state->phase == DEALPG4_PHASE_STARTUP
-        && state->classification == DEALPG4_SUP_CLASS_NONE
-        && (int64_t)dealpg4_now_ms() < state->dl.t1)
-        dealpg4_supervisor_release(state);
+    /* STUB_READY is published only after this verification (serve);
+     * run mode has no channel. The release itself happens at the
+     * release point of the event batch. */
+    if (state->control_fd >= 0)
+        dealpg4_supervisor_publish_stub_ready(state);
+}
+
+/* The AUTH_FAILED record-level path (failed STUB_IDENTITY
+ * cross-verification, a wrong-nonce ACK, or a second pre-release ACK):
+ * the invocation terminates FAILED <id> AUTH_FAILED, the release path
+ * freezes (never a release byte), the release pipe closes, the retained
+ * stub is killed pre-release (TERM now, KILL at the absolute T3),
+ * reaped, and proven clean (parent D9). */
+static void dealpg4_supervisor_classify_auth_failed(
+    dealpg4_supervisor_state *state)
+{
+    if (state->classification != DEALPG4_SUP_CLASS_NONE
+        && state->classification != DEALPG4_SUP_CLASS_AUTH_FAILED)
+        return;
+    if (state->classification == DEALPG4_SUP_CLASS_NONE) {
+        state->classification = DEALPG4_SUP_CLASS_AUTH_FAILED;
+        if (state->phase == DEALPG4_PHASE_STARTUP
+            && !state->release_write_ok && state->startup_ms == 0)
+            state->startup_ms = (int64_t)dealpg4_now_ms() - state->t0;
+    }
+    state->release_frozen = 1;
+    if (state->release_fd >= 0) {
+        close(state->release_fd);
+        state->release_fd = -1;
+    }
+    if (!state->term_issued) {
+        state->term_issued = 1;
+        state->term_ms = (int64_t)dealpg4_now_ms() - state->t0;
+        if (state->stub_pid > 0 && !state->stub_reaped
+            && kill(state->stub_pid, SIGTERM) == 0)
+            state->signals_issued_to_target = 1;
+    }
+    if (state->phase == DEALPG4_PHASE_STARTUP
+        || state->phase == DEALPG4_PHASE_RUN)
+        state->phase = DEALPG4_PHASE_TERM;
 }
 
 /* === Status-pipe raw records and the exec-confirmation evaluation ======= */
@@ -732,14 +1272,33 @@ static void dealpg4_supervisor_status_line(dealpg4_supervisor_state *state,
         break;
     case DEALPG4_REC_STUB_FAILED:
         state->stub_failed_seen = 1;
-        if (state->classification == DEALPG4_SUP_CLASS_NONE)
-            state->classification = DEALPG4_SUP_CLASS_STUB_BOOTSTRAP_FAILED;
+        if (state->classification == DEALPG4_SUP_CLASS_NONE) {
+            state->classification =
+                DEALPG4_SUP_CLASS_STUB_BOOTSTRAP_FAILED;
+            if (state->phase == DEALPG4_PHASE_STARTUP
+                && !state->release_write_ok && state->startup_ms == 0)
+                state->startup_ms = (int64_t)dealpg4_now_ms() - state->t0;
+        }
         break;
-    case DEALPG4_REC_STUB_EXEC_FAILED:
+    case DEALPG4_REC_STUB_EXEC_FAILED: {
+        int64_t err = 0;
+        const dealpg4_field_slice *f = dealpg4_parsed_field(&p, 1);
+
         state->stub_exec_failed_seen = 1;
-        if (state->classification == DEALPG4_SUP_CLASS_NONE)
+        if (f != NULL)
+            (void)dealpg4_field_decimal(f, &err);
+        if (state->classification == DEALPG4_SUP_CLASS_NONE) {
             state->classification = DEALPG4_SUP_CLASS_EXEC_FAILED;
+            if (state->phase == DEALPG4_PHASE_STARTUP
+                && !state->release_write_ok && state->startup_ms == 0)
+                state->startup_ms = (int64_t)dealpg4_now_ms() - state->t0;
+        }
+        /* A raw STUB_EXEC_FAILED is relayed as EXEC_FAILED <id> <errno>
+         * (parent D3, catalog translation). */
+        dealpg4_supervisor_publish_two_decimal(
+            state, DEALPG4_REC_EXEC_FAILED, state->invocation_id, err);
         break;
+    }
     case DEALPG4_REC_RELEASE_RECV: {
         int64_t pid = 0;
         const dealpg4_field_slice *f = dealpg4_parsed_field(&p, 0);
@@ -823,12 +1382,12 @@ static void dealpg4_supervisor_status_eof(dealpg4_supervisor_state *state)
          * conditions 3(ii)/3(iii) consume, so it must be retained
          * exactly like the reap loop does — discarding it would strand
          * the classification until the phase deadlines fire with no
-         * stub left to reap (the pending SIGCHLD would then drain
-         * against ECHILD). */
+         * stub left to reap. */
         if (!state->eof_liveness && si.si_pid == state->stub_pid) {
             state->stub_reaped = 1;
             state->stub_si_code = si.si_code;
             state->stub_si_status = si.si_status;
+            state->reap_count++;
         }
     }
     dealpg4_supervisor_evaluate(state);
@@ -859,11 +1418,26 @@ static void dealpg4_supervisor_read_status(dealpg4_supervisor_state *state)
 
 /* === Reaping and classification ========================================= */
 
+/* Reap one waitid result: the stub/target's status is retained for the
+ * D3 classification; every other reaped child is an adopted descendant
+ * (reapCount/adoptCount per D7). */
+static void dealpg4_supervisor_reap_one(dealpg4_supervisor_state *state,
+                                        const siginfo_t *si)
+{
+    if (si->si_pid == state->stub_pid && !state->stub_reaped) {
+        state->stub_reaped = 1;
+        state->stub_si_code = si->si_code;
+        state->stub_si_status = si->si_status;
+    } else {
+        state->adopt_count++;
+    }
+    state->reap_count++;
+}
+
 /* SIGCHLD events drive waitid(P_ALL, WEXITED|WNOHANG) until ECHILD /
  * nothing waitable (parent D1/D6): direct and adopted waitable
- * children are reaped, the stub's waitid status is retained for the
- * D3 classification, and no zombie of this supervisor remains. */
-static void dealpg4_supervisor_reap(dealpg4_supervisor_state *state)
+ * children are reaped and no zombie of this supervisor remains. */
+static void dealpg4_supervisor_reap_all(dealpg4_supervisor_state *state)
 {
     for (;;) {
         siginfo_t si;
@@ -873,20 +1447,20 @@ static void dealpg4_supervisor_reap(dealpg4_supervisor_state *state)
             break; /* ECHILD */
         if (si.si_pid == 0)
             break; /* nothing waitable */
-        if (si.si_pid == state->stub_pid && !state->stub_reaped) {
-            state->stub_reaped = 1;
-            state->stub_si_code = si.si_code;
-            state->stub_si_status = si.si_status;
-        }
-        /* Any other child (adopted descendant) is reaped here; its
-         * status is not part of the stage classification. */
+        dealpg4_supervisor_reap_one(state, &si);
     }
     dealpg4_supervisor_evaluate(state);
 }
 
 /* The D3 exec-confirmation evaluation (release write success, EOF
  * without STUB_FAILED/STUB_EXEC_FAILED, positive exec evidence) and
- * the non-STARTED classification matrix, exactly per parent D3. */
+ * the non-STARTED classification matrix, exactly per parent D3 — with
+ * the channel machine's cancel paths: a cancel-path pre-release
+ * classification is CALLER_LOST (the final record derives CLEAN
+ * final=cancelled from a clean reaped exit or FAILED CALLER_LOST from
+ * a cancel-path signal death at finalization), and a post-release
+ * signal death under an applied cancel is CALLER_LOST (never STARTED
+ * when the cancel landed before exec confirmation). */
 static void dealpg4_supervisor_evaluate(dealpg4_supervisor_state *state)
 {
     if (state->classification == DEALPG4_SUP_CLASS_STARTED
@@ -898,7 +1472,9 @@ static void dealpg4_supervisor_evaluate(dealpg4_supervisor_state *state)
             break;
         case CLD_KILLED:
         case CLD_DUMPED:
-            if (state->signals_issued_to_target)
+            if (state->cancel_requested && state->signals_issued_to_target)
+                state->classification = DEALPG4_SUP_CLASS_CALLER_LOST;
+            else if (state->signals_issued_to_target)
                 state->classification =
                     DEALPG4_SUP_CLASS_EXECUTION_TIMEOUT;
             else
@@ -917,12 +1493,26 @@ static void dealpg4_supervisor_evaluate(dealpg4_supervisor_state *state)
 
     if (!state->release_write_ok) {
         /* EOF observed before the release write, or the release write
-         * failed: classified from supervisor state plus the reaped
-         * stub status (parent D3). The cancel path does not exist at
-         * this stage, so exit 5 keeps the STUB_PRE_RELEASE_EXIT
-         * meaning. */
+         * failed: classified from the supervisor's own state plus the
+         * reaped stub status (parent D3). The cancel path closed the
+         * release pipe -> CALLER_LOST (clean-cancelled / CALLER_LOST
+         * at finalization). */
         if (!state->status_eof || !state->stub_reaped)
             return;
+        /* This branch is the startup-phase terminal classification for
+         * the silent pre-release stub exits and the release-write
+         * races: anchor startupMs at the classification (D7 — the
+         * observed successful release write, or the startup-phase
+         * terminal classification; the cancel/AUTH_FAILED paths anchor
+         * with the same guard, so a later classification never
+         * overwrites their value). */
+        if (state->phase == DEALPG4_PHASE_STARTUP
+            && state->startup_ms == 0)
+            state->startup_ms = (int64_t)dealpg4_now_ms() - state->t0;
+        if (state->cancel_requested) {
+            state->classification = DEALPG4_SUP_CLASS_CALLER_LOST;
+            return;
+        }
         switch (state->stub_si_code) {
         case CLD_EXITED:
             if (state->stub_si_status == 4)
@@ -958,6 +1548,7 @@ static void dealpg4_supervisor_evaluate(dealpg4_supervisor_state *state)
     if (state->eof_liveness) {
         /* 3(i): stub liveness at the EOF read. */
         state->classification = DEALPG4_SUP_CLASS_STARTED;
+        dealpg4_supervisor_note_started(state);
         return;
     }
     if (!state->stub_reaped)
@@ -966,13 +1557,14 @@ static void dealpg4_supervisor_evaluate(dealpg4_supervisor_state *state)
     case CLD_EXITED:
         if (state->stub_si_status < 2 || state->stub_si_status > 6) {
             /* 3(ii): exit code outside the reserved set (including 127,
-             * valid only because condition 2 holds). STARTED holds and
-             * the reaped target exited cleanly: final = success. */
+             * valid only because condition 2 holds). */
             state->classification = DEALPG4_SUP_CLASS_SUCCESS;
+            dealpg4_supervisor_note_started(state);
         } else if (state->release_recv_pid_match) {
             /* 3(iii): reserved code plus RELEASE_RECV with
              * pid == stubPid before the EOF. */
             state->classification = DEALPG4_SUP_CLASS_SUCCESS;
+            dealpg4_supervisor_note_started(state);
         } else {
             /* Reserved code without RELEASE_RECV: the pre-release
              * meaning (4 -> the stub's own step-6 deadline, including
@@ -987,7 +1579,9 @@ static void dealpg4_supervisor_evaluate(dealpg4_supervisor_state *state)
         break;
     case CLD_KILLED:
     case CLD_DUMPED:
-        if (state->signals_issued_to_target)
+        if (state->cancel_requested && state->signals_issued_to_target)
+            state->classification = DEALPG4_SUP_CLASS_CALLER_LOST;
+        else if (state->signals_issued_to_target)
             state->classification = DEALPG4_SUP_CLASS_EXECUTION_TIMEOUT;
         else
             state->classification =
@@ -999,7 +1593,7 @@ static void dealpg4_supervisor_evaluate(dealpg4_supervisor_state *state)
     }
 }
 
-/* === Deadlines and signaling =========================================== */
+/* === Deadlines, signaling, and the TIMER_FAILED path ==================== */
 
 /* Signals target a verified negative PGID (parent D5): getpgrp() !=
  * targetPgid and kill(-targetPgid, 0) == 0 before each signal;
@@ -1028,9 +1622,8 @@ static void dealpg4_supervisor_signal_target(dealpg4_supervisor_state *state,
  * this recipe state, never from the timerfd context alone: a failed
  * dealpg4_deadline_arm leaves the previous context state unchanged and
  * an idle context reports 0 remaining, so the recipe-state absolute
- * deadlines remain the escalation's wakeup source (the D8
- * TIMER_FAILED wakeup pattern; the record path itself lands with the
- * channel machine). */
+ * deadlines remain the escalation's wakeup source (the D8 TIMER_FAILED
+ * wakeup pattern). */
 static int64_t dealpg4_supervisor_next_deadline(
     const dealpg4_supervisor_state *state)
 {
@@ -1049,100 +1642,999 @@ static int64_t dealpg4_supervisor_next_deadline(
     }
 }
 
+static void dealpg4_supervisor_finalize(dealpg4_supervisor_state *state);
+
+/* The mid-run TIMER_FAILED path (D8): a failed deadline arm while
+ * installing a phase deadline terminates the invocation
+ * FAILED <id> TIMER_FAILED — TERM immediately (pre-release: the
+ * retained stub killed pre-release, never a release byte), KILL at the
+ * absolute T3, reap, prove clean. The escalation's wakeup is the
+ * recipe-state absolute deadlines (t2/t3), never the failed timerfd
+ * context: the loop's ppoll timeout is computed from the recipe state,
+ * so the escalation completes by the absolute deadlines with no
+ * timerfd wakeup — no busy-spin on the idle context's 0-ms remaining
+ * and no blocked-past-T3 failure. */
+static void dealpg4_supervisor_timer_failed(dealpg4_supervisor_state *state)
+{
+    int first = (state->classification
+                 != DEALPG4_SUP_CLASS_TIMER_FAILED)
+                && !state->terminal_queued;
+
+    state->classification = DEALPG4_SUP_CLASS_TIMER_FAILED;
+    if (!first)
+        return;
+    if (state->release_write_ok) {
+        if (!state->term_issued) {
+            state->term_issued = 1;
+            state->term_ms = (int64_t)dealpg4_now_ms() - state->t0;
+            if (!state->stub_reaped)
+                dealpg4_supervisor_signal_target(state, SIGTERM);
+        }
+    } else {
+        state->release_frozen = 1;
+        if (state->phase == DEALPG4_PHASE_STARTUP
+            && state->startup_ms == 0)
+            state->startup_ms = (int64_t)dealpg4_now_ms() - state->t0;
+        if (state->release_fd >= 0) {
+            close(state->release_fd);
+            state->release_fd = -1;
+        }
+        if (!state->term_issued) {
+            state->term_issued = 1;
+            state->term_ms = (int64_t)dealpg4_now_ms() - state->t0;
+            if (state->stub_pid > 0 && !state->stub_reaped
+                && kill(state->stub_pid, SIGTERM) == 0)
+                state->signals_issued_to_target = 1;
+        }
+    }
+    if (state->phase == DEALPG4_PHASE_STARTUP
+        || state->phase == DEALPG4_PHASE_RUN)
+        state->phase = DEALPG4_PHASE_TERM;
+}
+
 /* Phase escalation per the parent D4 recipe. T1 pre-release:
  * STARTUP_TIMEOUT classification and the retained stub killed
  * pre-release (TERM now, KILL at the absolute T3) — never a release
  * byte after T1 without an observed successful release write (the
- * successful write already ended the startup phase). T2: TERM against
- * the verified negative PGID. T3: KILL. T4: the proof deadline — at
- * this stage the full proof loop lands with the channel machine, so an
- * invocation not yet terminated (stub reaped, both drains at EOF)
- * classifies PROOF_TIMEOUT and ends. T5: OVERALL_TIMEOUT. */
+ * successful write already ended the startup phase); a pre-release
+ * cancel freezes the release first, so a cancel-path invocation is
+ * never re-classified STARTUP_TIMEOUT. T2: TERM against the verified
+ * negative PGID. T3: KILL. T4: the proof deadline — the survivor /
+ * DRAIN_FAILED / PROOF_TIMEOUT classification and the terminal
+ * records at the terminal classification. T5: OVERALL_TIMEOUT (the
+ * record terminates by its own deadline). */
 static void dealpg4_supervisor_advance_deadlines(
     dealpg4_supervisor_state *state)
 {
-    uint64_t now = dealpg4_now_ms();
-    int64_t n = (int64_t)now;
+    uint64_t now64 = dealpg4_now_ms();
+    int64_t now = (int64_t)now64;
 
     if (state->done)
         return;
-    if (n >= state->dl.t5) {
-        if (state->classification != DEALPG4_SUP_CLASS_OVERALL_TIMEOUT)
+    if (now >= state->dl.t5) {
+        if (!state->terminal_queued) {
             state->classification = DEALPG4_SUP_CLASS_OVERALL_TIMEOUT;
+            state->proof_failed_class = 1;
+            if (state->proof_ms == 0)
+                state->proof_ms = now - state->t0;
+            dealpg4_supervisor_finalize(state);
+        }
         state->done = 1;
         return;
     }
-    if (n >= state->dl.t4) {
-        if (!(state->stub_reaped
-              && dealpg4_drain_eof(state->drain_out)
-              && dealpg4_drain_eof(state->drain_err)))
-            state->classification = DEALPG4_SUP_CLASS_PROOF_TIMEOUT;
-        state->done = 1;
+    if (now >= state->dl.t4) {
+        /* The proof deadline classifies survivor / DRAIN_FAILED /
+         * PROOF_TIMEOUT paths — including a channel-loss / protocol-
+         * abort invocation whose proof still runs after the terminal
+         * classification (proof_pending admits exactly that state). */
+        if (dealpg4_supervisor_proof_pending(state))
+            dealpg4_supervisor_proof_deadline(state);
         return;
     }
-    if (n >= state->dl.t3 && state->phase == DEALPG4_PHASE_TERM) {
+    if (now >= state->dl.t3 && state->phase == DEALPG4_PHASE_TERM) {
+        state->phase = DEALPG4_PHASE_KILL;
         state->kill_issued = 1;
+        state->kill_ms = now - state->t0;
         if (!state->stub_reaped)
             dealpg4_supervisor_signal_target(state, SIGKILL);
-        state->phase = DEALPG4_PHASE_KILL;
-        (void)dealpg4_deadline_arm(&state->timer,
-                                   (uint64_t)state->dl.t4);
+        if (dealpg4_deadline_arm(&state->timer, (uint64_t)state->dl.t4)
+            != 0)
+            dealpg4_supervisor_timer_failed(state);
         return;
     }
-    if (n >= state->dl.t2 && state->phase == DEALPG4_PHASE_RUN) {
+    if (now >= state->dl.t2 && state->phase == DEALPG4_PHASE_RUN) {
+        state->phase = DEALPG4_PHASE_TERM;
         state->term_issued = 1;
+        state->term_ms = now - state->t0;
         if (!state->stub_reaped)
             dealpg4_supervisor_signal_target(state, SIGTERM);
-        state->phase = DEALPG4_PHASE_TERM;
-        (void)dealpg4_deadline_arm(&state->timer,
-                                   (uint64_t)state->dl.t3);
+        if (dealpg4_deadline_arm(&state->timer, (uint64_t)state->dl.t3)
+            != 0)
+            dealpg4_supervisor_timer_failed(state);
         return;
     }
-    if (n >= state->dl.t1 && state->phase == DEALPG4_PHASE_STARTUP) {
+    if (now >= state->dl.t1 && state->phase == DEALPG4_PHASE_STARTUP) {
         if (!state->release_write_ok
-            && state->classification == DEALPG4_SUP_CLASS_NONE) {
+            && state->classification == DEALPG4_SUP_CLASS_NONE
+            && !state->cancel_requested) {
             state->classification = DEALPG4_SUP_CLASS_STARTUP_TIMEOUT;
+            if (state->startup_ms == 0)
+                state->startup_ms = now - state->t0;
             state->term_issued = 1;
-            if (!state->stub_reaped
+            state->term_ms = now - state->t0;
+            if (state->stub_pid > 0 && !state->stub_reaped
+                && kill(state->stub_pid, SIGTERM) == 0)
+                state->signals_issued_to_target = 1;
+            state->release_frozen = 1;
+        }
+        state->phase = DEALPG4_PHASE_TERM;
+        if (dealpg4_deadline_arm(&state->timer, (uint64_t)state->dl.t3)
+            != 0)
+            dealpg4_supervisor_timer_failed(state);
+        return;
+    }
+}
+
+/* === Proof loop (parent D6) ============================================= */
+
+/* The proof is pending from the terminal classification until the
+ * proof passes or T4/T5: the stub must be reaped (or never forked for
+ * the CLEANUP_FAILED / STUB_BOOTSTRAP_FAILED record paths). */
+static int dealpg4_supervisor_proof_pending(
+    const dealpg4_supervisor_state *state)
+{
+    if (state->proof_done || state->proof_failed_class)
+        return 0;
+    if (state->terminal_queued) {
+        /* After channel loss or a protocol abort the invocation's own
+         * per-state termination still completes to its terminal
+         * classification (D5): the proof loop keeps running with no
+         * further publication, bounded by the T4/T5 recipe state. */
+        return (state->channel_lost || state->protocol_aborted) ? 1 : 0;
+    }
+    if (state->classification < DEALPG4_SUP_CLASS_SUCCESS)
+        return 0;
+    return state->stub_reaped || state->stub_pid < 0;
+}
+
+/* /proc scan: no task with pgrp == targetPgid, no task with session ==
+ * targetSid, no task with ppid == supervisorPid (or an adopted
+ * descendant chain) — bounded, with every found survivor's pid
+ * recorded for signaling. The stub pid and the supervisor itself are
+ * never survivor candidates. */
+static void dealpg4_supervisor_scan_proc(dealpg4_supervisor_state *state,
+                                         dealpg4_sup_survivors *surv)
+{
+    DIR *dir;
+    struct dirent *ent;
+    pid_t me = getpid();
+    pid_t adopted[DEALPG4_SUP_SURVIVOR_VIEW_MAX];
+    size_t nadopted = 0;
+    int pass;
+
+    memset(surv, 0, sizeof(*surv));
+    surv->ok = 1;
+    if (state->stub_pgid == 0 && state->stub_sid == 0)
+        return; /* no verified target identity: nothing to scan for */
+
+    dir = opendir("/proc");
+    if (dir == NULL) {
+        surv->ok = 0;
+        return;
+    }
+    for (pass = 0; pass < 8; pass++) {
+        int found_new = 0;
+
+        rewinddir(dir);
+        while ((ent = readdir(dir)) != NULL) {
+            const char *name = ent->d_name;
+            pid_t pid = 0;
+            pid_t ppid = 0;
+            pid_t pgrp = 0;
+            pid_t session = 0;
+            size_t i;
+            int is_adopted = 0;
+
+            if (name[0] < '0' || name[0] > '9')
+                continue;
+            for (i = 0; name[i] != '\0'; i++) {
+                int d = name[i] - '0';
+
+                if (d < 0 || d > 9)
+                    break;
+                if (pid > (INT_MAX - d) / 10) {
+                    pid = INT_MAX;
+                    break;
+                }
+                pid = pid * 10 + d;
+            }
+            if (name[i] != '\0' || pid <= 0)
+                continue;
+            if (pid == me || pid == state->stub_pid)
+                continue;
+            if (dealpg4_proc_stat_identity(pid, &ppid, &pgrp, &session)
+                != 0)
+                continue; /* the task raced away */
+            for (i = 0; i < nadopted; i++) {
+                if (ppid == adopted[i]) {
+                    is_adopted = 1;
+                    break;
+                }
+            }
+            if (ppid == me)
+                is_adopted = 1;
+            if (pgrp == state->stub_pgid)
+                surv->group_found = 1;
+            if (session == state->stub_sid)
+                surv->session_found = 1;
+            if (is_adopted)
+                surv->adopted_found = 1;
+            if (surv->group_found || surv->session_found
+                || surv->adopted_found) {
+                if (surv->count < DEALPG4_SUP_SURVIVOR_VIEW_MAX) {
+                    surv->pids[surv->count++] = pid;
+                }
+            }
+            if (is_adopted && nadopted < DEALPG4_SUP_SURVIVOR_VIEW_MAX) {
+                size_t known = 0;
+
+                for (i = 0; i < nadopted; i++) {
+                    if (adopted[i] == pid) {
+                        known = 1;
+                        break;
+                    }
+                }
+                if (!known) {
+                    adopted[nadopted++] = pid;
+                    found_new = 1;
+                }
+            }
+        }
+        if (!found_new)
+            break;
+    }
+    closedir(dir);
+}
+
+/* Signal every survivor found by the scan by pid: TERM at discovery,
+ * KILL once the absolute T3 deadline passed (parent D5 adopted/
+ * escaped-descendant signaling; group members are additionally
+ * covered by the verified negative-PGID escalation). */
+static void dealpg4_supervisor_signal_survivors(
+    dealpg4_supervisor_state *state, const dealpg4_sup_survivors *surv)
+{
+    int64_t now = (int64_t)dealpg4_now_ms();
+    int sig = now >= state->dl.t3 ? SIGKILL : SIGTERM;
+    size_t i;
+
+    for (i = 0; i < surv->count; i++) {
+        if (surv->pids[i] > 0)
+            (void)kill(surv->pids[i], sig);
+    }
+}
+
+/* One proof pass: (a) the reap loop — waitid(P_ALL, WEXITED|WNOHANG)
+ * until ECHILD / nothing waitable (no zombie of this supervisor); (b)
+ * the /proc scans with adopted-descendant signaling; (c) both stream
+ * read ends at EOF (or a drain failure). Success = all three hold in
+ * one pass plus a confirming second pass after a bounded ~10 ms poll
+ * (parent D6). */
+static void dealpg4_supervisor_proof_pass(dealpg4_supervisor_state *state)
+{
+    dealpg4_sup_survivors surv;
+    uint64_t now64 = dealpg4_now_ms();
+    int64_t now = (int64_t)now64;
+    int clean;
+
+    if (state->proof_done)
+        return;
+    if (state->terminal_queued
+        && !(state->channel_lost || state->protocol_aborted))
+        return; /* normal terminal: the cleanup already ran */
+
+    dealpg4_supervisor_reap_all(state);
+
+    dealpg4_supervisor_scan_proc(state, &surv);
+    if (surv.group_found || surv.session_found || surv.adopted_found)
+        dealpg4_supervisor_signal_survivors(state, &surv);
+    state->group_clean = surv.ok && !surv.group_found;
+    state->session_clean = surv.ok && !surv.session_found;
+    state->drain_ok =
+        (state->drains_active
+             ? (state->drain_out->eof && !state->drain_out->failed
+                && state->drain_err->eof && !state->drain_err->failed)
+             : 1);
+
+    clean = state->group_clean && state->session_clean
+            && surv.ok && !surv.adopted_found && state->drain_ok;
+    if (clean) {
+        if (!state->proof_first_pass) {
+            state->proof_first_pass = 1;
+            state->proof_first_pass_ms = now;
+            if (state->proof_ms == 0)
+                state->proof_ms = now - state->t0;
+        } else if (now - state->proof_first_pass_ms >= 10) {
+            state->proof_done = 1;
+        }
+    } else {
+        state->proof_first_pass = 0;
+    }
+    state->proof_next_pass_ms = now + 5;
+
+    if (state->proof_done)
+        dealpg4_supervisor_finalize(state);
+}
+
+/* One waitid probe with WNOHANG: 1 when a waitable child exists (a
+ * zombie of this supervisor at the evaluation instant). */
+static int dealpg4_supervisor_has_waitable(
+    const dealpg4_supervisor_state *state)
+{
+    siginfo_t si;
+
+    (void)state;
+    memset(&si, 0, sizeof(si));
+    if (waitid(P_ALL, 0, &si, WEXITED | WNOHANG) != 0)
+        return 0; /* ECHILD */
+    return si.si_pid != 0;
+}
+
+/* The T4 proof deadline: any survivor names its token — GROUP_SURVIVOR
+ * / SESSION_SURVIVOR / ADOPTED_SURVIVOR / ZOMBIE_SURVIVOR /
+ * DRAIN_FAILED — otherwise PROOF_TIMEOUT (the confirming pass did not
+ * complete). REPORT and the terminal record publish at the terminal
+ * classification without the incomplete stream's OUT_END (D5(d)). */
+static void dealpg4_supervisor_proof_deadline(
+    dealpg4_supervisor_state *state)
+{
+    dealpg4_sup_survivors surv;
+    int64_t now = (int64_t)dealpg4_now_ms();
+
+    dealpg4_supervisor_reap_all(state);
+    dealpg4_supervisor_scan_proc(state, &surv);
+    state->group_clean = surv.ok && !surv.group_found;
+    state->session_clean = surv.ok && !surv.session_found;
+    state->drain_ok =
+        (state->drains_active
+             ? (state->drain_out->eof && !state->drain_out->failed
+                && state->drain_err->eof && !state->drain_err->failed)
+             : 1);
+
+    if (surv.group_found)
+        state->classification = DEALPG4_SUP_CLASS_GROUP_SURVIVOR;
+    else if (surv.session_found)
+        state->classification = DEALPG4_SUP_CLASS_SESSION_SURVIVOR;
+    else if (surv.adopted_found)
+        state->classification = DEALPG4_SUP_CLASS_ADOPTED_SURVIVOR;
+    else if (dealpg4_supervisor_has_waitable(state))
+        state->classification = DEALPG4_SUP_CLASS_ZOMBIE_SURVIVOR;
+    else if (!state->drain_ok)
+        state->classification = DEALPG4_SUP_CLASS_DRAIN_FAILED;
+    else
+        state->classification = DEALPG4_SUP_CLASS_PROOF_TIMEOUT;
+    state->proof_failed_class = 1;
+    if (state->proof_ms == 0)
+        state->proof_ms = now - state->t0;
+
+    state->survivor_count =
+        surv.count < DEALPG4_SUP_SURVIVOR_VIEW_MAX
+            ? surv.count
+            : DEALPG4_SUP_SURVIVOR_VIEW_MAX;
+    memcpy(state->survivor_pids, surv.pids,
+           state->survivor_count * sizeof(surv.pids[0]));
+
+    dealpg4_supervisor_finalize(state);
+}
+
+/* === Channel machine (D5) =============================================== */
+
+static void dealpg4_supervisor_apply_cancel(dealpg4_supervisor_state *state)
+{
+    uint64_t now = dealpg4_now_ms();
+
+    if (state->cancel_requested)
+        return; /* idempotent */
+    state->cancel_requested = 1;
+    if (!state->release_write_done) {
+        /* PRE_RELEASE (pre- or post-ACK): the cancel freezes the
+         * release path — the release byte is never written (an
+         * already-applied ACK no longer releases); close the release
+         * pipe (the stub exits pre-exec on EOF); TERM the retained
+         * stubPid; KILL at the absolute T3 if still live. The cancel
+         * application ends the startup phase (D7: startupMs anchors at
+         * the end of the startup phase). */
+        state->release_frozen = 1;
+        if (state->phase == DEALPG4_PHASE_STARTUP
+            && state->startup_ms == 0)
+            state->startup_ms = (int64_t)now - state->t0;
+        if (state->release_fd >= 0) {
+            close(state->release_fd);
+            state->release_fd = -1;
+        }
+        if (!state->term_issued) {
+            state->term_issued = 1;
+            state->term_ms = (int64_t)now - state->t0;
+            if (state->stub_pid > 0 && !state->stub_reaped
                 && kill(state->stub_pid, SIGTERM) == 0)
                 state->signals_issued_to_target = 1;
         }
-        state->phase = DEALPG4_PHASE_TERM;
-        (void)dealpg4_deadline_arm(&state->timer,
-                                   (uint64_t)state->dl.t3);
+        if (state->phase == DEALPG4_PHASE_STARTUP
+            || state->phase == DEALPG4_PHASE_RUN)
+            state->phase = DEALPG4_PHASE_TERM;
+    } else {
+        /* RELEASED: TERM immediately against the verified negative
+         * PGID (unverifiable targets never signaled), KILL at the
+         * absolute T3 — the cancel neither extends nor shortens any
+         * absolute deadline; adopted descendants are signaled TERM
+         * then KILL by pid by the proof loop. */
+        if (!state->term_issued) {
+            state->term_issued = 1;
+            state->term_ms = (int64_t)now - state->t0;
+            if (!state->stub_reaped)
+                dealpg4_supervisor_signal_target(state, SIGTERM);
+        }
+        if (now >= (uint64_t)state->dl.t3) {
+            if (!state->kill_issued) {
+                state->kill_issued = 1;
+                state->kill_ms = (int64_t)now - state->t0;
+                if (!state->stub_reaped)
+                    dealpg4_supervisor_signal_target(state, SIGKILL);
+            }
+            if (state->phase == DEALPG4_PHASE_RUN
+                || state->phase == DEALPG4_PHASE_TERM)
+                state->phase = DEALPG4_PHASE_KILL;
+        } else if (state->phase == DEALPG4_PHASE_STARTUP
+                   || state->phase == DEALPG4_PHASE_RUN) {
+            state->phase = DEALPG4_PHASE_TERM;
+        }
+    }
+}
+
+/* Control-channel loss: read-side EOF/HUP or an irrecoverable write
+ * failure (EPIPE under the D8 SIGPIPE pin — an error return, never
+ * process death). Applies the per-state cancel semantics without
+ * requiring a CANCEL record; in TERMINAL there is no new termination
+ * work (the cleanup already ran to the terminal classification) — the
+ * undelivered queued records drop with the close. */
+static void dealpg4_supervisor_channel_lost(
+    dealpg4_supervisor_state *state)
+{
+    if (state->channel_lost)
+        return;
+    state->channel_lost = 1;
+    if (state->control_fd >= 0) {
+        close(state->control_fd);
+        state->control_fd = -1;
+    }
+    dealpg4_supervisor_queue_clear(&state->queue);
+    if (state->terminal_queued)
+        return; /* TERMINAL: no new termination work */
+    dealpg4_supervisor_apply_cancel(state);
+}
+
+/* PROTOCOL_ERROR (framing defects, unknown types, oversize records,
+ * records unexpected in the channel state — including any received
+ * BYE): the supervisor closes the control channel without a FAILED
+ * record and without any further record publication, then applies the
+ * per-state invocation termination exactly as channel loss — the
+ * supervisor never exits-and-orphans a released target. Serve exit 2
+ * on this no-record aborted path (D5). */
+static void dealpg4_supervisor_protocol_abort(
+    dealpg4_supervisor_state *state)
+{
+    if (state->protocol_aborted)
+        return;
+    state->protocol_aborted = 1;
+    if (state->control_fd >= 0) {
+        close(state->control_fd);
+        state->control_fd = -1;
+    }
+    dealpg4_supervisor_queue_clear(&state->queue);
+    if (state->terminal_queued)
+        return; /* TERMINAL: no new termination work (the cleanup already
+                    ran to the terminal classification) — the
+                    undelivered queued records drop with the close */
+    dealpg4_supervisor_apply_cancel(state);
+}
+
+/* A well-formed ACK in the apply phase releases exactly once; any
+ * other ACK — post-release, post-T1, or against a terminal-classified
+ * invocation — is state-unexpected -> PROTOCOL_ERROR (catalog ACK
+ * rule). A well-formed first ACK whose invocationId or nonce
+ * mismatches, or a second well-formed pre-release ACK, is the
+ * record-level AUTH_FAILED path (parent D9). */
+static void dealpg4_supervisor_ack(dealpg4_supervisor_state *state,
+                                   const dealpg4_parsed *p)
+{
+    const dealpg4_field_slice *idf = dealpg4_parsed_field(p, 0);
+    const dealpg4_field_slice *noncef = dealpg4_parsed_field(p, 1);
+    int64_t id = 0;
+    dealpg4_ack_facts facts;
+    dealpg4_classification cls;
+    int in_apply;
+
+    if (idf != NULL)
+        (void)dealpg4_field_decimal(idf, &id);
+
+    in_apply = (state->phase == DEALPG4_PHASE_STARTUP
+                && !state->release_write_done
+                && state->classification == DEALPG4_SUP_CLASS_NONE
+                && !state->cancel_requested
+                && (int64_t)dealpg4_now_ms() < state->dl.t1);
+    if (!in_apply) {
+        /* Post-release ACK and any ACK the invocation can no longer
+         * apply are state-unexpected (parent D9, catalog ACK rule). */
+        dealpg4_supervisor_protocol_abort(state);
         return;
     }
+    facts.invocation_id_known = (id == state->invocation_id);
+    facts.record_in_apply_phase = 1;
+    facts.nonce_matches = (noncef != NULL
+                           && noncef->len == DEALPG4_NONCE_HEX_CHARS
+                           && memcmp(noncef->p, state->nonce,
+                                     DEALPG4_NONCE_HEX_CHARS) == 0);
+    facts.first_ack = !state->ack_applied;
+    cls = dealpg4_ack_classify(&facts);
+    if (cls == DEALPG4_CLASS_OK) {
+        state->ack_applied = 1;
+        /* The release write happens at the release point (the end of
+         * the event batch): a second ACK or a CANCEL in the same batch
+         * observes the still-pre-release state (D5(a)). */
+        return;
+    }
+    /* AUTH_FAILED: publish FAILED <id> AUTH_FAILED at the terminal
+     * classification (channel open until delivered), stub killed
+     * pre-release, reaped, proven clean, never a release byte. */
+    dealpg4_supervisor_classify_auth_failed(state);
+}
+
+/* A well-formed CANCEL applies only when the invocation id and nonce
+ * both match the pending invocation and the invocation is live (not
+ * terminal). A mismatch or a terminal CANCEL is the record-level
+ * REJECT <id> - CANCEL_AUTH_FAILED (channel open, invocation
+ * untouched); in TERMINAL the REJECT queues behind the already-queued
+ * terminal record and flushes before the channel close (D5). */
+static void dealpg4_supervisor_cancel(dealpg4_supervisor_state *state,
+                                      const dealpg4_parsed *p)
+{
+    const dealpg4_field_slice *idf = dealpg4_parsed_field(p, 0);
+    const dealpg4_field_slice *noncef = dealpg4_parsed_field(p, 1);
+    int64_t id = 0;
+    dealpg4_cancel_facts facts;
+    dealpg4_classification cls;
+
+    if (idf != NULL)
+        (void)dealpg4_field_decimal(idf, &id);
+
+    facts.invocation_id_known = (id == state->invocation_id);
+    facts.record_live = !state->terminal_queued;
+    facts.nonce_matches = (noncef != NULL
+                           && noncef->len == DEALPG4_NONCE_HEX_CHARS
+                           && memcmp(noncef->p, state->nonce,
+                                     DEALPG4_NONCE_HEX_CHARS) == 0);
+    cls = dealpg4_cancel_classify(&facts);
+    if (cls == DEALPG4_CLASS_OK) {
+        dealpg4_supervisor_apply_cancel(state);
+        return;
+    }
+    /* Record-level rejection: the invocation is untouched and
+     * continues under its own absolute deadlines; the channel stays
+     * open. The REJECT echoes the CANCEL record's own id. */
+    dealpg4_supervisor_publish_reject(state, id);
+}
+
+/* One complete control-channel record line: framing (dealpg4_parse),
+ * the channel-state expectation set, and the per-type handlers. Every
+ * framing defect, unknown type, oversize record, or record unexpected
+ * in the current state classifies PROTOCOL_ERROR (D5). */
+static void dealpg4_supervisor_channel_record(
+    dealpg4_supervisor_state *state, const char *line, size_t len)
+{
+    dealpg4_parsed p;
+    dealpg4_classification cls;
+
+    if (dealpg4_parse(line, len, &p) != DEALPG4_PARSE_OK) {
+        dealpg4_supervisor_protocol_abort(state);
+        return;
+    }
+    cls = dealpg4_expectation_check(&state->expect, &p);
+    if (cls != DEALPG4_CLASS_OK) {
+        dealpg4_supervisor_protocol_abort(state);
+        return;
+    }
+    switch (p.type) {
+    case DEALPG4_REC_ACK:
+        dealpg4_supervisor_ack(state, &p);
+        break;
+    case DEALPG4_REC_CANCEL:
+        dealpg4_supervisor_cancel(state, &p);
+        break;
+    default:
+        /* Unreachable: the expectation set admits only ACK/CANCEL. */
+        dealpg4_supervisor_protocol_abort(state);
+        break;
+    }
+}
+
+/* Control-channel read side: complete record lines are consumed as
+ * they arrive; EOF/HUP is channel loss. A line longer than the largest
+ * catalog cap (no LF within the bound) is an oversize framing defect —
+ * PROTOCOL_ERROR. At EOF a buffered partial line is the same defect
+ * (a record is complete only at LF). */
+static void dealpg4_supervisor_read_control(dealpg4_supervisor_state *state)
+{
+    if (state->control_fd < 0)
+        return;
+    for (;;) {
+        ssize_t r;
+
+        if (state->ctrl_buf_len >= sizeof(state->ctrl_buf) - 1) {
+            dealpg4_supervisor_protocol_abort(state);
+            return;
+        }
+        r = read(state->control_fd,
+                 state->ctrl_buf + state->ctrl_buf_len,
+                 sizeof(state->ctrl_buf) - 1 - state->ctrl_buf_len);
+        if (r > 0) {
+            char *nl;
+
+            state->ctrl_buf_len += (size_t)r;
+            while ((nl = memchr(state->ctrl_buf, '\n',
+                                state->ctrl_buf_len)) != NULL) {
+                size_t line_len = (size_t)(nl - state->ctrl_buf) + 1;
+                size_t rest = state->ctrl_buf_len - line_len;
+
+                dealpg4_supervisor_channel_record(state,
+                                                  state->ctrl_buf,
+                                                  line_len);
+                if (state->protocol_aborted)
+                    return;
+                memmove(state->ctrl_buf, nl + 1, rest);
+                state->ctrl_buf_len = rest;
+            }
+            continue;
+        }
+        if (r == 0) {
+            /* EOF. A buffered partial line is an incomplete record —
+             * a framing defect. */
+            if (state->ctrl_buf_len > 0) {
+                dealpg4_supervisor_protocol_abort(state);
+                return;
+            }
+            dealpg4_supervisor_channel_lost(state);
+            return;
+        }
+        if (errno == EINTR)
+            continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return;
+        /* Any other read error: channel loss. */
+        dealpg4_supervisor_channel_lost(state);
+        return;
+    }
+}
+
+/* === REPORT and terminal records ======================================== */
+
+static const char *dealpg4_supervisor_class_token(
+    dealpg4_supervise_class cls)
+{
+    switch (cls) {
+    case DEALPG4_SUP_CLASS_STUB_BOOTSTRAP_FAILED:
+        return "STUB_BOOTSTRAP_FAILED";
+    case DEALPG4_SUP_CLASS_EXEC_FAILED:
+        return "EXEC_FAILED";
+    case DEALPG4_SUP_CLASS_AUTH_FAILED:
+        return "AUTH_FAILED";
+    case DEALPG4_SUP_CLASS_STARTUP_TIMEOUT:
+        return "STARTUP_TIMEOUT";
+    case DEALPG4_SUP_CLASS_STUB_PRE_RELEASE_EXIT:
+        return "STUB_PRE_RELEASE_EXIT";
+    case DEALPG4_SUP_CLASS_CALLER_LOST:
+        return "CALLER_LOST";
+    case DEALPG4_SUP_CLASS_EXECUTION_TIMEOUT:
+        return "EXECUTION_TIMEOUT";
+    case DEALPG4_SUP_CLASS_UNVERIFIED_TARGET_DEATH:
+        return "UNVERIFIED_TARGET_DEATH";
+    case DEALPG4_SUP_CLASS_PROOF_TIMEOUT:
+        return "PROOF_TIMEOUT";
+    case DEALPG4_SUP_CLASS_OVERALL_TIMEOUT:
+        return "OVERALL_TIMEOUT";
+    case DEALPG4_SUP_CLASS_TIMER_FAILED:
+        return "TIMER_FAILED";
+    case DEALPG4_SUP_CLASS_CLEANUP_FAILED:
+        return "CLEANUP_FAILED";
+    case DEALPG4_SUP_CLASS_GROUP_SURVIVOR:
+        return "GROUP_SURVIVOR";
+    case DEALPG4_SUP_CLASS_SESSION_SURVIVOR:
+        return "SESSION_SURVIVOR";
+    case DEALPG4_SUP_CLASS_ADOPTED_SURVIVOR:
+        return "ADOPTED_SURVIVOR";
+    case DEALPG4_SUP_CLASS_ZOMBIE_SURVIVOR:
+        return "ZOMBIE_SURVIVOR";
+    case DEALPG4_SUP_CLASS_DRAIN_FAILED:
+        return "DRAIN_FAILED";
+    default:
+        return "CLEANUP_FAILED"; /* unreachable: finalize is terminal */
+    }
+}
+
+/* The canonical 19-field REPORT (fixed catalog order) with the D7
+ * semantics: each ms field = CLOCK_MONOTONIC - T0 at its owning event
+ * (execMs at the exec-confirmation classification, 0 when exec is
+ * never confirmed); exitCode/termSignal per the reaped-status
+ * convention; stdoutBytes/stderrBytes = the drain totals;
+ * stdoutTruncated/stderrTruncated = drain-cap truncation OR the
+ * serve-mode queue-overflow drop (run-mode passthrough drops never set
+ * them); groupProof/sessionProof = the final scan items; drainEof = 0
+ * on DRAIN_FAILED/PROOF_TIMEOUT/OVERALL_TIMEOUT/survivor paths;
+ * failureToken = "-" on success and clean cancels, otherwise the named
+ * token. The serialized line goes to the serve-mode queue or the
+ * run-mode stderr pending slot. */
+static void dealpg4_supervisor_build_report(dealpg4_supervisor_state *state)
+{
+    int64_t now = (int64_t)dealpg4_now_ms();
+    int64_t exit_code = 0;
+    int64_t term_signal = 0;
+    char fbuf[DEALPG4_MAX_FIXED_FIELDS][32];
+    dealpg4_field_value fields[DEALPG4_MAX_FIXED_FIELDS];
+    size_t written = 0;
+    int drain_eof;
+    const char *token;
+
+    if (state->stub_reaped) {
+        switch (state->stub_si_code) {
+        case CLD_EXITED:
+            exit_code = state->stub_si_status;
+            term_signal = 0;
+            break;
+        case CLD_KILLED:
+        case CLD_DUMPED:
+            exit_code = 128 + state->stub_si_status;
+            term_signal = state->stub_si_status;
+            break;
+        default:
+            exit_code = 0;
+            term_signal = 0;
+            break;
+        }
+    }
+    drain_eof =
+        (state->drains_active
+             ? (state->drain_out->eof && !state->drain_out->failed
+                && state->drain_err->eof && !state->drain_err->failed)
+             : 1)
+        && !state->proof_failed_class;
+    token = (state->failure_token[0] != '\0') ? state->failure_token
+                                              : "-";
+
+#define DEALPG4_SUP_REPORT_SET(f, v)                                      \
+    do {                                                                  \
+        snprintf(fbuf[f], sizeof(fbuf[f]), "%lld", (long long)(v));       \
+        fields[f].data = fbuf[f];                                         \
+        fields[f].len = strlen(fbuf[f]);                                  \
+    } while (0)
+
+    DEALPG4_SUP_REPORT_SET(0, exit_code);
+    DEALPG4_SUP_REPORT_SET(1, term_signal);
+    DEALPG4_SUP_REPORT_SET(2, now - state->t0);
+    DEALPG4_SUP_REPORT_SET(3, state->startup_ms);
+    DEALPG4_SUP_REPORT_SET(4, state->exec_ms);
+    DEALPG4_SUP_REPORT_SET(5, state->term_ms);
+    DEALPG4_SUP_REPORT_SET(6, state->kill_ms);
+    DEALPG4_SUP_REPORT_SET(7, state->proof_ms);
+    DEALPG4_SUP_REPORT_SET(8, state->final_ms);
+    DEALPG4_SUP_REPORT_SET(9, state->reap_count);
+    DEALPG4_SUP_REPORT_SET(10, state->adopt_count);
+    DEALPG4_SUP_REPORT_SET(11, (int64_t)state->drain_out->total_read);
+    DEALPG4_SUP_REPORT_SET(12, (int64_t)state->drain_err->total_read);
+    DEALPG4_SUP_REPORT_SET(13, (state->drain_out->truncated
+                                || state->relay_out.queue_dropped)
+                                   ? 1
+                                   : 0);
+    DEALPG4_SUP_REPORT_SET(14, (state->drain_err->truncated
+                                || state->relay_err.queue_dropped)
+                                   ? 1
+                                   : 0);
+    DEALPG4_SUP_REPORT_SET(15, state->group_clean ? 1 : 0);
+    DEALPG4_SUP_REPORT_SET(16, state->session_clean ? 1 : 0);
+    DEALPG4_SUP_REPORT_SET(17, drain_eof ? 1 : 0);
+    fields[18].data = token;
+    fields[18].len = strlen(token);
+#undef DEALPG4_SUP_REPORT_SET
+
+    if (dealpg4_serialize(DEALPG4_REC_REPORT, fields,
+                          DEALPG4_MAX_FIXED_FIELDS, state->report_line,
+                          sizeof state->report_line, &written) != 0)
+        return; /* defect: a malformed REPORT line is never emitted */
+    state->report_len = written;
+    state->report_off = 0;
+
+    /* In-process report view (battery assertions). */
+    dealpg4_supervisor_last_result.report.exit_code = exit_code;
+    dealpg4_supervisor_last_result.report.term_signal = term_signal;
+    dealpg4_supervisor_last_result.report.elapsed_ms = now - state->t0;
+    dealpg4_supervisor_last_result.report.startup_ms = state->startup_ms;
+    dealpg4_supervisor_last_result.report.exec_ms = state->exec_ms;
+    dealpg4_supervisor_last_result.report.term_ms = state->term_ms;
+    dealpg4_supervisor_last_result.report.kill_ms = state->kill_ms;
+    dealpg4_supervisor_last_result.report.proof_ms = state->proof_ms;
+    dealpg4_supervisor_last_result.report.final_ms = state->final_ms;
+    dealpg4_supervisor_last_result.report.reap_count = state->reap_count;
+    dealpg4_supervisor_last_result.report.adopt_count = state->adopt_count;
+    dealpg4_supervisor_last_result.report.stdout_bytes =
+        state->drain_out->total_read;
+    dealpg4_supervisor_last_result.report.stderr_bytes =
+        state->drain_err->total_read;
+    dealpg4_supervisor_last_result.report.stdout_truncated =
+        (state->drain_out->truncated || state->relay_out.queue_dropped)
+            ? 1
+            : 0;
+    dealpg4_supervisor_last_result.report.stderr_truncated =
+        (state->drain_err->truncated || state->relay_err.queue_dropped)
+            ? 1
+            : 0;
+    dealpg4_supervisor_last_result.report.group_proof =
+        state->group_clean ? 1 : 0;
+    dealpg4_supervisor_last_result.report.session_proof =
+        state->session_clean ? 1 : 0;
+    dealpg4_supervisor_last_result.report.drain_eof = drain_eof ? 1 : 0;
+
+    if (state->serve_mode) {
+        /* Serve: REPORT goes on the control channel, behind every
+         * pending stream record (the queue is FIFO). */
+        (void)dealpg4_supervisor_queue_append(&state->queue,
+                                              state->report_line,
+                                              state->report_len, 1, -1,
+                                              0, 0);
+    } else {
+        /* Run: the REPORT line goes to stderr after the passthrough. */
+        state->report_pending = 1;
+    }
+}
+
+/* The terminal classification: derive the terminal record from the
+ * classification, the cancel state, and the reaped status (D5(c)),
+ * relay the final catch-up chunks and the OUT_ENDs of the EOF'd
+ * streams (never an OUT_END for a stream that never reached EOF), and
+ * queue REPORT + CLEAN/FAILED in catalog order. finalMs anchors at the
+ * terminal record's serialization. */
+static void dealpg4_supervisor_finalize(dealpg4_supervisor_state *state)
+{
+    dealpg4_supervise_terminal kind;
+    const char *token;
+
+    if (state->terminal_queued)
+        return;
+    if (state->protocol_aborted) {
+        /* No records on the aborted path (D5): the invocation
+         * termination already ran to its terminal classification. */
+        state->terminal_queued = 1;
+        state->channel_state = DEALPG4_CHAN_TERMINAL;
+        return;
+    }
+
+    /* Final relay catch-up: the remaining drained bytes and each EOF'd
+     * stream's OUT_END — on DRAIN_FAILED/PROOF_TIMEOUT/OVERALL_TIMEOUT
+     * and survivor-token paths the incomplete stream's relayed chunk
+     * sequence simply ends here, without its OUT_END (D5(d)). */
+    dealpg4_supervisor_relay_stream(state, &state->relay_out);
+    dealpg4_supervisor_relay_stream(state, &state->relay_err);
+
+    /* Terminal kind + failure token. */
+    if (state->cancel_requested) {
+        if (state->stub_reaped && state->stub_si_code == CLD_EXITED) {
+            /* Clean cancel: the stub/target exited on its own (the
+             * pre-release release-EOF exit 5 or any post-release
+             * CLD_EXITED). */
+            kind = DEALPG4_SUP_TERMINAL_CLEAN_CANCELLED;
+            token = "-";
+        } else if (state->stub_reaped
+                   && (state->stub_si_code == CLD_KILLED
+                       || state->stub_si_code == CLD_DUMPED)
+                   && state->signals_issued_to_target) {
+            /* Cancel-path signal death. */
+            kind = DEALPG4_SUP_TERMINAL_FAILED;
+            token = "CALLER_LOST";
+        } else if (state->stub_reaped
+                   && (state->stub_si_code == CLD_KILLED
+                       || state->stub_si_code == CLD_DUMPED)) {
+            /* A signal death with no supervisor-issued signal on the
+             * record (parent D3). */
+            kind = DEALPG4_SUP_TERMINAL_FAILED;
+            token = "UNVERIFIED_TARGET_DEATH";
+        } else {
+            /* The group was already gone at cancel time so no signal
+             * was issued (or no stub ever existed). */
+            kind = DEALPG4_SUP_TERMINAL_CLEAN_CANCELLED;
+            token = "-";
+        }
+    } else if (state->classification == DEALPG4_SUP_CLASS_SUCCESS) {
+        kind = DEALPG4_SUP_TERMINAL_CLEAN_SUCCESS;
+        token = "-";
+    } else {
+        kind = DEALPG4_SUP_TERMINAL_FAILED;
+        token = dealpg4_supervisor_class_token(state->classification);
+    }
+    state->final_kind = kind;
+    snprintf(state->failure_token, sizeof state->failure_token, "%s",
+             token);
+    state->final_ms = (int64_t)dealpg4_now_ms() - state->t0;
+
+    dealpg4_supervisor_build_report(state);
+
+    if (state->control_fd >= 0) {
+        /* Terminal record in catalog order after REPORT. */
+        {
+            char idbuf[32];
+            dealpg4_field_value fields[2];
+
+            snprintf(idbuf, sizeof idbuf, "%lld",
+                     (long long)state->invocation_id);
+            fields[0].data = idbuf;
+            fields[0].len = strlen(idbuf);
+            if (kind == DEALPG4_SUP_TERMINAL_CLEAN_SUCCESS
+                || kind == DEALPG4_SUP_TERMINAL_CLEAN_CANCELLED) {
+                static const char success_text[] = "success";
+                static const char cancelled_text[] = "cancelled";
+
+                fields[1].data =
+                    kind == DEALPG4_SUP_TERMINAL_CLEAN_SUCCESS
+                        ? success_text
+                        : cancelled_text;
+                fields[1].len = strlen(fields[1].data);
+                dealpg4_supervisor_publish(state, DEALPG4_REC_CLEAN,
+                                           fields, 2);
+            } else {
+                fields[1].data = state->failure_token;
+                fields[1].len = strlen(state->failure_token);
+                dealpg4_supervisor_publish(state, DEALPG4_REC_FAILED,
+                                           fields, 2);
+            }
+        }
+        state->channel_state = DEALPG4_CHAN_TERMINAL;
+        dealpg4_expectation_set_init(&state->expect);
+        dealpg4_expectation_set_add(&state->expect, DEALPG4_REC_CANCEL);
+    }
+    state->terminal_queued = 1;
 }
 
 /* === Event-loop fd roles and handlers =================================== */
 
 typedef enum dealpg4_loop_role {
     DEALPG4_ROLE_TIMER = 0,
-    DEALPG4_ROLE_SIGCHLD,
     DEALPG4_ROLE_STATUS,
+    DEALPG4_ROLE_SIGCHLD,
     DEALPG4_ROLE_STREAM_OUT,
     DEALPG4_ROLE_STREAM_ERR,
     DEALPG4_ROLE_CTRL_READ,
-    DEALPG4_ROLE_CTRL_WRITE
+    DEALPG4_ROLE_CTRL_WRITE,
+    DEALPG4_ROLE_STDOUT_WRITE,
+    DEALPG4_ROLE_STDERR_WRITE
 } dealpg4_loop_role;
 
 /* Pump one drain on readability (parent D1/D7): repeated non-blocking
  * reads through the drain context until EAGAIN; on EOF (or a read
- * error, stage-temporary) the read end is closed and leaves the poll
- * set. Draining continues past the cap so a saturated target can never
- * deadlock on a full pipe. */
+ * error) the read end is closed and leaves the poll set. Draining
+ * continues past the cap so a saturated target can never deadlock on
+ * a full pipe. In serve mode the pumped stream is relayed as OUT
+ * chunks as it drains. */
 static void dealpg4_supervisor_pump_stream(dealpg4_supervisor_state *state,
-                                           int *fd, dealpg4_drain_ctx *drain)
+                                           int *fd, dealpg4_drain_ctx *drain,
+                                           dealpg4_supervisor_relay *relay)
 {
     if (*fd < 0)
         return;
     for (;;) {
         dealpg4_drain_status s = dealpg4_drain_pump(drain, *fd);
 
-        if (s == DEALPG4_DRAIN_AGAIN)
+        if (s == DEALPG4_DRAIN_AGAIN) {
+            dealpg4_supervisor_relay_stream(state, relay);
             return;
+        }
         close(*fd);
         *fd = -1;
+        dealpg4_supervisor_relay_stream(state, relay);
         return; /* EOF or error: the read side is done */
     }
 }
@@ -1162,81 +2654,271 @@ static void dealpg4_supervisor_read_sigchld(dealpg4_supervisor_state *state)
             continue;
         break; /* EAGAIN */
     }
-    dealpg4_supervisor_reap(state);
+    dealpg4_supervisor_reap_all(state);
 }
 
-/* Control-channel read side (serve): stage-temporary read-and-discard —
- * the channel machine (ACK/CANCEL, per-state cancel/caller-loss
- * semantics) lands with epic Sequencing step 4. Reading keeps the fd in
- * the D1 poll set without a POLLIN busy-loop; EOF/HUP is observed but
- * carries no cancel semantics at this stage, so the invocation always
- * continues under its own absolute deadlines. After EOF/HUP the read
- * side leaves the poll set (a peer-closed socket keeps POLLIN ready
- * forever) and the invocation continues under its own deadlines. */
-static void dealpg4_supervisor_read_control(dealpg4_supervisor_state *state)
+/* Run-mode stdout flush: the ready frame first (when requested), then
+ * the stdout passthrough — both non-blocking. An EPIPE drops further
+ * stdout writes (never process death; SIGPIPE is ignored). */
+static void dealpg4_supervisor_flush_run_stdout(
+    dealpg4_supervisor_state *state)
 {
-    char discard[256];
+    if (state->serve_mode)
+        return; /* serve: never writes stdio */
 
-    if (state->control_fd < 0)
-        return;
-    for (;;) {
-        ssize_t r = read(state->control_fd, discard, sizeof discard);
+    if (state->ready_pending) {
+        for (;;) {
+            ssize_t r = write(1, state->ready_line + state->ready_off,
+                              state->ready_len - state->ready_off);
 
-        if (r > 0)
-            continue;
-        if (r == 0) {
-            state->channel_lost = 1;
+            if (r > 0) {
+                state->ready_off += (size_t)r;
+                if (state->ready_off >= state->ready_len) {
+                    state->ready_pending = 0;
+                    break;
+                }
+                continue;
+            }
+            if (r < 0 && (errno == EINTR || errno == EAGAIN
+                          || errno == EWOULDBLOCK))
+                return;
+            /* EPIPE or any other error: drop the ready frame and the
+             * stdout passthrough. */
+            state->ready_pending = 0;
+            state->pass_out_lost = 1;
             return;
         }
-        if (errno == EINTR)
+    }
+    if (!state->started_published)
+        return;
+    while (state->pass_out_off < state->drain_out->retained_len) {
+        ssize_t r = write(1,
+                          state->drain_out->retained
+                              + state->pass_out_off,
+                          state->drain_out->retained_len
+                              - state->pass_out_off);
+
+        if (r > 0) {
+            state->pass_out_off += (size_t)r;
             continue;
-        return; /* EAGAIN */
+        }
+        if (r < 0 && (errno == EINTR || errno == EAGAIN
+                      || errno == EWOULDBLOCK))
+            return;
+        /* EPIPE or any other error: drop further passthrough writes;
+         * draining continues to EOF and the record terminates by its
+         * own deadline. */
+        state->pass_out_lost = 1;
+        return;
     }
 }
 
-/* The stage-done test: a terminal classification, the stub reaped, and
- * both drains at EOF (EOF is mandatory; the full proof loop lands with
- * the channel machine). */
-static int dealpg4_supervisor_stage_done(
+/* Run-mode stderr flush: the stderr passthrough first, then the final
+ * REPORT line — both non-blocking; the process never waits for stdio
+ * to drain. */
+static void dealpg4_supervisor_flush_run_stderr(
+    dealpg4_supervisor_state *state)
+{
+    if (state->serve_mode)
+        return; /* serve: never writes stdio */
+
+    if (state->started_published) {
+        while (state->pass_err_off < state->drain_err->retained_len) {
+            ssize_t r = write(2,
+                              state->drain_err->retained
+                                  + state->pass_err_off,
+                              state->drain_err->retained_len
+                                  - state->pass_err_off);
+
+            if (r > 0) {
+                state->pass_err_off += (size_t)r;
+                continue;
+            }
+            if (r < 0 && (errno == EINTR || errno == EAGAIN
+                          || errno == EWOULDBLOCK))
+                return;
+            state->pass_err_lost = 1;
+            break;
+        }
+    }
+    if (!state->report_pending)
+        return;
+    if (state->pass_err_off < state->drain_err->retained_len
+        && !state->pass_err_lost)
+        return; /* the passthrough completes first */
+    if (state->report_off == 0 && !state->report_sep_done) {
+        state->report_sep_done = 1;
+        if (!state->pass_err_lost && state->pass_err_off > 0
+            && state->drain_err->retained[state->pass_err_off - 1]
+                   != '\n')
+            state->report_lead = 1; /* keep the REPORT a line of its own */
+    }
+    if (state->report_lead) {
+        static const char lf = '\n';
+        ssize_t r = write(2, &lf, 1);
+
+        if (r == 1) {
+            state->report_lead = 0;
+        } else if (r < 0 && (errno == EINTR || errno == EAGAIN
+                              || errno == EWOULDBLOCK)) {
+            return;
+        } else {
+            /* EPIPE or any other error: drop the separator and the
+             * REPORT line. */
+            state->report_lead = 0;
+            state->report_pending = 0;
+            return;
+        }
+    }
+    for (;;) {
+        ssize_t r = write(2, state->report_line + state->report_off,
+                          state->report_len - state->report_off);
+
+        if (r > 0) {
+            state->report_off += (size_t)r;
+            if (state->report_off >= state->report_len) {
+                state->report_pending = 0;
+                return;
+            }
+            continue;
+        }
+        if (r < 0 && (errno == EINTR || errno == EAGAIN
+                      || errno == EWOULDBLOCK))
+            return;
+        /* EPIPE or any other error: the REPORT line is dropped; the
+         * record terminates by its own deadline. */
+        state->report_pending = 0;
+        return;
+    }
+}
+
+/* The run-mode output is complete: the ready frame, both passthrough
+ * payloads, and the REPORT line were each written or dropped. */
+static int dealpg4_supervisor_run_output_done(
     const dealpg4_supervisor_state *state)
 {
-    if (state->classification == DEALPG4_SUP_CLASS_NONE
-        || state->classification == DEALPG4_SUP_CLASS_STARTED)
-        return 0;
-    return state->stub_reaped
-        && dealpg4_drain_eof(state->drain_out)
-        && dealpg4_drain_eof(state->drain_err);
+    return !state->ready_pending && !state->report_pending
+        && (state->pass_out_off >= state->drain_out->retained_len
+            || state->pass_out_lost)
+        && (state->pass_err_off >= state->drain_err->retained_len
+            || state->pass_err_lost);
+}
+
+/* The loop's ppoll timeout: the earliest of the recipe-state phase
+ * deadline (the TIMER_FAILED wakeup source, D8), the bounded proof
+ * pass throttle, the proof confirming-pass deadline, and the TERMINAL
+ * close-linger deadline (the serve-mode channel closes and the
+ * process exits promptly after the terminal record and its REJECTs
+ * were delivered — never blocked in ppoll until the next phase
+ * deadline). */
+static int64_t dealpg4_supervisor_loop_timeout_ms(
+    const dealpg4_supervisor_state *state, int64_t now)
+{
+    int64_t deadline = dealpg4_supervisor_next_deadline(state);
+    int64_t remaining = deadline > now ? deadline - now : 0;
+
+    if (state->close_lingering) {
+        int64_t linger = state->close_linger_deadline_ms;
+
+        if (linger <= now) {
+            remaining = 0;
+        } else if (linger - now < remaining) {
+            remaining = linger - now;
+        }
+    }
+    if (dealpg4_supervisor_proof_pending(state)) {
+        int64_t np = state->proof_next_pass_ms;
+
+        if (np <= now) {
+            remaining = 0;
+        } else if (np - now < remaining) {
+            remaining = np - now;
+        }
+        if (state->proof_first_pass && !state->proof_done) {
+            int64_t confirm = state->proof_first_pass_ms + 10;
+
+            if (confirm <= now) {
+                remaining = 0;
+            } else if (confirm - now < remaining) {
+                remaining = confirm - now;
+            }
+        }
+    }
+    return remaining;
 }
 
 /* The single-threaded ppoll event loop (parent D1): timerfd,
  * signalfd(SIGCHLD), both target stream pipes, the stub status-pipe
- * read fd, the control-channel read side, and the control-channel
- * write side whenever the pending record exists. No write path blocks;
- * ppoll always blocks with the earliest applicable recipe-state
- * deadline. The status pipe is handled before the reap loop so the
- * 3(i) liveness check runs at the first EOF read before any pending
- * SIGCHLD for the stub pid is reaped. */
+ * read fd, the control-channel read side, the control-channel write
+ * side whenever the pending queue is non-empty, and the run-mode
+ * stdout/stderr write sides whenever output is pending. No write path
+ * blocks; ppoll always blocks with the earliest applicable
+ * recipe-state deadline. The status pipe is handled before the reap
+ * loop so the 3(i) liveness check runs at the first EOF read before
+ * any pending SIGCHLD for the stub pid is reaped. */
 static void dealpg4_supervisor_loop(dealpg4_supervisor_state *state)
 {
     for (;;) {
-        struct pollfd fds[7];
-        dealpg4_loop_role roles[7];
+        struct pollfd fds[9];
+        dealpg4_loop_role roles[9];
         nfds_t nfds = 0;
         nfds_t i;
-        uint64_t now = dealpg4_now_ms();
-        int64_t deadline = dealpg4_supervisor_next_deadline(state);
-        int64_t remaining = deadline > (int64_t)now
-                                ? deadline - (int64_t)now
-                                : 0;
+        uint64_t now64;
+        int64_t now;
+        int64_t remaining;
         struct timespec ts;
         int rc;
 
         dealpg4_supervisor_advance_deadlines(state);
         if (state->done)
             return;
-        if (dealpg4_supervisor_stage_done(state))
-            return;
 
+        now64 = dealpg4_now_ms();
+        if (dealpg4_supervisor_proof_pending(state)
+            && (int64_t)now64 >= state->proof_next_pass_ms) {
+            dealpg4_supervisor_proof_pass(state);
+            if (state->done)
+                return;
+        }
+
+        if (state->terminal_queued) {
+            if (state->serve_mode) {
+                if (state->channel_lost || state->protocol_aborted) {
+                    /* The per-state invocation termination completes
+                     * before the supervisor exits (D5): after channel
+                     * loss / protocol abort the proof loop runs to its
+                     * terminal classification (proof pass or the T4
+                     * deadline), bounded by the T5 recipe state. Until
+                     * then the loop blocks in ppoll exactly like the
+                     * non-aborted proof paths (the timeout computation
+                     * covers the proof throttle), never busy-spinning. */
+                    if (state->proof_done
+                        || state->proof_failed_class) {
+                        state->done = 1;
+                        return;
+                    }
+                } else if (dealpg4_supervisor_queue_empty(
+                               &state->queue)) {
+                    if (!state->close_lingering) {
+                        state->close_lingering = 1;
+                        state->close_linger_deadline_ms =
+                            (int64_t)dealpg4_now_ms() + 10;
+                    } else if ((int64_t)dealpg4_now_ms()
+                               >= state->close_linger_deadline_ms) {
+                        state->done = 1;
+                        return;
+                    }
+                } else {
+                    state->close_lingering = 0;
+                }
+            } else if (dealpg4_supervisor_run_output_done(state)) {
+                state->done = 1;
+                return;
+            }
+        }
+
+        now = (int64_t)dealpg4_now_ms();
+        remaining = dealpg4_supervisor_loop_timeout_ms(state, now);
         dealpg4_ms_to_timespec(
             remaining > (uint64_t)INT_MAX ? (uint64_t)INT_MAX
                                           : (uint64_t)remaining,
@@ -1277,25 +2959,47 @@ static void dealpg4_supervisor_loop(dealpg4_supervisor_state *state)
             roles[nfds] = DEALPG4_ROLE_STREAM_ERR;
             nfds++;
         }
-        if (state->control_fd >= 0) {
-            if (state->ch_pending) {
-                fds[nfds].fd = state->control_fd;
-                fds[nfds].events = POLLOUT;
-                fds[nfds].revents = 0;
-                roles[nfds] = DEALPG4_ROLE_CTRL_WRITE;
-                nfds++;
-            }
-            /* The read side leaves the poll set once channel EOF/HUP
-             * was observed: a peer-closed socket keeps POLLIN ready
-             * forever, and polling it would busy-spin the loop.
-             * Channel loss carries no cancel semantics at this stage
-             * (the channel machine owns them), so the invocation
-             * continues under its own absolute deadlines. */
-            if (!state->channel_lost) {
+        if (state->serve_mode) {
+            if (state->control_fd >= 0) {
+                if (!dealpg4_supervisor_queue_empty(&state->queue)) {
+                    fds[nfds].fd = state->control_fd;
+                    fds[nfds].events = POLLOUT;
+                    fds[nfds].revents = 0;
+                    roles[nfds] = DEALPG4_ROLE_CTRL_WRITE;
+                    nfds++;
+                }
+                /* The read side leaves the poll set once the channel is
+                 * closed (loss/abort closes the fd): a peer-closed
+                 * socket keeps POLLIN ready forever and polling it
+                 * would busy-spin the loop. */
                 fds[nfds].fd = state->control_fd;
                 fds[nfds].events = POLLIN;
                 fds[nfds].revents = 0;
                 roles[nfds] = DEALPG4_ROLE_CTRL_READ;
+                nfds++;
+            }
+        } else {
+            /* Run mode: stdout/stderr write sides whenever output is
+             * pending. */
+            if (state->ready_pending
+                || (state->started_published
+                    && !state->pass_out_lost
+                    && state->pass_out_off
+                           < state->drain_out->retained_len)) {
+                fds[nfds].fd = 1;
+                fds[nfds].events = POLLOUT;
+                fds[nfds].revents = 0;
+                roles[nfds] = DEALPG4_ROLE_STDOUT_WRITE;
+                nfds++;
+            }
+            if ((state->started_published && !state->pass_err_lost
+                 && state->pass_err_off
+                        < state->drain_err->retained_len)
+                || state->report_pending) {
+                fds[nfds].fd = 2;
+                fds[nfds].events = POLLOUT;
+                fds[nfds].revents = 0;
+                roles[nfds] = DEALPG4_ROLE_STDERR_WRITE;
                 nfds++;
             }
         }
@@ -1311,8 +3015,6 @@ static void dealpg4_supervisor_loop(dealpg4_supervisor_state *state)
             }
             continue;
         }
-        if (rc == 0)
-            continue; /* recipe-state timeout: the advance applies it */
 
         for (i = 0; i < nfds; i++) {
             switch (roles[i]) {
@@ -1331,63 +3033,114 @@ static void dealpg4_supervisor_loop(dealpg4_supervisor_state *state)
             case DEALPG4_ROLE_STREAM_OUT:
                 if (fds[i].revents & (POLLIN | POLLHUP))
                     dealpg4_supervisor_pump_stream(
-                        state, &state->stream_out_fd, state->drain_out);
+                        state, &state->stream_out_fd, state->drain_out,
+                        &state->relay_out);
                 break;
             case DEALPG4_ROLE_STREAM_ERR:
                 if (fds[i].revents & (POLLIN | POLLHUP))
                     dealpg4_supervisor_pump_stream(
-                        state, &state->stream_err_fd, state->drain_err);
+                        state, &state->stream_err_fd, state->drain_err,
+                        &state->relay_err);
                 break;
             case DEALPG4_ROLE_SIGCHLD:
                 if (fds[i].revents & POLLIN)
                     dealpg4_supervisor_read_sigchld(state);
                 break;
             case DEALPG4_ROLE_CTRL_READ:
-                if (fds[i].revents & (POLLIN | POLLHUP))
+                if (fds[i].revents & (POLLIN | POLLHUP | POLLERR))
                     dealpg4_supervisor_read_control(state);
                 break;
             case DEALPG4_ROLE_CTRL_WRITE:
-                if (fds[i].revents & POLLOUT)
-                    dealpg4_supervisor_channel_flush(state);
+                if (fds[i].revents & (POLLOUT | POLLERR)) {
+                    int rcq = dealpg4_supervisor_queue_flush(
+                        &state->queue, state->control_fd);
+
+                    if (rcq < 0)
+                        dealpg4_supervisor_channel_lost(state);
+                }
+                break;
+            case DEALPG4_ROLE_STDOUT_WRITE:
+                if (fds[i].revents & (POLLOUT | POLLERR))
+                    dealpg4_supervisor_flush_run_stdout(state);
+                break;
+            case DEALPG4_ROLE_STDERR_WRITE:
+                if (fds[i].revents & (POLLOUT | POLLERR))
+                    dealpg4_supervisor_flush_run_stderr(state);
                 break;
             default:
                 break;
             }
         }
+
+        /* The release point: the end of one event-processing batch
+         * (the post-ACK-pre-release window, D5(a)). */
+        dealpg4_supervisor_maybe_release(state);
     }
 }
 
 /* === Stage termination ================================================== */
 
-/* Bounded post-state at the stage's terminal classification: close the
- * release pipe first (a pre-release stub still polled on it observes
- * EOF and exits 5), reap every waitable child (waitid to ECHILD — no
- * zombie of this supervisor), best-effort drain to EOF, close every
- * supervisor fd, restore the captured entry signal mask (in-process
- * composition: the caller's signal mask is exactly as it was before
- * the core blocked SIGCHLD), and record the observability result. No records are
- * published — the record surface lands with the channel machine. */
+/* The exit status after the invocation: serve 0/1/2 per the terminal
+ * record (2 also on the no-record PROTOCOL_ERROR path); run 0/1/2 per
+ * D4. */
+static int dealpg4_supervisor_exit_status(
+    const dealpg4_supervisor_state *state)
+{
+    if (state->protocol_aborted)
+        return DEALPG4_EXIT_USAGE;
+    if (state->serve_mode) {
+        switch (state->final_kind) {
+        case DEALPG4_SUP_TERMINAL_CLEAN_SUCCESS:
+            return 0;
+        case DEALPG4_SUP_TERMINAL_CLEAN_CANCELLED:
+            return 1;
+        default:
+            return DEALPG4_EXIT_USAGE;
+        }
+    }
+    switch (state->final_kind) {
+    case DEALPG4_SUP_TERMINAL_CLEAN_SUCCESS:
+        return state->stub_reaped && state->stub_si_code == CLD_EXITED
+                   && state->stub_si_status == 0
+               ? 0
+               : 1;
+    case DEALPG4_SUP_TERMINAL_CLEAN_CANCELLED:
+        return 1; /* clean containment (unreachable without a channel) */
+    default:
+        return DEALPG4_EXIT_USAGE;
+    }
+}
+
+/* Bounded post-state at termination: close the release pipe first (a
+ * pre-release stub still polled on it observes EOF and exits 5), reap
+ * every waitable child (waitid to ECHILD — no zombie of this
+ * supervisor), close every supervisor fd, restore the captured entry
+ * signal mask (in-process composition: the caller's signal mask is
+ * exactly as it was before the core blocked SIGCHLD), and record the
+ * in-process observability result. */
 static void dealpg4_supervisor_terminate(dealpg4_supervisor_state *state)
 {
     if (state->release_fd >= 0) {
         close(state->release_fd);
         state->release_fd = -1;
     }
-    dealpg4_supervisor_reap(state);
+    dealpg4_supervisor_reap_all(state);
 
     if (state->stream_out_fd >= 0) {
-        (void)dealpg4_drain_pump(state->drain_out, state->stream_out_fd);
         close(state->stream_out_fd);
         state->stream_out_fd = -1;
     }
     if (state->stream_err_fd >= 0) {
-        (void)dealpg4_drain_pump(state->drain_err, state->stream_err_fd);
         close(state->stream_err_fd);
         state->stream_err_fd = -1;
     }
     if (state->status_fd >= 0) {
         close(state->status_fd);
         state->status_fd = -1;
+    }
+    if (state->control_fd >= 0) {
+        close(state->control_fd);
+        state->control_fd = -1;
     }
     if (state->sig_fd >= 0) {
         close(state->sig_fd);
@@ -1403,6 +3156,33 @@ static void dealpg4_supervisor_terminate(dealpg4_supervisor_state *state)
     dealpg4_supervisor_last_result.classification = state->classification;
     dealpg4_supervisor_last_result.reaped_si_code = state->stub_si_code;
     dealpg4_supervisor_last_result.reaped_si_status = state->stub_si_status;
+    dealpg4_supervisor_last_result.terminal_kind = state->final_kind;
+    snprintf(dealpg4_supervisor_last_result.failure_token,
+             sizeof dealpg4_supervisor_last_result.failure_token, "%s",
+             state->failure_token);
+    dealpg4_supervisor_last_result.protocol_aborted =
+        state->protocol_aborted;
+    dealpg4_supervisor_last_result.channel_lost = state->channel_lost;
+    dealpg4_supervisor_last_result.cancel_applied = state->cancel_requested;
+    dealpg4_supervisor_last_result.started_published =
+        state->started_published;
+    dealpg4_supervisor_last_result.out_chunks_out = state->relay_out.chunks;
+    dealpg4_supervisor_last_result.out_chunks_err = state->relay_err.chunks;
+    dealpg4_supervisor_last_result.out_end_out =
+        state->relay_out.out_end_queued;
+    dealpg4_supervisor_last_result.out_end_err =
+        state->relay_err.out_end_queued;
+    dealpg4_supervisor_last_result.queue_drop_out =
+        state->relay_out.queue_dropped;
+    dealpg4_supervisor_last_result.queue_drop_err =
+        state->relay_err.queue_dropped;
+    dealpg4_supervisor_last_result.survivor_count = state->survivor_count;
+    if (state->survivor_count > 0) {
+        memcpy(dealpg4_supervisor_last_result.survivor_pids,
+               state->survivor_pids,
+               state->survivor_count
+                   * sizeof(dealpg4_supervisor_last_result.survivor_pids[0]));
+    }
 }
 
 /* Close both ends of a pipe (refusal paths). */
@@ -1436,11 +3216,7 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
     int err_pipe[2] = {-1, -1};
     pid_t stub;
     int flags;
-
-    /* The engine consumes emit_ready_frame (run --ready-frame: print
-     * "DEALPG4 STARTED <nonce>" once exec is confirmed); the
-     * publication lands with the channel machine. */
-    (void)emit_ready_frame;
+    int status;
 
     /* Observability reset, before any side effect or refusal path
      * (supervisor.h result contract): a core call refused before fork
@@ -1502,7 +3278,7 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
 
     /* Entry capability wiring (D8): one timerfd created before any
      * fork; timerfd_create failure is the no-record TIMER_FAILED
-     * refusal (distinct from the mid-invocation re-arm path). */
+     * refusal (distinct from the mid-invocation re-arm record path). */
     if (dealpg4_deadline_open(&timer) != 0)
         return DEALPG4_SUPERVISOR_ENTRY_TIMER_FAILED;
 
@@ -1540,6 +3316,8 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
     state.invocation_id = invocation_id;
     state.budget_t = budget_t;
     state.control_fd = control_fd;
+    state.serve_mode = (control_fd >= 0);
+    state.emit_ready_frame = emit_ready_frame;
     state.t0 = t0;
     state.dl = dl;
     state.timer = timer;
@@ -1555,8 +3333,20 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
     state.drain_out = &dealpg4_supervisor_drain_stdout_ctx;
     state.drain_err = &dealpg4_supervisor_drain_stderr_ctx;
     state.classification = DEALPG4_SUP_CLASS_NONE;
-
-    (void)dealpg4_deadline_arm(&state.timer, (uint64_t)dl.t1);
+    state.channel_state = DEALPG4_CHAN_PRE_RELEASE;
+    state.group_clean = 1;
+    state.session_clean = 1;
+    state.drain_ok = 1;
+    state.final_kind = DEALPG4_SUP_TERMINAL_NONE;
+    state.close_linger_deadline_ms = 0;
+    state.relay_out.drain = &dealpg4_supervisor_drain_stdout_ctx;
+    state.relay_out.is_out = 1;
+    state.relay_err.drain = &dealpg4_supervisor_drain_stderr_ctx;
+    state.relay_err.is_out = 0;
+    dealpg4_supervisor_queue_init(&state.queue);
+    dealpg4_expectation_set_init(&state.expect);
+    dealpg4_expectation_set_add(&state.expect, DEALPG4_REC_ACK);
+    dealpg4_expectation_set_add(&state.expect, DEALPG4_REC_CANCEL);
 
     /* Re-export the budget and the invocation nonce in the stub fork
      * environment in both modes (parent D4/D9): the stub's step-6 T1s
@@ -1586,7 +3376,9 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
      * single release byte (stub read end FD_CLOEXEC, supervisor write
      * end O_NONBLOCK); the two stream pipes carry the target's
      * stdout/stderr into the drains (read ends O_NONBLOCK; the write
-     * ends keep the target's ordinary blocking semantics). */
+     * ends keep the target's ordinary blocking semantics). A pipe
+     * creation failure is the record-bearing FAILED <id> CLEANUP_FAILED
+     * path (never STARTED, never CLEAN). */
     if (pipe2(status_pipe, O_NONBLOCK | O_CLOEXEC) != 0
         || pipe2(release_pipe, O_CLOEXEC) != 0
         || pipe2(out_pipe, O_CLOEXEC) != 0
@@ -1595,13 +3387,12 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
         dealpg4_supervisor_close_pipe(release_pipe);
         dealpg4_supervisor_close_pipe(out_pipe);
         dealpg4_supervisor_close_pipe(err_pipe);
-        dealpg4_deadline_close(&state.timer);
-        close(sig_fd);
-        (void)sigprocmask(SIG_SETMASK, &dealpg4_supervisor_entry_mask,
-                          NULL);
-        /* Stage-temporary fail-closed refusal (the CLEANUP_FAILED
-         * record path lands with the channel machine). */
-        return DEALPG4_EXIT_CAPABILITY_MISSING;
+        state.classification = DEALPG4_SUP_CLASS_CLEANUP_FAILED;
+        if (state.startup_ms == 0)
+            state.startup_ms = (int64_t)dealpg4_now_ms() - state.t0;
+        dealpg4_supervisor_loop(&state);
+        dealpg4_supervisor_terminate(&state);
+        return dealpg4_supervisor_exit_status(&state);
     }
     flags = fcntl(out_pipe[0], F_GETFL);
     if (flags >= 0)
@@ -1625,27 +3416,30 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
 
     /* Fork topology (parent D5): the supervisor stays outside the
      * target group (the stub's setsid creates its own session/group);
-     * stubPid is recorded immediately. */
+     * stubPid is recorded immediately. A fork(2) failure is the
+     * record-bearing FAILED <id> STUB_BOOTSTRAP_FAILED path (no stub
+     * ever existed; REPORT.exitCode = 0, termSignal = 0 — never
+     * STARTED, never CLEAN). */
     stub = fork();
     if (stub < 0) {
         dealpg4_supervisor_close_pipe(status_pipe);
         dealpg4_supervisor_close_pipe(release_pipe);
         dealpg4_supervisor_close_pipe(out_pipe);
         dealpg4_supervisor_close_pipe(err_pipe);
-        dealpg4_deadline_close(&state.timer);
-        close(sig_fd);
-        (void)sigprocmask(SIG_SETMASK, &dealpg4_supervisor_entry_mask,
-                          NULL);
-        /* Stage-temporary fail-closed refusal (the STUB_BOOTSTRAP_FAILED
-         * record path lands with the channel machine). */
-        return DEALPG4_EXIT_CAPABILITY_MISSING;
+        state.classification = DEALPG4_SUP_CLASS_STUB_BOOTSTRAP_FAILED;
+        if (state.startup_ms == 0)
+            state.startup_ms = (int64_t)dealpg4_now_ms() - state.t0;
+        dealpg4_supervisor_loop(&state);
+        dealpg4_supervisor_terminate(&state);
+        return dealpg4_supervisor_exit_status(&state);
     }
     if (stub == 0)
         dealpg4_stub_run(&cfg); /* never returns */
 
     /* Supervisor side: close every stub-owned end, bind the release
-     * write end O_NONBLOCK, and publish STUB_FORKED immediately after
-     * fork returns. */
+     * write end O_NONBLOCK, publish STUB_FORKED immediately after
+     * fork returns, and arm the T1 deadline (an arm failure is the
+     * mid-invocation TIMER_FAILED record path). */
     close(status_pipe[1]);
     close(release_pipe[0]);
     close(out_pipe[1]);
@@ -1655,16 +3449,20 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
     state.release_fd = release_pipe[1];
     state.stream_out_fd = out_pipe[0];
     state.stream_err_fd = err_pipe[0];
+    state.drains_active = 1;
     flags = fcntl(state.release_fd, F_GETFL);
     if (flags >= 0)
         (void)fcntl(state.release_fd, F_SETFL, flags | O_NONBLOCK);
 
     dealpg4_supervisor_publish_stub_forked(&state);
+    if (dealpg4_deadline_arm(&state.timer, (uint64_t)dl.t1) != 0)
+        dealpg4_supervisor_timer_failed(&state);
 
     dealpg4_supervisor_loop(&state);
     dealpg4_supervisor_terminate(&state);
 
-    return DEALPG4_SUPERVISOR_STAGE_TERMINAL;
+    status = dealpg4_supervisor_exit_status(&state);
+    return status;
 }
 
 /* === Serve entry ======================================================== */
@@ -1735,9 +3533,10 @@ int dealpg4_serve_entry(int argc, char **argv)
      * the program), cwd = argv[2], nonce from the environment, the
      * parsed invocation id and budget, control_fd = 0 (fd 0), and
      * serve mode has no ready frame. The returned status is the serve
-     * exit status: CONFIG_INVALID-class 3; the capability-class
-     * statuses map to exit 4 (DEALPG4_EXIT_CAPABILITY_MISSING),
-     * including the TIMER_FAILED entry refusal (D3/D8). */
+     * exit status: 0 CLEAN success, 1 CLEAN cancelled, 2 FAILED /
+     * PROTOCOL_ERROR; the capability-class statuses map to exit 4
+     * (DEALPG4_EXIT_CAPABILITY_MISSING), including the TIMER_FAILED
+     * entry refusal (D3/D8). */
     status = dealpg4_supervise_core((const char **)&argv[4], argv[2],
                                     nonce_env, invocation_id, budget_t,
                                     0, 0);
@@ -1795,8 +3594,7 @@ int dealpg4_run_entry(int argc, char **argv)
 
     /* fd flags (D8): capture F_GETFL for stdout/stderr before enabling
      * O_NONBLOCK on both; the original flag sets are restored before
-     * every exit on this child's exit paths (the discipline extends to
-     * all later-stage exits). A failure to bind the stdio surface is a
+     * every exit. A failure to bind the stdio surface is a
      * capability-class entry refusal: the named token on stderr, exit
      * 2 (the pinned run entry-refusal shape). */
     stdout_flags = fcntl(1, F_GETFL);
@@ -1834,5 +3632,7 @@ int dealpg4_run_entry(int argc, char **argv)
         fprintf(stderr, "TIMER_FAILED\n");
         return DEALPG4_EXIT_USAGE;
     }
+    if (status == DEALPG4_EXIT_CONFIG_INVALID)
+        return DEALPG4_EXIT_USAGE; /* unreachable: entry-validated */
     return status;
 }
