@@ -50,6 +50,7 @@ javac --release 25 -proc:none -d build \
   test/DiagnosticRangeTest.java \
   test/DiagnosticClassificationTest.java \
   test/LoweringFoundationTest.java \
+  test/SemanticIrSchemaTest.java \
   test/AstAndTypesTest.java \
   test/LexerTest.java \
   test/ParserTest.java \
@@ -138,6 +139,10 @@ java -ea -cp build deal.test.DiagnosticClassificationTest
 echo ""
 echo "=== Running Lowering Foundation Tests (ISSUE-0281) ==="
 java -ea -cp build deal.test.LoweringFoundationTest
+
+echo ""
+echo "=== Running Semantic IR Schema Tests (ISSUE-0282) ==="
+java -ea -cp build deal.test.SemanticIrSchemaTest
 
 echo ""
 echo "=== Running Protected Path Ops Tests (ISSUE-0262) ==="
