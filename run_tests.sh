@@ -104,6 +104,8 @@ javac --release 25 -proc:none -d build \
   test/StdlibTimePreActivationPinTest.java \
   test/GenerateStdlibGoldenIr.java \
   test/ConformanceTest.java \
+  test/ConformanceHarnessMetadata.java \
+  test/ConformanceHarnessMetadataTest.java \
   test/JvmConformanceTest.java \
   test/JsConformanceTest.java \
   test/LuaAbiTest.java \
@@ -560,6 +562,10 @@ else
   fi
 fi
 rm -f "$TEMP_FILE"
+
+echo ""
+echo "=== Running Conformance Harness Metadata Seam Tests ==="
+java -ea -cp build deal.test.ConformanceHarnessMetadataTest
 
 echo ""
 echo "=== Waiting for background suites ==="

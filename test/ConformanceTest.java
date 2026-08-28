@@ -256,7 +256,9 @@ public class ConformanceTest {
         LegacyProfileRegressionCatalog.runSelfProbes();
         for (TestFile test : tests) {
             LegacyProfileRegressionCatalog.scanDealSource(
-                test.relativePath(), Files.readString(test.path()),
+                test.relativePath(), ConformanceHarnessMetadata
+                    .stripClassificationHeaders(
+                        Files.readString(test.path())),
                 test.expected());
         }
         List<String> catalogViolations =
@@ -740,7 +742,11 @@ public class ConformanceTest {
     @SuppressWarnings("deprecation")
     private static List<CompilerDiagnostic> compileCompanion(TestFile test) {
         try {
-            String source = Files.readString(test.path());
+            // ISSUE-0272 D8 item 2a: in-memory seam site — classification
+            // headers are stripped before the lexer; parseMetadata keeps
+            // reading the raw fixture bytes.
+            String source = ConformanceHarnessMetadata
+                .stripClassificationHeaders(Files.readString(test.path()));
             String filename = test.path().toString();
 
             LexResult lex = new Lexer(source, filename).tokenize();
@@ -1094,7 +1100,11 @@ public class ConformanceTest {
     @SuppressWarnings("deprecation")
     private static List<CompilerDiagnostic> compileAndGetDiagnostics(TestFile test,
             CompanionCatalog catalog, SemanticProfile profile) throws Exception {
-        String source = Files.readString(test.path());
+        // ISSUE-0272 D8 item 2a: in-memory seam site — classification
+        // headers are stripped before the lexer; parseMetadata keeps
+        // reading the raw fixture bytes.
+        String source = ConformanceHarnessMetadata
+            .stripClassificationHeaders(Files.readString(test.path()));
         String filename = test.path().toString();
 
         LexResult lex = new Lexer(source, filename).tokenize();
@@ -1795,7 +1805,11 @@ public class ConformanceTest {
 
         private Artifact compile(Path file, boolean isEntry) {
             try {
-                String source = Files.readString(file);
+                // ISSUE-0272 D8 item 2a: in-memory seam site — classification
+                // headers are stripped before the lexer; parseMetadata keeps
+                // reading the raw fixture bytes.
+                String source = ConformanceHarnessMetadata
+                    .stripClassificationHeaders(Files.readString(file));
                 String filename = file.toString();
 
                 LexResult lex = new Lexer(source, filename).tokenize();
@@ -1943,7 +1957,11 @@ public class ConformanceTest {
                     "Module not found: " + modulePath);
             }
             try {
-                String source = Files.readString(decl);
+                // ISSUE-0272 D8 item 2a: in-memory seam site — classification
+                // headers are stripped before the lexer; parseMetadata keeps
+                // reading the raw fixture bytes.
+                String source = ConformanceHarnessMetadata
+                    .stripClassificationHeaders(Files.readString(decl));
                 String filename = decl.toString();
 
                 LexResult lex = new Lexer(source, filename).tokenize();
@@ -2188,7 +2206,11 @@ public class ConformanceTest {
         private Map<String, Type> resolveFileModule(Path file,
                 Set<String> modulesInProgress) throws ModuleNotFoundException {
             try {
-                String source = Files.readString(file);
+                // ISSUE-0272 D8 item 2a: in-memory seam site — classification
+                // headers are stripped before the lexer; parseMetadata keeps
+                // reading the raw fixture bytes.
+                String source = ConformanceHarnessMetadata
+                    .stripClassificationHeaders(Files.readString(file));
                 String filename = file.toString();
                 boolean isDecl = filename.endsWith(".d.deal");
 

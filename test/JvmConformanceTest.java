@@ -616,7 +616,9 @@ public class JvmConformanceTest {
         LegacyProfileRegressionCatalog.runSelfProbes();
         for (TestFile test : discovered) {
             LegacyProfileRegressionCatalog.scanDealSource(
-                test.relativePath(), Files.readString(test.path()),
+                test.relativePath(), ConformanceHarnessMetadata
+                    .stripClassificationHeaders(
+                        Files.readString(test.path())),
                 test.expected());
         }
         List<String> catalogViolations =
@@ -976,7 +978,11 @@ public class JvmConformanceTest {
             SemanticProfile profile) {
         List<CompilerDiagnostic> all = new ArrayList<>();
         try {
-            String source = Files.readString(file);
+            // ISSUE-0272 D8 item 2a: in-memory seam site — classification
+            // headers are stripped before the lexer; parseMetadata keeps
+            // reading the raw fixture bytes.
+            String source = ConformanceHarnessMetadata
+                .stripClassificationHeaders(Files.readString(file));
             String filename = file.toString();
 
             LexResult lex = new Lexer(source, filename).tokenize();
@@ -1054,7 +1060,10 @@ public class JvmConformanceTest {
             Path resolved = resolveRelativePath(modulePath);
             if (resolved != null && Files.exists(resolved)) {
                 try {
-                    String source = Files.readString(resolved);
+                    // ISSUE-0272 D8 item 2a: in-memory seam site —
+                    // classification headers are stripped before the lexer.
+                    String source = ConformanceHarnessMetadata
+                        .stripClassificationHeaders(Files.readString(resolved));
                     boolean isDecl = resolved.toString().endsWith(".d.deal");
                     LexResult lex = new Lexer(source, resolved.toString())
                         .tokenize();
@@ -1099,7 +1108,10 @@ public class JvmConformanceTest {
             Path resolved = resolveRelativePath(modulePath);
             if (resolved == null || !Files.exists(resolved)) return null;
             try {
-                String source = Files.readString(resolved);
+                // ISSUE-0272 D8 item 2a: in-memory seam site —
+                // classification headers are stripped before the lexer.
+                String source = ConformanceHarnessMetadata
+                    .stripClassificationHeaders(Files.readString(resolved));
                 LexResult lex = new Lexer(source, resolved.toString())
                     .tokenize();
                 if (lex.hasErrors()) return null;
@@ -1120,7 +1132,10 @@ public class JvmConformanceTest {
         private Map<String, Symbol.ClassSymbol> classSymbolsOf(Path file) {
             Map<String, Symbol.ClassSymbol> symbols = new LinkedHashMap<>();
             try {
-                String source = Files.readString(file);
+                // ISSUE-0272 D8 item 2a: in-memory seam site —
+                // classification headers are stripped before the lexer.
+                String source = ConformanceHarnessMetadata
+                    .stripClassificationHeaders(Files.readString(file));
                 LexResult lex = new Lexer(source, file.toString()).tokenize();
                 if (lex.hasErrors()) return symbols;
                 Parser parser = new Parser(lex.tokens(), file.toString(),
@@ -1299,6 +1314,10 @@ public class JvmConformanceTest {
             DealConfig config = null;
             Set<String> hostNames = hostImports(test.path());
             if (!hostNames.isEmpty()) {
+                // ISSUE-0272 D8 item 2b: producer-side seam — the host
+                // declaration materialization strips classification
+                // headers before the bytes reach the orchestrator.
+                copyHostBindings(projectRoot, hostFixturesRoot, hostNames);
                 StringBuilder dealJson = new StringBuilder();
                 dealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
                 dealJson.append("  \"externals\": {\n");
@@ -1306,16 +1325,7 @@ public class JvmConformanceTest {
                 for (String hostName : hostNames) {
                     if (!first) dealJson.append(",\n");
                     first = false;
-                    Path decl = hostFixturesRoot.resolve(hostName
-                        + ".d.deal");
-                    if (!Files.isRegularFile(decl)) {
-                        throw new IllegalStateException("host declaration "
-                            + "missing for " + hostName);
-                    }
                     String declRel = "bindings/" + hostName + ".d.deal";
-                    Files.createDirectories(
-                        projectRoot.resolve("bindings"));
-                    Files.copy(decl, projectRoot.resolve(declRel));
                     dealJson.append("    \"host/").append(hostName)
                         .append("\": { \"declaration\": \"")
                         .append(declRel).append("\" }");
@@ -1560,13 +1570,80 @@ public class JvmConformanceTest {
         copyTransitively(entry, projectRoot, written);
     }
 
+    /**
+     * Copies the host-ABI binding declarations to
+     * {@code bindings/<hostName>.d.deal} under the temp project root.
+     * ISSUE-0272 D8 item 2b: producer-side seam — every binding is
+     * written classification-header free (18 of 20
+     * {@code test/conformance/host-fixtures/*.d.deal} carry
+     * {@code // @expected: host-fixture} / {@code // @description:}
+     * headers), so the production orchestrator never lexes a header
+     * line. A missing host declaration fails loudly, exactly as the
+     * inline copy this replaces did.
+     */
+    private static void copyHostBindings(Path projectRoot,
+            Path hostFixturesRoot, Set<String> hostNames) throws IOException {
+        for (String hostName : hostNames) {
+            Path decl = hostFixturesRoot.resolve(hostName + ".d.deal");
+            if (!Files.isRegularFile(decl)) {
+                throw new IllegalStateException("host declaration "
+                    + "missing for " + hostName);
+            }
+            String declRel = "bindings/" + hostName + ".d.deal";
+            Files.createDirectories(projectRoot.resolve("bindings"));
+            Files.writeString(projectRoot.resolve(declRel),
+                ConformanceHarnessMetadata.stripClassificationHeaders(
+                    Files.readString(decl)));
+        }
+    }
+
+    /**
+     * Test-only materialization pin support
+     * ({@code ConformanceHarnessMetadataTest}): performs the exact
+     * temp-project materialization {@link #runApplicable} performs for a
+     * backend-runtime fixture — {@link #writeModuleFiles} (entry plus
+     * transitive companions, including explicit-{@code .deal} alias
+     * copies) and {@link #copyHostBindings} — and returns the project
+     * root so the pin can assert that the three producer-side copy sites
+     * left the orchestrator header-free sources. The caller owns the
+     * returned tree.
+     */
+    static Path materializeProject(Path conformanceRoot, Path entry)
+            throws IOException {
+        Path projectRoot = Files.createTempDirectory("deal_jvm_seam_");
+        boolean ok = false;
+        try {
+            Map<String, Path> written = new LinkedHashMap<>();
+            writeModuleFiles(projectRoot, entry, written);
+            Set<String> hostNames = hostImports(entry);
+            if (!hostNames.isEmpty()) {
+                copyHostBindings(projectRoot,
+                    conformanceRoot.resolve("host-fixtures"), hostNames);
+            }
+            ok = true;
+            return projectRoot;
+        } finally {
+            if (!ok) {
+                try {
+                    Files.walk(projectRoot).sorted(Comparator.reverseOrder())
+                        .forEach(f -> { try { Files.deleteIfExists(f); }
+                            catch (IOException ignored) { } });
+                } catch (IOException ignored) { }
+            }
+        }
+    }
+
     private static void copyTransitively(Path file, Path projectRoot,
             Map<String, Path> written) throws IOException {
         Path normalized = file.toAbsolutePath().normalize();
         if (written.containsKey(normalized.toString())) return;
         Path target = projectRoot.resolve(corpusStem(normalized)
             + ".deal");
-        Files.copy(normalized, target);
+        // ISSUE-0272 D8 item 2b: producer-side seam — the entry fixture
+        // and every transitive companion are written classification-header
+        // free, so the production orchestrator never lexes a header line.
+        Files.writeString(target, ConformanceHarnessMetadata
+            .stripClassificationHeaders(Files.readString(normalized)));
         written.put(normalized.toString(), target);
         for (String importPath : relativeImports(normalized)) {
             Path resolved = resolveCompanionPath(importPath,
@@ -1606,7 +1683,12 @@ public class JvmConformanceTest {
         }
         Path aliasTarget = projectRoot.resolve(aliasBase + ".deal");
         if (Files.exists(aliasTarget)) return;
-        Files.copy(resolved.toAbsolutePath().normalize(), aliasTarget);
+        // ISSUE-0272 D8 item 2b: producer-side seam — the explicit-.deal
+        // alias copy is written classification-header free; the
+        // written-map dedup/alias semantics are unchanged.
+        Files.writeString(aliasTarget, ConformanceHarnessMetadata
+            .stripClassificationHeaders(
+                Files.readString(resolved.toAbsolutePath().normalize())));
     }
 
     /** Relative import paths ({@code ./} / {@code ../}) appearing in the
