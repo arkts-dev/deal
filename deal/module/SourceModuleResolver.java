@@ -86,7 +86,10 @@ import java.util.Objects;
  * once per resolved source: the result is the provenance of
  * {@code projectIdentity} and the module-level classification recorded
  * on the location; {@code CanonicalClassIdentity} assembly stays
- * eligibility-gated at consumer time (a later epic item).</p>
+ * eligibility-gated at consumer time (a later epic item). A bare import
+ * additionally evaluates the classification before memoization to apply
+ * the file-keyed E2009 gate, so a bare import of a previously
+ * relatively-resolved undeclared declaration file still fails E2009.</p>
  *
  * <p><b>{@code deploymentModuleId}</b> is deterministic:
  * {@code "m" +} the first 16 lowercase hex chars of
@@ -329,7 +332,7 @@ public final class SourceModuleResolver {
                 + "'. The externals declaration path cannot be materialized: "
                 + e.getMessage(), importSpan);
         }
-        return publish(resolved, resolved, importSpan);
+        return publish(resolved, resolved, importSpan, null);
     }
 
     /**
@@ -397,7 +400,12 @@ public final class SourceModuleResolver {
      * {@code S/index.d.deal}.
      */
     private static List<Path> candidatesOf(Path base) {
-        String name = base.getFileName().toString();
+        // A base with no file-name component (e.g. a root-relative base
+        // from an empty specifier) uses the empty name: the candidates
+        // derive from the directory itself and the search still yields
+        // the pinned four candidate paths — never a raw exception.
+        Path fileName = base.getFileName();
+        String name = fileName == null ? "" : fileName.toString();
         return List.of(
             base.resolveSibling(name + ".deal"),
             base.resolve("index.deal"),
@@ -406,11 +414,16 @@ public final class SourceModuleResolver {
     }
 
     /**
-     * A successful bare-resolution landing: the E2009 gate fires for a
-     * bare import whose resolved file is a non-stdlib {@code .d.deal}
+     * A successful candidate landing: the file-keyed E2009 gate fires for
+     * a bare import whose resolved file is a non-stdlib {@code .d.deal}
      * whose canonical path matches no externals entry — i.e. the file
      * carries neither {@code BuiltinModule} nor {@code ExternalModule}
-     * classification. Every other landing publishes normally.
+     * classification. Every other landing publishes normally. The
+     * classification computed here is the single classifier invocation
+     * for the published location (or the per-import gate evaluation for a
+     * memoized bare landing); it is passed through to
+     * {@link #publish(Path, Path, Span, ModuleClassification)} so a
+     * non-memoized landing never classifies twice.
      */
     private ResolveResult publishOrGate(Path lexicalCandidate, Path resolvedReal,
                                         String specifier, Span importSpan,
@@ -428,7 +441,7 @@ public final class SourceModuleResolver {
                 + "' is not declared in deal.json externals (resolved declaration"
                 + " file: '" + resolvedReal + "')", importSpan);
         }
-        return publish(lexicalCandidate, resolvedReal, importSpan);
+        return publish(lexicalCandidate, resolvedReal, importSpan, classification);
     }
 
     /**
@@ -455,12 +468,16 @@ public final class SourceModuleResolver {
      * canonical URI was already published (equivalent spellings yield one
      * semantic identity), otherwise assigns the private
      * {@link SemanticModuleIdentity}, the deterministic
-     * {@code deploymentModuleId}, and one classifier invocation whose
-     * result is the location's {@code projectIdentity} provenance and
-     * module-level classification. Failed resolution registers nothing.
+     * {@code deploymentModuleId}, and the classifier result — the
+     * precomputed {@code classification} when the caller already evaluated
+     * it (a bare landing's E2009 gate), otherwise exactly one classifier
+     * invocation — whose result is the location's
+     * {@code projectIdentity} provenance and module-level classification.
+     * Failed resolution registers nothing.
      */
     private ResolveResult publish(Path lexicalCandidate, Path resolvedReal,
-                                  Span importSpan) {
+                                  Span importSpan,
+                                  ModuleClassification classification) {
         String lexicalPath = lexicalCandidate.toAbsolutePath().normalize().toString();
         String canonicalUri = uriOf(resolvedReal);
         if (canonicalUri == null) {
@@ -471,11 +488,12 @@ public final class SourceModuleResolver {
         if (existing != null) {
             return new ResolveResult.Resolved(existing);
         }
+        if (classification == null) {
+            classification = ModuleIdentityResolver.classify(context, canonicalUri);
+        }
         SemanticModuleIdentity semanticIdentity =
             new SemanticModuleIdentity(context.projectDeploymentIdentity(), canonicalUri);
         String deploymentModuleId = deploymentModuleIdOf(canonicalUri);
-        ModuleClassification classification =
-            ModuleIdentityResolver.classify(context, canonicalUri);
         SourceModuleLocation location = new SourceModuleLocation(
             lexicalPath, semanticIdentity, deploymentModuleId,
             classification.projectIdentity(), classification.moduleIdentity());
