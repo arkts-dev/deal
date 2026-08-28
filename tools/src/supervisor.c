@@ -75,6 +75,76 @@
  * the buffer overruns. */
 #define DEALPG4_SUPERVISOR_CTRL_BUF_BYTES (DEALPG4_MAX_LINE_INVOKE_BYTES + 1)
 
+/* === Fault-injection seam catalog (dealpg4-supervisor-engine D6) =======
+ * The named catalog the selftest battery (ISSUE-0184) passes to
+ * dealpg4_fi_install_overrides: the eleven delay site tags (one
+ * pre-step site for every stub step plus the two supervisor-side
+ * sites), the ten fail-site tags, the four congest targets, and the
+ * nine congestion-mode tags. All sites resolve to the production
+ * defaults (fi.h) — production modes behave identically to a seam-free
+ * build; the supervisor never installs overrides and no CLI/env key
+ * activates injection. */
+static const char *const dealpg4_supervisor_delay_sites[] = {
+    DEALPG4_FI_DELAY_SUP_PRE_FORK,
+    DEALPG4_FI_DELAY_SUP_PRE_RELEASE_WRITE,
+    DEALPG4_FI_DELAY_STUB_POST_FORK,
+    DEALPG4_FI_DELAY_STUB_PRE_PPID_RECHECK,
+    DEALPG4_FI_DELAY_STUB_PRE_SETSID,
+    DEALPG4_FI_DELAY_STUB_PRE_IDENTITY_SELFCHECK,
+    DEALPG4_FI_DELAY_STUB_PRE_IDENTITY_WRITE,
+    DEALPG4_FI_DELAY_STUB_PRE_RELEASE_POLL,
+    DEALPG4_FI_DELAY_STUB_POST_RELEASE,
+    DEALPG4_FI_DELAY_STUB_PRE_CHDIR,
+    DEALPG4_FI_DELAY_STUB_PRE_EXECVP
+};
+
+static const int dealpg4_supervisor_fail_sites[] = {
+    FI_SUP_SUBREAPER,
+    FI_SUP_TIMERFD,
+    FI_SUP_SIGNALFD,
+    FI_SUP_FORK,
+    FI_SUP_PIPE,
+    FI_STUB_SETSID,
+    FI_STUB_IDENTITY_SELFCHECK,
+    FI_STUB_CHDIR,
+    FI_STUB_EXEC,
+    FI_SUP_DEATH
+};
+
+static const int dealpg4_supervisor_congest_targets[] = {
+    FI_CONGEST_STATUS_PIPE,
+    FI_CONGEST_CTRL,
+    FI_CONGEST_STREAM,
+    FI_CONGEST_IDENTITY
+};
+
+static const int dealpg4_supervisor_congest_modes[] = {
+    STATUS_LOSS,
+    STATUS_CONGESTED,
+    CTRL_WRITE_STALL,
+    CTRL_READ_STALL,
+    STREAM_NO_EOF,
+    ID_MALFORMED_PID,
+    ID_MALFORMED_PGID,
+    ID_MALFORMED_SID,
+    ID_MALFORMED_NONCE
+};
+
+const struct dealpg4_fi_catalog dealpg4_supervisor_fi_catalog = {
+    dealpg4_supervisor_delay_sites,
+    sizeof(dealpg4_supervisor_delay_sites)
+        / sizeof(dealpg4_supervisor_delay_sites[0]),
+    dealpg4_supervisor_fail_sites,
+    sizeof(dealpg4_supervisor_fail_sites)
+        / sizeof(dealpg4_supervisor_fail_sites[0]),
+    dealpg4_supervisor_congest_targets,
+    sizeof(dealpg4_supervisor_congest_targets)
+        / sizeof(dealpg4_supervisor_congest_targets[0]),
+    dealpg4_supervisor_congest_modes,
+    sizeof(dealpg4_supervisor_congest_modes)
+        / sizeof(dealpg4_supervisor_congest_modes[0])
+};
+
 /* === Exec-hygiene capture (D8) ========================================== */
 
 /* The process signal mask observed at core entry, retained for the
@@ -205,6 +275,17 @@ static void dealpg4_stub_write_guaranteed(int fd, const char *line,
 {
     size_t off = 0;
 
+    /* FI_CONGEST_STATUS_PIPE STATUS_CONGESTED: stub-side POLLOUT never
+     * ready — the guaranteed-delivery retry loop keeps its bounded
+     * ~10 ms cadence until the congestion clears (the record is
+     * delivered then; no deadlock — the supervisor keeps the
+     * status-pipe read end open until EOF, and its own deadlines
+     * escalate a still-wedged stub). */
+    while (dealpg4_fi_hooks.congest(FI_CONGEST_STATUS_PIPE,
+                                    STATUS_CONGESTED, NULL)
+           == STATUS_CONGESTED)
+        (void)poll(NULL, 0, 10);
+
     while (off < len) {
         ssize_t r = write(fd, line + off, len - off);
 
@@ -250,18 +331,32 @@ static int64_t dealpg4_stub_t1s_ms(void)
     return t1s;
 }
 
+/* The stub's own T1s absolute deadline, anchored at the stub entry
+ * read (parent D4: T1s = stub-entry + min(startupTimeoutMs,
+ * T - cleanupTotalMs)). Anchoring at entry — not at the step-6 poll
+ * entry — keeps the D6 delay sites (stub-post-fork ..
+ * stub-pre-release-poll) consuming the deadline instead of shifting
+ * it: a scripted pre-poll delay past T1s makes the step-6 poll
+ * observe an already-expired deadline and _exit(4), the deterministic
+ * release-write race driver (dealpg4-supervisor-engine D6,
+ * native-supervisor-containment D3). Production behavior is unchanged
+ * (the entry and the poll entry differ by the pre-poll bootstrap steps
+ * only). */
+static int64_t dealpg4_stub_t1s_deadline_ms(void)
+{
+    return (int64_t)dealpg4_now_ms() + dealpg4_stub_t1s_ms();
+}
+
 /* Step 6: block on the release pipe until exactly one release byte,
  * the stub's own T1s deadline, or EOF/error (parent D3). Timeout ->
  * _exit(4); EOF/error -> _exit(5). On the single release byte: disarm
- * the deadline (implicit — the poll returned) and write one
+ * the deadline (implicit — the poll returned), then write one
  * DEALPG4 RELEASE_RECV <pid> line to the status pipe (single
  * non-blocking attempt; on EPIPE/EAGAIN the stub proceeds without
  * retry). */
 static void dealpg4_stub_release_poll(int release_fd, int status_fd,
-                                      pid_t pid)
+                                      pid_t pid, int64_t t1s_deadline)
 {
-    int64_t t1s = dealpg4_stub_t1s_ms();
-    uint64_t deadline = dealpg4_now_ms() + (uint64_t)t1s;
     struct pollfd pfd;
     char byte;
 
@@ -269,9 +364,21 @@ static void dealpg4_stub_release_poll(int release_fd, int status_fd,
     pfd.events = POLLIN;
     for (;;) {
         uint64_t now = dealpg4_now_ms();
-        uint64_t remaining = deadline > now ? deadline - now : 0;
+        uint64_t remaining = (uint64_t)t1s_deadline > now
+                                 ? (uint64_t)t1s_deadline - now
+                                 : 0;
         int rc;
 
+        /* The absolute T1s deadline governs step 6: past it no release
+         * byte is ever consumed. The check precedes the poll so a byte
+         * that was already buffered when the (scripted) pre-poll delay
+         * overran the deadline is refused exactly like a byte that
+         * never arrived — the release write that raced the stub's
+         * deadline lands in the pipe buffer while the stub still
+         * lives, the stub exits 4 without consuming it, and no
+         * RELEASE_RECV exists (the deterministic D3 race driver). */
+        if (now >= (uint64_t)t1s_deadline)
+            _exit(4);
         pfd.revents = 0;
         rc = poll(&pfd, 1,
                   remaining > (uint64_t)INT_MAX ? INT_MAX
@@ -280,7 +387,7 @@ static void dealpg4_stub_release_poll(int release_fd, int status_fd,
             break;
         if (rc == 0) {
             /* EINTR-free timeout: re-check the absolute deadline. */
-            if (dealpg4_now_ms() >= deadline)
+            if (dealpg4_now_ms() >= (uint64_t)t1s_deadline)
                 _exit(4);
             continue;
         }
@@ -290,9 +397,18 @@ static void dealpg4_stub_release_poll(int release_fd, int status_fd,
     }
     if (read(release_fd, &byte, 1) != 1)
         _exit(5); /* EOF/error before the release byte */
+    /* stub-post-release: after the release byte was consumed, before
+     * the RELEASE_RECV write — the wedged post-release-before-execvp
+     * window (a scripted delay here drives the post-release cancel /
+     * deadline signal deaths with no RELEASE_RECV on the pipe). */
+    (void)dealpg4_fi_hooks.delay_ms(0,
+                                    DEALPG4_FI_DELAY_STUB_POST_RELEASE);
     /* Release consumed; the step-6 deadline is disarmed. Single-attempt
-     * optional publication. */
-    {
+     * optional publication; FI_CONGEST_STATUS_PIPE STATUS_LOSS makes it
+     * vanish (loss of evidence only, never a false STARTED). */
+    if (dealpg4_fi_hooks.congest(FI_CONGEST_STATUS_PIPE, STATUS_LOSS,
+                                 NULL)
+        != STATUS_LOSS) {
         char line[48];
         int n = snprintf(line, sizeof line, "DEALPG4 RELEASE_RECV %ld\n",
                          (long)pid);
@@ -315,6 +431,10 @@ static void dealpg4_stub_run(const dealpg4_stub_cfg *cfg)
     pid_t pid = getpid();
     char line[96];
     int n;
+    /* Stub-entry anchor (parent D4): the step-6 T1s deadline is read
+     * here, before any seam delay — the D6 delay sites consume this
+     * absolute deadline (an injection never extends one). */
+    int64_t t1s_deadline = dealpg4_stub_t1s_deadline_ms();
 
     /* Close every inherited end the stub does not use (the release-pipe
      * write end immediately after fork, the status-pipe read end, the
@@ -324,51 +444,132 @@ static void dealpg4_stub_run(const dealpg4_stub_cfg *cfg)
     close(cfg->stdout_read_fd);
     close(cfg->stderr_read_fd);
 
+    /* stub-post-fork: immediately after fork, pinned to precede stub
+     * step 1 (the prctl(PR_SET_PDEATHSIG, SIGKILL) call). A scripted
+     * delay here lengthens the pre-PDEATHSIG window (the deterministic
+     * parent-mismatch driver). */
+    (void)dealpg4_fi_hooks.delay_ms(0, DEALPG4_FI_DELAY_STUB_POST_FORK);
+
     /* Step 1: parent-death cascade. A prctl failure removes the layered
      * pre-ACK safety — fail closed with the reserved silent exit 2
      * (pre-release, no write, no exec). */
     if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0)
         _exit(2);
 
+    /* stub-pre-ppid-recheck: before step 2 (the getppid() parent-death
+     * recheck — a scripted delay lengthens the window in which a
+     * parent-death injection lands before the recheck, driving the
+     * mismatch -> _exit(2) path; with step 1 already armed the
+     * reparenting delivers the PDEATHSIG cascade instead). */
+    (void)dealpg4_fi_hooks.delay_ms(
+        0, DEALPG4_FI_DELAY_STUB_PRE_PPID_RECHECK);
+
     /* Step 2: parent recheck against the pre-fork recorded supervisor
      * pid; mismatch -> _exit(2) (no write, no exec). */
     if (getppid() != cfg->supervisor_pid)
         _exit(2);
 
-    /* Step 3: setsid; failure -> STUB_FAILED (guaranteed delivery) +
-     * _exit(3). */
-    if (setsid() == -1) {
-        int err = errno;
+    /* stub-pre-setsid: before step 3. */
+    (void)dealpg4_fi_hooks.delay_ms(0, DEALPG4_FI_DELAY_STUB_PRE_SETSID);
 
-        n = snprintf(line, sizeof line, "DEALPG4 STUB_FAILED %ld %d\n",
-                     (long)pid, err);
-        if (n > 0 && (size_t)n < sizeof line)
-            dealpg4_stub_write_guaranteed(cfg->status_fd, line, (size_t)n);
-        _exit(3);
+    /* Step 3: setsid; failure -> STUB_FAILED (guaranteed delivery) +
+     * _exit(3). FI_STUB_SETSID scripts the failure with the scripted
+     * value as errno (0 runs the real setsid). */
+    {
+        int fi = dealpg4_fi_hooks.fail(FI_STUB_SETSID);
+        int err;
+
+        if (fi != 0)
+            err = fi;
+        else if (setsid() == -1)
+            err = errno;
+        else
+            err = 0;
+        if (err != 0) {
+            n = snprintf(line, sizeof line, "DEALPG4 STUB_FAILED %ld %d\n",
+                         (long)pid, err);
+            if (n > 0 && (size_t)n < sizeof line)
+                dealpg4_stub_write_guaranteed(cfg->status_fd, line,
+                                              (size_t)n);
+            _exit(3);
+        }
     }
+
+    /* stub-pre-identity-selfcheck: before step 4. */
+    (void)dealpg4_fi_hooks.delay_ms(
+        0, DEALPG4_FI_DELAY_STUB_PRE_IDENTITY_SELFCHECK);
 
     /* Step 4: identity self-check; mismatch -> STUB_FAILED (guaranteed
-     * delivery) + _exit(3). */
-    if (getsid(0) != pid || getpgid(0) != pid) {
-        n = snprintf(line, sizeof line, "DEALPG4 STUB_FAILED %ld %d\n",
-                     (long)pid, EPERM);
-        if (n > 0 && (size_t)n < sizeof line)
-            dealpg4_stub_write_guaranteed(cfg->status_fd, line, (size_t)n);
-        _exit(3);
+     * delivery) + _exit(3). FI_STUB_IDENTITY_SELFCHECK scripts the
+     * mismatch with the scripted value as the reported errno (0 runs
+     * the real self-check). */
+    {
+        int fi = dealpg4_fi_hooks.fail(FI_STUB_IDENTITY_SELFCHECK);
+
+        if (fi != 0 || getsid(0) != pid || getpgid(0) != pid) {
+            int err = fi != 0 ? fi : EPERM;
+
+            n = snprintf(line, sizeof line, "DEALPG4 STUB_FAILED %ld %d\n",
+                         (long)pid, err);
+            if (n > 0 && (size_t)n < sizeof line)
+                dealpg4_stub_write_guaranteed(cfg->status_fd, line,
+                                              (size_t)n);
+            _exit(3);
+        }
     }
+
+    /* stub-pre-identity-write: before step 5. */
+    (void)dealpg4_fi_hooks.delay_ms(
+        0, DEALPG4_FI_DELAY_STUB_PRE_IDENTITY_WRITE);
 
     /* Step 5: one STUB_IDENTITY line (single attempt; the nonce from
      * the inherited DEALPG4_NONCE env — the supervisor setenv'd it in
      * the fork environment). A missing nonce drops the publication:
-     * loss of evidence only, never a false STARTED. */
+     * loss of evidence only, never a false STARTED.
+     * FI_CONGEST_IDENTITY scripts a malformed STUB_IDENTITY line — the
+     * named field outside its cross-verification class (pid/pgid/sid =
+     * 0, the reserved value; nonce = the real nonce with the first hex
+     * character flipped, still 32 lowercase hex but mismatching) — the
+     * stub continues to step 6 and the supervisor's cross-verification
+     * fails -> FAILED <id> AUTH_FAILED.
+     * FI_CONGEST_STATUS_PIPE STATUS_LOSS makes the publication vanish
+     * (single-attempt policy: loss of evidence only). */
     {
         const char *nonce_env = getenv(DEALPG4_ENV_NONCE);
 
         if (nonce_env != NULL) {
+            int malformed_pid =
+                dealpg4_fi_hooks.congest(FI_CONGEST_IDENTITY,
+                                         ID_MALFORMED_PID, NULL)
+                == ID_MALFORMED_PID;
+            int malformed_pgid =
+                dealpg4_fi_hooks.congest(FI_CONGEST_IDENTITY,
+                                         ID_MALFORMED_PGID, NULL)
+                == ID_MALFORMED_PGID;
+            int malformed_sid =
+                dealpg4_fi_hooks.congest(FI_CONGEST_IDENTITY,
+                                         ID_MALFORMED_SID, NULL)
+                == ID_MALFORMED_SID;
+            int malformed_nonce =
+                dealpg4_fi_hooks.congest(FI_CONGEST_IDENTITY,
+                                         ID_MALFORMED_NONCE, NULL)
+                == ID_MALFORMED_NONCE;
+            char nonce_out[DEALPG4_NONCE_HEX_CHARS + 1];
+
+            memcpy(nonce_out, nonce_env, DEALPG4_NONCE_HEX_CHARS + 1);
+            if (malformed_nonce)
+                /* In-class (32 lowercase hex) but mismatching: the
+                 * supervisor's cross-verification rejects it. */
+                nonce_out[0] = nonce_out[0] == '0' ? '1' : '0';
             n = snprintf(line, sizeof line,
                          "DEALPG4 STUB_IDENTITY %ld %ld %ld %s\n",
-                         (long)pid, (long)pid, (long)pid, nonce_env);
-            if (n > 0 && (size_t)n < sizeof line) {
+                         (long)(malformed_pid ? 0 : pid),
+                         (long)(malformed_pgid ? 0 : pid),
+                         (long)(malformed_sid ? 0 : pid), nonce_out);
+            if (n > 0 && (size_t)n < sizeof line
+                && dealpg4_fi_hooks.congest(FI_CONGEST_STATUS_PIPE,
+                                            STATUS_LOSS, NULL)
+                       != STATUS_LOSS) {
                 ssize_t wr = write(cfg->status_fd, line, (size_t)n);
 
                 (void)wr; /* single attempt; loss removes evidence only */
@@ -376,27 +577,54 @@ static void dealpg4_stub_run(const dealpg4_stub_cfg *cfg)
         }
     }
 
+    /* stub-pre-release-poll: before the step-6 poll (drives the T1s
+     * race and release-EOF cases against the stub-entry-anchored
+     * deadline). */
+    (void)dealpg4_fi_hooks.delay_ms(
+        0, DEALPG4_FI_DELAY_STUB_PRE_RELEASE_POLL);
+
     /* Step 6: blocked release poll with the stub's own T1s deadline. */
-    dealpg4_stub_release_poll(cfg->release_fd, cfg->status_fd, pid);
+    dealpg4_stub_release_poll(cfg->release_fd, cfg->status_fd, pid,
+                              t1s_deadline);
+
+    /* stub-pre-chdir: before step 7. */
+    (void)dealpg4_fi_hooks.delay_ms(0, DEALPG4_FI_DELAY_STUB_PRE_CHDIR);
 
     /* Step 7: chdir; failure -> STUB_FAILED (guaranteed delivery) +
-     * _exit(6). */
-    if (chdir(cfg->cwd) != 0) {
-        int err = errno;
+     * _exit(6). FI_STUB_CHDIR scripts the failure with the scripted
+     * value as errno (0 runs the real chdir). */
+    {
+        int fi = dealpg4_fi_hooks.fail(FI_STUB_CHDIR);
+        int err;
 
-        n = snprintf(line, sizeof line, "DEALPG4 STUB_FAILED %ld %d\n",
-                     (long)pid, err);
-        if (n > 0 && (size_t)n < sizeof line)
-            dealpg4_stub_write_guaranteed(cfg->status_fd, line, (size_t)n);
-        _exit(6);
+        if (fi != 0)
+            err = fi;
+        else if (chdir(cfg->cwd) != 0)
+            err = errno;
+        else
+            err = 0;
+        if (err != 0) {
+            n = snprintf(line, sizeof line, "DEALPG4 STUB_FAILED %ld %d\n",
+                         (long)pid, err);
+            if (n > 0 && (size_t)n < sizeof line)
+                dealpg4_stub_write_guaranteed(cfg->status_fd, line,
+                                              (size_t)n);
+            _exit(6);
+        }
     }
+
+    /* stub-pre-execvp: before step 8 — the wedged
+     * post-release-before-execvp window. */
+    (void)dealpg4_fi_hooks.delay_ms(0, DEALPG4_FI_DELAY_STUB_PRE_EXECVP);
 
     /* Step 8: exactly one execvp, only after the release byte. The
      * stream write ends replace stdout/stderr (dup2 clears FD_CLOEXEC
      * on the target fds; the O_CLOEXEC originals are closed). Exec
      * hygiene (D8): SIGPIPE SIG_DFL and the captured-entry-mask
      * restore immediately before execvp, so the exec'd target's
-     * dispositions and mask are untouched. */
+     * dispositions and mask are untouched. FI_STUB_EXEC scripts the
+     * execvp failure with the scripted value as errno (0 runs the
+     * real execvp). */
     (void)dup2(cfg->stdout_write_fd, 1);
     (void)dup2(cfg->stderr_write_fd, 2);
     close(cfg->stdout_write_fd);
@@ -405,15 +633,23 @@ static void dealpg4_stub_run(const dealpg4_stub_cfg *cfg)
     (void)signal(SIGPIPE, SIG_DFL);
     (void)sigprocmask(SIG_SETMASK, &dealpg4_supervisor_entry_mask, NULL);
 
-    execvp(cfg->argv[0], (char *const *)cfg->argv);
-    /* Failure: STUB_EXEC_FAILED (guaranteed delivery) + _exit(127). */
     {
-        int err = errno;
+        int fi = dealpg4_fi_hooks.fail(FI_STUB_EXEC);
+        int err;
 
+        if (fi == 0) {
+            execvp(cfg->argv[0], (char *const *)cfg->argv);
+            err = errno;
+        } else {
+            err = fi;
+        }
+        /* Failure: STUB_EXEC_FAILED (guaranteed delivery) +
+         * _exit(127). */
         n = snprintf(line, sizeof line, "DEALPG4 STUB_EXEC_FAILED %ld %d\n",
                      (long)pid, err);
         if (n > 0 && (size_t)n < sizeof line)
-            dealpg4_stub_write_guaranteed(cfg->status_fd, line, (size_t)n);
+            dealpg4_stub_write_guaranteed(cfg->status_fd, line,
+                                          (size_t)n);
         _exit(127);
     }
 }
@@ -806,6 +1042,8 @@ typedef struct dealpg4_supervisor_state {
 /* Forward declarations (definition order: publication, relay, release,
  * identity, status, reaping, deadlines, proof, channel, report). */
 static void dealpg4_supervisor_timer_failed(dealpg4_supervisor_state *state);
+static void dealpg4_supervisor_read_control(
+    dealpg4_supervisor_state *state);
 static void dealpg4_supervisor_finalize(dealpg4_supervisor_state *state);
 static int dealpg4_supervisor_proof_pending(
     const dealpg4_supervisor_state *state);
@@ -1095,7 +1333,19 @@ static void dealpg4_supervisor_release(dealpg4_supervisor_state *state);
  * returned 1) is recorded; any other result is classified by the
  * EOF-before-release rule. The successful write ends the startup phase
  * and moves the channel to RELEASED. A frozen release path (pre-release
- * cancel / AUTH_FAILED / TIMER_FAILED) never writes the byte. */
+ * cancel / AUTH_FAILED / TIMER_FAILED) never writes the byte.
+ *
+ * sup-pre-release-write (D6): the injected delay sleeps immediately
+ * before the write and consumes the enclosing startup deadline (never
+ * an extension). The T1 check already passed at the release point, so
+ * a scripted delay past T1 drives the release-write race: the write
+ * lands after the stub's own T1s poll already timed out (write(2)
+ * succeeds into the pipe buffer while the stub is still in its
+ * pre-poll delay, or fails EPIPE once the stub fully exited). After
+ * the delay the pending control records are processed first — the
+ * D5(a) freeze re-check: a valid CANCEL, a second ACK, or a channel
+ * close that arrived during the delay freezes the release path and
+ * the byte is never written. */
 static void dealpg4_supervisor_release(dealpg4_supervisor_state *state)
 {
     char byte = 'R';
@@ -1104,6 +1354,18 @@ static void dealpg4_supervisor_release(dealpg4_supervisor_state *state)
     if (state->release_write_done || state->release_frozen
         || state->cancel_requested || state->protocol_aborted)
         return; /* at most once, and never after the freeze */
+    if (state->release_fd < 0)
+        return;
+    (void)dealpg4_fi_hooks.delay_ms(
+        0, DEALPG4_FI_DELAY_SUP_PRE_RELEASE_WRITE);
+    /* Records the outer sent while the delay slept are processed
+     * before the write decision (single-threaded: nothing else ran
+     * during the sleep). */
+    if (state->control_fd >= 0 && !state->protocol_aborted)
+        dealpg4_supervisor_read_control(state);
+    if (state->release_write_done || state->release_frozen
+        || state->cancel_requested || state->protocol_aborted)
+        return; /* the D5(a) freeze holds: never a release byte */
     if (state->release_fd < 0)
         return;
     state->release_write_done = 1;
@@ -2867,7 +3129,32 @@ static void dealpg4_supervisor_loop(dealpg4_supervisor_state *state)
         int64_t now;
         int64_t remaining;
         struct timespec ts;
+        int fi_death;
+        int stream_congested;
+        int ctrl_write_stalled;
+        int ctrl_read_stalled;
         int rc;
+
+        /* Seam congestion reports (once per iteration, before the poll
+         * set is built — the script hooks are the only place the
+         * reports change). */
+        stream_congested =
+            state->drains_active
+            && dealpg4_fi_hooks.congest(FI_CONGEST_STREAM, STREAM_NO_EOF,
+                                        NULL)
+                   == STREAM_NO_EOF;
+        ctrl_write_stalled = 0;
+        ctrl_read_stalled = 0;
+        if (state->serve_mode && state->control_fd >= 0) {
+            ctrl_write_stalled =
+                dealpg4_fi_hooks.congest(FI_CONGEST_CTRL, CTRL_WRITE_STALL,
+                                         NULL)
+                == CTRL_WRITE_STALL;
+            ctrl_read_stalled =
+                dealpg4_fi_hooks.congest(FI_CONGEST_CTRL, CTRL_READ_STALL,
+                                         NULL)
+                == CTRL_READ_STALL;
+        }
 
         dealpg4_supervisor_advance_deadlines(state);
         if (state->done)
@@ -2945,14 +3232,19 @@ static void dealpg4_supervisor_loop(dealpg4_supervisor_state *state)
         fds[nfds].revents = 0;
         roles[nfds] = DEALPG4_ROLE_SIGCHLD;
         nfds++;
-        if (state->stream_out_fd >= 0) {
+        /* STREAM_NO_EOF: while congested both stream read sides leave
+         * the poll set — the drains never advance, never reach EOF
+         * (a target stream that stays readable would otherwise keep
+         * POLLIN ready forever and busy-spin the loop), and the proof
+         * loop's drain check fails at T4 with DRAIN_FAILED. */
+        if (!stream_congested && state->stream_out_fd >= 0) {
             fds[nfds].fd = state->stream_out_fd;
             fds[nfds].events = POLLIN;
             fds[nfds].revents = 0;
             roles[nfds] = DEALPG4_ROLE_STREAM_OUT;
             nfds++;
         }
-        if (state->stream_err_fd >= 0) {
+        if (!stream_congested && state->stream_err_fd >= 0) {
             fds[nfds].fd = state->stream_err_fd;
             fds[nfds].events = POLLIN;
             fds[nfds].revents = 0;
@@ -2961,22 +3253,36 @@ static void dealpg4_supervisor_loop(dealpg4_supervisor_state *state)
         }
         if (state->serve_mode) {
             if (state->control_fd >= 0) {
-                if (!dealpg4_supervisor_queue_empty(&state->queue)) {
+                /* CTRL_WRITE_STALL: supervisor-side POLLOUT never
+                 * ready — the write side leaves the poll set while
+                 * congested, so no write path runs (a stalled outer
+                 * never suspends a deadline; the bounded queue stays
+                 * pending and the record terminates by its own
+                 * deadline). */
+                if (!ctrl_write_stalled
+                    && !dealpg4_supervisor_queue_empty(&state->queue)) {
                     fds[nfds].fd = state->control_fd;
                     fds[nfds].events = POLLOUT;
                     fds[nfds].revents = 0;
                     roles[nfds] = DEALPG4_ROLE_CTRL_WRITE;
                     nfds++;
                 }
-                /* The read side leaves the poll set once the channel is
-                 * closed (loss/abort closes the fd): a peer-closed
-                 * socket keeps POLLIN ready forever and polling it
-                 * would busy-spin the loop. */
-                fds[nfds].fd = state->control_fd;
-                fds[nfds].events = POLLIN;
-                fds[nfds].revents = 0;
-                roles[nfds] = DEALPG4_ROLE_CTRL_READ;
-                nfds++;
+                /* CTRL_READ_STALL: POLLIN never ready — the read side
+                 * leaves the poll set while congested (a buffered
+                 * record keeps POLLIN ready forever and polling it
+                 * would busy-spin the loop), driving the deterministic
+                 * missing-ACK scenarios to T1. The read side also
+                 * leaves the poll set once the channel is closed
+                 * (loss/abort closes the fd): a peer-closed socket
+                 * keeps POLLIN ready forever and polling it would
+                 * busy-spin the loop. */
+                if (!ctrl_read_stalled) {
+                    fds[nfds].fd = state->control_fd;
+                    fds[nfds].events = POLLIN;
+                    fds[nfds].revents = 0;
+                    roles[nfds] = DEALPG4_ROLE_CTRL_READ;
+                    nfds++;
+                }
             }
         } else {
             /* Run mode: stdout/stderr write sides whenever output is
@@ -3075,6 +3381,25 @@ static void dealpg4_supervisor_loop(dealpg4_supervisor_state *state)
         /* The release point: the end of one event-processing batch
          * (the post-ACK-pre-release window, D5(a)). */
         dealpg4_supervisor_maybe_release(state);
+
+        /* FI_SUP_DEATH: scripted nonzero terminates the supervisor
+         * immediately with the scripted exit code and no cleanup (a
+         * kill-equivalent death — the kernel cascades apply: the
+         * stub's PDEATHSIG and the outer's per-state fallback). The
+         * check sits at the end of the batch, gated on the stub's
+         * STUB_IDENTITY having been processed: by the time it fires
+         * the stub is past step 1 (PDEATHSIG armed) and inside or
+         * entering its pre-release window, so the kernel cascade
+         * deterministically delivers the armed SIGKILL at the
+         * reparenting instead of racing the step-2 parent recheck
+         * (a pre-identity death would leave the stub unarmed and the
+         * reparented stub would exit 2 — the scenario's pinned
+         * CLD_KILLED 9 observation requires the armed cascade). */
+        fi_death = 0;
+        if (state->identity_seen)
+            fi_death = dealpg4_fi_hooks.fail(FI_SUP_DEATH);
+        if (fi_death != 0)
+            _exit(fi_death);
     }
 }
 
@@ -3265,7 +3590,17 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
 
     /* Subreaper set + read-back before any fork, never assumed
      * inherited (parent D2): failure or unsupported capability is
-     * CAPABILITY_MISSING before any command can start. */
+     * CAPABILITY_MISSING before any command can start.
+     * FI_SUP_SUBREAPER scripts the failure with the scripted errno —
+     * the same no-record CAPABILITY_MISSING refusal, no fork. */
+    {
+        int fi = dealpg4_fi_hooks.fail(FI_SUP_SUBREAPER);
+
+        if (fi != 0) {
+            errno = fi;
+            return DEALPG4_EXIT_CAPABILITY_MISSING;
+        }
+    }
     if (prctl(PR_SET_CHILD_SUBREAPER, 1) != 0)
         return DEALPG4_EXIT_CAPABILITY_MISSING;
     {
@@ -3278,7 +3613,17 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
 
     /* Entry capability wiring (D8): one timerfd created before any
      * fork; timerfd_create failure is the no-record TIMER_FAILED
-     * refusal (distinct from the mid-invocation re-arm record path). */
+     * refusal (distinct from the mid-invocation re-arm record path).
+     * FI_SUP_TIMERFD scripts the failure with the scripted errno — the
+     * same no-record TIMER_FAILED entry refusal. */
+    {
+        int fi = dealpg4_fi_hooks.fail(FI_SUP_TIMERFD);
+
+        if (fi != 0) {
+            errno = fi;
+            return DEALPG4_SUPERVISOR_ENTRY_TIMER_FAILED;
+        }
+    }
     if (dealpg4_deadline_open(&timer) != 0)
         return DEALPG4_SUPERVISOR_ENTRY_TIMER_FAILED;
 
@@ -3292,6 +3637,21 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
     if (sigprocmask(SIG_BLOCK, &sigchld_set, NULL) != 0) {
         dealpg4_deadline_close(&timer);
         return DEALPG4_EXIT_CAPABILITY_MISSING;
+    }
+    /* FI_SUP_SIGNALFD scripts the signalfd(SIGCHLD) creation failure
+     * with the scripted errno — the no-record CAPABILITY_MISSING
+     * refusal (the timer and the signal mask are restored exactly like
+     * the real failure path). */
+    {
+        int fi = dealpg4_fi_hooks.fail(FI_SUP_SIGNALFD);
+
+        if (fi != 0) {
+            errno = fi;
+            dealpg4_deadline_close(&timer);
+            (void)sigprocmask(SIG_SETMASK,
+                              &dealpg4_supervisor_entry_mask, NULL);
+            return DEALPG4_EXIT_CAPABILITY_MISSING;
+        }
     }
     sig_fd = signalfd(-1, &sigchld_set, SFD_NONBLOCK | SFD_CLOEXEC);
     if (sig_fd < 0) {
@@ -3379,20 +3739,35 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
      * ends keep the target's ordinary blocking semantics). A pipe
      * creation failure is the record-bearing FAILED <id> CLEANUP_FAILED
      * path (never STARTED, never CLEAN). */
-    if (pipe2(status_pipe, O_NONBLOCK | O_CLOEXEC) != 0
-        || pipe2(release_pipe, O_CLOEXEC) != 0
-        || pipe2(out_pipe, O_CLOEXEC) != 0
-        || pipe2(err_pipe, O_CLOEXEC) != 0) {
-        dealpg4_supervisor_close_pipe(status_pipe);
-        dealpg4_supervisor_close_pipe(release_pipe);
-        dealpg4_supervisor_close_pipe(out_pipe);
-        dealpg4_supervisor_close_pipe(err_pipe);
-        state.classification = DEALPG4_SUP_CLASS_CLEANUP_FAILED;
-        if (state.startup_ms == 0)
-            state.startup_ms = (int64_t)dealpg4_now_ms() - state.t0;
-        dealpg4_supervisor_loop(&state);
-        dealpg4_supervisor_terminate(&state);
-        return dealpg4_supervisor_exit_status(&state);
+    /* FI_SUP_PIPE scripts the pipe-creation failure with the scripted
+     * errno — the record-bearing FAILED <id> CLEANUP_FAILED path
+     * (never STARTED, never CLEAN). */
+    {
+        int fi = dealpg4_fi_hooks.fail(FI_SUP_PIPE);
+        int pipes_ok;
+
+        if (fi != 0) {
+            errno = fi;
+            pipes_ok = 0;
+        } else {
+            pipes_ok = (pipe2(status_pipe, O_NONBLOCK | O_CLOEXEC) == 0
+                        && pipe2(release_pipe, O_CLOEXEC) == 0
+                        && pipe2(out_pipe, O_CLOEXEC) == 0
+                        && pipe2(err_pipe, O_CLOEXEC) == 0);
+        }
+        if (!pipes_ok) {
+            dealpg4_supervisor_close_pipe(status_pipe);
+            dealpg4_supervisor_close_pipe(release_pipe);
+            dealpg4_supervisor_close_pipe(out_pipe);
+            dealpg4_supervisor_close_pipe(err_pipe);
+            state.classification = DEALPG4_SUP_CLASS_CLEANUP_FAILED;
+            if (state.startup_ms == 0)
+                state.startup_ms =
+                    (int64_t)dealpg4_now_ms() - state.t0;
+            dealpg4_supervisor_loop(&state);
+            dealpg4_supervisor_terminate(&state);
+            return dealpg4_supervisor_exit_status(&state);
+        }
     }
     flags = fcntl(out_pipe[0], F_GETFL);
     if (flags >= 0)
@@ -3420,7 +3795,23 @@ int dealpg4_supervise_core(const char **argv, const char *cwd,
      * record-bearing FAILED <id> STUB_BOOTSTRAP_FAILED path (no stub
      * ever existed; REPORT.exitCode = 0, termSignal = 0 — never
      * STARTED, never CLEAN). */
-    stub = fork();
+    /* sup-pre-fork: the injected delay sleeps before the fork and
+     * consumes the startup deadline (never an extension).
+     * FI_SUP_FORK scripts the fork(2) failure with the scripted errno
+     * — the record-bearing FAILED <id> STUB_BOOTSTRAP_FAILED path (no
+     * stub ever existed; REPORT.exitCode = 0, termSignal = 0 — never
+     * STARTED, never CLEAN). */
+    (void)dealpg4_fi_hooks.delay_ms(0, DEALPG4_FI_DELAY_SUP_PRE_FORK);
+    {
+        int fi = dealpg4_fi_hooks.fail(FI_SUP_FORK);
+
+        if (fi != 0) {
+            errno = fi;
+            stub = -1;
+        } else {
+            stub = fork();
+        }
+    }
     if (stub < 0) {
         dealpg4_supervisor_close_pipe(status_pipe);
         dealpg4_supervisor_close_pipe(release_pipe);

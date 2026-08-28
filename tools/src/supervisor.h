@@ -46,6 +46,16 @@
  *    loss / passthrough drop, never process death) and the stub exec
  *    hygiene (SIGPIPE SIG_DFL + captured-entry-mask restore
  *    immediately before execvp).
+ *
+ * ISSUE-0245 (epic Sequencing step 6) lands the deterministic
+ * fault-injection seam call-site catalog of
+ * dealpg4-supervisor-engine D6 on the supervisor/stub paths: the
+ * named delay/fail/congest site tags below, one call site per tag
+ * with the production-inert defaults (fi.h) — only selftest-child
+ * code (ISSUE-0184) installs scripts in-process through
+ * dealpg4_fi_install_overrides against dealpg4_supervisor_fi_catalog;
+ * no CLI/env key activates injection and the supervisor never
+ * installs overrides.
  */
 #ifndef DEALPG4_SUPERVISOR_H
 #define DEALPG4_SUPERVISOR_H
@@ -54,6 +64,73 @@
 #include <sys/types.h>
 
 #include "drain.h"
+#include "fi.h"
+
+/* === Fault-injection seam catalog (dealpg4-supervisor-engine D6) ========
+ * The named catalog constants the selftest battery (ISSUE-0184)
+ * scripts against. Delay sites are string tags; fail sites and
+ * congest targets/modes are int tags. Every call site resolves to the
+ * production defaults (fi.h): delay_ms sleeps a monotonic-bounded
+ * scripted duration that consumes the enclosing component's own
+ * deadline (an injection never extends one), fail returns 0, congest
+ * returns 0 — production modes behave identically to a seam-free
+ * build. Only selftest-child code installs overrides, in-process,
+ * through the installer (selftest.h), which validates scripts against
+ * the catalog below (unknown site/target/mode installs nothing).
+ */
+
+/* Delay sites (string tags) — the coverage obligation: a named
+ * pre-step delay site for every one of the eight stub steps plus the
+ * two supervisor-side sites. */
+#define DEALPG4_FI_DELAY_SUP_PRE_FORK                "sup-pre-fork"
+#define DEALPG4_FI_DELAY_SUP_PRE_RELEASE_WRITE       "sup-pre-release-write"
+#define DEALPG4_FI_DELAY_STUB_POST_FORK              "stub-post-fork"
+#define DEALPG4_FI_DELAY_STUB_PRE_PPID_RECHECK       "stub-pre-ppid-recheck"
+#define DEALPG4_FI_DELAY_STUB_PRE_SETSID             "stub-pre-setsid"
+#define DEALPG4_FI_DELAY_STUB_PRE_IDENTITY_SELFCHECK \
+    "stub-pre-identity-selfcheck"
+#define DEALPG4_FI_DELAY_STUB_PRE_IDENTITY_WRITE     "stub-pre-identity-write"
+#define DEALPG4_FI_DELAY_STUB_PRE_RELEASE_POLL       "stub-pre-release-poll"
+#define DEALPG4_FI_DELAY_STUB_POST_RELEASE           "stub-post-release"
+#define DEALPG4_FI_DELAY_STUB_PRE_CHDIR              "stub-pre-chdir"
+#define DEALPG4_FI_DELAY_STUB_PRE_EXECVP             "stub-pre-execvp"
+
+/* Fail sites (int tags) — scripted nonzero forces the named failure
+ * path with the scripted value as errno; 0 runs the real syscall. */
+#define FI_SUP_SUBREAPER            1
+#define FI_SUP_TIMERFD              2
+#define FI_SUP_SIGNALFD             3
+#define FI_SUP_FORK                 4
+#define FI_SUP_PIPE                 5
+#define FI_STUB_SETSID              6
+#define FI_STUB_IDENTITY_SELFCHECK  7
+#define FI_STUB_CHDIR               8
+#define FI_STUB_EXEC                9
+#define FI_SUP_DEATH               10
+
+/* Congest targets (int tags). */
+#define FI_CONGEST_STATUS_PIPE 11
+#define FI_CONGEST_CTRL        12
+#define FI_CONGEST_STREAM      13
+#define FI_CONGEST_IDENTITY    14
+
+/* Congestion modes (int tags, nonzero — 0 is the production
+ * no-congestion report and is invalid in a script). */
+#define STATUS_LOSS       21
+#define STATUS_CONGESTED  22
+#define CTRL_WRITE_STALL  23
+#define CTRL_READ_STALL   24
+#define STREAM_NO_EOF     25
+#define ID_MALFORMED_PID  26
+#define ID_MALFORMED_PGID 27
+#define ID_MALFORMED_SID  28
+#define ID_MALFORMED_NONCE 29
+
+/* The supervisor/stub seam catalog (the named surface the ISSUE-0184
+ * battery passes to dealpg4_fi_install_overrides): the eleven delay
+ * site tags, the ten fail-site tags, the four congest targets, and
+ * the nine congestion-mode tags of D6. Defined in supervisor.c. */
+extern const struct dealpg4_fi_catalog dealpg4_supervisor_fi_catalog;
 
 /*
  * In-process supervisor core entry (dealpg4-supervisor-engine D1).
