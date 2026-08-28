@@ -1026,19 +1026,34 @@ public class CanonicalJsonTest {
                 List.of("deal/semantic/ir/ContractSnapshotCanonicalizer.java")),
             "exactly one production file serializes the snapshot digest field set: "
                 + filesContaining("deal/semantic", "\"referencedSemanticIds\""));
+        // The pinned digest-input key appears only in the pinned record
+        // shapes and their single derivation helpers: the lowering-context
+        // pair (T3) and the ISSUE-0284 release-state-hash derivation (F1).
+        // No other component names canonical JSON keys.
         check(filesContaining("deal/semantic", "\"capabilityRegistryHash\"").equals(
-                List.of("deal/semantic/ir/LoweringContext.java",
+                List.of("deal/semantic/CompilerProfileProvider.java",
+                    "deal/semantic/ir/LoweringContext.java",
                     "deal/semantic/ir/LoweringContextHash.java")),
-            "the lowering-context digest input key lives only in the pinned record and the "
-                + "single helper: " + filesContaining("deal/semantic", "\"capabilityRegistryHash\""));
+            "the pinned digest-input key lives only in the pinned record/derivation "
+                + "components: " + filesContaining("deal/semantic", "\"capabilityRegistryHash\""));
         check(filesContaining("deal/semantic", "CanonicalJson.parse(").equals(
                 List.of("deal/semantic/ir/ContractSnapshotCanonicalizer.java")),
             "exactly one production component parses canonical JSON: "
                 + filesContaining("deal/semantic", "CanonicalJson.parse("));
+        // Exactly the pinned production components serialize canonical
+        // JSON, and every one of them goes through the single CanonicalJson
+        // facility: the snapshot canonicalizer, the lowering-context helper
+        // (T3), and the ISSUE-0284 F1/F7 release-state-hash and
+        // capability-registry components (CompilerProfileProvider /
+        // CapabilityRegistry — records mapped onto the single value model,
+        // no serializer of their own; the MessageDigest/hex-float scans
+        // above still pin the machinery to CanonicalJson alone).
         check(filesContaining("deal/semantic", "CanonicalJson.serializeBytes(").equals(
-                List.of("deal/semantic/ir/ContractSnapshotCanonicalizer.java",
+                List.of("deal/semantic/CapabilityRegistry.java",
+                    "deal/semantic/CompilerProfileProvider.java",
+                    "deal/semantic/ir/ContractSnapshotCanonicalizer.java",
                     "deal/semantic/ir/LoweringContextHash.java")),
-            "exactly the two pinned production components serialize canonical JSON: "
+            "exactly the four pinned production components serialize canonical JSON: "
                 + filesContaining("deal/semantic", "CanonicalJson.serializeBytes("));
 
         // The pre-existing hash/parse sites elsewhere in the compiler are

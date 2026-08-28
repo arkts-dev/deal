@@ -13,6 +13,10 @@ import deal.diagnostics.DiagnosticFormatter;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.parser.*;
+import deal.semantic.CapabilityRegistry;
+import deal.semantic.CompilerInvocation;
+import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ir.ReleaseState;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -59,6 +63,17 @@ public final class CompilationOrchestrator {
     private final Backend backend;
     private final List<Path> moduleRoots;
     private final Path stdlibDir;
+
+    /**
+     * The release-owned compiler invocation resolved at compile start
+     * (foundation F1/F8): every compile carries exactly one purpose,
+     * profile, release state, and derived release-state hash. Public
+     * builds resolve PUBLIC_BUILD through
+     * {@link CompilerProfileProvider}; the verbose report prints the
+     * recorded facts but the recording location is the invocation's
+     * immutable {@code releaseStateHash} field.
+     */
+    private final CompilerInvocation invocation;
 
     private final Map<String, ModuleInfo> modules = new LinkedHashMap<>();
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
@@ -160,7 +175,8 @@ public final class CompilationOrchestrator {
                                     DealConfig config, List<Path> moduleRoots,
                                     Path stdlibDir) {
         this(entryFile, outputRoot, verbose, dumpIr, sourceMap,
-            sourceMapExplicit, backend, config, moduleRoots, stdlibDir, null);
+            sourceMapExplicit, backend, config, moduleRoots, stdlibDir, null,
+            defaultInvocation());
     }
 
     /**
@@ -175,7 +191,10 @@ public final class CompilationOrchestrator {
                                     boolean dumpIr, boolean sourceMap,
                                     boolean sourceMapExplicit, Backend backend,
                                     DealConfig config, List<Path> moduleRoots,
-                                    Path stdlibDir, Path diagnosticsJsonPath) {
+                                    Path stdlibDir, Path diagnosticsJsonPath,
+                                    CompilerInvocation invocation) {
+        this.invocation = java.util.Objects.requireNonNull(invocation,
+            "invocation must not be null");
         this.backend = backend;
         this.entryFile = entryFile.toAbsolutePath().normalize();
         this.outputRoot = outputRoot.toAbsolutePath().normalize();
@@ -207,6 +226,33 @@ public final class CompilationOrchestrator {
         this.externalsModulePaths = Map.copyOf(modulePaths);
     }
 
+    /**
+     * The default release-owned invocation used by every constructor that
+     * is not given one explicitly: {@code PUBLIC_BUILD} resolved through
+     * {@link CompilerProfileProvider} with this epic's release state
+     * {@code PRE_ACTIVATION} (the derived public profile is
+     * {@code LEGACY_SAFE_INT} and production SHARED routing stays
+     * unreachable, foundation F1/F4). The provider is the only
+     * invocation constructor — the orchestrator never constructs an
+     * invocation itself.
+     */
+    private static CompilerInvocation defaultInvocation() {
+        return CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+            CapabilityRegistry.releaseRegistry());
+    }
+
+    /**
+     * The release-owned compiler invocation of this compile: exactly one
+     * purpose/profile/release state with the derived release-state hash
+     * recorded (foundation F1) — resolved before checking/lowering and
+     * recorded verbatim on every invocation, verbose or not.
+     *
+     * @return the immutable invocation record
+     */
+    public CompilerInvocation invocation() {
+        return invocation;
+    }
+
     // =========================================================================
     // Public API
     // =========================================================================
@@ -235,6 +281,17 @@ public final class CompilationOrchestrator {
     /** The compilation pipeline proper; see {@link #compile()}. */
     private boolean compileInternal() throws IOException {
         long startTime = System.currentTimeMillis();
+
+        // The invocation was resolved at compile start (F1/F8); the
+        // verbose report prints the recorded facts. The recording
+        // location is the invocation's immutable releaseStateHash field —
+        // present on every invocation, verbose or not.
+        if (verbose) {
+            System.out.println("Purpose: " + invocation.purpose());
+            System.out.println("Semantic profile: " + invocation.semanticProfile());
+            System.out.println("Release state: " + invocation.releaseState());
+            System.out.println("Release-state hash: " + invocation.releaseStateHash());
+        }
 
         log("Phase 0: Module discovery and parsing");
         discoverAndParse();

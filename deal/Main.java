@@ -2,6 +2,10 @@ package deal;
 
 import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.semantic.CapabilityRegistry;
+import deal.semantic.CompilerInvocation;
+import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ir.ReleaseState;
 import deal.diagnostics.DiagnosticFormatter;
 import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.module.CompilationOrchestrator;
@@ -233,6 +237,15 @@ public final class Main {
             }
         }
 
+        // Release-owned invocation resolution (foundation F1/F7): every
+        // compile carries exactly one PUBLIC_BUILD invocation whose
+        // profile derives from the release state and whose derived
+        // release-state hash is recorded on the invocation. The CLI gains
+        // no profile or purpose option — source and CLI cannot select
+        // profile, purpose, or the hash.
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(
+            ReleaseState.PRE_ACTIVATION, CapabilityRegistry.releaseRegistry());
+
         // Run compilation
         // When --dump-ir is passed, also enable source maps since they
         // are part of IR hardening. When --source-map is explicitly passed,
@@ -243,7 +256,8 @@ public final class Main {
         // are written by this CLI directly above.
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, verbose, dumpIr, dumpIr || sourceMap, sourceMap,
-            backend, config, moduleRoots, stdlibDir, diagnosticsJsonPath);
+            backend, config, moduleRoots, stdlibDir, diagnosticsJsonPath,
+            invocation);
 
         boolean success = orchestrator.compile();
 

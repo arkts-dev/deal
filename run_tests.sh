@@ -42,11 +42,13 @@ javac --release 25 -proc:none -d build \
   deal/codegen/jvm/*.java \
   deal/codegen/js/*.java \
   deal/ir/*.java \
+  deal/semantic/*.java \
   deal/semantic/ir/*.java \
   deal/module/*.java \
   deal/project/*.java \
   deal/Main.java \
   test/StubModuleResolver.java \
+  test/InvocationProfileRegistryTest.java \
   test/DiagnosticRangeTest.java \
   test/DiagnosticClassificationTest.java \
   test/LoweringFoundationTest.java \
@@ -142,6 +144,10 @@ java -ea -cp build deal.test.DiagnosticClassificationTest
 echo ""
 echo "=== Running Lowering Foundation Tests (ISSUE-0281) ==="
 java -ea -cp build deal.test.LoweringFoundationTest
+
+echo ""
+echo "=== Running Invocation / Profile / Capability Registry Tests (ISSUE-0284) ==="
+java -ea -cp build deal.test.InvocationProfileRegistryTest
 
 echo ""
 echo "=== Running Semantic IR Schema Tests (ISSUE-0282) ==="
