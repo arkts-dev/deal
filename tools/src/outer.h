@@ -7,8 +7,17 @@
  * bootstrap (COORD_READY publication + report-first /proc cross-check),
  * the continuous 1 MiB coordinator stream drains, the D8 escalation
  * machinery with the COORDINATOR_HANG escalation-deadline trigger, the
- * COORDINATOR_STARTUP_FAILED by-pid termination scope, and the
- * final-proof skeleton.
+ * COORDINATOR_STARTUP_FAILED by-pid termination scope, the
+ * final-proof skeleton, and (ISSUE-0295) the authenticated AF_UNIX
+ * broker socket (0700 dir, stale-path unlink, 0600 bind, one
+ * SO_PEERCRED-verified connection, FD_CLOEXEC hygiene), the
+ * HELLO -> HELLO_OK 4 <caps> -> FEATURE_READY -> READY_ACK handshake
+ * channel state machine on the protocol expectation-set mechanism,
+ * the uniform framing-level PROTOCOL_ERROR close rule, the broker
+ * stall rule (stall deadline = now + brokerStallMs while relay data
+ * is pending and POLLOUT is not ready; BROKER_STALLED on expiry),
+ * and the PROTOCOL_ERROR/AUTH_FAILED aftermath (deadline-bounded D8
+ * escalation through the T2 machinery).
  *
  * See dealpg4-outer-supervisor-engine D1/D2/D5/D6 for the pinned
  * surfaces (outer-coordinator-and-broker D1-D9 preserved):
@@ -26,10 +35,13 @@
  *    loop (the single timerfd carrying the earliest applicable
  *    deadline; never blocked on a write), the write-side discipline,
  *    the final report, and the exit-status mapping.
- * The broker socket, registry, nested forks, fallbacks, and the
- * remaining final-sequence discrimination land with the next
- * sequencing steps; this child owns the coordinator machinery and the
- * proof slots it can run.
+ * The registry, nested forks, fallbacks, and the remaining
+ * final-sequence discrimination land with the next sequencing steps;
+ * this child additionally owns the broker socket and handshake channel
+ * machine; a well-formed record arriving in BROKER_LIVE is
+ * state-unexpected (the live-phase expectation set and its handlers
+ * land with the registry child) and closes per the D5 PROTOCOL_ERROR
+ * rule.
  */
 #ifndef DEALPG4_OUTER_H
 #define DEALPG4_OUTER_H
@@ -85,6 +97,65 @@ int dealpg4_outer_fork_nested(const dealpg4_outer_spawn *self,
                               const char nonce[33], int64_t budget_t,
                               int64_t invocation_id,
                               int child_control_fd);
+
+/* === Broker channel states (engine D5) ================================= */
+
+enum dealpg4_outer_broker_state {
+    DEALPG4_OUTER_BROKER_AWAIT_HELLO = 0, /* expects exactly HELLO (any
+                                             non-HELLO record ->
+                                             PROTOCOL_ERROR; a HELLO
+                                             nonce mismatch ->
+                                             AUTH_FAILED) */
+    DEALPG4_OUTER_BROKER_AWAIT_READY = 1, /* entered when HELLO_OK was
+                                             queued; expects exactly
+                                             FEATURE_READY (any other
+                                             record or a nonce
+                                             mismatch ->
+                                             PROTOCOL_ERROR) */
+    DEALPG4_OUTER_BROKER_LIVE = 2,        /* entered exactly after the
+                                             READY_ACK write was
+                                             queued; the live-phase
+                                             expectation set is empty
+                                             at this stage — a
+                                             well-formed record is
+                                             state-unexpected and
+                                             closes per the D5
+                                             PROTOCOL_ERROR rule (the
+                                             live-phase rows land with
+                                             the registry child); EOF
+                                             is the accepted channel
+                                             event feeding the D8
+                                             discrimination slot */
+    DEALPG4_OUTER_BROKER_CLOSED = 3       /* terminal: the connection
+                                             is closed, no further
+                                             records are read */
+};
+
+/* === Broker socket mechanics and authentication (engine D1/D5) ======== */
+
+/* The real socket-setup surface (one code path shared by the core and
+ * the component tests): mkdir(socket_dir, 0700) tolerating EEXIST for
+ * an existing directory, chmod the dir 0700, unlink a stale same-name
+ * path, socket(AF_UNIX, SOCK_STREAM) with O_NONBLOCK|FD_CLOEXEC,
+ * bind, chmod(path, 0600) immediately after bind and before listen,
+ * listen. The FI_OUTER_BIND seam forces the bind failure with the
+ * scripted value as errno. Returns 0 with *listen_fd set and the
+ * NUL-terminated socket path copied to path_out (path_cap bytes), or
+ * -1 with errno — no fd leaked and the path unlinked on every
+ * post-create failure path. */
+int dealpg4_outer_broker_bind_path(const char *socket_dir,
+                                   const char outer_nonce[33],
+                                   char *path_out, size_t path_cap,
+                                   int *listen_fd);
+
+/* Accept one broker connection with O_NONBLOCK|FD_CLOEXEC and verify
+ * SO_PEERCRED before any record (parent D5): pid == coordinator_pid
+ * AND uid == expected_uid. Returns 0 with *conn_fd set on success, or
+ * -1 with errno — EAGAIN when no connection is pending (the normal
+ * non-blocking outcome), EACCES when the peer credentials failed (the
+ * caller's AUTH_FAILED path), the accept(2)/fcntl errno otherwise. */
+int dealpg4_outer_broker_accept_peer(int listen_fd, pid_t coordinator_pid,
+                                     uid_t expected_uid, int *conn_fd);
 
 /* === Mode entry / core entry (engine D1/D2) ============================ */
 
@@ -164,13 +235,30 @@ enum dealpg4_outer_fi_fail_site {
                              * COORDINATOR_STARTUP_FAILED (the
                              * unverified-group discharge trivially
                              * holds — nothing was ever forked) */
-    FI_COORD_READY_MISMATCH = 6 /* the coordinator child writes a
-                                 * scripted COORD_READY whose pgid/sid
-                                 * differ from its actual values (the
-                                 * report lies; the outer's
-                                 * report//proc cross-check disagrees)
-                                 * -> COORDINATOR_STARTUP_FAILED */
+    FI_COORD_READY_MISMATCH = 6, /* the coordinator child writes a
+                                  * scripted COORD_READY whose pgid/sid
+                                  * differ from its actual values (the
+                                  * report lies; the outer's
+                                  * report//proc cross-check disagrees)
+                                  * -> COORDINATOR_STARTUP_FAILED */
+    FI_OUTER_BIND = 7              /* the broker socket bind fails with
+                                    * the scripted value as errno ->
+                                    * BROKER_BIND_FAILED, no
+                                    * coordinator fork */
 };
+
+/* Named congest target/mode tags (int tags through
+ * dealpg4_fi_hooks.congest; a scripted nonzero mode forces the named
+ * congestion, 0 = the real path; fi.h). The broker-owned congestion
+ * seam (engine D6) lands with this child. */
+#define FI_CONGEST_BROKER        1 /* the broker socket hop */
+#define BROKER_WRITE_STALL       1 /* broker POLLOUT never ready while
+                                    * relay data is pending (the write
+                                    * flush reports EAGAIN without
+                                    * attempting the syscall) — arms
+                                    * and fires the parent-D5 stall
+                                    * rule; a native deadline is never
+                                    * suspended */
 
 /* Named delay-site tags (string tags through dealpg4_fi_hooks.
  * delay_ms; an injected delay sleeps exactly the scripted ms before
@@ -279,6 +367,32 @@ typedef struct dealpg4_outer_result {
     /* Shell loss (parent D1). */
     int shell_lost;            /* EPIPE/EBADF on the report stdout or
                                   getppid() != shellPid */
+    /* Broker channel (engine D5). */
+    int broker_created;        /* bind/listen completed */
+    int broker_conn_accepted;  /* the one connection was accepted at
+                                  the socket level */
+    int broker_peer_verified;  /* SO_PEERCRED pid/uid held */
+    int broker_hello_ok_sent;  /* HELLO_OK queued (AWAIT_READY
+                                  entered) */
+    int broker_ready_acked;    /* READY_ACK queued (BROKER_LIVE
+                                  entered exactly after the queue) */
+    int broker_state;          /* final channel state
+                                  (dealpg4_outer_broker_state) */
+    int broker_closed;         /* the connection is closed */
+    int broker_eof;            /* read-side EOF observed (the D8
+                                  discrimination slot) */
+    int broker_socket_unlinked; /* the socket path was unlinked */
+    int broker_conns_rejected; /* second+ connections accepted and
+                                  closed without a read */
+    int broker_stall_armed;    /* the stall deadline was armed
+                                  (observed at least once) */
+    int broker_stall_fired;    /* BROKER_STALLED decided (relay data
+                                  still pending at the stall
+                                  deadline) */
+    int64_t broker_stall_arm_ms; /* t0o-relative stall arm time (0
+                                    when never armed) */
+    int64_t broker_stall_deadline_ms; /* t0o-relative stall deadline
+                                         (0 when never armed) */
     /* Coordinator stream drains. */
     uint64_t coord_stdout_bytes; /* drain total_read */
     uint64_t coord_stderr_bytes;
