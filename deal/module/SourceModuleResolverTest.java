@@ -5,6 +5,8 @@ import deal.diagnostics.DiagnosticNote;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
 import deal.ast.Span;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
 import deal.project.ConfiguredModuleRoot;
 import deal.project.ExternalEntry;
 import deal.project.NormalizedDeclarationPath;
@@ -614,7 +616,7 @@ public final class SourceModuleResolverTest {
                 + dupLocation.normalizedSourcePath());
         check(dupLocation.moduleClassification()
                 instanceof CanonicalModuleIdentity.ProjectModule project
-                    && project.identity().configuredRootText().equals("src"),
+                    && project.projectIdentity().configuredRootText().equals("src"),
             "dup carries the src project identity");
     }
 
@@ -1190,14 +1192,14 @@ public final class SourceModuleResolverTest {
             dir.resolve("src/nested/deep.deal").toUri().toString());
         check(rooted.moduleIdentity()
                     instanceof CanonicalModuleIdentity.ProjectModule module
-                        && module.identity().configuredRootText().equals("src")
-                        && module.identity().relativeModuleComponents()
+                        && module.projectIdentity().configuredRootText().equals("src")
+                        && module.projectIdentity().relativeModuleComponents()
                             .equals(List.of("nested")),
             "rooted .deal → ProjectModule(src, [nested])");
         check(rooted.projectIdentity() != null
                 && rooted.projectIdentity().equals(
                     ((CanonicalModuleIdentity.ProjectModule)
-                        rooted.moduleIdentity()).identity()),
+                        rooted.moduleIdentity()).projectIdentity()),
             "the classifier result carries the projectIdentity provenance");
 
         // Most-specific selection across nested roots.
@@ -1205,7 +1207,7 @@ public final class SourceModuleResolverTest {
             dir.resolve("lib/utils/deep.deal").toUri().toString());
         check(nestedRoot.moduleIdentity()
                     instanceof CanonicalModuleIdentity.ProjectModule module
-                        && module.identity().configuredRootText().equals("lib/utils"),
+                        && module.projectIdentity().configuredRootText().equals("lib/utils"),
             "lib/utils/deep.deal selects the most-specific root lib/utils");
 
         // Rooted non-externals .d.deal → no public identity.
@@ -1340,8 +1342,8 @@ public final class SourceModuleResolverTest {
             "equal inputs produce equal classification results");
         check(first.moduleIdentity()
                     instanceof CanonicalModuleIdentity.ProjectModule module
-                        && module.identity().configuredRootText().equals("src")
-                        && module.identity().relativeModuleComponents()
+                        && module.projectIdentity().configuredRootText().equals("src")
+                        && module.projectIdentity().relativeModuleComponents()
                             .equals(List.of("alpha")),
             "fabricated URIs classify without any filesystem existence");
 

@@ -1,5 +1,8 @@
 package deal.module;
 
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
+
 import java.util.Objects;
 
 /**

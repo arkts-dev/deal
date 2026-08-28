@@ -3,6 +3,7 @@ package deal.module;
 import deal.ast.Span;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.identity.CanonicalModuleIdentity;
 import deal.project.ConfiguredModuleRoot;
 import deal.project.ExternalEntry;
 import deal.project.ProjectContext;
