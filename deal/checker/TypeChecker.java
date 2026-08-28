@@ -242,6 +242,7 @@ public final class TypeChecker {
             case Type.Number ignored     -> true;
             case Type.String ignored     -> true;
             case Type.Table ignored      -> true;
+            case Type.Bytes ignored      -> false;
             case Type.Array arr          -> isJsonableType(arr.element());
             case Type.Nullable n         -> isJsonableType(n.inner());
             case Type.Class cls          -> {
@@ -294,6 +295,7 @@ public final class TypeChecker {
                 collectSameModuleJsonableClassDeps(arr.element(), deps);
             case Type.Nullable n ->
                 collectSameModuleJsonableClassDeps(n.inner(), deps);
+            case Type.Bytes ignored -> { /* stop: no class references possible */ }
             default -> { /* stop: no deeper class references possible */ }
         }
     }
@@ -1688,6 +1690,7 @@ public final class TypeChecker {
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
+            case Type.Bytes ignored -> "bytes";
             case Type.Error ignored -> "<error>";
             case Type.Array a -> typeName(a.element()) + "[]";
             case Type.Nullable n -> typeName(n.inner()) + " | null";

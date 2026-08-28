@@ -892,6 +892,7 @@ public final class LuaBackend implements Visitor<Void> {
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
+            case Type.Bytes ignored -> "bytes";
             case Type.Error ignored -> "Error";
             case Type.Array arr -> {
                 String elem = typeDescriptor(arr.element());
@@ -972,6 +973,23 @@ public final class LuaBackend implements Visitor<Void> {
                 "__rt.check_string(" + valueExpr + ", " + spanParam + ")";
             case Type.Table ignored ->
                 "__rt.check_table(" + valueExpr + ", " + spanParam + ")";
+            case Type.Bytes ignored -> {
+                // ISSUE-0158 (E6) boundary: no checked program can produce
+                // a bytes value before the bytes checker/runtime lands.
+                // Fail explicitly through the backend's unsupported-shape
+                // handling (E6000) instead of silently passing the value
+                // through or emitting a wrong descriptor.
+                String message = "bytes is not supported by the Lua backend "
+                    + "slice (ISSUE-0158 boundary)";
+                if (span != null) {
+                    addDiagnostic(DiagnosticCode.E6000, message, span);
+                } else {
+                    diagnostics.add(CompilerDiagnostic.syntheticError(
+                        DiagnosticCode.E6000, message, sourceFilePath,
+                        "missing anchor: bytes runtime check span"));
+                }
+                yield valueExpr;
+            }
             case Type.Array arr ->
                 "__rt.check_array(" + quotedTypeDescriptor(type) + ", "
                     + valueExpr + ", " + spanParam + ")";
@@ -997,6 +1015,10 @@ public final class LuaBackend implements Visitor<Void> {
             case Type.Number ignored -> "__rt.check_number";
             case Type.String ignored -> "__rt.check_string";
             case Type.Table ignored -> "__rt.check_table";
+            // bytes has no direct primitive check helper (E6 owns the
+            // bytes checker surface); null routes the site through
+            // emitCheckExpr, whose Bytes arm fails explicitly (E6000).
+            case Type.Bytes ignored -> null;
             default -> null;
         };
     }

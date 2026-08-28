@@ -3963,6 +3963,7 @@ public final class JvmBackend {
             case Type.Number ignored -> 'N';
             case Type.String ignored -> 'S';
             case Type.Null ignored -> 'V';
+            case Type.Bytes ignored -> null;
             default -> null;
         };
     }
@@ -3991,6 +3992,7 @@ public final class JvmBackend {
             case Type.Boolean ignored -> "boolean";
             case Type.String ignored -> "string";
             case Type.Null ignored -> "null";
+            case Type.Bytes ignored -> "bytes";
             case Type.Func nested -> fnDescriptor(nested);
             default -> "?";
         };
@@ -4319,11 +4321,13 @@ public final class JvmBackend {
             case Type.Number ignored -> "java.lang.Double";
             case Type.Boolean ignored -> "java.lang.Boolean";
             case Type.String ignored -> "java.lang.String";
+            case Type.Bytes ignored -> "java.lang.Object";
             case Type.Nullable n -> switch (n.inner()) {
                 case Type.Int ignored -> "java.lang.Long";
                 case Type.Number ignored -> "java.lang.Double";
                 case Type.Boolean ignored -> "java.lang.Boolean";
                 case Type.String ignored -> "java.lang.String";
+                case Type.Bytes ignored -> "java.lang.Object";
                 default -> "java.lang.Object";
             };
             default -> "java.lang.Object";
@@ -4391,6 +4395,7 @@ public final class JvmBackend {
             case Type.Number ignored -> true;
             case Type.Boolean ignored -> true;
             case Type.String ignored -> true;
+            case Type.Bytes ignored -> false;
             default -> false;
         };
     }
@@ -4403,11 +4408,13 @@ public final class JvmBackend {
             case Type.Number ignored -> "double";
             case Type.Boolean ignored -> "boolean";
             case Type.String ignored -> "java.lang.String";
+            case Type.Bytes ignored -> null;
             case Type.Nullable n -> switch (n.inner()) {
                 case Type.Int ignored -> "java.lang.Long";
                 case Type.Number ignored -> "java.lang.Double";
                 case Type.Boolean ignored -> "java.lang.Boolean";
                 case Type.String ignored -> "java.lang.String";
+                case Type.Bytes ignored -> null;
                 default -> null;
             };
             default -> null;
@@ -4423,11 +4430,13 @@ public final class JvmBackend {
             case Type.Number ignored -> "double.class";
             case Type.Boolean ignored -> "boolean.class";
             case Type.String ignored -> "java.lang.String.class";
+            case Type.Bytes ignored -> "java.lang.Object.class";
             case Type.Nullable n -> switch (n.inner()) {
                 case Type.Int ignored -> "java.lang.Long.class";
                 case Type.Number ignored -> "java.lang.Double.class";
                 case Type.Boolean ignored -> "java.lang.Boolean.class";
                 case Type.String ignored -> "java.lang.String.class";
+                case Type.Bytes ignored -> "java.lang.Object.class";
                 default -> "java.lang.Object.class";
             };
             default -> "java.lang.Object.class";
@@ -4440,6 +4449,7 @@ public final class JvmBackend {
         if (t instanceof Type.Null) return "void";
         return switch (t) {
             case Type.Nullable n -> hostParamJavaType(n);
+            case Type.Bytes ignored -> hostParamJavaType(t);
             default -> hostParamJavaType(t);
         };
     }
@@ -4504,6 +4514,7 @@ public final class JvmBackend {
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
+            case Type.Bytes ignored -> "bytes";
             case Type.Error ignored -> "Error";
             case Type.Array arr -> "[" + typeDescriptor(arr.element()) + "]";
             case Type.Nullable n -> "?" + typeDescriptor(n.inner());
@@ -4575,12 +4586,14 @@ public final class JvmBackend {
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Boolean ignored -> "boolean";
+            case Type.Bytes ignored -> null;
             case Type.Nullable ne -> switch (ne.inner()) {
                 case Type.Int ignored -> "?int";
                 case Type.Number ignored -> "?number";
                 case Type.String ignored -> "?string";
                 case Type.Boolean ignored -> "?boolean";
                 case Type.Class c -> "?" + classCheckDescriptor(c);
+                case Type.Bytes ignored -> null;
                 default -> null;
             };
             case Type.Class c -> classCheckDescriptor(c);
@@ -4879,6 +4892,7 @@ public final class JvmBackend {
                     case Type.Number ignored -> "java.lang.Double";
                     case Type.Boolean ignored -> "java.lang.Boolean";
                     case Type.String ignored -> "java.lang.String";
+                    case Type.Bytes ignored -> javaLocalType(inner, cf.span());
                     default -> javaLocalType(inner, cf.span());
                 };
                 if (javaType == null) return;
@@ -5142,6 +5156,7 @@ public final class JvmBackend {
             case Type.Class ignored -> true;
             case Type.Nullable n -> isJvmJsonableFieldType(n.inner());
             case Type.Array a -> isJvmJsonableFieldType(a.element());
+            case Type.Bytes ignored -> false;
             default -> false; // function
         };
     }
@@ -5160,6 +5175,7 @@ public final class JvmBackend {
             case Type.Array ignored -> "array";
             case Type.Table ignored -> "table";
             case Type.Class ignored -> "class";
+            case Type.Bytes ignored -> "unknown";
             default -> "unknown";
         };
     }
@@ -5355,6 +5371,10 @@ public final class JvmBackend {
                 emitToJsonArrayField(cf.name(),
                     optional ? castJsonValueCode(valueCode, a) : valueCode,
                     a.element(), idx, false);
+            // bytes is not jsonable (the E4007 checker rule is a later
+            // slice); mirror the default's unsupported-value handling.
+            case Type.Bytes ignored ->
+                emitLine("out.put(" + name + ", null);");
             default ->
                 emitLine("out.put(" + name + ", null);");
         }
@@ -5414,9 +5434,11 @@ public final class JvmBackend {
                 case Type.Number ignored -> "java.lang.Double";
                 case Type.Boolean ignored -> "java.lang.Boolean";
                 case Type.String ignored -> "java.lang.String";
+                case Type.Bytes ignored -> "java.lang.Object";
                 default -> "java.lang.Object";
             };
             case Type.Class ignored -> "java.lang.Object";
+            case Type.Bytes ignored -> "java.lang.Object";
             default -> "java.lang.Object";
         };
     }
@@ -5447,6 +5469,7 @@ public final class JvmBackend {
                 emitLine(arrVar + ".add(" + ref + ".$toJsonValue((" + ref
                     + ") " + eVar + "));");
             }
+            case Type.Bytes ignored -> emitLine(arrVar + ".add(null);");
             default -> emitLine(arrVar + ".add(null);");
         }
     }
@@ -5671,6 +5694,16 @@ public final class JvmBackend {
                 emitLine(targetVar + " = new " + arrayWrapperName(a.element())
                     + "(a" + idx + ");");
             }
+            case Type.Bytes ignored -> {
+                // bytes is not jsonable (the E4007 checker rule is a
+                // later slice); fail through the jsonable conversion's
+                // existing unsupported-shape handling.
+                unsupportedSynthetic("@jsonable value conversion of type "
+                    + typeName(t),
+                    "missing anchor: source span for @jsonable value "
+                        + "conversion of type '" + typeName(t) + "'");
+                emitLine(targetVar + " = null;");
+            }
             default -> {
                 unsupportedSynthetic("@jsonable value conversion of type "
                     + typeName(t),
@@ -5693,9 +5726,11 @@ public final class JvmBackend {
                 case Type.Number ignored -> "java.lang.Double";
                 case Type.Boolean ignored -> "java.lang.Boolean";
                 case Type.String ignored -> "java.lang.String";
+                case Type.Bytes ignored -> "java.lang.Object";
                 default -> "java.lang.Object";
             };
             case Type.Class ignored -> "java.lang.Object";
+            case Type.Bytes ignored -> "java.lang.Object";
             default -> "java.lang.Object";
         };
     }
@@ -5728,6 +5763,7 @@ public final class JvmBackend {
                 String ref = jsonClassRefSynthetic(c);
                 yield ref == null ? "java.lang.Object" : ref;
             }
+            case Type.Bytes ignored -> "java.lang.Object";
             default -> "java.lang.Object";
         };
     }
@@ -8929,6 +8965,7 @@ public final class JvmBackend {
             case Type.Number ignored -> l + ".doubleValue() == " + r + ".doubleValue()";
             case Type.Boolean ignored -> l + ".booleanValue() == " + r + ".booleanValue()";
             case Type.String ignored -> l + ".equals(" + r + ")";
+            case Type.Bytes ignored -> "(" + l + " == " + r + ")";
             default -> "(" + l + " == " + r + ")";
         };
     }
@@ -8940,6 +8977,7 @@ public final class JvmBackend {
             case Type.Number ignored -> l + ".doubleValue() != " + r + ".doubleValue()";
             case Type.Boolean ignored -> l + ".booleanValue() != " + r + ".booleanValue()";
             case Type.String ignored -> "(!" + l + ".equals(" + r + "))";
+            case Type.Bytes ignored -> "(" + l + " != " + r + ")";
             default -> "(" + l + " != " + r + ")";
         };
     }
@@ -10417,12 +10455,14 @@ public final class JvmBackend {
             case Type.Boolean ignored ->
                 "java.lang.Boolean.valueOf(" + codes.get(1) + ")";
             case Type.Null ignored -> "(java.lang.Object) null";
+            case Type.Bytes ignored -> codes.get(1);
             default -> codes.get(1);
         };
         String unbox = switch (valueType) {
             case Type.Int ignored -> ".longValue()";
             case Type.Number ignored -> ".doubleValue()";
             case Type.Boolean ignored -> ".booleanValue()";
+            case Type.Bytes ignored -> "";
             default -> "";
         };
         return "$tPut(" + codes.get(0) + ", "
@@ -11032,6 +11072,7 @@ public final class JvmBackend {
             case Type.Int ignored -> boxed + ".longValue()";
             case Type.Number ignored -> boxed + ".doubleValue()";
             case Type.Boolean ignored -> boxed + ".booleanValue()";
+            case Type.Bytes ignored -> boxed;
             default -> boxed;
         };
     }
@@ -11953,6 +11994,11 @@ public final class JvmBackend {
                 // emitted array wrapper reference for T[] | null.
                 yield nullableJavaType(n.inner(), span);
             }
+            case Type.Bytes ignored -> {
+                unsupported("values of type " + typeName(t)
+                    + " (bytes is unsupported — ISSUE-0158 boundary)", span);
+                yield null;
+            }
             case Type.Error ignored -> null;
             case Type.Func f -> {
                 // Function values (ISSUE-0098 slice): a per-signature
@@ -12054,6 +12100,11 @@ public final class JvmBackend {
                 }
                 yield registerWrapperShape(f);
             }
+            case Type.Bytes ignored -> {
+                unsupported("values of type " + typeName(inner) + " | null"
+                    + " (bytes is unsupported — ISSUE-0158 boundary)", span);
+                yield null;
+            }
             default -> {
                 unsupported("values of type " + typeName(inner) + " | null"
                     + " (only primitive, local class, and supported array"
@@ -12092,6 +12143,11 @@ public final class JvmBackend {
                     if (localClassJavaType(c, span) == null) yield null;
                     yield "java.lang.Object";
                 }
+                case Type.Bytes ignored -> {
+                    unsupported("arrays with element type " + typeName(element)
+                        + " (bytes is unsupported — ISSUE-0158 boundary)", span);
+                    yield null;
+                }
                 case Type.Func f -> {
                     // ISSUE-0102: nullable function elements — Object
                     // storage; null is the DEAL null element.
@@ -12119,6 +12175,11 @@ public final class JvmBackend {
                     if (importedClassModuleRef(c, span) == null) yield null;
                 }
                 yield "java.lang.Object";
+            }
+            case Type.Bytes ignored -> {
+                unsupported("arrays with element type " + typeName(element)
+                    + " (bytes is unsupported — ISSUE-0158 boundary)", span);
+                yield null;
             }
             case Type.Array inner -> {
                 // ISSUE-0102 nested arrays: Object storage; the
@@ -12170,6 +12231,7 @@ public final class JvmBackend {
                 case Type.Boolean ignored -> "__BooleanOrNullArray";
                 case Type.Class c -> classOrNullArrayWrapperName(c.name());
                 case Type.Func f -> "__RefArray";
+                case Type.Bytes ignored -> null;
                 default -> null;
             };
             case Type.Class c -> isLocalClassType(c)
@@ -12181,6 +12243,7 @@ public final class JvmBackend {
             // helpers below, whose runtime checks prove every element.
             case Type.Array inner -> "__RefArray";
             case Type.Func f -> "__RefArray";
+            case Type.Bytes ignored -> null;
             default -> null;
         };
     }
@@ -12194,6 +12257,7 @@ public final class JvmBackend {
             case Type.Number ignored -> "__numberArrayRead";
             case Type.String ignored -> "__stringArrayRead";
             case Type.Boolean ignored -> "__booleanArrayRead";
+            case Type.Bytes ignored -> null;
             default -> null;
         };
     }
@@ -12211,6 +12275,7 @@ public final class JvmBackend {
             case Type.Number ignored -> "__numberArrayReadBoxed";
             case Type.String ignored -> "__stringArrayReadBoxed";
             case Type.Boolean ignored -> "__booleanArrayReadBoxed";
+            case Type.Bytes ignored -> null;
             default -> null;
         };
     }
@@ -12223,6 +12288,7 @@ public final class JvmBackend {
             case Type.Number ignored -> "java.lang.Double";
             case Type.String ignored -> "java.lang.String";
             case Type.Boolean ignored -> "java.lang.Boolean";
+            case Type.Bytes ignored -> null;
             default -> null;
         };
     }
@@ -12266,6 +12332,7 @@ public final class JvmBackend {
             case Type.Number ignored -> "__numberArrayWrite";
             case Type.String ignored -> "__stringArrayWrite";
             case Type.Boolean ignored -> "__booleanArrayWrite";
+            case Type.Bytes ignored -> null;
             default -> null;
         };
     }
@@ -12281,6 +12348,7 @@ public final class JvmBackend {
             case Type.Number ignored -> "__numberOrNullArrayWrite";
             case Type.String ignored -> "__stringOrNullArrayWrite";
             case Type.Boolean ignored -> "__booleanOrNullArrayWrite";
+            case Type.Bytes ignored -> null;
             default -> null;
         };
     }
@@ -12296,6 +12364,7 @@ public final class JvmBackend {
             case Type.Number ignored -> "__numberOrNullArrayRead";
             case Type.String ignored -> "__stringOrNullArrayRead";
             case Type.Boolean ignored -> "__booleanOrNullArrayRead";
+            case Type.Bytes ignored -> null;
             default -> null;
         };
     }
@@ -12524,6 +12593,7 @@ public final class JvmBackend {
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
+            case Type.Bytes ignored -> "bytes";
             case Type.Error ignored -> "error";
             case Type.Array a -> "array of " + typeName(a.element());
             case Type.Nullable n -> typeName(n.inner()) + " | null";

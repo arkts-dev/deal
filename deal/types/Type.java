@@ -11,6 +11,12 @@ import java.util.List;
  *
  * <p>DEAL v1.2: function types have no rest parameters.  A function type is
  * exactly an async marker, a fixed parameter list, and a return type.</p>
+ *
+ * <p>DEAL v1.2: {@link Bytes} is the canonical bytes primitive
+ * (descriptor {@code bytes}, invariant, identity-compared).  The value
+ * representation, allocation, indexing, and mutation surface is owned by
+ * a later epic; the type layer pins the type and its
+ * {@linkplain Types#containsBytes(Type) containsBytes} recursion only.</p>
  */
 public sealed interface Type
     permits Type.Null,
@@ -18,6 +24,7 @@ public sealed interface Type
            Type.Int,
            Type.Number,
            Type.String,
+           Type.Bytes,
            Type.Table,
            Type.Error,
            Type.Array,
@@ -34,6 +41,15 @@ public sealed interface Type
     enum Int implements Type { INSTANCE }
     enum Number implements Type { INSTANCE }
     enum String implements Type { INSTANCE }
+
+    /**
+     * The canonical {@code bytes} primitive type (DEAL v1.2).  Invariant
+     * and identity-compared; legal inside every Array/Nullable/Function/
+     * Class construction at arbitrary depth.  The runtime value
+     * representation and operations are not part of the type layer.
+     */
+    enum Bytes implements Type { INSTANCE }
+
     enum Table implements Type { INSTANCE }
 
     /**

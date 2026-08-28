@@ -58,6 +58,7 @@ javac --release 25 -proc:none -d build \
   test/SemanticIrValidatorTest.java \
   test/SemanticIrDumperTest.java \
   test/AstAndTypesTest.java \
+  test/TypesBytesTest.java \
   test/LexerTest.java \
   test/ParserTest.java \
   test/CheckerTest.java \
@@ -189,6 +190,10 @@ java -ea -cp build deal.project.ProjectLocatorTest
 echo ""
 echo "=== Running AST/Types Tests ==="
 java -ea -cp build deal.test.AstAndTypesTest
+
+echo ""
+echo "=== Running Types Bytes Tests (ISSUE-0308) ==="
+java -ea -cp build deal.test.TypesBytesTest
 
 echo ""
 echo "=== Running Lexer Tests ==="

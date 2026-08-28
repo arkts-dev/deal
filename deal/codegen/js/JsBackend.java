@@ -316,6 +316,7 @@ public final class JsBackend {
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
+            case Type.Bytes ignored -> "bytes";
             case Type.Error ignored -> "Error";
             case Type.Array arr -> {
                 String elem = jsTypeDescriptor(arr.element());
@@ -921,10 +922,11 @@ public final class JsBackend {
                     // ISSUE-0252 rejection pass (js-backend-architecture
                     // A1): the defensive bytes arm keys on the AST
                     // spelling — the frontend cannot produce a bytes
-                    // program today (no bytes case in deal/types/Type),
-                    // so a bytes-spelled named type is reported exactly
-                    // once at its use site instead of being silently
-                    // treated as an error type. The unknown-symbol guard
+                    // program today (no bytes grammar/resolver produces
+                    // Type.Bytes yet), so a bytes-spelled named type is
+                    // reported exactly once at its use site instead of
+                    // being silently treated as an error type. The
+                    // unknown-symbol guard
                     // keeps the arm defensive-only: a checker-accepted
                     // user class named bytes resolves to its ClassSymbol
                     // and is never rejected (bytes is not a DEAL keyword
@@ -2942,6 +2944,12 @@ public final class JsBackend {
                 "$rt.checkString(" + valueExpr + ", " + spanParam + ")";
             case Type.Table ignored ->
                 "$rt.checkTable(" + valueExpr + ", " + spanParam + ")";
+            // Mechanical arm: the JS runtime has no bytes checker yet
+            // (ISSUE-0169 skeleton); a bytes-spelled annotation is
+            // rejected with E6000 in resolveTypeNode and resolves to the
+            // Error sentinel, so this arm is unreachable in real flows
+            // and mirrors the sentinel pass-through.
+            case Type.Bytes ignored -> valueExpr;
             case Type.Error ignored -> valueExpr;
             case Type.Array arr ->
                 "$rt.checkArray(\"" + jsTypeDescriptor(type) + "\", "

@@ -109,6 +109,7 @@ public final class IrDumper implements Visitor<String> {
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
+            case Type.Bytes ignored -> "bytes";
             case Type.Error ignored -> "Error";
             case Type.Array arr -> "[" + specTypeDescriptor(arr.element()) + "]";
             case Type.Nullable n -> "?" + specTypeDescriptor(n.inner());

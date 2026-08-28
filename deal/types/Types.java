@@ -48,6 +48,9 @@ public final class Types {
             Type canonRet = canonicalize(f.returnType());
             return new Type.Func(canonParams, canonRet, f.isAsync());
         }
+        // Every primitive — including {@link Type.Bytes#INSTANCE} — is
+        // already canonical and is returned unchanged (reference identity
+        // preserved for the enum singletons).
         return type;
     }
 
@@ -78,6 +81,7 @@ public final class Types {
             case Type.Int ignored -> true;
             case Type.Number ignored -> true;
             case Type.String ignored -> true;
+            case Type.Bytes ignored -> true;
             case Type.Table ignored -> true;
             case Type.Error ignored -> true;
 
@@ -105,6 +109,50 @@ public final class Types {
                 }
                 yield true;
             }
+        };
+    }
+
+    // =========================================================================
+    // containsBytes (DEAL v1.2 D8)
+    // =========================================================================
+
+    /**
+     * Returns {@code true} when {@code t} contains {@code bytes} anywhere
+     * in its structure (DEAL v1.2 D8), with no depth limit:
+     * <ul>
+     *   <li>{@code containsBytes(bytes)} = true</li>
+     *   <li>{@code containsBytes(Array(T))} = {@code containsBytes(T)}</li>
+     *   <li>{@code containsBytes(Nullable(T))} = {@code containsBytes(T)}</li>
+     *   <li>{@code containsBytes(Function(marker, params, ret))} =
+     *       any {@code containsBytes(param)} or {@code containsBytes(ret)}</li>
+     *   <li>otherwise false</li>
+     * </ul>
+     *
+     * @param type the type to inspect (must not be null)
+     * @return true iff bytes occurs in the type structure
+     */
+    public static boolean containsBytes(Type type) {
+        Objects.requireNonNull(type, "type must not be null");
+        return switch (type) {
+            case Type.Bytes ignored -> true;
+            case Type.Array a -> containsBytes(a.element());
+            case Type.Nullable n -> containsBytes(n.inner());
+            case Type.Func f -> {
+                for (Type p : f.paramTypes()) {
+                    if (containsBytes(p)) {
+                        yield true;
+                    }
+                }
+                yield containsBytes(f.returnType());
+            }
+            case Type.Null nullIgnored -> false;
+            case Type.Boolean boolIgnored -> false;
+            case Type.Int intIgnored -> false;
+            case Type.Number numIgnored -> false;
+            case Type.String strIgnored -> false;
+            case Type.Table tblIgnored -> false;
+            case Type.Error errIgnored -> false;
+            case Type.Class clsIgnored -> false;
         };
     }
 
