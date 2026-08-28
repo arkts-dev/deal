@@ -21,6 +21,7 @@ import java.util.Set;
  *   constructCoverage: Map<ConstructKind, [SemanticOpKind]>,   // enum-keyed; recorded at lowering start
  *   classLayouts, functions, moduleInit, exportPlan,
  *   functionBindings: Map<FunctionAllocationIdentity, FunctionExecutionBinding>
+ *   ops: [SemanticOp]                            // the unit's produced operations in source order
  * }
  * }</pre>
  *
@@ -41,7 +42,18 @@ import java.util.Set;
  * computed at lowering start over the invocation's facts (see
  * {@link LoweringContext}); the validator recomputes it from its
  * comparison facts and rejects a mismatch (R-PROFILE). The digest helper
- * implementing the formula lands with the canonicalizer (T3).</p>
+ * implementing the formula lives with the canonicalizer (T3).</p>
+ *
+ * <p>{@code ops} is the unit's produced operations in source order — the
+ * validator's pinned input (module order, then op order): R-COVERAGE
+ * compares the produced op kinds against the recorded
+ * {@code constructCoverage} obligations, and the per-op rules
+ * (R-ENUM, R-POLICY-KIND, R-BOUNDARY-TRIPLE, R-ELIDED-PLACEMENT,
+ * R-FUNCTION-BINDING, R-ALIAS-CYCLE, R-TOKEN-REUSE, R-PRIVATE-STEP,
+ * R-RESERVED-NAME, R-DIGEST) walk exactly this list. The 12-argument
+ * constructor overload (without {@code ops}) is a convenience for
+ * operation-free synthetic units and delegates to the full constructor
+ * with an empty list.</p>
  *
  * @param formatVersion         the pinned {@link #FORMAT_VERSION}; non-null
  * @param semanticProfile       must be {@link SemanticProfile#DEAL_V1_2_INT32}
@@ -59,6 +71,7 @@ import java.util.Set;
  * @param exportPlan            the export plan of the module; non-null
  * @param functionBindings      the function execution bindings keyed by
  *                              allocation identity; non-null
+ * @param ops                   the produced operations in source order; non-null
  */
 public record LoweredModuleUnit(
     String formatVersion,
@@ -72,12 +85,20 @@ public record LoweredModuleUnit(
     Map<FunctionId, LoweredFunction> functions,
     ModuleInitPlan moduleInit,
     ExportPlan exportPlan,
-    Map<FunctionAllocationIdentity, FunctionExecutionBinding> functionBindings
+    Map<FunctionAllocationIdentity, FunctionExecutionBinding> functionBindings,
+    List<SemanticOp> ops
 ) {
 
     /** The pinned IR format version string. */
     public static final String FORMAT_VERSION = "deal.semantic-ir/1";
 
+    /**
+     * Convenience constructor for operation-free synthetic units: the
+     * produced-operation list is empty. The validator's per-op rules are
+     * vacuous over an empty list while the unit-level rules (R-COVERAGE,
+     * R-CAPABILITY, R-EXTERNAL-ENTRY, R-ALIAS-CYCLE, R-TOKEN-REUSE,
+     * R-PROFILE) still apply.
+     */
     public LoweredModuleUnit(String formatVersion, SemanticProfile semanticProfile, ModuleId moduleId,
                              String interfaceHash, String loweringContextHash,
                              Set<SemanticCapability> requiredCapabilities,
@@ -86,6 +107,20 @@ public record LoweredModuleUnit(
                              Map<FunctionId, LoweredFunction> functions,
                              ModuleInitPlan moduleInit, ExportPlan exportPlan,
                              Map<FunctionAllocationIdentity, FunctionExecutionBinding> functionBindings) {
+        this(formatVersion, semanticProfile, moduleId, interfaceHash, loweringContextHash,
+            requiredCapabilities, constructCoverage, classLayouts, functions, moduleInit,
+            exportPlan, functionBindings, List.of());
+    }
+
+    public LoweredModuleUnit(String formatVersion, SemanticProfile semanticProfile, ModuleId moduleId,
+                             String interfaceHash, String loweringContextHash,
+                             Set<SemanticCapability> requiredCapabilities,
+                             Map<ConstructKind, List<SemanticOpKind>> constructCoverage,
+                             Map<ClassId, ClassLayout> classLayouts,
+                             Map<FunctionId, LoweredFunction> functions,
+                             ModuleInitPlan moduleInit, ExportPlan exportPlan,
+                             Map<FunctionAllocationIdentity, FunctionExecutionBinding> functionBindings,
+                             List<SemanticOp> ops) {
         this.formatVersion = Objects.requireNonNull(formatVersion, "formatVersion must not be null");
         if (!FORMAT_VERSION.equals(formatVersion)) {
             throw new IllegalArgumentException(
@@ -102,7 +137,9 @@ public record LoweredModuleUnit(
         this.loweringContextHash = Objects.requireNonNull(loweringContextHash, "loweringContextHash must not be null");
 
         Objects.requireNonNull(requiredCapabilities, "requiredCapabilities must not be null");
-        this.requiredCapabilities = Collections.unmodifiableSet(EnumSet.copyOf(requiredCapabilities));
+        EnumSet<SemanticCapability> capabilitiesCopy = EnumSet.noneOf(SemanticCapability.class);
+        capabilitiesCopy.addAll(requiredCapabilities);
+        this.requiredCapabilities = Collections.unmodifiableSet(capabilitiesCopy);
 
         Objects.requireNonNull(constructCoverage, "constructCoverage must not be null");
         if (constructCoverage.containsKey(ConstructKind.STDLIB_TIME_NOW_MILLIS)) {
@@ -128,5 +165,8 @@ public record LoweredModuleUnit(
 
         Objects.requireNonNull(functionBindings, "functionBindings must not be null");
         this.functionBindings = Collections.unmodifiableMap(new LinkedHashMap<>(functionBindings));
+
+        Objects.requireNonNull(ops, "ops must not be null");
+        this.ops = List.copyOf(ops);
     }
 }

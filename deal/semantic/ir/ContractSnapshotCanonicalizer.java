@@ -1,8 +1,10 @@
 package deal.semantic.ir;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * The single operation-contract snapshot canonicalizer of
@@ -319,7 +321,8 @@ public final class ContractSnapshotCanonicalizer {
             "the \"" + field + "\" field must be an array, got " + jsonKindName(value));
     }
 
-    private static String jsonKindName(CanonicalJson.Value value) {
+    /** The canonical JSON kind name of a value (decode-failure messages). */
+    public static String jsonKindName(CanonicalJson.Value value) {
         return switch (value) {
             case CanonicalJson.Null ignored -> "null";
             case CanonicalJson.Bool b -> "boolean (" + b.value() + ")";
@@ -866,5 +869,651 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("mainFunction", semanticIdJson(p.mainFunction())),
                 CanonicalJson.e("module", semanticIdJson(p.module())));
         };
+    }
+
+    // =========================================================================
+    // Unit/project validation text protocol (T6's validator text surface)
+    // =========================================================================
+
+    /**
+     * The parsed project text of the validator's text surface:
+     * {@code {semanticProfile, entryModule, modules}} — the project-level
+     * positions carried as raw strings.
+     *
+     * @param semanticProfile the raw project semantic-profile name; non-null
+     * @param entryModule     the entry module path; non-null
+     * @param modules         the parsed raw units in serialized order; non-null
+     */
+    public record ParsedProject(String semanticProfile, String entryModule,
+                                List<RawUnit> modules) {
+
+        public ParsedProject {
+            Objects.requireNonNull(semanticProfile, "semanticProfile must not be null");
+            Objects.requireNonNull(entryModule, "entryModule must not be null");
+            modules = List.copyOf(Objects.requireNonNull(modules, "modules must not be null"));
+        }
+    }
+
+    /**
+     * Parses canonical validation text through the single parser. No
+     * framing, closed-enum, or profile validation happens here beyond the
+     * JSON value model itself — those are the validator's rules (T6).
+     *
+     * @param text the canonical JSON text; non-null
+     * @return the parsed value tree
+     * @throws SemanticIrTextDecodeException on malformed JSON (the single
+     *         parser's transport-level rejection)
+     */
+    public static CanonicalJson.Value parseValidationText(String text) {
+        return CanonicalJson.parse(text);
+    }
+
+    /**
+     * Decodes a unit text object into the raw unit record: the pinned
+     * field names and JSON value types are mapped into
+     * {@link RawUnit}; every closed enum position (profile, capabilities,
+     * construct names, op kinds, payload leaves, bindings, tokens) is
+     * carried as a raw string — no enum conversion at parse time, so
+     * out-of-set and reserved names survive byte-intact and reach the
+     * validator's rule checks.
+     *
+     * @param obj the unit text object; non-null
+     * @return the raw unit
+     * @throws SemanticIrTextDecodeException on a pinned framing/
+     *         field/value-type/version mismatch (transport-level, never
+     *         E6005)
+     */
+    public static RawUnit parseUnit(CanonicalJson.Obj obj) {
+        checkKeys(obj, "formatVersion", "semanticProfile", "moduleId", "interfaceHash",
+            "loweringContextHash", "requiredCapabilities", "constructCoverage",
+            "functionBindings", "ops");
+        String formatVersion = requireString(obj, "formatVersion");
+        if (!LoweredModuleUnit.FORMAT_VERSION.equals(formatVersion)) {
+            throw new SemanticIrTextDecodeException(
+                "formatVersion mismatch: expected \"" + LoweredModuleUnit.FORMAT_VERSION
+                    + "\", got \"" + formatVersion + "\"");
+        }
+        String modulePath = requireString(obj, "moduleId");
+        try {
+            new ModuleId(modulePath);
+        } catch (IllegalArgumentException e) {
+            throw new SemanticIrTextDecodeException("invalid moduleId \"" + modulePath + "\"");
+        }
+        String semanticProfile = requireString(obj, "semanticProfile");
+        String interfaceHash = requireString(obj, "interfaceHash");
+        String loweringContextHash = requireString(obj, "loweringContextHash");
+
+        List<String> capabilities = new ArrayList<>();
+        for (CanonicalJson.Value item : requireArray(obj, "requiredCapabilities").items()) {
+            capabilities.add(requireStringValue(item, "requiredCapabilities entry"));
+        }
+        List<RawCoverage> coverage = new ArrayList<>();
+        for (CanonicalJson.Value item : requireArray(obj, "constructCoverage").items()) {
+            if (!(item instanceof CanonicalJson.Obj row)) {
+                throw new SemanticIrTextDecodeException(
+                    "constructCoverage entries must be objects, got " + jsonKindName(item));
+            }
+            checkKeys(row, "construct", "opKinds");
+            List<String> kinds = new ArrayList<>();
+            for (CanonicalJson.Value kind : requireArray(row, "opKinds").items()) {
+                kinds.add(requireStringValue(kind, "constructCoverage opKinds entry"));
+            }
+            coverage.add(new RawCoverage(requireString(row, "construct"), kinds));
+        }
+        List<RawBinding> bindings = new ArrayList<>();
+        for (CanonicalJson.Value item : requireArray(obj, "functionBindings").items()) {
+            if (!(item instanceof CanonicalJson.Obj entry)) {
+                throw new SemanticIrTextDecodeException(
+                    "functionBindings entries must be objects, got " + jsonKindName(item));
+            }
+            checkKeys(entry, "allocationId", "binding");
+            long allocationId = requireInt(entry, "allocationId");
+            CanonicalJson.Value bindingValue = entryValue(entry, "binding");
+            if (!(bindingValue instanceof CanonicalJson.Obj binding)) {
+                throw new SemanticIrTextDecodeException(
+                    "functionBindings \"binding\" must be an object, got "
+                        + jsonKindName(bindingValue));
+            }
+            bindings.add(bindingFromText(allocationId, binding));
+        }
+        List<RawOp> ops = new ArrayList<>();
+        for (CanonicalJson.Value item : requireArray(obj, "ops").items()) {
+            if (!(item instanceof CanonicalJson.Obj op)) {
+                throw new SemanticIrTextDecodeException(
+                    "ops entries must be objects, got " + jsonKindName(item));
+            }
+            ops.add(opFromText(op));
+        }
+        return new RawUnit(modulePath, semanticProfile, interfaceHash, loweringContextHash,
+            capabilities, coverage, bindings, ops);
+    }
+
+    /**
+     * Decodes a project text object ({@code {semanticProfile, entryModule,
+     * modules}}) into its raw records with the entry-module framing check.
+     *
+     * @param obj the project text object; non-null
+     * @return the parsed project
+     * @throws SemanticIrTextDecodeException on a framing mismatch
+     */
+    public static ParsedProject parseProject(CanonicalJson.Obj obj) {
+        checkKeys(obj, "semanticProfile", "entryModule", "modules");
+        String projectProfile = requireString(obj, "semanticProfile");
+        String entryModule = requireString(obj, "entryModule");
+        CanonicalJson.Arr modulesArr = requireArray(obj, "modules");
+        List<RawUnit> modules = new ArrayList<>();
+        for (int i = 0; i < modulesArr.items().size(); i++) {
+            CanonicalJson.Value item = modulesArr.items().get(i);
+            if (!(item instanceof CanonicalJson.Obj unitObj)) {
+                throw new SemanticIrTextDecodeException(
+                    "modules[" + i + "] must be a unit object, got " + jsonKindName(item));
+            }
+            modules.add(parseUnit(unitObj));
+        }
+        boolean hasEntry = false;
+        for (RawUnit unit : modules) {
+            if (entryModule.equals(unit.modulePath())) {
+                hasEntry = true;
+                break;
+            }
+        }
+        if (!hasEntry) {
+            throw new SemanticIrTextDecodeException(
+                "entryModule \"" + entryModule + "\" must be present in the project modules");
+        }
+        return new ParsedProject(projectProfile, entryModule, modules);
+    }
+
+    /** Maps a raw unit onto the single canonical JSON value model (the text surface's transport). */
+    public static CanonicalJson.Value toJson(RawUnit unit) {
+        List<CanonicalJson.Value> capabilities = new ArrayList<>();
+        for (String capability : unit.requiredCapabilities()) {
+            capabilities.add(CanonicalJson.str(capability));
+        }
+        List<CanonicalJson.Value> coverage = new ArrayList<>();
+        for (RawCoverage row : unit.coverage()) {
+            List<CanonicalJson.Value> kinds = new ArrayList<>();
+            for (String kind : row.opKinds()) {
+                kinds.add(CanonicalJson.str(kind));
+            }
+            coverage.add(CanonicalJson.obj(
+                CanonicalJson.e("construct", CanonicalJson.str(row.construct())),
+                CanonicalJson.e("opKinds", CanonicalJson.arr(kinds))));
+        }
+        List<CanonicalJson.Value> bindings = new ArrayList<>();
+        for (RawBinding binding : unit.bindings()) {
+            bindings.add(CanonicalJson.obj(
+                CanonicalJson.e("allocationId", CanonicalJson.intValue((int) binding.allocationId())),
+                CanonicalJson.e("binding", bindingJson(binding))));
+        }
+        List<CanonicalJson.Value> ops = new ArrayList<>();
+        for (RawOp op : unit.ops()) {
+            ops.add(opJson(op));
+        }
+        return CanonicalJson.obj(
+            CanonicalJson.e("formatVersion", CanonicalJson.str(LoweredModuleUnit.FORMAT_VERSION)),
+            CanonicalJson.e("semanticProfile", CanonicalJson.str(unit.semanticProfile())),
+            CanonicalJson.e("moduleId", CanonicalJson.str(unit.modulePath())),
+            CanonicalJson.e("interfaceHash", CanonicalJson.str(unit.interfaceHash())),
+            CanonicalJson.e("loweringContextHash", CanonicalJson.str(unit.loweringContextHash())),
+            CanonicalJson.e("requiredCapabilities", CanonicalJson.arr(capabilities)),
+            CanonicalJson.e("constructCoverage", CanonicalJson.arr(coverage)),
+            CanonicalJson.e("functionBindings", CanonicalJson.arr(bindings)),
+            CanonicalJson.e("ops", CanonicalJson.arr(ops)));
+    }
+
+    /** Maps an executable project onto the project text protocol value model. */
+    public static CanonicalJson.Value toJson(ExecutableLoweredProject project) {
+        List<CanonicalJson.Value> modules = new ArrayList<>();
+        for (LoweredModuleUnit unit : project.modules().values()) {
+            modules.add(toJson(RawUnit.fromTyped(unit)));
+        }
+        return CanonicalJson.obj(
+            CanonicalJson.e("semanticProfile",
+                CanonicalJson.str(project.semanticProfile().name())),
+            CanonicalJson.e("entryModule", CanonicalJson.str(project.entryModule().path())),
+            CanonicalJson.e("modules", CanonicalJson.arr(modules)));
+    }
+
+    /**
+     * Recomputes the contract digest over the raw 8-field snapshot object
+     * (R-DIGEST's recomputation): {@code SHA-256(canonical JSON bytes)} of
+     * exactly the eight pinned snapshot fields.
+     *
+     * @param snapshot the raw 8-field snapshot object (no canonicalDigest); non-null
+     * @return the lowercase 64-character hex digest
+     */
+    public static String recomputeSnapshotDigest(CanonicalJson.Obj snapshot) {
+        return CanonicalJson.sha256Hex(CanonicalJson.serializeBytes(snapshot));
+    }
+
+    private static CanonicalJson.Value bindingJson(RawBinding binding) {
+        return switch (binding.shape()) {
+            case "loweredBody" -> CanonicalJson.obj(
+                CanonicalJson.e("type", CanonicalJson.str("loweredBody")));
+            case "adapter" -> CanonicalJson.obj(
+                CanonicalJson.e("captureMode", CanonicalJson.str(binding.captureMode())),
+                CanonicalJson.e("targetSignature", CanonicalJson.str(binding.targetSignature())),
+                CanonicalJson.e("type", CanonicalJson.str("adapter")));
+            case "hostFunction" -> CanonicalJson.obj(
+                CanonicalJson.e("descriptor", CanonicalJson.str(binding.descriptor())),
+                CanonicalJson.e("exportName", CanonicalJson.str(binding.exportName())),
+                CanonicalJson.e("hostModuleId", moduleIdJson(binding.modulePath())),
+                CanonicalJson.e("type", CanonicalJson.str("hostFunction")));
+            case "hostFunctionValue" -> CanonicalJson.obj(
+                CanonicalJson.e("descriptor", CanonicalJson.str(binding.descriptor())),
+                CanonicalJson.e("hostModuleId", moduleIdJson(binding.modulePath())),
+                CanonicalJson.e("type", CanonicalJson.str("hostFunctionValue")));
+            case "externalFunction" -> CanonicalJson.obj(
+                CanonicalJson.e("descriptor", CanonicalJson.str(binding.descriptor())),
+                CanonicalJson.e("executionOwner", CanonicalJson.str(binding.executionOwner())),
+                CanonicalJson.e("exportName", CanonicalJson.str(binding.exportName())),
+                CanonicalJson.e("moduleId", moduleIdJson(binding.modulePath())),
+                CanonicalJson.e("type", CanonicalJson.str("externalFunction")));
+            default -> CanonicalJson.obj(
+                CanonicalJson.e("type", CanonicalJson.str(binding.shape())));
+        };
+    }
+
+    private static RawBinding bindingFromText(long allocationId, CanonicalJson.Obj binding) {
+        String shape = requireString(binding, "type");
+        String modulePath = null;
+        String exportName = null;
+        String executionOwner = null;
+        String captureMode = null;
+        String descriptor = null;
+        String targetSignature = null;
+        switch (shape) {
+            case "loweredBody" -> {
+                // functionId + blockId; no enum positions the rules consult.
+            }
+            case "adapter" -> {
+                captureMode = requireString(binding, "captureMode");
+                targetSignature = requireString(binding, "targetSignature");
+            }
+            case "hostFunction" -> {
+                modulePath = modulePathOf(requireObject(binding, "hostModuleId"));
+                exportName = requireString(binding, "exportName");
+                descriptor = requireString(binding, "descriptor");
+            }
+            case "hostFunctionValue" -> {
+                modulePath = modulePathOf(requireObject(binding, "hostModuleId"));
+                descriptor = requireString(binding, "descriptor");
+            }
+            case "externalFunction" -> {
+                modulePath = modulePathOf(requireObject(binding, "moduleId"));
+                exportName = requireString(binding, "exportName");
+                executionOwner = requireString(binding, "executionOwner");
+                descriptor = requireString(binding, "descriptor");
+            }
+            default -> {
+                // An unknown binding shape tag is an R-ENUM position —
+                // carry it through as the shape string.
+            }
+        }
+        return new RawBinding(allocationId, shape, modulePath, exportName, executionOwner,
+            captureMode, descriptor, targetSignature);
+    }
+
+    private static CanonicalJson.Value opJson(RawOp op) {
+        List<CanonicalJson.Value> operands = new ArrayList<>();
+        for (ValueId value : op.operands()) {
+            operands.add(semanticIdJson(value));
+        }
+        List<CanonicalJson.Value> operandTypes = new ArrayList<>();
+        for (String type : op.operandTypes()) {
+            operandTypes.add(CanonicalJson.str(type));
+        }
+        CanonicalJson.Value result;
+        if (op.resultValue() != null) {
+            result = semanticIdJson(op.resultValue());
+        } else if (op.resultToken() != null) {
+            result = semanticIdJson(op.resultToken());
+        } else {
+            result = CanonicalJson.nullValue();
+        }
+        List<CanonicalJson.Entry> contractEntries = new ArrayList<>(op.snapshot().entries());
+        contractEntries.add(CanonicalJson.e("canonicalDigest",
+            CanonicalJson.str(op.canonicalDigest())));
+        return CanonicalJson.obj(
+            CanonicalJson.e("opId", semanticIdJson(op.opId())),
+            CanonicalJson.e("kind", CanonicalJson.str(op.kind())),
+            CanonicalJson.e("origin", originJson(op)),
+            CanonicalJson.e("result", result),
+            CanonicalJson.e("resultType", op.resultType() == null
+                ? CanonicalJson.nullValue() : CanonicalJson.str(op.resultType())),
+            CanonicalJson.e("operands", CanonicalJson.arr(operands)),
+            CanonicalJson.e("operandTypes", CanonicalJson.arr(operandTypes)),
+            CanonicalJson.e("payload", op.payload()),
+            CanonicalJson.e("failurePolicy", CanonicalJson.str(op.failurePolicy())),
+            CanonicalJson.e("contract", CanonicalJson.obj(contractEntries)));
+    }
+
+    private static CanonicalJson.Value originJson(RawOp op) {
+        // The raw model carries the parent-op link only; the remaining
+        // origin coordinates render as pinned neutral synthetic values
+        // (the validation protocol does not consult them).
+        return CanonicalJson.obj(
+            CanonicalJson.e("sourceId", CanonicalJson.str("semantic-ir")),
+            CanonicalJson.e("span", CanonicalJson.obj(
+                CanonicalJson.e("file", CanonicalJson.str("semantic-ir")),
+                CanonicalJson.e("startLine", CanonicalJson.intValue(1)),
+                CanonicalJson.e("startColumn", CanonicalJson.intValue(1)),
+                CanonicalJson.e("endLine", CanonicalJson.intValue(1)),
+                CanonicalJson.e("endColumn", CanonicalJson.intValue(1)),
+                CanonicalJson.e("startScalarOffset", CanonicalJson.intValue(-1)),
+                CanonicalJson.e("endScalarOffset", CanonicalJson.intValue(-1)))),
+            CanonicalJson.e("kind", CanonicalJson.str("SYNTHETIC")),
+            CanonicalJson.e("anchorId", CanonicalJson.obj(
+                CanonicalJson.e("id", CanonicalJson.intValue(0)),
+                CanonicalJson.e("type", CanonicalJson.str("anchor")))),
+            CanonicalJson.e("parentOpId", op.parentOpId() == null
+                ? CanonicalJson.nullValue()
+                : semanticIdJson(op.parentOpId())));
+    }
+
+    private static RawOp opFromText(CanonicalJson.Obj op) {
+        checkKeys(op, "opId", "kind", "origin", "result", "resultType", "operands",
+            "operandTypes", "payload", "failurePolicy", "contract");
+        OpId opId = parseOpId(requireObject(op, "opId"));
+        String kind = requireString(op, "kind");
+        String failurePolicy = requireString(op, "failurePolicy");
+
+        CanonicalJson.Obj origin = requireObject(op, "origin");
+        checkKeys(origin, "sourceId", "span", "kind", "anchorId", "parentOpId");
+        OpId parentOpId = null;
+        CanonicalJson.Value parent = entryValue(origin, "parentOpId");
+        if (!(parent instanceof CanonicalJson.Null)) {
+            parentOpId = parseOpId(requireObjectValue(parent, "origin.parentOpId"));
+        }
+
+        ValueId resultValue = null;
+        AsyncTokenId resultToken = null;
+        CanonicalJson.Value result = entryValue(op, "result");
+        if (result instanceof CanonicalJson.Obj resultObj) {
+            switch (requireString(resultObj, "type")) {
+                case "value" -> resultValue = parseValueId(resultObj);
+                case "tokenCanonical", "tokenAlias" -> resultToken = parseToken(resultObj);
+                default -> throw new SemanticIrTextDecodeException(
+                    "op result type tag \"" + requireString(resultObj, "type")
+                        + "\" is not a closed semantic-id shape");
+            }
+        } else if (!(result instanceof CanonicalJson.Null)) {
+            throw new SemanticIrTextDecodeException(
+                "op result must be null or a semantic-id object, got " + jsonKindName(result));
+        }
+
+        String resultType = null;
+        CanonicalJson.Value resultTypeValue = entryValue(op, "resultType");
+        if (resultTypeValue instanceof CanonicalJson.Str str) {
+            resultType = str.value();
+        } else if (!(resultTypeValue instanceof CanonicalJson.Null)) {
+            throw new SemanticIrTextDecodeException(
+                "op resultType must be null or a string, got " + jsonKindName(resultTypeValue));
+        }
+
+        List<ValueId> operands = new ArrayList<>();
+        for (CanonicalJson.Value item : requireArray(op, "operands").items()) {
+            operands.add(parseValueId(requireObjectValue(item, "operands entry")));
+        }
+        List<String> operandTypes = new ArrayList<>();
+        for (CanonicalJson.Value item : requireArray(op, "operandTypes").items()) {
+            operandTypes.add(requireStringValue(item, "operandTypes entry"));
+        }
+        if (operands.size() != operandTypes.size()) {
+            throw new SemanticIrTextDecodeException(
+                "operands (" + operands.size() + ") and operandTypes ("
+                    + operandTypes.size() + ") must have the same length");
+        }
+
+        CanonicalJson.Obj payload = requireObject(op, "payload");
+
+        CanonicalJson.Obj contract = requireObject(op, "contract");
+        checkKeys(contract, "version", "opKind", "resultType", "operandTypes", "selector",
+            "payload", "failurePolicy", "referencedSemanticIds", "canonicalDigest");
+        if (requireInt(contract, "version") != OperationContractSnapshot.VERSION) {
+            throw new SemanticIrTextDecodeException(
+                "contract version mismatch: expected " + OperationContractSnapshot.VERSION);
+        }
+        String canonicalDigest = requireString(contract, "canonicalDigest");
+        List<CanonicalJson.Entry> snapshotEntries = new ArrayList<>();
+        for (CanonicalJson.Entry entry : contract.entries()) {
+            if (!"canonicalDigest".equals(entry.key())) {
+                snapshotEntries.add(entry);
+            }
+        }
+        CanonicalJson.Obj snapshot = CanonicalJson.obj(snapshotEntries);
+        String selector = null;
+        CanonicalJson.Value selectorValue = entryValue(snapshot, "selector");
+        if (selectorValue instanceof CanonicalJson.Str str) {
+            selector = str.value();
+        } else if (!(selectorValue instanceof CanonicalJson.Null)) {
+            throw new SemanticIrTextDecodeException(
+                "contract selector must be null or a string, got "
+                    + jsonKindName(selectorValue));
+        }
+        return new RawOp(opId, kind, failurePolicy, parentOpId, resultValue, resultToken,
+            resultType, operands, operandTypes, payload, selector, canonicalDigest, snapshot);
+    }
+
+    // =========================================================================
+    // Text protocol framing helpers (pinned field sets, raw-string preservation)
+    // =========================================================================
+
+    /**
+     * Enforces the pinned object framing: exactly the pinned field set —
+     * every present key must be pinned and every pinned key must be
+     * present. Any deviation is a transport-level decode failure.
+     *
+     * @param obj    the object; non-null
+     * @param pinned the pinned field names; non-null
+     */
+    public static void checkKeys(CanonicalJson.Obj obj, String... pinned) {
+        Set<String> set = new LinkedHashSet<>(List.of(pinned));
+        for (CanonicalJson.Entry entry : obj.entries()) {
+            if (!set.contains(entry.key())) {
+                throw new SemanticIrTextDecodeException(
+                    "unknown field \"" + entry.key() + "\" (pinned field set is "
+                        + List.of(pinned) + ")");
+            }
+        }
+        for (String key : pinned) {
+            if (!hasKey(obj, key)) {
+                throw new SemanticIrTextDecodeException(
+                    "missing field \"" + key + "\" (pinned field set is " + List.of(pinned) + ")");
+            }
+        }
+    }
+
+    /** True iff the object carries the given key. */
+    public static boolean hasKey(CanonicalJson.Obj obj, String key) {
+        for (CanonicalJson.Entry entry : obj.entries()) {
+            if (entry.key().equals(key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The value of a pinned key (decode failure when absent). */
+    public static CanonicalJson.Value entryValue(CanonicalJson.Obj obj, String key) {
+        for (CanonicalJson.Entry entry : obj.entries()) {
+            if (entry.key().equals(key)) {
+                return entry.value();
+            }
+        }
+        throw new SemanticIrTextDecodeException("missing field \"" + key + "\"");
+    }
+
+    /** The string value of a pinned key. */
+    public static String requireString(CanonicalJson.Obj obj, String key) {
+        return requireStringValue(entryValue(obj, key), key);
+    }
+
+    /** A string value or a decode failure. */
+    public static String requireStringValue(CanonicalJson.Value value, String what) {
+        if (value instanceof CanonicalJson.Str str) {
+            return str.value();
+        }
+        throw new SemanticIrTextDecodeException(
+            "the \"" + what + "\" field must be a string, got " + jsonKindName(value));
+    }
+
+    /** The signed32 integer value of a pinned key. */
+    public static int requireInt(CanonicalJson.Obj obj, String key) {
+        CanonicalJson.Value value = entryValue(obj, key);
+        if (value instanceof CanonicalJson.Int i) {
+            return i.value();
+        }
+        throw new SemanticIrTextDecodeException(
+            "the \"" + key + "\" field must be a canonical signed32 integer, got "
+                + jsonKindName(value));
+    }
+
+    /** The array value of a pinned key. */
+    public static CanonicalJson.Arr requireArray(CanonicalJson.Obj obj, String key) {
+        CanonicalJson.Value value = entryValue(obj, key);
+        if (value instanceof CanonicalJson.Arr arr) {
+            return arr;
+        }
+        throw new SemanticIrTextDecodeException(
+            "the \"" + key + "\" field must be an array, got " + jsonKindName(value));
+    }
+
+    /** The object value of a pinned key. */
+    public static CanonicalJson.Obj requireObject(CanonicalJson.Obj obj, String key) {
+        return requireObjectValue(entryValue(obj, key), key);
+    }
+
+    /** An object value or a decode failure. */
+    public static CanonicalJson.Obj requireObjectValue(CanonicalJson.Value value, String what) {
+        if (value instanceof CanonicalJson.Obj obj) {
+            return obj;
+        }
+        throw new SemanticIrTextDecodeException(
+            "the \"" + what + "\" field must be an object, got " + jsonKindName(value));
+    }
+
+    /** The pinned module semantic-id object for a module path. */
+    public static CanonicalJson.Value moduleIdJson(String modulePath) {
+        return CanonicalJson.obj(
+            CanonicalJson.e("path", CanonicalJson.str(modulePath)),
+            CanonicalJson.e("type", CanonicalJson.str("module")));
+    }
+
+    /** The module path carried by a module semantic-id object. */
+    public static String modulePathOf(CanonicalJson.Obj moduleIdObj) {
+        return requireString(moduleIdObj, "path");
+    }
+
+    /** Parses an op semantic-id object. */
+    public static OpId parseOpId(CanonicalJson.Obj obj) {
+        String type = requireString(obj, "type");
+        if (!"op".equals(type)) {
+            throw new SemanticIrTextDecodeException(
+                "expected an op semantic-id object, got type \"" + type + "\"");
+        }
+        return new OpId(new ModuleId(requireString(obj, "modulePath")), requireInt(obj, "id"));
+    }
+
+    /** Parses a value semantic-id object. */
+    public static ValueId parseValueId(CanonicalJson.Obj obj) {
+        String type = requireString(obj, "type");
+        if (!"value".equals(type)) {
+            throw new SemanticIrTextDecodeException(
+                "expected a value semantic-id object, got type \"" + type + "\"");
+        }
+        return new ValueId(requireInt(obj, "id"));
+    }
+
+    /** Parses a token semantic-id object (recursive alias referents). */
+    public static AsyncTokenId parseToken(CanonicalJson.Obj obj) {
+        return switch (requireString(obj, "type")) {
+            case "tokenCanonical" -> new AsyncTokenId.Canonical(requireInt(obj, "tokenId"),
+                parseTokenOwner(requireString(obj, "owner")));
+            case "tokenAlias" -> new AsyncTokenId.Alias(requireInt(obj, "tokenId"),
+                parseToken(requireObject(obj, "referent")),
+                parseLinkKind(requireString(obj, "linkKind")));
+            default -> throw new SemanticIrTextDecodeException(
+                "expected a token semantic-id object, got type \"" + requireString(obj, "type")
+                    + "\"");
+        };
+    }
+
+    private static AsyncTokenOwner parseTokenOwner(String raw) {
+        try {
+            return AsyncTokenOwner.valueOf(raw);
+        } catch (IllegalArgumentException e) {
+            throw new SemanticIrTextDecodeException(
+                "unknown async token owner \"" + raw + "\"");
+        }
+    }
+
+    private static AsyncLinkKind parseLinkKind(String raw) {
+        try {
+            return AsyncLinkKind.valueOf(raw);
+        } catch (IllegalArgumentException e) {
+            throw new SemanticIrTextDecodeException(
+                "unknown async link kind \"" + raw + "\"");
+        }
+    }
+
+    /** The raw string of a payload field, or {@code null} when absent or JSON null. */
+    public static String optionalString(CanonicalJson.Obj obj, String key) {
+        CanonicalJson.Value value = payloadValue(obj, key);
+        if (value == null || value instanceof CanonicalJson.Null) {
+            return null;
+        }
+        if (value instanceof CanonicalJson.Str str) {
+            return str.value();
+        }
+        throw new SemanticIrTextDecodeException(
+            "the \"" + key + "\" field must be a string or null, got " + jsonKindName(value));
+    }
+
+    /** The value of a payload field, or {@code null} when absent. */
+    public static CanonicalJson.Value payloadValue(CanonicalJson.Obj obj, String key) {
+        for (CanonicalJson.Entry entry : obj.entries()) {
+            if (entry.key().equals(key)) {
+                return entry.value();
+            }
+        }
+        return null;
+    }
+
+    /** The boolean of a payload field (decode failure on absence/wrong type). */
+    public static boolean isTrue(CanonicalJson.Obj obj, String key) {
+        CanonicalJson.Value value = payloadValue(obj, key);
+        if (value instanceof CanonicalJson.Bool bool) {
+            return bool.value();
+        }
+        throw new SemanticIrTextDecodeException(
+            "the \"" + key + "\" field must be a boolean, got " + jsonKindName(value));
+    }
+
+    /** Parses an ordered op-id list payload field (empty when absent). */
+    public static List<OpId> parseOpIdList(CanonicalJson.Obj obj, String key) {
+        List<OpId> result = new ArrayList<>();
+        CanonicalJson.Value value = payloadValue(obj, key);
+        if (value == null) {
+            return result;
+        }
+        if (!(value instanceof CanonicalJson.Arr arr)) {
+            throw new SemanticIrTextDecodeException(
+                "the \"" + key + "\" field must be an array, got " + jsonKindName(value));
+        }
+        for (CanonicalJson.Value item : arr.items()) {
+            result.add(parseOpId(requireObjectValue(item, key + " entry")));
+        }
+        return result;
+    }
+
+    /** Parses an optional op-id payload field ({@code null} when absent or JSON null). */
+    public static OpId parseOptionalOpId(CanonicalJson.Obj obj, String key) {
+        CanonicalJson.Value value = payloadValue(obj, key);
+        if (value == null || value instanceof CanonicalJson.Null) {
+            return null;
+        }
+        return parseOpId(requireObjectValue(value, key));
     }
 }

@@ -1,5 +1,6 @@
 package deal.semantic.ir;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -29,6 +30,14 @@ import java.util.Objects;
  * and no spaces. Examples: {@code [int]}, {@code ?string},
  * {@code ?[@src/app/User]}, {@code (int,string)->boolean},
  * {@code ()->null}, {@code async(int)->string}.</p>
+ *
+ * <p>{@link #parseCanonicalText(String)} is the exact inverse of
+ * {@code canonicalSpecText()}: it decodes pinned descriptor text back into
+ * the sealed variants. It is the single descriptor-text decoder the
+ * validator's text surface uses; a text that is not a canonical descriptor
+ * spelling is a transport-level decode failure
+ * ({@link SemanticIrTextDecodeException}), never a validator rule and
+ * never E6005.</p>
  */
 public sealed interface RuntimeDescriptor extends OpResultType
     permits RuntimeDescriptor.Null,
@@ -44,6 +53,138 @@ public sealed interface RuntimeDescriptor extends OpResultType
 
     /** The canonical spec text of this descriptor (parent D6 grammar). */
     java.lang.String canonicalSpecText();
+
+    /**
+     * Parses a canonical descriptor spec text back into the sealed
+     * variants — the exact inverse of {@link #canonicalSpecText()}. The
+     * whole text must be consumed: {@code null}, {@code boolean},
+     * {@code int}, {@code number}, {@code string}, {@code table},
+     * {@code @modulePath/ClassName}, {@code [element]},
+     * {@code ?inner}, {@code (p1,p2)->r}, {@code async(p1,p2)->r}.
+     *
+     * @param text the canonical descriptor text; non-null
+     * @return the decoded descriptor
+     * @throws SemanticIrTextDecodeException if the text is not a canonical
+     *         descriptor spelling (transport-level rejection, never E6005)
+     */
+    static RuntimeDescriptor parseCanonicalText(java.lang.String text) {
+        Objects.requireNonNull(text, "text must not be null");
+        int[] pos = {0};
+        RuntimeDescriptor descriptor = parseAt(text, pos, false);
+        if (pos[0] != text.length()) {
+            throw new SemanticIrTextDecodeException(
+                "not a canonical descriptor text (trailing content at offset " + pos[0]
+                    + "): \"" + text + "\"");
+        }
+        return descriptor;
+    }
+
+    /** Recursive-descent decoder over the canonical descriptor grammar. */
+    private static RuntimeDescriptor parseAt(java.lang.String text, int[] pos, boolean inNulled) {
+        if (pos[0] >= text.length()) {
+            throw new SemanticIrTextDecodeException(
+                "not a canonical descriptor text (unexpected end): \"" + text + "\"");
+        }
+        char c = text.charAt(pos[0]);
+        if (c == '[') {
+            pos[0]++;
+            RuntimeDescriptor element = parseAt(text, pos, false);
+            expect(text, pos, ']');
+            return new Array(element);
+        }
+        if (c == '?') {
+            pos[0]++;
+            RuntimeDescriptor inner = parseAt(text, pos, true);
+            try {
+                return new Nullable(inner);
+            } catch (IllegalArgumentException e) {
+                throw new SemanticIrTextDecodeException(
+                    "not a canonical descriptor text (invalid nullable inner): \""
+                        + text + "\"");
+            }
+        }
+        if (c == '@') {
+            // @modulePath/ClassName: the class segment ends at the next
+            // ')' / ']' / ',' (none of those may appear inside a module
+            // path or class name) or at the end of the text; the module
+            // path is everything before the last '/', the class name
+            // everything after it.
+            int end = pos[0] + 1;
+            while (end < text.length() && text.charAt(end) != ')'
+                    && text.charAt(end) != ']' && text.charAt(end) != ',') {
+                end++;
+            }
+            java.lang.String segment = text.substring(pos[0] + 1, end);
+            int slash = segment.lastIndexOf('/');
+            if (slash <= 0 || slash == segment.length() - 1) {
+                throw new SemanticIrTextDecodeException(
+                    "not a canonical descriptor text (class text lacks modulePath/ClassName): \""
+                        + text + "\"");
+            }
+            try {
+                ClassId classId = new ClassId(segment.substring(0, slash),
+                    segment.substring(slash + 1));
+                pos[0] = end;
+                return new Class(classId);
+            } catch (IllegalArgumentException e) {
+                throw new SemanticIrTextDecodeException(
+                    "not a canonical descriptor text (invalid class identity): \""
+                        + text + "\"");
+            }
+        }
+        if (c == 'a' && text.startsWith("async(", pos[0])) {
+            pos[0] += "async".length();
+            return parseFunc(text, pos, true);
+        }
+        if (c == '(') {
+            return parseFunc(text, pos, false);
+        }
+        // Fixed scalar spellings.
+        java.lang.String[] fixed = {"null", "boolean", "int", "number", "string", "table"};
+        RuntimeDescriptor[] mapped = {Null.INSTANCE, Boolean.INSTANCE, Int.INSTANCE,
+            Number.INSTANCE, String.INSTANCE, Table.INSTANCE};
+        for (int i = 0; i < fixed.length; i++) {
+            if (text.startsWith(fixed[i], pos[0])) {
+                int end = pos[0] + fixed[i].length();
+                if (end == text.length() || text.charAt(end) == ')'
+                        || text.charAt(end) == ']' || text.charAt(end) == ',') {
+                    pos[0] = end;
+                    return mapped[i];
+                }
+            }
+        }
+        throw new SemanticIrTextDecodeException(
+            "not a canonical descriptor text at offset " + pos[0] + ": \"" + text + "\"");
+    }
+
+    private static RuntimeDescriptor parseFunc(java.lang.String text, int[] pos, boolean isAsync) {
+        expect(text, pos, '(');
+        List<RuntimeDescriptor> params = new ArrayList<>();
+        if (text.charAt(pos[0]) != ')') {
+            while (true) {
+                params.add(parseAt(text, pos, false));
+                if (text.charAt(pos[0]) == ',') {
+                    pos[0]++;
+                    continue;
+                }
+                break;
+            }
+        }
+        expect(text, pos, ')');
+        expect(text, pos, '-');
+        expect(text, pos, '>');
+        RuntimeDescriptor returnType = parseAt(text, pos, false);
+        return new Func(params, returnType, isAsync);
+    }
+
+    private static void expect(java.lang.String text, int[] pos, char expected) {
+        if (pos[0] >= text.length() || text.charAt(pos[0]) != expected) {
+            throw new SemanticIrTextDecodeException(
+                "not a canonical descriptor text (expected '" + expected + "' at offset "
+                    + pos[0] + "): \"" + text + "\"");
+        }
+        pos[0]++;
+    }
 
     /** The {@code null} descriptor; canonical text {@code "null"}. */
     enum Null implements RuntimeDescriptor {
