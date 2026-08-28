@@ -311,6 +311,8 @@ public class DiagnosticClassificationTest {
         coverage.put("E6002", "Historical (ISSUE-0011, no longer emitted)");
         coverage.put("E6003", "LuaBackendTest (rest parameter rejection)");
         coverage.put("E6004", "LuaBackendTest / JvmBackendTest (entry main validation)");
+        coverage.put("E6005",
+            "LoweringFoundationTest (common semantic lowering failure; ISSUE-0230 foundation)");
 
         coverage.put("E7001", "ModuleSystemTest (decl file exec stmt)");
         coverage.put("E7002",

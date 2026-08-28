@@ -42,12 +42,14 @@ javac --release 25 -proc:none -d build \
   deal/codegen/jvm/*.java \
   deal/codegen/js/*.java \
   deal/ir/*.java \
+  deal/semantic/ir/*.java \
   deal/module/*.java \
   deal/project/*.java \
   deal/Main.java \
   test/StubModuleResolver.java \
   test/DiagnosticRangeTest.java \
   test/DiagnosticClassificationTest.java \
+  test/LoweringFoundationTest.java \
   test/AstAndTypesTest.java \
   test/LexerTest.java \
   test/ParserTest.java \
@@ -132,6 +134,10 @@ java -ea -cp build deal.test.DiagnosticRangeTest
 echo ""
 echo "=== Running Diagnostic Classification Tests ==="
 java -ea -cp build deal.test.DiagnosticClassificationTest
+
+echo ""
+echo "=== Running Lowering Foundation Tests (ISSUE-0281) ==="
+java -ea -cp build deal.test.LoweringFoundationTest
 
 echo ""
 echo "=== Running Protected Path Ops Tests (ISSUE-0262) ==="

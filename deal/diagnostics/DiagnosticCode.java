@@ -273,6 +273,9 @@ public enum DiagnosticCode {
     /** Entry module must export a non-async main(): null (v1.2 entry contract). */
     E6004(Phase.BACKEND_LOWERING, "Entry module must export non-async main(): null"),
 
+    /** Common semantic lowering contract violation (ISSUE-0230 foundation, parent D11). */
+    E6005(Phase.BACKEND_LOWERING, "Common semantic lowering failed"),
+
     // =========================================================================
     // E7xxx — declaration-file errors (FRONTEND)
     // =========================================================================
