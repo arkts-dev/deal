@@ -51,6 +51,7 @@ javac --release 25 -proc:none -d build \
   deal/Main.java \
   test/StubModuleResolver.java \
   test/CheckedProjectBuilderTest.java \
+  test/LoweringSupportTest.java \
   test/InvocationProfileRegistryTest.java \
   test/DiagnosticRangeTest.java \
   test/DiagnosticClassificationTest.java \
@@ -181,6 +182,10 @@ java -ea -cp build deal.test.LoweringFoundationTest
 echo ""
 echo "=== Running Checked Project Builder Tests (ISSUE-0288) ==="
 java -ea -cp build deal.test.CheckedProjectBuilderTest
+
+echo ""
+echo "=== Running Lowering Support / Requirement Manifest Tests (ISSUE-0289) ==="
+java -ea -cp build deal.test.LoweringSupportTest
 
 echo ""
 echo "=== Running Invocation / Profile / Capability Registry Tests (ISSUE-0284) ==="

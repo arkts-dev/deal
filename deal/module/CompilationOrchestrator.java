@@ -18,7 +18,9 @@ import deal.semantic.CheckedProjectBuildResult;
 import deal.semantic.CheckedProjectBuilder;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
+import deal.semantic.LoweringSupport;
 import deal.semantic.ModuleFact;
+import deal.semantic.RequirementManifestResult;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ReleaseState;
 import deal.types.Type;
@@ -88,6 +90,18 @@ public final class CompilationOrchestrator {
      * pre-foundation phase failed).
      */
     private CheckedProjectBuildResult checkedProjectBuild;
+
+    /**
+     * The requirement-manifest foundation result of this compile
+     * (ISSUE-0289): exactly one manifest per implementation module in
+     * dependency order computed by {@link LoweringSupport} after the
+     * checked project and interface index (foundation F3/F8) —
+     * {@code null} before the manifest phase runs or when a preceding
+     * phase failed. The support's E6005 diagnostics (an inconsistent
+     * checked/interface fact, never a crash) are merged into
+     * {@link #diagnostics()}.
+     */
+    private RequirementManifestResult requirementManifests;
 
     private final Map<String, ModuleInfo> modules = new LinkedHashMap<>();
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
@@ -282,6 +296,19 @@ public final class CompilationOrchestrator {
         return checkedProjectBuild;
     }
 
+    /**
+     * The requirement-manifest foundation result of this compile
+     * (ISSUE-0289): one {@code SemanticRequirementManifest} per
+     * implementation module in dependency order — {@code null} before the
+     * manifest phase runs or when a preceding phase failed.
+     *
+     * @return the manifest result, or {@code null} when the phase did not
+     *         run
+     */
+    public RequirementManifestResult requirementManifests() {
+        return requirementManifests;
+    }
+
     // =========================================================================
     // Public API
     // =========================================================================
@@ -350,6 +377,16 @@ public final class CompilationOrchestrator {
         // diagnostics fail the compile exactly like frontend errors.
         log("Phase 3.5: Checked project and interface index");
         buildCheckedProject(checkOrder);
+        if (hasErrors) { printDiagnostics(); return false; }
+
+        // Foundation phase (F3/F8): after the checked project and index,
+        // LoweringSupport computes exactly one SemanticRequirementManifest
+        // per implementation module in dependency order (the closed
+        // four-part STDLIB_TIME_CONFLICT trigger + constructCoverage
+        // rows). Read-only over the checked facts; its E6005 diagnostics
+        // fail the compile exactly like frontend errors.
+        log("Phase 3.6: Semantic requirement manifests");
+        computeRequirementManifests();
         if (hasErrors) { printDiagnostics(); return false; }
 
         log("Phase 4: Code generation");
@@ -1190,6 +1227,31 @@ public final class CompilationOrchestrator {
         if (result.hasErrors()) {
             hasErrors = true;
             log("  Checked project build failed: " + result.diagnostics());
+        }
+    }
+
+    /**
+     * Runs the requirement-manifest foundation after the checked project
+     * and interface index (ISSUE-0289): hands the checked project and the
+     * index to {@link LoweringSupport}, which computes one manifest per
+     * implementation module in dependency order — the closed four-part
+     * {@code STDLIB_TIME_CONFLICT} detector and the reachable-construct
+     * coverage rows. Support E6005 diagnostics merge into
+     * {@link #diagnostics()} and fail the compile; a failed computation
+     * leaves {@link #requirementManifests()} null.
+     */
+    private void computeRequirementManifests() {
+        CheckedProjectBuildResult checked = this.checkedProjectBuild;
+        if (checked == null || checked.hasErrors()) {
+            return; // a pre-manifest phase failure already gates the compile
+        }
+        RequirementManifestResult result = LoweringSupport.computeManifests(
+            invocation, checked.input(), checked.index());
+        this.requirementManifests = result;
+        diagnostics.addAll(result.diagnostics());
+        if (result.hasErrors()) {
+            hasErrors = true;
+            log("  Requirement manifest computation failed: " + result.diagnostics());
         }
     }
 
