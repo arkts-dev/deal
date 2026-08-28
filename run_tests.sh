@@ -46,6 +46,7 @@ javac --release 25 -proc:none -d build \
   deal/semantic/ir/*.java \
   deal/module/*.java \
   deal/project/*.java \
+  deal/identity/*.java \
   deal/Main.java \
   test/StubModuleResolver.java \
   test/InvocationProfileRegistryTest.java \
@@ -82,6 +83,7 @@ javac --release 25 -proc:none -d build \
   test/LuaAbiBackendTest.java \
   test/CrossModuleTypingTest.java \
   test/ProtectedPathOpsTest.java \
+  test/CanonicalIdentityTest.java \
   deal/test/containment/ContainedProcessBroker.java \
   deal/test/containment/PreflightCoordinator.java \
   deal/test/containment/ContainedProcessBrokerFramingTest.java \
@@ -91,6 +93,28 @@ javac --release 25 -proc:none -d build \
 else
   echo "=== DEAL sources and tests unchanged since the last build; reusing build/ ==="
 fi
+
+# =========================================================================
+# Identity package gate (ISSUE-0309): deal.identity is the neutral
+# JDK-only carrier package. A standalone compile against an empty
+# classpath fails on any symbol outside java.* and deal.identity, and an
+# import scan pins the allowed import surface.
+# =========================================================================
+echo ""
+echo "=== Identity Package Gate: JDK-only closure ==="
+mkdir -p build/identity-cp-empty build/identity-standalone
+javac --release 25 -proc:none -cp build/identity-cp-empty \
+  -d build/identity-standalone deal/identity/*.java
+IDENTITY_IMPORTS="$(grep -hE '^import ' deal/identity/*.java || true)"
+IDENTITY_BAD_IMPORTS="$(echo "$IDENTITY_IMPORTS" \
+  | grep -vE '^import java\.' \
+  | grep -vE '^import deal\.identity\.' || true)"
+if [ -n "$IDENTITY_BAD_IMPORTS" ]; then
+  echo "  ERROR: deal.identity imports outside java.* and deal.identity:"
+  echo "$IDENTITY_BAD_IMPORTS"
+  exit 1
+fi
+echo "  deal.identity is JDK-only (standalone compile and import scan pass)."
 
 # =========================================================================
 # Migration gate (verification 7): the legacy start-only record is gone
@@ -173,6 +197,10 @@ java -ea -cp build deal.test.SemanticIrDumperTest
 echo ""
 echo "=== Running Protected Path Ops Tests (ISSUE-0262) ==="
 java -ea -cp build deal.test.ProtectedPathOpsTest
+
+echo ""
+echo "=== Running Identity Carrier Package Tests (ISSUE-0309) ==="
+java -ea -cp build deal.test.CanonicalIdentityTest
 
 echo ""
 echo "=== Running Strict Manifest Parser Tests (ISSUE-0263 T2) ==="
