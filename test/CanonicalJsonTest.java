@@ -1043,17 +1043,22 @@ public class CanonicalJsonTest {
         // Exactly the pinned production components serialize canonical
         // JSON, and every one of them goes through the single CanonicalJson
         // facility: the snapshot canonicalizer, the lowering-context helper
-        // (T3), and the ISSUE-0284 F1/F7 release-state-hash and
+        // (T3), the ISSUE-0284 F1/F7 release-state-hash and
         // capability-registry components (CompilerProfileProvider /
         // CapabilityRegistry — records mapped onto the single value model,
-        // no serializer of their own; the MessageDigest/hex-float scans
-        // above still pin the machinery to CanonicalJson alone).
+        // no serializer of their own), and the ISSUE-0288 interface index
+        // (ProjectInterfaceIndex.interfaceIndexDigest = SHA-256(canonical
+        // JSON of the index), foundation F2 — a record mapped onto the
+        // single value model through the same facility, no serializer of
+        // its own). The MessageDigest/hex-float scans above still pin the
+        // machinery to CanonicalJson alone.
         check(filesContaining("deal/semantic", "CanonicalJson.serializeBytes(").equals(
                 List.of("deal/semantic/CapabilityRegistry.java",
                     "deal/semantic/CompilerProfileProvider.java",
                     "deal/semantic/ir/ContractSnapshotCanonicalizer.java",
-                    "deal/semantic/ir/LoweringContextHash.java")),
-            "exactly the four pinned production components serialize canonical JSON: "
+                    "deal/semantic/ir/LoweringContextHash.java",
+                    "deal/semantic/ir/ProjectInterfaceIndex.java")),
+            "exactly the five pinned production components serialize canonical JSON: "
                 + filesContaining("deal/semantic", "CanonicalJson.serializeBytes("));
 
         // The pre-existing hash/parse sites elsewhere in the compiler are

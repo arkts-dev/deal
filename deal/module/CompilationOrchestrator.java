@@ -14,8 +14,12 @@ import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.parser.*;
 import deal.semantic.CapabilityRegistry;
+import deal.semantic.CheckedProjectBuildResult;
+import deal.semantic.CheckedProjectBuilder;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ModuleFact;
+import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ReleaseState;
 import deal.types.Type;
 import deal.types.Types;
@@ -74,6 +78,16 @@ public final class CompilationOrchestrator {
      * immutable {@code releaseStateHash} field.
      */
     private final CompilerInvocation invocation;
+
+    /**
+     * The foundation-phase result built once per compile (ISSUE-0288):
+     * after phase 3 succeeds, {@link CheckedProjectBuilder} consumes the
+     * orchestrator's module map in {@code buildCheckOrder} and produces
+     * exactly one checked project input and one project interface index.
+     * {@code null} before the foundation phase runs (or when a
+     * pre-foundation phase failed).
+     */
+    private CheckedProjectBuildResult checkedProjectBuild;
 
     private final Map<String, ModuleInfo> modules = new LinkedHashMap<>();
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
@@ -253,6 +267,21 @@ public final class CompilationOrchestrator {
         return invocation;
     }
 
+    /**
+     * The checked-project foundation result of this compile (ISSUE-0288):
+     * exactly one checked project input and one project interface index
+     * built in dependency order after phase 3 succeeds — {@code null} before the foundation phase runs or when
+     * a pre-foundation phase failed. The builder's E6005 diagnostics (a
+     * fact defect, never a crash) are also merged into
+     * {@link #diagnostics()}.
+     *
+     * @return the build result, or {@code null} when the foundation phase
+     *         did not run
+     */
+    public CheckedProjectBuildResult checkedProject() {
+        return checkedProjectBuild;
+    }
+
     // =========================================================================
     // Public API
     // =========================================================================
@@ -312,6 +341,15 @@ public final class CompilationOrchestrator {
 
         log("Phase 3: Type checking (" + checkOrder.size() + " modules)");
         typeCheckAll(checkOrder);
+        if (hasErrors) { printDiagnostics(); return false; }
+
+        // Foundation phase (F2/F8): after phase 3 succeeds, the builder
+        // produces exactly one CheckedProjectInput and one
+        // ProjectInterfaceIndex per compile in dependency order. The
+        // builder is strictly read-only over the checked facts; its E6005
+        // diagnostics fail the compile exactly like frontend errors.
+        log("Phase 3.5: Checked project and interface index");
+        buildCheckedProject(checkOrder);
         if (hasErrors) { printDiagnostics(); return false; }
 
         log("Phase 4: Code generation");
@@ -1117,6 +1155,70 @@ public final class CompilationOrchestrator {
 
         stack.removeLast();
         return false;
+    }
+
+    // =========================================================================
+    // Phase 3.5: Checked project and interface index (foundation, ISSUE-0288)
+    // =========================================================================
+
+    /**
+     * Runs the checked-project foundation after phase 3: packages the
+     * orchestrator's module facts in {@code buildCheckOrder} (source
+     * paths, dotted module paths, ASTs, Phase-3-corrected export maps,
+     * checked facts, the spec-stdlib classification, and the resolved
+     * imports) and hands them to {@link CheckedProjectBuilder}. Builder
+     * E6005 diagnostics merge into {@link #diagnostics()} and fail the
+     * compile; a failed build leaves {@link #checkedProject()} null.
+     */
+    private void buildCheckedProject(List<String> checkOrder) {
+        List<ModuleFact> facts = new ArrayList<>(checkOrder.size());
+        for (String sourcePath : checkOrder) {
+            ModuleInfo info = modules.get(sourcePath);
+            if (info == null) {
+                continue; // defensive: buildCheckOrder names only discovered modules
+            }
+            facts.add(toModuleFact(info));
+        }
+        ModuleInfo entryInfo = modules.get(entryFile.toString());
+        if (entryInfo == null) {
+            return; // defensive: phase 3 gates the entry module earlier
+        }
+        CheckedProjectBuildResult result = CheckedProjectBuilder.build(
+            invocation, new ModuleId(entryInfo.modulePath), facts);
+        this.checkedProjectBuild = result;
+        diagnostics.addAll(result.diagnostics());
+        if (result.hasErrors()) {
+            hasErrors = true;
+            log("  Checked project build failed: " + result.diagnostics());
+        }
+    }
+
+    /**
+     * Packages one orchestrator module's read-only facts for the builder:
+     * the resolved imports in source order re-run through the same import
+     * resolution the discovery/typing phases used ({@code resolveImportPath}
+     * plus the externals maps — the try-variant emits no diagnostics; an
+     * unresolvable import would have failed the compile with E2003 before
+     * this phase).
+     */
+    private ModuleFact toModuleFact(ModuleInfo info) {
+        List<ModuleFact.ImportFact> imports = new ArrayList<>();
+        if (info.rawAst != null) {
+            for (StatementNode stmt : info.rawAst.statements()) {
+                if (stmt instanceof ImportDeclaration imp) {
+                    String resolved = tryResolveImportPath(imp.modulePath(),
+                        Path.of(info.sourcePath));
+                    if (resolved != null) {
+                        imports.add(new ModuleFact.ImportFact(imp.alias(),
+                            imp.modulePath(), resolved));
+                    }
+                }
+            }
+        }
+        return new ModuleFact(info.sourcePath, new ModuleId(info.modulePath),
+            info.isDeclarationFile, isSpecStdlibModuleInfo(info), info.rawAst,
+            info.exports != null ? info.exports : Map.of(),
+            info.symbolTable, info.checkResult, imports);
     }
 
     // =========================================================================

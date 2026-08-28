@@ -15,6 +15,12 @@ import java.util.Objects;
  * (dependency order), so repeated builds produce byte-identical
  * serializations.
  *
+ * <p>The index serializes exclusively through the single canonical JSON
+ * facility ({@link CanonicalJson}): {@link #toCanonicalJson()} is the one
+ * mapping used for {@link #interfaceIndexDigest()}, so the digest is
+ * fully determined and byte-identical across builds — STDLIB/HOST
+ * declaration entries included (foundation F2).</p>
+ *
  * @param formatVersion the pinned {@link #FORMAT_VERSION}; non-null
  * @param modules       every module in the dependency closure keyed by
  *                      {@link ModuleId}; non-null
@@ -32,5 +38,34 @@ public record ProjectInterfaceIndex(String formatVersion, Map<ModuleId, External
         }
         Objects.requireNonNull(modules, "modules must not be null");
         this.modules = Collections.unmodifiableMap(new LinkedHashMap<>(modules));
+    }
+
+    /**
+     * The single canonical JSON mapping of the index (dependency-ordered
+     * module list; sorted object keys; closed enums as names) — the only
+     * shape {@link #interfaceIndexDigest()} hashes.
+     *
+     * @return the canonical JSON object
+     */
+    public CanonicalJson.Value toCanonicalJson() {
+        return CanonicalJson.obj(
+            CanonicalJson.e("formatVersion", CanonicalJson.str(formatVersion)),
+            CanonicalJson.e("modules", CanonicalJson.arr(
+                modules.values().stream()
+                    .map(ExternalModuleInterface::toCanonicalJson)
+                    .toList())));
+    }
+
+    /**
+     * The pinned interface index digest (foundation F2):
+     * {@code SHA-256(canonical JSON of the index)} through the single
+     * canonical JSON facility. Feeds the route plan's
+     * {@code invocationHash} (F4) and the validator's R-PROFILE
+     * {@code interfaceHash} comparison fact.
+     *
+     * @return the lowercase 64-character hex digest
+     */
+    public String interfaceIndexDigest() {
+        return CanonicalJson.sha256Hex(CanonicalJson.serializeBytes(toCanonicalJson()));
     }
 }

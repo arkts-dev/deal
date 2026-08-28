@@ -39,7 +39,7 @@ import deal.semantic.ir.FieldInterface;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
-import deal.semantic.ir.ImportInterface;
+import deal.semantic.ir.ResolvedImport;
 import deal.semantic.ir.InitializationMode;
 import deal.semantic.ir.InternalResultType;
 import deal.semantic.ir.IntrinsicKind;
@@ -1144,61 +1144,82 @@ public class SemanticIrSchemaTest {
         expectRejected(() -> new ProjectInterfaceIndex("deal.semantic-interface/2", Map.of()),
             "a foreign interface format version is rejected");
 
-        // Interface entries.
+        // Interface entries (the F2-pinned shapes: FieldInterface
+        // {name, declaredType, optional, nullable, hasDefault},
+        // ResolvedImport {alias, modulePath, resolvedModuleId, kind},
+        // ExportInterface {name, declaredType}).
         ClassFactoryId ctor = new ClassFactoryId(0);
         ClassInterface classEntry = new ClassInterface(new ClassId("m", "C"),
-            List.of(new FieldInterface("f", "int", false, DefaultOwner.LOCAL)), ctor);
+            List.of(new FieldInterface("f", "int", true, false, true)), ctor);
         ExternalModuleInterface entry = new ExternalModuleInterface(new ModuleId("m"),
             ExternalModuleKind.IMPLEMENTATION,
-            List.of(new ImportInterface("a", new ModuleId("a"))),
+            List.of(new ResolvedImport("a", "a", new ModuleId("a"),
+                ExternalModuleKind.IMPLEMENTATION)),
             List.of(new ExportInterface("x", "int")),
             List.of(classEntry),
             InitializationMode.ONCE_AFTER_DEPENDENCIES);
         check(entry.initialization() == InitializationMode.ONCE_AFTER_DEPENDENCIES
                 && entry.classes().get(0).constructionEntry() == ctor
-                && entry.imports().get(0).resolvedModule().equals(new ModuleId("a"))
-                && "int".equals(entry.exports().get(0).canonicalTypeText()),
+                && entry.imports().get(0).resolvedModuleId().equals(new ModuleId("a"))
+                && "int".equals(entry.exports().get(0).declaredType()),
             "ExternalModuleInterface carries imports/exports/classes and ONCE_AFTER_DEPENDENCIES");
     }
 
     // =========================================================================
-    // Package hygiene: deal.semantic.ir depends only on the JDK
+    // Package hygiene: deal.semantic.ir stays frontend-free; deal.semantic
+    // is the pipeline foundation consuming read-only checker facts (F8)
     // =========================================================================
 
     static void testPackageHygiene() {
-        System.out.println("-- Package hygiene: no frontend imports in deal.semantic.ir --");
+        System.out.println("-- Package hygiene: deal.semantic.ir stays frontend-free; "
+            + "deal.semantic consumes read-only checker facts (F8) --");
 
-        List<Path> dirs = List.of(Path.of("deal/semantic/ir"), Path.of("deal/semantic"));
-        List<String> forbiddenPrefixes = List.of(
+        // The closed schema package depends only on the JDK (plus the
+        // diagnostics registration the failure registry/validator consume):
+        // no AST/checker/codegen/module/parser/project/source/IR import.
+        List<String> schemaForbidden = List.of(
             "deal.ast", "deal.checker", "deal.codegen", "deal.module", "deal.parser",
             "deal.lexer", "deal.types", "deal.project", "deal.source", "deal.ir",
             "deal.Main");
+
+        // The pipeline foundation (deal.semantic, F8) consumes deal.diagnostics
+        // and read-only checker facts (deal.ast/deal.checker/deal.types) plus the
+        // closed schema; it must never reach an emitter/target/orchestrator surface.
+        List<String> foundationForbidden = List.of(
+            "deal.codegen", "deal.module", "deal.parser", "deal.lexer", "deal.project",
+            "deal.source", "deal.ir", "deal.Main");
+
         int scanned = 0;
-        for (Path dir : dirs) {
-            if (!Files.isDirectory(dir)) {
-                continue;
-            }
-            try (var stream = Files.list(dir)) {
-                for (Path file : stream.filter(p -> p.toString().endsWith(".java")).toList()) {
-                    for (String line : Files.readAllLines(file)) {
-                        String trimmed = line.trim();
-                        if (trimmed.startsWith("import ")) {
-                            scanned++;
-                            String imported = trimmed.substring("import ".length())
-                                .replace(";", "").trim();
-                            for (String prefix : forbiddenPrefixes) {
-                                check(!imported.equals(prefix) && !imported.startsWith(prefix + "."),
-                                    file.getFileName() + " must not import " + prefix
-                                        + " (offending import: " + imported + ")");
-                            }
+        scanned += scanImports(Path.of("deal/semantic/ir"), schemaForbidden);
+        scanned += scanImports(Path.of("deal/semantic"), foundationForbidden);
+        check(scanned > 0, "the package scan examined the deal.semantic sources");
+    }
+
+    private static int scanImports(Path dir, List<String> forbiddenPrefixes) {
+        int scanned = 0;
+        if (!Files.isDirectory(dir)) {
+            return scanned;
+        }
+        try (var stream = Files.list(dir)) {
+            for (Path file : stream.filter(p -> p.toString().endsWith(".java")).toList()) {
+                for (String line : Files.readAllLines(file)) {
+                    String trimmed = line.trim();
+                    if (trimmed.startsWith("import ")) {
+                        scanned++;
+                        String imported = trimmed.substring("import ".length())
+                            .replace(";", "").trim();
+                        for (String prefix : forbiddenPrefixes) {
+                            check(!imported.equals(prefix) && !imported.startsWith(prefix + "."),
+                                file.getFileName() + " must not import " + prefix
+                                    + " (offending import: " + imported + ")");
                         }
                     }
                 }
-            } catch (Exception e) {
-                fail("package scan failed: " + e);
             }
+        } catch (Exception e) {
+            fail("package scan failed: " + e);
         }
-        check(scanned > 0, "the package scan examined the deal.semantic.ir sources");
+        return scanned;
     }
 
     // =========================================================================

@@ -4,24 +4,38 @@ import java.util.Objects;
 
 /**
  * One field entry of a {@link ClassInterface} (parent canonical surfaces;
- * foundation F2): declaration order, presence, and default ownership,
- * carrying declared types only — {@code canonicalTypeText} is the
- * canonical type text (the {@code TypeNode → CanonicalTypeText} grammar
- * for declaration entries; the module's Phase-3-corrected resolved export
- * map for implementation entries). Pure immutable data of
- * {@code deal.semantic-interface/1}.
+ * foundation F2): the pinned {@code FieldInterface} shape
+ * {@code {name, declaredType, optional, nullable, hasDefault}} in
+ * declaration order, carrying declared types only — {@code declaredType}
+ * is the canonical type text rendered through the pinned
+ * {@code TypeNode → CanonicalTypeText} grammar for every entry kind
+ * (class fields are closed AST records
+ * {@code {name, optional, nullable, type, defaultExpr}}, so
+ * {@code optional}/{@code nullable} come from the record and
+ * {@code hasDefault} from {@code defaultExpr} presence). Pure immutable
+ * data of {@code deal.semantic-interface/1}.
  *
- * @param name              the field name; non-null
- * @param canonicalTypeText the canonical declared-type text; non-null
- * @param required          whether the field is required-present
- * @param defaultOwner      the default ownership of the field; non-null
+ * @param name         the field name; non-null
+ * @param declaredType the canonical declared-type text; non-null
+ * @param optional     whether the field is optional (may be omitted)
+ * @param nullable     whether the declared field type admits null
+ * @param hasDefault   whether the field carries a default expression
  */
-public record FieldInterface(String name, String canonicalTypeText, boolean required,
-                             DefaultOwner defaultOwner) {
+public record FieldInterface(String name, String declaredType, boolean optional,
+                             boolean nullable, boolean hasDefault) {
 
     public FieldInterface {
         Objects.requireNonNull(name, "name must not be null");
-        Objects.requireNonNull(canonicalTypeText, "canonicalTypeText must not be null");
-        Objects.requireNonNull(defaultOwner, "defaultOwner must not be null");
+        Objects.requireNonNull(declaredType, "declaredType must not be null");
+    }
+
+    /** The canonical JSON object of this field entry (sorted keys). */
+    CanonicalJson.Value toCanonicalJson() {
+        return CanonicalJson.obj(
+            CanonicalJson.e("name", CanonicalJson.str(name)),
+            CanonicalJson.e("declaredType", CanonicalJson.str(declaredType)),
+            CanonicalJson.e("optional", CanonicalJson.bool(optional)),
+            CanonicalJson.e("nullable", CanonicalJson.bool(nullable)),
+            CanonicalJson.e("hasDefault", CanonicalJson.bool(hasDefault)));
     }
 }
