@@ -95,12 +95,16 @@ import java.util.Objects;
  * <p>Every slash-separated component of a configured root text, of the
  * relative module path, and of an externals raw import specifier must be
  * non-empty; not {@code .} or {@code ..}; free of U+0000, C0 controls,
- * DEL, and Unicode whitespace; free of {@code @ [ ] ? ( ) ,}; and free of
- * contiguous {@code -}{@code >}. {@code %}, non-reserved {@code $}, and a
- * Linux backslash remain byte-identical and valid. {@code $external} and
- * {@code $builtin} are reserved only as <b>exact first components</b>: a
- * root whose first component is exactly one of them is unrepresentable as
- * a project identity. Class names are identifier-shaped by the grammar,
+ * DEL, and Unicode whitespace (the full pinned White_Space property —
+ * {@code 0009-000D, 0020, 0085, 00A0, 1680, 2000-200A, 2028, 2029,
+ * 202F, 205F, 3000} — checked explicitly, since Java's
+ * {@code Character.isWhitespace} excludes U+0085 NEXT LINE); free of
+ * {@code @ [ ] ? ( ) ,}; and free of contiguous {@code -}{@code >}.
+ * {@code %}, non-reserved {@code $}, and a Linux backslash remain
+ * byte-identical and valid. {@code $external} and {@code $builtin} are
+ * reserved only as <b>exact first components</b>: a root whose first
+ * component is exactly one of them is unrepresentable as a project
+ * identity. Class names are identifier-shaped by the grammar,
  * {@code [a-zA-Z_$][a-zA-Z0-9_$]*}.</p>
  */
 public final class ModuleIdentityResolver {
@@ -433,6 +437,12 @@ public final class ModuleIdentityResolver {
      * {@code %}, non-reserved {@code $}, and a Linux backslash remain
      * byte-identical and valid. A null component is not representable.
      *
+     * <p>Unicode whitespace is the full pinned White_Space property
+     * ({@code 0009-000D, 0020, 0085, 00A0, 1680, 2000-200A, 2028, 2029,
+     * 202F, 205F, 3000}) checked explicitly — never
+     * {@code Character.isWhitespace}, which excludes U+0085 NEXT LINE
+     * (a White_Space Cc control) since JDK 5.</p>
+     *
      * <p>Pure over the decoded text: no filesystem access, no shared
      * state.</p>
      *
@@ -456,9 +466,8 @@ public final class ModuleIdentityResolver {
                     || codePoint == 0x007F) {
                 return false; // U+0000, C0 controls, DEL
             }
-            if (Character.isWhitespace(codePoint)
-                    || Character.isSpaceChar(codePoint)) {
-                return false; // Unicode whitespace (incl. U+00A0, U+1680, ...)
+            if (isUnicodeWhiteSpace(codePoint)) {
+                return false; // the full pinned White_Space property
             }
             if (codePoint == '@' || codePoint == '[' || codePoint == ']'
                     || codePoint == '?' || codePoint == '(' || codePoint == ')'
@@ -468,6 +477,29 @@ public final class ModuleIdentityResolver {
             i += Character.charCount(codePoint);
         }
         return true;
+    }
+
+    /**
+     * The full pinned Unicode White_Space property (UAX #44 PropList:
+     * {@code White_Space=Yes}): {@code 0009-000D, 0020, 0085, 00A0, 1680,
+     * 2000-200A, 2028, 2029, 202F, 205F, 3000}. Checked explicitly
+     * because Java's {@code Character.isWhitespace} excludes U+0085 NEXT
+     * LINE since JDK 5 (a documented deviation from the Unicode
+     * property), which would let a NEL control/whitespace scalar pass
+     * the pinned representability criterion.
+     */
+    private static boolean isUnicodeWhiteSpace(int codePoint) {
+        return (codePoint >= 0x0009 && codePoint <= 0x000D)
+            || codePoint == 0x0020
+            || codePoint == 0x0085
+            || codePoint == 0x00A0
+            || codePoint == 0x1680
+            || (codePoint >= 0x2000 && codePoint <= 0x200A)
+            || codePoint == 0x2028
+            || codePoint == 0x2029
+            || codePoint == 0x202F
+            || codePoint == 0x205F
+            || codePoint == 0x3000;
     }
 
     /**

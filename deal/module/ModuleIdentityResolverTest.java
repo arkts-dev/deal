@@ -703,7 +703,9 @@ public final class ModuleIdentityResolverTest {
         // whitespace, metacharacters, contiguous ->.
         for (String forbidden : new String[]{
                 "", ".", "..", "a\u0000b", "a\u0001b", "a\u001Fb", "a\u007Fb",
-                "a b", "a\tb", "a\nb", "a\u00A0b", "a\u1680b", "a\u2028b",
+                "a b", "a\tb", "a\nb", "a\u0085b", "a\u00A0b", "a\u1680b",
+                "a\u2000b", "a\u200Ab", "a\u2028b", "a\u2029b",
+                "a\u202Fb", "a\u205Fb", "a\u3000b",
                 "a@b", "a[b", "a]b", "a?b", "a(b", "a)b", "a,b", "->", "a->",
                 "->b", "a->b", "a->b->c"}) {
             check(!ModuleIdentityResolver.isRepresentableDescriptorComponent(forbidden),
@@ -753,6 +755,9 @@ public final class ModuleIdentityResolverTest {
             "contiguous -> inside a root component is not representable");
         check(!ModuleIdentityResolver.isRepresentableConfiguredRootText("a@b/c"),
             "a metacharacter inside a root component is not representable");
+        check(!ModuleIdentityResolver.isRepresentableConfiguredRootText("a\u0085b"),
+            "a U+0085 NEL scalar (Unicode White_Space, Cc) inside a root"
+                + " component is not representable");
 
         // The reservation is exact-first-component only: a later
         // component may be named $external.
@@ -814,6 +819,10 @@ public final class ModuleIdentityResolverTest {
             "a .. externals component is not representable");
         check(!ModuleIdentityResolver.isRepresentableExternalSpecifier("host/a,b"),
             "a comma in an externals component is not representable");
+        check(!ModuleIdentityResolver.isRepresentableExternalSpecifier(
+                "host/a\u0085b"),
+            "a U+0085 NEL scalar in an externals component is not"
+                + " representable");
 
         ProjectModuleIdentity representable =
             new ProjectModuleIdentity("lib/utils", "/p/lib/utils", List.of("a"));
