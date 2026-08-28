@@ -65,9 +65,11 @@ public sealed interface CanonicalModuleIdentity
 
     /**
      * One of the six spec-listed stdlib declaration files under the
-     * pinned {@code ProjectContext.stdlibSurfacePath} (file-keyed,
-     * regardless of the import spelling). Carries no data: the stdlib
-     * surface declares no classes today.
+     * pinned surface — the fully symlink-resolved pinned files published
+     * as {@code ProjectContext.stdlibDeclarationFiles()} (file-keyed on
+     * both sides, regardless of the import spelling; a symlinked
+     * spec-listed file classifies by its resolved target). Carries no
+     * data: the stdlib surface declares no classes today.
      */
     record BuiltinModule() implements CanonicalModuleIdentity {
     }

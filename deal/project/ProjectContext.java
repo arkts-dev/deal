@@ -55,9 +55,22 @@ import java.util.Objects;
  *       directory of the pinned stdlib surface:
  *       {@code <manifestDirectory>/std} when it exists as a directory,
  *       else {@code <processCWD>/std} when that exists as a directory,
- *       else absent ({@code null}). Absence is not an error; the six
- *       spec-listed files under this surface are the only
- *       {@code BuiltinModule} sources.</li>
+ *       else absent ({@code null}). Absence is not an error.</li>
+ *   <li>{@code stdlibDeclarationFiles} — the canonical (fully
+ *       symlink-resolved) absolute path texts of the six spec-listed
+ *       stdlib declaration files under the pinned surface, in pinned
+ *       module order ({@code console}, {@code string}, {@code table},
+ *       {@code json}, {@code math}, {@code time}). A file contributes
+ *       its {@code toRealPath} text only when it exists as a regular,
+ *       fully resolvable file; missing, non-regular, or unresolvable
+ *       files are omitted (they have no canonical path and can never
+ *       equal a resolved source), and the list is empty when the surface
+ *       is absent. These canonical files are the only
+ *       {@code BuiltinModule} sources — the classifier keys its stdlib
+ *       predicate on this list (file-keyed on both sides), so a
+ *       spec-listed file that is a symlink keeps its pinned
+ *       {@code BuiltinModule} classification for its resolved
+ *       target.</li>
  *   <li>{@code projectDeploymentIdentity} — the private deployment
  *       identity (canonical symlink-resolved manifest URI + SHA-256 of
  *       the exact manifest bytes).</li>
@@ -83,6 +96,11 @@ import java.util.Objects;
  *                                   ({@code "1.2"})
  * @param stdlibSurfacePath          the pinned stdlib surface directory
  *                                   path text, or {@code null} when absent
+ * @param stdlibDeclarationFiles     the canonical resolved paths of the
+ *                                   six spec-listed stdlib declaration
+ *                                   files under the pinned surface, in
+ *                                   pinned module order; empty when the
+ *                                   surface is absent (never null)
  * @param projectDeploymentIdentity  the private deployment identity
  */
 public record ProjectContext(
@@ -96,6 +114,7 @@ public record ProjectContext(
     Map<String, ExternalEntry> externals,
     String stdlibVersion,
     String stdlibSurfacePath,
+    List<String> stdlibDeclarationFiles,
     ProjectDeploymentIdentity projectDeploymentIdentity
 ) {
 
@@ -109,10 +128,12 @@ public record ProjectContext(
         Objects.requireNonNull(backend, "backend");
         Objects.requireNonNull(externals, "externals");
         Objects.requireNonNull(stdlibVersion, "stdlibVersion");
+        Objects.requireNonNull(stdlibDeclarationFiles, "stdlibDeclarationFiles");
         Objects.requireNonNull(projectDeploymentIdentity, "projectDeploymentIdentity");
         // stdlibSurfacePath may be null: absence is a plain value.
 
         configuredModuleRoots = List.copyOf(configuredModuleRoots);
         externals = Collections.unmodifiableMap(new LinkedHashMap<>(externals));
+        stdlibDeclarationFiles = List.copyOf(stdlibDeclarationFiles);
     }
 }

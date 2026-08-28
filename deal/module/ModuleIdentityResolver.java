@@ -36,13 +36,17 @@ import java.util.Objects;
  * <ol>
  *   <li>A source whose canonical URI equals the canonical URI of one of
  *       the six spec-listed stdlib declaration files under the pinned
- *       {@code ProjectContext.stdlibSurfacePath}
+ *       surface — the fully symlink-resolved pinned files published by
+ *       ProjectLocator as
+ *       {@code ProjectContext.stdlibDeclarationFiles()}
  *       ({@code std/console}, {@code std/string}, {@code std/table},
  *       {@code std/json}, {@code std/math}, {@code std/time} — the
  *       authoritative filter of
  *       {@link StdlibModuleResolver#SPEC_STDLIB_MODULES}) is
  *       {@link CanonicalModuleIdentity.BuiltinModule}, regardless of how
- *       the source was resolved. If the surface is absent, no source
+ *       the source was resolved (a symlinked spec-listed file classifies
+ *       by its resolved target, exactly the canonical URI every import
+ *       spelling resolves to). If the surface is absent no source
  *       carries {@code BuiltinModule}; a same-named {@code .d.deal} in any
  *       other directory is not builtin.</li>
  *   <li>A source whose canonical URI equals an externals entry's
@@ -303,23 +307,30 @@ public final class ModuleIdentityResolver {
     }
 
     /**
-     * The stdlib predicate (D6 (1)): the source path equals the pinned
-     * path of one of the six spec-listed stdlib declaration files under
-     * the pinned surface. The surface itself is symlink-resolved by
-     * ProjectLocator and the distribution's six files are regular files,
-     * so the lexically derived pinned paths equal the files' canonical
-     * URIs in every supported deployment. Absent surface → false.
+     * The stdlib predicate (D6 (1)): the source path equals the canonical
+     * (fully symlink-resolved) path of one of the six spec-listed stdlib
+     * declaration files under the pinned surface. ProjectLocator
+     * publishes those canonical paths in
+     * {@code ProjectContext.stdlibDeclarationFiles()} (pinned module
+     * order; only existing regular fully-resolvable files are listed),
+     * so the comparison is canonical-file-keyed on both sides: a
+     * spec-listed file that is a symlink keeps its pinned
+     * {@code BuiltinModule} classification for its resolved target —
+     * exactly the canonical URI every import spelling of that file
+     * resolves to. Absent surface (empty list) → false. The classifier
+     * itself performs no filesystem access.
      */
     private static boolean matchesStdlibFile(ProjectContext context, Path sourcePath) {
-        if (sourcePath == null || context.stdlibSurfacePath() == null) {
+        if (sourcePath == null) {
             return false;
         }
-        Path surface = pathOf(context.stdlibSurfacePath());
-        if (surface == null || !surface.isAbsolute()) {
+        List<String> pinnedFiles = context.stdlibDeclarationFiles();
+        if (pinnedFiles == null || pinnedFiles.isEmpty()) {
             return false;
         }
-        for (String module : SPEC_STDLIB_MODULE_NAMES) {
-            if (sourcePath.equals(surface.resolve(module + ".d.deal"))) {
+        for (String pinnedFile : pinnedFiles) {
+            Path pinnedPath = pathOf(pinnedFile);
+            if (pinnedPath != null && sourcePath.equals(pinnedPath)) {
                 return true;
             }
         }

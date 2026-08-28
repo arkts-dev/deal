@@ -106,8 +106,12 @@ import java.util.Set;
  *   <li><b>Stdlib surface</b> — {@code <manifestDirectory>/std} when it
  *       exists as a directory, else {@code <processCWD>/std} when that
  *       exists as a directory, else absent (absence is not an error).
- *       The same pure probe (no failure mode, no diagnostic reordering)
- *       supplies step 4(b)'s stdlib-overlap check.</li>
+ *       The six spec-listed files under the surface are canonicalized
+ *       once (fully symlink-resolved; only existing regular resolvable
+ *       files contribute) and published as the context's
+ *       {@code stdlibDeclarationFiles}; the same canonical paths supply
+ *       step 4(b)'s stdlib-overlap check (a symlinked spec-listed file
+ *       keeps its pinned identity for its resolved target).</li>
  *   <li><b>Deployment identity</b> — {@link ProjectDeploymentIdentity}
  *       per D4: the symlink-resolved {@code file:} URI via
  *       {@link ProtectedPathOps#toFileUri(Path)} after protected
@@ -303,12 +307,14 @@ public final class ProjectLocator {
         }
 
         // The stdlib-surface pure probe (step 6) supplies step 4(b)'s
-        // stdlib-overlap check. The probe has no failure mode — absence is
-        // a value — so consulting it here cannot reorder or duplicate any
-        // diagnostic.
+        // stdlib-overlap check and the published canonical declaration
+        // files. The probe has no failure mode — absence is a value — so
+        // consulting it here cannot reorder or duplicate any diagnostic.
         String manifestDirectoryText =
             Path.of(manifestPathText).getParent().toString();
         String stdlibSurface = probeStdlibSurface(manifestDirectoryText);
+        List<String> stdlibDeclarationFiles =
+            resolveStdlibDeclarationFiles(stdlibSurface);
 
         // ---- Step 4(a): roots (conversion order, then duplicates). -----
         List<ConfiguredModuleRoot> convertedRoots = new ArrayList<>();
@@ -359,7 +365,8 @@ public final class ProjectLocator {
             }
             String declarationPathText =
                 ((ProtectedPathOps.PathResult.Success) converted).resolvedPath().toString();
-            String overlapped = stdlibModuleOf(stdlibSurface, declarationPathText);
+            String overlapped = stdlibModuleOf(stdlibDeclarationFiles,
+                declarationPathText);
             if (overlapped != null) {
                 return e2010("deal.json: externals entry '" + spec.rawImportSpecifier()
                         + "': declaration '" + declarationText
@@ -425,6 +432,7 @@ public final class ProjectLocator {
             externals,
             manifest.stdlib(),
             stdlibSurface,
+            stdlibDeclarationFiles,
             new ProjectDeploymentIdentity(
                 ((ProtectedPathOps.UriResult.Success) uri).uri().toString(), digest));
         return new LocateResult(context, null, null);
@@ -617,17 +625,33 @@ public final class ProjectLocator {
     }
 
     /**
-     * The stdlib-overlap predicate: returns the stdlib module name when
-     * {@code declarationPathText} equals the canonical (fully
-     * symlink-resolved) path of one of the six spec-listed stdlib
-     * declaration files under the pinned surface, otherwise
-     * {@code null}. When the surface is absent no file satisfies the
-     * predicate and the check cannot fire.
+     * The six spec-listed stdlib declaration files under the pinned
+     * surface, each fully symlink-resolved (D1 step 6 / D6 (1)): for
+     * each module in {@link #SPEC_STDLIB_MODULES} (pinned order),
+     * {@code <surface>/<module>.d.deal} contributes its canonical
+     * {@code toRealPath} text when the file exists as a regular, fully
+     * resolvable file. Missing, non-regular, or unresolvable files (a
+     * dangling symlink, a symlink loop, an I/O race) are omitted: they
+     * have no canonical path, and a source can never resolve to them (an
+     * import of a missing spec-listed file is E2003 at the import span).
+     * With an absent surface the list is empty and no source carries
+     * {@code BuiltinModule}.
+     *
+     * <p>This is the canonical-file keying of the stdlib predicate: the
+     * resolved target of a symlinked spec-listed file is the canonical
+     * path both here and in the classifier's canonical source URIs, so a
+     * symlinked spec-listed file under a project-local surface keeps its
+     * pinned {@code BuiltinModule} classification.</p>
+     *
+     * @param stdlibSurface the pinned surface directory path text, or
+     *                      {@code null} when absent
+     * @return the canonical declaration-file path texts in pinned module
+     *         order (never null; empty when the surface is absent)
      */
-    private static String stdlibModuleOf(String stdlibSurface,
-                                         String declarationPathText) {
+    private static List<String> resolveStdlibDeclarationFiles(String stdlibSurface) {
+        List<String> files = new ArrayList<>();
         if (stdlibSurface == null) {
-            return null;
+            return files;
         }
         for (String module : SPEC_STDLIB_MODULES) {
             Path pinned = Path.of(stdlibSurface).resolve(module + ".d.deal");
@@ -635,12 +659,29 @@ public final class ProjectLocator {
                 continue;
             }
             try {
-                if (pinned.toRealPath().toString().equals(declarationPathText)) {
-                    return module;
-                }
+                files.add(pinned.toRealPath().toString());
             } catch (IOException ignored) {
-                // Not a fully resolvable regular file: cannot equal the
-                // existing declaration file.
+                // Not a fully resolvable regular file: no canonical path
+                // exists, so no resolved source can equal it.
+            }
+        }
+        return files;
+    }
+
+    /**
+     * The stdlib-overlap predicate: returns the stdlib module name when
+     * {@code declarationPathText} equals one of the published canonical
+     * (fully symlink-resolved) stdlib declaration file paths, otherwise
+     * {@code null}. The files are computed once per locate by
+     * {@link #resolveStdlibDeclarationFiles(String)} in pinned module
+     * order, so the list index identifies the module; when the surface
+     * is absent the list is empty and the check cannot fire.
+     */
+    private static String stdlibModuleOf(List<String> stdlibDeclarationFiles,
+                                         String declarationPathText) {
+        for (int i = 0; i < stdlibDeclarationFiles.size(); i++) {
+            if (stdlibDeclarationFiles.get(i).equals(declarationPathText)) {
+                return SPEC_STDLIB_MODULES.get(i);
             }
         }
         return null;

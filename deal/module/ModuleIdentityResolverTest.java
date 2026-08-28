@@ -46,8 +46,11 @@ import java.util.Map;
  *       {@link ModuleIdentityResolver.Issue#EQUAL_ROOT_TIE} and publish
  *       no identity (never a silent pick).</li>
  *   <li>Classification precedence: pinned stdlib file → BuiltinModule;
- *       absent surface → never builtin; same-named {@code .d.deal}
- *       elsewhere → none; externals declaration URI →
+ *       a symlinked spec-listed stdlib file under a project-local
+ *       surface keeps BuiltinModule for its canonical resolved target
+ *       (canonical-file keying on both sides); absent surface → never
+ *       builtin; same-named {@code .d.deal} elsewhere → none;
+ *       externals declaration URI →
  *       ExternalModule(that key) even under a configured root; rooted
  *       {@code .deal} → ProjectModule; rooted non-externals
  *       {@code .d.deal} → none; relative non-externals {@code .d.deal}
@@ -121,6 +124,7 @@ public final class ModuleIdentityResolverTest {
             testRepresentabilityRelativeAndExternal();
             testIdentifierShapedClassNames();
             if (environmentClean) {
+                testSymlinkedStdlibSpecListedFile();
                 testCombinedRealDeployment();
             }
         } finally {
@@ -167,10 +171,21 @@ public final class ModuleIdentityResolverTest {
     // =========================================================================
 
     /** A fabricated validated context over arbitrary (possibly non-existent)
-     * paths — the classifier must derive its result purely lexically. */
+     * paths — the classifier must derive its result purely lexically. The
+     * published stdlib declaration files are the lexically pinned
+     * {@code <surface>/<module>.d.deal} paths (what a real locate
+     * publishes when every spec-listed file is a regular non-symlinked
+     * file); with an absent surface the list is empty. */
     private static ProjectContext fabricatedContext(List<ConfiguredModuleRoot> roots,
                                                     Map<String, ExternalEntry> externals,
                                                     String stdlibSurfacePath) {
+        List<String> stdlibDeclarationFiles = new ArrayList<>();
+        if (stdlibSurfacePath != null) {
+            for (String module : ModuleIdentityResolver.SPEC_STDLIB_MODULE_NAMES) {
+                stdlibDeclarationFiles.add(Path.of(stdlibSurfacePath)
+                    .resolve(module + ".d.deal").normalize().toString());
+            }
+        }
         return new ProjectContext(
             "/proj/deal.json",
             "/proj",
@@ -184,6 +199,7 @@ public final class ModuleIdentityResolverTest {
             externals,
             "1.2",
             stdlibSurfacePath,
+            stdlibDeclarationFiles,
             new ProjectDeploymentIdentity("file:///proj/deal.json",
                 "0".repeat(64)));
     }
@@ -863,6 +879,107 @@ public final class ModuleIdentityResolverTest {
             "a null class name is not identifier-shaped");
     }
 
+    private static void testSymlinkedStdlibSpecListedFile() throws Exception {
+        System.out.println("-- Classification: symlinked spec-listed stdlib file"
+            + " (canonical-file keying)");
+
+        // A project-local surface whose console.d.deal is a symlink
+        // pointing outside the surface: the canonical URI of the stdlib
+        // file is the resolved target. T4 publishes the six files fully
+        // symlink-resolved, and the classifier keys its BuiltinModule
+        // predicate on those canonical paths — so the symlinked file
+        // keeps its pinned classification (the bare std/... spelling and
+        // any relative spelling both resolve to the one canonical URI:
+        // spelling-independence), while the lexical surface spelling is
+        // never a canonical input.
+        Path dir = Files.createDirectories(tmpDir.resolve("symlinked-stdlib"));
+        Path outside = Files.createDirectories(tmpDir.resolve("symlinked-stdlib-out"));
+        Path other = Files.createDirectories(tmpDir.resolve("symlinked-stdlib-other"));
+        Files.createDirectories(dir.resolve("std"));
+        writeText(dir.resolve("main.deal"), "export function main(): null { }\n");
+        writeText(outside.resolve("console.d.deal"),
+            "export function log(s: string): null;\n");
+        writeText(other.resolve("console.d.deal"),
+            "export function otherLog(s: string): null;\n");
+        Files.createSymbolicLink(dir.resolve("std/console.d.deal"),
+            outside.resolve("console.d.deal"));
+        for (String module : List.of("string", "table", "json", "math", "time")) {
+            writeText(dir.resolve("std").resolve(module + ".d.deal"),
+                "export function pinned(): null;\n");
+        }
+        writeText(dir.resolve("std/io.d.deal"), "export function read(): string;\n");
+        writeText(dir.resolve("deal.json"),
+            "{\n  \"languageVersion\": \"1.2\"\n}\n");
+
+        ProjectLocator.LocateResult located =
+            ProjectLocator.locate(dir.resolve("main.deal").toString(), null);
+        if (located.context() == null) {
+            fail("symlinked-stdlib locate should succeed: " + describeFailure(located));
+            return;
+        }
+        ProjectContext context = located.context();
+
+        String resolvedTarget =
+            outside.resolve("console.d.deal").toRealPath().toString();
+        check(context.stdlibDeclarationFiles() != null
+                && context.stdlibDeclarationFiles().contains(resolvedTarget),
+            "the published stdlib declaration files carry the canonical"
+                + " resolved target of the symlinked spec-listed file");
+        check(context.stdlibDeclarationFiles() != null
+                && context.stdlibSurfacePath() != null
+                && !context.stdlibDeclarationFiles().contains(
+                    context.stdlibSurfacePath() + "/console.d.deal"),
+            "the lexical surface spelling is never published (only the"
+                + " canonical file is)");
+
+        // The canonical URI of the stdlib file — the one URI the bare
+        // std/... spelling and any relative spelling both resolve to —
+        // is BuiltinModule.
+        String throughSymlink = canonicalUriOf(dir.resolve("std/console.d.deal"));
+        String direct = canonicalUriOf(outside.resolve("console.d.deal"));
+        check(throughSymlink.equals(direct),
+            "the symlinked spelling and the direct spelling share one"
+                + " canonical URI");
+        checkBuiltin(classify(context, throughSymlink),
+            "the resolved target of the symlinked spec-listed file is"
+                + " BuiltinModule (bare std/... spelling)");
+        checkBuiltin(classify(context, direct),
+            "the same canonical file is BuiltinModule under the relative"
+                + " spelling (spelling-independence)");
+
+        // The regular pinned siblings and the pinned exclusions stay
+        // intact under the symlinked surface.
+        checkBuiltin(classify(context,
+                canonicalUriOf(dir.resolve("std/string.d.deal"))),
+            "a regular pinned sibling is still BuiltinModule");
+        checkNone(classify(context, canonicalUriOf(dir.resolve("std/io.d.deal"))),
+            "a non-spec-listed .d.deal inside the symlinked surface selects none");
+        checkNone(classify(context, canonicalUriOf(other.resolve("console.d.deal"))),
+            "a same-named .d.deal in any other directory is not builtin");
+
+        // Continued disjointness with a symlinked surface: an externals
+        // declaration naming the resolved target is rejected at locate
+        // (E2010 at the declaration value range), so the classifier can
+        // never see the both-match state.
+        Path overlapDir = Files.createDirectories(tmpDir.resolve("symlinked-overlap"));
+        Files.createDirectories(overlapDir.resolve("std"));
+        writeText(overlapDir.resolve("main.deal"),
+            "export function main(): null { }\n");
+        Files.createSymbolicLink(overlapDir.resolve("std/console.d.deal"),
+            outside.resolve("console.d.deal"));
+        writeText(overlapDir.resolve("deal.json"),
+            "{\n  \"languageVersion\": \"1.2\",\n"
+                + "  \"externals\": {\n"
+                + "    \"bad/console\": {\"declaration\": \"" + resolvedTarget
+                + "\"}\n"
+                + "  }\n}\n");
+        ProjectLocator.LocateResult overlap = ProjectLocator.locate(
+            overlapDir.resolve("main.deal").toString(), null);
+        check(overlap.e2010() != null && overlap.context() == null,
+            "an externals declaration naming the symlinked stdlib file's"
+                + " resolved target is rejected at locate (E2010, disjointness)");
+    }
+
     // =========================================================================
     // Combined T1+T4 gate: a real located deployment
     // =========================================================================
@@ -930,6 +1047,12 @@ public final class ModuleIdentityResolverTest {
                 && context.stdlibSurfacePath().equals(
                     dir.resolve("std").toRealPath().toString()),
             "combined context pins the project-local std surface");
+        check(context.stdlibDeclarationFiles() != null
+                && context.stdlibDeclarationFiles().size() == 6
+                && context.stdlibDeclarationFiles().contains(
+                    dir.resolve("std/console.d.deal").toRealPath().toString()),
+            "combined context publishes the six canonical stdlib declaration"
+                + " files");
 
         // Real resolved files: canonical URIs via the T1 protected
         // boundary (full symlink resolution), classified by rule.
@@ -1012,13 +1135,11 @@ public final class ModuleIdentityResolverTest {
         for (ExternalEntry entry : context.externals().values()) {
             Path declarationReal = Path.of(
                 entry.declarationPath().absoluteNormalizedPath()).toRealPath();
-            for (String module : ModuleIdentityResolver.SPEC_STDLIB_MODULE_NAMES) {
-                Path pinnedReal = dir.resolve("std").resolve(module + ".d.deal")
-                    .toRealPath();
-                check(!declarationReal.equals(pinnedReal),
+            for (String pinnedFile : context.stdlibDeclarationFiles()) {
+                check(!declarationReal.equals(Path.of(pinnedFile)),
                     "externals entry '" + entry.rawImportSpecifier()
-                        + "' is disjoint from the pinned stdlib file '"
-                        + module + "'");
+                        + "' is disjoint from the published stdlib declaration"
+                        + " file '" + pinnedFile + "'");
             }
         }
 
