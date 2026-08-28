@@ -266,6 +266,39 @@ public final class ProtectedPathOps {
     }
 
     // =========================================================================
+    // Entry-file validation (D1 step 1)
+    // =========================================================================
+
+    /**
+     * Validates the CLI-supplied entry-file value (D1 step 1): non-empty,
+     * NUL-free, host-representable, then resolved through symlinks to a
+     * regular, readable file (the existing-file conversion above).
+     *
+     * <p>This is the entry row of the pinned per-path-class conversion
+     * matrix with the additional non-emptiness gate: the entry value is
+     * CLI-supplied, so an empty string (which would otherwise denote the
+     * process CWD and fail as NOT_REGULAR) is rejected with the explicit
+     * INVALID_INPUT classification. The caller (ProjectLocator) maps
+     * every failure to a CliDiagnostic — never E2010.</p>
+     *
+     * @param entryFile the CLI-supplied entry-file value (a null input is
+     *                  invalid)
+     * @return the resolved regular readable entry file, or the
+     *         classified failure
+     */
+    public static PathResult validateEntry(String entryFile) {
+        if (entryFile == null) {
+            return new PathResult.Failure(PathResult.FailureKind.INVALID_INPUT, "<null>",
+                "entry file must be a non-empty path string");
+        }
+        if (entryFile.isEmpty()) {
+            return new PathResult.Failure(PathResult.FailureKind.INVALID_INPUT, entryFile,
+                "entry file must be a non-empty path string");
+        }
+        return canonicalizeExisting(entryFile);
+    }
+
+    // =========================================================================
     // Conversion: roots and output paths (existence never required)
     // =========================================================================
 
