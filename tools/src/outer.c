@@ -798,8 +798,8 @@ static void dealpg4_outer_coordinator_child(
 
 /* Set O_NONBLOCK|FD_CLOEXEC on a freshly created pipe end (fd hygiene,
  * D1: every outer-owned fd that outlives a fork is FD_CLOEXEC unless
- * deliberately inherited; the drain contract requires O_NONBLOCK read
- * ends). */
+ * deliberately inherited). Used for the pre-exec ready pipe, which is
+ * CLOEXEC and never enters the coordinator's fds. */
 static void dealpg4_outer_pipe_end_flags(int fd)
 {
     int fl = fcntl(fd, F_GETFL);
@@ -807,6 +807,18 @@ static void dealpg4_outer_pipe_end_flags(int fd)
     if (fl != -1)
         (void)fcntl(fd, F_SETFL, fl | O_NONBLOCK);
     (void)fcntl(fd, F_SETFD, FD_CLOEXEC);
+}
+
+/* Set O_NONBLOCK on a coordinator stream drain read end (the drain
+ * contract requires O_NONBLOCK read sides; the write ends keep the
+ * target's ordinary blocking semantics — the supervisor.c
+ * stream-topology pin). */
+static void dealpg4_outer_drain_read_nonblock(int fd)
+{
+    int fl = fcntl(fd, F_GETFL);
+
+    if (fl != -1)
+        (void)fcntl(fd, F_SETFL, fl | O_NONBLOCK);
 }
 
 /* Close an fds pair (refusal paths). */
@@ -837,19 +849,28 @@ static int dealpg4_outer_start_coordinator(dealpg4_outer_state *st)
     if (dealpg4_fi_hooks.fail(FI_OUTER_PIPE) != 0
         || pipe(ready_pipe) != 0)
         goto abort;
+    /* The two coordinator stream drain pipes carry the coordinator's
+     * stdout/stderr (D1): the pinned stream-topology contract
+     * (supervisor.c) keeps the write ends at the target's ordinary
+     * blocking semantics and requires O_NONBLOCK only on the read
+     * sides — pipe2 sets FD_CLOEXEC on every end (dup2 onto fds 1/2
+     * clears it on the inherited coordinator surfaces, and the outer
+     * closes the write ends at fork return). */
     if (dealpg4_fi_hooks.fail(FI_OUTER_PIPE) != 0
-        || pipe(out_pipe) != 0)
+        || pipe2(out_pipe, O_CLOEXEC) != 0)
         goto abort;
     if (dealpg4_fi_hooks.fail(FI_OUTER_PIPE) != 0
-        || pipe(err_pipe) != 0)
+        || pipe2(err_pipe, O_CLOEXEC) != 0)
         goto abort;
 
+    /* The ready pipe keeps O_NONBLOCK on both ends (it is CLOEXEC and
+     * never enters the coordinator's fds); the drain read ends become
+     * O_NONBLOCK for the continuous pump — the write ends stay
+     * blocking, exactly the supervisor.c topology. */
     dealpg4_outer_pipe_end_flags(ready_pipe[0]);
     dealpg4_outer_pipe_end_flags(ready_pipe[1]);
-    dealpg4_outer_pipe_end_flags(out_pipe[0]);
-    dealpg4_outer_pipe_end_flags(out_pipe[1]);
-    dealpg4_outer_pipe_end_flags(err_pipe[0]);
-    dealpg4_outer_pipe_end_flags(err_pipe[1]);
+    dealpg4_outer_drain_read_nonblock(out_pipe[0]);
+    dealpg4_outer_drain_read_nonblock(err_pipe[0]);
 
     /* Delay site: before the coordinator fork (lengthens the
      * shell-loss/coordinator-loss window). */

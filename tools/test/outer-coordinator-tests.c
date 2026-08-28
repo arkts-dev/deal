@@ -50,7 +50,19 @@
  *     COORDINATOR_STARTUP_FAILED;
  *  9. FI_OUTER_PIPE: the pre-exec pipe fails before the coordinator
  *     fork -> no fork, gate-fatal, COORDINATOR_STARTUP_FAILED, the
- *     unverified-group discharge trivially holds, proof passes.
+ *     unverified-group discharge trivially holds, proof passes;
+ * 10. drain-pipe blocking semantics: the suite binary re-execs
+ *     itself as the coordinator probe (--coord-pipe-flags-probe) and
+ *     asserts its fds 1/2 carry no O_NONBLOCK — the write ends of
+ *     the two coordinator stream pipes keep the target's ordinary
+ *     blocking semantics (the supervisor.c topology pin), with only
+ *     the drain read ends O_NONBLOCK.
+ *
+ * Every case group runs in a forked helper child whose captured
+ * stderr is inspected and whose own assertion count propagates
+ * through the child's exit status: a group-internal failure can
+ * never stay green. The final gate covers the parent-side checks and
+ * every propagated child-side failure.
  */
 #define _POSIX_C_SOURCE 200809L
 
@@ -74,6 +86,10 @@
 
 static int g_checks;
 static int g_failures;
+static const char *g_suite_argv0; /* argv[0] of the suite binary — the
+                                     re-exec probe (group 10) uses it
+                                     as the scripted coordinator
+                                     program */
 
 #define CHECK(cond)                                                     \
     do {                                                                \
@@ -148,11 +164,21 @@ static int run_capture_child(outer_test_fn fn, char *errbuf,
         return -1;
     }
     if (pid == 0) {
+        int r;
+
         close(pipefd[0]);
         if (dup2(pipefd[1], 2) == -1)
             _exit(125);
         close(pipefd[1]);
-        _exit(fn() & 0xff);
+        /* Fresh per-group counters: the fork-copied parent counts
+         * would make an earlier group's failure taint every later
+         * group. */
+        g_checks = 0;
+        g_failures = 0;
+        r = fn();
+        /* The group's own g_failures propagate as the exit status: a
+         * group-internal assertion failure can never stay green. */
+        _exit(r != 0 ? 1 : 0);
     }
     close(pipefd[1]);
     for (;;) {
@@ -173,6 +199,27 @@ static int run_capture_child(outer_test_fn fn, char *errbuf,
     if (waitpid(pid, status, 0) != pid)
         return -1;
     return 0;
+}
+
+/* Gate one capture-child group: the child's own assertion failures
+ * are propagated through its exit status AND its captured stderr —
+ * both are checked here (and the captured FAIL lines are echoed), so
+ * a group-internal failure can never stay green. */
+static void gate_group(const char *name, const char *errbuf, int status)
+{
+    int child_ok = (WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    int no_fail_lines = (strstr(errbuf, "FAIL ") == NULL);
+
+    CHECK(child_ok);
+    CHECK(no_fail_lines);
+    if (!child_ok)
+        fprintf(stderr,
+                "group %s: helper child propagated failures "
+                "(status 0x%x, WIFEXITED=%d)\n",
+                name, status, WIFEXITED(status) != 0);
+    if (!no_fail_lines)
+        fprintf(stderr, "group %s: captured child stderr:\n%s",
+                name, errbuf);
 }
 
 /* One full-core call in a pipe-backed report fd: run the core in the
@@ -282,7 +329,7 @@ static int success_bootstrap_fn(void)
     /* No survivor remains: no children, no socket. */
     check_no_children();
     CHECK(outer_socket_path_count("build") == 0);
-    return 0;
+    return (g_failures > 0) ? 1 : 0;
 }
 
 /* === Group 2: exec failure ============================================= */
@@ -335,7 +382,7 @@ static int exec_failure_fn(void)
 
     check_no_children();
     CHECK(outer_socket_path_count("build") == 0);
-    return 0;
+    return (g_failures > 0) ? 1 : 0;
 }
 
 /* === Group 3: readiness bound + by-pid escalation ====================== */
@@ -413,7 +460,7 @@ static int readiness_bound_fn(void)
 
     check_no_children();
     CHECK(outer_socket_path_count("build") == 0);
-    return 0;
+    return (g_failures > 0) ? 1 : 0;
 }
 
 /* === Group 4: COORDINATOR_HANG escalation deadline ===================== */
@@ -474,7 +521,7 @@ static int hang_escalation_fn(void)
 
     check_no_children();
     CHECK(outer_socket_path_count("build") == 0);
-    return 0;
+    return (g_failures > 0) ? 1 : 0;
 }
 
 /* === Group 5: output flood ============================================= */
@@ -498,16 +545,32 @@ static int output_flood_fn(void)
     after = dealpg4_now_ms();
 
     CHECK(status == DEALPG4_OUTER_EXIT_GATE_FAILURE);
-    /* The escalation deadline fired on schedule while 3 MiB per
-     * stream flowed — the drains never blocked and never suspended a
-     * native deadline. */
-    CHECK(after - before >= 6900);
-    CHECK(after - before < 9500);
+    /* The escalation deadline fired on schedule at T0o + 5000 while
+     * 3 MiB per stream flowed — the drains never blocked and never
+     * suspended a native deadline. The flood script's sh has the
+     * default TERM disposition, so the escalation TERM kills the
+     * coordinator (the TERM-death path) and the run completes at
+     * ~5.1 s — before the 2000 ms grace expiry and the KILL step. */
+    CHECK(after - before >= 4900);
+    CHECK(after - before < 6500);
 
     memset(&view, 0, sizeof view);
     dealpg4_outer_last_result(&view);
     CHECK(has_token(&view, "COORDINATOR_HANG"));
+    CHECK(view.escalation_term_issued == 1);
     CHECK(view.escalation_term_sent == 1);
+    CHECK(view.escalation_group_scope == 1);
+    CHECK(view.group_liveness_checked == 1);
+    CHECK(view.escalation_term_ms >= 4900);
+    /* The TERM killed the untrapped sh; the run completed before the
+     * grace expiry, so no KILL step ran (the re-verified KILL was
+     * never reached). */
+    CHECK(view.escalation_kill_issued == 0);
+    CHECK(view.escalation_kill_sent == 0);
+    CHECK(view.coordinator_reaped == 1);
+    CHECK(view.coordinator_si_code == CLD_KILLED);
+    CHECK(view.coordinator_si_status == SIGTERM);
+    CHECK(view.total_fired == 0);
     CHECK(view.proof_passed == 1);
     CHECK(view.proof_streams_eof == 1);
 
@@ -536,7 +599,7 @@ static int output_flood_fn(void)
 
     check_no_children();
     CHECK(outer_socket_path_count("build") == 0);
-    return 0;
+    return (g_failures > 0) ? 1 : 0;
 }
 
 /* === Group 6: shell loss — closed report stdout ======================== */
@@ -575,7 +638,7 @@ static int shell_loss_report_fn(void)
 
     check_no_children();
     CHECK(outer_socket_path_count("build") == 0);
-    return 0;
+    return (g_failures > 0) ? 1 : 0;
 }
 
 /* === Group 7: shell loss — orphaned outer ============================== */
@@ -747,7 +810,7 @@ static int ready_mismatch_fn(void)
 
     check_no_children();
     CHECK(outer_socket_path_count("build") == 0);
-    return 0;
+    return (g_failures > 0) ? 1 : 0;
 }
 
 /* === Group 9: FI_OUTER_PIPE ============================================ */
@@ -800,15 +863,135 @@ static int outer_pipe_failure_fn(void)
 
     check_no_children();
     CHECK(outer_socket_path_count("build") == 0);
-    return 0;
+    return (g_failures > 0) ? 1 : 0;
+}
+
+/* === Group 10: drain-pipe blocking semantics =========================== */
+
+/* Find needle inside the drain's retained window (the window is not
+ * NUL-terminated; the search is bounded by retained_len). */
+static const char *find_in_retained(const dealpg4_drain_ctx *d,
+                                    const char *needle)
+{
+    size_t nlen = strlen(needle);
+    size_t i;
+    size_t j;
+
+    if (d->retained_len < nlen)
+        return NULL;
+    for (i = 0; i + nlen <= d->retained_len; i++) {
+        for (j = 0; j < nlen; j++) {
+            if (d->retained[i + j] != (unsigned char)needle[j])
+                break;
+        }
+        if (j == nlen)
+            return (const char *)d->retained + i;
+    }
+    return NULL;
+}
+
+/* The suite binary re-execs itself as the coordinator probe: the
+ * probe reports the F_GETFL flag words of its fds 1/2 (the line lands
+ * in the drain the outer retains) and exits nonzero when either
+ * carries O_NONBLOCK — the regression trigger for the pinned
+ * stream-topology contract (the coordinator's stdout/stderr write
+ * ends keep ordinary blocking semantics; only the drain read ends are
+ * O_NONBLOCK). */
+static int pipe_flags_probe_fn(void)
+{
+    char *argv[3];
+    char report[1024];
+    dealpg4_outer_result view;
+    const dealpg4_drain_ctx *dout = NULL;
+    const dealpg4_drain_ctx *derr = NULL;
+    const char *line;
+    char probe[128];
+    size_t avail;
+    int f1 = -1;
+    int f2 = -1;
+    uint64_t before;
+    uint64_t after;
+    int status;
+
+    argv[0] = (char *)g_suite_argv0;
+    argv[1] = (char *)"--coord-pipe-flags-probe";
+    argv[2] = NULL;
+
+    before = dealpg4_now_ms();
+    status = core_with_report(&SCALED, argv, report, sizeof report);
+    after = dealpg4_now_ms();
+
+    /* The probe exits 0 iff fds 1/2 are blocking: the clean exit
+     * holds only on the pinned topology. */
+    CHECK(status == 0);
+    CHECK(after - before < 8000);
+
+    memset(&view, 0, sizeof view);
+    dealpg4_outer_last_result(&view);
+    CHECK(view.gate_failure == 0);
+    CHECK(view.coordinator_exited_0 == 1);
+    CHECK(view.coordinator_si_status == 0);
+    CHECK(view.proof_passed == 1);
+    CHECK(view.escalation_term_issued == 0); /* never signaled */
+
+    /* Parse the flag words back out of the retained stdout and
+     * assert the blocking semantics directly (the structural
+     * regression check). */
+    dealpg4_outer_drain_state(&dout, &derr);
+    CHECK(dout != NULL && derr != NULL);
+    CHECK(dout->eof == 1 && derr->eof == 1);
+    CHECK(dout->failed == 0 && derr->failed == 0);
+    line = find_in_retained(dout, "PROBE stdout_flags=");
+    CHECK(line != NULL);
+    if (line != NULL) {
+        avail = dout->retained_len
+                - (size_t)(line - (const char *)dout->retained);
+        if (avail < sizeof probe) {
+            memcpy(probe, line, avail);
+            probe[avail] = '\0';
+            CHECK(sscanf(probe,
+                         "PROBE stdout_flags=%d stderr_flags=%d",
+                         &f1, &f2) == 2);
+            CHECK(f1 >= 0 && f2 >= 0);
+            CHECK((f1 & O_NONBLOCK) == 0);
+            CHECK((f2 & O_NONBLOCK) == 0);
+        } else {
+            CHECK(0); /* the probe line outgrew the view */
+        }
+    }
+    /* stderr stayed empty (no failure output). */
+    CHECK(derr->total_read == 0);
+
+    check_no_children();
+    CHECK(outer_socket_path_count("build") == 0);
+    return (g_failures > 0) ? 1 : 0;
 }
 
 /* === Main ============================================================== */
 
-int main(void)
+int main(int argc, char **argv)
 {
     char errbuf[1024];
     int status;
+
+    g_suite_argv0 = argv[0];
+    if (argc >= 2 && strcmp(argv[1], "--coord-pipe-flags-probe") == 0) {
+        /* Coordinator probe (group 10 re-execs the suite binary as
+         * the scripted coordinator): report the F_GETFL flag words of
+         * fds 1/2 — the line lands in the outer's retained drain —
+         * and exit nonzero when either fd is O_NONBLOCK (the
+         * stream-topology regression trigger: the coordinator's
+         * stdout/stderr must keep ordinary blocking semantics). */
+        int f1 = fcntl(STDOUT_FILENO, F_GETFL);
+        int f2 = fcntl(STDERR_FILENO, F_GETFL);
+
+        printf("PROBE stdout_flags=%d stderr_flags=%d\n", f1, f2);
+        fflush(stdout);
+        if (f1 == -1 || f2 == -1 || (f1 & O_NONBLOCK)
+            || (f2 & O_NONBLOCK))
+            return 42;
+        return 0;
+    }
 
     /* Group 1: success bootstrap. */
     errbuf[0] = '\0';
@@ -817,7 +1000,7 @@ int main(void)
         fprintf(stderr, "FAIL: helper child machinery broke\n");
         return 1;
     }
-    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    gate_group("success bootstrap", errbuf, status);
 
     /* Group 2: exec failure. */
     errbuf[0] = '\0';
@@ -826,7 +1009,7 @@ int main(void)
         fprintf(stderr, "FAIL: helper child machinery broke\n");
         return 1;
     }
-    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    gate_group("exec failure", errbuf, status);
 
     /* Group 3: readiness bound + by-pid escalation (~2.5 s). */
     errbuf[0] = '\0';
@@ -835,7 +1018,7 @@ int main(void)
         fprintf(stderr, "FAIL: helper child machinery broke\n");
         return 1;
     }
-    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    gate_group("readiness bound", errbuf, status);
 
     /* Group 4: COORDINATOR_HANG escalation (~7.2 s). */
     errbuf[0] = '\0';
@@ -844,16 +1027,16 @@ int main(void)
         fprintf(stderr, "FAIL: helper child machinery broke\n");
         return 1;
     }
-    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    gate_group("COORDINATOR_HANG escalation", errbuf, status);
 
-    /* Group 5: output flood (~7.2 s). */
+    /* Group 5: output flood (~5.1 s; the TERM-death path). */
     errbuf[0] = '\0';
     if (run_capture_child(output_flood_fn, errbuf, sizeof errbuf,
                           &status) != 0) {
         fprintf(stderr, "FAIL: helper child machinery broke\n");
         return 1;
     }
-    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    gate_group("output flood", errbuf, status);
 
     /* Group 6: shell loss — closed report stdout. */
     errbuf[0] = '\0';
@@ -862,11 +1045,12 @@ int main(void)
         fprintf(stderr, "FAIL: helper child machinery broke\n");
         return 1;
     }
-    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    gate_group("shell loss (closed report stdout)", errbuf, status);
 
     /* Group 7: shell loss — orphaned outer (the grandchild result
      * line travels over a pipe; the orphaned grandchild reparents
-     * away and is reaped by its new parent). */
+     * away and is reaped by its new parent). Its assertions run in
+     * the parent and count against the final gate directly. */
     if (shell_loss_orphan_case() != 0) {
         fprintf(stderr, "FAIL: orphan case machinery broke\n");
         return 1;
@@ -879,7 +1063,7 @@ int main(void)
         fprintf(stderr, "FAIL: helper child machinery broke\n");
         return 1;
     }
-    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    gate_group("FI_COORD_READY_MISMATCH", errbuf, status);
 
     /* Group 9: FI_OUTER_PIPE. */
     errbuf[0] = '\0';
@@ -888,7 +1072,16 @@ int main(void)
         fprintf(stderr, "FAIL: helper child machinery broke\n");
         return 1;
     }
-    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    gate_group("FI_OUTER_PIPE", errbuf, status);
+
+    /* Group 10: drain-pipe blocking semantics (the re-exec probe). */
+    errbuf[0] = '\0';
+    if (run_capture_child(pipe_flags_probe_fn, errbuf, sizeof errbuf,
+                          &status) != 0) {
+        fprintf(stderr, "FAIL: helper child machinery broke\n");
+        return 1;
+    }
+    gate_group("drain-pipe blocking semantics", errbuf, status);
 
     if (g_failures > 0) {
         fprintf(stderr, "outer-coordinator-tests: %d/%d checks failed\n",

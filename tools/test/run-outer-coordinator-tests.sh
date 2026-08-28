@@ -3,11 +3,14 @@
 #
 # Compiles tools/src/outer.c + monotonic.c + protocol.c + fi.c +
 # selftest.c + drain.c with tools/test/outer-coordinator-tests.c under
-# the pinned D4 flags and runs the nine case groups (success
+# the pinned D4 flags and runs the ten case groups (success
 # bootstrap, exec failure, readiness bound + by-pid escalation,
 # COORDINATOR_HANG escalation deadline, output flood, shell loss via
 # the closed report stdout and via orphaning, FI_COORD_READY_MISMATCH,
-# FI_OUTER_PIPE). The suite lives outside the tools/src/*.c build
+# FI_OUTER_PIPE, drain-pipe blocking semantics). Every group's
+# internal assertion failures propagate through the helper child's
+# exit status and the captured stderr — the suite gates on the
+# propagated results. The suite lives outside the tools/src/*.c build
 # glob, so the pinned artifact build is unchanged; the test binary is
 # a scratch file and never enters the repository. The suite includes
 # the ~7 s scaled escalation-deadline runs; the script-side bound
