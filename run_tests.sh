@@ -88,6 +88,7 @@ javac --release 25 -proc:none -d build \
   test/IrGoldenTest.java \
   test/TypeDescriptorTest.java \
   test/CanonicalRuntimeTypeDescriptorTest.java \
+  test/RuntimeTypeMatcherTest.java \
   test/BackendConformanceTest.java \
   test/JvmBackendTest.java \
   test/JsBackendTest.java \
@@ -418,6 +419,10 @@ java -ea -cp build deal.test.TypeDescriptorTest
 echo ""
 echo "=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310/0311) ==="
 java -ea -cp build deal.test.CanonicalRuntimeTypeDescriptorTest
+echo ""
+echo "=== Running Runtime Type Matcher Tests (ISSUE-0312) ==="
+java -ea -cp build deal.test.RuntimeTypeMatcherTest
+echo ""
 
 echo ""
 echo "=== Running JS Backend Unit Tests ==="
