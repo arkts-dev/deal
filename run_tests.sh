@@ -33,6 +33,7 @@ javac --release 25 -proc:none -d build \
   deal/source/*.java \
   deal/ast/*.java \
   deal/types/*.java \
+  deal/descriptors/*.java \
   deal/diagnostics/*.java \
   deal/lexer/*.java \
   deal/parser/*.java \
@@ -66,6 +67,7 @@ javac --release 25 -proc:none -d build \
   test/IrDumperTest.java \
   test/IrGoldenTest.java \
   test/TypeDescriptorTest.java \
+  test/CanonicalRuntimeTypeDescriptorTest.java \
   test/BackendConformanceTest.java \
   test/JvmBackendTest.java \
   test/JsBackendTest.java \
@@ -246,6 +248,10 @@ java -ea -cp build deal.test.IrGoldenTest
 echo ""
 echo "=== Running Type Descriptor Tests ==="
 java -ea -cp build deal.test.TypeDescriptorTest
+
+echo ""
+echo "=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310) ==="
+java -ea -cp build deal.test.CanonicalRuntimeTypeDescriptorTest
 
 echo ""
 echo "=== Running Backend Conformance Tests ==="
