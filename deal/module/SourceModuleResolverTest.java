@@ -108,6 +108,7 @@ public final class SourceModuleResolverTest {
                 testDiagnosticRanges();
                 testIdentityMemoization();
                 testSymlinkSpellings();
+                testSymlinkedPinnedStdlibFile();
                 testDeploymentMutation();
                 testDeploymentModuleIdFormula();
                 testPrivacyInvariant();
@@ -285,6 +286,23 @@ public final class SourceModuleResolverTest {
             OutputConfigResolver.Source.MANIFEST,
             OutputConfigResolver.Kind.MANIFEST_RELATIVE_PATH,
             "build/lua", dir.resolve("build/lua").normalize().toString(), null);
+        // The pinned six-file set mirrors ProjectLocator step 6: the
+        // canonical (fully symlink-resolved) path of each spec-listed
+        // file that exists as a regular file under the surface.
+        List<String> pinnedStdlibFiles = new ArrayList<>();
+        if (stdlibSurface != null) {
+            for (String module : ProjectLocator.SPEC_STDLIB_MODULES) {
+                Path pinned = Path.of(stdlibSurface).resolve(module + ".d.deal");
+                if (Files.isRegularFile(pinned)) {
+                    try {
+                        pinnedStdlibFiles.add(pinned.toRealPath().toString());
+                    } catch (IOException ignored) {
+                        // Not a fully resolvable regular file: cannot
+                        // equal a resolved source.
+                    }
+                }
+            }
+        }
         ProjectDeploymentIdentity deployment = new ProjectDeploymentIdentity(
             dir.resolve("deal.json").normalize().toUri().toString(),
             "0".repeat(64));
@@ -299,6 +317,7 @@ public final class SourceModuleResolverTest {
             externals,
             "1.2",
             stdlibSurface,
+            pinnedStdlibFiles,
             deployment);
     }
 
@@ -890,6 +909,71 @@ public final class SourceModuleResolverTest {
                 + " receives no project identity");
     }
 
+    /**
+     * Regression (review finding): a spec-listed stdlib declaration file
+     * that is itself a symlink must still classify as BuiltinModule for
+     * every spelling. ProjectLocator derives the canonical six-file set
+     * at locate (each existing file fully symlink-resolved) and
+     * publishes it on ProjectContext.pinnedStdlibFiles; the pure
+     * classifier compares the canonical source URI against that set, so
+     * the bare std/console import does not fall through to the file-keyed
+     * E2009 gate and the relative spelling does not lose BuiltinModule.
+     */
+    private static void testSymlinkedPinnedStdlibFile() throws Exception {
+        System.out.println("-- Symlinked pinned stdlib file (file-keyed BuiltinModule)");
+        Path dir = fixture("symlinked-stdlib");
+        writeText(dir.resolve("deal.json"),
+            "{\n  \"languageVersion\": \"1.2\",\n"
+                + "  \"moduleRoots\": [\"src\"]\n}\n");
+        writeText(dir.resolve("entry.deal"), "export function main(): null {}\n");
+        writeText(dir.resolve("src/main.deal"), "// importer\n");
+        // The pinned file is itself a symlink to a real file outside the
+        // surface and outside every configured root.
+        Path realFile = writeText(tmpDir.resolve("realstdlib/console.d.deal"),
+            "export function consoleLog(x: string): null\n");
+        Files.createDirectories(dir.resolve("std"));
+        Files.createSymbolicLink(dir.resolve("std/console.d.deal"),
+            realFile.toAbsolutePath());
+        ProjectContext context = locateOrFail(dir, "entry.deal");
+
+        String realPath = realFile.toRealPath().toString();
+        check(context.pinnedStdlibFiles().equals(List.of(realPath)),
+            "locate publishes the fully symlink-resolved pinned file path ("
+                + context.pinnedStdlibFiles() + ")");
+
+        SourceModuleResolver resolver = new SourceModuleResolver(context);
+        Path importer = dir.resolve("src/main.deal");
+        SourceModuleResolver.ResolveResult bare =
+            resolver.resolve(importer.toString(), "std/console");
+        check(bare instanceof SourceModuleResolver.ResolveResult.Resolved,
+            "bare std/console through the symlinked pinned file resolves"
+                + " (no bogus E2009): " + describe(bare));
+        SourceModuleResolver.ResolveResult relative =
+            resolver.resolve(importer.toString(), "../std/console");
+        check(relative instanceof SourceModuleResolver.ResolveResult.Resolved,
+            "relative ../std/console of the same canonical file resolves: "
+                + describe(relative));
+        if (bare instanceof SourceModuleResolver.ResolveResult.Resolved bareHit
+                && relative instanceof SourceModuleResolver.ResolveResult.Resolved
+                    relativeHit) {
+            check(bareHit.location().moduleClassification()
+                        instanceof CanonicalModuleIdentity.BuiltinModule
+                    && bareHit.location().projectIdentity() == null,
+                "bare std/console through the symlinked pinned file carries"
+                    + " BuiltinModule");
+            check(relativeHit.location().moduleClassification()
+                        instanceof CanonicalModuleIdentity.BuiltinModule
+                    && relativeHit.location().projectIdentity() == null,
+                "the relative spelling of the same canonical file carries"
+                    + " BuiltinModule (file-keyed, spelling-independent)");
+            check(bareHit.location() == relativeHit.location(),
+                "both spellings share the one memoized location (one semantic"
+                    + " identity per canonical URI)");
+        }
+        check(resolver.resolvedLocations().size() == 1,
+            "exactly one location published for the one canonical file");
+    }
+
     private static void testDeploymentMutation() throws Exception {
         System.out.println("-- Manifest-content and source-relocation identity changes");
         ProjectContext before = buildMatrixFixture();
@@ -1195,7 +1279,7 @@ public final class SourceModuleResolverTest {
             new OutputConfigResolver.OutputRef(OutputConfigResolver.Source.MANIFEST,
                 OutputConfigResolver.Kind.MANIFEST_RELATIVE_PATH, "build/lua",
                 dir.resolve("build/lua").normalize().toString(), null),
-            "luajit", Map.of(), "1.2", null,
+            "luajit", Map.of(), "1.2", null, List.of(),
             new ProjectDeploymentIdentity(
                 dir.resolve("deal.json").normalize().toUri().toString(),
                 "0".repeat(64)));
@@ -1228,6 +1312,7 @@ public final class SourceModuleResolverTest {
             overlapContext.configuredModuleRoots(), overlapContext.outputPath(),
             overlapContext.backend(), overlapExternals,
             overlapContext.stdlibVersion(), overlapContext.stdlibSurfacePath(),
+            overlapContext.pinnedStdlibFiles(),
             overlapContext.projectDeploymentIdentity());
         ModuleClassification overlap = ModuleIdentityResolver.classify(
             overlapContext, Path.of(pinnedPath).toUri().toString());
