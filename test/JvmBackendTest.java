@@ -27,6 +27,7 @@ import deal.source.ScalarSourceCursor;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -37,6 +38,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Unit tests for the JVM backend skeleton (ISSUE-0091), the first
@@ -290,124 +296,312 @@ import java.util.Set;
  */
 public class JvmBackendTest {
 
-    private static int passed = 0;
-    private static int failed = 0;
-    private static Path tmpDir;
+    private static final AtomicInteger passed = new AtomicInteger();
+    private static final AtomicInteger failed = new AtomicInteger();
 
-    public static void main(String[] args) throws Exception {
-        tmpDir = Files.createTempDirectory("jvm_backend_test_");
+    /**
+     * Per-worker-thread temp project dir (ISSUE-0274 parallel workers):
+     * every test method writes its scratch files into its own directory,
+     * so parallel execution never shares temp state. All created dirs
+     * are registered for the end-of-run cleanup.
+     */
+    private static final ConcurrentLinkedQueue<Path> tmpDirs =
+        new ConcurrentLinkedQueue<>();
+    private static final ThreadLocal<Path> tmpDir =
+        ThreadLocal.withInitial(() -> {
+            try {
+                Path dir = Files.createTempDirectory("jvm_backend_test_");
+                tmpDirs.add(dir);
+                return dir;
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+    /** The per-thread output buffer the dispatch streams route writes to. */
+    private static final ThreadLocal<StringBuilder> OUTPUT_BUFFER =
+        new ThreadLocal<>();
+    /**
+     * Per-thread stderr capture override for the CLI-warning tests: while
+     * set, the dispatch stderr stream routes this thread's stderr writes
+     * into the override instead of the output buffer — the same
+     * observable capture the tests previously performed with a global
+     * {@code System.setErr} swap, without the global race.
+     */
+    private static final ThreadLocal<OutputStream> ERR_CAPTURE =
+        new ThreadLocal<>();
+    private static final Object CONSOLE_LOCK = new Object();
+
+    public static void main(String[] args) {
+        // ISSUE-0274 gate-time work: the 89 test methods spawn over two
+        // hundred java subprocesses and an in-process javac compile each;
+        // running them sequentially kept the suite over the gate's
+        // wall-clock budget. The methods are independent — each writes
+        // into its own per-thread temp dir and its own per-test output
+        // buffer — so they run on a worker pool with the same
+        // deterministic-outcome machinery BackendConformanceTest uses
+        // (atomic counters, per-test buffered output flushed as one
+        // contiguous block, completion-order blocks). The CLI-warning
+        // captures route through the per-thread ERR_CAPTURE override
+        // instead of a global System.setErr swap, so no test needs a
+        // serialized main-thread tail. The pool is sized at 2x the core
+        // count for the same reason BackendConformanceTest oversubscribes:
+        // per-test work is dominated by javac/java subprocess latency, so
+        // the extra workers overlap spawns under concurrent host load.
+        PrintStream realOut = System.out;
+        PrintStream realErr = System.err;
+        System.setOut(new PrintStream(new DispatchStream(realOut, false),
+            true, StandardCharsets.UTF_8));
+        System.setErr(new PrintStream(new DispatchStream(realErr, true),
+            true, StandardCharsets.UTF_8));
+
+        List<TestCase> parallelTests = List.of(
+            new TestCase("testBackendNames", () -> testBackendNames()),
+            new TestCase("testIdentifierTranslation", () -> testIdentifierTranslation()),
+            new TestCase("testClassNameDerivation", () -> testClassNameDerivation()),
+            new TestCase("testEmissionSmoke", () -> testEmissionSmoke()),
+            new TestCase("testUnsupportedConstructsRejected", () -> testUnsupportedConstructsRejected()),
+            new TestCase("testWhileLoops", () -> testWhileLoops()),
+            new TestCase("testWhileFalseBodySkipped", () -> testWhileFalseBodySkipped()),
+            new TestCase("testWhileHoistedConditionPerIteration", () -> testWhileHoistedConditionPerIteration()),
+            new TestCase("testWhileContinueTargetsWhileInsideTransformedFor", () -> testWhileContinueTargetsWhileInsideTransformedFor()),
+            new TestCase("testWhileLoopModuleFieldDominanceGuards", () -> testWhileLoopModuleFieldDominanceGuards()),
+            new TestCase("testWhileModuleLevelReturnRejected", () -> testWhileModuleLevelReturnRejected()),
+            new TestCase("testWhileUseBeforeDeclarationRejected", () -> testWhileUseBeforeDeclarationRejected()),
+            new TestCase("testLoopCondHelperCollision", () -> testLoopCondHelperCollision()),
+            new TestCase("testTemplateLiterals", () -> testTemplateLiterals()),
+            new TestCase("testPrimitiveArrays", () -> testPrimitiveArrays()),
+            new TestCase("testArrayRuntimeErrorCodes", () -> testArrayRuntimeErrorCodes()),
+            new TestCase("testArrayEvaluationOrderHoisted", () -> testArrayEvaluationOrderHoisted()),
+            new TestCase("testArrayReadComparisonNilSemantics", () -> testArrayReadComparisonNilSemantics()),
+            new TestCase("testArrayEvalOrderSideEffectingReceiver", () -> testArrayEvalOrderSideEffectingReceiver()),
+            new TestCase("testArrayReadComparisonBothReadsOrder", () -> testArrayReadComparisonBothReadsOrder()),
+            new TestCase("testArrayReadComparisonPlainLeftOperandOrder", () -> testArrayReadComparisonPlainLeftOperandOrder()),
+            new TestCase("testArrayBoundaryLessReadPositions", () -> testArrayBoundaryLessReadPositions()),
+            new TestCase("testArrayUnsupportedElementTypesRejected", () -> testArrayUnsupportedElementTypesRejected()),
+            new TestCase("testArrayUseBeforeDeclarationGuards", () -> testArrayUseBeforeDeclarationGuards()),
+            new TestCase("testNullReturnSideEffects", () -> testNullReturnSideEffects()),
+            new TestCase("testNullTypedInitializers", () -> testNullTypedInitializers()),
+            new TestCase("testNullTypedCapturesWithReassignment", () -> testNullTypedCapturesWithReassignment()),
+            new TestCase("testNullEquality", () -> testNullEquality()),
+            new TestCase("testStandaloneExpressionStatements", () -> testStandaloneExpressionStatements()),
+            new TestCase("testNumberModStringAndStderrRuntime", () -> testNumberModStringAndStderrRuntime()),
+            new TestCase("testModuleLevelStatements", () -> testModuleLevelStatements()),
+            new TestCase("testShadowedInitializer", () -> testShadowedInitializer()),
+            new TestCase("testParameterShadowing", () -> testParameterShadowing()),
+            new TestCase("testClassSlice", () -> testClassSlice()),
+            new TestCase("testTypeDescriptorEmitter", () -> testTypeDescriptorEmitter()),
+            new TestCase("testSharedCheckSeam", () -> testSharedCheckSeam()),
+            new TestCase("testNullableSlice", () -> testNullableSlice()),
+            new TestCase("testAsyncSlice", () -> testAsyncSlice()),
+            new TestCase("testJsonableSlice", () -> testJsonableSlice()),
+            new TestCase("testImportedClassValues", () -> testImportedClassValues()),
+            new TestCase("testFunctionValues", () -> testFunctionValues()),
+            new TestCase("testCrossModuleFunctionValuesRejected", () -> testCrossModuleFunctionValuesRejected()),
+            new TestCase("testUseBeforeDeclarationRejected", () -> testUseBeforeDeclarationRejected()),
+            new TestCase("testFunctionBodyModuleFieldAccessGuards", () -> testFunctionBodyModuleFieldAccessGuards()),
+            new TestCase("testAssignmentBeforeDeclarationRejected", () -> testAssignmentBeforeDeclarationRejected()),
+            new TestCase("testDeadCodeAfterNonCompletingStatements", () -> testDeadCodeAfterNonCompletingStatements()),
+            new TestCase("testRuntimeErrorCodes", () -> testRuntimeErrorCodes()),
+            new TestCase("testIntSafeRange", () -> testIntSafeRange()),
+            new TestCase("testJavaLangNameCollisions", () -> testJavaLangNameCollisions()),
+            new TestCase("testElseIfChainUseBeforeDeclaration", () -> testElseIfChainUseBeforeDeclaration()),
+            new TestCase("testNonFiniteNumberLiterals", () -> testNonFiniteNumberLiterals()),
+            new TestCase("testShortCircuitPreservation", () -> testShortCircuitPreservation()),
+            new TestCase("testEvaluationOrderPreservation", () -> testEvaluationOrderPreservation()),
+            new TestCase("testStringScalarOrdering", () -> testStringScalarOrdering()),
+            new TestCase("testModuleLevelCallReadingLaterField", () -> testModuleLevelCallReadingLaterField()),
+            new TestCase("testModuleLevelCallBeforeFunctionDeclarationRejected", () -> testModuleLevelCallBeforeFunctionDeclarationRejected()),
+            new TestCase("testRunnerModuleErrorCodeWithExport", () -> testRunnerModuleErrorCodeWithExport()),
+            new TestCase("testOrchestratorJvmBackend", () -> testOrchestratorJvmBackend()),
+            new TestCase("testOrchestratorDefaultStaysLua", () -> testOrchestratorDefaultStaysLua()),
+            new TestCase("testOrchestratorJvmRejectsUnsupported", () -> testOrchestratorJvmRejectsUnsupported()),
+            new TestCase("testOrchestratorJvmImportSupported", () -> testOrchestratorJvmImportSupported()),
+            new TestCase("testStdlibCallEmission", () -> testStdlibCallEmission()),
+            new TestCase("testStdlibTableBoundaryRejected", () -> testStdlibTableBoundaryRejected()),
+            new TestCase("testStdlibExecution", () -> testStdlibExecution()),
+            new TestCase("testStdlibSqrtNegativeRuntimeError", () -> testStdlibSqrtNegativeRuntimeError()),
+            new TestCase("testStdlibScalarSemantics", () -> testStdlibScalarSemantics()),
+            new TestCase("testEntryModuleEmitsJvmEntryPoint", () -> testEntryModuleEmitsJvmEntryPoint()),
+            new TestCase("testEntryGateBackendE6004", () -> testEntryGateBackendE6004()),
+            new TestCase("testEntryE6004ProgramSpanAnchors", () -> testEntryE6004ProgramSpanAnchors()),
+            new TestCase("testJsonableSyntheticE6000Anchor", () -> testJsonableSyntheticE6000Anchor()),
+            new TestCase("testStringForOfScalarIteration", () -> testStringForOfScalarIteration()),
+            new TestCase("testArrayForOfRefElementShapes", () -> testArrayForOfRefElementShapes()),
+            new TestCase("testCatchVarCapturedByNestedFunction", () -> testCatchVarCapturedByNestedFunction()),
+            new TestCase("testBoundaryStringValidation", () -> testBoundaryStringValidation()),
+            new TestCase("testStdlibTimeNowMillis", () -> testStdlibTimeNowMillis()),
+            new TestCase("testStdlibHelperNameCollisions", () -> testStdlibHelperNameCollisions()),
+            new TestCase("testOrchestratorJvmStdlibImport", () -> testOrchestratorJvmStdlibImport()),
+            new TestCase("testOrchestratorJvmDeclarationImportRejected", () -> testOrchestratorJvmDeclarationImportRejected()),
+            new TestCase("testHostAbiSlice", () -> testHostAbiSlice()),
+            new TestCase("testOrchestratorJvmClassCollision", () -> testOrchestratorJvmClassCollision()),
+            new TestCase("testModuleImports", () -> testModuleImports()),
+            new TestCase("testModuleClassIsolation", () -> testModuleClassIsolation()),
+            new TestCase("testModuleUnusedImportLoadTime", () -> testModuleUnusedImportLoadTime()),
+            new TestCase("testModuleImportBackendEmission", () -> testModuleImportBackendEmission()),
+            new TestCase("testModuleImportUseBeforeImportRejected", () -> testModuleImportUseBeforeImportRejected()),
+            new TestCase("testOrchestratorJvmSourceMapWarning", () -> testOrchestratorJvmSourceMapWarning()),
+            new TestCase("testDealConfigBackendField", () -> testDealConfigBackendField()),
+            new TestCase("testCliBackendFlag", () -> testCliBackendFlag()),
+            new TestCase("testFixtureConfigValidation", () -> testFixtureConfigValidation()));
+
+        int workers = Math.max(1, Math.min(
+            2 * Runtime.getRuntime().availableProcessors(),
+            parallelTests.size()));
+        ExecutorService pool = Executors.newFixedThreadPool(workers);
         try {
-            testBackendNames();
-            testIdentifierTranslation();
-            testClassNameDerivation();
-            testEmissionSmoke();
-            testUnsupportedConstructsRejected();
-            testWhileLoops();
-            testWhileFalseBodySkipped();
-            testWhileHoistedConditionPerIteration();
-            testWhileContinueTargetsWhileInsideTransformedFor();
-            testWhileLoopModuleFieldDominanceGuards();
-            testWhileModuleLevelReturnRejected();
-            testWhileUseBeforeDeclarationRejected();
-            testLoopCondHelperCollision();
-            testTemplateLiterals();
-            testPrimitiveArrays();
-            testArrayRuntimeErrorCodes();
-            testArrayEvaluationOrderHoisted();
-            testArrayReadComparisonNilSemantics();
-            testArrayEvalOrderSideEffectingReceiver();
-            testArrayReadComparisonBothReadsOrder();
-            testArrayReadComparisonPlainLeftOperandOrder();
-            testArrayBoundaryLessReadPositions();
-            testArrayUnsupportedElementTypesRejected();
-            testArrayUseBeforeDeclarationGuards();
-            testNullReturnSideEffects();
-            testNullTypedInitializers();
-            testNullTypedCapturesWithReassignment();
-            testNullEquality();
-            testStandaloneExpressionStatements();
-            testNumberModStringAndStderrRuntime();
-            testModuleLevelStatements();
-            testShadowedInitializer();
-            testParameterShadowing();
-            testClassSlice();
-            testTypeDescriptorEmitter();
-            testSharedCheckSeam();
-            testNullableSlice();
-            testAsyncSlice();
-            testJsonableSlice();
-            testImportedClassValues();
-            testFunctionValues();
-            testCrossModuleFunctionValuesRejected();
-            testUseBeforeDeclarationRejected();
-            testFunctionBodyModuleFieldAccessGuards();
-            testAssignmentBeforeDeclarationRejected();
-            testDeadCodeAfterNonCompletingStatements();
-            testRuntimeErrorCodes();
-            testIntSafeRange();
-            testJavaLangNameCollisions();
-            testElseIfChainUseBeforeDeclaration();
-            testNonFiniteNumberLiterals();
-            testShortCircuitPreservation();
-            testEvaluationOrderPreservation();
-            testStringScalarOrdering();
-            testModuleLevelCallReadingLaterField();
-            testModuleLevelCallBeforeFunctionDeclarationRejected();
-            testRunnerModuleErrorCodeWithExport();
-            testOrchestratorJvmBackend();
-            testOrchestratorDefaultStaysLua();
-            testOrchestratorJvmRejectsUnsupported();
-            testOrchestratorJvmImportSupported();
-            testStdlibCallEmission();
-            testStdlibTableBoundaryRejected();
-            testStdlibExecution();
-            testStdlibSqrtNegativeRuntimeError();
-            testStdlibScalarSemantics();
-            // ISSUE-0106 v1.2 slice: entry-module invocation, Unicode
-            // scalar-value string for-of, and boundary string validation.
-            testEntryModuleEmitsJvmEntryPoint();
-            testEntryGateBackendE6004();
-            testEntryE6004ProgramSpanAnchors();
-            testJsonableSyntheticE6000Anchor();
-            testStringForOfScalarIteration();
-            testArrayForOfRefElementShapes();
-            testCatchVarCapturedByNestedFunction();
-            testBoundaryStringValidation();
-            testStdlibTimeNowMillis();
-            testStdlibHelperNameCollisions();
-            testOrchestratorJvmStdlibImport();
-            testOrchestratorJvmDeclarationImportRejected();
-            testHostAbiSlice();
-            testOrchestratorJvmClassCollision();
-            testModuleImports();
-            testModuleClassIsolation();
-            testModuleUnusedImportLoadTime();
-            testModuleImportBackendEmission();
-            testModuleImportUseBeforeImportRejected();
-            testOrchestratorJvmSourceMapWarning();
-            testDealConfigBackendField();
-            testCliBackendFlag();
-            testFixtureConfigValidation();
+            List<Future<?>> futures = new ArrayList<>();
+            for (TestCase test : parallelTests) {
+                futures.add(pool.submit(() -> runTestCaseWorker(test)));
+            }
+            for (Future<?> future : futures) {
+                future.get();
+            }
+        } catch (Exception e) {
+            failed.incrementAndGet();
+            System.err.println("FAIL: harness exception: " + e);
+            e.printStackTrace(System.err);
         } finally {
-            cleanup();
+            pool.shutdownNow();
         }
+        cleanup();
 
         System.out.println();
         System.out.println("=== JVM Backend Test Summary ===");
-        System.out.println("Passed: " + passed + ", Failed: " + failed);
-        if (failed > 0) {
+        System.out.println("Passed: " + passed.get() + ", Failed: "
+            + failed.get());
+        if (failed.get() > 0) {
             System.exit(1);
         }
     }
 
     private static void check(boolean condition, String message) {
-        if (condition) { passed++; }
-        else { failed++; System.err.println("FAIL: " + message); }
+        if (condition) {
+            passed.incrementAndGet();
+        } else {
+            failed.incrementAndGet();
+            System.err.println("FAIL: " + message);
+        }
     }
 
     private static void fail(String message) {
-        failed++;
+        failed.incrementAndGet();
         System.err.println("FAIL: " + message);
+    }
+
+    /** One named test method for the worker pool (ISSUE-0274). */
+    private record TestCase(String name, TestBody body) { }
+
+    /** A test method body: per-test isolated, run once per test. */
+    @FunctionalInterface
+    private interface TestBody {
+        void run() throws Exception;
+    }
+
+    /**
+     * Runs one test method on a worker thread with its own output
+     * buffer, flushed as one contiguous block under the console lock
+     * when the method finishes — the BackendConformanceTest worker
+     * pattern at per-test granularity (ISSUE-0274).
+     */
+    private static void runTestCaseWorker(TestCase test) {
+        StringBuilder buffer = new StringBuilder();
+        OUTPUT_BUFFER.set(buffer);
+        try {
+            test.body().run();
+        } catch (Throwable t) {
+            System.err.println("FAIL: test method '" + test.name()
+                + "' threw: " + t);
+            t.printStackTrace(System.err);
+            failed.incrementAndGet();
+        } finally {
+            OUTPUT_BUFFER.remove();
+            synchronized (CONSOLE_LOCK) {
+                System.out.print(buffer);
+            }
+        }
+    }
+
+    /**
+     * Routes every write to the current thread's output buffer; threads
+     * without a buffer (the main thread before/after the worker pool)
+     * write straight through to the real stream under the console lock.
+     */
+    private static final class DispatchStream extends OutputStream {
+        private final OutputStream sink;
+        private final boolean stderrSide;
+
+        DispatchStream(OutputStream sink, boolean stderrSide) {
+            this.sink = sink;
+            this.stderrSide = stderrSide;
+        }
+
+        @Override
+        public void write(int b) {
+            OutputStream capture = stderrSide ? ERR_CAPTURE.get() : null;
+            if (capture != null) {
+                try {
+                    capture.write(b);
+                } catch (IOException ignored) {
+                }
+                return;
+            }
+            StringBuilder buffer = OUTPUT_BUFFER.get();
+            if (buffer != null) {
+                buffer.append((char) b);
+                return;
+            }
+            synchronized (CONSOLE_LOCK) {
+                try {
+                    sink.write(b);
+                } catch (IOException ignored) {
+                }
+            }
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) {
+            OutputStream capture = stderrSide ? ERR_CAPTURE.get() : null;
+            if (capture != null) {
+                try {
+                    capture.write(b, off, len);
+                } catch (IOException ignored) {
+                }
+                return;
+            }
+            StringBuilder buffer = OUTPUT_BUFFER.get();
+            if (buffer != null) {
+                buffer.append(new String(b, off, len, StandardCharsets.UTF_8));
+                return;
+            }
+            synchronized (CONSOLE_LOCK) {
+                try {
+                    sink.write(b, off, len);
+                } catch (IOException ignored) {
+                }
+            }
+        }
+
+        @Override
+        public void flush() {
+            OutputStream capture = stderrSide ? ERR_CAPTURE.get() : null;
+            if (capture != null) {
+                try {
+                    capture.flush();
+                } catch (IOException ignored) {
+                }
+                return;
+            }
+            if (OUTPUT_BUFFER.get() == null) {
+                synchronized (CONSOLE_LOCK) {
+                    try {
+                        sink.flush();
+                    } catch (IOException ignored) {
+                    }
+                }
+            }
+        }
     }
 
     // =========================================================================
@@ -415,17 +609,19 @@ public class JvmBackendTest {
     // =========================================================================
 
     private static Path writeFile(String relativePath, String content) throws IOException {
-        Path file = tmpDir.resolve(relativePath);
+        Path file = tmpDir.get().resolve(relativePath);
         Files.createDirectories(file.getParent());
         Files.writeString(file, content);
         return file;
     }
 
     private static void cleanup() {
-        try {
-            Files.walk(tmpDir).sorted(Comparator.reverseOrder())
-                .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
-        } catch (IOException ignored) {}
+        for (Path dir : tmpDirs) {
+            try {
+                Files.walk(dir).sorted(Comparator.reverseOrder())
+                    .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+            } catch (IOException ignored) {}
+        }
     }
 
     /** Result of the real frontend pipeline (lexer → parser → resolver → checker). */
@@ -3044,9 +3240,9 @@ public class JvmBackendTest {
               return total;
             }
             """);
-        Path entryFile = tmpDir.resolve("src/refof_main.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/refof");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        Path entryFile = tmpDir.get().resolve("src/refof_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/refof");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
             (DealConfig) null, roots,
@@ -3080,9 +3276,9 @@ public class JvmBackendTest {
               return 0;
             }
             """);
-        Path badEntry = tmpDir.resolve("src2/refof_bad.deal").toAbsolutePath();
-        Path badOut = tmpDir.resolve("build/refof_bad");
-        List<Path> roots2 = List.of(tmpDir.resolve("src2").toAbsolutePath());
+        Path badEntry = tmpDir.get().resolve("src2/refof_bad.deal").toAbsolutePath();
+        Path badOut = tmpDir.get().resolve("build/refof_bad");
+        List<Path> roots2 = List.of(tmpDir.get().resolve("src2").toAbsolutePath());
         CompilationOrchestrator badOrchestrator = new CompilationOrchestrator(
             badEntry, badOut, false, false, false, Backend.JVM,
             (DealConfig) null, roots2,
@@ -3285,10 +3481,10 @@ public class JvmBackendTest {
             }
             """);
         Path catchEntry =
-            tmpDir.resolve("src/catchcap_main.deal").toAbsolutePath();
-        Path catchOut = tmpDir.resolve("build/catchcap");
+            tmpDir.get().resolve("src/catchcap_main.deal").toAbsolutePath();
+        Path catchOut = tmpDir.get().resolve("build/catchcap");
         List<Path> catchRoots =
-            List.of(tmpDir.resolve("src").toAbsolutePath());
+            List.of(tmpDir.get().resolve("src").toAbsolutePath());
         CompilationOrchestrator catchOrchestrator = new CompilationOrchestrator(
             catchEntry, catchOut, false, false, false, Backend.JVM,
             (DealConfig) null, catchRoots,
@@ -5344,9 +5540,9 @@ public class JvmBackendTest {
             writeFile("src/lib.deal", c.libSource());
             writeFile("src/entry.deal", c.entrySource());
 
-            Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
-            Path outputDir = tmpDir.resolve("build/xmod_fv");
-            List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+            Path entryFile = tmpDir.get().resolve("src/entry.deal").toAbsolutePath();
+            Path outputDir = tmpDir.get().resolve("build/xmod_fv");
+            List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
 
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
                 entryFile, outputDir, false, false, false, Backend.JVM,
@@ -6772,11 +6968,11 @@ public class JvmBackendTest {
             }
             """);
 
-        Path entryFile = tmpDir.resolve("src/jvm_main.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/jvm");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        Path entryFile = tmpDir.get().resolve("src/jvm_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/jvm");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
 
-        DealConfig config = DealConfig.load(tmpDir).config();
+        DealConfig config = DealConfig.load(tmpDir.get()).config();
         check(config != null && "jvm".equals(config.backend()),
             "deal.json backend jvm parsed");
 
@@ -6828,9 +7024,9 @@ public class JvmBackendTest {
             export function run(): null { console.log("default-lua"); }
             """);
 
-        Path entryFile = tmpDir.resolve("src/default_main.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/default_lua");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        Path entryFile = tmpDir.get().resolve("src/default_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/default_lua");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
 
         // The pre-ISSUE-0091 constructor (no backend parameter).
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
@@ -6864,9 +7060,9 @@ public class JvmBackendTest {
             export function run(): int { return 1; }
             """);
 
-        Path entryFile = tmpDir.resolve("src/unsupported_main.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/unsupported");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        Path entryFile = tmpDir.get().resolve("src/unsupported_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/unsupported");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
@@ -6889,9 +7085,9 @@ public class JvmBackendTest {
             }
             export function run(): int { return 1; }
             """);
-        Path optionalEntry = tmpDir.resolve("src/optional_main.deal")
+        Path optionalEntry = tmpDir.get().resolve("src/optional_main.deal")
             .toAbsolutePath();
-        Path optionalOut = tmpDir.resolve("build/optional_supported");
+        Path optionalOut = tmpDir.get().resolve("build/optional_supported");
         CompilationOrchestrator optionalOrchestrator =
             new CompilationOrchestrator(
                 optionalEntry, optionalOut, false, false, false,
@@ -7819,9 +8015,9 @@ public class JvmBackendTest {
             }
             """);
 
-        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/imported_class");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        Path entryFile = tmpDir.get().resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/imported_class");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
@@ -7869,9 +8065,9 @@ public class JvmBackendTest {
             }
             """);
 
-        Path entryFile2 = tmpDir.resolve("src2/entry.deal").toAbsolutePath();
-        Path outputDir2 = tmpDir.resolve("build/imported_class_same_name");
-        List<Path> roots2 = List.of(tmpDir.resolve("src2").toAbsolutePath());
+        Path entryFile2 = tmpDir.get().resolve("src2/entry.deal").toAbsolutePath();
+        Path outputDir2 = tmpDir.get().resolve("build/imported_class_same_name");
+        List<Path> roots2 = List.of(tmpDir.get().resolve("src2").toAbsolutePath());
 
         CompilationOrchestrator orchestrator2 = new CompilationOrchestrator(
             entryFile2, outputDir2, false, false, false, Backend.JVM,
@@ -7913,9 +8109,9 @@ public class JvmBackendTest {
             }
             """);
 
-        Path entryFile3 = tmpDir.resolve("src3/entry.deal").toAbsolutePath();
-        Path outputDir3 = tmpDir.resolve("build/imported_class_construct");
-        List<Path> roots3 = List.of(tmpDir.resolve("src3").toAbsolutePath());
+        Path entryFile3 = tmpDir.get().resolve("src3/entry.deal").toAbsolutePath();
+        Path outputDir3 = tmpDir.get().resolve("build/imported_class_construct");
+        List<Path> roots3 = List.of(tmpDir.get().resolve("src3").toAbsolutePath());
 
         CompilationOrchestrator orchestrator3 = new CompilationOrchestrator(
             entryFile3, outputDir3, false, false, false, Backend.JVM,
@@ -7958,9 +8154,9 @@ public class JvmBackendTest {
             }
             """);
 
-        Path entryFile4 = tmpDir.resolve("src4/entry.deal").toAbsolutePath();
-        Path outputDir4 = tmpDir.resolve("build/imported_class_defaults");
-        List<Path> roots4 = List.of(tmpDir.resolve("src4").toAbsolutePath());
+        Path entryFile4 = tmpDir.get().resolve("src4/entry.deal").toAbsolutePath();
+        Path outputDir4 = tmpDir.get().resolve("build/imported_class_defaults");
+        List<Path> roots4 = List.of(tmpDir.get().resolve("src4").toAbsolutePath());
 
         CompilationOrchestrator orchestrator4 = new CompilationOrchestrator(
             entryFile4, outputDir4, false, false, false, Backend.JVM,
@@ -8023,13 +8219,13 @@ public class JvmBackendTest {
             }
             """);
 
-        Path outputDir5 = tmpDir.resolve("build/imported_nominal");
+        Path outputDir5 = tmpDir.get().resolve("build/imported_nominal");
         // Success entry: entry.deal (the orchestrator resolves only the
         // imports each entry needs).
         CompilationOrchestrator orchestrator5 = new CompilationOrchestrator(
-            tmpDir.resolve("src5/entry.deal").toAbsolutePath(),
+            tmpDir.get().resolve("src5/entry.deal").toAbsolutePath(),
             outputDir5, false, false, false, Backend.JVM,
-            (DealConfig) null, List.of(tmpDir.resolve("src5").toAbsolutePath()),
+            (DealConfig) null, List.of(tmpDir.get().resolve("src5").toAbsolutePath()),
             Path.of(".").toAbsolutePath().normalize());
         boolean success5 = orchestrator5.compile();
         check(success5, "cross-module nominal check success shape compiles: "
@@ -8048,11 +8244,11 @@ public class JvmBackendTest {
                 + "check: " + exec.output());
         }
 
-        Path outputDir6 = tmpDir.resolve("build/imported_nominal_fail");
+        Path outputDir6 = tmpDir.get().resolve("build/imported_nominal_fail");
         CompilationOrchestrator orchestrator6 = new CompilationOrchestrator(
-            tmpDir.resolve("src5/entry_fail.deal").toAbsolutePath(),
+            tmpDir.get().resolve("src5/entry_fail.deal").toAbsolutePath(),
             outputDir6, false, false, false, Backend.JVM,
-            (DealConfig) null, List.of(tmpDir.resolve("src5").toAbsolutePath()),
+            (DealConfig) null, List.of(tmpDir.get().resolve("src5").toAbsolutePath()),
             Path.of(".").toAbsolutePath().normalize());
         boolean success6 = orchestrator6.compile();
         check(success6, "cross-module nominal check failure shape compiles: "
@@ -8089,9 +8285,9 @@ public class JvmBackendTest {
             }
             """);
 
-        Path entryFile6 = tmpDir.resolve("src6/entry.deal").toAbsolutePath();
-        Path outputDir7 = tmpDir.resolve("build/imported_class_passthrough");
-        List<Path> roots6 = List.of(tmpDir.resolve("src6").toAbsolutePath());
+        Path entryFile6 = tmpDir.get().resolve("src6/entry.deal").toAbsolutePath();
+        Path outputDir7 = tmpDir.get().resolve("build/imported_class_passthrough");
+        List<Path> roots6 = List.of(tmpDir.get().resolve("src6").toAbsolutePath());
 
         CompilationOrchestrator orchestrator7 = new CompilationOrchestrator(
             entryFile6, outputDir7, false, false, false, Backend.JVM,
@@ -8435,9 +8631,9 @@ public class JvmBackendTest {
             export function run(): int { return 1; }
             """);
 
-        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/import_supported");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        Path entryFile = tmpDir.get().resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/import_supported");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
@@ -8636,9 +8832,9 @@ public class JvmBackendTest {
             export function main(): null { return null; }
             export function run(): int { return 1; }
             """);
-        Path entryFile = tmpDir.resolve("src/table_import.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/table_boundary");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        Path entryFile = tmpDir.get().resolve("src/table_import.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/table_boundary");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
             (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
@@ -8830,9 +9026,9 @@ public class JvmBackendTest {
             }
             """);
 
-        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/stdlib_import");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        Path entryFile = tmpDir.get().resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/stdlib_import");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
@@ -8898,9 +9094,9 @@ public class JvmBackendTest {
             export function run(): int { return m.foo(); }
             """);
 
-        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/import_decl_rejected");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        Path entryFile = tmpDir.get().resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/import_decl_rejected");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
@@ -8931,7 +9127,7 @@ public class JvmBackendTest {
             export function main(): null { return null; }
             export function run(): int { return 1; }
             """);
-        Path outputDir2 = tmpDir.resolve("build/import_decl_class");
+        Path outputDir2 = tmpDir.get().resolve("build/import_decl_class");
         CompilationOrchestrator orchestrator2 = new CompilationOrchestrator(
             entryFile, outputDir2, false, false, false, Backend.JVM,
             (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
@@ -8995,10 +9191,10 @@ public class JvmBackendTest {
             }
             """);
 
-        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/host_abi");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
-        DealConfig config = DealConfig.load(tmpDir).config();
+        Path entryFile = tmpDir.get().resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/host_abi");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
+        DealConfig config = DealConfig.load(tmpDir.get()).config();
         check(config != null, "deal.json with externals loads");
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
@@ -9033,7 +9229,7 @@ public class JvmBackendTest {
         // Real execution: javac over the artifacts + host class + runner,
         // then java. The host's load-time call, the nullable return, and
         // the exported add run end to end.
-        Files.copy(tmpDir.resolve("HostLog.java"), outputDir.resolve("HostLog.java"));
+        Files.copy(tmpDir.get().resolve("HostLog.java"), outputDir.resolve("HostLog.java"));
         Files.writeString(outputDir.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(
                 parseProgram("""
@@ -9068,13 +9264,13 @@ public class JvmBackendTest {
                 public static Object fetch() { return java.util.concurrent.CompletableFuture.completedFuture("d"); }
             }
             """);
-        Path outputDir2 = tmpDir.resolve("build/host_abi_missing");
+        Path outputDir2 = tmpDir.get().resolve("build/host_abi_missing");
         CompilationOrchestrator orchestrator2 = new CompilationOrchestrator(
             entryFile, outputDir2, false, false, false, Backend.JVM,
             config, roots, Path.of(".").toAbsolutePath().normalize());
         check(orchestrator2.compile(), "missing-export project still compiles (the check is load-time): "
             + orchestrator2.diagnostics());
-        Files.copy(tmpDir.resolve("HostLogMissing.java"),
+        Files.copy(tmpDir.get().resolve("HostLogMissing.java"),
             outputDir2.resolve("HostLog.java"));
         Files.writeString(outputDir2.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(
@@ -9114,14 +9310,14 @@ public class JvmBackendTest {
             export function main(): null { return null; }
             export function run(): string { return log.value(); }
             """);
-        Path entryBad = tmpDir.resolve("src/entry_bad.deal").toAbsolutePath();
-        Path outputDir3 = tmpDir.resolve("build/host_abi_bad_ret");
+        Path entryBad = tmpDir.get().resolve("src/entry_bad.deal").toAbsolutePath();
+        Path outputDir3 = tmpDir.get().resolve("build/host_abi_bad_ret");
         CompilationOrchestrator orchestrator3 = new CompilationOrchestrator(
             entryBad, outputDir3, false, false, false, Backend.JVM,
             config, roots, Path.of(".").toAbsolutePath().normalize());
         check(orchestrator3.compile(), "bad-return project compiles: "
             + orchestrator3.diagnostics());
-        Files.copy(tmpDir.resolve("HostLogBad.java"),
+        Files.copy(tmpDir.get().resolve("HostLogBad.java"),
             outputDir3.resolve("HostLog.java"));
         Files.writeString(outputDir3.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(
@@ -9160,13 +9356,13 @@ public class JvmBackendTest {
                 public static Object fetch() { return java.util.concurrent.CompletableFuture.completedFuture("d"); }
             }
             """);
-        Path outputDirSur = tmpDir.resolve("build/host_abi_bad_surrogate");
+        Path outputDirSur = tmpDir.get().resolve("build/host_abi_bad_surrogate");
         CompilationOrchestrator orchestratorSur = new CompilationOrchestrator(
             entryBad, outputDirSur, false, false, false, Backend.JVM,
             config, roots, Path.of(".").toAbsolutePath().normalize());
         check(orchestratorSur.compile(), "surrogate-return project compiles: "
             + orchestratorSur.diagnostics());
-        Files.copy(tmpDir.resolve("HostLogBadSurrogate.java"),
+        Files.copy(tmpDir.get().resolve("HostLogBadSurrogate.java"),
             outputDirSur.resolve("HostLog.java"));
         Files.writeString(outputDirSur.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(
@@ -9200,14 +9396,14 @@ public class JvmBackendTest {
             export function main(): null { return null; }
             export async function run(): string { return await log.fetch(); }
             """);
-        Path entryAsync = tmpDir.resolve("src/entry_async.deal").toAbsolutePath();
-        Path outputDir4 = tmpDir.resolve("build/host_abi_async_ok");
+        Path entryAsync = tmpDir.get().resolve("src/entry_async.deal").toAbsolutePath();
+        Path outputDir4 = tmpDir.get().resolve("build/host_abi_async_ok");
         CompilationOrchestrator orchestrator4 = new CompilationOrchestrator(
             entryAsync, outputDir4, false, false, false, Backend.JVM,
             config, roots, Path.of(".").toAbsolutePath().normalize());
         check(orchestrator4.compile(), "async host import compiles: "
             + orchestrator4.diagnostics());
-        Files.copy(tmpDir.resolve("HostLog.java"),
+        Files.copy(tmpDir.get().resolve("HostLog.java"),
             outputDir4.resolve("HostLog.java"));
         Files.writeString(outputDir4.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(
@@ -9241,13 +9437,13 @@ public class JvmBackendTest {
                 public static Object fetch() { return "not-an-operation"; }
             }
             """);
-        Path outputDir5 = tmpDir.resolve("build/host_abi_async_shape");
+        Path outputDir5 = tmpDir.get().resolve("build/host_abi_async_shape");
         CompilationOrchestrator orchestrator5 = new CompilationOrchestrator(
             entryAsync, outputDir5, false, false, false, Backend.JVM,
             config, roots, Path.of(".").toAbsolutePath().normalize());
         check(orchestrator5.compile(), "async shape project compiles: "
             + orchestrator5.diagnostics());
-        Files.copy(tmpDir.resolve("HostLogAsyncShape.java"),
+        Files.copy(tmpDir.get().resolve("HostLogAsyncShape.java"),
             outputDir5.resolve("HostLog.java"));
         Files.writeString(outputDir5.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(
@@ -9280,13 +9476,13 @@ public class JvmBackendTest {
                 public static Object fetch() { return java.util.concurrent.CompletableFuture.completedFuture(Long.valueOf(7L)); }
             }
             """);
-        Path outputDir6 = tmpDir.resolve("build/host_abi_async_completion");
+        Path outputDir6 = tmpDir.get().resolve("build/host_abi_async_completion");
         CompilationOrchestrator orchestrator6 = new CompilationOrchestrator(
             entryAsync, outputDir6, false, false, false, Backend.JVM,
             config, roots, Path.of(".").toAbsolutePath().normalize());
         check(orchestrator6.compile(), "async completion project compiles: "
             + orchestrator6.diagnostics());
-        Files.copy(tmpDir.resolve("HostLogAsyncCompletion.java"),
+        Files.copy(tmpDir.get().resolve("HostLogAsyncCompletion.java"),
             outputDir6.resolve("HostLog.java"));
         Files.writeString(outputDir6.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(
@@ -9323,13 +9519,13 @@ public class JvmBackendTest {
                 public static Object fetch() { return java.util.concurrent.CompletableFuture.completedFuture("a" + (char) 0xDC00 + "b"); }
             }
             """);
-        Path outputDir7 = tmpDir.resolve("build/host_abi_async_surrogate");
+        Path outputDir7 = tmpDir.get().resolve("build/host_abi_async_surrogate");
         CompilationOrchestrator orchestrator7 = new CompilationOrchestrator(
             entryAsync, outputDir7, false, false, false, Backend.JVM,
             config, roots, Path.of(".").toAbsolutePath().normalize());
         check(orchestrator7.compile(), "async surrogate project compiles: "
             + orchestrator7.diagnostics());
-        Files.copy(tmpDir.resolve("HostLogAsyncSurrogate.java"),
+        Files.copy(tmpDir.get().resolve("HostLogAsyncSurrogate.java"),
             outputDir7.resolve("HostLog.java"));
         Files.writeString(outputDir7.resolve("JvmConformanceRunner.java"),
             BackendConformanceTest.buildJvmRunner(
@@ -9396,9 +9592,9 @@ public class JvmBackendTest {
             export function run(): int { return lib.add(10, 20); }
             """);
 
-        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/imports");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        Path entryFile = tmpDir.get().resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/imports");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
@@ -9453,9 +9649,9 @@ public class JvmBackendTest {
             export function run(): int { return aCalc.compute() * 10 + bCalc.compute(); }
             """);
 
-        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/isolation");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        Path entryFile = tmpDir.get().resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/isolation");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
@@ -9512,9 +9708,9 @@ public class JvmBackendTest {
             export function run(): int { return b.plus(c.base()); }
             """);
 
-        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/sibling_imports");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        Path entryFile = tmpDir.get().resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/sibling_imports");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
@@ -9689,9 +9885,9 @@ public class JvmBackendTest {
             export function main(): null { return null; }
             """);
 
-        Path entryFile = tmpDir.resolve("src/entry.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/collision");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        Path entryFile = tmpDir.get().resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/collision");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
@@ -9736,23 +9932,21 @@ public class JvmBackendTest {
             export function run(): int { return 1; }
             """);
 
-        Path entryFile = tmpDir.resolve("src/sm_main.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("build/sm_jvm");
-        List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
+        Path entryFile = tmpDir.get().resolve("src/sm_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/sm_jvm");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, true, Backend.JVM,
             (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
 
-        PrintStream originalErr = System.err;
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         boolean success;
         try {
-            System.setErr(new PrintStream(captured, true, StandardCharsets.UTF_8));
+            ERR_CAPTURE.set(captured);
             success = orchestrator.compile();
         } finally {
-            System.err.flush();
-            System.setErr(originalErr);
+            ERR_CAPTURE.remove();
         }
         check(success, "JVM compile with --source-map succeeds");
         String warning = captured.toString(StandardCharsets.UTF_8);
@@ -9769,18 +9963,17 @@ public class JvmBackendTest {
         // --dump-ir derives the sourceMap flag internally (IR hardening
         // enables source maps with dumps) but is NOT an explicit
         // --source-map request: the warning must not fire.
-        Path dumpIrOut = tmpDir.resolve("build/sm_dumpir");
+        Path dumpIrOut = tmpDir.get().resolve("build/sm_dumpir");
         CompilationOrchestrator dumpIrOnly = new CompilationOrchestrator(
             entryFile, dumpIrOut, false, true, true, false, Backend.JVM,
             (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
         ByteArrayOutputStream capturedDumpIr = new ByteArrayOutputStream();
         boolean dumpIrSuccess;
         try {
-            System.setErr(new PrintStream(capturedDumpIr, true, StandardCharsets.UTF_8));
+            ERR_CAPTURE.set(capturedDumpIr);
             dumpIrSuccess = dumpIrOnly.compile();
         } finally {
-            System.err.flush();
-            System.setErr(originalErr);
+            ERR_CAPTURE.remove();
         }
         check(dumpIrSuccess, "JVM compile with --dump-ir (no --source-map) succeeds");
         check(!capturedDumpIr.toString(StandardCharsets.UTF_8).contains("source-map"),
@@ -9796,11 +9989,10 @@ public class JvmBackendTest {
         ByteArrayOutputStream capturedBoth = new ByteArrayOutputStream();
         boolean bothSuccess;
         try {
-            System.setErr(new PrintStream(capturedBoth, true, StandardCharsets.UTF_8));
+            ERR_CAPTURE.set(capturedBoth);
             bothSuccess = both.compile();
         } finally {
-            System.err.flush();
-            System.setErr(originalErr);
+            ERR_CAPTURE.remove();
         }
         check(bothSuccess, "JVM compile with --dump-ir --source-map succeeds");
         check(capturedBoth.toString(StandardCharsets.UTF_8).contains("source-map"),
@@ -9878,9 +10070,9 @@ public class JvmBackendTest {
             writeFile("lua_proj/src/lua_alias_main.deal",
                 "export function main(): null { return null; }\n"
                 + "export function run(): null {}");
-            Path luaEntry = tmpDir.resolve("lua_proj/src/lua_alias_main.deal")
+            Path luaEntry = tmpDir.get().resolve("lua_proj/src/lua_alias_main.deal")
                 .toAbsolutePath();
-            Path luaOut = tmpDir.resolve("build/lua_alias");
+            Path luaOut = tmpDir.get().resolve("build/lua_alias");
             int rc = deal.Main.run(new String[] {
                 "compile", luaEntry.toString(),
                 "--output", luaOut.toString()});
@@ -9902,9 +10094,9 @@ public class JvmBackendTest {
             writeFile("jvm_proj/src/jvm_alias_main.deal",
                 "export function main(): null { return null; }\n"
                 + "export function run(): int { return 6 * 7; }");
-            Path jvmEntry = tmpDir.resolve("jvm_proj/src/jvm_alias_main.deal")
+            Path jvmEntry = tmpDir.get().resolve("jvm_proj/src/jvm_alias_main.deal")
                 .toAbsolutePath();
-            Path jvmOut = tmpDir.resolve("build/jvm_alias");
+            Path jvmOut = tmpDir.get().resolve("build/jvm_alias");
             int rc = deal.Main.run(new String[] {
                 "compile", jvmEntry.toString(),
                 "--output", jvmOut.toString()});
@@ -9931,8 +10123,8 @@ public class JvmBackendTest {
                 }
                 """);
 
-            Path entry = tmpDir.resolve("src/cli_main.deal").toAbsolutePath();
-            Path outDir = tmpDir.resolve("build/cli_jvm");
+            Path entry = tmpDir.get().resolve("src/cli_main.deal").toAbsolutePath();
+            Path outDir = tmpDir.get().resolve("build/cli_jvm");
 
             int rc = deal.Main.run(new String[] {
                 "compile", entry.toString(),
@@ -9951,7 +10143,7 @@ public class JvmBackendTest {
             check(rcBad == 1, "CLI rejects unknown backend");
 
             // Default (no flag, no manifest backend field) stays LuaJIT.
-            Path outLua = tmpDir.resolve("build/cli_default");
+            Path outLua = tmpDir.get().resolve("build/cli_default");
             int rcDefault = deal.Main.run(new String[] {
                 "compile", entry.toString(),
                 "--output", outLua.toString()});
@@ -9962,18 +10154,16 @@ public class JvmBackendTest {
             // --dump-ir derives the sourceMap flag internally (IR hardening
             // enables source maps with dumps); the JVM source-map warning
             // must fire only for an explicit --source-map request.
-            PrintStream originalErr = System.err;
             ByteArrayOutputStream capturedDump = new ByteArrayOutputStream();
             try {
-                System.setErr(new PrintStream(capturedDump, true, StandardCharsets.UTF_8));
+                ERR_CAPTURE.set(capturedDump);
                 int rcDump = deal.Main.run(new String[] {
                     "compile", entry.toString(),
                     "--output", outDir.toString(),
                     "--backend", "jvm", "--dump-ir"});
                 check(rcDump == 0, "CLI --backend jvm --dump-ir exits 0");
             } finally {
-                System.err.flush();
-                System.setErr(originalErr);
+                ERR_CAPTURE.remove();
             }
             check(!capturedDump.toString(StandardCharsets.UTF_8).contains("source-map"),
                 "--dump-ir alone prints no JVM source-map warning: "
@@ -9981,15 +10171,14 @@ public class JvmBackendTest {
 
             ByteArrayOutputStream capturedBoth = new ByteArrayOutputStream();
             try {
-                System.setErr(new PrintStream(capturedBoth, true, StandardCharsets.UTF_8));
+                ERR_CAPTURE.set(capturedBoth);
                 int rcBoth = deal.Main.run(new String[] {
                     "compile", entry.toString(),
                     "--output", outDir.toString(),
                     "--backend", "jvm", "--dump-ir", "--source-map"});
                 check(rcBoth == 0, "CLI --backend jvm --dump-ir --source-map exits 0");
             } finally {
-                System.err.flush();
-                System.setErr(originalErr);
+                ERR_CAPTURE.remove();
             }
             check(capturedBoth.toString(StandardCharsets.UTF_8).contains("source-map"),
                 "--dump-ir --source-map prints the JVM source-map warning: "

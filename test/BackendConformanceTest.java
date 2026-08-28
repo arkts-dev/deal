@@ -404,21 +404,62 @@ public class BackendConformanceTest {
                 .sorted().toList();
         }
 
-        // ISSUE-0109 gate-time work: fixture files are independent
-        // temp-root projects, so they run in parallel worker threads —
-        // sequential execution kept the suite over the gate's wall-clock
-        // budget because every JVM fixture spawns a javac + java pair.
-        // Each file buffers its output and flushes it as one contiguous
-        // block (FILE_OUTPUT / CONSOLE_LOCK), so parallel files never
-        // interleave lines and the per-test evidence stays readable.
+        // ISSUE-0109 gate-time work, extended by ISSUE-0274: every
+        // fixture case is an independent temp-root project, so cases run
+        // as individual parallel worker tasks — the per-FILE granularity
+        // still serialized each file's cases inside one worker, and the
+        // largest files (67 sequential JVM subprocess cases) kept the
+        // suite over the gate's wall-clock budget. File-level validation
+        // (version, the tests array) stays deterministic on the main
+        // thread below; each case buffers its output and flushes it as
+        // one contiguous block (FILE_OUTPUT / CONSOLE_LOCK), so parallel
+        // cases never interleave lines and the per-test evidence stays
+        // readable. The pool is sized at 2x the core count: case work is
+        // dominated by subprocess startup and child-CPU latency (javac /
+        // java / node per case), so oversubscription overlaps process
+        // spawns and keeps the suite under the gate's wall-clock budget
+        // even when the host runs other work concurrently.
+        List<Object[]> caseTasks = new ArrayList<>();
+        for (Path file : fixtureFiles) {
+            log("--- Fixture: " + file.getFileName() + " ---");
+            try {
+                String raw = Files.readString(file);
+                Map<String, Object> root = (Map<String, Object>) parseJson(raw);
+
+                Object version = root.get("version");
+                if (!"1.0".equals(String.valueOf(version))) {
+                    log("  FAIL: unsupported version: " + version);
+                    failed.incrementAndGet();
+                    continue;
+                }
+
+                List<Map<String, Object>> tests =
+                    (List<Map<String, Object>>) root.get("tests");
+                if (tests == null) {
+                    log("  FAIL: no 'tests' array in fixture");
+                    failed.incrementAndGet();
+                    continue;
+                }
+
+                for (Map<String, Object> test : tests) {
+                    caseTasks.add(new Object[] {
+                        file.getFileName().toString(), test });
+                }
+            } catch (Exception e) {
+                log("  FAIL: error processing fixture: " + e.getMessage());
+                e.printStackTrace(System.out);
+                failed.incrementAndGet();
+            }
+        }
         int workers = Math.max(1,
-            Math.min(Runtime.getRuntime().availableProcessors(),
-                fixtureFiles.size()));
+            Math.min(2 * Runtime.getRuntime().availableProcessors(),
+                caseTasks.size()));
         ExecutorService pool = Executors.newFixedThreadPool(workers);
         try {
             List<Future<?>> futures = new ArrayList<>();
-            for (Path file : fixtureFiles) {
-                futures.add(pool.submit(() -> runFixtureFile(file)));
+            for (Object[] task : caseTasks) {
+                futures.add(pool.submit(() -> runFixtureCase(
+                    (String) task[0], (Map<String, Object>) task[1])));
             }
             for (Future<?> future : futures) {
                 future.get();
@@ -624,39 +665,22 @@ public class BackendConformanceTest {
     }
 
     @SuppressWarnings("unchecked")
-    private static void runFixtureFile(Path file) {
+    /**
+     * Runs one fixture case on a worker thread with its own output
+     * buffer, flushed as one contiguous block under {@link #CONSOLE_LOCK}
+     * when the case finishes (the ISSUE-0109 worker pattern at per-case
+     * granularity).
+     */
+    private static void runFixtureCase(String fixtureName,
+                                       Map<String, Object> test) {
         StringBuilder buffer = new StringBuilder();
         FILE_OUTPUT.set(buffer);
         try {
-            log("--- Fixture: " + file.getFileName() + " ---");
-
-            try {
-                String raw = Files.readString(file);
-                Map<String, Object> root = (Map<String, Object>) parseJson(raw);
-
-                Object version = root.get("version");
-                if (!"1.0".equals(String.valueOf(version))) {
-                    log("  FAIL: unsupported version: " + version);
-                    failed.incrementAndGet();
-                    return;
-                }
-
-                List<Map<String, Object>> tests =
-                    (List<Map<String, Object>>) root.get("tests");
-                if (tests == null) {
-                    log("  FAIL: no 'tests' array in fixture");
-                    failed.incrementAndGet();
-                    return;
-                }
-
-                for (Map<String, Object> test : tests) {
-                    runTestCase(file.getFileName().toString(), test);
-                }
-            } catch (Exception e) {
-                log("  FAIL: error processing fixture: " + e.getMessage());
-                e.printStackTrace(System.out);
-                failed.incrementAndGet();
-            }
+            runTestCase(fixtureName, test);
+        } catch (Exception e) {
+            log("  FAIL: error processing fixture case: " + e.getMessage());
+            e.printStackTrace(System.out);
+            failed.incrementAndGet();
         } finally {
             FILE_OUTPUT.remove();
             synchronized (CONSOLE_LOCK) {
