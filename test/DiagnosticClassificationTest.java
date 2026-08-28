@@ -312,7 +312,9 @@ public class DiagnosticClassificationTest {
         coverage.put("E6003", "LuaBackendTest (rest parameter rejection)");
         coverage.put("E6004", "LuaBackendTest / JvmBackendTest (entry main validation)");
         coverage.put("E6005",
-            "LoweringFoundationTest (common semantic lowering failure; ISSUE-0230 foundation)");
+            "FailureContractRegistryTest (registry-owned detail/message construction; "
+            + "ISSUE-0230 foundation, ISSUE-0285) — LoweringFoundationTest pins the "
+            + "registration");
 
         coverage.put("E7001", "ModuleSystemTest (decl file exec stmt)");
         coverage.put("E7002",

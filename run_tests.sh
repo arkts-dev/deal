@@ -51,6 +51,7 @@ javac --release 25 -proc:none -d build \
   test/DiagnosticClassificationTest.java \
   test/LoweringFoundationTest.java \
   test/SemanticIrSchemaTest.java \
+  test/FailureContractRegistryTest.java \
   test/AstAndTypesTest.java \
   test/LexerTest.java \
   test/ParserTest.java \
@@ -143,6 +144,10 @@ java -ea -cp build deal.test.LoweringFoundationTest
 echo ""
 echo "=== Running Semantic IR Schema Tests (ISSUE-0282) ==="
 java -ea -cp build deal.test.SemanticIrSchemaTest
+
+echo ""
+echo "=== Running Failure Contract Registry Tests (ISSUE-0285) ==="
+java -ea -cp build deal.test.FailureContractRegistryTest
 
 echo ""
 echo "=== Running Protected Path Ops Tests (ISSUE-0262) ==="
