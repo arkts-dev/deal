@@ -1,13 +1,17 @@
 /*
- * DEALPG4 outer feature supervisor (ISSUE-0293, epic Sequencing step 1):
- * the outer mode entry surface, the in-process outer core entry, the D1
- * entry preamble, the ppoll loop skeleton with the non-blocking
- * write-side discipline, the nested-spawn seam, and the exit-status
- * mapping.
+ * DEALPG4 outer feature supervisor (ISSUE-0293/ISSUE-0294, epic
+ * Sequencing steps 1-2): the outer mode entry surface, the in-process
+ * outer core entry, the D1 entry preamble, the ppoll loop with the
+ * non-blocking write-side discipline, the nested-spawn seam, the
+ * exit-status mapping, the coordinator fork with the pre-exec
+ * bootstrap (COORD_READY publication + report-first /proc cross-check),
+ * the continuous 1 MiB coordinator stream drains, the D8 escalation
+ * machinery with the COORDINATOR_HANG escalation-deadline trigger, the
+ * COORDINATOR_STARTUP_FAILED by-pid termination scope, and the
+ * final-proof skeleton.
  *
- * See dealpg4-outer-supervisor-engine D1/D2 for the pinned surfaces
- * (outer-coordinator-and-broker D1-D9 preserved). This child replaces
- * the stage placeholder:
+ * See dealpg4-outer-supervisor-engine D1/D2/D5/D6 for the pinned
+ * surfaces (outer-coordinator-and-broker D1-D9 preserved):
  *  - the mode entry owns only surface binding: the pinned argv shape
  *    "launcher outer <coordinatorNonce> -- <coordinator-argv...>"
  *    (usage errors on stderr, exit 2, no fork, no socket, no channel),
@@ -16,16 +20,16 @@
  *    capture/restore;
  *  - the core owns the D1 entry preamble and T0o (setsid, ignore
  *    SIGHUP/SIGPIPE, subreaper set + read-back, shellPid, T0o, the
- *    total-deadline timerfd, signalfd(SIGCHLD), the outerNonce), the
- *    ppoll loop skeleton (the single timerfd carrying the earliest
- *    applicable deadline; never blocked on a write), the write-side
- *    discipline (bounded per-record queues, POLLOUT flushes, overflow
- *    dropped with the truncation flag), the final report plumbing, and
- *    the exit-status mapping.
- * The coordinator fork/bootstrap, broker socket, registry, nested
- * forks, fallbacks, escalation, and final proof land with the next
- * sequencing steps; this child owns the mapping, the report plumbing,
- * and the entry-level tokens it can produce.
+ *    timerfd, signalfd(SIGCHLD), the outerNonce), the coordinator
+ *    lifecycle (pre-exec pipe, COORD_READY wait + cross-check, the
+ *    stream drains, the D8 escalation, the final proof), the ppoll
+ *    loop (the single timerfd carrying the earliest applicable
+ *    deadline; never blocked on a write), the write-side discipline,
+ *    the final report, and the exit-status mapping.
+ * The broker socket, registry, nested forks, fallbacks, and the
+ * remaining final-sequence discrimination land with the next
+ * sequencing steps; this child owns the coordinator machinery and the
+ * proof slots it can run.
  */
 #ifndef DEALPG4_OUTER_H
 #define DEALPG4_OUTER_H
@@ -105,8 +109,10 @@ int dealpg4_outer_entry(int argc, char **argv);
 /*
  * In-process outer core entry. The core owns the D1 entry preamble and
  * T0o (so the battery's forked scenario process gets the identical
- * entry behavior), the ppoll loop, and the report/exit discipline; the
- * mode entry owns only surface binding.
+ * entry behavior), the coordinator lifecycle (pre-exec pipe +
+ * COORD_READY wait + report-first cross-check + continuous stream
+ * drains + D8 escalation + final proof), the ppoll loop, and the
+ * report/exit discipline; the mode entry owns only surface binding.
  *
  * Fail-closed core-entry validation before any fork/socket/channel:
  * limits ordering (nestedStopMs + cleanupReserveMs <= overallTimeoutMs,
@@ -115,13 +121,14 @@ int dealpg4_outer_entry(int argc, char **argv);
  * lowercase hex; coordinator argv non-empty; socket_dir non-empty. No
  * fork, socket, or channel on violation.
  *
- * Return status: 0 on the clean exit (the full D8 discrimination —
- * records, coordinator, proof — holds); 1
- * (DEALPG4_OUTER_EXIT_GATE_FAILURE) for any gate failure;
- * DEALPG4_EXIT_CONFIG_INVALID (3); DEALPG4_EXIT_CAPABILITY_MISSING (4)
- * for capability-class entry refusals. The final report goes to
- * report_fd (not a DEALPG4 record) with named tokens and per-record
- * states; the report-fd flag set is restored before every exit.
+ * Return status: 0 on the clean exit (the D8 discrimination — the
+ * coordinator reaped with status 0, no live records, the final proof
+ * passed — holds); 1 (DEALPG4_OUTER_EXIT_GATE_FAILURE) for any gate
+ * failure; DEALPG4_EXIT_CONFIG_INVALID (3);
+ * DEALPG4_EXIT_CAPABILITY_MISSING (4) for capability-class entry
+ * refusals. The final report goes to report_fd (not a DEALPG4 record)
+ * with named tokens, coordinator facts, and the proof result; the
+ * report-fd flag set is restored before every exit.
  */
 int dealpg4_outer_core(const OuterLimits *limits,
                        const char coordinator_nonce[33],
@@ -133,12 +140,14 @@ int dealpg4_outer_core(const OuterLimits *limits,
 
 /* Named fail-site tags (int tags through dealpg4_fi_hooks.fail): a
  * scripted nonzero return forces the named failure path with the
- * scripted value as errno; 0 runs the real syscall. The four entry
- * sites land with this child; the remaining D6 fail sites
- * (FI_OUTER_PIPE, FI_OUTER_BIND, FI_OUTER_SOCKETPAIR, FI_OUTER_FORK,
- * FI_COORD_READY_MISMATCH, FI_OUTER_DEATH) and the delay/congestion
- * catalog land with the children that own the coordinator pipe, the
- * broker socket, and the nested fork machinery. */
+ * scripted value as errno; 0 runs the real syscall. The entry sites
+ * (FI_OUTER_SUBREAPER / FI_OUTER_TIMERFD / FI_OUTER_SIGNALFD /
+ * FI_OUTER_NONCE) land with the entry child; FI_OUTER_PIPE and
+ * FI_COORD_READY_MISMATCH land with this child (the coordinator pipe
+ * owner). The remaining D6 fail sites (FI_OUTER_BIND,
+ * FI_OUTER_SOCKETPAIR, FI_OUTER_FORK, FI_OUTER_DEATH) and the
+ * congestion catalog land with the children that own the broker
+ * socket and the nested fork machinery. */
 enum dealpg4_outer_fi_fail_site {
     FI_OUTER_SUBREAPER = 1, /* entry prctl set/read-back fails ->
                              * CAPABILITY_MISSING, exit 4 */
@@ -146,17 +155,35 @@ enum dealpg4_outer_fi_fail_site {
                              * TIMER_FAILED, exit 4 */
     FI_OUTER_SIGNALFD = 3,  /* entry signalfd(SIGCHLD) fails ->
                              * CAPABILITY_MISSING, exit 4 */
-    FI_OUTER_NONCE = 4      /* entry getrandom(2) outerNonce fails ->
+    FI_OUTER_NONCE = 4,     /* entry getrandom(2) outerNonce fails ->
                              * NONCE_FAILED, exit 1 */
+    FI_OUTER_PIPE = 5,      /* the coordinator pre-exec pipe or a
+                             * coordinator stream drain pipe fails
+                             * before the coordinator fork -> no fork,
+                             * gate-fatal, final report token
+                             * COORDINATOR_STARTUP_FAILED (the
+                             * unverified-group discharge trivially
+                             * holds — nothing was ever forked) */
+    FI_COORD_READY_MISMATCH = 6 /* the coordinator child writes a
+                                 * scripted COORD_READY whose pgid/sid
+                                 * differ from its actual values (the
+                                 * report lies; the outer's
+                                 * report//proc cross-check disagrees)
+                                 * -> COORDINATOR_STARTUP_FAILED */
 };
+
+/* Named delay-site tags (string tags through dealpg4_fi_hooks.
+ * delay_ms; an injected delay sleeps exactly the scripted ms before
+ * the named step and consumes the component's own deadline — an
+ * injection never extends a deadline, fi.h). Production: the
+ * requested 0 ms at every site. */
+#define DEALPG4_FI_DELAY_OUTER_PRE_COORD_FORK    "outer-pre-coord-fork"
+#define DEALPG4_FI_DELAY_COORD_POST_FORK         "coord-post-fork"
+#define DEALPG4_FI_DELAY_COORD_PRE_READY_WRITE   "coord-pre-ready-write"
 
 /* === Exit-status mapping (engine D1) =================================== */
 
-/* The run-outcome facts the mapping consumes. This child owns the
- * mapping; the lifecycle machinery that produces records and
- * classifications lands with the next sequencing steps (at this stage
- * the core fills the stage facts: no coordinator reaped, an empty
- * registry, the proof not run). */
+/* The run-outcome facts the mapping consumes. */
 typedef struct dealpg4_outer_outcome {
     int coordinator_reaped;   /* waitid observed the coordinator */
     int coordinator_exited_0; /* reaped CLD_EXITED with status 0 */
@@ -196,7 +223,7 @@ typedef struct dealpg4_outer_result {
                                generation failed */
     int setsid_ok;          /* the preamble established a session */
     int subreaper_ok;       /* prctl set + read-back == 1 */
-    int timerfd_ok;         /* the total-deadline timerfd armed */
+    int timerfd_ok;         /* the deadline timerfd armed */
     int signalfd_ok;        /* signalfd(SIGCHLD) created */
     int readiness_fired;    /* recipe readiness deadline evaluated as
                                fired (T0o + readinessTimeoutMs) */
@@ -211,11 +238,71 @@ typedef struct dealpg4_outer_result {
     uint64_t sigchld_events; /* SIGCHLD events drained by the loop */
     size_t ntokens;         /* named gate tokens recorded */
     char tokens[DEALPG4_OUTER_MAX_TOKENS][DEALPG4_OUTER_TOKEN_BYTES];
+
+    /* Coordinator lifecycle (engine D1/D5/D8). */
+    pid_t coordinator_pid;       /* -1 when never forked */
+    pid_t coordinator_pgid;      /* 0 when never verified (the
+                                    pipe-published cross-checked
+                                    group — never a /proc race) */
+    pid_t coordinator_sid;       /* 0 when never verified */
+    int ready_verified;          /* COORD_READY received and every
+                                    cross-check held */
+    int coord_exec_failed;       /* COORD_EXEC_FAILED observed */
+    int coordinator_reaped;      /* waitid observed the coordinator */
+    int coordinator_si_code;     /* reaped si_code (CLD_*) */
+    int coordinator_si_status;   /* reaped si_status */
+    int coordinator_exited_0;    /* CLD_EXITED with status 0 */
+    /* D8 escalation facts. */
+    int escalation_term_issued;  /* the TERM step ran */
+    int escalation_term_sent;    /* a TERM was dispatched */
+    int escalation_kill_issued;  /* the KILL step ran */
+    int escalation_kill_sent;    /* a KILL was dispatched */
+    int escalation_group_scope;  /* 1 = -pgid (verified group),
+                                    0 = by pid (unverified group) */
+    int group_liveness_checked;  /* kill(-pgid, 0) attempt observed
+                                    (never against an unverified
+                                    group) */
+    int64_t escalation_term_ms;  /* t0o-relative ms of the TERM step */
+    int64_t escalation_kill_ms;  /* t0o-relative ms of the KILL step */
+    /* Final-proof facts. */
+    int proof_passed;          /* the proof completed clean */
+    int proof_reap_echild;     /* waitid reached ECHILD */
+    int proof_adopted_clean;   /* no /proc task with ppid == outerPid */
+    int proof_group_clean;     /* coordinator group absent (vacuous
+                                  under the unverified group) */
+    int proof_streams_eof;     /* both coordinator stream fds at EOF */
+    int proof_broker_clean;    /* broker connection closed and socket
+                                  unlinked (vacuous until the broker
+                                  child — the check slot is wired) */
+    int proof_registry_clean;  /* every registry record terminal
+                                  (registry empty at this stage) */
+    /* Shell loss (parent D1). */
+    int shell_lost;            /* EPIPE/EBADF on the report stdout or
+                                  getppid() != shellPid */
+    /* Coordinator stream drains. */
+    uint64_t coord_stdout_bytes; /* drain total_read */
+    uint64_t coord_stderr_bytes;
+    int coord_stdout_truncated;
+    int coord_stderr_truncated;
+    int coord_stdout_eof;
+    int coord_stderr_eof;
+    uint64_t reap_count;        /* children reaped by the outer */
+    uint64_t adopt_count;       /* adopted descendants found/scanned */
 } dealpg4_outer_result;
 
 /* Copy the most recent core call's result view (zeroed when no core
  * call ran or the call was refused before the preamble). */
 void dealpg4_outer_last_result(dealpg4_outer_result *out);
+
+/* Read-only view of the most recent core call's two coordinator
+ * stream drain contexts (stdout and stderr in that order): the final
+ * retained content (1 MiB cap + the truncation marker), the
+ * truncation flag, the total read, and the EOF state the component
+ * tests and the ISSUE-0184 battery assert against. Valid until the
+ * next core call; a call refused before the coordinator start leaves
+ * empty contexts. */
+void dealpg4_outer_drain_state(const dealpg4_drain_ctx **stdout_ctx,
+                               const dealpg4_drain_ctx **stderr_ctx);
 
 /* === Write-side discipline (engine D1/D5, canonical write-side
  * contract) =============================================================
