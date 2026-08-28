@@ -297,17 +297,19 @@ static int core_validation_fn(void)
     return 0;
 }
 
-/* === Group 3: preamble observation ===================================== */
+/* === Group 3: preamble observation + clean coordinator run ============= */
 
 static int preamble_observation_fn(void)
 {
-    OuterLimits limits = {4000, 500, 2000, 2000, 200};
-    char *argv[] = {(char *)"coordinator-script", NULL};
+    OuterLimits limits = {10000, 500, 8000, 2000, 200};
+    char *argv[] = {(char *)"/bin/true", NULL};
     int pipefd[2];
     uint64_t before;
     uint64_t after;
     pid_t shell;
     dealpg4_outer_result view;
+    const dealpg4_drain_ctx *dout = NULL;
+    const dealpg4_drain_ctx *derr = NULL;
     char report[512];
     ssize_t total = 0;
     int status;
@@ -323,11 +325,13 @@ static int preamble_observation_fn(void)
     after = dealpg4_now_ms();
     close(pipefd[1]);
 
-    /* The run terminated at the scaled total deadline (4000 ms) with
-     * the stage gate failure. */
-    CHECK(status == DEALPG4_OUTER_EXIT_GATE_FAILURE);
-    CHECK(after - before >= 3900);
-    CHECK(after - before < 30000);
+    /* The clean coordinator run: /bin/true publishes COORD_READY
+     * (verified), execs, and exits 0 — the outer verifies the report
+     * against /proc and getpgid/getsid, drains both streams to EOF,
+     * reaps status 0, runs the final proof, and exits 0 well before
+     * any recipe deadline. */
+    CHECK(status == 0);
+    CHECK(after - before < 10000);
 
     /* Preamble completed: session leader, subreaper read-back. */
     CHECK(getsid(0) == getpgid(0) && getpgid(0) == getpid());
@@ -344,15 +348,48 @@ static int preamble_observation_fn(void)
     CHECK(view.subreaper_ok == 1);
     CHECK(view.timerfd_ok == 1);
     CHECK(view.signalfd_ok == 1);
-    CHECK(view.readiness_fired == 1);
-    CHECK(view.cutoff_fired == 1);
-    CHECK(view.total_fired == 1);
-    CHECK(view.gate_failure == 1);
-    CHECK(view.exit_status == 1);
-    CHECK(view.ntokens == 1);
-    CHECK(strcmp(view.tokens[0], "OVERALL_TIMEOUT") == 0);
+    /* The run completed before any recipe deadline fired. */
+    CHECK(view.readiness_fired == 0);
+    CHECK(view.cutoff_fired == 0);
+    CHECK(view.total_fired == 0);
+    CHECK(view.gate_failure == 0);
+    CHECK(view.exit_status == 0);
+    CHECK(view.ntokens == 0);
     CHECK(view.report_flags_captured == 1);
     CHECK(view.report_flags_restored == 1);
+
+    /* Coordinator lifecycle: verified COORD_READY (pgid == sid ==
+     * pid after the child's setsid), clean reap, no escalation (a
+     * healthy coordinator is never signaled), proof complete. */
+    CHECK(view.coordinator_pid > 0);
+    CHECK(view.ready_verified == 1);
+    CHECK(view.coordinator_pgid == view.coordinator_pid);
+    CHECK(view.coordinator_sid == view.coordinator_pid);
+    CHECK(view.coordinator_reaped == 1);
+    CHECK(view.coordinator_exited_0 == 1);
+    CHECK(view.coordinator_si_code == CLD_EXITED);
+    CHECK(view.coordinator_si_status == 0);
+    CHECK(view.escalation_term_issued == 0);
+    CHECK(view.escalation_kill_issued == 0);
+    CHECK(view.escalation_group_scope == 0);
+    CHECK(view.group_liveness_checked == 0);
+    CHECK(view.proof_passed == 1);
+    CHECK(view.proof_reap_echild == 1);
+    CHECK(view.proof_adopted_clean == 1);
+    CHECK(view.proof_group_clean == 1);
+    CHECK(view.proof_streams_eof == 1);
+    CHECK(view.proof_broker_clean == 1);
+    CHECK(view.proof_registry_clean == 1);
+    CHECK(view.shell_lost == 0);
+
+    /* Stream drains: /bin/true writes nothing; both reach EOF with no
+     * truncation. */
+    dealpg4_outer_drain_state(&dout, &derr);
+    CHECK(dout != NULL && derr != NULL);
+    CHECK(dout->eof == 1 && derr->eof == 1);
+    CHECK(dout->failed == 0 && derr->failed == 0);
+    CHECK(dout->truncated == 0 && derr->truncated == 0);
+    CHECK(dout->total_read == 0 && derr->total_read == 0);
 
     /* The outerNonce: exactly 32 lowercase hex (getrandom-backed). */
     for (i = 0; i < 32; i++) {
@@ -362,11 +399,12 @@ static int preamble_observation_fn(void)
     }
     CHECK(view.outer_nonce[32] == '\0');
 
-    /* No fork (no coordinator machinery at this stage), no socket. */
+    /* The coordinator was reaped: no children remain; no socket. */
     check_no_children();
     CHECK(outer_socket_path_count("build") == 0);
 
-    /* The final report on the report fd: header + token line. */
+    /* The final report on the report fd: header + coordinator facts +
+     * proof line, no token lines. */
     for (;;) {
         ssize_t r = read(pipefd[0], report + total,
                          sizeof report - (size_t)total - 1);
@@ -381,9 +419,11 @@ static int preamble_observation_fn(void)
     }
     close(pipefd[0]);
     report[total] = '\0';
-    CHECK(strstr(report, "OUTER final 1 ") != NULL);
+    CHECK(strstr(report, "OUTER final 0 ") != NULL);
     CHECK(strstr(report, " records=0\n") != NULL);
-    CHECK(strstr(report, "OUTER token OVERALL_TIMEOUT\n") != NULL);
+    CHECK(strstr(report, "OUTER coord pid=") != NULL);
+    CHECK(strstr(report, "OUTER proof ok\n") != NULL);
+    CHECK(strstr(report, "OUTER token ") == NULL);
     return 0;
 }
 
@@ -701,8 +741,8 @@ int main(void)
     }
     CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 
-    /* Group 3: preamble observation (runs ~4 s at the scaled total
-     * deadline). */
+    /* Group 3: preamble observation + the clean /bin/true
+     * coordinator run (fast: the coordinator exits 0 immediately). */
     errbuf[0] = '\0';
     if (run_capture_child(preamble_observation_fn, errbuf, sizeof errbuf,
                           &status) != 0) {
