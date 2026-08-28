@@ -113,6 +113,15 @@ public enum DiagnosticCode {
     /** @jsonable directive is only valid on 'export class'. */
     E1043(Phase.FRONTEND, "Invalid @jsonable directive placement"),
 
+    /** Unrecognized compiler directive. */
+    E1044(Phase.FRONTEND, "Unrecognized compiler directive"),
+
+    /** Invalid compiler directive argument. */
+    E1045(Phase.FRONTEND, "Invalid compiler directive argument"),
+
+    /** Invalid compiler directive placement or version. */
+    E1046(Phase.FRONTEND, "Invalid compiler directive placement or version"),
+
     /** Rest parameters are not supported in DEAL v1.2. */
     E1047(Phase.FRONTEND, "Rest parameters are not supported in DEAL v1.2"),
 
@@ -270,6 +279,9 @@ public enum DiagnosticCode {
 
     /** Declaration file cannot contain executable statement. */
     E7001(Phase.FRONTEND, "Declaration file cannot contain executable statement"),
+
+    /** Invalid C FFI declaration. */
+    E7002(Phase.FRONTEND, "Invalid C FFI declaration"),
 
     // =========================================================================
     // E8xxx — runtime errors (RUNTIME) — emitted from runtime.lua

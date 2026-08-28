@@ -243,6 +243,12 @@ public class DiagnosticClassificationTest {
 
         for (int i = 1001; i <= 1004; i++) coverage.put("E" + i, "LexerTest");
         for (int i = 1005; i <= 1043; i++) coverage.put("E" + i, "ParserTest");
+        coverage.put("E1044",
+            "LexerTest / DirectiveTest (unrecognized directive)");
+        coverage.put("E1045",
+            "ParserTest / DirectiveTest (directive argument)");
+        coverage.put("E1046",
+            "ParserTest / DirectiveTest (directive placement/version)");
         coverage.put("E1047", "ParserTest (rest parameters removed in v1.2)");
         coverage.put("E1048", "ModuleSystemTest (import after declaration)");
         coverage.put("E1049", "ModuleSystemTest (top-level statement)");
@@ -307,6 +313,9 @@ public class DiagnosticClassificationTest {
         coverage.put("E6004", "LuaBackendTest / JvmBackendTest (entry main validation)");
 
         coverage.put("E7001", "ModuleSystemTest (decl file exec stmt)");
+        coverage.put("E7002",
+            "DirectiveTest (directive-level C marker validation; "
+            + "semantic policy: ISSUE-0162)");
 
         coverage.put("E8001", "test_runtime.lua / LuaBackendIntegrationTest");
         coverage.put("E8002", "LuaBackendIntegrationTest (array OOB)");
