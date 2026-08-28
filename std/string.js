@@ -127,16 +127,16 @@ $string.replace = $rt.function("(string,string,string)->string", function(s, old
 // plain-text string.find loop (a trailing separator yields the empty
 // last element). The exit check validates the array and each string
 // element.
-$string.split = $rt.function("(string,string)->string[]", function(s, sep, $file, $line, $column) {
+$string.split = $rt.function("(string,string)->[string]", function(s, sep, $file, $line, $column) {
   $rt.checkString(s, $file, $line, $column);
   $rt.checkString(sep, $file, $line, $column);
   if (s === "") {
-    return $rt.checkArray("string[]", [], $file, $line, $column);
+    return $rt.checkArray("[string]", [], $file, $line, $column);
   }
   if (sep === "") {
-    return $rt.checkArray("string[]", $rt.scalars(s), $file, $line, $column);
+    return $rt.checkArray("[string]", $rt.scalars(s), $file, $line, $column);
   }
-  return $rt.checkArray("string[]", s.split(sep), $file, $line, $column);
+  return $rt.checkArray("[string]", s.split(sep), $file, $line, $column);
 });
 
 // trim(s: string): string — strips the leading and trailing Lua %s set

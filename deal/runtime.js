@@ -75,163 +75,255 @@ function $kindOf($v) {
   return typeof $v;
 }
 
-// ===== Descriptor parser (js-backend-runtime-artifact D4) =====
-// $parse: the module-private mirror of parse_descriptor
-// (deal/runtime.lua:287-415), step-for-step under parse order P:
-// (i) "?T" prefix -> nullable; (ii) async strip + function branch (leading
-// "(", depth-aware top-level "->" scan with ")" immediately before the
-// arrow) — the function branch precedes every suffix rule, so
-// "(int)->int|null" reads Func(ret=Nullable) and "(int)->int[]" reads
-// Func(ret=Array), while the "?T" prefix precedes the function branch, so
-// "?(int)->int" reads Nullable(Func); (iii) "|null" end-anchored top-level
-// suffix (legacy nullable); (iv) "[]" suffix (legacy array); (v) "[T]"
-// prefix (array disambiguation); (vi) "@path/Name" class; (vii) primitives
-// null|boolean|int|number|string|bytes|table — bytes included so its
-// dispatch reaches the defensive E6000 (D3; the reference's primitive set
-// omits it only because its frontend never emits it,
-// deal/runtime.lua:404-412); (viii) bare class-name fallback (the builtin
-// Error parses here). Records are $-keyed: { $t, $inner },
-// { $t, $async, $params, $ret }, { $t, $element }, { $t, $name }. The
-// parser is total over strings — no string descriptor reaches a
-// cannot-parse state (D4). The non-string guard mirrors parse_descriptor's
-// nil return (deal/runtime.lua:287-290); checkType routes only strict null
-// to its nil arm before this guard ever runs.
+// ===== Canonical descriptor parser (js-v12-completion-architecture D3) =====
+// $parse: the module-private canonical descriptor parser — the runtime
+// realization of CanonicalRuntimeTypeDescriptor.parse (the strict
+// recursive-descent grammar over Unicode scalars with complete-input
+// consumption). Only canonical spellings parse: primitive names
+// null|boolean|int|number|string|bytes|table; "[D]" arrays; "?D"
+// nullables ("?D" and "[D]" accept ANY descriptor D, function
+// descriptors included — "?(int)->int" and "[(int)->int]" parse);
+// "async"? "(params)" "->" D functions; "@" class atoms with at least two
+// components and an identifier-shaped final component, carried verbatim
+// (byte-for-byte nominal compare). Every legacy spelling — "T[]",
+// "T|null", rest-parameter sigs, bare class names, the bare "Error"
+// atom, dotted class-name-position text, nested nullables ("??T"),
+// nullable-of-null ("?null"), empty/malformed arrays and functions,
+// invalid class atoms, trailing content — fails the parse and returns
+// null, so checkType raises the pinned defensive E8001
+// "internal: cannot parse type descriptor: {text}". Records stay
+// $-keyed exactly like the retired parser: { $t: "nullable", $inner },
+// { $t: "function", $async, $params, $ret }, { $t: "array", $element },
+// { $t: "primitive", $name }, { $t: "class", $name } — the dispatch
+// surface is unchanged, only the accepted grammar is. The non-string
+// guard mirrors parse_descriptor's nil return (deal/runtime.lua:287-290);
+// checkType routes only strict null to its nil arm before this guard
+// ever runs.
+
+// The pinned component whitespace set of the canonical grammar (Java
+// Character.isWhitespace || Character.isSpaceChar over the v1.2 alphabet):
+// every JS \s scalar minus U+FEFF, plus U+0085 and U+200B.
+const $CANONICAL_WS = /[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200B\u2028\u2029\u202F\u205F\u3000]/u;
+
 function $parse($descriptor) {
   if ($descriptor === $undefined || $descriptor === null || typeof $descriptor !== "string") {
     return null;
   }
-
-  const $d = $descriptor;
-
-  // (i) Nullable: "?T" prefix (spec form). Must bind before the function
-  // branch and before every suffix rule.
-  if ($d[0] === "?") {
-    return { $t: "nullable", $inner: $d.slice(1) };
+  // Decode the string into Unicode scalars with their UTF-16 indices
+  // (a codePointAt walk), so the grammar runs over scalar positions and
+  // record texts slice back to byte-identical substrings.
+  const $cps = [];
+  for (let $i = 0; $i < $descriptor.length;) {
+    const $cp = $descriptor.codePointAt($i);
+    $cps.push({ $cp: $cp, $idx: $i });
+    $i += $cp > 0xFFFF ? 2 : 1;
   }
-
-  // (ii) Function: "(params)->ret" or "async(params)->ret". The "async"
-  // prefix is recognized inside the function branch, after the "?T" prefix
-  // but before any suffix stripping.
-  let $isAsync = false;
-  let $dFn = $d;
-  if ($dFn.slice(0, 5) === "async") {
-    $isAsync = true;
-    $dFn = $dFn.slice(5); // strip "async", leaving "(params)->ret"
+  const $st = { $pos: 0 };
+  const $node = $parseOne($descriptor, $cps, $st);
+  if ($node === null || $st.$pos !== $cps.length) {
+    // Complete-input consumption is mandatory: any failure or any
+    // trailing content (the legacy T[]/T|null spellings included) is
+    // unparsable text.
+    return null;
   }
-
-  if ($dFn[0] === "(") {
-    let $arrowPos = null;
-    let $depth = 0;
-    for (let $i = 0; $i < $dFn.length; $i++) {
-      const $c = $dFn[$i];
-      if ($c === "(" || $c === "[") {
-        $depth++;
-      } else if ($c === ")" || $c === "]") {
-        $depth--;
-      } else if ($depth === 0 && $i + 2 <= $dFn.length && $dFn.slice($i, $i + 2) === "->") {
-        $arrowPos = $i;
-        break;
-      }
-    }
-    if ($arrowPos !== null) {
-      const $paramsStr = $dFn.slice(1, $arrowPos - 1); // content between ( and )
-      if ($dFn[$arrowPos - 1] === ")") { // the ")" immediately before the arrow
-        const $retType = $dFn.slice($arrowPos + 2);
-        const $params = [];
-        if ($paramsStr !== "") {
-          // Comma-separated parameters, respecting nesting.
-          $depth = 0;
-          let $start = 0;
-          for (let $i = 0; $i < $paramsStr.length; $i++) {
-            const $c = $paramsStr[$i];
-            if ($c === "(" || $c === "[") {
-              $depth++;
-            } else if ($c === ")" || $c === "]") {
-              $depth--;
-            } else if ($depth === 0 && $c === ",") {
-              $params.push($paramsStr.slice($start, $i));
-              $start = $i + 1;
-            }
-          }
-          $params.push($paramsStr.slice($start));
-        }
-        // Async functions report $ret "null" so the declared return type R
-        // is enforced at the await site, not by the wrapper
-        // (deal/runtime.lua:369-375).
-        if ($isAsync) {
-          return { $t: "function", $async: true, $params: $params, $ret: "null" };
-        }
-        return { $t: "function", $async: false, $params: $params, $ret: $retType };
-      }
-    }
-  }
-
-  // (iii) Nullable: "T|null" legacy suffix (end-anchored, top-level only).
-  // Reached only when the string is not a function descriptor, so a "|null"
-  // inside "(...)->..." can never win over the arrow.
-  let $nullPos = null;
-  let $depth = 0;
-  for (let $i = 0; $i < $d.length; $i++) {
-    const $c = $d[$i];
-    if ($c === "(" || $c === "[") {
-      $depth++;
-    } else if ($c === ")" || $c === "]") {
-      $depth--;
-    } else if ($depth === 0 && $i + 5 <= $d.length && $d.slice($i, $i + 5) === "|null") {
-      const $rest = $d.slice($i + 5);
-      if ($rest === "") {
-        $nullPos = $i;
-        break;
-      }
-    }
-  }
-  if ($nullPos !== null) {
-    return { $t: "nullable", $inner: $d.slice(0, $nullPos) };
-  }
-
-  // (iv) Array: "T[]" legacy suffix.
-  if ($d.length >= 2 && $d.slice(-2) === "[]") {
-    return { $t: "array", $element: $d.slice(0, $d.length - 2) };
-  }
-
-  // (v) Array: "[T]" prefix (spec form).
-  if ($d.length >= 2 && $d[0] === "[" && $d[$d.length - 1] === "]") {
-    return { $t: "array", $element: $d.slice(1, $d.length - 1) };
-  }
-
-  // (vi) Class: "@path/ClassName" format.
-  if ($d[0] === "@") {
-    return { $t: "class", $name: $d };
-  }
-
-  // (vii) Primitive types — bytes included (D4).
-  if ($d === "null" || $d === "boolean" || $d === "int" || $d === "number" ||
-      $d === "string" || $d === "bytes" || $d === "table") {
-    return { $t: "primitive", $name: $d };
-  }
-
-  // (viii) Assume it's a class name (simple identifier) — "ClassName"
-  // without the "@" prefix for local classes; the builtin Error parses
-  // here.
-  return { $t: "class", $name: $d };
+  return $node;
 }
 
-// ===== Array element extraction (js-backend-runtime-artifact D3) =====
-// $arrayElementDescriptor: the mirror of array_element_descriptor
-// (deal/runtime.lua:239-254) — "T[]" suffix -> "T", "[T]" prefix -> "T",
-// else the E8001 "invalid array descriptor" error. The strict === null
-// nil arm mirrors the reference's defensive guard (deal/runtime.lua:240-242);
-// reachable only through direct misuse — checkType dispatches checkArray
-// only with the string descriptor it parsed (A3). Non-string descriptors
-// fail loudly via the invalid-arm text, never a raw TypeError.
+// The UTF-16 index of a scalar position, or the string end.
+function $scalarIdx($cps, $scalarPos) {
+  return $scalarPos < $cps.length ? $cps[$scalarPos].$idx : Infinity;
+}
+
+// The text slice covering scalar positions [$startScalar, $endScalar).
+function $slice($d, $cps, $startScalar, $endScalar) {
+  const $endIdx = $scalarIdx($cps, $endScalar);
+  return $d.slice($cps[$startScalar].$idx, $endIdx === Infinity ? $d.length : $endIdx);
+}
+
+// One descriptor at the current scalar position; null on any failure.
+// No partial AST is ever produced.
+function $parseOne($d, $cps, $st) {
+  if ($st.$pos >= $cps.length) return null;
+  const $cp = $cps[$st.$pos].$cp;
+  if ($cp === 0x5B) { // '['
+    return $parseArray($d, $cps, $st);
+  }
+  if ($cp === 0x3F) { // '?'
+    return $parseNullable($d, $cps, $st);
+  }
+  if ($cp === 0x28) { // '('
+    return $parseFunction($d, $cps, $st, false);
+  }
+  if ($cp === 0x40) { // '@'
+    return $parseClass($d, $cps, $st);
+  }
+  // Primitive keywords (disjoint, so order does not matter) — bytes
+  // included so its dispatch reaches the defensive E6000 gate.
+  const $keywords = ["null", "boolean", "int", "number", "string", "bytes", "table"];
+  for (let $k = 0; $k < $keywords.length; $k++) {
+    if ($matchKeyword($cps, $st.$pos, $keywords[$k])) {
+      const $name = $keywords[$k];
+      $st.$pos += $name.length;
+      return { $t: "primitive", $name: $name };
+    }
+  }
+  // The exact async marker: "async" immediately followed by "(".
+  if ($matchKeyword($cps, $st.$pos, "async")
+      && $st.$pos + 5 < $cps.length && $cps[$st.$pos + 5].$cp === 0x28) {
+    $st.$pos += 5;
+    return $parseFunction($d, $cps, $st, true);
+  }
+  // Every other spelling — bare class names ("Error" included),
+  // "T[]"/"T|null" shapes, rest sigs — is unparsable.
+  return null;
+}
+
+// "[ descriptor ]".
+function $parseArray($d, $cps, $st) {
+  $st.$pos++; // consume '['
+  const $innerStart = $st.$pos;
+  const $inner = $parseOne($d, $cps, $st);
+  if ($inner === null) return null;
+  if ($st.$pos >= $cps.length || $cps[$st.$pos].$cp !== 0x5D) return null;
+  const $element = $slice($d, $cps, $innerStart, $st.$pos);
+  $st.$pos++; // consume ']'
+  return { $t: "array", $element: $element };
+}
+
+// "? descriptor" with the pinned nested-nullable/null-inner rejections
+// (the canonical grammar's D2 rules; "?D" accepts every other
+// descriptor D, function descriptors included).
+function $parseNullable($d, $cps, $st) {
+  $st.$pos++; // consume '?'
+  const $innerStart = $st.$pos;
+  const $inner = $parseOne($d, $cps, $st);
+  if ($inner === null) return null;
+  if ($inner.$t === "nullable") return null;
+  if ($inner.$t === "primitive" && $inner.$name === "null") return null;
+  return { $t: "nullable", $inner: $slice($d, $cps, $innerStart, $st.$pos) };
+}
+
+// async? "(" (descriptor ("," descriptor)*)? ")" "->" descriptor.
+// No rest-parameter arm exists in DEAL v1.2.
+function $parseFunction($d, $cps, $st, $isAsync) {
+  $st.$pos++; // consume '('
+  const $params = [];
+  if ($st.$pos < $cps.length && $cps[$st.$pos].$cp !== 0x29) { // ')'
+    while (true) {
+      const $paramStart = $st.$pos;
+      const $param = $parseOne($d, $cps, $st);
+      if ($param === null) return null;
+      $params.push($slice($d, $cps, $paramStart, $st.$pos));
+      if ($st.$pos >= $cps.length) return null;
+      if ($cps[$st.$pos].$cp === 0x2C) { $st.$pos++; continue; } // ','
+      if ($cps[$st.$pos].$cp === 0x29) break; // ')'
+      return null;
+    }
+  }
+  if ($st.$pos >= $cps.length) return null;
+  $st.$pos++; // consume ')'
+  // The exact "->" arrow.
+  if ($st.$pos >= $cps.length || $cps[$st.$pos].$cp !== 0x2D) return null;
+  if ($st.$pos + 1 >= $cps.length || $cps[$st.$pos + 1].$cp !== 0x3E) return null;
+  $st.$pos += 2; // consume '->'
+  const $retStart = $st.$pos;
+  const $ret = $parseOne($d, $cps, $st);
+  if ($ret === null) return null;
+  // Async functions report $ret "null" so the declared return type R is
+  // enforced at the await site, not by the wrapper
+  // (deal/runtime.lua:369-375).
+  if ($isAsync) {
+    return { $t: "function", $async: true, $params: $params, $ret: "null" };
+  }
+  return { $t: "function", $async: false, $params: $params,
+    $ret: $slice($d, $cps, $retStart, $st.$pos) };
+}
+
+// "@" component ("/" component)+ with the pinned class-atom shape rules.
+// Components are maximal allowed runs; the atom ends exactly at its
+// enclosing delimiter (end of input, "]", ")", ",") and is carried
+// verbatim with the leading "@". At least one "/" and an
+// identifier-shaped final component are mandatory; no root/path boundary
+// is ever inferred and class atoms compare byte-for-byte.
+function $parseClass($d, $cps, $st) {
+  const $atomStart = $st.$pos;
+  $st.$pos++; // consume '@'
+  let $hasSeparator = false;
+  while (true) {
+    const $componentStart = $st.$pos;
+    while ($st.$pos < $cps.length) {
+      const $cp = $cps[$st.$pos].$cp;
+      if ($cp === 0x5D || $cp === 0x29 || $cp === 0x2C) break; // ] ) ,
+      if ($cp === 0x2F) break; // '/'
+      if ($cp === 0x2D && $st.$pos + 1 < $cps.length
+          && $cps[$st.$pos + 1].$cp === 0x3E) return null; // contiguous "->"
+      if ($forbiddenInComponent($cp)) break; // maximal run ends here
+      $st.$pos++;
+    }
+    if ($st.$pos === $componentStart) return null; // empty component
+    const $component = $slice($d, $cps, $componentStart, $st.$pos);
+    if ($component === "." || $component === "..") return null;
+    if ($st.$pos < $cps.length && $cps[$st.$pos].$cp === 0x2F) {
+      $hasSeparator = true;
+      $st.$pos++; // consume '/' — the next component must be non-empty
+      continue;
+    }
+    // This component terminates the atom, so it is the class name and
+    // must match the source identifier shape. Dotted class-name-position
+    // text fails exactly here.
+    if (!$isIdentifierShape($component)) return null;
+    if (!$hasSeparator) return null; // fewer than two components
+    return { $t: "class", $name: $slice($d, $cps, $atomStart, $st.$pos) };
+  }
+}
+
+// The pinned component alphabet: forbidden scalars end the maximal run.
+function $forbiddenInComponent($cp) {
+  if ($cp < 0x20 || $cp === 0x7F) return true; // U+0000, C0/DEL controls
+  if ($cp === 0x40 || $cp === 0x5B || $cp === 0x5D || $cp === 0x3F
+      || $cp === 0x28 || $cp === 0x29 || $cp === 0x2C) return true; // @ [ ] ? ( ) ,
+  if ($CANONICAL_WS.test(String.fromCodePoint($cp))) return true;
+  return $cp >= 0xD800 && $cp <= 0xDFFF; // lone surrogates
+}
+
+// The final-component class-name shape: [A-Za-z_][A-Za-z0-9_]*.
+function $isIdentifierShape($s) {
+  if ($s === "") return false;
+  const $c0 = $s.charCodeAt(0);
+  if (!($c0 >= 0x41 && $c0 <= 0x5A) && !($c0 >= 0x61 && $c0 <= 0x7A)
+      && $c0 !== 0x5F) return false;
+  for (let $i = 1; $i < $s.length; $i++) {
+    const $c = $s.charCodeAt($i);
+    const $ok = ($c >= 0x41 && $c <= 0x5A) || ($c >= 0x61 && $c <= 0x7A)
+        || ($c >= 0x30 && $c <= 0x39) || $c === 0x5F;
+    if (!$ok) return false;
+  }
+  return true;
+}
+
+// Exact keyword match against the decoded scalars at the given position.
+function $matchKeyword($cps, $pos, $kw) {
+  if ($pos + $kw.length > $cps.length) return false;
+  for (let $i = 0; $i < $kw.length; $i++) {
+    if ($cps[$pos + $i].$cp !== $kw.charCodeAt($i)) return false;
+  }
+  return true;
+}
+
+// ===== Array element extraction (canonical grammar, js-v12-completion-architecture D3) =====
+// $arrayElementDescriptor: the canonical "[D]" prefix -> "D" extraction
+// (the legacy "T[]" suffix arm retired with the dialect — the parser
+// rejects "T[]" text, and checkArray only ever receives parsed
+// "[D]" text). Anything else takes the E8001 "invalid array descriptor"
+// error. The strict === null nil arm mirrors the reference's defensive
+// guard (deal/runtime.lua:240-242); reachable only through direct misuse
+// (A3). Non-string descriptors fail loudly via the invalid-arm text,
+// never a raw TypeError.
 function $arrayElementDescriptor($descriptor, $file, $line, $column) {
   if ($descriptor === null) {
     $rt.fail("E8001", "internal: nil array descriptor", $file, $line, $column);
   }
   if (typeof $descriptor === "string") {
-    if ($descriptor.length >= 2 && $descriptor.slice(-2) === "[]") {
-      return $descriptor.slice(0, $descriptor.length - 2);
-    }
     if ($descriptor.length >= 2 && $descriptor[0] === "[" && $descriptor[$descriptor.length - 1] === "]") {
       return $descriptor.slice(1, $descriptor.length - 1);
     }
@@ -342,7 +434,7 @@ const $rt = {
   errorValue: function $errorValue(code, message, file, line, column) {
     const $value = {};
     $rt.setProp($value, "$kind", "class");
-    $rt.setProp($value, "$classname", "Error");
+    $rt.setProp($value, "$classname", "@$builtin/Error");
     $rt.setProp($value, "code", code);
     $rt.setProp($value, "message", message);
     if (file !== $undefined) $rt.setProp($value, "file", file);
@@ -362,7 +454,7 @@ const $rt = {
     if (v instanceof $DEALError) {
       return $rt.errorValue(v.code, v.message, v.file, v.line, v.column);
     }
-    if (typeof v === "object" && v !== null && v.$kind === "class" && v.$classname === "Error") {
+    if (typeof v === "object" && v !== null && v.$kind === "class" && v.$classname === "@$builtin/Error") {
       return v;
     }
     return $rt.errorValue("E8001", String(v));
@@ -486,14 +578,16 @@ const $rt = {
     return $rt.checkType(inner, v, file, line, column);
   },
 
-  // checkType: descriptor parse (order P via $parse) then dispatch — the
-  // check_type mirror (deal/runtime.lua:417-476). Defensive arms: the
-  // strict === null predicate routes only JS null to the nil arm (DEAL
-  // null is only JS null, D3); undefined and every other non-string
-  // descriptor fail the parse step and take the cannot-parse arm
-  // (String(descriptor) mirrors Lua's tostring(descriptor)). The parser is
-  // total over strings, so the cannot-parse arm is reached exactly through
-  // the parse-nil path and never by a string descriptor.
+  // checkType: canonical descriptor parse ($parse) then dispatch — the
+  // check_type mirror (deal/runtime.lua:417-476) realized over the
+  // canonical grammar only (js-v12-completion-architecture D3). Defensive
+  // arms: the strict === null predicate routes only JS null to the nil
+  // arm (DEAL null is only JS null, D3); undefined and every other
+  // non-string descriptor fail the parse step and take the cannot-parse
+  // arm (String(descriptor) mirrors Lua's tostring(descriptor)). Legacy
+  // spellings ("T[]", "T|null", bare class names, the bare "Error" atom)
+  // are unparsable text and take the pinned E8001
+  // "internal: cannot parse type descriptor: {text}" arm.
   checkType: function $checkType(descriptor, v, file, line, column) {
     if (descriptor === null) {
       $rt.fail("E8001", "internal: nil type descriptor", file, line, column);
@@ -550,9 +644,10 @@ const $rt = {
       return v;
     }
     if ($parsed.$t === "class") {
-      // Class branch: the $kind tag, then module-qualified nominal
-      // identity — exact string equality between $classname and the parsed
-      // identity (deal/runtime.lua:459-468; runtime-class-identity D2).
+      // Class branch: the $kind tag, then nominal identity — byte-for-byte
+      // equality between $classname and the parsed class atom's full text
+      // (deal/runtime.lua:459-468; canonical-type-system-and-runtime-descriptors
+      // D4). The builtin Error atom is @$builtin/Error.
       if (v === $undefined || v === null || v.$kind !== "class") {
         $rt.fail("E8001", "expected class instance", file, line, column, "class", $kindOf(v));
       }
@@ -569,8 +664,9 @@ const $rt = {
   // checkArray: the strict array split (D3) — Array.isArray via the T1
   // $Array capture (never the bare spelling); a Map, class instance, or
   // primitive is rejected with "expected array". Element extraction
-  // mirrors array_element_descriptor (deal/runtime.lua:239-254): "T[]"
-  // suffix -> "T", "[T]" prefix -> "T". The element walk is 0-based,
+  // realizes the canonical "[D]" prefix form only
+  // ($arrayElementDescriptor); the legacy "T[]" suffix was retired with
+  // the dialect. The element walk is 0-based,
   // mirroring the reference's 1..#v walk (deal/runtime.lua:256-285) with
   // the 1-based message index; any element failure is wrapped in E8003
   // with the inner DEALError's message embedded (the deliberate

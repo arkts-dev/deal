@@ -137,10 +137,10 @@ test("every stdlib member is a $rt.function wrapper with the pinned signature", 
       startsWith: "(string,string)->boolean",
       endsWith: "(string,string)->boolean",
       replace: "(string,string,string)->string",
-      split: "(string,string)->string[]",
+      split: "(string,string)->[string]",
       trim: "(string)->string",
     }],
-    [table, "std/table", { keys: "(table)->string[]" }],
+    [table, "std/table", { keys: "(table)->[string]" }],
     [json, "std/json", { stringify: "(table)->string", parse: "(string)->table" }],
     [math, "std/math", {
       floor: "(number)->number",
@@ -230,9 +230,9 @@ test("valid calls return values that re-validate through the $rt checks", functi
   assertEqual(rt.checkString(string.substring.$f("abc", 1, 3, "f.js", 1, 1), "f.js", 1, 1), "bc", "substring result");
   assertEqual(rt.checkBoolean(string.contains.$f("abc", "b", "f.js", 1, 1), "f.js", 1, 1), true, "contains result");
   assertEqual(rt.checkString(string.replace.$f("a-a", "a", "x", "f.js", 1, 1), "f.js", 1, 1), "x-x", "replace result");
-  rt.checkArray("string[]", string.split.$f("a,b", ",", "f.js", 1, 1), "f.js", 1, 1);
+  rt.checkArray("[string]", string.split.$f("a,b", ",", "f.js", 1, 1), "f.js", 1, 1);
   assertEqual(rt.checkString(string.trim.$f("  x  ", "f.js", 1, 1), "f.js", 1, 1), "x", "trim result");
-  rt.checkArray("string[]", table.keys.$f(rt.makeTable({}), "f.js", 1, 1), "f.js", 1, 1);
+  rt.checkArray("[string]", table.keys.$f(rt.makeTable({}), "f.js", 1, 1), "f.js", 1, 1);
   rt.checkTable(json.parse.$f("{}", "f.js", 1, 1), "f.js", 1, 1);
   rt.checkString(json.stringify.$f(rt.makeTable({ a: 1 }), "f.js", 1, 1), "f.js", 1, 1);
   assertEqual(rt.checkNumber(math.floor.$f(1.9, "f.js", 1, 1), "f.js", 1, 1), 1, "floor result");

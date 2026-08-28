@@ -6,11 +6,14 @@ import deal.descriptors.DescriptorParseResult;
 import deal.descriptors.DescriptorSyntaxError;
 import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
 import deal.types.Type;
 import deal.types.Types;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
@@ -40,11 +43,15 @@ import java.util.Set;
  *       exact sync/async functions, bytes at arbitrary depth).</li>
  *   <li>Scalar offsets (not UTF-16 code units) for astral input, and the
  *       never-throw contract.</li>
- *   <li>The class-free encode surface (ISSUE-0311): the per-compilation
- *       service over the pinned index constructor contract, primitives
- *       verbatim, {@code [D]}/{@code ?D}, exact sync/async functions, the
- *       {@code Type.Error}/{@code Type.Class} internal invariant
- *       violations, and the property-style corpus asserting
+ *   <li>The encode surface (ISSUE-0311 + the ISSUE-0317 identity-carriage
+ *       consumption): the per-compilation service over the pinned
+ *       (index, module-path classification) constructor contract,
+ *       primitives verbatim, {@code [D]}/{@code ?D}, exact sync/async
+ *       functions, the class branch through the identity index
+ *       ({@code @lib/utils/User} and the {@code @$builtin/Error} builtin
+ *       projection), the {@code Type.Error}/{@code Type.Class}
+ *       absent-identity internal invariant violations, and the
+ *       property-style corpus asserting
  *       {@code render(parse(encode(T))) == encode(T)} byte-identically
  *       for every generated tree with per-member legacy-spelling negative
  *       pins, bytes at depth &gt;= 50, and bytes through sync/async
@@ -78,6 +85,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         testEncodePrimitives();
         testEncodePinnedShapes();
         testEncodeInvariantViolations();
+        testEncodeClassBranch();
         testEncodePropertyCorpus();
         testEncodeDeepNesting();
 
@@ -809,10 +817,9 @@ public class CanonicalRuntimeTypeDescriptorTest {
      * The per-compilation service instance for the class-free encode
      * corpus.  The index is empty and contract-conformant: every lookup
      * is an absent lookup and raises the pinned invariant violation.  No
-     * encode path consults the index in this child because the class
-     * branch lands with the identity-carriage sibling (T7); the index
-     * parameter type itself comes from the T2 {@code deal.identity}
-     * contract.
+     * class-free corpus member consults the index because the generated
+     * type trees contain no {@link Type.Class}; the class-branch pins
+     * use the registered index of {@link #testEncodeClassBranch()}.
      */
     private static final CanonicalClassIdentityIndex CLASS_FREE_INDEX =
         new CanonicalClassIdentityIndex() {
@@ -831,9 +838,20 @@ public class CanonicalRuntimeTypeDescriptorTest {
             }
         };
 
+    /**
+     * The module-path classification of the class-free stage: every
+     * module path is unclassified (no public identity), so a
+     * {@link Type.Class} encode raises the pinned absent-identity
+     * invariant violation (the class branch lands through the
+     * registered index of {@link #testEncodeClassBranch()}).
+     */
+    private static final java.util.function.Function<String, deal.identity.CanonicalModuleIdentity>
+        CLASS_FREE_CLASSIFICATION = modulePath -> null;
+
     /** The per-compilation service under test. */
     private static final CanonicalRuntimeTypeDescriptor ENCODER =
-        new CanonicalRuntimeTypeDescriptor(CLASS_FREE_INDEX);
+        new CanonicalRuntimeTypeDescriptor(CLASS_FREE_INDEX,
+            CLASS_FREE_CLASSIFICATION);
 
     /** The canonical primitive keyword set (encode never emits a bare name). */
     private static final Set<String> PRIMITIVE_KEYWORDS_SET =
@@ -984,15 +1002,25 @@ public class CanonicalRuntimeTypeDescriptorTest {
         System.out.println("-- encode: per-compilation service contract --");
 
         CanonicalRuntimeTypeDescriptor service =
-            new CanonicalRuntimeTypeDescriptor(CLASS_FREE_INDEX);
+            new CanonicalRuntimeTypeDescriptor(CLASS_FREE_INDEX,
+                CLASS_FREE_CLASSIFICATION);
         check(service != null,
-            "service constructs with the pinned (index) signature");
+            "service constructs with the pinned (index, module-path "
+            + "classification) signature");
 
         try {
-            new CanonicalRuntimeTypeDescriptor(null);
+            new CanonicalRuntimeTypeDescriptor(null, CLASS_FREE_CLASSIFICATION);
             fail("constructor: null index must be rejected", "no exception was thrown");
         } catch (NullPointerException expected) {
             check(true, "constructor: null index rejected");
+        }
+
+        try {
+            new CanonicalRuntimeTypeDescriptor(CLASS_FREE_INDEX, null);
+            fail("constructor: null module-path classification must be "
+                + "rejected", "no exception was thrown");
+        } catch (NullPointerException expected) {
+            check(true, "constructor: null module-path classification rejected");
         }
 
         try {
@@ -1085,9 +1113,88 @@ public class CanonicalRuntimeTypeDescriptorTest {
         check(classFailure != null
                 && classFailure.getMessage() != null
                 && !classFailure.getMessage().isEmpty(),
-            "Type.Class encode is an explicit internal invariant violation "
-            + "at this stage (class branch lands with the identity-carriage "
-            + "sibling)");
+            "Type.Class encode for an identity-absent class is an explicit "
+            + "internal invariant violation (no module-identity "
+            + "classification, never fallback text)");
+    }
+
+    static void testEncodeClassBranch() {
+        System.out.println("-- encode: class branch through the identity index --");
+
+        // The registered index of this pin: a project module identity and
+        // the builtin Error module identity, projected to the canonical
+        // class atoms byte-for-byte.
+        CanonicalModuleIdentity projectModule =
+            new CanonicalModuleIdentity.ProjectModule(
+                new ProjectModuleIdentity("lib", "/lib", List.of("utils")));
+        CanonicalClassIdentityIndex registeredIndex =
+            new CanonicalClassIdentityIndex() {
+                @Override
+                public String descriptorTextFor(CanonicalClassIdentity identity) {
+                    if (CanonicalModuleIdentity.BuiltinModule.INSTANCE
+                            .equals(identity.moduleIdentity())) {
+                        check("Error".equals(identity.className()),
+                            "builtin index entry is only ever the Error class");
+                        return "@$builtin/Error";
+                    }
+                    if (projectModule.equals(identity.moduleIdentity())) {
+                        check("User".equals(identity.className()),
+                            "project index entry is only ever the User class");
+                        return "@lib/utils/User";
+                    }
+                    throw new IllegalStateException(
+                        "absent from the registered test index: " + identity);
+                }
+
+                @Override
+                public CanonicalClassIdentity identityForDescriptorText(
+                        String descriptorText) {
+                    throw new IllegalStateException(
+                        "reverse lookup not exercised by this pin: \""
+                        + descriptorText + "\"");
+                }
+            };
+        Map<String, CanonicalModuleIdentity> classification =
+            new java.util.HashMap<>();
+        classification.put("lib.utils", projectModule);
+        classification.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        CanonicalRuntimeTypeDescriptor service =
+            new CanonicalRuntimeTypeDescriptor(registeredIndex,
+                classification::get);
+
+        check("@lib/utils/User".equals(
+                service.encode(new Type.Class("User", "lib.utils"))),
+            "Type.Class encodes to the index-registered project atom "
+            + "@lib/utils/User");
+        check("@$builtin/Error".equals(
+                service.encode(new Type.Class("Error", ""))),
+            "the builtin Error class encodes to @$builtin/Error");
+        check("@lib/utils/User".equals(service.encode(
+                Types.classType("User", "lib.utils"))),
+            "Types.classType encodes to the same index-registered atom");
+
+        String classText = service.encode(
+            new Type.Class("User", "lib.utils"));
+        DescriptorParseResult classParse = parseResult(classText);
+        check(classParse instanceof DescriptorAst.ClassAtom c
+                && "@lib/utils/User".equals(c.fullDescriptorText()),
+            "class encode round-trips through parse/render byte-for-byte: "
+                + classText + " -> " + classParse);
+        check(classText.equals(CanonicalRuntimeTypeDescriptor.render(
+                (DescriptorAst) classParse)),
+            "render(parse(encode(class))) == encode(class) byte-identically");
+
+        IllegalStateException absentFailure = null;
+        try {
+            service.encode(new Type.Class("User", "unclassified.module"));
+        } catch (IllegalStateException expected) {
+            absentFailure = expected;
+        }
+        check(absentFailure != null
+                && absentFailure.getMessage() != null
+                && !absentFailure.getMessage().isEmpty(),
+            "a class in an unclassified module path is the pinned "
+            + "absent-identity invariant violation");
     }
 
     static void testEncodePropertyCorpus() {
