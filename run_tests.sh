@@ -87,6 +87,7 @@ javac --release 25 -proc:none -d build \
   test/GenerateStdlibGoldenIr.java \
   test/ConformanceTest.java \
   test/JvmConformanceTest.java \
+  test/JsConformanceTest.java \
   test/LuaAbiTest.java \
   test/LuaAbiBackendTest.java \
   test/CrossModuleTypingTest.java \
