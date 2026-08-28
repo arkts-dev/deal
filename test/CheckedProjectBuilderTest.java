@@ -550,6 +550,13 @@ public class CheckedProjectBuilderTest {
 
         expectDefect(() -> CanonicalTypeText.render(Type.Error.INSTANCE),
             "Type.Error has no rendering (defect)");
+        expectDefect(() -> CanonicalTypeText.render(Type.Bytes.INSTANCE),
+            "Type.Bytes has no rendering in the closed eleven-form index (defect)");
+        expectDefect(() -> CanonicalTypeText.render(
+                new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Null.INSTANCE)),
+            "Type.Bytes at depth (a function parameter) is a defect too");
+        expectDefect(() -> CanonicalTypeText.render(nt("bytes"), context),
+            "a bytes NamedType is outside the pinned TypeNode grammar (defect)");
         expectDefect(() -> CanonicalTypeText.render(qual("Unknown", "Vec"), context),
             "an unresolvable qualified alias is a defect");
         expectDefect(() -> CanonicalTypeText.render(nul(nul(nt("int"))), context),
@@ -588,6 +595,18 @@ public class CheckedProjectBuilderTest {
         ModuleFact typeErrorFact = implFact("main", programOf(), errorExports,
             new SymbolTable(), emptyChecks());
         assertE6005(typeErrorFact, new ModuleId("main"), "Type.Error in a declared-type position");
+
+        // (a2) The same defensive guard for Type.Bytes: the v1.2 bytes
+        // primitive is not one of the eleven declared-variant forms of
+        // deal.semantic-interface/1, so a declared-type position carrying
+        // it raises E6005 with INDEX_INTERNAL_ERROR_SENTINEL (never an
+        // invented rendering, never a crash).
+        Map<String, Type> bytesExports = new LinkedHashMap<>();
+        bytesExports.put("main", Types.func(List.of(), Type.Null.INSTANCE));
+        bytesExports.put("bad", Type.Bytes.INSTANCE);
+        ModuleFact bytesFact = implFact("main", programOf(), bytesExports,
+            new SymbolTable(), emptyChecks());
+        assertE6005(bytesFact, new ModuleId("main"), "Type.Bytes in a declared-type position");
 
         // (b) An unresolvable qualified-type alias in a declaration entry.
         ProgramNode aliasProgram = programOf(new ExportDeclaration(span(),

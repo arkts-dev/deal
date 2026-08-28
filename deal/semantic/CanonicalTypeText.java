@@ -69,9 +69,16 @@ import java.util.Set;
  * outside the grammar in an index position (an unresolvable qualified-type
  * alias, a chained {@code T | null | null}, or a {@code NamedType} that is
  * neither a primitive nor a class declared in the module) is a fact
- * defect. All of these raise {@link Defect} — never an invented rendering,
- * never a crash; {@link CheckedProjectBuilder} converts the defect into
- * E6005 through the failure contract registry with
+ * defect. {@link Type.Bytes} — the v1.2 bytes primitive added to the
+ * checked type hierarchy by the bytes epic, which is not one of the
+ * eleven declared-variant forms of this interface version — likewise has
+ * no rendering: both renderers reject it (the checked-{@link Type} arm
+ * raises {@link Defect}; the {@code TypeNode} arm rejects a {@code bytes}
+ * {@code NamedType} through the unknown-non-primitive arm), so the two
+ * rule sets stay byte-identical. All of these raise {@link Defect} —
+ * never an invented rendering, never a crash;
+ * {@link CheckedProjectBuilder} converts the defect into E6005 through
+ * the failure contract registry with
  * {@code validatorRule: INDEX_INTERNAL_ERROR_SENTINEL}.</p>
  */
 public final class CanonicalTypeText {
@@ -95,11 +102,12 @@ public final class CanonicalTypeText {
     }
 
     /**
-     * A canonical-type-text fact defect: {@link Type.Error} reached a
-     * declared-type position or a TypeNode shape fell outside the pinned
-     * grammar. The builder owns the conversion into E6005
-     * ({@code INDEX_INTERNAL_ERROR_SENTINEL}); this exception is internal
-     * control flow, never a crash and never a rendered fallback.
+     * A canonical-type-text fact defect: {@link Type.Error} or
+     * {@link Type.Bytes} reached a declared-type position, or a TypeNode
+     * shape fell outside the pinned grammar. The builder owns the
+     * conversion into E6005 ({@code INDEX_INTERNAL_ERROR_SENTINEL}); this
+     * exception is internal control flow, never a crash and never a
+     * rendered fallback.
      */
     public static final class Defect extends RuntimeException {
 
@@ -120,13 +128,16 @@ public final class CanonicalTypeText {
      * Renders a checked {@link Type} value into its canonical form —
      * implementation entries render the module's Phase-3-corrected
      * resolved export map through this exact rule set. The ten declared
-     * variants render as eleven canonical forms; {@link Type.Error} has no
-     * rendering and raises {@link Defect}.
+     * variants render as eleven canonical forms; {@link Type.Error} and
+     * {@link Type.Bytes} have no rendering and raise {@link Defect}.
      *
      * @param type the checked type; non-null
      * @return the canonical declared-type text
      * @throws Defect when {@code type} is {@link Type.Error} (the internal
-     *         checker sentinel is excluded from the index by contract)
+     *         checker sentinel is excluded from the index by contract) or
+     *         {@link Type.Bytes} (the v1.2 bytes primitive is not one of
+     *         the eleven declared-variant forms of this interface
+     *         version)
      */
     public static String render(Type type) {
         Objects.requireNonNull(type, "type must not be null");
@@ -140,6 +151,11 @@ public final class CanonicalTypeText {
             case Type.Error ignored -> throw new Defect(
                 "Type.Error reached a declared-type position: the internal checker "
                     + "sentinel has no canonical rendering and is excluded from the index");
+            case Type.Bytes ignored -> throw new Defect(
+                "Type.Bytes reached a declared-type position: the v1.2 bytes primitive "
+                    + "is not one of the eleven declared-variant forms of "
+                    + "deal.semantic-interface/1 and has no canonical rendering "
+                    + "(out-of-grammar declared type)");
             case Type.Array array -> {
                 String element = render(array.element());
                 yield wrapInArrayPosition(element,
@@ -175,7 +191,8 @@ public final class CanonicalTypeText {
      * @throws Defect for any out-of-grammar shape: an unresolvable
      *         qualified-type alias, a chained {@code T | null | null}, or
      *         a {@code NamedType} that is neither a primitive nor a class
-     *         declared in the module
+     *         declared in the module (including the v1.2 {@code bytes}
+     *         name, which is outside the closed eleven-form grammar)
      */
     public static String render(TypeNode node, Context context) {
         Objects.requireNonNull(node, "node must not be null");
