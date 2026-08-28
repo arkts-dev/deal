@@ -255,7 +255,7 @@ echo "=== Running Type Descriptor Tests ==="
 java -ea -cp build deal.test.TypeDescriptorTest
 
 echo ""
-echo "=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310) ==="
+echo "=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310/0311) ==="
 java -ea -cp build deal.test.CanonicalRuntimeTypeDescriptorTest
 
 echo ""

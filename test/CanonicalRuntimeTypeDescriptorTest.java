@@ -4,18 +4,24 @@ import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.descriptors.DescriptorAst;
 import deal.descriptors.DescriptorParseResult;
 import deal.descriptors.DescriptorSyntaxError;
+import deal.identity.CanonicalClassIdentity;
+import deal.identity.CanonicalClassIdentityIndex;
 import deal.types.Type;
+import deal.types.Types;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 
 /**
- * Tests for the strict canonical runtime type descriptor grammar
- * (ISSUE-0310): {@link CanonicalRuntimeTypeDescriptor#parse(String)} and
- * {@link CanonicalRuntimeTypeDescriptor#render(DescriptorAst)} with the
- * immutable {@link DescriptorAst} atoms and scalar-offset
- * {@link DescriptorSyntaxError} failures.
+ * Tests for the strict canonical runtime type descriptor service
+ * (ISSUE-0310/0311): {@link CanonicalRuntimeTypeDescriptor#parse(String)}
+ * and {@link CanonicalRuntimeTypeDescriptor#render(DescriptorAst)} with
+ * the immutable {@link DescriptorAst} atoms and scalar-offset
+ * {@link DescriptorSyntaxError} failures, plus the class-free
+ * {@link CanonicalRuntimeTypeDescriptor#encode(Type)} surface with its
+ * property round-trip corpus.
  *
  * <p>Coverage:</p>
  * <ul>
@@ -34,6 +40,15 @@ import java.util.Random;
  *       exact sync/async functions, bytes at arbitrary depth).</li>
  *   <li>Scalar offsets (not UTF-16 code units) for astral input, and the
  *       never-throw contract.</li>
+ *   <li>The class-free encode surface (ISSUE-0311): the per-compilation
+ *       service over the pinned index constructor contract, primitives
+ *       verbatim, {@code [D]}/{@code ?D}, exact sync/async functions, the
+ *       {@code Type.Error}/{@code Type.Class} internal invariant
+ *       violations, and the property-style corpus asserting
+ *       {@code render(parse(encode(T))) == encode(T)} byte-identically
+ *       for every generated tree with per-member legacy-spelling negative
+ *       pins, bytes at depth &gt;= 50, and bytes through sync/async
+ *       function parameter/return positions.</li>
  * </ul>
  */
 public class CanonicalRuntimeTypeDescriptorTest {
@@ -42,7 +57,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
     private static int failed = 0;
 
     public static void main(String[] args) {
-        System.out.println("=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310) ===");
+        System.out.println("=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310/0311) ===");
 
         testBytesAtomTie();
         testPrimitiveRoundTrips();
@@ -58,6 +73,13 @@ public class CanonicalRuntimeTypeDescriptorTest {
         testAtomImmutability();
         testPropertyRoundTrips();
         testDeepNesting();
+
+        testEncodeServiceContract();
+        testEncodePrimitives();
+        testEncodePinnedShapes();
+        testEncodeInvariantViolations();
+        testEncodePropertyCorpus();
+        testEncodeDeepNesting();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -777,5 +799,368 @@ public class CanonicalRuntimeTypeDescriptorTest {
         assertAtom(mixed, "mixed nesting at depth " + depth);
         check(maxDepth(atomOf(mixed)) >= depth,
             "mixed atom tree reaches depth " + depth);
+    }
+
+    // =========================================================================
+    // Class-free encode (ISSUE-0311): the one Type->text authority
+    // =========================================================================
+
+    /**
+     * The per-compilation service instance for the class-free encode
+     * corpus.  The index is empty and contract-conformant: every lookup
+     * is an absent lookup and raises the pinned invariant violation.  No
+     * encode path consults the index in this child because the class
+     * branch lands with the identity-carriage sibling (T7); the index
+     * parameter type itself comes from the T2 {@code deal.identity}
+     * contract.
+     */
+    private static final CanonicalClassIdentityIndex CLASS_FREE_INDEX =
+        new CanonicalClassIdentityIndex() {
+            @Override
+            public String descriptorTextFor(CanonicalClassIdentity identity) {
+                throw new IllegalStateException(
+                    "absent from the class-free test index: " + identity);
+            }
+
+            @Override
+            public CanonicalClassIdentity identityForDescriptorText(
+                    String descriptorText) {
+                throw new IllegalStateException(
+                    "absent from the class-free test index: \""
+                    + descriptorText + "\"");
+            }
+        };
+
+    /** The per-compilation service under test. */
+    private static final CanonicalRuntimeTypeDescriptor ENCODER =
+        new CanonicalRuntimeTypeDescriptor(CLASS_FREE_INDEX);
+
+    /** The canonical primitive keyword set (encode never emits a bare name). */
+    private static final Set<String> PRIMITIVE_KEYWORDS_SET =
+        Set.of("null", "boolean", "int", "number", "string", "bytes", "table");
+
+    private static final Type[] PRIMITIVE_TYPES = {
+        Type.Null.INSTANCE,
+        Type.Boolean.INSTANCE,
+        Type.Int.INSTANCE,
+        Type.Number.INSTANCE,
+        Type.String.INSTANCE,
+        Type.Bytes.INSTANCE,
+        Type.Table.INSTANCE,
+    };
+
+    private static final Type[] NON_NULL_PRIMITIVE_TYPES = {
+        Type.Boolean.INSTANCE,
+        Type.Int.INSTANCE,
+        Type.Number.INSTANCE,
+        Type.String.INSTANCE,
+        Type.Bytes.INSTANCE,
+        Type.Table.INSTANCE,
+    };
+
+    private static Type genLeafTypeTree(Random rnd) {
+        // Bytes bias: every third leaf is bytes so the corpus covers bytes
+        // in every structural position.
+        if (rnd.nextInt(3) == 0) {
+            return Type.Bytes.INSTANCE;
+        }
+        return PRIMITIVE_TYPES[rnd.nextInt(PRIMITIVE_TYPES.length)];
+    }
+
+    private static Type genFunctionTypeTree(Random rnd, int depth) {
+        boolean async = rnd.nextBoolean();
+        int count = rnd.nextInt(4);
+        List<Type> params = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            params.add(genTypeTree(rnd, depth - 1));
+        }
+        return new Type.Func(params, genTypeTree(rnd, depth - 1), async);
+    }
+
+    /** A non-null, non-nullable type (a legal {@code ?D} inner). */
+    private static Type genNonNullableTypeTree(Random rnd, int depth) {
+        if (depth <= 0) {
+            return NON_NULL_PRIMITIVE_TYPES[rnd.nextInt(NON_NULL_PRIMITIVE_TYPES.length)];
+        }
+        switch (rnd.nextInt(4)) {
+            case 0:
+                return NON_NULL_PRIMITIVE_TYPES[rnd.nextInt(NON_NULL_PRIMITIVE_TYPES.length)];
+            case 1:
+                return new Type.Array(genTypeTree(rnd, depth - 1));
+            case 2:
+                return genFunctionTypeTree(rnd, depth - 1);
+            default:
+                return NON_NULL_PRIMITIVE_TYPES[rnd.nextInt(NON_NULL_PRIMITIVE_TYPES.length)];
+        }
+    }
+
+    /** Generates a legal class-free type tree within the depth budget. */
+    private static Type genTypeTree(Random rnd, int depth) {
+        if (depth <= 0) {
+            return genLeafTypeTree(rnd);
+        }
+        switch (rnd.nextInt(4)) {
+            case 0:
+                return genLeafTypeTree(rnd);
+            case 1:
+                return new Type.Array(genTypeTree(rnd, depth - 1));
+            case 2:
+                return new Type.Nullable(genNonNullableTypeTree(rnd, depth - 1));
+            default:
+                return genFunctionTypeTree(rnd, depth - 1);
+        }
+    }
+
+    /**
+     * The full per-member encode verification: encodes the legal type
+     * (no exception), applies the explicit legacy-spelling negative pins
+     * to the produced text, proves {@code render(parse(encode(T))) ==
+     * encode(T)} byte-identically through T3's strict parser (never
+     * self-approval), and round-trips {@code parse(render(ast))}.
+     * Returns the parsed atom (or null after a counted failure).
+     */
+    private static DescriptorAst assertEncodeMember(Type type, String label) {
+        String text;
+        try {
+            text = ENCODER.encode(type);
+        } catch (Throwable t) {
+            fail(label, "encode threw for legal class-free type " + type + ": " + t);
+            return null;
+        }
+        check(text != null && !text.isEmpty(), label + ": encoded text present");
+        if (text == null || text.isEmpty()) {
+            return null;
+        }
+
+        // Explicit negative pins per corpus member: never a legacy spelling.
+        check(text.indexOf("[]") < 0,
+            label + ": no legacy T[] spelling in " + quote(text));
+        check(text.indexOf('|') < 0,
+            label + ": no legacy T|null spelling in " + quote(text));
+        check(text.indexOf("...") < 0,
+            label + ": no rest-parameter spelling in " + quote(text));
+        check(text.indexOf('.') < 0,
+            label + ": no dotted spelling in " + quote(text));
+        check(text.indexOf('@') < 0,
+            label + ": no class atom for a class-free type in " + quote(text));
+        boolean structural = text.indexOf('[') >= 0
+            || text.indexOf('?') >= 0
+            || text.indexOf('(') >= 0
+            || text.indexOf(',') >= 0
+            || text.indexOf('-') >= 0;
+        check(structural || PRIMITIVE_KEYWORDS_SET.contains(text),
+            label + ": no bare-name spelling in " + quote(text));
+
+        // Pure: a repeated encode is byte-identical.
+        check(text.equals(ENCODER.encode(type)),
+            label + ": encode is pure and deterministic");
+
+        // Proven against T3's strict parse/render, not self-approval.
+        DescriptorParseResult result = parseResult(text);
+        if (!(result instanceof DescriptorAst ast)) {
+            fail(label, "strict parse rejected encode(T) " + quote(text)
+                + ": " + result);
+            return null;
+        }
+        String rendered = CanonicalRuntimeTypeDescriptor.render(ast);
+        if (!text.equals(rendered)) {
+            fail(label, "render(parse(encode(T))) != encode(T) for "
+                + quote(text) + ": rendered " + quote(rendered));
+        } else {
+            check(true, label + ": render(parse(encode(T))) == encode(T) "
+                + "byte-identically");
+        }
+        DescriptorParseResult again = parseResult(rendered);
+        if (!(again instanceof DescriptorAst ast2) || !ast2.equals(ast)) {
+            fail(label, "parse(render(ast)) did not round-trip for "
+                + quote(text));
+        } else {
+            check(true, label + ": parse(render(ast)) round-trips");
+        }
+        return ast;
+    }
+
+    static void testEncodeServiceContract() {
+        System.out.println("-- encode: per-compilation service contract --");
+
+        CanonicalRuntimeTypeDescriptor service =
+            new CanonicalRuntimeTypeDescriptor(CLASS_FREE_INDEX);
+        check(service != null,
+            "service constructs with the pinned (index) signature");
+
+        try {
+            new CanonicalRuntimeTypeDescriptor(null);
+            fail("constructor: null index must be rejected", "no exception was thrown");
+        } catch (NullPointerException expected) {
+            check(true, "constructor: null index rejected");
+        }
+
+        try {
+            ENCODER.encode(null);
+            fail("encode: null type must be rejected", "no exception was thrown");
+        } catch (NullPointerException expected) {
+            check(true, "encode: null type rejected");
+        }
+    }
+
+    static void testEncodePrimitives() {
+        System.out.println("-- encode: primitives verbatim --");
+
+        Type[] types = {
+            Type.Null.INSTANCE, Type.Boolean.INSTANCE, Type.Int.INSTANCE,
+            Type.Number.INSTANCE, Type.String.INSTANCE, Type.Bytes.INSTANCE,
+            Type.Table.INSTANCE,
+        };
+        String[] texts = {
+            "null", "boolean", "int", "number", "string", "bytes", "table",
+        };
+        for (int i = 0; i < types.length; i++) {
+            DescriptorAst ast = assertEncodeMember(types[i], "primitive " + texts[i]);
+            check(ast instanceof DescriptorAst.PrimitiveAtom p
+                    && p.name().equals(texts[i]),
+                "primitive " + texts[i] + " encodes to the exact keyword");
+        }
+        check(CanonicalRuntimeTypeDescriptor.BYTES_DESCRIPTOR.equals(
+                ENCODER.encode(Type.Bytes.INSTANCE)),
+            "bytes encodes to the pinned BYTES_DESCRIPTOR constant");
+    }
+
+    static void testEncodePinnedShapes() {
+        System.out.println("-- encode: pinned canonical shapes --");
+
+        check("[int]".equals(ENCODER.encode(new Type.Array(Type.Int.INSTANCE))),
+            "Array(int) encodes to [int]");
+        check("[?bytes]".equals(ENCODER.encode(
+                new Type.Array(new Type.Nullable(Type.Bytes.INSTANCE)))),
+            "Array(Nullable(bytes)) encodes to [?bytes]");
+        check("?[bytes]".equals(ENCODER.encode(
+                new Type.Nullable(new Type.Array(Type.Bytes.INSTANCE)))),
+            "Nullable(Array(bytes)) encodes to ?[bytes]");
+        check("(int,string)->boolean".equals(ENCODER.encode(
+                new Type.Func(List.of(Type.Int.INSTANCE, Type.String.INSTANCE),
+                    Type.Boolean.INSTANCE))),
+            "sync function encodes with the exact marker-less shape");
+        check("()->null".equals(ENCODER.encode(
+                new Type.Func(List.of(), Type.Null.INSTANCE))),
+            "zero-parameter sync function encodes to ()->null");
+        check("async(bytes)->bytes".equals(ENCODER.encode(
+                new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Bytes.INSTANCE,
+                    true))),
+            "async bytes function encodes to async(bytes)->bytes");
+        check("async(?int)->[bytes]".equals(ENCODER.encode(
+                new Type.Func(List.of(new Type.Nullable(Type.Int.INSTANCE)),
+                    new Type.Array(Type.Bytes.INSTANCE), true))),
+            "async function params/return encode recursively");
+
+        assertEncodeMember(new Type.Array(Type.Int.INSTANCE), "pinned shape [int]");
+        assertEncodeMember(new Type.Nullable(new Type.Array(Type.Bytes.INSTANCE)),
+            "pinned shape ?[bytes]");
+        assertEncodeMember(new Type.Func(
+                List.of(Type.Bytes.INSTANCE, new Type.Nullable(Type.Int.INSTANCE)),
+                new Type.Array(Type.Bytes.INSTANCE), true),
+            "pinned shape async(bytes,?int)->[bytes]");
+    }
+
+    static void testEncodeInvariantViolations() {
+        System.out.println("-- encode: internal invariant violations --");
+
+        IllegalStateException sentinelFailure = null;
+        try {
+            ENCODER.encode(Type.Error.INSTANCE);
+        } catch (IllegalStateException expected) {
+            sentinelFailure = expected;
+        }
+        check(sentinelFailure != null
+                && sentinelFailure.getMessage() != null
+                && !sentinelFailure.getMessage().isEmpty(),
+            "Type.Error encode is an explicit internal invariant violation "
+            + "(internal error, never fallback text)");
+
+        IllegalStateException classFailure = null;
+        try {
+            ENCODER.encode(new Type.Class("User", "lib.utils"));
+        } catch (IllegalStateException expected) {
+            classFailure = expected;
+        }
+        check(classFailure != null
+                && classFailure.getMessage() != null
+                && !classFailure.getMessage().isEmpty(),
+            "Type.Class encode is an explicit internal invariant violation "
+            + "at this stage (class branch lands with the identity-carriage "
+            + "sibling)");
+    }
+
+    static void testEncodePropertyCorpus() {
+        System.out.println("-- encode: class-free property corpus --");
+
+        Random rnd = new Random(0x0311_CAFE_5EEDL);
+        for (int i = 0; i < 600; i++) {
+            Type tree = genTypeTree(rnd, 12);
+            assertEncodeMember(tree, "encode corpus member " + i);
+        }
+    }
+
+    static void testEncodeDeepNesting() {
+        System.out.println("-- encode: deep nesting (depth >= 50) --");
+
+        final int depth = 60;
+
+        // Pure array nesting around bytes.
+        Type arrayDeep = Type.Bytes.INSTANCE;
+        for (int i = 0; i < depth; i++) {
+            arrayDeep = new Type.Array(arrayDeep);
+        }
+        DescriptorAst arrayAst = assertEncodeMember(arrayDeep,
+            "encode: array nesting at depth " + depth);
+        check(Types.containsBytes(arrayDeep), "arrayDeep structurally contains bytes");
+        check(arrayAst != null && maxDepth(arrayAst) >= depth,
+            "encode: array atom tree reaches depth " + depth);
+
+        // Alternating array/nullable nesting around bytes.
+        Type alternated = Type.Bytes.INSTANCE;
+        for (int i = 0; i < depth; i++) {
+            alternated = (i % 2 == 0)
+                ? new Type.Array(alternated)
+                : new Type.Nullable(alternated);
+        }
+        DescriptorAst altAst = assertEncodeMember(alternated,
+            "encode: array/nullable alternation at depth " + depth);
+        check(Types.containsBytes(alternated),
+            "alternated type structurally contains bytes");
+        check(altAst != null && maxDepth(altAst) >= depth,
+            "encode: alternated atom tree reaches depth " + depth);
+
+        // Bytes through sync and async function parameter/return positions,
+        // nested to depth >= 50: every level carries bytes in the parameter
+        // and in the return position, alternating the exact marker.
+        Type funcs = Type.Bytes.INSTANCE;
+        for (int i = 0; i < depth; i++) {
+            boolean async = (i % 2 == 0);
+            funcs = new Type.Func(List.of(funcs), Type.Bytes.INSTANCE, async);
+        }
+        DescriptorAst funcAst = assertEncodeMember(funcs,
+            "encode: sync/async function nesting at depth " + depth);
+        check(Types.containsBytes(funcs),
+            "function-nested type structurally contains bytes");
+        check(funcAst != null && maxDepth(funcAst) >= depth,
+            "encode: function atom tree reaches depth " + depth);
+
+        // Mixed array/nullable/function nesting around bytes with a bytes
+        // parameter and a bytes return at every function level.
+        Type mixed = Type.Bytes.INSTANCE;
+        for (int i = 0; i < depth; i++) {
+            switch (i % 3) {
+                case 0 -> mixed = new Type.Array(mixed);
+                case 1 -> mixed = new Type.Nullable(mixed);
+                default -> mixed = new Type.Func(
+                    List.of(mixed, Type.Bytes.INSTANCE),
+                    Type.Bytes.INSTANCE, i % 2 == 0);
+            }
+        }
+        DescriptorAst mixedAst = assertEncodeMember(mixed,
+            "encode: mixed nesting at depth " + depth);
+        check(Types.containsBytes(mixed), "mixed type structurally contains bytes");
+        check(mixedAst != null && maxDepth(mixedAst) >= depth,
+            "encode: mixed atom tree reaches depth " + depth);
     }
 }

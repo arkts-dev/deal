@@ -1,13 +1,21 @@
 package deal.descriptors;
 
+import deal.identity.CanonicalClassIdentityIndex;
+import deal.types.Type;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
 /**
- * The canonical runtime type descriptor grammar (DEAL v1.2): strict
- * {@linkplain #parse(String) parsing} and verbatim
- * {@linkplain #render(DescriptorAst) rendering}.
+ * The canonical runtime type descriptor service (DEAL v1.2): one
+ * per-compilation instance over the compilation's
+ * {@link CanonicalClassIdentityIndex} (design source
+ * {@code canonical-type-system-and-runtime-descriptors} D2/D5), with
+ * strict static {@linkplain #parse(String) parsing}, verbatim static
+ * {@linkplain #render(DescriptorAst) rendering}, and the instance
+ * {@linkplain #encode(Type) encode} surface — the single Type→text
+ * authority; no second Type→text producer may exist.
  *
  * <pre>
  * descriptor := primitive | class | array | nullable | function
@@ -40,9 +48,22 @@ import java.util.Objects;
  * {@code render(parse(text))} is byte-identical to {@code text}, and
  * {@code parse(render(ast))} round-trips for every atom.</p>
  *
- * <p>This class owns only the grammar surface.  The per-compilation
- * {@code encode(Type)} surface and the runtime matcher are separate
- * service layers.</p>
+ * <p>Encoding is total for class-free legal types and never emits a
+ * legacy spelling ({@code T[]}, {@code T|null}, bare names, rest sigs):
+ * primitives encode verbatim ({@code bytes} → {@code bytes});
+ * {@code Array<T>} → {@code [D]}; {@code Nullable<T>} → {@code ?D};
+ * functions carry the exact sync/async marker, the ordered parameter
+ * descriptors, and the return descriptor.  {@link Type.Error} — the
+ * internal sentinel — has no descriptor and is a pinned internal
+ * invariant violation (internal error, never fallback text, never an
+ * artifact).  {@link Type.Class} encoding lands with the
+ * identity-carriage sibling: at this stage it is an explicit internal
+ * invariant violation; the class branch consumes the held index.  For
+ * every class-free legal type {@code T},
+ * {@code render(parse(encode(T)))} equals {@code encode(T)}
+ * byte-for-byte.</p>
+ *
+ * <p>The runtime matcher remains a separate service layer.</p>
  */
 public final class CanonicalRuntimeTypeDescriptor {
 
@@ -50,7 +71,9 @@ public final class CanonicalRuntimeTypeDescriptor {
      * The pinned canonical descriptor text of
      * {@code deal.types.Type.Bytes.INSTANCE} (parent D3: "its descriptor
      * is {@code bytes}").  Parsing this constant yields a
-     * {@link DescriptorAst.PrimitiveAtom} whose name is this constant.
+     * {@link DescriptorAst.PrimitiveAtom} whose name is this constant,
+     * and encoding {@code Type.Bytes.INSTANCE} returns exactly this
+     * constant.
      */
     public static final String BYTES_DESCRIPTOR = "bytes";
 
@@ -58,8 +81,110 @@ public final class CanonicalRuntimeTypeDescriptor {
     private static final List<String> PRIMITIVE_KEYWORDS =
         List.of("null", "boolean", "int", "number", "string", BYTES_DESCRIPTOR, "table");
 
-    private CanonicalRuntimeTypeDescriptor() {
-        throw new AssertionError("static utility surface");
+    /**
+     * The compilation's canonical class-identity index.  The class encode
+     * branch (the identity-carriage sibling) consumes this index; this
+     * class never recomputes or reverse-parses identity text.
+     */
+    private final CanonicalClassIdentityIndex index;
+
+    /**
+     * Constructs the per-compilation descriptor service over the
+     * compilation's validated {@link CanonicalClassIdentityIndex}
+     * (design source {@code canonical-type-system-and-runtime-descriptors}
+     * D5: one service instance per compilation, constructed after the
+     * identity layer's index exists).
+     *
+     * @param index the compilation's canonical class-identity index;
+     *              never {@code null}
+     */
+    public CanonicalRuntimeTypeDescriptor(CanonicalClassIdentityIndex index) {
+        this.index = Objects.requireNonNull(index, "index must not be null");
+    }
+
+    // =========================================================================
+    // encode
+    // =========================================================================
+
+    /**
+     * Encodes a checked {@link Type} to canonical descriptor text — the
+     * single Type→text authority of the compilation.
+     *
+     * <ul>
+     *   <li>Primitives verbatim: {@code null}, {@code boolean},
+     *       {@code int}, {@code number}, {@code string}, {@code bytes},
+     *       {@code table}.</li>
+     *   <li>{@code Array<T>} → {@code [D]}; {@code Nullable<T>} →
+     *       {@code ?D}; functions carry the exact sync/async marker plus
+     *       the ordered parameter descriptors and the return
+     *       descriptor.</li>
+     *   <li>No legacy spelling ({@code T[]}, {@code T|null}, bare
+     *       names, rest sigs) is ever emitted for any input.</li>
+     * </ul>
+     *
+     * <p>Total for class-free legal types: for every such {@code T},
+     * {@code render(parse(encode(T)))} equals {@code encode(T)}
+     * byte-for-byte.</p>
+     *
+     * <p><b>Internal invariant violations:</b> {@link Type.Error} (the
+     * internal sentinel) has no descriptor and {@link Type.Class} is not
+     * encodable until the class branch lands with the identity-carriage
+     * sibling; both raise {@link IllegalStateException} — an internal
+     * error with never a fallback text and never an artifact.</p>
+     *
+     * @param type the checked type to encode (never {@code null})
+     * @return the canonical descriptor text
+     * @throws NullPointerException     when {@code type} is {@code null}
+     * @throws IllegalStateException    when {@code type} is
+     *                                  {@link Type.Error} or
+     *                                  {@link Type.Class} (pinned
+     *                                  internal invariant violations at
+     *                                  this stage)
+     */
+    public String encode(Type type) {
+        Objects.requireNonNull(type, "type must not be null");
+        return switch (type) {
+            case Type.Null ignored -> "null";
+            case Type.Boolean ignored -> "boolean";
+            case Type.Int ignored -> "int";
+            case Type.Number ignored -> "number";
+            case Type.String ignored -> "string";
+            case Type.Bytes ignored -> BYTES_DESCRIPTOR;
+            case Type.Table ignored -> "table";
+            case Type.Array a -> "[" + encode(a.element()) + "]";
+            case Type.Nullable n -> "?" + encode(n.inner());
+            case Type.Func f -> encodeFunction(f);
+            case Type.Error ignored -> throw new IllegalStateException(
+                "Type.Error is the internal sentinel and has no canonical "
+                + "descriptor; it must never be silently emitted and never "
+                + "reach artifact publication");
+            case Type.Class c -> throw new IllegalStateException(
+                "Type.Class is not encodable in the class-free stage: the "
+                + "class branch lands with the identity-carriage sibling; "
+                + "got " + c);
+        };
+    }
+
+    /**
+     * {@code async? "(" (D ("," D)*)? ")" "->" D} — the exact sync/async
+     * marker, the ordered parameter descriptors, and the return
+     * descriptor.
+     */
+    private String encodeFunction(Type.Func f) {
+        StringBuilder sb = new StringBuilder();
+        if (f.isAsync()) {
+            sb.append("async");
+        }
+        sb.append('(');
+        for (int i = 0; i < f.paramTypes().size(); i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append(encode(f.paramTypes().get(i)));
+        }
+        sb.append(")->");
+        sb.append(encode(f.returnType()));
+        return sb.toString();
     }
 
     // =========================================================================
