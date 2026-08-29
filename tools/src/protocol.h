@@ -18,9 +18,16 @@
  *  - the per-class field encodings (decimal ids/counts/milliseconds,
  *    32-lowercase-hex nonces, even-length lowercase-hex opaque byte
  *    strings, [A-Za-z_]+ tokens) and the per-type size caps (INVOKE <=
- *    131072-byte line with <= 65536 raw argv bytes; OUT chunks <= 65536
- *    hex chars = 32768 raw bytes; every other record <= 8192 bytes),
- *    enforced on read (PROTOCOL_ERROR) and on write (refusal);
+ *    131072-byte line with <= 65536 raw argv bytes and a <= 8000-byte
+ *    clientTag; OUT chunks <= 65536 hex chars = 32768 raw bytes;
+ *    every other record <= 8192 bytes), enforced on read
+ *    (PROTOCOL_ERROR) and on write (refusal). The clientTag bound is
+ *    sized so that every INVOKED/REJECT echo of a parse-OK INVOKE
+ *    always fits the 8192-byte per-type answer cap: the longest echo
+ *    (an 18-byte reason token, a 19-digit id, the max tag) is 8055
+ *    bytes -- so no well-formed INVOKE can ever produce a silently
+ *    dropped answer (an oversize tag is a framing defect and closes
+ *    the channel instead, the canonical size-cap split);
  *  - the full 26-type record catalog with per-type field shapes,
  *    encodings, counts, and directions (REPORT fixed 19-field order);
  *  - the framing-vs-record-level validation split: framing defects,
@@ -65,6 +72,18 @@
  * independently. */
 #define DEALPG4_MAX_LINE_OUT_BYTES (DEALPG4_OUT_MAX_HEX_CHARS + 64)
 #define DEALPG4_INVOKE_MAX_ARGV_RAW_BYTES   65536
+/* The INVOKE clientTag catalog max. Sized so that every INVOKED/REJECT
+ * echo of a parse-OK INVOKE always fits the 8192-byte per-type answer
+ * cap: the longest INVOKED echo ("DEALPG4 INVOKED " + a 19-digit
+ * decimal id + " " + tag + LF) is 8037 bytes, and the longest REJECT
+ * echo (19-digit id, 8000-byte tag, the catalog's longest in-use
+ * 18-byte reason token CANCEL_AUTH_FAILED) is 8055 bytes -- both under
+ * 8192, so a legal INVOKE can never produce a silently dropped answer.
+ * Enforced on read (framing: an oversize tag classifies OVERSIZE_LINE,
+ * PROTOCOL_ERROR downstream -- the canonical size-cap split) and on
+ * write (the INVOKE tag and the INVOKED/REJECT echo fields are refused
+ * past the bound, so a malformed echo line is never emitted). */
+#define DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES 8000
 #define DEALPG4_NONCE_BYTES                    16
 #define DEALPG4_NONCE_HEX_CHARS                32
 

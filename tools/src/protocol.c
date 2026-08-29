@@ -537,6 +537,16 @@ dealpg4_parse_status dealpg4_parse(const char *line, size_t len,
 
     /* Fixed-field classes. */
     for (i = 0; i < fixed; i++) {
+        /* The INVOKE clientTag bound (a per-field size cap): a tag
+         * that cannot be echoed inside the 8192-byte answer cap is a
+         * framing defect -- OVERSIZE_LINE, PROTOCOL_ERROR downstream --
+         * so no parse-OK INVOKE can ever produce a silently dropped
+         * INVOKED/REJECT answer (the canonical size-cap split; the
+         * bound keeps every echo inside the per-type answer cap). */
+        if (type == DEALPG4_REC_INVOKE && i == 0 &&
+            out->fields[i].len > DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES)
+            return dealpg4_parse_fail(out,
+                                      DEALPG4_PARSE_ERR_OVERSIZE_LINE);
         /* The empty INVOKE cwd (fixed index 1) accepted by the framing
          * walk above is exempt from dealpg4_is_hex_text's len >= 2
          * floor: the empty string is even-length lowercase hex (D2), so
@@ -902,6 +912,20 @@ static int dealpg4_serialize_validate(dealpg4_record_type type,
         if (fields[i].len > DEALPG4_MAX_LINE_INVOKE_BYTES) {
             errno = EINVAL;
             return -1;
+        }
+        /* The INVOKE clientTag and its INVOKED/REJECT echo fields are
+         * bounded by the catalog max (write-side symmetry with the
+         * parser): every parse-OK tag serializes inside the 8192-byte
+         * answer cap, so a conforming echo is never refused -- an
+         * oversize tag is a caller defect and a malformed echo line
+         * is never emitted. */
+        if ((type == DEALPG4_REC_INVOKE && i == 0)
+            || (type == DEALPG4_REC_INVOKED && i == 1)
+            || (type == DEALPG4_REC_REJECT && i == 1)) {
+            if (fields[i].len > DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES) {
+                errno = EINVAL;
+                return -1;
+            }
         }
         f.p = fields[i].data;
         f.len = fields[i].len;

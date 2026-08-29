@@ -24,8 +24,11 @@
  *     spawn composition records no fork call, the record has no
  *     channels and no pid, and the broker stays open; framing-level
  *     INVOKE defects (non-hex argv, odd-length hex, field-count
- *     violations, CR, an oversize unterminated stream) close the
- *     broker with PROTOCOL_ERROR.
+ *     violations, CR, an oversize unterminated stream, an oversize
+ *     clientTag) close the broker with PROTOCOL_ERROR; a
+ *     catalog-max clientTag is echoed in full (the pinned tag bound
+ *     keeps every INVOKED/REJECT echo inside the 8192-byte answer
+ *     cap — no silently dropped answer).
  *  2. Pre-fork rejection battery (scaled OuterLimits through the
  *     in-process core): T-floor (scaled nestedStopMs so T < 15000) ->
  *     REJECT BUDGET_EXHAUSTED + terminal FAILED record, no fork;
@@ -35,13 +38,21 @@
  *     scripted socketpair failure (FI_OUTER_SOCKETPAIR), and via the
  *     production fork_nested with FI_OUTER_FORK armed; NONCE_FAILED
  *     via the pinned FI_OUTER_NONCE tag (the production nonce path
- *     stays unchanged when the site is unscripted).
+ *     stays unchanged when the site is unscripted); the registry
+ *     total bound (scaled to 256 by the suite compile) covers
+ *     live/forked records only — pre-cutoff semantic rejection
+ *     records fill the registry across the bound and the post-cutoff
+ *     INVOKE keeps the unconditional REJECT BUDGET_EXHAUSTED answer
+ *     with its immediate terminal FAILED record at every registry
+ *     size.
  *  3. Register-before-fork: a checker composition runs inside
  *     fork_nested and proves the record exists (inserted) with the
  *     exact fork parameters (nonce, budget_t == deadline_ms within
  *     [15000, 45000], invocation_id, control fd, tag, FORKING state,
  *     no pid attached yet) and the exact serve argv surface
- *     ([self, serve, decodedCwd, --, target...]); INVOKED <id> <tag>
+ *     ([self, serve, decodedCwd, --, target...] with self == the
+ *     suite's own argv[0] — the outer's own argv[0] pin); INVOKED
+ *     <id> <tag>
  *     is received with the record's id; a broker EOF injected
  *     mid-INVOKE still registers + forks, then the caller-loss mark
  *     applies — never the reverse.
@@ -275,7 +286,8 @@ static int recorder_fork_nested(const dealpg4_outer_spawn *self,
         /* The D3 serve surface: [self, serve, decodedCwd, --,
          * target-argv...]. */
         CHECK(argc == 5);
-        CHECK(serve_argv[0] != NULL && serve_argv[0][0] != '\0');
+        CHECK(serve_argv[0] != NULL
+              && strcmp(serve_argv[0], g_suite_argv0) == 0);
         CHECK(serve_argv[1] != NULL
               && strcmp(serve_argv[1], "serve") == 0);
         CHECK(serve_argv[2] != NULL && strcmp(serve_argv[2], "/") == 0);
@@ -1010,6 +1022,127 @@ static int registry_peer_main(const char *scenario, const char *arg)
         return 0;
     }
 
+    if (strcmp(scenario, "tag-max") == 0) {
+        /* A catalog-max clientTag (8000 bytes) with a semantic
+         * defect: the REJECT echo carries the full tag — a legal
+         * INVOKE can never produce a silently dropped answer (the
+         * echo fits the 8192-byte answer cap by the pinned tag
+         * bound). */
+        static char big[DEALPG4_MAX_LINE_INVOKE_BYTES + 1];
+        static char echo[DEALPG4_MAX_LINE_OTHER_BYTES + 1];
+        size_t pos = 0;
+        size_t idlen = 0;
+        size_t epos;
+
+        memcpy(big + pos, "DEALPG4 INVOKE ", 15);
+        pos += 15;
+        memset(big + pos, 'a', DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES);
+        pos += DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES;
+        memcpy(big + pos, " 2f 2 74727565\n", 15);
+        pos += 15;
+        big[pos] = '\0';
+        if (peer_write_all(fd, big, pos) != 0
+            || peer_read_line(fd, echo, sizeof echo, 3000) != 0) {
+            fprintf(stderr, "PEER FAIL tag-max-read\n");
+            return 1;
+        }
+        if (memcmp(echo, "DEALPG4 REJECT ", 15) != 0) {
+            fprintf(stderr, "PEER FAIL tag-max-prefix %s\n", echo);
+            return 1;
+        }
+        epos = 15;
+        while (echo[epos] >= '0' && echo[epos] <= '9') {
+            epos++;
+            idlen++;
+        }
+        if (idlen == 0 || echo[epos] != ' ') {
+            fprintf(stderr, "PEER FAIL tag-max-id\n");
+            return 1;
+        }
+        epos++;
+        /* The exact echo: the 8000-byte tag, then " MALFORMED_INVOKE\n". */
+        if (strlen(echo) != epos + DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES
+                + strlen(" MALFORMED_INVOKE\n")
+            || memcmp(echo + epos, big + 15,
+                      DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES) != 0
+            || memcmp(echo + epos + DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES,
+                      " MALFORMED_INVOKE\n",
+                      strlen(" MALFORMED_INVOKE\n")) != 0) {
+            fprintf(stderr, "PEER FAIL tag-max-echo\n");
+            return 1;
+        }
+        close(fd);
+        printf("PEER tag-max\n");
+        fflush(stdout);
+        return 0;
+    }
+
+    if (strcmp(scenario, "flood-cap") == 0) {
+        /* The registry total bound (scaled to 256 by the suite
+         * compile) covers live/forked records only: 260 pre-cutoff
+         * semantic rejections fill the registry across the bound —
+         * every answer carries the pinned MALFORMED_INVOKE token and
+         * every terminal FAILED record is inserted (the crossing at
+         * record 257 would have been refused by the bound
+         * substitution); then a post-cutoff INVOKE keeps the
+         * unconditional BUDGET_EXHAUSTED answer with its terminal
+         * record — never a substitute token, never a close. */
+        int64_t id = 0;
+        char tag[64];
+        char token[64];
+        int i;
+
+        for (i = 1; i <= 260; i++) {
+            if (peer_write_all(fd, MALFORMED_ARGC_INVOKE,
+                               strlen(MALFORMED_ARGC_INVOKE)) != 0
+                || peer_read_line(fd, line, sizeof line, 3000) != 0) {
+                fprintf(stderr, "PEER FAIL flood-pre %d\n", i);
+                return 1;
+            }
+            if (peer_parse_reject(line, &id, tag, token) != 0
+                || id != i || strcmp(tag, "tag") != 0
+                || strcmp(token, "MALFORMED_INVOKE") != 0) {
+                fprintf(stderr, "PEER FAIL flood-pre-shape %d %s\n", i,
+                        line);
+                return 1;
+            }
+        }
+        /* DONE failed arrives at the cutoff (every record terminal,
+         * the registry non-empty). */
+        if (peer_read_line(fd, line, sizeof line, 5000) != 0
+            || strcmp(line, "DEALPG4 DONE failed\n") != 0) {
+            fprintf(stderr, "PEER FAIL flood-done %s\n", line);
+            return 1;
+        }
+        /* The post-cutoff INVOKE at the bound: the unconditional
+         * answer. */
+        if (peer_write_all(fd, VALID_INVOKE, strlen(VALID_INVOKE)) != 0
+            || peer_read_line(fd, line, sizeof line, 3000) != 0) {
+            fprintf(stderr, "PEER FAIL flood-post-read\n");
+            return 1;
+        }
+        if (peer_parse_reject(line, &id, tag, token) != 0
+            || id != 261 || strcmp(tag, "tag") != 0
+            || strcmp(token, "BUDGET_EXHAUSTED") != 0) {
+            fprintf(stderr, "PEER FAIL flood-post %s\n", line);
+            return 1;
+        }
+        /* No second DONE; BYE is then accepted (EOF after BYE). */
+        if (peer_read_line(fd, line, sizeof line, 500) != -2) {
+            fprintf(stderr, "PEER FAIL flood-second-done %s\n", line);
+            return 1;
+        }
+        if (peer_write_all(fd, "DEALPG4 BYE\n", 12) != 0
+            || peer_read_line(fd, line, sizeof line, 3000) != -1) {
+            fprintf(stderr, "PEER FAIL flood-bye\n");
+            return 1;
+        }
+        close(fd);
+        printf("PEER flood-cap\n");
+        fflush(stdout);
+        return 0;
+    }
+
     if (strcmp(scenario, "done-cycle") == 0) {
         /* The cutoff-anchored DONE trigger: two pre-cutoff REJECT
          * answers (the live phase stays open for the repeated
@@ -1459,6 +1592,71 @@ static int framing_split_fn(void)
         }
         gate_group(cases[i].name, errbuf, status);
     }
+    /* The oversize INVOKE clientTag: a framing defect per the
+     * canonical size-cap split (PROTOCOL_ERROR close) — the pinned
+     * catalog max keeps every parse-OK INVOKE's INVOKED/REJECT echo
+     * inside the 8192-byte answer cap, so a legal INVOKE can never
+     * produce a silently dropped answer. */
+    {
+        static char big_tag_invoke[DEALPG4_MAX_LINE_INVOKE_BYTES + 1];
+        framing_case c;
+        size_t pos = 0;
+        char errbuf[2048];
+        int status;
+
+        memcpy(big_tag_invoke + pos, "DEALPG4 INVOKE ", 15);
+        pos += 15;
+        memset(big_tag_invoke + pos, 'a',
+               DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES + 1);
+        pos += DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES + 1;
+        memcpy(big_tag_invoke + pos, " 2f 1 74727565\n", 15);
+        pos += 15;
+        big_tag_invoke[pos] = '\0';
+        c.text = big_tag_invoke;
+        c.name = "oversize INVOKE clientTag";
+        g_current_framing = &c;
+        if (run_capture_child(framing_split_case, errbuf,
+                              sizeof errbuf, &status) != 0) {
+            fprintf(stderr, "FAIL: helper machinery broke\n");
+            return 1;
+        }
+        gate_group(c.name, errbuf, status);
+    }
+    return (g_failures > 0) ? 1 : 0;
+}
+
+/* A catalog-max clientTag (8000 bytes) with a semantic defect: the
+ * REJECT echo carries the full tag — a legal INVOKE can never produce
+ * a silently dropped answer (the echo fits the 8192-byte answer cap
+ * by the pinned tag bound). */
+static int tag_max_echo_fn(void)
+{
+    spawn_recorder rec;
+    dealpg4_outer_spawn sp;
+    char report[1024];
+    dealpg4_outer_result view;
+    dealpg4_outer_record_view recview;
+    int status;
+
+    memset(&rec, 0, sizeof rec);
+    rec.mode = REC_MODE_FORK;
+    sp = make_spawn(&rec);
+    run_case(&FAST_LIMITS, "tag-max", NULL, &sp, report, sizeof report,
+             &status, &view);
+
+    CHECK(status == DEALPG4_OUTER_EXIT_GATE_FAILURE);
+    CHECK(rec.fork_calls == 0);
+    CHECK(view.records_total == 1);
+    CHECK(view.records_failed == 1);
+    CHECK(view.proof_passed == 1);
+    CHECK(!has_token(&view, "PROTOCOL_ERROR"));
+    CHECK(dealpg4_outer_registry_record(0, &recview) == 0);
+    CHECK(recview.state == DEALPG4_OUTER_REC_FAILED);
+    CHECK(strcmp(recview.failure_token, "MALFORMED_INVOKE") == 0);
+    /* The view truncates the 8000-byte tag at the view cap; the peer
+     * asserted the exact echo over the broker. */
+    CHECK(recview.client_tag[0] == 'a');
+    CHECK(recview.client_tag[DEALPG4_OUTER_TAG_VIEW_BYTES - 2] == 'a');
     return (g_failures > 0) ? 1 : 0;
 }
 
@@ -1728,6 +1926,61 @@ static int registry_full_case_fn(void)
     return (g_failures > 0) ? 1 : 0;
 }
 
+/* The registry total bound (scaled to 256 by the suite compile)
+ * covers live/forked records only: pre-cutoff semantic rejection
+ * records fill the registry across the bound (the crossing at record
+ * 257 would have been refused by the bound substitution), and the
+ * post-cutoff INVOKE keeps the unconditional REJECT BUDGET_EXHAUSTED
+ * answer with its immediate terminal FAILED record at every registry
+ * size — never a substitute token, never a close. */
+static int flood_cap_case_fn(void)
+{
+    spawn_recorder rec;
+    dealpg4_outer_spawn sp;
+    char report[65536];
+    dealpg4_outer_result view;
+    dealpg4_outer_record_view recview;
+    int status;
+
+    memset(&rec, 0, sizeof rec);
+    rec.mode = REC_MODE_FORK;
+    sp = make_spawn(&rec);
+    run_case(&FAST_LIMITS, "flood-cap", NULL, &sp, report, sizeof report,
+             &status, &view);
+
+    CHECK(status == DEALPG4_OUTER_EXIT_GATE_FAILURE);
+    CHECK(rec.fork_calls == 0); /* every INVOKE was rejected — no fork */
+    CHECK(view.done_queued == 1);
+    CHECK(view.done_clean == 0);
+    CHECK(view.records_total == 261);
+    CHECK(view.records_live == 0);
+    CHECK(view.records_failed == 261);
+    CHECK(view.next_invocation_id == 262);
+    CHECK(view.proof_passed == 1);
+    CHECK(!has_token(&view, "REGISTRY_FULL")); /* no bound substitution */
+    CHECK(!has_token(&view, "OVERALL_TIMEOUT"));
+    CHECK(!has_token(&view, "PROTOCOL_ERROR"));
+    CHECK(dealpg4_outer_registry_count() == 261);
+    /* The crossing at the bound: record 256 (id 257) was inserted —
+     * the pre-cutoff semantic rejection kept its terminal record. */
+    CHECK(dealpg4_outer_registry_record(256, &recview) == 0);
+    CHECK(recview.invocation_id == 257);
+    CHECK(recview.state == DEALPG4_OUTER_REC_FAILED);
+    CHECK(recview.supervisor_pid == -1);
+    CHECK(recview.control_fd == -1);
+    CHECK(strcmp(recview.failure_token, "MALFORMED_INVOKE") == 0);
+    /* The post-cutoff record at the bound: BUDGET_EXHAUSTED, no pid,
+     * no channels, no fork. */
+    CHECK(dealpg4_outer_registry_record(260, &recview) == 0);
+    CHECK(recview.invocation_id == 261);
+    CHECK(recview.state == DEALPG4_OUTER_REC_FAILED);
+    CHECK(recview.supervisor_pid == -1);
+    CHECK(recview.control_fd == -1);
+    CHECK(recview.nonce[0] == '\0');
+    CHECK(strcmp(recview.failure_token, "BUDGET_EXHAUSTED") == 0);
+    return (g_failures > 0) ? 1 : 0;
+}
+
 /* === Group 3: register-before-fork and the serve surface ============== */
 
 static int register_before_fork_fn(void)
@@ -1780,7 +2033,8 @@ static int register_before_fork_fn(void)
      * composition; re-checked here): self + serve + cwd + -- +
      * target. */
     CHECK(rec.serve_argc == 5);
-    CHECK(rec.serve_self[0] != '\0');
+    CHECK(strcmp(rec.serve_self, g_suite_argv0) == 0); /* the outer's
+                                                          own argv[0] */
     CHECK(strcmp(rec.serve_cwd, "/") == 0);
     CHECK(strcmp(rec.serve_arg0, "true") == 0);
     return (g_failures > 0) ? 1 : 0;
@@ -2158,6 +2412,11 @@ static void run_group(const char *name, outer_test_fn fn)
 int main(int argc, char **argv)
 {
     g_suite_argv0 = argv[0];
+    /* The suite composes the core in-process: note the process argv[0]
+     * so the D3 serve surface carries the suite's own argv[0] (the
+     * in-process equivalent of the launcher's argv[0] — the exact
+     * identity the registry checks pin). */
+    dealpg4_outer_note_process_argv0(g_suite_argv0);
     if (argc >= 2 && strcmp(argv[1], "--registry-peer") == 0)
         return registry_peer_entry(argc, argv);
 
@@ -2187,6 +2446,10 @@ int main(int argc, char **argv)
         gate_group("framing split", errbuf, status);
     }
 
+    /* Group 1c: the clientTag bound (framing close past the max,
+     * exact echo at the max). */
+    run_group("INVOKE tag-max echo", tag_max_echo_fn);
+
     /* Group 2: the pre-fork rejection battery. */
     run_group("T-floor BUDGET_EXHAUSTED", floor_case_fn);
     run_group("FORK_FAILED (composition)", fork_fail_composition_fn);
@@ -2196,6 +2459,8 @@ int main(int argc, char **argv)
     run_group("FORK_FAILED (fork site)", fork_fail_site_case_fn);
     run_group("REGISTRY_FULL at 128 live records",
               registry_full_case_fn);
+    run_group("registry total bound: rejection records exempt",
+              flood_cap_case_fn);
 
     /* Group 3: register-before-fork and the serve surface. */
     run_group("register-before-fork + serve surface",

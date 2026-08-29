@@ -29,8 +29,13 @@ trap 'rm -f "$BIN"; exit 130' HUP INT TERM
 
 SOURCE_DATE_EPOCH=0
 export SOURCE_DATE_EPOCH
+# The registry total bound is scaled for the component suite so the
+# exact-boundary cases (the terminal-rejection-record exemption past
+# the bound, the unconditional post-cutoff answer) run fast and
+# deterministically; production keeps 4096 (outer.c default).
 gcc -std=c11 -O2 -Wall -Werror -fno-ident -ffile-prefix-map=$PWD=. \
-    -Wl,--build-id=none -o "$BIN" src/outer.c src/monotonic.c \
+    -Wl,--build-id=none -DDEALPG4_OUTER_REGISTRY_TOTAL_CAP=256 \
+    -o "$BIN" src/outer.c src/monotonic.c \
     src/protocol.c src/fi.c src/selftest.c src/drain.c \
     test/outer-registry-tests.c
 

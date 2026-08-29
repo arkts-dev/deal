@@ -157,13 +157,22 @@ struct dealpg4_outer_record {
 typedef struct dealpg4_outer_record dealpg4_outer_record;
 
 /* Registry total bound (an implementation bound, distinct from the
- * pinned 128-live cap): records are retained until the final report,
- * so a flood of post-cutoff INVOKEs grows the registry; the bound
- * keeps the run's memory and the bounded final report deterministic.
- * At the bound every further INVOKE is answered REJECT <id> <tag>
- * REGISTRY_FULL over the open broker with the gate token recorded
- * (no record is inserted — the array is full). */
+ * pinned 128-live cap): live and forked records are bounded at
+ * DEALPG4_OUTER_REGISTRY_TOTAL_CAP so the run's memory and the
+ * bounded final report stay deterministic. Terminal-at-insertion
+ * pre-fork rejection records are exempt from the bound: the
+ * unconditional post-cutoff REJECT <id> <tag> BUDGET_EXHAUSTED answer
+ * and every pre-cutoff semantic rejection keep their immediate
+ * terminal FAILED record at every registry size (the array grows
+ * separately for them — D4/D5 review rule). At the bound a
+ * further live/forked insert is answered REJECT <id> <tag>
+ * REGISTRY_FULL with the immediate terminal FAILED record (the
+ * rejection record itself is exempt). The component suite scales the
+ * bound through -DDEALPG4_OUTER_REGISTRY_TOTAL_CAP to exercise the
+ * exact boundary; production keeps 4096. */
+#ifndef DEALPG4_OUTER_REGISTRY_TOTAL_CAP
 #define DEALPG4_OUTER_REGISTRY_TOTAL_CAP 4096
+#endif
 
 /* === Core state ========================================================= */
 
@@ -350,9 +359,13 @@ typedef struct dealpg4_outer_state {
     int records_live;           /* pre-terminal (live) records */
     int records_failed;         /* terminal FAILED records */
     int records_clean;          /* terminal CLEAN records */
-    char self_exe[PATH_MAX + 1]; /* /proc/self/exe — the serve argv[0]
-                                    (the same committed binary) */
-    int self_exe_ok;
+    char self_argv0[PATH_MAX + 1]; /* the outer's own argv[0] (the
+                                      exact string the shell used) —
+                                      the serve argv[0] of the D3 fork
+                                      surface, captured at core entry
+                                      from the process argv[0] the
+                                      dispatch noted at startup */
+    int self_argv0_ok;
 
     /* DONE trigger + cutoff (engine D5/D9). */
     int done_queued;    /* the trigger fired exactly once */
@@ -378,6 +391,24 @@ static dealpg4_drain_ctx dealpg4_outer_last_drain_stderr;
 static dealpg4_outer_state *dealpg4_outer_live_state;
 static dealpg4_outer_record_view *dealpg4_outer_registry_snapshot;
 static size_t dealpg4_outer_registry_snapshot_count;
+
+/* The process argv[0] the dispatch noted at startup (the exact string
+ * the shell used to start the launcher) — the serve argv[0] of
+ * the D3 fork surface. Noted by launcher-main (the single process
+ * entry, so every mode — including the selftest battery's
+ * forked scenario processes — delivers it) and by the outer
+ * mode entry; the core captures it at core entry. Never a /proc
+ * resolution: argv[0] is the pinned structural surface. */
+static const char *dealpg4_outer_process_argv0;
+
+void dealpg4_outer_note_process_argv0(const char *argv0)
+{
+    /* Idempotent: the first non-NULL non-empty note wins (argv[0] is
+     * immutable for the process lifetime). */
+    if (dealpg4_outer_process_argv0 == NULL && argv0 != NULL
+        && argv0[0] != '\0')
+        dealpg4_outer_process_argv0 = argv0;
+}
 
 void dealpg4_outer_last_result(dealpg4_outer_result *out)
 {
@@ -1303,9 +1334,13 @@ static void dealpg4_outer_record_transition(dealpg4_outer_state *st,
 
 /* Insert one registry record (never deleted before the final report).
  * The tag bytes are copied to the heap (exact — INVOKED/REJECT echo
- * them verbatim); the array grows up to the total bound. Returns NULL
- * at the total bound or on a tag-copy failure (the caller's defensive
- * REGISTRY_FULL path — no record is inserted). */
+ * them verbatim); the array grows up to the total bound. The bound
+ * covers live and forked records only: terminal-at-insertion pre-fork
+ * rejection records (initial_state FAILED) are exempt and grow the
+ * array past the bound, so the unconditional post-cutoff answer and
+ * every pre-fork semantic rejection keep their immediate terminal
+ * FAILED record at every registry size. Returns NULL at the
+ * live/forked total bound or on an allocation failure. */
 static dealpg4_outer_record *dealpg4_outer_insert_record(
     dealpg4_outer_state *st, int64_t invocation_id,
     const char *tag_bytes, size_t tag_len, const char nonce[33],
@@ -1315,13 +1350,15 @@ static dealpg4_outer_record *dealpg4_outer_insert_record(
     dealpg4_outer_record *r;
     char *tag;
 
-    if (st->nrecords >= DEALPG4_OUTER_REGISTRY_TOTAL_CAP)
+    if (st->nrecords >= DEALPG4_OUTER_REGISTRY_TOTAL_CAP
+        && initial_state != DEALPG4_OUTER_REC_FAILED)
         return NULL;
     if (st->nrecords == st->records_cap) {
         size_t new_cap = st->records_cap == 0 ? 16 : st->records_cap * 2;
         dealpg4_outer_record *grown;
 
-        if (new_cap > DEALPG4_OUTER_REGISTRY_TOTAL_CAP)
+        if (initial_state != DEALPG4_OUTER_REC_FAILED
+            && new_cap > DEALPG4_OUTER_REGISTRY_TOTAL_CAP)
             new_cap = DEALPG4_OUTER_REGISTRY_TOTAL_CAP;
         grown = realloc(st->records, new_cap * sizeof *grown);
         if (grown == NULL)
@@ -1510,16 +1547,17 @@ static void dealpg4_outer_reject_pre_fork(dealpg4_outer_state *st,
                                     DEALPG4_OUTER_REC_FAILED, 0, 0,
                                     token, now);
     if (r == NULL) {
-        /* The registry total bound: the answer still goes out (the
-         * run stays deterministic and bounded), the named gate token
-         * is recorded, and no record is inserted (the array is
-         * full). */
+        /* Only an allocation failure can refuse a terminal rejection
+         * record (they are exempt from the registry total bound): the
+         * answer still carries the pinned token — never a
+         * substitute — and the pinned token is recorded on the
+         * gate. */
         char *tagbuf = dealpg4_outer_dup_tag(tag);
 
-        dealpg4_outer_gate_token(st, "REGISTRY_FULL");
+        dealpg4_outer_gate_token(st, token);
         dealpg4_outer_reject_answer(st, id,
                                     tagbuf != NULL ? tagbuf : "-",
-                                    "REGISTRY_FULL");
+                                    token);
         free(tagbuf);
         return;
     }
@@ -1529,9 +1567,11 @@ static void dealpg4_outer_reject_pre_fork(dealpg4_outer_state *st,
 
 
 /* The serve argv of the D3 fork surface: [self, "serve", <decodedCwd>,
- * "--", <target-argv...>] with self = the outer's own executable
- * (readlink /proc/self/exe — the same committed binary), argv[2] the
- * INVOKE cwd field decoded, and the tail the decoded INVOKE argv.
+ * "--", <target-argv...>] with self = the outer's own argv[0] (the
+ * exact string the shell used to start the launcher — the same
+ * committed binary; captured at core entry, never a /proc
+ * resolution), argv[2] the INVOKE cwd field decoded, and the tail
+ * the decoded INVOKE argv.
  * The returned argv array and data block are heap-owned; the caller
  * frees them after fork_nested returns (the child side uses them
  * before its exec / _exit — copy-on-write safe because the child
@@ -1552,11 +1592,11 @@ static char **dealpg4_outer_build_serve_argv(const dealpg4_outer_state *st,
     size_t off;
     size_t i;
 
-    if (!st->self_exe_ok)
+    if (!st->self_argv0_ok)
         return NULL;
     if (dealpg4_parsed_argv_raw_total(parsed, &raw_total) != 0)
         return NULL;
-    self_len = strlen(st->self_exe);
+    self_len = strlen(st->self_argv0);
     /* argv slots: self, "serve", cwd, "--", argc elements, NULL. */
     av = malloc((argc + 5) * sizeof(char *));
     if (av == NULL)
@@ -1571,7 +1611,7 @@ static char **dealpg4_outer_build_serve_argv(const dealpg4_outer_state *st,
         return NULL;
     }
     off = 0;
-    memcpy(data + off, st->self_exe, self_len);
+    memcpy(data + off, st->self_argv0, self_len);
     data[off + self_len] = '\0';
     av[0] = (char *)data + off;
     off += self_len + 1;
@@ -1711,14 +1751,12 @@ static void dealpg4_outer_broker_invoke(dealpg4_outer_state *st,
                                     DEALPG4_OUTER_REC_FORKING, budget_t,
                                     now + budget_t, NULL, now);
     if (r == NULL) {
-        /* The registry total bound (defensive; the live cap is the
-         * pinned REGISTRY_FULL semantic). */
-        char *tagbuf = dealpg4_outer_dup_tag(tag_f);
-
-        dealpg4_outer_gate_token(st, "REGISTRY_FULL");
-        dealpg4_outer_reject_answer(st, id,
-                                    tagbuf != NULL ? tagbuf : "-",
-                                    "REGISTRY_FULL");
+        /* The registry total bound for live/forked records: the
+         * rejection keeps the pinned pre-fork shape — REJECT <id>
+         * <tag> REGISTRY_FULL + the immediate terminal FAILED record
+         * (the rejection record itself is exempt from the bound) +
+         * the DONE trigger evaluation. */
+        dealpg4_outer_reject_pre_fork(st, id, tag_f, "REGISTRY_FULL");
         return;
     }
 
@@ -1761,8 +1799,8 @@ static void dealpg4_outer_broker_invoke(dealpg4_outer_state *st,
     child_control_fd = sv[1];
 
     /* The D3 serve surface: serve argv [self, serve, <decodedCwd>, --,
-     * <target-argv...>] with self = the outer's own argv[0] equivalent
-     * (/proc/self/exe — the same committed binary). */
+     * <target-argv...>] with self = the outer's own argv[0] (the same
+     * committed binary). */
     serve_argv = dealpg4_outer_build_serve_argv(st, parsed, cwd_buf,
                                                 cwd_len, &serve_data);
     if (serve_argv == NULL) {
@@ -3763,16 +3801,22 @@ int dealpg4_outer_core(const OuterLimits *limits,
     st.spawn = spawn;
 
     /* The serve argv[0] of the D3 fork surface: the outer's own
-     * executable (the same committed binary) via /proc/self/exe. A
-     * read failure fail-closes later INVOKEs that would fork (the
-     * FORK_FAILED path — no fork happens without a serve surface). */
+     * argv[0] (the exact string the shell used to start the
+     * launcher), captured at core entry from the process argv[0] the
+     * dispatch noted at startup — never a /proc resolution. A
+     * missing capture fail-closes later INVOKEs that would fork (the
+     * FORK_FAILED path — no fork happens without a serve
+     * surface). */
     {
-        ssize_t n = readlink("/proc/self/exe", st.self_exe,
-                             sizeof st.self_exe - 1);
+        const char *argv0 = dealpg4_outer_process_argv0;
 
-        if (n > 0) {
-            st.self_exe[n] = '\0';
-            st.self_exe_ok = 1;
+        if (argv0 != NULL && argv0[0] != '\0') {
+            size_t alen = strlen(argv0);
+
+            if (alen < sizeof st.self_argv0) {
+                memcpy(st.self_argv0, argv0, alen + 1);
+                st.self_argv0_ok = 1;
+            }
         }
     }
 
@@ -3896,6 +3940,12 @@ int dealpg4_outer_entry(int argc, char **argv)
      * inherits the ignored disposition (the core preamble repeats the
      * ignore). */
     (void)signal(SIGPIPE, SIG_IGN);
+
+    /* Capture the process argv[0] for the D3 serve surface: the
+     * serve argv[0] is the outer's own argv[0] (the exact string the
+     * shell used). The dispatch notes it at startup too; the entry
+     * note makes the entry self-sufficient for any caller. */
+    dealpg4_outer_note_process_argv0(argv[0]);
 
     /* argv shape (D1): "launcher outer <coordinatorNonce> --
      * <coordinator-argv...>". argv[0] = program path, argv[1] =

@@ -28,7 +28,10 @@
  * dealpg4_outer_spawn seam (per-invocation AF_UNIX socketpair control
  * channel with the outer end O_NONBLOCK|FD_CLOEXEC and the child end
  * dup2'd onto fd 0, serve argv [self, serve, <decodedCwd>, --,
- * <target-argv...>] with self = /proc/self/exe, the DEALPG4_NONCE /
+ * <target-argv...>] with self = the outer's own argv[0] (the exact
+ * string the shell used, captured from the process argv[0] the
+ * dispatch notes at startup -- never a /proc resolution), the
+ * DEALPG4_NONCE /
  * DEALPG4_BUDGET_MS / DEALPG4_INVOCATION_ID env pins child-side at
  * the fork, T = min(invocationLimits.overallTimeoutMs, nestedStopMs -
  * nowMs), the 15000 ms budget floor); the pre-fork terminal-record
@@ -356,6 +359,21 @@ int dealpg4_outer_registry_record(size_t idx, dealpg4_outer_record_view *out);
  */
 
 /* === Mode entry / core entry (engine D1/D2) ============================ */
+
+/*
+ * Capture the process argv[0] for the D3 serve surface. The mode
+ * dispatch (launcher-main.c) notes the process argv[0] at startup --
+ * the exact string the shell used -- and the outer core captures it
+ * at core entry as the serve argv[0] slot (engine D3: serve argv
+ * [self, serve, <decodedCwd>, --, <target-argv...>] with self = the
+ * outer's own argv[0], the same committed binary -- never a /proc
+ * resolution). Idempotent: the first non-NULL non-empty note wins; a
+ * NULL/empty argument is ignored. Direct core callers (component
+ * tests, the selftest battery) note their process argv[0] the same
+ * way; a missing capture fail-closes a valid INVOKE on the
+ * FORK_FAILED path (no fork happens without a serve surface).
+ */
+void dealpg4_outer_note_process_argv0(const char *argv0);
 
 /*
  * outer mode entry: argv shape
