@@ -1,0 +1,14 @@
+// @spec: Standard library declarations — std/math.d.deal
+// @description: std/math.absInt(-2147483648) raises E8004 — the result 2147483648 is outside the signed-int32 range (v1.2: int is [-2147483648, 2147483647])
+// @expected: runtime-error E8004
+// @features: stdlib, math, int, overflow, v1.2
+
+import * as math from "std/math";
+
+export function test_abs_int_min_overflow(): int {
+  return math.absInt(-2147483648);
+}
+
+export function main(): null {
+  return null;
+}

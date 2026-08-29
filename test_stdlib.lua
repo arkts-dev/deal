@@ -866,6 +866,49 @@ test("math.absInt with NaN raises error", function()
   assert(type(err) == "table", "error should be a table")
 end)
 
+-- int32 contract tests (luajit-v1.2-stdlib-contracts D2, ISSUE-0337)
+
+test("math.absInt(-7) returns 7 (int32 contract driver call)", function()
+  assert(mathlib.absInt.f(-7) == 7)
+end)
+
+test("math.absInt(-2147483648) raises E8004 (2147483648 is outside int32)", function()
+  local err = assert_error_code(function() mathlib.absInt.f(-2147483648) end, "E8004")
+  assert(err.message == "int out of range",
+    "expected 'int out of range', got " .. tostring(err.message))
+end)
+
+test("math.absInt(2147483647) returns 2147483647 (int32 upper bound)", function()
+  assert(mathlib.absInt.f(2147483647) == 2147483647)
+end)
+
+test("math.absInt(-2147483647) returns 2147483647 (int32 lower-bound neighbor)", function()
+  assert(mathlib.absInt.f(-2147483647) == 2147483647)
+end)
+
+test("math.minInt returns MIN over the int32 extremes", function()
+  assert(mathlib.minInt.f(-2147483648, 2147483647) == -2147483648)
+end)
+
+test("math.maxInt returns MAX over the int32 extremes", function()
+  assert(mathlib.maxInt.f(-2147483648, 2147483647) == 2147483647)
+end)
+
+test("math.minInt(-2147483648, -2147483648) returns MIN", function()
+  assert(mathlib.minInt.f(-2147483648, -2147483648) == -2147483648)
+end)
+
+test("math.maxInt(2147483647, 2147483647) returns MAX", function()
+  assert(mathlib.maxInt.f(2147483647, 2147483647) == 2147483647)
+end)
+
+test("math.minInt/maxInt on int32 extremes stay integral ints", function()
+  local mn = mathlib.minInt.f(-2147483648, 2147483647)
+  local mx = mathlib.maxInt.f(-2147483648, 2147483647)
+  assert(type(mn) == "number" and mn % 1 == 0)
+  assert(type(mx) == "number" and mx % 1 == 0)
+end)
+
 -- absNumber tests
 
 test("math.absNumber returns absolute value", function()
