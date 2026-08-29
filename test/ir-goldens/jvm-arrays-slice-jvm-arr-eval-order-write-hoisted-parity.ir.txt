@@ -1,0 +1,90 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:4:1-12:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function pick: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:5:1-6:8
+    param label: string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:5:15-5:28
+      [boundary: param-entry]
+    param z: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:5:30-5:37
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:5:46-5:63
+        call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:5:46-5:63
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:5:46-5:56
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:5:46-5:52
+              [boundary: import]
+          ident label : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:5:58-5:62
+      return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:5:66-5:76
+        [boundary: return]
+        literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:5:73-5:73
+  function getArr: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:6:1-7:6
+    param label: string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:6:17-6:30
+      [boundary: param-entry]
+    param xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:6:32-6:41
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:6:52-6:69
+        call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:6:52-6:69
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:6:52-6:62
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:6:52-6:58
+              [boundary: import]
+          ident label : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:6:64-6:68
+      return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:6:72-6:83
+        [boundary: return]
+        ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:6:79-6:80
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:7:1-12:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:7:8-12:1
+      body
+        let xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:8:3-9:8
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:8:19-8:24
+            literal 5 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:8:20-8:20
+            literal 6 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:8:23-8:23
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:3-9:76
+          assign = : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:3-9:76
+            [boundary: array-write]
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:3-9:46
+              call : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:3-9:17
+                ident getArr : (string,[int])->[int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:3-9:8
+                literal "a" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:10-9:12
+                ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:15-9:16
+              call : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:19-9:45
+                ident pick : (string,null)->int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:19-9:22
+                literal "i" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:24-9:26
+                call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:29-9:44
+                  [boundary: stdlib-boundary]
+                  member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:29-9:39
+                    [boundary: table-read]
+                    ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:29-9:35
+                      [boundary: import]
+                  literal "b" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:41-9:43
+            call : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:50-9:76
+              ident pick : (string,null)->int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:50-9:53
+              literal "v" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:55-9:57
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:60-9:75
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:60-9:70
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:60-9:66
+                    [boundary: import]
+                literal "c" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:9:72-9:74
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:10:3-11:1
+          binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:10:7-10:17
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:10:7-10:11
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:10:7-10:8
+              literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:10:10-10:10
+            literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:10:17-10:17
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:10:20-10:47
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:10:22-10:44
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:10:22-10:44
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:10:22-10:32
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:10:22-10:28
+                    [boundary: import]
+                literal "write-ok" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity.deal:10:34-10:43

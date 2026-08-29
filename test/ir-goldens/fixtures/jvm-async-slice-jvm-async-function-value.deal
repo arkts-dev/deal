@@ -1,0 +1,8 @@
+// IR golden fixture: jvm-async-slice-jvm-async-function-value
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-async-slice.json case 'jvm-async-function-value' (ISSUE-0358).
+
+async function value(): int { return 6; }
+export async function test(): int {
+  let f: async () => int = value;
+  return await f();
+}

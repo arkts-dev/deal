@@ -1,0 +1,29 @@
+module @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:4:1-11:1
+  class Box @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:4:1-4:29
+    field value: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:4:13-4:29
+      [boundary: class-default]
+      literal 0 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:4:26-4:26
+  export @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:5:1-11:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:5:8-11:1
+      body
+        let real: @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal/Box @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:6:3-7:5
+          [boundary: var-annotation]
+          object : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal/Box @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:6:19-6:31
+            [boundary: class-construct]
+            literal 41 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:6:28-6:29
+        let holder: table @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:7:3-8:5
+          [boundary: var-annotation]
+          object : table @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:7:23-7:36
+            ident real : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal/Box @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:7:31-7:34
+        let b: @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal/Box @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:8:3-9:8
+          [boundary: var-annotation]
+          member .item : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal/Box @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:8:16-8:26
+            [boundary: table-read]
+            ident holder : table @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:8:16-8:21
+        return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:9:3-10:1
+          [boundary: return]
+          binary + : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:9:10-9:20
+            member .value : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:9:10-9:16
+              ident b : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal/Box @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:9:10-9:10
+            literal 1 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-nominal-check-success.deal:9:20-9:20

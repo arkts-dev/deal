@@ -1,0 +1,15 @@
+// IR golden fixture: jvm-skeleton-jvm-int-arithmetic
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-int-arithmetic' (ISSUE-0358).
+
+function add(a: int, b: int): int { return a + b; }
+function sub(a: int, b: int): int { return a - b; }
+function mul(a: int, b: int): int { return a * b; }
+function div(a: int, b: int): int { return a / b; }
+function mod(a: int, b: int): int { return a % b; }
+function pow(a: int, b: int): int { return a ** b; }
+export function test(): int {
+  let step1: int = add(mul(7, 6), div(25, 4));
+  let step2: int = sub(step1, mod(25, 4));
+  let step3: int = add(step2, pow(2, 3));
+  return sub(step3, 14);
+}

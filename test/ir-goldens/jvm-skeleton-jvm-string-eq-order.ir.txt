@@ -1,0 +1,50 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:4:1-14:1
+  function classify: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:4:1-9:6
+    param s: string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:4:19-4:28
+      [boundary: param-entry]
+    param t: string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:4:30-4:39
+      [boundary: param-entry]
+    body
+      if @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:5:3-6:4
+        binary === : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:5:7-5:13
+          ident s : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:5:7-5:7
+          ident t : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:5:13-5:13
+        block @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:5:16-5:28
+          return @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:5:18-5:28
+            [boundary: return]
+            literal 1 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:5:25-5:25
+      if @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:6:3-7:8
+        binary < : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:6:7-6:11
+          ident s : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:6:7-6:7
+          ident t : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:6:11-6:11
+        block @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:6:14-6:26
+          return @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:6:16-6:26
+            [boundary: return]
+            literal 2 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:6:23-6:23
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:7:3-8:1
+        [boundary: return]
+        literal 3 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:7:10-7:10
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:9:1-14:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:9:8-14:1
+      body
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:10:3-13:1
+          [boundary: return]
+          binary + : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:10:10-12:27
+            binary + : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:10:10-11:32
+              binary * : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:10:10-10:37
+                call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:10:10-10:31
+                  ident classify : (string,string)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:10:10-10:17
+                  literal "aaa" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:10:19-10:23
+                  literal "aaa" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:10:26-10:30
+                literal 100 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:10:35-10:37
+              binary * : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:11:10-11:32
+                call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:11:10-11:27
+                  ident classify : (string,string)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:11:10-11:17
+                  literal "a" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:11:19-11:21
+                  literal "b" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:11:24-11:26
+                literal 10 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:11:31-11:32
+            call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:12:10-12:27
+              ident classify : (string,string)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:12:10-12:17
+              literal "b" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:12:19-12:21
+              literal "a" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-eq-order.deal:12:24-12:26

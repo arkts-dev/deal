@@ -1,0 +1,15 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-multi-type-parity
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-multi-type-parity' (ISSUE-0358).
+
+import * as console from "std/console"
+export function test(): null {
+  let ns: number[] = [1.5, 2.5];
+  ns[0] = ns[0] + 1.0;
+  let ss: string[] = ["a", "b"];
+  ss[0] = "z";
+  let bs: boolean[] = [true, false];
+  bs[1] = bs[0];
+  if (ns[0] === 2.5 && ns[1] === 2.5 && ss[0] === "z" && ss[1] === "b" && bs[0] === true && bs[1] === true) {
+    console.log("multi-parity");
+  }
+}

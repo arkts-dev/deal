@@ -1,0 +1,13 @@
+module @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-intrinsic-value-number.deal:4:1-8:1
+  export @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-intrinsic-value-number.deal:4:1-8:1
+    [boundary: export]
+    function test: number @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-intrinsic-value-number.deal:4:8-8:1
+      body
+        let cn: (int)->number @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-intrinsic-value-number.deal:5:3-6:8
+          [boundary: var-annotation]
+          ident number : (int)->number @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-intrinsic-value-number.deal:5:32-5:37
+        return @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-intrinsic-value-number.deal:6:3-7:1
+          [boundary: return]
+          call : number @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-intrinsic-value-number.deal:6:10-6:15
+            ident cn : (int)->number @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-intrinsic-value-number.deal:6:10-6:11
+            literal 42 : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-intrinsic-value-number.deal:6:13-6:14

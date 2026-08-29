@@ -1,0 +1,9 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-cmp-lhs-effect-before-read-error-parity' (ISSUE-0358).
+
+import * as console from "std/console"
+function mark(label: string, v: int): int { console.log(label); return v; }
+export function test(): null {
+  let xs: int[] = [1];
+  if (mark("lhs", 5) === xs[-1]) { console.log("bad"); }
+}

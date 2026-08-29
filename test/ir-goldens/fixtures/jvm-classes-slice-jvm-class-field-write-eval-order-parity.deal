@@ -1,0 +1,9 @@
+// IR golden fixture: jvm-classes-slice-jvm-class-field-write-eval-order-parity
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-classes-slice.json case 'jvm-class-field-write-eval-order-parity' (ISSUE-0358).
+
+import * as console from "std/console"
+class Box { x: int = 0; }
+function note(s: string): null { console.log(s); return; }
+function getBox(): Box { note("target"); return { x: 0 }; }
+function make(v: null): int { note("make"); return 1; }
+export function test(): int { getBox().x = make(note("value")); return 0; }

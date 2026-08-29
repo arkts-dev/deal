@@ -1,0 +1,4 @@
+// IR golden fixture: jvm-skeleton-jvm-int-safe-range-overflow
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-int-safe-range-overflow' (ISSUE-0358).
+
+export function test(): int { return 9007199254740991 + 1; }

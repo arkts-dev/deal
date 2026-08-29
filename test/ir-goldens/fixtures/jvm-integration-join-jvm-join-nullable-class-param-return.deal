@@ -1,0 +1,15 @@
+// IR golden fixture: jvm-integration-join-jvm-join-nullable-class-param-return
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-nullable-class-param-return' (ISSUE-0358).
+
+class User { name: string = ""; }
+function greet(u: User | null): string {
+  if (u !== null) { return u.name; }
+  return "nobody";
+}
+export function test(): int {
+  let a: User = { name: "ada" };
+  let s: string = greet(a);
+  let t: string = greet(null);
+  if (s === "ada" && t === "nobody") { return 1; }
+  return 0;
+}

@@ -1,0 +1,30 @@
+module @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:4:1-11:1
+  class Bag @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:4:1-4:29
+    field count: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:4:13-4:29
+      [boundary: class-default]
+      literal 0 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:4:26-4:26
+  export @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:5:1-11:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:5:8-11:1
+      body
+        let a: @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal/Bag @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:6:3-7:5
+          [boundary: var-annotation]
+          object : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal/Bag @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:6:16-6:17
+            [boundary: class-construct]
+        let b: @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal/Bag @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:7:3-8:3
+          [boundary: var-annotation]
+          object : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal/Bag @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:7:16-7:17
+            [boundary: class-construct]
+        expr-stmt @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:8:3-8:13
+          assign = : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:8:3-8:13
+            [boundary: field-write]
+            member .count : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:8:3-8:9
+              ident a : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal/Bag @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:8:3-8:3
+            literal 7 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:8:13-8:13
+        return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:9:3-10:1
+          [boundary: return]
+          binary + : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:9:10-9:26
+            member .count : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:9:10-9:16
+              ident a : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal/Bag @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:9:10-9:10
+            member .count : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:9:20-9:26
+              ident b : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal/Bag @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-fresh-instances-per-construction.deal:9:20-9:20

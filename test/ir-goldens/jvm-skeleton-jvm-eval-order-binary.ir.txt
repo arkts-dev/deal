@@ -1,0 +1,55 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:4:1-11:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function g: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:5:1-6:8
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:5:21-5:40
+        call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:5:21-5:40
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:5:21-5:31
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:5:21-5:27
+              [boundary: import]
+          literal "g-ran" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:5:33-5:39
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:5:43-5:53
+        [boundary: return]
+        literal 3 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:5:50-5:50
+  function f: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:6:1-7:6
+    param x: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:6:12-6:19
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:6:28-6:38
+        [boundary: return]
+        literal 4 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:6:35-6:35
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:7:1-11:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:7:8-11:1
+      body
+        let r: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:8:3-9:4
+          [boundary: var-annotation]
+          binary + : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:8:16-8:40
+            call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:8:16-8:18
+              ident g : ()->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:8:16-8:16
+            call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:8:22-8:40
+              ident f : (null)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:8:22-8:22
+              call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:8:24-8:39
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:8:24-8:34
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:8:24-8:30
+                    [boundary: import]
+                literal "x" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:8:36-8:38
+        if @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:9:3-10:1
+          binary === : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:9:7-9:13
+            ident r : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:9:7-9:7
+            literal 7 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:9:13-9:13
+          block @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:9:16-9:41
+            expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:9:18-9:38
+              call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:9:18-9:38
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:9:18-9:28
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:9:18-9:24
+                    [boundary: import]
+                literal "sum-ok" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-binary.deal:9:30-9:37

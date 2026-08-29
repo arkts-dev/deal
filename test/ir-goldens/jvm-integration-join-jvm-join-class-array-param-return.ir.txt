@@ -1,0 +1,42 @@
+module @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:4:1-15:1
+  class Pt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:4:1-4:24
+    field x: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:4:12-4:24
+      [boundary: class-default]
+      literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:4:21-4:21
+  function shift: Pt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:5:1-8:6
+    param ps: [Pt] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:5:16-5:24
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:6:3-7:1
+        [boundary: return]
+        index [] : @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:6:10-6:14
+          ident ps : [@test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:6:10-6:11
+          literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:6:13-6:13
+  export @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:8:1-15:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:8:8-15:1
+      body
+        let first: @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:9:3-10:5
+          [boundary: var-annotation]
+          object : @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:9:19-9:27
+            [boundary: class-construct]
+            literal 30 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:9:24-9:25
+        let second: @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:10:3-11:5
+          [boundary: var-annotation]
+          object : @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:10:20-10:28
+            [boundary: class-construct]
+            literal 40 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:10:25-10:26
+        let ps: [@test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:11:3-12:5
+          [boundary: var-annotation]
+          array : [@test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:11:18-11:32
+            ident first : @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:11:19-11:23
+            ident second : @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:11:26-11:31
+        let p: @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:12:3-13:8
+          [boundary: var-annotation]
+          call : @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:12:15-12:23
+            ident shift : ([@test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt])->@test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:12:15-12:19
+            ident ps : [@test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:12:21-12:22
+        return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:13:3-14:1
+          [boundary: return]
+          member .x : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:13:10-13:12
+            ident p : @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal/Pt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-class-array-param-return.deal:13:10-13:10

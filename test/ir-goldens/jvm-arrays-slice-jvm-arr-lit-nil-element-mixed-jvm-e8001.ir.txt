@@ -1,0 +1,29 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:4:1-10:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:4:1-5:6
+    [boundary: host-in]
+    [boundary: import]
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:5:1-10:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:5:8-10:1
+      body
+        let bs: [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:6:3-7:5
+          [boundary: var-annotation]
+          array : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:6:23-6:28
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:6:24-6:27
+        let ys: [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:7:3-8:9
+          [boundary: var-annotation]
+          array : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:7:23-7:44
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:7:24-7:27
+            binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:7:30-7:43
+              index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:7:30-7:35
+                ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:7:30-7:31
+                literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:7:33-7:34
+              literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:7:40-7:43
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:8:3-8:28
+          call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:8:3-8:28
+            [boundary: stdlib-boundary]
+            member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:8:3-8:13
+              [boundary: table-read]
+              ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:8:3-8:9
+                [boundary: import]
+            literal "unreachable" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-mixed-jvm-e8001.deal:8:15-8:27

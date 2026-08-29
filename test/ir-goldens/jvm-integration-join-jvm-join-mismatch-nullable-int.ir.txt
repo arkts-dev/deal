@@ -1,0 +1,25 @@
+module @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:4:1-10:1
+  export @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:4:1-10:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:4:8-10:1
+      body
+        let holder: table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:5:3-6:5
+          [boundary: var-annotation]
+          object : table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:5:23-5:39
+            literal "wrong" : string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:5:31-5:37
+        let n: ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:6:3-7:4
+          [boundary: var-annotation]
+          member .item : ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:6:23-6:33
+            [boundary: table-read]
+            ident holder : table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:6:23-6:28
+        if @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:7:3-8:8
+          binary !== : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:7:7-7:16
+            ident n : ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:7:7-7:7
+            literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:7:13-7:16
+          block @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:7:19-7:31
+            return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:7:21-7:31
+              [boundary: return]
+              ident n : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:7:28-7:28
+        return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:8:3-9:1
+          [boundary: return]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-int.deal:8:10-8:10

@@ -1,0 +1,18 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-function.deal:4:1-5:1
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-function.deal:4:1-5:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-function.deal:4:8-5:1
+      body
+        if @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-function.deal:4:31-4:79
+          literal true : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-function.deal:4:35-4:38
+          block @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-function.deal:4:41-4:53
+            return @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-function.deal:4:43-4:53
+              [boundary: return]
+              literal 1 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-function.deal:4:50-4:50
+        block @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-function.deal:4:60-4:72
+          return @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-function.deal:4:62-4:72
+            [boundary: return]
+            literal 2 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-function.deal:4:69-4:69
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-function.deal:4:74-4:84
+          [boundary: return]
+          literal 3 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-function.deal:4:81-4:81

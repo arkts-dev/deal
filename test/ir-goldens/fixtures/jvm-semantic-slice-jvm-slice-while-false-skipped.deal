@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-semantic-slice-jvm-slice-while-false-skipped
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-semantic-slice.json case 'jvm-slice-while-false-skipped' (ISSUE-0358).
+
+export function test(): int {
+  let x: int = 1;
+  while (false) {
+    x = x + 1;
+  }
+  return x;
+}

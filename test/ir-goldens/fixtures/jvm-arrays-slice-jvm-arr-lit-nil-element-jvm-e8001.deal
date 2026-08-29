@@ -1,0 +1,9 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-lit-nil-element-jvm-e8001
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-lit-nil-element-jvm-e8001' (ISSUE-0358).
+
+import * as console from "std/console"
+export function test(): null {
+  let bs: boolean[] = [true];
+  let xs: boolean[] = [bs[99] && true];
+  console.log("unreachable");
+}

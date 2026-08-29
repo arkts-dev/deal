@@ -1,0 +1,5 @@
+// IR golden fixture: async-await-async-with-params
+// Migrated IR-containment pins from test/conformance/fixtures/async-await.json case 'async-with-params' (ISSUE-0358).
+
+async function add(a: int, b: int): int { return a + b; }
+export async function compute(): int { return await add(1, 2); }

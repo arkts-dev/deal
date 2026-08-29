@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-async-slice-jvm-async-completion-success
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-async-slice.json case 'jvm-async-completion-success' (ISSUE-0358).
+
+async function flag(): boolean { return true; }
+async function noop(): null { return; }
+export async function test(): boolean {
+  await noop();
+  let b: boolean = await flag();
+  return b;
+}

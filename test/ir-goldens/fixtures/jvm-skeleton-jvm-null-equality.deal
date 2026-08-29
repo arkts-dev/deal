@@ -1,0 +1,11 @@
+// IR golden fixture: jvm-skeleton-jvm-null-equality
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-null-equality' (ISSUE-0358).
+
+export function test(): int {
+  let z: null = null;
+  let same: boolean = z === null;
+  let litSame: boolean = null === null;
+  let neq: boolean = null !== null;
+  if (same && litSame && !neq) { return 1; }
+  return 0;
+}

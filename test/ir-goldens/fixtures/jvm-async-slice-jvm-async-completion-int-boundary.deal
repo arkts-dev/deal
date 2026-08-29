@@ -1,0 +1,5 @@
+// IR golden fixture: jvm-async-slice-jvm-async-completion-int-boundary
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-async-slice.json case 'jvm-async-completion-int-boundary' (ISSUE-0358).
+
+async function big(): int { return 9007199254740991; }
+export async function test(): int { return await big(); }

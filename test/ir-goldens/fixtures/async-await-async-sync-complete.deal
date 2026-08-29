@@ -1,0 +1,4 @@
+// IR golden fixture: async-await-async-sync-complete
+// Migrated IR-containment pins from test/conformance/fixtures/async-await.json case 'async-sync-complete' (ISSUE-0358).
+
+export async function f(): int { return 5; }

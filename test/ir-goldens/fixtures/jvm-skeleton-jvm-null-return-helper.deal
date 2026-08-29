@@ -1,0 +1,6 @@
+// IR golden fixture: jvm-skeleton-jvm-null-return-helper
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-null-return-helper' (ISSUE-0358).
+
+import * as console from "std/console"
+function helper(): null { console.log("helper-ran"); }
+export function test(): null { return helper(); }

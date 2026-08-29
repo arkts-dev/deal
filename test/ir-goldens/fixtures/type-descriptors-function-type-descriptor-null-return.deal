@@ -1,0 +1,8 @@
+// IR golden fixture: type-descriptors-function-type-descriptor-null-return
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'function-type-descriptor-null-return' (ISSUE-0358).
+
+function noop(): null { return; }
+export function main(): null {
+let f: () => null = noop;
+return null;
+}

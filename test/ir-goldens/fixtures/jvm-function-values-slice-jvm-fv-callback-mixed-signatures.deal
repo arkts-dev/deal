@@ -1,0 +1,11 @@
+// IR golden fixture: jvm-function-values-slice-jvm-fv-callback-mixed-signatures
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-function-values-slice.json case 'jvm-fv-callback-mixed-signatures' (ISSUE-0358).
+
+function pick(flag: boolean, yes: string, no: string): string {
+  if (flag) { return yes; }
+  return no;
+}
+function choose(f: (flag: boolean, yes: string, no: string) => string, flag: boolean): string {
+  return f(flag, "jvm", "lua");
+}
+export function test(): string { return choose(pick, true); }

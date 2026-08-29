@@ -1,0 +1,44 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:4:1-10:1
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:4:1-10:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:4:8-10:1
+      body
+        let xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:5:3-6:4
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:5:19-5:27
+            literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:5:20-5:20
+            literal 2 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:5:23-5:23
+            literal 3 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:5:26-5:26
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:6:3-6:12
+          assign = : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:6:3-6:12
+            [boundary: array-write]
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:6:3-6:7
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:6:3-6:4
+              literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:6:6-6:6
+            literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:6:11-6:12
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:7:3-7:23
+          assign = : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:7:3-7:23
+            [boundary: array-write]
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:7:3-7:7
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:7:3-7:4
+              literal 2 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:7:6-7:6
+            binary + : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:7:11-7:23
+              index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:7:11-7:15
+                ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:7:11-7:12
+                literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:7:14-7:14
+              index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:7:19-7:23
+                ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:7:19-7:20
+                literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:7:22-7:22
+        return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:8:3-9:1
+          [boundary: return]
+          binary + : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:8:10-8:30
+            binary + : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:8:10-8:22
+              index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:8:10-8:14
+                ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:8:10-8:11
+                literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:8:13-8:13
+              index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:8:18-8:22
+                ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:8:18-8:19
+                literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:8:21-8:21
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:8:26-8:30
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:8:26-8:27
+              literal 2 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-write-readback.deal:8:29-8:29

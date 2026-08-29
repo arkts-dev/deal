@@ -1,0 +1,21 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-return-helper.deal:4:1-7:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-return-helper.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function helper: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-return-helper.deal:5:1-6:6
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-return-helper.deal:5:27-5:51
+        call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-return-helper.deal:5:27-5:51
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-return-helper.deal:5:27-5:37
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-return-helper.deal:5:27-5:33
+              [boundary: import]
+          literal "helper-ran" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-return-helper.deal:5:39-5:50
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-return-helper.deal:6:1-7:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-return-helper.deal:6:8-7:1
+      body
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-return-helper.deal:6:32-6:49
+          call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-return-helper.deal:6:39-6:46
+            ident helper : ()->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-return-helper.deal:6:39-6:44

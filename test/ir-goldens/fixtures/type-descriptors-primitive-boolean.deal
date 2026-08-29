@@ -1,0 +1,4 @@
+// IR golden fixture: type-descriptors-primitive-boolean
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'primitive-boolean' (ISSUE-0358).
+
+function f(): null { let x: boolean = true; return; }

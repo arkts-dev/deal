@@ -1,0 +1,11 @@
+// IR golden fixture: jvm-nullable-slice-jvm-nullable-class-boundary-success
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-nullable-slice.json case 'jvm-nullable-class-boundary-success' (ISSUE-0358).
+
+class Item { x: int = 7; }
+export function test(): int {
+  let it: Item = {};
+  let t: table = { it: it };
+  let got: Item | null = t.it;
+  if (got !== null) { return got.x + 1; }
+  return 0;
+}

@@ -1,0 +1,4 @@
+// IR golden fixture: jvm-skeleton-jvm-dead-code-function
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-dead-code-function' (ISSUE-0358).
+
+export function test(): int { if (true) { return 1; } else { return 2; } return 3; }

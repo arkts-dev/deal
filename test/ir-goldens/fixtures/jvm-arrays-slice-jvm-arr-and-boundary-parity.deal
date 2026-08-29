@@ -1,0 +1,8 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-and-boundary-parity
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-and-boundary-parity' (ISSUE-0358).
+
+export function test(): boolean {
+  let bs: boolean[] = [true];
+  let b: boolean = bs[99] && true;
+  return b;
+}

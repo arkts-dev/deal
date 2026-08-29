@@ -1,0 +1,15 @@
+// IR golden fixture: jvm-semantic-slice-jvm-slice-local-mutation
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-semantic-slice.json case 'jvm-slice-local-mutation' (ISSUE-0358).
+
+export function test(): int {
+  let x: int = 10;
+  x = x + 1;
+  let y: int = x * 2;
+  y = y - 10;
+  let z: int = y;
+  {
+    let x: int = 99;
+    z = z + x;
+  }
+  return z;
+}

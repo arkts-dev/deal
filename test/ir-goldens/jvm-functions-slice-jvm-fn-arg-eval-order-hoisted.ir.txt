@@ -1,0 +1,49 @@
+module @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:4:1-8:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function mark: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:5:1-6:8
+    param label: string @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:5:15-5:28
+      [boundary: param-entry]
+    param value: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:5:30-5:40
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:5:49-5:66
+        call : null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:5:49-5:66
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:5:49-5:59
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:5:49-5:55
+              [boundary: import]
+          ident label : string @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:5:61-5:65
+      return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:5:69-5:83
+        [boundary: return]
+        ident value : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:5:76-5:80
+  function take: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:6:1-7:6
+    param i: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:6:15-6:21
+      [boundary: param-entry]
+    param z: null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:6:23-6:30
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:6:39-6:49
+        [boundary: return]
+        ident i : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:6:46-6:46
+  export @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:7:1-8:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:7:8-8:1
+      body
+        return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:7:31-7:92
+          [boundary: return]
+          call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:7:38-7:89
+            ident take : (int,null)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:7:38-7:41
+            call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:7:43-7:60
+              ident mark : (string,int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:7:43-7:46
+              literal "arg-ran" : string @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:7:48-7:56
+              literal 7 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:7:59-7:59
+            call : null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:7:63-7:88
+              [boundary: stdlib-boundary]
+              member .log : (string)->null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:7:63-7:73
+                [boundary: table-read]
+                ident console : table @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:7:63-7:69
+                  [boundary: import]
+              literal "hoisted-ran" : string @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order-hoisted.deal:7:75-7:87

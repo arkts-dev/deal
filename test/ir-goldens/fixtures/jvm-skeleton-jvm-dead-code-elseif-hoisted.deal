@@ -1,0 +1,11 @@
+// IR golden fixture: jvm-skeleton-jvm-dead-code-elseif-hoisted
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-dead-code-elseif-hoisted' (ISSUE-0358).
+
+import * as console from "std/console"
+function helper(): null { console.log("helper-ran"); }
+export function test(): int {
+  if (true) { return 1; }
+  else if (helper() === null) { return 2; }
+  else { return 3; }
+  return 4;
+}

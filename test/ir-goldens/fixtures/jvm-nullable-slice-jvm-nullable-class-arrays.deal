@@ -1,0 +1,22 @@
+// IR golden fixture: jvm-nullable-slice-jvm-nullable-class-arrays
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-nullable-slice.json case 'jvm-nullable-class-arrays' (ISSUE-0358).
+
+class Point { x: int = 1; }
+export function test(): int {
+  let p: Point = {};
+  let ps: Point[] = [p, p];
+  let r: int = 0;
+  r = r + ps[0].x + ps[1].x;
+  ps[1] = p;
+  r = r + ps.length;
+  let maybe: Point[] | null = ps;
+  if (maybe !== null) { r = r + maybe[0].x; }
+  let mp: (Point | null)[] = [];
+  mp[0] = p;
+  mp[1] = null;
+  let first: Point | null = mp[0];
+  if (first !== null) { r = r + first.x; }
+  let second: Point | null = mp[1];
+  if (second === null) { r = r + 1; }
+  return r;
+}

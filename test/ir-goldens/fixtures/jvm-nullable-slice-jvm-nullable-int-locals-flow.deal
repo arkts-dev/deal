@@ -1,0 +1,17 @@
+// IR golden fixture: jvm-nullable-slice-jvm-nullable-int-locals-flow
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-nullable-slice.json case 'jvm-nullable-int-locals-flow' (ISSUE-0358).
+
+export function test(): int {
+  let n: int | null = 5;
+  let m: int | null = null;
+  let total: int = 0;
+  if (n !== null) {
+    total = n + 1;
+  }
+  if (m === null) {
+    total = total + 1;
+  } else {
+    total = 99;
+  }
+  return total;
+}

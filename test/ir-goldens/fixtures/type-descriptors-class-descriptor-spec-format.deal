@@ -1,0 +1,9 @@
+// IR golden fixture: type-descriptors-class-descriptor-spec-format
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'class-descriptor-spec-format' (ISSUE-0358).
+
+class User { name: string = ""; }
+function makeUser(): User { return { name: "Ada" }; }
+export function main(): null {
+let f: User = makeUser();
+return null;
+}

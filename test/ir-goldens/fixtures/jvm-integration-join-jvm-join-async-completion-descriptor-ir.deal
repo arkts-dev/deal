@@ -1,0 +1,8 @@
+// IR golden fixture: jvm-integration-join-jvm-join-async-completion-descriptor-ir
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-async-completion-descriptor-ir' (ISSUE-0358).
+
+async function fetch(x: int): string { return "s"; }
+export function main(): null {
+  let f: async (x: int) => string = fetch;
+  return null;
+}

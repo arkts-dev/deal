@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-skeleton-jvm-eval-order-binary
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-eval-order-binary' (ISSUE-0358).
+
+import * as console from "std/console"
+function g(): int { console.log("g-ran"); return 3; }
+function f(x: null): int { return 4; }
+export function test(): null {
+  let r: int = g() + f(console.log("x"));
+  if (r === 7) { console.log("sum-ok"); }
+}

@@ -1,0 +1,21 @@
+module @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:4:1-11:1
+  export @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:4:1-11:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:4:8-11:1
+      body
+        let x: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:5:3-6:7
+          [boundary: var-annotation]
+          literal 1 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:5:16-5:16
+        while @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:6:3-9:8
+          literal false : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:6:10-6:14
+          block @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:6:17-8:3
+            expr-stmt @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:7:5-7:13
+              assign = : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:7:5-7:13
+                [boundary: assignment]
+                ident x : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:7:5-7:5
+                binary + : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:7:9-7:13
+                  ident x : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:7:9-7:9
+                  literal 1 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:7:13-7:13
+        return @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:9:3-10:1
+          [boundary: return]
+          ident x : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-false-skipped.deal:9:10-9:10

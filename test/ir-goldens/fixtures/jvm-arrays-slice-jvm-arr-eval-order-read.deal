@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-eval-order-read
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-eval-order-read' (ISSUE-0358).
+
+import * as console from "std/console"
+function mark(label: string, value: int): int { console.log(label); return value; }
+function get(label: string, xs: int[]): int[] { console.log(label); return xs; }
+export function test(): int {
+  let xs: int[] = [100, 200, 300];
+  return get("arr", xs)[mark("idx", 2)];
+}

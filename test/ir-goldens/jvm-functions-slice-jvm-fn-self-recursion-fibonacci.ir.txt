@@ -1,0 +1,35 @@
+module @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:4:1-9:1
+  function fib: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:4:1-8:6
+    param n: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:4:14-4:20
+      [boundary: param-entry]
+    body
+      if @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:5:3-6:8
+        binary <= : boolean @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:5:7-5:12
+          ident n : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:5:7-5:7
+          literal 1 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:5:12-5:12
+        block @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:5:15-5:27
+          return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:5:17-5:27
+            [boundary: return]
+            ident n : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:5:24-5:24
+      return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:6:3-7:1
+        [boundary: return]
+        binary + : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:6:10-6:32
+          call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:6:10-6:19
+            ident fib : (int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:6:10-6:12
+            binary - : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:6:14-6:18
+              ident n : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:6:14-6:14
+              literal 1 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:6:18-6:18
+          call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:6:23-6:32
+            ident fib : (int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:6:23-6:25
+            binary - : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:6:27-6:31
+              ident n : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:6:27-6:27
+              literal 2 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:6:31-6:31
+  export @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:8:1-9:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:8:8-9:1
+      body
+        return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:8:31-8:47
+          [boundary: return]
+          call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:8:38-8:44
+            ident fib : (int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:8:38-8:40
+            literal 10 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-fibonacci.deal:8:42-8:43

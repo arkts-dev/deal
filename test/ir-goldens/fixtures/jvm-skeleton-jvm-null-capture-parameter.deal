@@ -1,0 +1,9 @@
+// IR golden fixture: jvm-skeleton-jvm-null-capture-parameter
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-null-capture-parameter' (ISSUE-0358).
+
+import * as console from "std/console"
+function helper(p: string): null {
+  let z: null = console.log(p);
+  p = "changed";
+}
+export function test(): null { helper("param-captured"); }

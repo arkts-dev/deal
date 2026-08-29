@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-functions-slice-jvm-fn-return-values
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-functions-slice.json case 'jvm-fn-return-values' (ISSUE-0358).
+
+function double(x: int): int { return x * 2; }
+function add(a: int, b: int): int { return a + b; }
+export function test(): int {
+  let a: int = double(21);
+  let b: int = add(a, a);
+  return b;
+}

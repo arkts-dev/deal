@@ -1,0 +1,8 @@
+// IR golden fixture: jvm-functions-slice-jvm-fn-self-recursion-factorial
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-functions-slice.json case 'jvm-fn-self-recursion-factorial' (ISSUE-0358).
+
+function fact(n: int): int {
+  if (n <= 1) { return 1; }
+  return n * fact(n - 1);
+}
+export function test(): int { return fact(6); }

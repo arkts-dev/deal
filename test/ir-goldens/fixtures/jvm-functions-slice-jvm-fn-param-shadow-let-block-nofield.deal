@@ -1,0 +1,9 @@
+// IR golden fixture: jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-functions-slice.json case 'jvm-fn-param-shadow-let-block-nofield' (ISSUE-0358).
+
+function f(g: int): int {
+  let g: int = g + 10;
+  { let g: int = g + 1; }
+  return g;
+}
+export function test(): int { return f(5); }

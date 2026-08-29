@@ -1,0 +1,40 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:4:1-12:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function helper: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:5:1-6:6
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:5:27-5:51
+        call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:5:27-5:51
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:5:27-5:37
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:5:27-5:33
+              [boundary: import]
+          literal "helper-ran" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:5:39-5:50
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:6:1-12:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:6:8-12:1
+      body
+        if @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:7:3-10:8
+          literal true : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:7:7-7:10
+          block @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:7:13-7:25
+            return @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:7:15-7:25
+              [boundary: return]
+              literal 1 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:7:22-7:22
+        if @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:8:8-10:8
+          binary === : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:8:12-8:28
+            call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:8:12-8:19
+              ident helper : ()->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:8:12-8:17
+            literal null : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:8:25-8:28
+          block @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:8:31-8:43
+            return @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:8:33-8:43
+              [boundary: return]
+              literal 2 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:8:40-8:40
+        block @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:9:8-9:20
+          return @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:9:10-9:20
+            [boundary: return]
+            literal 3 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:9:17-9:17
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:10:3-11:1
+          [boundary: return]
+          literal 4 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-dead-code-elseif-hoisted.deal:10:10-10:10

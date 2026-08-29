@@ -1,0 +1,13 @@
+module @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-null-return.deal:4:1-9:1
+  function noop: null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-null-return.deal:4:1-5:6
+    body
+      return @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-null-return.deal:4:25-4:33
+  export @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-null-return.deal:5:1-9:1
+    [boundary: export]
+    function main: null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-null-return.deal:5:8-9:1
+      body
+        let f: ()->null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-null-return.deal:6:1-7:6
+          [boundary: var-annotation]
+          ident noop : ()->null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-null-return.deal:6:21-6:24
+        return @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-null-return.deal:7:1-8:1
+          literal null : null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-null-return.deal:7:8-7:11

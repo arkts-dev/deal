@@ -1,0 +1,39 @@
+module @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:4:1-11:1
+  function double: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:4:1-5:8
+    param x: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:4:17-4:23
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:4:32-4:46
+        [boundary: return]
+        binary * : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:4:39-4:43
+          ident x : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:4:39-4:39
+          literal 2 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:4:43-4:43
+  function add: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:5:1-6:6
+    param a: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:5:14-5:20
+      [boundary: param-entry]
+    param b: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:5:22-5:28
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:5:37-5:51
+        [boundary: return]
+        binary + : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:5:44-5:48
+          ident a : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:5:44-5:44
+          ident b : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:5:48-5:48
+  export @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:6:1-11:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:6:8-11:1
+      body
+        let a: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:7:3-8:5
+          [boundary: var-annotation]
+          call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:7:16-7:25
+            ident double : (int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:7:16-7:21
+            literal 21 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:7:23-7:24
+        let b: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:8:3-9:8
+          [boundary: var-annotation]
+          call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:8:16-8:24
+            ident add : (int,int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:8:16-8:18
+            ident a : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:8:20-8:20
+            ident a : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:8:23-8:23
+        return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:9:3-10:1
+          [boundary: return]
+          ident b : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-return-values.deal:9:10-9:10

@@ -1,0 +1,20 @@
+module @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-array-wrapper.deal:4:1-9:1
+  export @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-array-wrapper.deal:4:1-9:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-array-wrapper.deal:4:8-9:1
+      body
+        let holder: table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-array-wrapper.deal:5:3-6:5
+          [boundary: var-annotation]
+          object : table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-array-wrapper.deal:5:23-5:37
+            array : [string] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-array-wrapper.deal:5:31-5:35
+              literal "s" : string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-array-wrapper.deal:5:32-5:34
+        let xs: [int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-array-wrapper.deal:6:3-7:8
+          [boundary: var-annotation]
+          member .item : [int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-array-wrapper.deal:6:19-6:29
+            [boundary: table-read]
+            ident holder : table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-array-wrapper.deal:6:19-6:24
+        return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-array-wrapper.deal:7:3-8:1
+          [boundary: return]
+          index [] : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-array-wrapper.deal:7:10-7:14
+            ident xs : [int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-array-wrapper.deal:7:10-7:11
+            literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-array-wrapper.deal:7:13-7:13

@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-semantic-slice-jvm-slice-int-arithmetic
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-semantic-slice.json case 'jvm-slice-int-arithmetic' (ISSUE-0358).
+
+export function test(): int {
+  let a: int = 7 * 6;
+  let b: int = a + 25 / 4;
+  let c: int = b - 25 % 4;
+  let d: int = c + 2 ** 3;
+  return d - 14;
+}

@@ -1,0 +1,5 @@
+// IR golden fixture: jvm-async-slice-jvm-async-error-propagation
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-async-slice.json case 'jvm-async-error-propagation' (ISSUE-0358).
+
+async function bomb(): int { return 1 / 0; }
+export async function test(): int { return await bomb(); }

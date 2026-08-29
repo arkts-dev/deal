@@ -1,0 +1,9 @@
+// IR golden fixture: jvm-integration-join-jvm-join-function-type-descriptor-ir
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-function-type-descriptor-ir' (ISSUE-0358).
+
+class User { name: string = ""; }
+function use(a: int[], u: User | null): User | null { if (u !== null) { return u; } return null; }
+export function main(): null {
+  let f: (a: int[], u: User | null) => User | null = use;
+  return null;
+}

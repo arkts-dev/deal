@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-skeleton-jvm-eval-order-call-args
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-eval-order-call-args' (ISSUE-0358).
+
+import * as console from "std/console"
+function g(): int { console.log("g-ran"); return 7; }
+function f(y: int, x: null): int { return y; }
+export function test(): null {
+  let r: int = f(g(), console.log("x"));
+  if (r === 7) { console.log("order-ok"); }
+}

@@ -1,0 +1,14 @@
+// IR golden fixture: jvm-integration-join-jvm-join-class-array-param-return
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-class-array-param-return' (ISSUE-0358).
+
+class Pt { x: int = 0; }
+function shift(ps: Pt[]): Pt {
+  return ps[0];
+}
+export function test(): int {
+  let first: Pt = { x: 30 };
+  let second: Pt = { x: 40 };
+  let ps: Pt[] = [first, second];
+  let p: Pt = shift(ps);
+  return p.x;
+}

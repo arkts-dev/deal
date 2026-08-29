@@ -1,0 +1,30 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:4:1-8:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:4:1-5:6
+    [boundary: host-in]
+    [boundary: import]
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:5:1-8:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:5:8-8:1
+      body
+        if @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:3-7:1
+          binary < : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:7-6:15
+            literal "😀" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:7-6:9
+            literal "" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:13-6:15
+          block @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:18-6:42
+            expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:20-6:39
+              call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:20-6:39
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:20-6:30
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:20-6:26
+                    [boundary: import]
+                literal "utf16" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:32-6:38
+        block @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:49-6:74
+          expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:51-6:71
+            call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:51-6:71
+              [boundary: stdlib-boundary]
+              member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:51-6:61
+                [boundary: table-read]
+                ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:51-6:57
+                  [boundary: import]
+              literal "scalar" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-string-scalar-order.deal:6:63-6:70

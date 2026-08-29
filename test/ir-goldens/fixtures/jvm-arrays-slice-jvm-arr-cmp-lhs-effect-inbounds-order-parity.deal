@@ -1,0 +1,11 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-cmp-lhs-effect-inbounds-order-parity' (ISSUE-0358).
+
+import * as console from "std/console"
+function mark(label: string, v: int): int { console.log(label); return v; }
+function pick(label: string, z: null): int { console.log(label); return 0; }
+export function test(): null {
+  let xs: int[] = [1];
+  let zs: int[] = [5];
+  if (mark("lhs", 5) === zs[pick("i", console.log("h"))]) { console.log("eq-ok"); }
+}

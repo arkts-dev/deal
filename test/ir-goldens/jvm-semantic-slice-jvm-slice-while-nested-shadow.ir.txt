@@ -1,0 +1,58 @@
+module @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:4:1-19:1
+  export @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:4:1-19:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:4:8-19:1
+      body
+        let total: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:5:3-6:5
+          [boundary: var-annotation]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:5:20-5:20
+        let i: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:6:3-7:7
+          [boundary: var-annotation]
+          literal 1 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:6:16-6:16
+        while @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:7:3-17:8
+          binary <= : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:7:10-7:15
+            ident i : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:7:10-7:10
+            literal 4 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:7:15-7:15
+          block @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:7:18-16:3
+            let acc: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:8:5-9:7
+              [boundary: var-annotation]
+              literal 0 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:8:20-8:20
+            let j: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:9:5-10:9
+              [boundary: var-annotation]
+              literal 1 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:9:18-9:18
+            while @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:10:5-14:9
+              binary <= : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:10:12-10:17
+                ident j : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:10:12-10:12
+                ident i : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:10:17-10:17
+              block @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:10:20-13:5
+                expr-stmt @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:11:7-11:19
+                  assign = : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:11:7-11:19
+                    [boundary: assignment]
+                    ident acc : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:11:7-11:9
+                    binary + : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:11:13-11:19
+                      ident acc : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:11:13-11:15
+                      ident j : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:11:19-11:19
+                expr-stmt @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:12:7-12:15
+                  assign = : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:12:7-12:15
+                    [boundary: assignment]
+                    ident j : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:12:7-12:7
+                    binary + : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:12:11-12:15
+                      ident j : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:12:11-12:11
+                      literal 1 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:12:15-12:15
+            expr-stmt @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:14:5-14:23
+              assign = : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:14:5-14:23
+                [boundary: assignment]
+                ident total : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:14:5-14:9
+                binary + : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:14:13-14:23
+                  ident total : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:14:13-14:17
+                  ident acc : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:14:21-14:23
+            expr-stmt @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:15:5-15:13
+              assign = : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:15:5-15:13
+                [boundary: assignment]
+                ident i : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:15:5-15:5
+                binary + : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:15:9-15:13
+                  ident i : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:15:9-15:9
+                  literal 1 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:15:13-15:13
+        return @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:17:3-18:1
+          [boundary: return]
+          ident total : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-while-nested-shadow.deal:17:10-17:14

@@ -1,0 +1,38 @@
+module @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:4:1-13:1
+  async function a: string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:4:1-5:5
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:4:30-4:42
+        [boundary: async-completion]
+        literal "a" : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:4:37-4:39
+  async function b: string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:5:1-6:6
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:5:30-5:42
+        [boundary: async-completion]
+        literal "b" : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:5:37-5:39
+  export @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:6:1-13:1
+    [boundary: export]
+    async function test: string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:6:8-13:1
+      body
+        let f: async()->string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:7:3-8:5
+          [boundary: var-annotation]
+          ident a : async()->string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:7:31-7:31
+        let s: string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:8:3-9:3
+          [boundary: var-annotation]
+          await : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:8:19-8:27
+            call : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:8:25-8:27
+              ident f : async()->string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:8:25-8:25
+        expr-stmt @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:9:3-9:7
+          assign = : async()->string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:9:3-9:7
+            [boundary: assignment]
+            ident f : async()->string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:9:3-9:3
+            ident b : async()->string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:9:7-9:7
+        let t: string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:10:3-11:8
+          [boundary: var-annotation]
+          await : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:10:19-10:27
+            call : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:10:25-10:27
+              ident f : async()->string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:10:25-10:25
+        return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:11:3-12:1
+          [boundary: async-completion]
+          binary + : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:11:10-11:14
+            ident s : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:11:10-11:10
+            ident t : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value-local-reassign.deal:11:14-11:14

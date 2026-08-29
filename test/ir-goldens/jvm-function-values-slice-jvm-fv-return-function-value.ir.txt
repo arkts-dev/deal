@@ -1,0 +1,25 @@
+module @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:4:1-7:1
+  function inc: int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:4:1-5:8
+    param x: int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:4:14-4:20
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:4:29-4:43
+        [boundary: return]
+        binary + : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:4:36-4:40
+          ident x : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:4:36-4:36
+          literal 1 : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:4:40-4:40
+  function picker: (int)->int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:5:1-6:6
+    body
+      return @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:5:38-5:50
+        [boundary: return]
+        ident inc : (int)->int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:5:45-5:47
+  export @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:6:1-7:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:6:8-7:1
+      body
+        return @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:6:31-6:52
+          [boundary: return]
+          call : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:6:38-6:49
+            call : (int)->int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:6:38-6:45
+              ident picker : ()->(int)->int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:6:38-6:43
+            literal 41 : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-return-function-value.deal:6:47-6:48

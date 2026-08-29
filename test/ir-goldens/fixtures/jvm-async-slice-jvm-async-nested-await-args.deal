@@ -1,0 +1,6 @@
+// IR golden fixture: jvm-async-slice-jvm-async-nested-await-args
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-async-slice.json case 'jvm-async-nested-await-args' (ISSUE-0358).
+
+async function inner(): int { return 7; }
+async function outer(x: int): int { return x + 1; }
+export async function test(): int { return await outer(await inner()); }

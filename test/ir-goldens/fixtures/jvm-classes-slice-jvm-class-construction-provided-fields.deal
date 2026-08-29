@@ -1,0 +1,8 @@
+// IR golden fixture: jvm-classes-slice-jvm-class-construction-provided-fields
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-classes-slice.json case 'jvm-class-construction-provided-fields' (ISSUE-0358).
+
+class Point { x: int = 0; y: int = 0; }
+export function test(): int {
+  let p: Point = { x: 1, y: 2 };
+  return p.x * 10 + p.y;
+}

@@ -1,0 +1,8 @@
+// IR golden fixture: jvm-functions-slice-jvm-fn-self-recursion-fibonacci
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-functions-slice.json case 'jvm-fn-self-recursion-fibonacci' (ISSUE-0358).
+
+function fib(n: int): int {
+  if (n <= 1) { return n; }
+  return fib(n - 1) + fib(n - 2);
+}
+export function test(): int { return fib(10); }

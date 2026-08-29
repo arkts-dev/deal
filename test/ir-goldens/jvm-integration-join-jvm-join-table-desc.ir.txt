@@ -1,0 +1,18 @@
+module @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-table-desc.deal:4:1-9:1
+  export @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-table-desc.deal:4:1-9:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-table-desc.deal:4:8-9:1
+      body
+        let outer: table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-table-desc.deal:5:3-6:5
+          [boundary: var-annotation]
+          object : table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-table-desc.deal:5:22-5:40
+            object : table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-table-desc.deal:5:31-5:38
+              literal 3 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-table-desc.deal:5:36-5:36
+        let inner: table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-table-desc.deal:6:3-7:8
+          [boundary: var-annotation]
+          member .inner : table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-table-desc.deal:6:22-6:32
+            [boundary: table-read]
+            ident outer : table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-table-desc.deal:6:22-6:26
+        return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-table-desc.deal:7:3-8:1
+          [boundary: return]
+          literal 1 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-table-desc.deal:7:10-7:10

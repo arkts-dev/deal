@@ -1,0 +1,29 @@
+module @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:4:1-12:1
+  function noop: null @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:4:1-5:8
+    body
+      return @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:4:25-4:33
+  function withNull: int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:5:1-6:6
+    param n: null @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:5:19-5:26
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:5:35-5:46
+        [boundary: return]
+        literal 42 : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:5:42-5:43
+  export @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:6:1-12:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:6:8-12:1
+      body
+        let nf: ()->null @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:7:3-8:4
+          [boundary: var-annotation]
+          ident noop : ()->null @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:7:24-7:27
+        expr-stmt @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:8:3-8:6
+          call : null @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:8:3-8:6
+            ident nf : ()->null @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:8:3-8:4
+        let wn: (null)->int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:9:3-10:8
+          [boundary: var-annotation]
+          ident withNull : (null)->int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:9:30-9:37
+        return @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:10:3-11:1
+          [boundary: return]
+          call : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:10:10-10:17
+            ident wn : (null)->int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:10:10-10:11
+            literal null : null @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-null-signatures.deal:10:13-10:16

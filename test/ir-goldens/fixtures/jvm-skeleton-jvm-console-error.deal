@@ -1,0 +1,5 @@
+// IR golden fixture: jvm-skeleton-jvm-console-error
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-console-error' (ISSUE-0358).
+
+import * as console from "std/console"
+export function test(): null { console.error("err-chan"); }

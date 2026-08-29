@@ -1,0 +1,19 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-cmp-past-end-parity
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-cmp-past-end-parity' (ISSUE-0358).
+
+import * as console from "std/console"
+export function test(): null {
+  let xs: int[] = [1];
+  let ns: number[] = [1.5];
+  let ss: string[] = ["a"];
+  let bs: boolean[] = [true];
+  if (xs[99] === 5) { console.log("bad1"); }
+  if (xs[99] !== 5) { console.log("int-neq"); }
+  if (xs[99] === xs[99]) { console.log("nil-eq-nil"); }
+  if (ns[99] !== 2.5) { console.log("number-neq"); }
+  if (ss[99] === "x") { console.log("bad2"); }
+  if (ss[99] !== "x") { console.log("string-neq"); }
+  if (bs[99] === true) { console.log("bad3"); }
+  if (bs[99] !== true) { console.log("boolean-neq"); }
+  if (xs[0] === 1 && xs[99] !== 1) { console.log("mixed"); }
+}

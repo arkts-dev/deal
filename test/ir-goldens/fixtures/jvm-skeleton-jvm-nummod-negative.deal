@@ -1,0 +1,4 @@
+// IR golden fixture: jvm-skeleton-jvm-nummod-negative
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-nummod-negative' (ISSUE-0358).
+
+export function test(): number { return -7.0 % 3.0; }

@@ -1,0 +1,102 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:4:1-15:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function pick: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:5:1-6:6
+    param label: string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:5:15-5:28
+      [boundary: param-entry]
+    param z: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:5:30-5:37
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:5:46-5:63
+        call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:5:46-5:63
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:5:46-5:56
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:5:46-5:52
+              [boundary: import]
+          ident label : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:5:58-5:62
+      return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:5:66-5:76
+        [boundary: return]
+        literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:5:73-5:73
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:6:1-15:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:6:8-15:1
+      body
+        let bs: [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:7:3-8:5
+          [boundary: var-annotation]
+          array : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:7:23-7:28
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:7:24-7:27
+        let c: boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:8:3-9:4
+          [boundary: var-annotation]
+          binary || : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:8:20-8:33
+            index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:8:20-8:25
+              ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:8:20-8:21
+              literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:8:23-8:24
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:8:30-8:33
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:9:3-10:5
+          ident c : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:9:7-9:7
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:9:10-9:39
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:9:12-9:36
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:9:12-9:36
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:9:12-9:22
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:9:12-9:18
+                    [boundary: import]
+                literal "or-coerced" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:9:24-9:35
+        let g: boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:10:3-11:4
+          [boundary: var-annotation]
+          binary || : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:10:20-10:59
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:10:20-10:23
+            index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:10:28-10:59
+              ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:10:28-10:29
+              call : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:10:31-10:58
+                ident pick : (string,null)->int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:10:31-10:34
+                literal "xx" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:10:36-10:39
+                call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:10:42-10:57
+                  [boundary: stdlib-boundary]
+                  member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:10:42-10:52
+                    [boundary: table-read]
+                    ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:10:42-10:48
+                      [boundary: import]
+                  literal "h" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:10:54-10:56
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:11:3-12:5
+          ident g : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:11:7-11:7
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:11:10-11:41
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:11:12-11:38
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:11:12-11:38
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:11:12-11:22
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:11:12-11:18
+                    [boundary: import]
+                literal "true-or-skip" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:11:24-11:37
+        let f: boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:12:3-13:4
+          [boundary: var-annotation]
+          binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:12:20-12:61
+            literal false : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:12:20-12:24
+            index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:12:29-12:61
+              ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:12:29-12:30
+              call : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:12:32-12:60
+                ident pick : (string,null)->int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:12:32-12:35
+                literal "yy" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:12:37-12:40
+                call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:12:43-12:59
+                  [boundary: stdlib-boundary]
+                  member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:12:43-12:53
+                    [boundary: table-read]
+                    ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:12:43-12:49
+                      [boundary: import]
+                  literal "h2" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:12:55-12:58
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:13:3-14:1
+          unary ! : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:13:7-13:8
+            ident f : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:13:8-13:8
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:13:11-13:44
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:13:13-13:41
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:13:13-13:41
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:13:13-13:23
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:13:13-13:19
+                    [boundary: import]
+                literal "false-and-skip" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-shortcircuit-read-parity.deal:13:25-13:40

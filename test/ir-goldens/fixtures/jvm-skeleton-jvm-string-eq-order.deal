@@ -1,0 +1,13 @@
+// IR golden fixture: jvm-skeleton-jvm-string-eq-order
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-string-eq-order' (ISSUE-0358).
+
+function classify(s: string, t: string): int {
+  if (s === t) { return 1; }
+  if (s < t) { return 2; }
+  return 3;
+}
+export function test(): int {
+  return classify("aaa", "aaa") * 100
+       + classify("a", "b") * 10
+       + classify("b", "a");
+}

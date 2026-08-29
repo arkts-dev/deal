@@ -1,0 +1,41 @@
+module @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:4:1-7:1
+  function inc: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:4:1-5:8
+    param x: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:4:14-4:20
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:4:29-4:43
+        [boundary: return]
+        binary + : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:4:36-4:40
+          ident x : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:4:36-4:36
+          literal 1 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:4:40-4:40
+  function add: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:5:1-6:6
+    param a: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:5:14-5:20
+      [boundary: param-entry]
+    param b: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:5:22-5:28
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:5:37-5:51
+        [boundary: return]
+        binary + : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:5:44-5:48
+          ident a : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:5:44-5:44
+          ident b : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:5:48-5:48
+  export @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:1-7:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:8-7:1
+      body
+        return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:31-6:74
+          [boundary: return]
+          call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:38-6:71
+            ident add : (int,int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:38-6:40
+            call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:42-6:52
+              ident inc : (int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:42-6:44
+              call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:46-6:51
+                ident inc : (int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:46-6:48
+                literal 1 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:50-6:50
+            call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:55-6:70
+              ident inc : (int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:55-6:57
+              call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:59-6:69
+                ident inc : (int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:59-6:61
+                call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:63-6:68
+                  ident inc : (int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:63-6:65
+                  literal 2 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-nested-calls.deal:6:67-6:67

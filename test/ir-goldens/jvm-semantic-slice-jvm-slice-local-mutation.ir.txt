@@ -1,0 +1,44 @@
+module @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:4:1-16:1
+  export @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:4:1-16:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:4:8-16:1
+      body
+        let x: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:5:3-6:3
+          [boundary: var-annotation]
+          literal 10 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:5:16-5:17
+        expr-stmt @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:6:3-6:11
+          assign = : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:6:3-6:11
+            [boundary: assignment]
+            ident x : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:6:3-6:3
+            binary + : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:6:7-6:11
+              ident x : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:6:7-6:7
+              literal 1 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:6:11-6:11
+        let y: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:7:3-8:3
+          [boundary: var-annotation]
+          binary * : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:7:16-7:20
+            ident x : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:7:16-7:16
+            literal 2 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:7:20-7:20
+        expr-stmt @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:8:3-8:12
+          assign = : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:8:3-8:12
+            [boundary: assignment]
+            ident y : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:8:3-8:3
+            binary - : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:8:7-8:12
+              ident y : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:8:7-8:7
+              literal 10 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:8:11-8:12
+        let z: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:9:3-10:3
+          [boundary: var-annotation]
+          ident y : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:9:16-9:16
+        block @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:10:3-13:3
+          let x: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:11:5-12:5
+            [boundary: var-annotation]
+            literal 99 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:11:18-11:19
+          expr-stmt @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:12:5-12:13
+            assign = : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:12:5-12:13
+              [boundary: assignment]
+              ident z : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:12:5-12:5
+              binary + : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:12:9-12:13
+                ident z : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:12:9-12:9
+                ident x : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:12:13-12:13
+        return @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:14:3-15:1
+          [boundary: return]
+          ident z : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-local-mutation.deal:14:10-14:10

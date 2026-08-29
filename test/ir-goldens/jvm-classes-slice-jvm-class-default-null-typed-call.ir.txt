@@ -1,0 +1,38 @@
+module @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:4:1-12:1
+  function noise: null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:4:1-5:8
+    body
+      return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:4:26-4:34
+  function wrap: string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:5:1-6:5
+    param x: null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:5:15-5:22
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:5:34-5:46
+        [boundary: return]
+        literal "w" : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:5:41-5:43
+  class P @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:6:1-6:38
+    field x: string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:6:11-6:38
+      [boundary: class-default]
+      call : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:6:23-6:35
+        ident wrap : (null)->string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:6:23-6:26
+        call : null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:6:28-6:34
+          ident noise : ()->null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:6:28-6:32
+  export @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:7:1-12:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:7:8-12:1
+      body
+        let p: @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal/P @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:8:3-9:4
+          [boundary: var-annotation]
+          object : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal/P @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:8:14-8:15
+            [boundary: class-construct]
+        if @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:9:3-10:8
+          binary === : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:9:7-9:17
+            member .x : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:9:7-9:9
+              ident p : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal/P @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:9:7-9:7
+            literal "w" : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:9:15-9:17
+          block @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:9:20-9:32
+            return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:9:22-9:32
+              [boundary: return]
+              literal 1 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:9:29-9:29
+        return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:10:3-11:1
+          [boundary: return]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-default-null-typed-call.deal:10:10-10:10

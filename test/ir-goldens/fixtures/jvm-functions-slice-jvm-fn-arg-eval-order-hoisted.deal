@@ -1,0 +1,7 @@
+// IR golden fixture: jvm-functions-slice-jvm-fn-arg-eval-order-hoisted
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-functions-slice.json case 'jvm-fn-arg-eval-order-hoisted' (ISSUE-0358).
+
+import * as console from "std/console"
+function mark(label: string, value: int): int { console.log(label); return value; }
+function take(i: int, z: null): int { return i; }
+export function test(): int { return take(mark("arg-ran", 7), console.log("hoisted-ran")); }

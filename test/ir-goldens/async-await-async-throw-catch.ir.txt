@@ -1,0 +1,21 @@
+module @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:1-5:1
+  export @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:1-5:1
+    [boundary: export]
+    async function f: string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:8-5:1
+      body
+        try @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:37-4:145
+          block @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:41-4:114
+            throw @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:43-4:97
+              object : Error @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:49-4:89
+                [boundary: class-construct]
+                literal "E_TEST" : string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:57-4:64
+                literal "test error" : string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:76-4:87
+            return @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:92-4:114
+              [boundary: async-completion]
+              literal "unreachable" : string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:99-4:111
+        catch e @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:126-4:143
+          block @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:126-4:143
+            return @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:128-4:143
+              [boundary: async-completion]
+              member .code : string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:135-4:140
+                ident e : Error @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:135-4:135

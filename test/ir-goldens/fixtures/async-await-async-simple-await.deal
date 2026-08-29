@@ -1,0 +1,5 @@
+// IR golden fixture: async-await-async-simple-await
+// Migrated IR-containment pins from test/conformance/fixtures/async-await.json case 'async-simple-await' (ISSUE-0358).
+
+async function g(): int { return 42; }
+export async function f(): int { return await g(); }

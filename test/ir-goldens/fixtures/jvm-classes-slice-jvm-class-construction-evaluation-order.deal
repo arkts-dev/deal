@@ -1,0 +1,11 @@
+// IR golden fixture: jvm-classes-slice-jvm-class-construction-evaluation-order
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-classes-slice.json case 'jvm-class-construction-evaluation-order' (ISSUE-0358).
+
+import * as console from "std/console"
+class Pair { a: string = ""; b: string = ""; }
+function tag(s: string): string { console.log(s); return s; }
+export function test(): int {
+  let p: Pair = { b: tag("second"), a: tag("first") };
+  if (p.a === "first" && p.b === "second") { return 1; }
+  return 0;
+}

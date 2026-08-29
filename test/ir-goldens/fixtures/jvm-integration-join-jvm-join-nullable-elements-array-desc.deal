@@ -1,0 +1,20 @@
+// IR golden fixture: jvm-integration-join-jvm-join-nullable-elements-array-desc
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-nullable-elements-array-desc' (ISSUE-0358).
+
+function total(xs: (int | null)[]): int {
+  let r: int = 0;
+  let i: int = 0;
+  while (i < xs.length) {
+    let e: int | null = xs[i];
+    if (e !== null) { r = r + e; }
+    i = i + 1;
+  }
+  return r;
+}
+export function test(): int {
+  let xs: (int | null)[] = [];
+  xs[0] = 1;
+  xs[1] = null;
+  xs[2] = 3;
+  return total(xs);
+}

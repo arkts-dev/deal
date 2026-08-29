@@ -1,0 +1,124 @@
+module @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:4:1-23:1
+  class Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:4:1-4:27
+    field x: int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:4:15-4:27
+      [boundary: class-default]
+      literal 1 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:4:24-4:24
+  export @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:5:1-23:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:5:8-23:1
+      body
+        let p: @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:6:3-7:5
+          [boundary: var-annotation]
+          object : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:6:18-6:19
+            [boundary: class-construct]
+        let ps: [@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:7:3-8:5
+          [boundary: var-annotation]
+          array : [@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:7:21-7:26
+            ident p : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:7:22-7:22
+            ident p : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:7:25-7:25
+        let r: int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:8:3-9:3
+          [boundary: var-annotation]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:8:16-8:16
+        expr-stmt @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:9:3-9:27
+          assign = : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:9:3-9:27
+            [boundary: assignment]
+            ident r : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:9:3-9:3
+            binary + : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:9:7-9:27
+              binary + : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:9:7-9:17
+                ident r : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:9:7-9:7
+                member .x : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:9:11-9:17
+                  index [] : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:9:11-9:15
+                    ident ps : [@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:9:11-9:12
+                    literal 0 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:9:14-9:14
+              member .x : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:9:21-9:27
+                index [] : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:9:21-9:25
+                  ident ps : [@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:9:21-9:22
+                  literal 1 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:9:24-9:24
+        expr-stmt @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:10:3-10:11
+          assign = : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:10:3-10:11
+            [boundary: array-write]
+            index [] : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:10:3-10:7
+              ident ps : [@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:10:3-10:4
+              literal 1 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:10:6-10:6
+            ident p : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:10:11-10:11
+        expr-stmt @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:11:3-11:19
+          assign = : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:11:3-11:19
+            [boundary: assignment]
+            ident r : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:11:3-11:3
+            binary + : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:11:7-11:19
+              ident r : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:11:7-11:7
+              member .length : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:11:11-11:19
+                ident ps : [@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:11:11-11:12
+        let maybe: [@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:12:3-13:4
+          [boundary: var-annotation]
+          ident ps : [@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:12:31-12:32
+        if @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:13:3-14:5
+          binary !== : boolean @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:13:7-13:20
+            ident maybe : ?[@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:13:7-13:11
+            literal null : null @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:13:17-13:20
+          block @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:13:23-13:45
+            expr-stmt @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:13:25-13:42
+              assign = : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:13:25-13:42
+                [boundary: assignment]
+                ident r : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:13:25-13:25
+                binary + : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:13:29-13:42
+                  ident r : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:13:29-13:29
+                  member .x : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:13:33-13:42
+                    index [] : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:13:33-13:40
+                      ident maybe : [@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:13:33-13:37
+                      literal 0 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:13:39-13:39
+        let mp: [?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:14:3-15:4
+          [boundary: var-annotation]
+          array : [?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:14:30-14:31
+        expr-stmt @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:15:3-15:11
+          assign = : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:15:3-15:11
+            [boundary: array-write]
+            index [] : ?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:15:3-15:7
+              ident mp : [?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:15:3-15:4
+              literal 0 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:15:6-15:6
+            ident p : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:15:11-15:11
+        expr-stmt @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:16:3-16:14
+          assign = : null @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:16:3-16:14
+            [boundary: array-write]
+            index [] : ?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:16:3-16:7
+              ident mp : [?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:16:3-16:4
+              literal 1 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:16:6-16:6
+            literal null : null @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:16:11-16:14
+        let first: ?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:17:3-18:4
+          [boundary: var-annotation]
+          index [] : ?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:17:29-17:33
+            ident mp : [?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:17:29-17:30
+            literal 0 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:17:32-17:32
+        if @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:18:3-19:5
+          binary !== : boolean @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:18:7-18:20
+            ident first : ?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:18:7-18:11
+            literal null : null @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:18:17-18:20
+          block @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:18:23-18:42
+            expr-stmt @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:18:25-18:39
+              assign = : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:18:25-18:39
+                [boundary: assignment]
+                ident r : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:18:25-18:25
+                binary + : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:18:29-18:39
+                  ident r : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:18:29-18:29
+                  member .x : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:18:33-18:39
+                    ident first : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:18:33-18:37
+        let second: ?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:19:3-20:4
+          [boundary: var-annotation]
+          index [] : ?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:19:30-19:34
+            ident mp : [?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point] @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:19:30-19:31
+            literal 1 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:19:33-19:33
+        if @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:20:3-21:8
+          binary === : boolean @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:20:7-20:21
+            ident second : ?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal/Point @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:20:7-20:12
+            literal null : null @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:20:18-20:21
+          block @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:20:24-20:37
+            expr-stmt @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:20:26-20:34
+              assign = : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:20:26-20:34
+                [boundary: assignment]
+                ident r : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:20:26-20:26
+                binary + : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:20:30-20:34
+                  ident r : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:20:30-20:30
+                  literal 1 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:20:34-20:34
+        return @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:21:3-22:1
+          [boundary: return]
+          ident r : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-arrays.deal:21:10-21:10

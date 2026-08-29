@@ -1,0 +1,18 @@
+module @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-string-concat.deal:4:1-9:1
+  export @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-string-concat.deal:4:1-9:1
+    [boundary: export]
+    function test: string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-string-concat.deal:4:8-9:1
+      body
+        let a: string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-string-concat.deal:5:3-6:5
+          [boundary: var-annotation]
+          literal "deal" : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-string-concat.deal:5:19-5:24
+        let b: string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-string-concat.deal:6:3-7:8
+          [boundary: var-annotation]
+          literal "jvm" : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-string-concat.deal:6:19-6:23
+        return @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-string-concat.deal:7:3-8:1
+          [boundary: return]
+          binary + : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-string-concat.deal:7:10-7:20
+            binary + : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-string-concat.deal:7:10-7:16
+              ident b : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-string-concat.deal:7:10-7:10
+              literal "-" : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-string-concat.deal:7:14-7:16
+            ident a : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-string-concat.deal:7:20-7:20

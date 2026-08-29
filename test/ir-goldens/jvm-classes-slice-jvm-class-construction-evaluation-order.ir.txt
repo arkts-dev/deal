@@ -1,0 +1,57 @@
+module @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:4:1-12:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:4:1-5:5
+    [boundary: host-in]
+    [boundary: import]
+  class Pair @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:5:1-5:46
+    field a: string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:5:14-5:30
+      [boundary: class-default]
+      literal "" : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:5:26-5:27
+    field b: string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:5:30-5:46
+      [boundary: class-default]
+      literal "" : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:5:42-5:43
+  function tag: string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:6:1-7:6
+    param s: string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:6:14-6:23
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:6:35-6:48
+        call : null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:6:35-6:48
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:6:35-6:45
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:6:35-6:41
+              [boundary: import]
+          ident s : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:6:47-6:47
+      return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:6:51-6:61
+        [boundary: return]
+        ident s : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:6:58-6:58
+  export @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:7:1-12:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:7:8-12:1
+      body
+        let p: @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal/Pair @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:8:3-9:4
+          [boundary: var-annotation]
+          object : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal/Pair @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:8:17-8:53
+            [boundary: class-construct]
+            call : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:8:22-8:34
+              ident tag : (string)->string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:8:22-8:24
+              literal "second" : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:8:26-8:33
+            call : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:8:40-8:51
+              ident tag : (string)->string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:8:40-8:42
+              literal "first" : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:8:44-8:50
+        if @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:9:3-10:8
+          binary && : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:9:7-9:41
+            binary === : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:9:7-9:21
+              member .a : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:9:7-9:9
+                ident p : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal/Pair @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:9:7-9:7
+              literal "first" : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:9:15-9:21
+            binary === : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:9:26-9:41
+              member .b : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:9:26-9:28
+                ident p : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal/Pair @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:9:26-9:26
+              literal "second" : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:9:34-9:41
+          block @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:9:44-9:56
+            return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:9:46-9:56
+              [boundary: return]
+              literal 1 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:9:53-9:53
+        return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:10:3-11:1
+          [boundary: return]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-evaluation-order.deal:10:10-10:10

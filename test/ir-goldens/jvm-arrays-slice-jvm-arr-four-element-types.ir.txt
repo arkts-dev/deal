@@ -1,0 +1,105 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:4:1-16:1
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:4:1-16:1
+    [boundary: export]
+    function test: string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:4:8-16:1
+      body
+        let ns: [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:5:3-6:4
+          [boundary: var-annotation]
+          array : [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:5:22-5:31
+            literal 1.5 : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:5:23-5:25
+            literal 2.5 : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:5:28-5:30
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:6:3-6:21
+          assign = : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:6:3-6:21
+            [boundary: array-write]
+            index [] : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:6:3-6:7
+              ident ns : [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:6:3-6:4
+              literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:6:6-6:6
+            binary + : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:6:11-6:21
+              index [] : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:6:11-6:15
+                ident ns : [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:6:11-6:12
+                literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:6:14-6:14
+              literal 1.0 : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:6:19-6:21
+        let ss: [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:7:3-8:4
+          [boundary: var-annotation]
+          array : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:7:22-7:31
+            literal "a" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:7:23-7:25
+            literal "b" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:7:28-7:30
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:8:3-8:21
+          assign = : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:8:3-8:21
+            [boundary: array-write]
+            index [] : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:8:3-8:7
+              ident ss : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:8:3-8:4
+              literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:8:6-8:6
+            binary + : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:8:11-8:21
+              index [] : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:8:11-8:15
+                ident ss : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:8:11-8:12
+                literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:8:14-8:14
+              literal "x" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:8:19-8:21
+        let bs: [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:9:3-10:4
+          [boundary: var-annotation]
+          array : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:9:23-9:35
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:9:24-9:27
+            literal false : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:9:30-9:34
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:10:3-10:15
+          assign = : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:10:3-10:15
+            [boundary: array-write]
+            index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:10:3-10:7
+              ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:10:3-10:4
+              literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:10:6-10:6
+            index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:10:11-10:15
+              ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:10:11-10:12
+              literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:10:14-10:14
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:3-14:8
+          binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:7-11:146
+            binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:7-11:127
+              binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:7-11:108
+                binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:7-11:89
+                  binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:7-11:80
+                    binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:7-11:71
+                      binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:7-11:54
+                        binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:7-11:36
+                          binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:7-11:19
+                            index [] : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:7-11:11
+                              ident ns : [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:7-11:8
+                              literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:10-11:10
+                            literal 1.5 : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:17-11:19
+                          binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:24-11:36
+                            index [] : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:24-11:28
+                              ident ns : [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:24-11:25
+                              literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:27-11:27
+                            literal 2.5 : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:34-11:36
+                        binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:41-11:54
+                          index [] : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:41-11:45
+                            ident ss : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:41-11:42
+                            literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:44-11:44
+                          literal "bx" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:51-11:54
+                      binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:59-11:71
+                        index [] : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:59-11:63
+                          ident ss : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:59-11:60
+                          literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:62-11:62
+                        literal "b" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:69-11:71
+                    index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:76-11:80
+                      ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:76-11:77
+                      literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:79-11:79
+                  index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:85-11:89
+                    ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:85-11:86
+                    literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:88-11:88
+                binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:94-11:108
+                  member .length : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:94-11:102
+                    ident ns : [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:94-11:95
+                  literal 2 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:108-11:108
+              binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:113-11:127
+                member .length : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:113-11:121
+                  ident ss : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:113-11:114
+                literal 2 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:127-11:127
+            binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:132-11:146
+              member .length : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:132-11:140
+                ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:132-11:133
+              literal 2 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:146-11:146
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:11:149-13:3
+            return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:12:5-13:3
+              [boundary: return]
+              literal "ok" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:12:12-12:15
+        return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:14:3-15:1
+          [boundary: return]
+          literal "bad" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-four-element-types.deal:14:10-14:14

@@ -1,0 +1,34 @@
+module @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:4:1-14:1
+  class Box @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:4:1-4:25
+    field v: int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:4:13-4:25
+      [boundary: class-default]
+      literal 7 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:4:22-4:22
+  function make: Box @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:5:1-6:6
+    body
+      return @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:5:24-5:35
+        [boundary: return]
+        object : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal/Box @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:5:31-5:32
+          [boundary: class-construct]
+  export @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:6:1-14:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:6:8-14:1
+      body
+        let b: @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal/Box @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:7:3-8:4
+          [boundary: var-annotation]
+          call : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal/Box @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:7:23-7:28
+            ident make : ()->@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal/Box @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:7:23-7:26
+        if @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:8:3-12:8
+          binary !== : boolean @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:8:7-8:16
+            ident b : ?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal/Box @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:8:7-8:7
+            literal null : null @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:8:13-8:16
+          block @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:8:19-11:3
+            let x: int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:9:5-10:10
+              [boundary: var-annotation]
+              member .v : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:9:18-9:20
+                ident b : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal/Box @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:9:18-9:18
+            return @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:10:5-11:3
+              [boundary: return]
+              ident x : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:10:12-10:12
+        return @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:12:3-13:1
+          [boundary: return]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-flow.deal:12:10-12:10

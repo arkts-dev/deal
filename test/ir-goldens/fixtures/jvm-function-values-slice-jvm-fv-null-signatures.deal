@@ -1,0 +1,11 @@
+// IR golden fixture: jvm-function-values-slice-jvm-fv-null-signatures
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-function-values-slice.json case 'jvm-fv-null-signatures' (ISSUE-0358).
+
+function noop(): null { return; }
+function withNull(n: null): int { return 42; }
+export function test(): int {
+  let nf: () => null = noop;
+  nf();
+  let wn: (n: null) => int = withNull;
+  return wn(null);
+}

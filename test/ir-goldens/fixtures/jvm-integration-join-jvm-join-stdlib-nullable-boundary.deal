@@ -1,0 +1,12 @@
+// IR golden fixture: jvm-integration-join-jvm-join-stdlib-nullable-boundary
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-stdlib-nullable-boundary' (ISSUE-0358).
+
+import * as str from "std/string"
+export function test(): int {
+  let n: int | null = str.length("abc");
+  let r: int = 0;
+  if (n !== null) { r = r + n; }
+  let m: string | null = str.substring("abcdef", 2, 4);
+  if (m !== null) { if (m === "cd") { r = r + 1; } }
+  return r;
+}

@@ -1,0 +1,21 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-boundary.deal:4:1-8:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-boundary.deal:4:1-5:6
+    [boundary: host-in]
+    [boundary: import]
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-boundary.deal:5:1-8:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-boundary.deal:5:8-8:1
+      body
+        if @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-boundary.deal:6:3-7:1
+          binary === : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-boundary.deal:6:7-6:43
+            literal 9007199254740991 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-boundary.deal:6:7-6:22
+            literal 9007199254740991 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-boundary.deal:6:28-6:43
+          block @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-boundary.deal:6:46-6:82
+            expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-boundary.deal:6:48-6:79
+              call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-boundary.deal:6:48-6:79
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-boundary.deal:6:48-6:58
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-boundary.deal:6:48-6:54
+                    [boundary: import]
+                literal "boundary-in-range" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-boundary.deal:6:60-6:78

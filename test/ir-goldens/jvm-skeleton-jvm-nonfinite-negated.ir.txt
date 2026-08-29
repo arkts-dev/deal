@@ -1,0 +1,12 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-nonfinite-negated.deal:4:1-5:1
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-nonfinite-negated.deal:4:1-5:1
+    [boundary: export]
+    function test: number @test/ir-goldens/fixtures/jvm-skeleton-jvm-nonfinite-negated.deal:4:8-5:1
+      body
+        let x: number @test/ir-goldens/fixtures/jvm-skeleton-jvm-nonfinite-negated.deal:4:34-4:63
+          [boundary: var-annotation]
+          unary - : number @test/ir-goldens/fixtures/jvm-skeleton-jvm-nonfinite-negated.deal:4:50-4:55
+            literal Infinity : number @test/ir-goldens/fixtures/jvm-skeleton-jvm-nonfinite-negated.deal:4:51-4:55
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-nonfinite-negated.deal:4:58-4:68
+          [boundary: return]
+          ident x : number @test/ir-goldens/fixtures/jvm-skeleton-jvm-nonfinite-negated.deal:4:65-4:65

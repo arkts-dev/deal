@@ -1,0 +1,19 @@
+module @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-template-basic.deal:4:1-9:1
+  export @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-template-basic.deal:4:1-9:1
+    [boundary: export]
+    function test: string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-template-basic.deal:4:8-9:1
+      body
+        let name: string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-template-basic.deal:5:3-6:5
+          [boundary: var-annotation]
+          literal "deal" : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-template-basic.deal:5:22-5:27
+        let kind: string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-template-basic.deal:6:3-7:8
+          [boundary: var-annotation]
+          literal "slice" : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-template-basic.deal:6:22-6:28
+        return @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-template-basic.deal:7:3-8:1
+          [boundary: return]
+          template-literal : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-template-basic.deal:7:10-7:30
+            literal "jvm-" : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-template-basic.deal:7:11-7:14
+            ident name : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-template-basic.deal:7:17-7:20
+            literal "-" : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-template-basic.deal:7:22-7:22
+            ident kind : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-template-basic.deal:7:25-7:28
+            literal "" : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-template-basic.deal:7:30-7:30

@@ -1,0 +1,60 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:4:1-11:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function pick: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:5:1-6:6
+    param label: string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:5:15-5:28
+      [boundary: param-entry]
+    param z: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:5:30-5:37
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:5:46-5:63
+        call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:5:46-5:63
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:5:46-5:56
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:5:46-5:52
+              [boundary: import]
+          ident label : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:5:58-5:62
+      return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:5:66-5:76
+        [boundary: return]
+        literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:5:73-5:73
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:6:1-11:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:6:8-11:1
+      body
+        let ys: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:7:3-8:5
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:7:19-7:21
+            literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:7:20-7:20
+        let zs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:8:3-9:4
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:8:19-8:21
+            literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:8:20-8:20
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:3-10:1
+          binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:7-9:48
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:7-9:12
+              ident ys : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:7-9:8
+              unary - : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:10-9:11
+                literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:11-9:11
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:18-9:48
+              ident zs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:18-9:19
+              call : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:21-9:47
+                ident pick : (string,null)->int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:21-9:24
+                literal "i" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:26-9:28
+                call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:31-9:46
+                  [boundary: stdlib-boundary]
+                  member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:31-9:41
+                    [boundary: table-read]
+                    ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:31-9:37
+                      [boundary: import]
+                  literal "h" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:43-9:45
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:51-9:73
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:53-9:70
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:53-9:70
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:53-9:63
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:53-9:59
+                    [boundary: import]
+                literal "bad" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity.deal:9:65-9:69

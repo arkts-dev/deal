@@ -1,0 +1,6 @@
+// IR golden fixture: jvm-async-slice-jvm-async-nested-error-propagation
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-async-slice.json case 'jvm-async-nested-error-propagation' (ISSUE-0358).
+
+async function innermost(): int { return 1 / 0; }
+async function mid(): int { return await innermost(); }
+export async function test(): int { return await mid(); }

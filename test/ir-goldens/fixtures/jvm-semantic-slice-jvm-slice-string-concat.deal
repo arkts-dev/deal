@@ -1,0 +1,8 @@
+// IR golden fixture: jvm-semantic-slice-jvm-slice-string-concat
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-semantic-slice.json case 'jvm-slice-string-concat' (ISSUE-0358).
+
+export function test(): string {
+  let a: string = "deal";
+  let b: string = "jvm";
+  return b + "-" + a;
+}

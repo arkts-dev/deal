@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-semantic-slice-jvm-slice-template-plain-and-parts
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-semantic-slice.json case 'jvm-slice-template-plain-and-parts' (ISSUE-0358).
+
+export function test(): string {
+  let a: string = "alpha";
+  let t1: string = `plain`;
+  let t2: string = `${a}b`;
+  let t3: string = `x${""}y`;
+  return t1 + t2 + t3;
+}

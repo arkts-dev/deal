@@ -1,0 +1,9 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-cmp-lhs-effect-number-parity
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-cmp-lhs-effect-number-parity' (ISSUE-0358).
+
+import * as console from "std/console"
+function markN(label: string, v: number): number { console.log(label); return v; }
+export function test(): null {
+  let ns: number[] = [1.5];
+  if (markN("lhsN", 2.5) === ns[-1]) { console.log("badN"); }
+}

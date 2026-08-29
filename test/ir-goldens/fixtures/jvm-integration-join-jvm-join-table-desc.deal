@@ -1,0 +1,8 @@
+// IR golden fixture: jvm-integration-join-jvm-join-table-desc
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-table-desc' (ISSUE-0358).
+
+export function test(): int {
+  let outer: table = { inner: { n: 3 } };
+  let inner: table = outer.inner;
+  return 1;
+}

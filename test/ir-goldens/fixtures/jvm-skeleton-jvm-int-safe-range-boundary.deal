@@ -1,0 +1,7 @@
+// IR golden fixture: jvm-skeleton-jvm-int-safe-range-boundary
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-int-safe-range-boundary' (ISSUE-0358).
+
+import * as console from "std/console"
+export function test(): null {
+  if (9007199254740991 === 9007199254740991) { console.log("boundary-in-range"); }
+}

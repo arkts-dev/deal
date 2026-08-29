@@ -1,0 +1,25 @@
+module @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:4:1-9:1
+  function maybe: ?int @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:4:1-5:6
+    param x: int @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:4:16-4:22
+      [boundary: param-entry]
+    body
+      if @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:4:38-4:73
+        binary === : boolean @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:4:42-4:48
+          ident x : int @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:4:42-4:42
+          literal 0 : int @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:4:48-4:48
+        block @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:4:51-4:66
+          return @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:4:53-4:66
+            [boundary: return]
+            literal null : null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:4:60-4:63
+      return @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:4:68-4:78
+        [boundary: return]
+        ident x : int @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:4:75-4:75
+  export @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:5:1-9:1
+    [boundary: export]
+    function main: null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:5:8-9:1
+      body
+        let f: (int)->?int @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:6:1-7:6
+          [boundary: var-annotation]
+          ident maybe : (int)->?int @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:6:33-6:37
+        return @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:7:1-8:1
+          literal null : null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-nullable-return.deal:7:8-7:11

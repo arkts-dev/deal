@@ -1,0 +1,9 @@
+// IR golden fixture: jvm-classes-slice-jvm-class-bool-construction-value-boundary
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-classes-slice.json case 'jvm-class-bool-construction-value-boundary' (ISSUE-0358).
+
+class P { b: boolean = false; }
+export function test(): int {
+  let xs: boolean[] = [true, false];
+  let p: P = { b: xs[0] && xs[5] };
+  return 1;
+}

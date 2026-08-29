@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-alias-mutation-append
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-alias-mutation-append' (ISSUE-0358).
+
+export function test(): int {
+  let a: int[] = [1, 2, 3];
+  let b: int[] = a;
+  b[1] = 9;
+  b[3] = 4;
+  return a[1] + a[3] + a.length;
+}

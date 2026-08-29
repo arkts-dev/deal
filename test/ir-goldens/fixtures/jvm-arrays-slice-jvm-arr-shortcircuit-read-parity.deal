@@ -1,0 +1,14 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-shortcircuit-read-parity
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-shortcircuit-read-parity' (ISSUE-0358).
+
+import * as console from "std/console"
+function pick(label: string, z: null): int { console.log(label); return 0; }
+export function test(): null {
+  let bs: boolean[] = [true];
+  let c: boolean = bs[99] || true;
+  if (c) { console.log("or-coerced"); }
+  let g: boolean = true || bs[pick("xx", console.log("h"))];
+  if (g) { console.log("true-or-skip"); }
+  let f: boolean = false && bs[pick("yy", console.log("h2"))];
+  if (!f) { console.log("false-and-skip"); }
+}

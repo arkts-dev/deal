@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-classes-slice-jvm-class-nominal-check-success
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-classes-slice.json case 'jvm-class-nominal-check-success' (ISSUE-0358).
+
+class Box { value: int = 0; }
+export function test(): int {
+  let real: Box = { value: 41 };
+  let holder: table = { item: real };
+  let b: Box = holder.item;
+  return b.value + 1;
+}

@@ -1,0 +1,6 @@
+// IR golden fixture: jvm-functions-slice-jvm-fn-nested-calls
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-functions-slice.json case 'jvm-fn-nested-calls' (ISSUE-0358).
+
+function inc(x: int): int { return x + 1; }
+function add(a: int, b: int): int { return a + b; }
+export function test(): int { return add(inc(inc(1)), inc(inc(inc(2)))); }

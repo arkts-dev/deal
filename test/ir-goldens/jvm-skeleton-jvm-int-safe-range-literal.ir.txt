@@ -1,0 +1,8 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-literal.deal:4:1-5:1
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-literal.deal:4:1-5:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-literal.deal:4:8-5:1
+      body
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-literal.deal:4:31-4:59
+          [boundary: return]
+          literal 9223372036854775807 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-safe-range-literal.deal:4:38-4:56

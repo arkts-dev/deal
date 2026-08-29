@@ -1,0 +1,16 @@
+// IR golden fixture: jvm-integration-join-jvm-join-nullable-array-param-return
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-nullable-array-param-return' (ISSUE-0358).
+
+function first(xs: int[] | null): int | null {
+  if (xs !== null) { return xs[0]; }
+  return null;
+}
+export function test(): int {
+  let a: int[] = [7, 8];
+  let got: int | null = first(a);
+  let none: int | null = first(null);
+  let r: int = 0;
+  if (got !== null) { r = r + got; }
+  if (none === null) { r = r + 1; }
+  return r;
+}

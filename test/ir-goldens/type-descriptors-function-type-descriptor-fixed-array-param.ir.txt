@@ -1,0 +1,17 @@
+module @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:4:1-9:1
+  function describe: null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:4:1-5:6
+    param label: string @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:4:19-4:32
+      [boundary: param-entry]
+    param values: [int] @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:4:34-4:47
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:4:57-4:65
+  export @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:5:1-9:1
+    [boundary: export]
+    function main: null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:5:8-9:1
+      body
+        let f: (string,[int])->null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:6:3-7:8
+          [boundary: var-annotation]
+          ident describe : (string,[int])->null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:6:51-6:58
+        return @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:7:3-8:1
+          literal null : null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:7:10-7:13

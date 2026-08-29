@@ -1,0 +1,24 @@
+module @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:4:1-7:1
+  async function innermost: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:4:1-5:5
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:4:35-4:49
+        [boundary: async-completion]
+        binary / : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:4:42-4:46
+          literal 1 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:4:42-4:42
+          literal 0 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:4:46-4:46
+  async function mid: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:5:1-6:6
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:5:29-5:55
+        [boundary: async-completion]
+        await : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:5:36-5:52
+          call : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:5:42-5:52
+            ident innermost : async()->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:5:42-5:50
+  export @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:6:1-7:1
+    [boundary: export]
+    async function test: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:6:8-7:1
+      body
+        return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:6:37-6:57
+          [boundary: async-completion]
+          await : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:6:44-6:54
+            call : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:6:50-6:54
+              ident mid : async()->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-error-propagation.deal:6:50-6:52

@@ -1,0 +1,35 @@
+module @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:4:1-10:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function walk: null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:5:1-9:6
+    param n: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:5:15-5:21
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:6:3-6:21
+        call : null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:6:3-6:21
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:6:3-6:13
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:6:3-6:9
+              [boundary: import]
+          literal "step" : string @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:6:15-6:20
+      if @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:7:3-8:1
+        binary > : boolean @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:7:7-7:11
+          ident n : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:7:7-7:7
+          literal 0 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:7:11-7:11
+        block @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:7:14-7:29
+          expr-stmt @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:7:16-7:26
+            call : null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:7:16-7:26
+              ident walk : (int)->null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:7:16-7:19
+              binary - : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:7:21-7:25
+                ident n : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:7:21-7:21
+                literal 1 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:7:25-7:25
+  export @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:9:1-10:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:9:8-10:1
+      body
+        expr-stmt @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:9:32-9:38
+          call : null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:9:32-9:38
+            ident walk : (int)->null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:9:32-9:35
+            literal 2 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-void-recursion.deal:9:37-9:37

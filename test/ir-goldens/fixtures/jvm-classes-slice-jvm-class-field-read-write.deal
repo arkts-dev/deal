@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-classes-slice-jvm-class-field-read-write
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-classes-slice.json case 'jvm-class-field-read-write' (ISSUE-0358).
+
+class Point { x: int = 0; y: int = 0; }
+export function test(): int {
+  let p: Point = { x: 1, y: 2 };
+  p.x = p.x + 5;
+  p.y = p.y + 2;
+  return p.x * 10 + p.y;
+}

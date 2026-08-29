@@ -1,0 +1,76 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:4:1-14:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:4:1-5:6
+    [boundary: host-in]
+    [boundary: import]
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:5:1-14:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:5:8-14:1
+      body
+        let bs: [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:6:3-7:5
+          [boundary: var-annotation]
+          array : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:6:23-6:28
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:6:24-6:27
+        let b: boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:7:3-8:4
+          [boundary: var-annotation]
+          unary ! : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:7:20-7:26
+            index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:7:21-7:26
+              ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:7:21-7:22
+              literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:7:24-7:25
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:8:3-9:4
+          ident b : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:8:7-8:7
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:8:10-8:45
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:8:12-8:42
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:8:12-8:42
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:8:12-8:22
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:8:12-8:18
+                    [boundary: import]
+                literal "not-coerced-true" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:8:24-8:41
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:9:3-10:5
+          unary ! : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:9:7-9:13
+            index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:9:8-9:13
+              ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:9:8-9:9
+              literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:9:11-9:12
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:9:16-9:44
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:9:18-9:41
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:9:18-9:41
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:9:18-9:28
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:9:18-9:24
+                    [boundary: import]
+                literal "not-taken" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:9:30-9:40
+        let d: boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:10:3-11:4
+          [boundary: var-annotation]
+          unary ! : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:10:20-10:35
+            binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:10:22-10:35
+              index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:10:22-10:27
+                ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:10:22-10:23
+                literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:10:25-10:26
+              literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:10:32-10:35
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:11:3-12:4
+          ident d : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:11:7-11:7
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:11:10-11:39
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:11:12-11:36
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:11:12-11:36
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:11:12-11:22
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:11:12-11:18
+                    [boundary: import]
+                literal "not-niland" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:11:24-11:35
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:12:3-13:1
+          unary ! : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:12:7-12:12
+            index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:12:8-12:12
+              ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:12:8-12:9
+              literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:12:11-12:11
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:12:15-12:37
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:12:17-12:34
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:12:17-12:34
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:12:17-12:27
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:12:17-12:23
+                    [boundary: import]
+                literal "bad" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-not-read-parity.deal:12:29-12:33

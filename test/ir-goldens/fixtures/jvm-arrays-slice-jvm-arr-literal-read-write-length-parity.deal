@@ -1,0 +1,19 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-literal-read-write-length-parity
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-literal-read-write-length-parity' (ISSUE-0358).
+
+import * as console from "std/console"
+export function test(): null {
+  let xs: int[] = [10, 20, 30];
+  xs[1] = 99;
+  xs[xs.length] = 40;
+  if (xs[0] === 10 && xs[1] === 99 && xs[2] === 30 && xs[3] === 40 && xs.length === 4) {
+    console.log("array-parity");
+  }
+  let ys: int[] = [];
+  ys[0] = 7;
+  let zs: int[] = ys;
+  zs[1] = 8;
+  if (ys[0] === 7 && ys[1] === 8 && ys.length === 2) {
+    console.log("alias-parity");
+  }
+}

@@ -1,0 +1,76 @@
+module @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:4:1-17:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:4:1-5:5
+    [boundary: host-in]
+    [boundary: import]
+  async function one: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:5:1-6:5
+    param x: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:5:20-5:26
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:5:35-5:45
+        [boundary: async-completion]
+        ident x : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:5:42-5:42
+  async function two: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:6:1-7:5
+    param x: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:6:20-6:26
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:6:35-6:50
+        [boundary: async-completion]
+        binary + : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:6:42-6:47
+          ident x : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:6:42-6:42
+          literal 10 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:6:46-6:47
+  async function apply: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:7:1-8:6
+    param cb: (int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:7:22-7:47
+      [boundary: param-entry]
+    param v: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:7:49-7:55
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:7:64-7:84
+        [boundary: async-completion]
+        await : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:7:71-7:81
+          call : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:7:77-7:81
+            ident cb : async(int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:7:77-7:78
+            ident v : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:7:80-7:80
+  export @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:8:1-17:1
+    [boundary: export]
+    async function test: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:8:8-17:1
+      body
+        let g: async(int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:9:3-10:5
+          [boundary: var-annotation]
+          ident one : async(int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:9:34-9:36
+        let h: async(int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:10:3-11:3
+          [boundary: var-annotation]
+          ident g : async(int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:10:42-10:42
+        expr-stmt @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:11:3-11:9
+          assign = : async(int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:11:3-11:9
+            [boundary: assignment]
+            ident g : async(int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:11:3-11:3
+            ident two : async(int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:11:7-11:9
+        expr-stmt @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:12:3-12:19
+          await : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:12:3-12:19
+            call : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:12:9-12:19
+              ident apply : async(async(int)->int,int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:12:9-12:13
+              ident g : async(int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:12:15-12:15
+              literal 1 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:12:18-12:18
+        let r: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:13:3-14:4
+          [boundary: var-annotation]
+          await : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:13:16-13:28
+            call : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:13:22-13:28
+              ident h : async(int,int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:13:22-13:22
+              literal 1 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:13:24-13:24
+              literal 2 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:13:27-13:27
+        if @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:14:3-15:8
+          binary === : boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:14:7-14:14
+            ident r : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:14:7-14:7
+            literal 11 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:14:13-14:14
+          block @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:14:17-14:75
+            expr-stmt @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:14:19-14:72
+              call : null @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:14:19-14:72
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:14:19-14:29
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:14:19-14:25
+                    [boundary: import]
+                literal "jvm-async-lua-ref-reassigned-adapter-ok" : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:14:31-14:71
+        return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:15:3-16:1
+          [boundary: async-completion]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-lua-ref-reassigned-adapter.deal:15:10-15:10

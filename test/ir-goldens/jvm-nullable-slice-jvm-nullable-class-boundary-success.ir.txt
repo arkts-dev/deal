@@ -1,0 +1,36 @@
+module @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:4:1-12:1
+  class Item @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:4:1-4:26
+    field x: int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:4:14-4:26
+      [boundary: class-default]
+      literal 7 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:4:23-4:23
+  export @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:5:1-12:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:5:8-12:1
+      body
+        let it: @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal/Item @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:6:3-7:5
+          [boundary: var-annotation]
+          object : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal/Item @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:6:18-6:19
+            [boundary: class-construct]
+        let t: table @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:7:3-8:5
+          [boundary: var-annotation]
+          object : table @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:7:18-7:27
+            ident it : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal/Item @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:7:24-7:25
+        let got: ?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal/Item @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:8:3-9:4
+          [boundary: var-annotation]
+          member .it : ?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal/Item @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:8:26-8:29
+            [boundary: table-read]
+            ident t : table @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:8:26-8:26
+        if @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:9:3-10:8
+          binary !== : boolean @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:9:7-9:18
+            ident got : ?@test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal/Item @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:9:7-9:9
+            literal null : null @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:9:15-9:18
+          block @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:9:21-9:41
+            return @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:9:23-9:41
+              [boundary: return]
+              binary + : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:9:30-9:38
+                member .x : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:9:30-9:34
+                  ident got : @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal/Item @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:9:30-9:32
+                literal 1 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:9:38-9:38
+        return @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:10:3-11:1
+          [boundary: return]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-nullable-slice-jvm-nullable-class-boundary-success.deal:10:10-10:10

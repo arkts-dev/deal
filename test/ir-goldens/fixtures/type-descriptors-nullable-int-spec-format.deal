@@ -1,0 +1,4 @@
+// IR golden fixture: type-descriptors-nullable-int-spec-format
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'nullable-int-spec-format' (ISSUE-0358).
+
+function f(n: int | null): null { return; }

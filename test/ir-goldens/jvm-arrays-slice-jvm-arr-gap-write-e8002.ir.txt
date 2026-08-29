@@ -1,0 +1,23 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:4:1-9:1
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:4:1-9:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:4:8-9:1
+      body
+        let xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:5:3-6:4
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:5:19-5:27
+            literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:5:20-5:20
+            literal 2 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:5:23-5:23
+            literal 3 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:5:26-5:26
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:6:3-6:12
+          assign = : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:6:3-6:12
+            [boundary: array-write]
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:6:3-6:7
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:6:3-6:4
+              literal 4 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:6:6-6:6
+            literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:6:11-6:12
+        return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:7:3-8:1
+          [boundary: return]
+          index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:7:10-7:14
+            ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:7:10-7:11
+            literal 4 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-gap-write-e8002.deal:7:13-7:13
