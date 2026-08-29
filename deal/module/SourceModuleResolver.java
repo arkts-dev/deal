@@ -47,9 +47,12 @@ import java.util.Objects;
  *       (never a {@code RuntimeException}); a non-spec-listed
  *       {@code .d.deal} physically inside the stdlib directory is not
  *       resolvable through bare lookup and is reachable only by relative
- *       import. There is no CWD module fallback and no importer-relative
- *       fallback for bare lookup; the stdlib surface is the only
- *       {@code std/} source authority.</li>
+ *       import. The stdlib-surface lookup consults the single pinned
+ *       candidate {@code <surface>/<module>.d.deal} only — the generic
+ *       four-candidate walk never applies under the surface. There is
+ *       no CWD module fallback and no importer-relative fallback for
+ *       bare lookup; the stdlib surface is the only {@code std/} source
+ *       authority.</li>
  *   <li>Candidates per root are {@code S.deal}, {@code S/index.deal},
  *       {@code S.d.deal}, {@code S/index.d.deal} (spec order). A bare
  *       import whose resolution lands on a non-stdlib {@code .d.deal}
@@ -297,23 +300,69 @@ public final class SourceModuleResolver {
             }
         }
         if (specifier.startsWith("std/")) {
-            String surface = context.stdlibSurfacePath();
-            if (surface == null) {
-                return e2003("Module not found: '" + specifier + "'. The stdlib"
-                    + " surface is absent (no project-local std/ directory and no"
-                    + " language-distribution std/ directory)", importSpan);
-            }
-            String moduleName = specifier.substring("std/".length());
-            Path base = safeResolve(surface, moduleName);
-            if (base != null) {
-                ResolveResult hit =
-                    searchCandidates(specifier, base, attempted, importSpan, true);
-                if (hit != null) {
-                    return hit;
-                }
-            }
+            return resolveStdlibSurface(specifier, importSpan);
         }
         return e2003(notFoundMessage(specifier, attempted), importSpan);
+    }
+
+    /**
+     * Rule 3 stdlib-surface lookup: exactly one pinned candidate,
+     * {@code <surface>/<module>.d.deal}. The generic four-candidate walk
+     * is deliberately not used under the surface — the six spec-listed
+     * files under the resolved surface are the only stdlib sources, so
+     * {@code S.deal}, {@code S/index.deal}, and {@code S/index.d.deal}
+     * are never consulted and can never satisfy a bare std import. The
+     * pinned candidate is fully symlink-resolved and verified regular +
+     * readable through T1's protected conversion ({@link
+     * ProtectedPathOps#canonicalizeExisting(String)}); a missing or
+     * unreadable pinned file is E2003 at the import span (a surface
+     * missing a spec-listed file — never a {@code RuntimeException}).
+     * The stdlib branch always concludes the bare search.
+     */
+    private ResolveResult resolveStdlibSurface(String specifier, Span importSpan) {
+        String surface = context.stdlibSurfacePath();
+        if (surface == null) {
+            return e2003("Module not found: '" + specifier + "'. The stdlib"
+                + " surface is absent (no project-local std/ directory and no"
+                + " language-distribution std/ directory)", importSpan);
+        }
+        String moduleName = specifier.substring("std/".length());
+        Path base = safeResolve(surface, moduleName);
+        if (base == null) {
+            return e2003("Module not found: '" + specifier + "'. The pinned"
+                + " stdlib candidate path cannot be materialized from surface '"
+                + surface + "'", importSpan);
+        }
+        Path candidate = pinnedStdlibCandidate(base, moduleName);
+        if (!probeExists(candidate)) {
+            return e2003("Module not found: '" + specifier + "'. The stdlib"
+                + " surface is missing the spec-listed declaration file '"
+                + candidate + "'", importSpan);
+        }
+        ProtectedPathOps.PathResult converted =
+            ProtectedPathOps.canonicalizeExisting(candidate.toString());
+        if (converted instanceof ProtectedPathOps.PathResult.Success success) {
+            return publishOrGate(candidate, success.resolvedPath(), specifier,
+                importSpan, true);
+        }
+        ProtectedPathOps.PathResult.Failure failure =
+            (ProtectedPathOps.PathResult.Failure) converted;
+        return e2003("Module not found: '" + specifier + "'. The spec-listed"
+            + " stdlib declaration file '" + candidate + "' is not a readable"
+            + " module: " + failure.reason(), importSpan);
+    }
+
+    /**
+     * The single pinned stdlib candidate of one base path:
+     * {@code <surface>/<module>.d.deal} (the third spec candidate, taken
+     * alone — the only stdlib source shape).
+     */
+    private static Path pinnedStdlibCandidate(Path base, String moduleName) {
+        Path fileName = base.getFileName();
+        String name = fileName == null ? "" : fileName.toString();
+        String candidateName = name.isEmpty() ? moduleName + ".d.deal"
+            : name + ".d.deal";
+        return base.resolveSibling(candidateName);
     }
 
     /**

@@ -102,6 +102,7 @@ public final class SourceModuleResolverTest {
             if (environmentClean) {
                 testResolutionMatrix();
                 testStdlibSurfaceRules();
+                testStdlibSurfaceSinglePinnedCandidate();
                 testExternalsAuthorityAndFileKeyedClassification();
                 testE2009AndRelativeExemption();
                 testRootOrder();
@@ -667,6 +668,91 @@ public final class SourceModuleResolverTest {
                 && failure.diagnostic().message().contains("absent"),
             "a missing stdlib surface is E2003 (never a RuntimeException): "
                 + describe(miss));
+    }
+
+    private static void testStdlibSurfaceSinglePinnedCandidate()
+            throws Exception {
+        System.out.println("-- Stdlib surface: the single pinned .d.deal candidate only");
+        Path dir = fixture("single-pinned");
+        writeText(dir.resolve("deal.json"),
+            "{\n  \"languageVersion\": \"1.2\",\n"
+                + "  \"moduleRoots\": [\"src\"]\n}\n");
+        writeText(dir.resolve("src/main.deal"), "// importer\n");
+        // Non-spec candidate shapes under the surface must never satisfy
+        // a bare std/... import: console.d.deal is absent while the
+        // generic S.deal candidate exists.
+        writeText(dir.resolve("std/console.deal"),
+            "export function notSpecConsole(): null {}\n");
+        // The pinned .d.deal candidate of a spec-listed module resolves.
+        writeText(dir.resolve("std/math.d.deal"),
+            "export function mathAbs(x: number): number\n");
+        ProjectContext context = locateOrFail(dir, "entry.deal");
+        SourceModuleResolver resolver = new SourceModuleResolver(context);
+        Path importer = dir.resolve("src/main.deal");
+
+        SourceModuleResolver.ResolveResult console =
+            resolver.resolve(importer.toString(), "std/console");
+        check(console instanceof SourceModuleResolver.ResolveResult.Failure failure
+                && failure.diagnostic().code().equals("E2003"),
+            "std/console with only std/console.deal under the surface is E2003"
+                + " (the non-spec .deal candidate is never consulted): "
+                + describe(console));
+        if (console instanceof SourceModuleResolver.ResolveResult.Failure failure) {
+            check(failure.diagnostic().message().contains("console.d.deal"),
+                "the miss names the single pinned candidate console.d.deal ("
+                    + failure.diagnostic().message() + ")");
+        }
+
+        // The index.deal variant: console.d.deal absent, only
+        // std/console/index.deal present.
+        Files.delete(dir.resolve("std/console.deal"));
+        writeText(dir.resolve("std/console/index.deal"),
+            "export function notSpecIndex(): null {}\n");
+        SourceModuleResolver.ResolveResult indexVariant =
+            resolver.resolve(importer.toString(), "std/console");
+        check(indexVariant instanceof SourceModuleResolver.ResolveResult.Failure failure
+                && failure.diagnostic().code().equals("E2003"),
+            "std/console with only std/console/index.deal under the surface is"
+                + " E2003: " + describe(indexVariant));
+
+        // Positive control: the single pinned candidate resolves and
+        // carries BuiltinModule.
+        SourceModuleResolver.ResolveResult math =
+            resolver.resolve(importer.toString(), "std/math");
+        check(math instanceof SourceModuleResolver.ResolveResult.Resolved,
+            "bare std/math resolves through the single pinned .d.deal"
+                + " candidate: " + describe(math));
+        if (math instanceof SourceModuleResolver.ResolveResult.Resolved resolved) {
+            check(resolved.location().moduleClassification()
+                        instanceof CanonicalModuleIdentity.BuiltinModule,
+                "std/math carries BuiltinModule through the pinned candidate");
+            check(resolved.location().semanticModuleIdentity()
+                        .canonicalResolvedSourceUri().endsWith("/std/math.d.deal"),
+                "std/math resolves to the pinned surface file ("
+                    + resolved.location().semanticModuleIdentity()
+                        .canonicalResolvedSourceUri() + ")");
+        }
+        check(resolver.resolvedLocations().size() == 1,
+            "only the pinned-candidate resolution registered a location");
+
+        // Unreadable pinned candidate → E2003 (never a raw exception).
+        if (makeUnreadable(dir.resolve("std/math.d.deal"))) {
+            SourceModuleResolver.ResolveResult unreadable =
+                resolver.resolve(importer.toString(), "std/math");
+            check(unreadable instanceof SourceModuleResolver.ResolveResult.Failure
+                        failure
+                    && failure.diagnostic().code().equals("E2003")
+                    && failure.diagnostic().message()
+                        .contains("not a readable module"),
+                "unreadable pinned stdlib file is E2003 at the import span: "
+                    + describe(unreadable));
+            check(resolver.resolvedLocations().size() == 1,
+                "the unreadable-candidate failure registers nothing");
+        } else {
+            System.out.println("  SKIP: platform reports the pinned file readable"
+                + " (running as root?)");
+        }
+        makeWritable(dir.resolve("std/math.d.deal"));
     }
 
     private static void testExternalsAuthorityAndFileKeyedClassification()
