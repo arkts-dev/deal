@@ -61,6 +61,7 @@ javac --release 25 -proc:none -d build \
   test/LoweringFoundationTest.java \
   test/SemanticIrSchemaTest.java \
   test/DescriptorServiceTest.java \
+  test/ContainerPayloadDescriptorsTest.java \
   test/BoundaryExecutorTest.java \
   test/UnicodeScalarsTest.java \
   test/FailureContractRegistryTest.java \
@@ -263,6 +264,10 @@ java -ea -cp build deal.test.SemanticIrSchemaTest
 echo ""
 echo "=== Running Descriptor Service Tests (ISSUE-0233 D1/D2) ==="
 java -ea -cp build deal.test.DescriptorServiceTest
+
+echo ""
+echo "=== Running Container Payload Descriptor Bridge Tests (ISSUE-0232 D2) ==="
+java -ea -cp build deal.test.ContainerPayloadDescriptorsTest
 
 echo ""
 echo "=== Running Boundary Executor Tests (ISSUE-0364 D3) ==="
