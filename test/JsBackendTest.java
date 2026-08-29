@@ -1584,6 +1584,19 @@ public class JsBackendTest {
                 $fail = "u200a-arm:" + e.$dealCode + ":" + e.message;
               }
             }
+            // U+0085 NEXT LINE is pinned White_Space property whitespace
+            // (the Java parser, the identity index, and $CANONICAL_WS
+            // all forbid it), so @a<U+0085>b/C takes the same pinned
+            // E8001 cannot-parse arm.
+            try {
+              $rt.checkType("@a\\u0085b/C", $v2, "probe.js", 1, 1);
+              $fail = "u0085-accepted";
+            } catch (e) {
+              if (e.$dealCode !== "E8001"
+                  || e.message !== "internal: cannot parse type descriptor: @a\\u0085b/C") {
+                $fail = "u0085-arm:" + e.$dealCode + ":" + e.message;
+              }
+            }
             // E8003 pinned array-element message at the first failing index.
             try {
               $rt.checkType("[int]", [1, "x", 3], "probe.js", 1, 1);

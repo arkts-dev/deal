@@ -538,6 +538,10 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "single-component @Foo rejected");
         assertError("@a b/c", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM, 2,
             "whitespace-containing single component rejected");
+        assertError("@a\u0085b/C", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM, 2,
+            "U+0085 NEXT LINE component rejected (pinned White_Space property)");
+        assertError("@a\u00A0b/C", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM, 2,
+            "U+00A0 NO-BREAK SPACE component rejected");
 
         // Dotted class-name-position forms.
         assertError("@src.models.User", DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM, 1,

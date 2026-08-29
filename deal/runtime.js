@@ -104,9 +104,10 @@ function $kindOf($v) {
 // exact ModuleIdentityResolver.isUnicodeWhiteSpace exclusion (the
 // White_Space property pin 0009-000D, 0020, 0085, 00A0, 1680,
 // 2000-200A, 2028, 2029, 202F, 205F, 3000): every JS \s scalar minus
-// U+FEFF, plus U+0085. (Java's Character.isWhitespace/isSpaceChar do
-// not mirror this set exactly: isWhitespace excludes U+0085 NEXT LINE
-// since JDK 5, so the property pin is the single authority.)
+// U+FEFF, plus U+0085. The Java parser's forbiddenInComponent checks
+// this same property pin explicitly — never
+// Character.isWhitespace/isSpaceChar, whose isWhitespace excludes
+// U+0085 NEXT LINE since JDK 5.
 // U+200B ZERO WIDTH SPACE is deliberately absent: it is a legal
 // component scalar in the Java parser and the identity index.
 const $CANONICAL_WS = /[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/u;

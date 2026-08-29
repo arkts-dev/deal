@@ -591,8 +591,27 @@ public final class CanonicalRuntimeTypeDescriptor {
                 }
                 default -> { }
             }
-            // Unicode whitespace (including space separators).
-            if (Character.isWhitespace(cp) || Character.isSpaceChar(cp)) {
+            // The full pinned Unicode White_Space property (UAX #44
+            // PropList White_Space=Yes): 0009-000D, 0020, 0085, 00A0,
+            // 1680, 2000-200A, 2028, 2029, 202F, 205F, 3000 — the
+            // single component-exclusion authority shared with
+            // ModuleIdentityResolver.isUnicodeWhiteSpace and the JS
+            // runtime's $CANONICAL_WS.  Checked explicitly, never via
+            // Character.isWhitespace/isSpaceChar: Java's isWhitespace
+            // excludes U+0085 NEXT LINE (a White_Space Cc control)
+            // since JDK 5, which would let that scalar pass the
+            // component alphabet and diverge from the runtime parser.
+            if ((cp >= 0x0009 && cp <= 0x000D)
+                    || cp == 0x0020
+                    || cp == 0x0085
+                    || cp == 0x00A0
+                    || cp == 0x1680
+                    || (cp >= 0x2000 && cp <= 0x200A)
+                    || cp == 0x2028
+                    || cp == 0x2029
+                    || cp == 0x202F
+                    || cp == 0x205F
+                    || cp == 0x3000) {
                 return true;
             }
             // A lone surrogate is not a decoded Unicode scalar.
