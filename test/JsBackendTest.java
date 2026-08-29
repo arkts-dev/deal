@@ -1567,6 +1567,23 @@ public class JsBackendTest {
             const $v = $rt.makeClass("C", "@m/C", () => ({ ["x"]: 0 }), { ["x"]: 1 }, "probe.js", 1, 1);
             $rt.checkType("@m/C", $v, "probe.js", 1, 1);
             try { $rt.checkType("@m/c", $v, "probe.js", 1, 1); $fail = "class-case"; } catch (e) {}
+            // Differential whitespace pin: U+200B ZERO WIDTH SPACE is a
+            // legal component scalar in the canonical alphabet (the Java
+            // parser and the identity index forbid only 2000-200A), so
+            // the class atom @a<U+200B>b/C parses and compares
+            // byte-for-byte; U+200A HAIR SPACE is forbidden whitespace
+            // and takes the pinned E8001 cannot-parse arm.
+            const $v2 = $rt.makeClass("C", "@a\\u200Bb/C", () => ({ ["x"]: 0 }), { ["x"]: 1 }, "probe.js", 1, 1);
+            $rt.checkType("@a\\u200Bb/C", $v2, "probe.js", 1, 1);
+            try {
+              $rt.checkType("@a\\u200Ab/C", $v2, "probe.js", 1, 1);
+              $fail = "u200a-accepted";
+            } catch (e) {
+              if (e.$dealCode !== "E8001"
+                  || e.message !== "internal: cannot parse type descriptor: @a\\u200Ab/C") {
+                $fail = "u200a-arm:" + e.$dealCode + ":" + e.message;
+              }
+            }
             // E8003 pinned array-element message at the first failing index.
             try {
               $rt.checkType("[int]", [1, "x", 3], "probe.js", 1, 1);
