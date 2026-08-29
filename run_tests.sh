@@ -90,6 +90,8 @@ javac --release 25 -proc:none -d build \
   test/CanonicalIdentityTest.java \
   deal/test/containment/ContainedProcessBroker.java \
   deal/test/containment/PreflightCoordinator.java \
+  deal/test/conformance/SidecarSchemaValidator.java \
+  deal/test/conformance/SidecarSchemaValidatorTest.java \
   deal/test/containment/ContainedProcessBrokerFramingTest.java \
   deal/test/containment/ContainedProcessBrokerStateTest.java \
   deal/project/ProjectLocatorTest.java
@@ -209,6 +211,10 @@ java -ea -cp build deal.test.ProtectedPathOpsTest
 echo ""
 echo "=== Running Identity Carrier Package Tests (ISSUE-0309) ==="
 java -ea -cp build deal.test.CanonicalIdentityTest
+
+echo ""
+echo "=== Running Sidecar Schema Validator Tests (ISSUE-0348) ==="
+java -ea -cp build deal.test.conformance.SidecarSchemaValidatorTest
 
 echo ""
 echo "=== Running Strict Manifest Parser Tests (ISSUE-0263 T2) ==="
