@@ -1805,7 +1805,6 @@ public final class CompilationOrchestrator {
         ModuleIdentityResolver.IdentityIndex identityIndex =
             ModuleIdentityResolver.buildIndex(modulePathIdentities);
 
-
         // Pass 1: generate every module and merge diagnostics. Rejected
         // modules write no artifact.
         List<ModuleInfo> cleanModules = new ArrayList<>();
