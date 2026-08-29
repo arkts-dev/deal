@@ -2613,5 +2613,37 @@ public final class CompilationOrchestrator {
             }
             return null;
         }
+
+        /**
+         * Resolves a type node against the owning module's own
+         * name-resolved scope — the phase-3 dependency order guarantees
+         * the owner's {@link #typeCheckAll} turn (and therefore its
+         * {@code NameResolver}) completed before any importer checks,
+         * so the importer's cross-module class-field type annotations
+         * (e.g. {@code children: Child[]} declared in a companion)
+         * resolve against the declaring module instead of silently
+         * falling back to the importing module's scope where the bare
+         * class name is unknown ({@code Type.Error} facts). An
+         * unresolved owner type ({@code Type.Error}) returns
+         * {@code null} so the caller keeps its documented local
+         * fallback; a declaration-file owner has no name resolver and
+         * returns {@code null} the same way.
+         */
+        @Override
+        public Type resolveTypeNodeInModule(TypeNode typeNode,
+                                            String modulePath,
+                                            String importingModule)
+                throws ModuleNotFoundException {
+            for (ModuleInfo info : modules.values()) {
+                if (info.modulePath.equals(modulePath)) {
+                    if (info.nameResolver == null) {
+                        return null;
+                    }
+                    Type resolved = info.nameResolver.resolveTypeNode(typeNode);
+                    return resolved == Type.Error.INSTANCE ? null : resolved;
+                }
+            }
+            return null;
+        }
     }
 }

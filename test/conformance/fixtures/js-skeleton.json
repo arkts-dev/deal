@@ -457,6 +457,52 @@
         "js"
       ],
       "expectedCompileError": "E3004"
+    },
+    {
+      "name": "js-jsonable-roundtrip",
+      "description": "js-jsonable-roundtrip",
+      "source": "// @jsonable\nexport class U {\n  name: string = \"\";\n  nick?: string | null;\n  age: int = 0;\n}\nexport function test(): int {\n  let u: U = { name: \"Ada\", nick: null, age: 36 };\n  let json: string = U$toJson(u);\n  let v: U | null = U$fromJson(json);\n  if (v !== null) {\n    if (v.name === \"Ada\" && v.nick === null && v.age === 36) {\n      let round: string = U$toJson(v);\n      let w: U | null = U$fromJson(round);\n      if (w !== null) {\n        if (w.name === \"Ada\" && w.nick === null && w.age === 36) { return 1; }\n      }\n    }\n  }\n  return 0;\n}",
+      "backends": [
+        "js"
+      ],
+      "expectedOutput": "1"
+    },
+    {
+      "name": "js-jsonable-fromjson-gates",
+      "description": "js-jsonable-fromjson-gates",
+      "source": "// @jsonable\nexport class U {\n  name: string = \"\";\n  age: int = 0;\n}\nexport function test(): int {\n  let a: U | null = U$fromJson(\"42\");\n  let b: U | null = U$fromJson(\"null\");\n  let c: U | null = U$fromJson(\"[1,2]\");\n  let d: U | null = U$fromJson(\"{\\\"name\\\":\\\"Ada\\\",\\\"extra\\\":1}\");\n  let e: U | null = U$fromJson(\"{\\\"age\\\":\\\"x\\\"}\");\n  let f: U | null = U$fromJson(\"{}\");\n  let g: U | null = U$fromJson(\"[]\");\n  if (a === null && b === null && c === null && d === null && e === null) {\n    if (f !== null) {\n      if (g !== null) {\n        if (U$toJson(f) === U$toJson(g)\n            && U$toJson(f) === \"{\\\"name\\\":\\\"\\\",\\\"age\\\":0}\") { return 1; }\n      }\n    }\n  }\n  return 0;\n}",
+      "backends": [
+        "js"
+      ],
+      "expectedOutput": "1"
+    },
+    {
+      "name": "js-jsonable-three-state",
+      "description": "js-jsonable-three-state",
+      "source": "// @jsonable\nexport class U {\n  name: string = \"\";\n  nick?: string | null;\n}\nexport function test(): int {\n  let missing: U = { name: \"A\" };\n  let j1: string = U$toJson(missing);\n  if (j1 !== \"{\\\"name\\\":\\\"A\\\"}\") { return 0; }\n  let m2: U | null = U$fromJson(j1);\n  if (m2 !== null) {\n    if (has(m2.nick)) { return 0; }\n  } else { return 0; }\n  let explicit: U = { name: \"B\", nick: null };\n  let j2: string = U$toJson(explicit);\n  if (j2 !== \"{\\\"name\\\":\\\"B\\\",\\\"nick\\\":null}\") { return 0; }\n  let e2: U | null = U$fromJson(j2);\n  if (e2 !== null) {\n    if (!has(e2.nick)) { return 0; }\n    if (e2.nick !== null) { return 0; }\n  } else { return 0; }\n  return 1;\n}",
+      "backends": [
+        "js"
+      ],
+      "expectedOutput": "1"
+    },
+    {
+      "name": "js-jsonable-table-nested-array-roundtrip",
+      "description": "js-jsonable-table-nested-array-roundtrip",
+      "source": "// @jsonable\nexport class W {\n  data: table = {};\n}\nexport function test(): int {\n  let w: W = { data: { values: [[1, 2], [3, 4]] } };\n  let json: string = W$toJson(w);\n  let w2: W | null = W$fromJson(json);\n  if (w2 !== null) {\n    let encoded: string = W$toJson(w2);\n    if (encoded === \"{\\\"data\\\":{\\\"values\\\":[[1,2],[3,4]]}}\") { return 1; }\n  }\n  return 0;\n}",
+      "backends": [
+        "js"
+      ],
+      "expectedOutput": "1"
+    },
+    {
+      "name": "js-jsonable-tojson-cycle-e8001",
+      "description": "js-jsonable-tojson-cycle-e8001",
+      "source": "// @jsonable\nexport class W {\n  data: table = {};\n}\nexport function test(): string {\n  let w: W = { data: {} };\n  w.data.self = w.data;\n  return W$toJson(w);\n}",
+      "backends": [
+        "js"
+      ],
+      "expectedError": "E8001",
+      "expectedExitCode": 1
     }
   ]
 }

@@ -95,6 +95,9 @@ public class JsBackendTest {
             testCheckSiteDescriptorPins();
             testSpanParameterCollisionEmission();
             testClassEmissionPins();
+            testJsonableEmissionPins();
+            testJsonableRoundTripNode();
+            testOrchestratorJsonableCrossModule();
             testEntryShimAndE6004();
             testSourceLocationArguments();
             testOwnPropertySafeProtoEmission();
@@ -828,6 +831,208 @@ public class JsBackendTest {
             "non-exported class keeps its C$new module-private");
     }
 
+    /**
+     * JSONable emission pins (js-v12-jsonable-completion D1-D2): the
+     * two exported wrappers plus the hidden C$fields descriptor export
+     * in the pinned shapes — canonical wrapper signatures over the
+     * canonical identity, the walker calls with the per-construction
+     * defaults thunk, declaration-order descriptor entries with one
+     * role per key, and the export assignments under the raw $-sigil
+     * keys.
+     */
+    private static void testJsonableEmissionPins() {
+        System.out.println("-- Jsonable emission: C$fromJson/C$toJson wrappers and the hidden C$fields export --");
+
+        JsBackend.JsCodegenResult res = generate("""
+            // @jsonable
+            export class U {
+              name: string = "";
+              nick?: string | null;
+              age: int = 0;
+            }
+            export function test(): int { return 1; }
+            """, "jsonable-pins");
+        check(res != null && !res.hasErrors(), "jsonable codegen clean: "
+            + (res == null ? "<null>" : res.diagnostics()));
+        if (res == null || res.hasErrors()) return;
+
+        String js = res.source();
+        check(js.contains("let U$new; let U$meta; let U$fromJson; "
+            + "let U$toJson; let U$fields;"),
+            "the header predeclares the $-sigil jsonable artifact bindings");
+        check(js.contains("U$fromJson = $rt.function(\"(string)->?@Main/U\", "
+            + "(s, $file, $line, $column) => $rt.jsonFromJson(\"@Main/U\", "
+            + "U$fields, () => ({ [\"name\"]: \"\", [\"nick\"]: $rt.MISSING, "
+            + "[\"age\"]: 0 }), s, $file, $line, $column));"),
+            "U$fromJson carries the canonical (string)->?@Main/U signature "
+                + "and the walker call with the identity, C$fields, and the "
+                + "per-construction defaults thunk");
+        check(js.contains("U$toJson = $rt.function(\"(@Main/U)->string\", "
+            + "(v, $file, $line, $column) => $rt.jsonToJson(\"@Main/U\", v, "
+            + "U$fields, $file, $line, $column));"),
+            "U$toJson carries the canonical (@Main/U)->string signature "
+                + "and the walker call with the identity backstop");
+        check(js.contains("U$fields = [{ name: \"name\", jtype: \"string\", "
+            + "optional: false, nullable: false, hasDefault: true }, "
+            + "{ name: \"nick\", jtype: \"string\", optional: true, "
+            + "nullable: true, hasDefault: false }, "
+            + "{ name: \"age\", jtype: \"int\", optional: false, "
+            + "nullable: false, hasDefault: true }];"),
+            "U$fields is the declaration-order descriptor array with one "
+                + "role per key (name/jtype/optional/nullable/hasDefault)");
+        check(js.contains("$rt.setProp($exports, \"U$fromJson\", U$fromJson);"),
+            "the generated C$fromJson wrapper is exported under its raw key");
+        check(js.contains("$rt.setProp($exports, \"U$toJson\", U$toJson);"),
+            "the generated C$toJson wrapper is exported under its raw key");
+        check(js.contains("$rt.setProp($exports, \"U$fields\", U$fields);"),
+            "the hidden C$fields descriptor export is emitted");
+    }
+
+    /**
+     * The @jsonable roundtrip through the real node binary
+     * (js-v12-jsonable-completion): toJson → fromJson → toJson
+     * preserves every field value, the three-state optional field
+     * omits MISSING and keeps present null, and the top-level gate/
+     * extra-key rejections return the DEAL null.
+     */
+    private static void testJsonableRoundTripNode() {
+        System.out.println("-- Node: @jsonable C$fromJson/C$toJson roundtrip --");
+        if (!nodeAvailable) { skipNode("jsonable roundtrip"); return; }
+        try {
+            NodeResult run = runDealNode("""
+                // @jsonable
+                export class U {
+                  name: string = "";
+                  nick?: string | null;
+                  age: int = 0;
+                }
+                export function test(): int {
+                  let u: U = { name: "Ada", nick: null, age: 36 };
+                  let json: string = U$toJson(u);
+                  let v: U | null = U$fromJson(json);
+                  if (v !== null) {
+                    if (v.name !== "Ada" || v.nick !== null || v.age !== 36) { return 0; }
+                    let round: string = U$toJson(v);
+                    let w: U | null = U$fromJson(round);
+                    if (w !== null) {
+                      if (w.nick !== null || w.age !== 36) { return 0; }
+                    } else { return 0; }
+                  } else { return 0; }
+                  let missing: U = { name: "A" };
+                  let j1: string = U$toJson(missing);
+                  if (j1 !== "{\\"name\\":\\"A\\",\\"age\\":0}") { return 0; }
+                  let m2: U | null = U$fromJson(j1);
+                  if (m2 !== null) {
+                    if (has(m2.nick)) { return 0; }
+                  } else { return 0; }
+                  let extra: U | null = U$fromJson("{\\"name\\":\\"Ada\\",\\"extra\\":1}");
+                  if (extra !== null) { return 0; }
+                  let scalar: U | null = U$fromJson("42");
+                  if (scalar !== null) { return 0; }
+                  return 1;
+                }
+                """, "jsonable-roundtrip");
+            check(run.exitCode() == 0 && run.output().equals("1"),
+                "the jsonable roundtrip runs under node (1): exit "
+                    + run.exitCode() + ", output '" + run.output() + "'");
+        } catch (Exception e) {
+            fail("jsonable roundtrip node run: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Orchestrator-level cross-module @jsonable pins
+     * (js-v12-jsonable-completion D1): a cross-module class-typed field
+     * carries the imported module's {@code Lib.C$fields} export, a
+     * cross-module array-of-class field carries the same reference in
+     * its element entry, and the emitted project roundtrips and reads
+     * cross-module class-field arrays through the real node binary
+     * (the common-semantic-lowering checked-fact regression: an index
+     * into a cross-module class-field array carries its checked type).
+     */
+    private static void testOrchestratorJsonableCrossModule() throws Exception {
+        System.out.println("-- Orchestrator: cross-module @jsonable fields references and roundtrip --");
+
+        writeFile("xjson_proj/deal.json",
+            "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}");
+        writeFile("xjson_proj/src/lib_a.deal", """
+            // @jsonable
+            export class Inner {
+              v: int = 0;
+            }
+            export function inner(v: int): Inner {
+              return { v: v };
+            }
+            """);
+        writeFile("xjson_proj/src/lib_b.deal", """
+            import * as A from "./lib_a"
+
+            // @jsonable
+            export class Wrap {
+              inner: A.Inner = {};
+              children: A.Inner[] = [];
+            }
+            export function make(a: int): Wrap {
+              return { inner: A.inner(a), children: [A.inner(a + 1)] };
+            }
+            """);
+        writeFile("xjson_proj/src/xjson_main.deal", """
+            import * as B from "./lib_b"
+            import * as console from "std/console"
+            export function main(): null {
+              let w: B.Wrap = B.make(7);
+              let json: string = B.Wrap$toJson(w);
+              let w2: B.Wrap | null = B.Wrap$fromJson(json);
+              if (w2 === null) { console.log("xmod-jsonable-null"); return null; }
+              if (w2.inner.v !== 7) { console.log("xmod-jsonable-inner-mismatch"); return null; }
+              if (w2.children[0].v !== 8) { console.log("xmod-jsonable-array-mismatch"); return null; }
+              console.log("xmod-jsonable-ok");
+              return null;
+            }
+            """);
+
+        Path entryFile = tmpDir.resolve("xjson_proj/src/xjson_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("xjson_proj/build/js");
+        List<Path> roots = List.of(tmpDir.resolve("xjson_proj/src").toAbsolutePath());
+        DealConfig config = DealConfig.load(tmpDir.resolve("xjson_proj")).config();
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JS, config, roots,
+            Path.of(".").toAbsolutePath().normalize());
+        boolean success = orchestrator.compile();
+        check(success, "cross-module jsonable project compiles: "
+            + orchestrator.diagnostics());
+        if (!success) return;
+
+        Path libB = outputDir.resolve("lib_b.js");
+        check(Files.exists(libB), "orchestrator wrote lib_b.js");
+        if (Files.exists(libB)) {
+            String js = Files.readString(libB);
+            check(js.contains("fields: A.Inner$fields"),
+                "the cross-module class-typed field references the imported "
+                    + "module's A.Inner$fields export");
+            check(js.contains("element: { jtype: \"class\", className: \"@"),
+                "the cross-module array-of-class element entry carries the "
+                    + "canonical class identity text");
+        }
+
+        if (nodeAvailable) {
+            ProcessBuilder node = new ProcessBuilder("node", "xjson_main.js");
+            node.directory(outputDir.toFile());
+            node.redirectErrorStream(true);
+            Process np = node.start();
+            String nout = new String(np.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8).trim();
+            int nrc = np.waitFor();
+            check(nrc == 0 && nout.equals("xmod-jsonable-ok"),
+                "node xjson_main.js roundtrips the cross-module jsonable "
+                    + "graph and reads the class-field array: exit " + nrc
+                    + ", output '" + nout + "'");
+        } else {
+            skipNode("orchestrator cross-module jsonable node run");
+        }
+    }
+
     private static void testEntryShimAndE6004() {
         System.out.println("-- Entry shim and the E6004 backstop --");
 
@@ -1133,25 +1338,9 @@ public class JsBackendTest {
     private static void testUnsupportedConstructsRejected() {
         System.out.println("-- Unsupported constructs → E6000/E6003 --");
 
-        // @jsonable on an exported class: E6000 at the declaration site.
-        JsBackend.JsCodegenResult jsonable = generate("""
-            // @jsonable
-            export class U {
-              name: string = "";
-            }
-            export function test(): int { return 1; }
-            """, "rej-jsonable");
-        check(jsonable != null, "jsonable module generated");
-        if (jsonable != null) {
-            check(jsonable.hasErrors(), "hasErrors() holds for @jsonable");
-            check(jsonable.diagnostics().stream().anyMatch(d ->
-                    "E6000".equals(d.code())
-                        && "error".equals(d.severity())
-                        && d.message().contains("@jsonable")
-                        && d.range().startLine() == 2),
-                "@jsonable rejection is E6000 naming the construct at the "
-                    + "declaration site: " + jsonable.diagnostics());
-        }
+        // @jsonable emission retired the E6000 arm
+        // (js-v12-jsonable-completion D1): the passing emission pins
+        // live in testJsonableEmissionPins().
 
         // Nested class declaration: E6000 at the declaration site.
         JsBackend.JsCodegenResult nested = generate("""
@@ -2713,12 +2902,20 @@ public class JsBackendTest {
     private static void testOrchestratorJsRejectsUnsupported() throws Exception {
         System.out.println("-- Orchestrator: no-partial-artifact on rejection --");
 
+        // The retired @jsonable rejection (js-v12-jsonable-completion
+        // D1) no longer drives this two-pass pin; the still-live
+        // nested-class E6000 arm keeps the no-partial-artifact
+        // rejection model covered (the host-ABI E6000 model lives in
+        // testNoPartialArtifactOnRejection).
         writeFile("rej_proj/deal.json",
             "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}");
         writeFile("rej_proj/src/lib.deal", """
-            // @jsonable
-            export class Data {
+            export class Outer {
               v: int = 0;
+            }
+            export function make(): int {
+              class Inner { w: int = 0; }
+              return 1;
             }
             """);
         writeFile("rej_proj/src/rej_main.deal", """
@@ -2736,7 +2933,7 @@ public class JsBackendTest {
             entryFile, outputDir, false, false, false, Backend.JS, config, roots,
             Path.of(".").toAbsolutePath().normalize());
         boolean success = orchestrator.compile();
-        check(!success, "the @jsonable project fails the compilation");
+        check(!success, "the nested-class project fails the compilation");
         check(orchestrator.diagnostics().stream().anyMatch(d ->
                 "E6000".equals(d.code())),
             "the orchestrator reports E6000: " + orchestrator.diagnostics());

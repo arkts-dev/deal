@@ -205,9 +205,9 @@ import java.util.Set;
  * never a dead placeholder, and preceding the host-ABI arm when both
  * apply); a non-stdlib declaration-file import (a {@code hostModules}
  * entry) is E6000 (host ABI deferred) at the import statement;
- * {@code @jsonable} on an exported class is E6000 (generated
- * {@code C$fromJson}/{@code C$toJson} deferred) at the declaration
- * site, keyed on {@code ClassDeclaration.isJsonable()}; a nested
+ * {@code @jsonable} on an exported class emits the two exported
+ * wrappers plus the hidden {@code C$fields} descriptor export
+ * (js-v12-jsonable-completion D1-D2); a nested
  * (below-module-level) class declaration is E6000 at the declaration
  * site (the arm fires through walked function-expression bodies); and
  * the defensive {@code bytes} arm (js-backend-architecture A1 — the
@@ -678,7 +678,12 @@ public final class JsBackend {
                     switch (ed.declaration()) {
                         case ClassDeclaration cd -> predeclares.add(
                             "let " + cd.name() + "$new; let "
-                                + cd.name() + "$meta;");
+                                + cd.name() + "$meta;"
+                                + (cd.isJsonable()
+                                    ? " let " + cd.name() + "$fromJson; let "
+                                        + cd.name() + "$toJson; let "
+                                        + cd.name() + "$fields;"
+                                    : ""));
                         case FunctionDeclaration fd -> predeclares.add(
                             "let " + jsName(fd.name()) + ";");
                         default -> {
@@ -1201,25 +1206,14 @@ public final class JsBackend {
                 // construction runs the declaring module's closure).
                 switch (ed.declaration()) {
                     case ClassDeclaration cd -> {
-                        // ISSUE-0252 rejection pass: @jsonable on an
-                        // exported class is the D8 table's E6000 row at
-                        // the declaration site (generated
-                        // C$fromJson/C$toJson deferred) — the arm keys
-                        // on the parser-propagated
-                        // ClassDeclaration.isJsonable() marker
-                        // (js-backend-emitter D8). The rejected module
-                        // emits no artifact, so the class artifacts and
-                        // the export assignments are skipped.
-                        if (cd.isJsonable()) {
-                            diagnostics.add(CompilerDiagnostic.error(
-                                DiagnosticCode.E6000,
-                                "JavaScript backend: @jsonable classes "
-                                    + "are not supported (generated "
-                                    + "C$fromJson/C$toJson deferred, "
-                                    + "ISSUE-0169 skeleton)",
-                                cd.span()));
-                            return;
-                        }
+                        // js-v12-jsonable-completion D1: an exported
+                        // @jsonable class additionally exports the two
+                        // generated wrappers under their raw $-sigil
+                        // keys plus the hidden C$fields descriptor
+                        // export — collision-free by construction (user
+                        // DEAL identifiers cannot contain $, while JS
+                        // identifiers may — no translation table is
+                        // needed, unlike the Lua __deal namespace).
                         visit(cd);
                         exportAssignments.add("$rt.setProp($exports, "
                             + jsStringLiteral(cd.name()) + ", "
@@ -1227,6 +1221,17 @@ public final class JsBackend {
                         exportAssignments.add("$rt.setProp($exports, "
                             + jsStringLiteral(cd.name() + "$new") + ", "
                             + cd.name() + "$new);");
+                        if (cd.isJsonable()) {
+                            exportAssignments.add("$rt.setProp($exports, "
+                                + jsStringLiteral(cd.name() + "$fromJson")
+                                + ", " + cd.name() + "$fromJson);");
+                            exportAssignments.add("$rt.setProp($exports, "
+                                + jsStringLiteral(cd.name() + "$toJson")
+                                + ", " + cd.name() + "$toJson);");
+                            exportAssignments.add("$rt.setProp($exports, "
+                                + jsStringLiteral(cd.name() + "$fields")
+                                + ", " + cd.name() + "$fields);");
+                        }
                     }
                     case FunctionDeclaration fd -> {
                         visit(fd);
@@ -1484,7 +1489,187 @@ public final class JsBackend {
             + classDefaultsThunk(cd) + ", provided, $file, $line, $column);");
         line(cd.name() + "$meta = { $kind: \"class\", $classname: "
             + jsStringLiteral(qualifiedClassName(cd.name())) + " };");
+        if (cd.isJsonable()) {
+            emitJsonableArtifacts(cd);
+        }
         out.append("\n");
+    }
+
+    /**
+     * JSONable artifact emission (js-v12-jsonable-completion D1-D2): the
+     * two exported wrappers plus the hidden field-descriptor array, in
+     * the pinned order — {@code C$fromJson}, {@code C$toJson},
+     * {@code C$fields} — over the canonical identity and the
+     * per-construction defaults thunk the construction closure shares.
+     * The wrapper bodies are the pinned walker calls: the parameter
+     * checks and the declared-return shape live inside the runtime
+     * walkers ({@code $rt.jsonFromJson} collapses every failure to the
+     * DEAL null — the public export never throws; {@code $rt.jsonToJson}
+     * is the defensive identity backstop and raises E8001 on
+     * non-JSON-shaped values), so the emitted arrow bodies carry no
+     * extra checks. The {@code $} sigil makes every generated name
+     * collision-free (user DEAL identifiers cannot contain {@code $}).
+     */
+    private void emitJsonableArtifacts(ClassDeclaration cd) {
+        String identity = qualifiedClassName(cd.name());
+        out.append("// Jsonable: ").append(cd.name())
+            .append(" — C$fromJson/C$toJson wrappers and the hidden")
+            .append(" C$fields descriptor export.\n");
+        line(cd.name() + "$fromJson = $rt.function("
+            + jsStringLiteral("(string)->?" + identity) + ", "
+            + "(s, $file, $line, $column) => $rt.jsonFromJson("
+            + jsStringLiteral(identity) + ", " + cd.name() + "$fields, "
+            + classDefaultsThunk(cd) + ", s, $file, $line, $column));");
+        line(cd.name() + "$toJson = $rt.function("
+            + jsStringLiteral("(" + identity + ")->string") + ", "
+            + "(v, $file, $line, $column) => $rt.jsonToJson("
+            + jsStringLiteral(identity) + ", v, " + cd.name() + "$fields, "
+            + "$file, $line, $column));");
+        line(cd.name() + "$fields = " + jsonFieldsArray(cd.fields()) + ";");
+    }
+
+    /**
+     * The pinned field-descriptor array (js-v12-jsonable-completion D2):
+     * one entry per declared field in declaration order, one role per
+     * key — {@code name}, {@code jtype}, the class/array sub-shapes
+     * ({@code className}+{@code fields} / {@code element}), and the
+     * declaration flags {@code optional}/{@code nullable}/
+     * {@code hasDefault}.
+     */
+    private String jsonFieldsArray(List<ClassField> fields) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < fields.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(jsonFieldEntry(fields.get(i)));
+        }
+        return sb.append("]").toString();
+    }
+
+    /**
+     * One field-descriptor entry. The {@code nullable} flag is the
+     * declaration flag ({@code ClassField.nullable()}); the
+     * {@code jtype} derives from the declared type node with a
+     * {@code T | null} unwrapped, the {@code className}/{@code fields}
+     * pair carries the canonical identity text and the nested
+     * descriptor array for class-typed fields, and {@code element}
+     * carries the element entry for array-typed fields.
+     */
+    private String jsonFieldEntry(ClassField cf) {
+        TypeNode base = cf.type();
+        if (base instanceof NullableType nt) {
+            base = nt.innerType();
+        }
+        String jtype = jsonJType(base);
+        StringBuilder sb = new StringBuilder("{ name: ")
+            .append(jsStringLiteral(cf.name()))
+            .append(", jtype: ").append(jsStringLiteral(jtype));
+        appendJsonSubShape(sb, jtype, base);
+        sb.append(", optional: ").append(cf.optional())
+            .append(", nullable: ").append(cf.nullable())
+            .append(", hasDefault: ").append(cf.defaultExpr().isPresent());
+        return sb.append(" }").toString();
+    }
+
+    /**
+     * The class/array sub-shape of one entry: a {@code class} jtype
+     * carries {@code className} (the canonical identity text of the
+     * resolved {@link Type.Class}) and {@code fields} (the nested
+     * descriptor array emitted inline for same-module classes, the
+     * imported module's {@code Lib.C$fields} export for cross-module
+     * classes — js-v12-jsonable-completion D1); an {@code array} jtype
+     * carries {@code element}.
+     */
+    private void appendJsonSubShape(StringBuilder sb, String jtype,
+                                    TypeNode base) {
+        switch (jtype) {
+            case "class" -> {
+                Type resolved = resolveTypeNode(base);
+                if (resolved instanceof Type.Class cls) {
+                    sb.append(", className: ")
+                        .append(jsStringLiteral(descriptors.encode(cls)))
+                        .append(", fields: ").append(jsonFieldsRef(cls));
+                }
+            }
+            case "array" -> {
+                if (base instanceof ArrayType at) {
+                    sb.append(", element: ")
+                        .append(jsonElementEntry(at.elementType()));
+                }
+            }
+            default -> { }
+        }
+    }
+
+    /**
+     * One array-element entry (the Lua
+     * {@code emitElementDescriptor} mirror): element entries carry no
+     * {@code name}/{@code hasDefault} — the walkers read only
+     * {@code jtype}/{@code element}/{@code className}/{@code fields}/
+     * {@code optional}/{@code nullable} at element positions.
+     */
+    private String jsonElementEntry(TypeNode elementType) {
+        boolean nullable = elementType instanceof NullableType;
+        TypeNode inner = elementType;
+        if (nullable) {
+            inner = ((NullableType) elementType).innerType();
+        }
+        String jtype = jsonJType(inner);
+        StringBuilder sb = new StringBuilder("{ jtype: ")
+            .append(jsStringLiteral(jtype));
+        appendJsonSubShape(sb, jtype, inner);
+        sb.append(", optional: false, nullable: ").append(nullable);
+        return sb.append(" }").toString();
+    }
+
+    /**
+     * The jtype string for a type node after {@code T | null}
+     * unwrapping (the {@code LuaBackend.jtypeForTypeNode} mirror,
+     * deal/codegen/lua/LuaBackend.java:2737-2758): the JSON kind of a
+     * field — primitives by name, user-defined classes (bare or
+     * qualified) as {@code class}, arrays as {@code array}. The
+     * {@code function} arm is defensive-only (the checker's E4007
+     * rejects non-jsonable field types before the backend runs).
+     */
+    private String jsonJType(TypeNode typeNode) {
+        return switch (typeNode) {
+            case NamedType nt -> switch (nt.name()) {
+                case "null" -> "null";
+                case "boolean" -> "boolean";
+                case "int" -> "int";
+                case "number" -> "number";
+                case "string" -> "string";
+                case "table" -> "table";
+                default -> "class";
+            };
+            case QualifiedType qt -> "class";
+            case ArrayType at -> "array";
+            case NullableType nt -> jsonJType(nt.innerType());
+            case FunctionType ft -> "function";
+        };
+    }
+
+    /**
+     * The descriptor-array reference for a class-typed field: the
+     * nested descriptor array emitted inline for a same-module class
+     * (built from the class symbol's declared fields in declaration
+     * order), the declaring module's exported {@code <alias>.<C>$fields}
+     * for a cross-module class (js-v12-jsonable-completion D1 — the
+     * imported module's {@code C$fields} export read at decode time).
+     */
+    private String jsonFieldsRef(Type.Class cls) {
+        String mp = cls.modulePath();
+        if (mp == null || mp.isEmpty() || mp.equals(modulePath)) {
+            Symbol sym = symbols.resolve(cls.name());
+            if (sym instanceof Symbol.ClassSymbol cs) {
+                return jsonFieldsArray(cs.fields());
+            }
+            return "[]";
+        }
+        String alias = findImportAliasForClass(cls.name(), mp);
+        if (alias != null) {
+            return jsName(alias) + "." + cls.name() + "$fields";
+        }
+        return cls.name() + "$fields";
     }
 
     /**
