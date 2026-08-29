@@ -659,15 +659,49 @@ local function parse_canonical_descriptor(text)
     return true
   end
 
-  -- The pinned component alphabet: C0/DEL controls, ASCII whitespace, and
-  -- the structural scalars end the maximal run ('/' is the component
-  -- separator, handled by the class parser).
-  local function forbidden_in_component(b)
+  -- The pinned component alphabet, byte-exact against the canonical
+  -- service's scalar-level set: C0/DEL controls, ASCII whitespace, the
+  -- structural scalars @ [ ] ? ( ) , , every Unicode whitespace scalar
+  -- (Character.isWhitespace / isSpaceChar: U+0085, U+00A0, U+1680,
+  -- U+2000..U+200A, U+2028, U+2029, U+202F, U+205F, U+3000), and
+  -- surrogate code points — each ends the maximal run ('/' is the
+  -- component separator, handled by the class parser). The checks walk
+  -- UTF-8 bytes, which is exact: no continuation byte collides with a
+  -- forbidden ASCII byte and every forbidden non-ASCII scalar is matched
+  -- by its full encoded sequence.
+  local function forbidden_in_component(text, pos, n)
+    local b = string.byte(text, pos)
     if b < 0x20 or b == 0x20 or b == 0x7F then
       return true
     end
-    return b == 0x40 or b == 0x5B or b == 0x5D or b == 0x3F
-        or b == 0x28 or b == 0x29 or b == 0x2C
+    if b == 0x40 or b == 0x5B or b == 0x5D or b == 0x3F
+        or b == 0x28 or b == 0x29 or b == 0x2C then
+      return true
+    end
+    local b2 = pos + 1 <= n and string.byte(text, pos + 1) or nil
+    local b3 = pos + 2 <= n and string.byte(text, pos + 2) or nil
+    if b == 0xC2 and (b2 == 0x85 or b2 == 0xA0) then
+      return true  -- U+0085 NEL, U+00A0 NO-BREAK SPACE
+    end
+    if b == 0xE1 and b2 == 0x9A and b3 == 0x80 then
+      return true  -- U+1680 OGHAM SPACE MARK
+    end
+    if b == 0xE2 and b2 == 0x80 then
+      if (b3 ~= nil and b3 >= 0x80 and b3 <= 0x8A)
+          or b3 == 0xA8 or b3 == 0xA9 or b3 == 0xAF then
+        return true  -- U+2000..U+200A, U+2028, U+2029, U+202F
+      end
+    end
+    if b == 0xE2 and b2 == 0x81 and b3 == 0x9F then
+      return true  -- U+205F MEDIUM MATHEMATICAL SPACE
+    end
+    if b == 0xE3 and b2 == 0x80 and b3 == 0x80 then
+      return true  -- U+3000 IDEOGRAPHIC SPACE
+    end
+    if b == 0xED and b2 ~= nil and b2 >= 0xA0 and b2 <= 0xBF then
+      return true  -- surrogate code point (never a valid Unicode scalar)
+    end
+    return false
   end
 
   local parse_descriptor
@@ -728,7 +762,7 @@ local function parse_canonical_descriptor(text)
         if b == 0x2D and pos + 1 <= n and string.byte(text, pos + 1) == 0x3E then
           return nil  -- contiguous "->" inside a component
         end
-        if forbidden_in_component(b) then
+        if forbidden_in_component(text, pos, n) then
           break  -- the maximal allowed run ends before the forbidden byte
         end
         pos = pos + 1
