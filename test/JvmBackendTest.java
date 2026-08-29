@@ -1107,6 +1107,108 @@ public class JvmBackendTest {
             check(!res.hasErrors(),
                 "backend now accepts " + c.what() + ": " + res.diagnostics());
         }
+
+        // Exact rejection-detail-text pins migrated from the JSON slice
+        // corpus (ISSUE-0359; v12-three-backend-conformance-corpus C1/C6:
+        // backend-internal E6000 detail texts are never corpus fields — the
+        // corpus keeps only the E6000 code pins). Each pin mirrors one JSON
+        // corpus E6000 case and asserts the EXACT current detail text, so a
+        // production text drift trips the unit test while the JSON cases
+        // keep pinning only the code.
+        //
+        // Cross-module function-value flow (jvm-function-values-slice.json:
+        // jvm-fv-xmod-callback-arg-e6000, jvm-fv-xmod-arity-extension-
+        // arg-e6000, jvm-fv-xmod-return-out-e6000,
+        // jvm-fv-xmod-callresult-callee-e6000).
+        Map<String, Map<String, Type>> xmodLib = Map.of(
+            "./lib", Map.of(
+                "apply", Types.func(List.of(
+                    Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE),
+                    Type.Int.INSTANCE), Type.Int.INSTANCE),
+                "apply2", Types.func(List.of(
+                    Types.func(List.of(Type.Int.INSTANCE, Type.String.INSTANCE),
+                        Type.Int.INSTANCE),
+                    Type.Int.INSTANCE), Type.Int.INSTANCE),
+                "picker", Types.func(List.of(),
+                    Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE))));
+        String xmodArgText = "JVM backend (skeleton) does not support "
+            + "function values passed to an imported module call (the "
+            + "per-module wrapper classes cannot cross a module boundary \u2014 "
+            + "cross-module function values are deferred to ISSUE-0110) yet";
+        String xmodReturnText = "JVM backend (skeleton) does not support "
+            + "function values returned from an imported module call (the "
+            + "per-module wrapper classes cannot cross a module boundary \u2014 "
+            + "cross-module function values are deferred to ISSUE-0110) yet";
+        record XmodPin(String what, String source, String detailText) {}
+        List<XmodPin> xmodPins = List.of(
+            new XmodPin("callback passed into an imported module call", """
+                import * as lib from "./lib"
+                function inc(x: int): int { return x + 1; }
+                export function test(): int { return lib.apply(inc, 41); }
+                """, xmodArgText),
+            new XmodPin("arity-extension adapter argument to an imported module call", """
+                import * as lib from "./lib"
+                function inc(x: int): int { return x + 1; }
+                export function test(): int { return lib.apply2(inc, 41); }
+                """, xmodArgText),
+            new XmodPin("function value returned from an imported module call", """
+                import * as lib from "./lib"
+                export function test(): int {
+                  let f: (x: int) => int = lib.picker();
+                  return f(41);
+                }
+                """, xmodReturnText),
+            new XmodPin("imported call result used as a call-result callee", """
+                import * as lib from "./lib"
+                export function test(): int { return lib.picker()(41); }
+                """, xmodReturnText));
+        for (XmodPin pin : xmodPins) {
+            Frontend f = compileFrontend(pin.source(),
+                "jvmtest-xmod-rejection.deal", new FixedModuleResolver(xmodLib));
+            if (!f.errors().isEmpty()) {
+                fail("frontend must accept the JSON-corpus rejection shape '"
+                    + pin.what() + "' (the backend rejects it): " + f.errors());
+                continue;
+            }
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-xmod-rejection.deal",
+                "main", Map.of("./lib", "lib"));
+            check(res.hasErrors(), "backend rejects " + pin.what());
+            check(res.diagnostics().stream().anyMatch(d ->
+                    "E6000".equals(d.code())
+                        && pin.detailText().equals(d.message())),
+                "E6000 detail text exact for " + pin.what() + ": "
+                    + res.diagnostics());
+        }
+
+        // @jsonable optional table field (jvm-jsonable-slice.json:
+        // jvm-jsonable-optional-table-rejected).
+        Frontend jsonableF = compileFrontend("""
+            // @jsonable
+            export class Wrap {
+              data?: table;
+            }
+            export function test(): int { return 1; }
+            """, "jvmtest-jsonable-optional-table.deal");
+        if (!jsonableF.errors().isEmpty()) {
+            fail("frontend must accept the @jsonable optional-table shape "
+                + "(the backend rejects it): " + jsonableF.errors());
+        } else {
+            JvmBackend.JvmCodegenResult jsonableRes = JvmBackend.generate(
+                jsonableF.program(), jsonableF.checkResult(),
+                "jvmtest-jsonable-optional-table.deal", "main");
+            check(jsonableRes.hasErrors(),
+                "backend rejects the @jsonable optional table field");
+            check(jsonableRes.diagnostics().stream().anyMatch(d ->
+                    "E6000".equals(d.code())
+                        && ("JVM backend (skeleton) does not support "
+                            + "optional table fields of @jsonable class "
+                            + "'Wrap' (the read of 'data' yields "
+                            + "`table | null`, which stays out of the "
+                            + "slice's typed positions) yet").equals(d.message())),
+                "E6000 detail text exact for the @jsonable optional table "
+                    + "field: " + jsonableRes.diagnostics());
+        }
     }
 
 

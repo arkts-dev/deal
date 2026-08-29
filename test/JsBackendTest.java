@@ -1090,7 +1090,18 @@ public class JsBackendTest {
                     + host.diagnostics());
         }
 
-        // @extern-c import: E6003 containing FFI_UNSUPPORTED_BACKEND.
+        // @extern-c import: E6003 with the EXACT current detail text
+        // (the JSON-slice-corpus rejection-detail pin migrated here,
+        // ISSUE-0359; v12-three-backend-conformance-corpus C1/C6:
+        // backend-internal rejection detail texts are never corpus
+        // fields). ISSUE-0277 migrates the production emission to E6006
+        // and must update this pin together with that change — this unit
+        // test pins the CURRENT emission (E6003 + the current text at
+        // deal/codegen/js/JsBackend.java:799) and must not pin E6006
+        // before the backend epic lands it.
+        String externDetailText = "JavaScript backend: @extern-c imports "
+            + "are not supported (FFI_UNSUPPORTED_BACKEND, "
+            + "ISSUE-0169 skeleton)";
         JsBackend.JsCodegenResult extern = generate("""
             // @extern-c
             import * as ffi from "myffi"
@@ -1102,10 +1113,10 @@ public class JsBackendTest {
             check(extern.diagnostics().stream().anyMatch(d ->
                     "E6003".equals(d.code())
                         && "error".equals(d.severity())
-                        && d.message().contains("FFI_UNSUPPORTED_BACKEND")
+                        && externDetailText.equals(d.message())
                         && d.range().startLine() == 2),
-                "@extern-c rejection is E6003 containing FFI_UNSUPPORTED_BACKEND "
-                    + "at the import statement: " + extern.diagnostics());
+                "@extern-c rejection is E6003 with the exact current detail "
+                    + "text at the import statement: " + extern.diagnostics());
         }
 
         // The defensive bytes arms (the frontend rejects the program; the
