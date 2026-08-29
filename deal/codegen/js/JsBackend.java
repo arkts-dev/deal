@@ -2874,17 +2874,20 @@ public final class JsBackend {
         }
         sb.append("  ".repeat(indent)).append("})");
         String adapter = sb.toString();
-        // The adapter body contributes its own lines to the enclosing
-        // statement's in-memory assembly (the wrapper-prefix newline,
-        // one entry-check line per target parameter, and the return
-        // line); the embedded value expression's newlines were already
-        // counted when that expression was emitted, so only the
-        // adapter's own newlines are added here.
-        inFlightNewlines += newlineCount(adapter) - newlineCount(valueExpr);
-        if (valueHasAwait && !asyncBody) {
-            return "(($fn) => " + adapter + ")(" + valueExpr + ")";
-        }
-        return adapter;
+        String result = (valueHasAwait && !asyncBody)
+            ? "(($fn) => " + adapter + ")(" + valueExpr + ")"
+            : adapter;
+        // The adapter text carries its own body lines (the
+        // wrapper-prefix newline, one entry-check line per target
+        // parameter, and the return line) into the enclosing
+        // statement's in-memory assembly; the embedded value
+        // expression's newlines were already counted when the value was
+        // emitted, so only the net new-line contribution lands in the
+        // counter — exact for both forms (the sync-target await-bearing
+        // form appends the value expression after the adapter, so its
+        // lines count here too).
+        inFlightNewlines += newlineCount(result) - newlineCount(valueExpr);
+        return result;
     }
 
     /**

@@ -721,8 +721,9 @@ public class SourceMapTest {
      * (js-v12-source-maps D2 exactness): a statement's expression text
      * is assembled in memory before {@code line()} splices it into the
      * artifact, so when one statement carries two or more function
-     * expressions (array-literal elements, function-typed class field
-     * defaults), each wrapper and each captured body statement must
+     * expressions (array-literal elements, object-literal properties,
+     * call arguments, function-typed class field defaults), each
+     * wrapper and each captured body statement must
      * map to the artifact line carrying its OWN generated code — the
      * capture splice rebase adds the in-flight newlines of the
      * expression text already assembled on the current line, and the
@@ -826,11 +827,110 @@ public class SourceMapTest {
                 + " < wrapper2 " + cWrap2Gen + " < body2 " + cRet2Gen
                 + ")");
 
-        // The whole sequence stays monotonic in both cases.
+        // Object-literal case: two function-typed properties in one
+        // literal (both wrappers land on the literal's own artifact
+        // line group).
+        String objectSource =
+            "export function main(): null {\n" +                    // line 1
+            "  let o = { a: function(): int { return 3; }, b: function(): int { return 4; } };\n"
+                +                                                    // line 2
+            "  return null;\n" +                                   // line 3
+            "}\n";                                                 // line 4
+        String[] objectLines = objectSource.split("\n", -1);
+        int oWrap1 = objectLines[1].indexOf("function") + 1;
+        int oRet1 = objectLines[1].indexOf("return 3") + 1;
+        int oWrap2 = objectLines[1].indexOf("function", oWrap1) + 1;
+        int oRet2 = objectLines[1].indexOf("return 4") + 1;
+
+        JsFrontend objFrontend = parseChecked(objectSource,
+            "jsmap-sibling-object.deal");
+        if (objFrontend == null) return;
+        SourceMapGenerator objSmg = new SourceMapGenerator();
+        JsBackend.JsCodegenResult objRes = JsBackend.generate(
+            objFrontend.program(), objFrontend.checkResult(),
+            "jsmap-sibling-object.deal", "Main", Map.of(), Map.of(),
+            false, objSmg);
+        check(objRes != null && !objRes.hasErrors(),
+            "object-literal codegen clean: "
+                + (objRes == null ? "<null>" : objRes.diagnostics()));
+        if (objRes == null || objRes.hasErrors()) return;
+
+        String[] objArtifact = objRes.source().split("\n", -1);
+        List<SourceMapGenerator.Mapping> objMappings = objSmg.mappings();
+        checkSiblingGroup(objMappings, objArtifact, 2, oWrap1, oRet1,
+            "first object property wrapper", "[\"a\"]: $rt.function",
+            "checkInt(3", "$rt.function(\"()->int\"");
+        checkSiblingGroup(objMappings, objArtifact, 2, oWrap2, oRet2,
+            "second object property wrapper", "[\"b\"]: $rt.function",
+            "checkInt(4", "$rt.function(\"()->int\"");
+        int oWrap1Gen = generatedLineOf(objMappings, 2, oWrap1);
+        int oRet1Gen = generatedLineOf(objMappings, 2, oRet1);
+        int oWrap2Gen = generatedLineOf(objMappings, 2, oWrap2);
+        int oRet2Gen = generatedLineOf(objMappings, 2, oRet2);
+        check(oWrap1Gen < oRet1Gen && oRet1Gen < oWrap2Gen
+                && oWrap2Gen < oRet2Gen,
+            "object-literal positions strictly increase "
+                + "(wrapper1 " + oWrap1Gen + " < body1 " + oRet1Gen
+                + " < wrapper2 " + oWrap2Gen + " < body2 " + oRet2Gen
+                + ")");
+
+        // Call-argument case: two function-expression arguments in one
+        // call statement.
+        String callSource =
+            "export function consume(a: () => int, b: () => int): int { return a() + b(); }\n"
+                +                                                  // line 1
+            "export function main(): null {\n" +                  // line 2
+            "  consume(function(): int { return 5; }, function(): int { return 6; });\n"
+                +                                                  // line 3
+            "  return null;\n" +                                  // line 4
+            "}\n";                                                // line 5
+        String[] callLines = callSource.split("\n", -1);
+        int pWrap1 = callLines[2].indexOf("function") + 1;
+        int pRet1 = callLines[2].indexOf("return 5") + 1;
+        int pWrap2 = callLines[2].indexOf("function", pWrap1) + 1;
+        int pRet2 = callLines[2].indexOf("return 6") + 1;
+
+        JsFrontend callFrontend = parseChecked(callSource,
+            "jsmap-sibling-call.deal");
+        if (callFrontend == null) return;
+        SourceMapGenerator callSmg = new SourceMapGenerator();
+        JsBackend.JsCodegenResult callRes = JsBackend.generate(
+            callFrontend.program(), callFrontend.checkResult(),
+            "jsmap-sibling-call.deal", "Main", Map.of(), Map.of(),
+            false, callSmg);
+        check(callRes != null && !callRes.hasErrors(),
+            "call-argument codegen clean: "
+                + (callRes == null ? "<null>" : callRes.diagnostics()));
+        if (callRes == null || callRes.hasErrors()) return;
+
+        String[] callArtifact = callRes.source().split("\n", -1);
+        List<SourceMapGenerator.Mapping> callMappings = callSmg.mappings();
+        checkSiblingGroup(callMappings, callArtifact, 3, pWrap1, pRet1,
+            "first call argument wrapper", "consume.$f($rt.function",
+            "checkInt(5", "$rt.function(\"()->int\"");
+        checkSiblingGroup(callMappings, callArtifact, 3, pWrap2, pRet2,
+            "second call argument wrapper", "}), $rt.function",
+            "checkInt(6", "$rt.function(\"()->int\"");
+        int pWrap1Gen = generatedLineOf(callMappings, 3, pWrap1);
+        int pRet1Gen = generatedLineOf(callMappings, 3, pRet1);
+        int pWrap2Gen = generatedLineOf(callMappings, 3, pWrap2);
+        int pRet2Gen = generatedLineOf(callMappings, 3, pRet2);
+        check(pWrap1Gen < pRet1Gen && pRet1Gen < pWrap2Gen
+                && pWrap2Gen < pRet2Gen,
+            "call-argument positions strictly increase "
+                + "(wrapper1 " + pWrap1Gen + " < body1 " + pRet1Gen
+                + " < wrapper2 " + pWrap2Gen + " < body2 " + pRet2Gen
+                + ")");
+
+        // The whole sequence stays monotonic in every case.
         check(monotonicGeneratedLines(mappings),
             "array case generated lines monotonically increase");
         check(monotonicGeneratedLines(clsMappings),
             "class case generated lines monotonically increase");
+        check(monotonicGeneratedLines(objMappings),
+            "object-literal case generated lines monotonically increase");
+        check(monotonicGeneratedLines(callMappings),
+            "call-argument case generated lines monotonically increase");
     }
 
     /**
