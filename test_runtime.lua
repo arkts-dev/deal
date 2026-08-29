@@ -2249,6 +2249,271 @@ test("load_host class absent _fields tolerated", function()
   assert(host.NoFields_fields == nil)
 end)
 
+
+
+-- ==================== Canonical descriptor parser tests ====================
+
+local function assert_parse_ok(text)
+  local ast = __rt.parse_canonical_descriptor(text)
+  if ast == nil then
+    error("expected canonical parse of '" .. text .. "' but it was rejected")
+  end
+  assert(type(ast) == "table")
+  assert(ast.text == text, "parsed text '" .. tostring(ast.text) .. "' differs from input '" .. text .. "'")
+  return ast
+end
+
+local function assert_parse_rejected(text)
+  local ast = __rt.parse_canonical_descriptor(text)
+  if ast ~= nil then
+    error("expected '" .. text .. "' to be rejected but it parsed")
+  end
+end
+
+test("canonical parser accepts every primitive keyword", function()
+  local keywords = { "null", "boolean", "int", "number", "string", "bytes", "table" }
+  for _, kw in ipairs(keywords) do
+    local ast = assert_parse_ok(kw)
+    assert(ast.kind == "primitive", kw .. " parsed with kind " .. tostring(ast.kind))
+    assert(ast.name == kw)
+  end
+end)
+
+test("canonical parser accepts composite shapes with byte-exact text", function()
+  local shapes = {
+    "[int]", "[[bytes]]", "?int", "?[?bytes]", "()->null", "(int)->int",
+    "(int,string)->boolean", "async()->int", "async(int)->?string",
+    "?(int)->int", "[?(bytes)->bytes]", "async()->async()->int",
+    "(bytes)->bytes", "?bytes", "[bytes]",
+  }
+  for _, t in ipairs(shapes) do
+    assert_parse_ok(t)
+  end
+end)
+
+test("canonical parser builds nested atom structure", function()
+  local ast = assert_parse_ok("[?(bytes)->bytes]")
+  assert(ast.kind == "array")
+  assert(ast.element.kind == "nullable")
+  assert(ast.element.inner.kind == "function")
+  assert(ast.element.inner.isAsync == false)
+  assert(#ast.element.inner.params == 1)
+  assert(ast.element.inner.params[1].name == "bytes")
+  assert(ast.element.inner.ret.name == "bytes")
+  local fn = assert_parse_ok("async()->int")
+  assert(fn.kind == "function" and fn.isAsync == true)
+  assert(#fn.params == 0 and fn.ret.name == "int")
+end)
+
+test("canonical parser accepts class atoms byte-for-byte", function()
+  local atoms = {
+    "@lib/utils/User", "@lib.utils/User", "@$external/host.cfg/ServerConfig",
+    "@$builtin/Error", "@host.cfg/ServerConfig", "@a/b",
+  }
+  for _, t in ipairs(atoms) do
+    local ast = assert_parse_ok(t)
+    assert(ast.kind == "class", t .. " parsed with kind " .. tostring(ast.kind))
+    assert(ast.name == t, "class atom name must equal the complete text")
+  end
+end)
+
+test("canonical parser keeps distinct atoms distinct", function()
+  local a = assert_parse_ok("@lib/utils/User")
+  local b = assert_parse_ok("@lib.utils/User")
+  assert(a.name ~= b.name)
+  assert(a.text ~= b.text)
+end)
+
+test("canonical parser rejects every legacy dialect spelling", function()
+  local legacy = {
+    "int[]", "bytes[]", "string[]", "int|null", "?int|null", "string|null",
+    "T[]", "T|null", "...T[]", "User", "Error", "ServerConfig", "Foo",
+  }
+  for _, t in ipairs(legacy) do
+    assert_parse_rejected(t)
+  end
+end)
+
+test("canonical parser rejects malformed canonical shapes", function()
+  local malformed = {
+    "[]", "??int", "?null", "(int)", "(int)->", "->int", "(int,)->int",
+    "()", "async", "async[int]", "async ", "Async(int)->int", "asyncFoo",
+  }
+  for _, t in ipairs(malformed) do
+    assert_parse_rejected(t)
+  end
+end)
+
+test("canonical parser rejects invalid class atoms", function()
+  local invalid = {
+    "@", "@a", "@a/", "@a//b", "@.", "@..", "@a->b", "@Foo",
+    "@src.models.User", "@a/b.C", "@host.cfg.ServerConfig", "@a b/C", "@a b",
+  }
+  for _, t in ipairs(invalid) do
+    assert_parse_rejected(t)
+  end
+end)
+
+test("canonical parser requires complete consumption", function()
+  local trailing = {
+    "int ", " int", "intFoo", "inte", "nulls", "(int)->int|null", "1",
+    "@a/b] ", "[int", "int]", "[[int]", "@a/b c", "int,x",
+  }
+  for _, t in ipairs(trailing) do
+    assert_parse_rejected(t)
+  end
+end)
+
+-- ==================== Canonical checker tests ====================
+
+test("check_canonical_type accepts every primitive row", function()
+  assert(__rt.check_canonical_type("null", __rt.__NULL) == __rt.__NULL)
+  assert(__rt.check_canonical_type("boolean", true) == true)
+  assert(__rt.check_canonical_type("int", 42) == 42)
+  assert(__rt.check_canonical_type("number", 1.5) == 1.5)
+  assert(__rt.check_canonical_type("string", "s") == "s")
+  assert(__rt.check_canonical_type("table", {}) ~= nil)
+end)
+
+test("check_canonical_type bytes row accepts real bytes values", function()
+  local b = __rt.bytes_new(2)
+  __rt.bytes_set(b, 1, 255)
+  assert(__rt.check_canonical_type("bytes", b) == b)
+  -- Recursive bytes descriptors at depth, exercised on RV's bytes runtime.
+  assert(__rt.check_canonical_type("[bytes]", { __rt.bytes_new(1) }) ~= nil)
+  assert(__rt.check_canonical_type("?bytes", b) == b)
+  local w = __rt.function_("(bytes)->bytes", function(x) return x end)
+  assert(__rt.check_canonical_type("(bytes)->bytes", w) == w)
+  assert(__rt.check_canonical_type("[?(bytes)->bytes]", { w }) ~= nil)
+end)
+
+test("check_canonical_type bytes row rejects non-bytes values with E8001", function()
+  local err = assert_error(function() __rt.check_canonical_type("bytes", {}) end, "E8001")
+  assert(err.expected == "bytes")
+  assert_error(function() __rt.check_canonical_type("bytes", 42) end, "E8001")
+  assert_error(function() __rt.check_canonical_type("bytes", "x") end, "E8001")
+end)
+
+test("check_canonical_type int row shares the int32 gate", function()
+  assert_error(function() __rt.check_canonical_type("int", "x") end, "E8001")
+  assert_error(function() __rt.check_canonical_type("int", 2147483648) end, "E8004")
+  assert_error(function() __rt.check_canonical_type("int", -2147483649) end, "E8004")
+  assert_error(function() __rt.check_canonical_type("int", 1.5) end, "E8001")
+  assert_error(function() __rt.check_canonical_type("int", 0 / 0) end, "E8001")
+end)
+
+test("check_canonical_type array row checks elements in order", function()
+  assert(__rt.check_canonical_type("[int]", { 1, 2, 3 }) ~= nil)
+  assert(__rt.check_canonical_type("[[int]]", { { 1 }, { 2 } }) ~= nil)
+end)
+
+test("check_canonical_type array row wraps the first failing index in E8003", function()
+  local err = assert_error(function()
+    __rt.check_canonical_type("[int]", { 1, "x", 3 })
+  end, "E8003")
+  assert(err.message == "array element 2 type mismatch", tostring(err.message))
+  assert(err.expected == "int")
+  assert(err.actual == "string")
+  assert_error(function()
+    __rt.check_canonical_type("[[int]]", { { 1 }, { 2, "x" } })
+  end, "E8003")
+end)
+
+test("check_canonical_type array row rejects non-arrays with E8001", function()
+  assert_error(function() __rt.check_canonical_type("[int]", 42) end, "E8001")
+  assert_error(function() __rt.check_canonical_type("[int]", "x") end, "E8001")
+end)
+
+test("check_canonical_type nullable row", function()
+  assert(__rt.check_canonical_type("?int", __rt.__NULL) == __rt.__NULL)
+  assert(__rt.check_canonical_type("?int", nil) == __rt.__NULL)
+  assert(__rt.check_canonical_type("?int", 42) == 42)
+  assert(__rt.check_canonical_type("?bytes", __rt.bytes_new(1)) ~= nil)
+  assert_error(function() __rt.check_canonical_type("?int", "x") end, "E8001")
+end)
+
+test("check_canonical_type function row compares sigs byte-for-byte", function()
+  local w = __rt.function_("(int)->int", function(x) return x end)
+  assert(__rt.check_canonical_type("(int)->int", w) == w)
+  local err = assert_error(function()
+    __rt.check_canonical_type("(string)->int", w)
+  end, "E8010")
+  assert(err.message == "function signature mismatch: expected (string)->int, got (int)->int",
+      tostring(err.message))
+  assert_error(function() __rt.check_canonical_type("(int)->int", 42) end, "E8001")
+  assert_error(function() __rt.check_canonical_type("(int)->int", {}) end, "E8001")
+end)
+
+test("check_canonical_type function row keeps the exact async marker", function()
+  local w = __rt.function_("async()->int", function() return 1 end)
+  assert(__rt.check_canonical_type("async()->int", w) == w)
+  -- The sync descriptor is a different byte-for-byte signature.
+  assert_error(function() __rt.check_canonical_type("()->int", w) end, "E8010")
+  local wrong = __rt.function_("async()->int", function() return 1 end)
+  assert_error(function() __rt.check_canonical_type("async()->string", wrong) end, "E8010")
+end)
+
+test("check_canonical_type class row matches atoms byte-for-byte", function()
+  local probe = { __kind = "class", __classname = "@$builtin/Error" }
+  assert(__rt.check_canonical_type("@$builtin/Error", probe) == probe)
+  local err = assert_error(function()
+    __rt.check_canonical_type("@$builtin/Error", { __kind = "class", __classname = "Error" })
+  end, "E8001")
+  assert(err.message == "expected instance of @$builtin/Error, got Error", tostring(err.message))
+  assert_error(function()
+    __rt.check_canonical_type("@$builtin/Error", { __kind = "class", __classname = "@$builtin/Errorx" })
+  end, "E8001")
+  assert_error(function()
+    __rt.check_canonical_type("@$builtin/Error", { __kind = "class", __classname = "@host.cfg/ServerConfig" })
+  end, "E8001")
+  assert_error(function() __rt.check_canonical_type("@$builtin/Error", 42) end, "E8001")
+  assert_error(function() __rt.check_canonical_type("@$builtin/Error", {}) end, "E8001")
+end)
+
+test("check_canonical_type rejects legacy and malformed descriptors", function()
+  local err = assert_error(function() __rt.check_canonical_type("int[]", { 1, 2 }) end, "E8001")
+  assert(string.find(err.message, "cannot parse type descriptor", 1, true) ~= nil)
+  assert_error(function() __rt.check_canonical_type("int|null", 1) end, "E8001")
+  assert_error(function() __rt.check_canonical_type("Error", {}) end, "E8001")
+  assert_error(function() __rt.check_canonical_type(nil, 1) end, "E8001")
+  assert_error(function() __rt.check_canonical_type(42, 1) end, "E8001")
+end)
+
+test("check_canonical_type forwards span args on every failure path", function()
+  local err = assert_error(function()
+    __rt.check_canonical_type("int", "x", "canonical.deal", 10, 20)
+  end, "E8001")
+  assert(err.file == "canonical.deal" and err.line == 10 and err.column == 20)
+  err = assert_error(function()
+    __rt.check_canonical_type("[int]", { 1, "x" }, "canonical.deal", 11, 21)
+  end, "E8003")
+  assert(err.file == "canonical.deal" and err.line == 11 and err.column == 21)
+  err = assert_error(function()
+    __rt.check_canonical_type("(int)->int", __rt.function_("(string)->int", function() end),
+        "canonical.deal", 12, 22)
+  end, "E8010")
+  assert(err.file == "canonical.deal" and err.line == 12 and err.column == 22)
+  err = assert_error(function()
+    __rt.check_canonical_type("int", 2147483648, "canonical.deal", 13, 23)
+  end, "E8004")
+  assert(err.file == "canonical.deal" and err.line == 13 and err.column == 23)
+  err = assert_error(function()
+    __rt.check_canonical_type("int[]", 1, "canonical.deal", 14, 24)
+  end, "E8001")
+  assert(err.file == "canonical.deal" and err.line == 14 and err.column == 24)
+end)
+
+test("canonical checker and legacy boundary path coexist", function()
+  -- The legacy dialect keeps serving generated v1.1 artifacts unchanged.
+  assert(__rt.check_type("int[]", { 1, 2 }) ~= nil)
+  assert(__rt.check_type("string|null", __rt.__NULL) == __rt.__NULL)
+  local ev = __rt.error_value("E8001", "boom")
+  assert(__rt.check_type("Error", ev) == ev)
+  -- The same spellings are rejected by the canonical surface.
+  assert_parse_rejected("int[]")
+  assert_parse_rejected("string|null")
+  assert_parse_rejected("Error")
+end)
 -- ==================== Summary ====================
 
 print("")

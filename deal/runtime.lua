@@ -1,5 +1,6 @@
 -- DEAL Runtime Library v1.2 (LuaJIT backend)
--- Provides type checks, integer arithmetic, class construction, function wrapping,
+-- Provides type checks, canonical descriptor parsing and matching, integer
+-- arithmetic, class construction, function wrapping,
 -- and async/await infrastructure.
 -- Loaded by every generated Lua module via require("deal.runtime").
 --
@@ -577,6 +578,364 @@ function __rt.bytes_set(b, i, v, file, line, column)
   end
   b.__data[idx] = val
   return val
+end
+
+-- ===== Canonical descriptor parser and matcher (v1.2) =====
+--
+-- Staging boundary (runtime page D3): the legacy descriptor path above
+-- (parse_descriptor/check_type/check_array/check_nullable) keeps serving
+-- generated v1.1-dialect artifacts unchanged at this merge. The canonical
+-- entries below are the descriptor authority for the v1.2 runtime entries:
+-- class_plan_ phase-3 field validation (RCP) and invoke_async_export
+-- completion validation (ASYNC_RT) call check_canonical_type with
+-- canonical descriptors. The boundary flip, error_value tagging with
+-- @$builtin/Error, and removal of the legacy parser are the cutover
+-- child's obligation.
+--
+-- Canonical grammar (canonical-type-system-and-runtime-descriptors D2):
+--
+--   descriptor := primitive | class | array | nullable | function
+--   primitive  := "null" | "boolean" | "int" | "number" | "string" | "bytes" | "table"
+--   class      := "@" component ("/" component)+
+--   array      := "[" descriptor "]"
+--   nullable   := "?" descriptor
+--   function   := "async"? "(" (descriptor ("," descriptor)*)? ")" "->" descriptor
+--
+-- A component is a non-empty maximal scalar run that is not "." or ".."
+-- as a whole component and is free of U+0000, C0/DEL controls, Unicode
+-- whitespace, "@", "[", "]", "?", "(", ")", ",", "/", and contiguous
+-- "->". The final component is the class name and must match the source
+-- identifier shape [A-Za-z_][A-Za-z0-9_]*. Class atoms are stored
+-- byte-for-byte as the complete text including the leading "@" and are
+-- never split into root/path boundaries; function atoms carry the exact
+-- sync/async marker and the byte-exact descriptor text.
+--
+-- The parser is strict and total: it never throws and never returns a
+-- partial AST. Every legacy dialect spelling ("T[]", "T|null", bare
+-- class names, "...T[]", dotted class-name-position text) yields nil;
+-- the canonical parser accepts no legacy spelling at any point.
+
+local CANONICAL_PRIMITIVES = {
+  "null", "boolean", "int", "number", "string", "bytes", "table",
+}
+
+--- Strict canonical recursive-descent parser (total; never throws).
+-- Returns the complete atom on full consumption, or nil for any text the
+-- canonical grammar rejects. Atom shapes:
+--   { kind="primitive", name=kw, text=kw }
+--   { kind="class", name=fullText, text=fullText }
+--   { kind="array", element=atom, text="[D]" }
+--   { kind="nullable", inner=atom, text="?D" }
+--   { kind="function", isAsync=bool, params={atom,...}, ret=atom, text=full }
+-- Every node carries its byte-exact descriptor text so the function row
+-- can compare wrapper sigs byte-for-byte at any nesting depth.
+local function parse_canonical_descriptor(text)
+  if type(text) ~= "string" then
+    return nil
+  end
+  local n = #text
+  local pos = 1
+
+  local function is_identifier_byte(b)
+    return (b >= 65 and b <= 90) or (b >= 97 and b <= 122)
+        or (b >= 48 and b <= 57) or b == 95
+  end
+
+  local function is_identifier_shape(component)
+    local len = #component
+    if len == 0 then
+      return false
+    end
+    local first = string.byte(component, 1)
+    if not ((first >= 65 and first <= 90) or (first >= 97 and first <= 122) or first == 95) then
+      return false
+    end
+    for i = 2, len do
+      local b = string.byte(component, i)
+      if not is_identifier_byte(b) then
+        return false
+      end
+    end
+    return true
+  end
+
+  -- The pinned component alphabet: C0/DEL controls, ASCII whitespace, and
+  -- the structural scalars end the maximal run ('/' is the component
+  -- separator, handled by the class parser).
+  local function forbidden_in_component(b)
+    if b < 0x20 or b == 0x20 or b == 0x7F then
+      return true
+    end
+    return b == 0x40 or b == 0x5B or b == 0x5D or b == 0x3F
+        or b == 0x28 or b == 0x29 or b == 0x2C
+  end
+
+  local parse_descriptor
+
+  local function parse_function(is_async, start)
+    pos = pos + 1  -- consume '('
+    local params = {}
+    if pos <= n and string.byte(text, pos) ~= 0x29 then
+      while true do
+        local param = parse_descriptor()
+        if param == nil then
+          return nil
+        end
+        params[#params + 1] = param
+        if pos > n then
+          return nil
+        end
+        local b = string.byte(text, pos)
+        if b == 0x2C then
+          pos = pos + 1
+        elseif b == 0x29 then
+          break
+        else
+          return nil
+        end
+      end
+    end
+    if pos > n then
+      return nil
+    end
+    pos = pos + 1  -- consume ')'
+    if pos + 1 > n or string.byte(text, pos) ~= 0x2D or string.byte(text, pos + 1) ~= 0x3E then
+      return nil  -- the exact "->" arrow
+    end
+    pos = pos + 2  -- consume "->"
+    local ret = parse_descriptor()
+    if ret == nil then
+      return nil
+    end
+    return { kind = "function", isAsync = is_async, params = params, ret = ret,
+             text = string.sub(text, start, pos - 1) }
+  end
+
+  local function parse_class()
+    local start = pos
+    pos = pos + 1  -- consume '@'
+    local has_separator = false
+    while true do
+      local component_start = pos
+      while pos <= n do
+        local b = string.byte(text, pos)
+        if b == 0x5D or b == 0x29 or b == 0x2C then
+          break  -- enclosing delimiter: the atom ends exactly here
+        end
+        if b == 0x2F then
+          break  -- component separator
+        end
+        if b == 0x2D and pos + 1 <= n and string.byte(text, pos + 1) == 0x3E then
+          return nil  -- contiguous "->" inside a component
+        end
+        if forbidden_in_component(b) then
+          break  -- the maximal allowed run ends before the forbidden byte
+        end
+        pos = pos + 1
+      end
+      if pos == component_start then
+        return nil  -- empty component ("@" alone, trailing "/", "//")
+      end
+      local component = string.sub(text, component_start, pos - 1)
+      if component == "." or component == ".." then
+        return nil  -- "." / ".." as a whole component
+      end
+      if pos <= n and string.byte(text, pos) == 0x2F then
+        has_separator = true
+        pos = pos + 1  -- consume '/'; the next component must be non-empty
+      else
+        -- This component terminates the atom, so it is the class name and
+        -- must be identifier-shaped (dotted class-name text fails here).
+        if not is_identifier_shape(component) then
+          return nil
+        end
+        if not has_separator then
+          return nil  -- fewer than two components
+        end
+        return { kind = "class", name = string.sub(text, start, pos - 1),
+                 text = string.sub(text, start, pos - 1) }
+      end
+    end
+  end
+
+  parse_descriptor = function()
+    if pos > n then
+      return nil
+    end
+    local b = string.byte(text, pos)
+    if b == 0x5B then  -- '[': array
+      local start = pos
+      pos = pos + 1
+      local element = parse_descriptor()
+      if element == nil then
+        return nil
+      end
+      if pos > n or string.byte(text, pos) ~= 0x5D then
+        return nil
+      end
+      pos = pos + 1
+      return { kind = "array", element = element, text = string.sub(text, start, pos - 1) }
+    end
+    if b == 0x3F then  -- '?': nullable
+      local start = pos
+      pos = pos + 1
+      local inner = parse_descriptor()
+      if inner == nil then
+        return nil
+      end
+      if inner.kind == "nullable" then
+        return nil  -- nested nullable ("??T")
+      end
+      if inner.kind == "primitive" and inner.name == "null" then
+        return nil  -- nullable of null ("?null")
+      end
+      return { kind = "nullable", inner = inner, text = string.sub(text, start, pos - 1) }
+    end
+    if b == 0x28 then  -- '(': function
+      return parse_function(false, pos)
+    end
+    if b == 0x40 then  -- '@': class
+      return parse_class()
+    end
+    -- Primitive keywords. The keyword match is a prefix match like the
+    -- canonical service: any residue after a keyword match is rejected by
+    -- the complete-consumption check ("int[]", "int|null", "intFoo").
+    for i = 1, #CANONICAL_PRIMITIVES do
+      local kw = CANONICAL_PRIMITIVES[i]
+      if string.sub(text, pos, pos + #kw - 1) == kw then
+        pos = pos + #kw
+        return { kind = "primitive", name = kw, text = kw }
+      end
+    end
+    -- The exact async marker: "async" must be immediately followed by '('.
+    if string.sub(text, pos, pos + 4) == "async"
+        and (pos + 5 > n or not is_identifier_byte(string.byte(text, pos + 5))) then
+      if pos + 5 > n or string.byte(text, pos + 5) ~= 0x28 then
+        return nil
+      end
+      local start = pos
+      pos = pos + 5  -- point at '('
+      return parse_function(true, start)
+    end
+    -- Anything else — including identifier-shaped runs (bare class names)
+    -- and the legacy "...T[]" leading dots — is a rejection.
+    return nil
+  end
+
+  local ast = parse_descriptor()
+  if ast == nil then
+    return nil
+  end
+  if pos <= n then
+    return nil  -- complete consumption is mandatory (trailing content)
+  end
+  return ast
+end
+
+--- Recursive canonical checker over one parsed atom (the parent matcher
+-- table, canonical-type-system-and-runtime-descriptors D4). Every failure
+-- raises a DEAL error through _err with the forwarded (file, line, column)
+-- span; never a raw Lua error; never mutates its inputs. Array elements
+-- are checked in 1-based contiguous order and the first failing index is
+-- wrapped in E8003.
+local function check_canonical_ast(ast, v, file, line, column)
+  local kind = ast.kind
+  if kind == "primitive" then
+    local name = ast.name
+    if name == "null" then
+      return __rt.check_null(v, file, line, column)
+    elseif name == "boolean" then
+      return __rt.check_boolean(v, file, line, column)
+    elseif name == "int" then
+      return __rt.check_int(v, file, line, column)
+    elseif name == "number" then
+      return __rt.check_number(v, file, line, column)
+    elseif name == "string" then
+      return __rt.check_string(v, file, line, column)
+    elseif name == "bytes" then
+      return check_bytes(v, file, line, column)
+    elseif name == "table" then
+      return __rt.check_table(v, file, line, column)
+    end
+    error(__rt._err("E8001", "unknown primitive type: " .. name, file, line, column, nil, nil))
+  elseif kind == "class" then
+    -- Byte-for-byte nominal identity: the runtime tag must equal the
+    -- class atom's complete text (text-opaque — no path normalization,
+    -- no bare-name fallback).
+    if type(v) ~= "table" or v.__kind ~= "class" then
+      error(__rt._err("E8001", "expected class instance", file, line, column, "class", type(v)))
+    end
+    local actual_class = v.__classname
+    if actual_class ~= ast.name then
+      error(__rt._err("E8001", "expected instance of " .. ast.name .. ", got " .. tostring(actual_class or "unknown"), file, line, column, ast.name, actual_class))
+    end
+    return v
+  elseif kind == "array" then
+    if type(v) ~= "table" then
+      error(__rt._err("E8001", "expected array", file, line, column, "array", type(v)))
+    end
+    for i = 1, #v do
+      local ok = pcall(check_canonical_ast, ast.element, v[i], file, line, column)
+      if not ok then
+        error(__rt._err("E8003", "array element " .. i .. " type mismatch", file, line, column, ast.element.text, type(v[i])))
+      end
+    end
+    return v
+  elseif kind == "nullable" then
+    if v == nil or v == __rt.__NULL then
+      return __rt.__NULL
+    end
+    return check_canonical_ast(ast.inner, v, file, line, column)
+  elseif kind == "function" then
+    -- Function row: a wrapper whose carried descriptor equals the atom's
+    -- byte-exact text (the exact sync/async marker included).
+    if type(v) ~= "table" or v.__kind ~= "function" then
+      error(__rt._err("E8001", "expected function", file, line, column, "function", type(v)))
+    end
+    if v.sig ~= ast.text then
+      error(__rt._err("E8010", "function signature mismatch: expected " .. ast.text .. ", got " .. tostring(v.sig or "nil"), file, line, column, ast.text, v.sig))
+    end
+    return v
+  end
+  error(__rt._err("E8001", "internal: unhandled descriptor kind: " .. tostring(kind), file, line, column, nil, nil))
+end
+
+--- Strict canonical descriptor parser (total; never throws).
+-- Returns the complete atom table on full consumption, or nil for any
+-- text the canonical grammar rejects — including every legacy dialect
+-- spelling ("T[]", "T|null", bare class names, "...T[]").
+function __rt.parse_canonical_descriptor(text)
+  return parse_canonical_descriptor(text)
+end
+
+--- Canonical type checker (parent matcher table D4; runtime page D3):
+-- one row per primitive (the bytes row is the RV bytes predicate — a
+-- table with __kind == "bytes"), [D] arrays via 1-based contiguous
+-- iteration with E8003 wrapping at the first failing index, ?D nullables,
+-- function descriptors with byte-for-byte signature comparison (E8010 on
+-- mismatch), and class atoms matched byte-for-byte as complete text
+-- (including the canonical projection @$builtin/Error).
+--
+-- This is the descriptor authority of the v1.2 runtime entries:
+-- class_plan_ phase-3 field validation (RCP) and invoke_async_export
+-- completion validation (ASYNC_RT) call it with canonical descriptors.
+-- It accepts only the canonical grammar; the legacy boundary path
+-- (check_type/check_array/check_nullable) is untouched at this stage.
+--
+-- @return the checked value, unchanged
+-- Errors: DEAL errors through _err with the forwarded (file, line,
+--         column) span — E8001 (kind/class/malformed mismatch, E8004
+--         int out of range via check_int), E8003 (array element
+--         mismatch), E8010 (function signature mismatch).
+function __rt.check_canonical_type(descriptor, v, file, line, column)
+  if descriptor == nil then
+    error(__rt._err("E8001", "internal: nil type descriptor", file, line, column, nil, nil))
+  end
+  local parsed = parse_canonical_descriptor(descriptor)
+  if parsed == nil then
+    error(__rt._err("E8001", "internal: cannot parse type descriptor: " .. tostring(descriptor), file, line, column, nil, nil))
+  end
+  return check_canonical_ast(parsed, v, file, line, column)
 end
 
 -- ===== Function infrastructure =====
