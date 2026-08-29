@@ -1833,9 +1833,12 @@ public final class CompilationOrchestrator {
         // one <modulePath with '/' for '.'>.deal.map.json next to the
         // artifact, serialized from the module's recorded mappings via
         // SourceMapGenerator.toJson with the same project-relative
-        // source/generated path strings the Lua arm passes. A rejected
-        // module writes no .js and no sidecar (the two-pass
-        // no-partial-artifact contract).
+        // source/generated path strings the Lua arm passes. A clean
+        // statement-less module (an empty or comment-only source)
+        // writes its sidecar with an empty mappings array — every
+        // clean module gets exactly one sidecar, so no hasMappings()
+        // gate may skip the write. A rejected module writes no .js
+        // and no sidecar (the two-pass no-partial-artifact contract).
         for (ModuleInfo info : cleanModules) {
             JsBackend.JsCodegenResult res = results.get(info);
             Path outputPath = outputRoot.resolve(
@@ -1844,8 +1847,7 @@ public final class CompilationOrchestrator {
             Files.writeString(outputPath, res.source());
             log("  Generated: " + outputPath);
 
-            if (sourceMap && res.sourceMap() != null
-                    && res.sourceMap().hasMappings()) {
+            if (sourceMap && res.sourceMap() != null) {
                 String[] paths = sourceMapSidecarPaths(info.sourcePath,
                     outputRoot, outputPath);
                 String mapJson = res.sourceMap().toJson(paths[0], paths[1]);

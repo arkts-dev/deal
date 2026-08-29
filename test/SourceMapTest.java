@@ -30,9 +30,10 @@ import java.util.concurrent.TimeUnit;
  *   <li>JS backend (js-v12-source-maps D4): emitter-side mapping
  *       recording through the optional SourceMapGenerator parameter,
  *       orchestrator-side per-module .deal.map.json sidecar writes for
- *       every clean module with the --source-map warning retired, and
- *       node runtime-location pins (array bounds, division by zero,
- *       throw) reporting the original .deal file/line/column</li>
+ *       every clean module (statement-less modules included, with an
+ *       empty mappings array) with the --source-map warning retired,
+ *       and node runtime-location pins (array bounds, division by
+ *       zero, throw) reporting the original .deal file/line/column</li>
  * </ul>
  */
 public class SourceMapTest {
@@ -163,6 +164,7 @@ public class SourceMapTest {
         testSourceMapGeneratedPath();
         testJsEmitterMappingRecording();
         testJsSidecarsRealPipeline();
+        testJsSidecarStatementlessModule();
         testJsSidecarsDumpIrDerived();
         testJsSidecarRejectedModule();
         testJsNodeRuntimeLocations();
@@ -860,6 +862,83 @@ public class SourceMapTest {
             }
         } catch (IOException e) {
             fail("JS sidecar pipeline threw: " + e);
+        } finally {
+            if (proj != null) deleteDir(proj);
+        }
+    }
+
+    /**
+     * One sidecar per clean module, statement-less modules included
+     * (js-v12-source-maps D1): a zero-byte sibling module — the
+     * pipeline accepts empty sources and emits their {@code .js}
+     * artifact — writes its {@code .deal.map.json} sidecar next to the
+     * artifact with the spec fields and an empty mappings array. No
+     * hasMappings() gate may skip the write.
+     */
+    static void testJsSidecarStatementlessModule() {
+        System.out.println("-- JS sidecars: statement-less module sidecar --");
+        Path proj = null;
+        try {
+            proj = Files.createTempDirectory("sourcemap_js_empty_");
+            Path src = proj.resolve("src");
+            Files.createDirectories(src);
+            Path mainSrc = src.resolve("main.deal");
+            Files.writeString(mainSrc, """
+                import * as e from "./empty"
+                export function main(): null {
+                  return null;
+                }
+                """);
+            Files.writeString(src.resolve("empty.deal"), "");
+
+            Path outputRoot = proj.resolve("build/js");
+            PrintStream originalErr = System.err;
+            ByteArrayOutputStream captured = new ByteArrayOutputStream();
+            boolean ok;
+            try {
+                System.setErr(new PrintStream(captured, true,
+                    StandardCharsets.UTF_8));
+                CompilationOrchestrator orchestrator =
+                    new CompilationOrchestrator(mainSrc, outputRoot, false,
+                        false, true, Backend.JS,
+                        (deal.module.DealConfig) null, List.of(src),
+                        Path.of(".").toAbsolutePath().normalize());
+                ok = orchestrator.compile();
+            } finally {
+                System.err.flush();
+                System.setErr(originalErr);
+            }
+            check(ok, "the statement-less-module --source-map compile succeeds");
+            check(!captured.toString(StandardCharsets.UTF_8)
+                    .contains("source-map"),
+                "no warning for the statement-less module compile: "
+                    + captured.toString(StandardCharsets.UTF_8));
+
+            Path emptyArtifact = outputRoot.resolve("empty.js");
+            Path emptySidecar = outputRoot.resolve("empty.deal.map.json");
+            check(Files.exists(emptyArtifact),
+                "the statement-less module writes its .js artifact");
+            check(Files.exists(emptySidecar),
+                "the statement-less module writes its .deal.map.json "
+                    + "sidecar next to the artifact");
+
+            if (Files.exists(emptySidecar)) {
+                String json = Files.readString(emptySidecar);
+                check(json.contains("\"version\": 1"),
+                    "statement-less sidecar version is 1");
+                check("src/empty.deal".equals(extractString(json, "source")),
+                    "statement-less sidecar source path correct: "
+                        + extractString(json, "source"));
+                check("build/js/empty.js".equals(extractString(json, "generated")),
+                    "statement-less sidecar generated path correct: "
+                        + extractString(json, "generated"));
+                check(json.contains("\"mappings\": ["),
+                    "statement-less sidecar carries the mappings key");
+                check(parseSourceMapJson(json).isEmpty(),
+                    "statement-less sidecar mappings array is empty");
+            }
+        } catch (IOException e) {
+            fail("JS statement-less sidecar case threw: " + e);
         } finally {
             if (proj != null) deleteDir(proj);
         }
