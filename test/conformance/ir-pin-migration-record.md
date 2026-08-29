@@ -50,18 +50,21 @@ File totals: 14 `irContains`, 0 `irNotContains`, 14 pins — all retained (0 dro
 
 ## error-shape.json
 
-This file carries the `irContains`/`irNotContains` keys with empty arrays only —
-zero IR-containment pins to migrate.
+This file carries no `irContains`/`irNotContains` keys at all (verified: zero
+occurrences of either key) — zero IR-containment pins to migrate, and the file is
+not among the 17 key-carrying slice files.
 
 ## js-skeleton.json
 
-This file carries the `irContains`/`irNotContains` keys with empty arrays only —
-zero IR-containment pins to migrate.
+This file carries no `irContains`/`irNotContains` keys at all (verified: zero
+occurrences of either key) — zero IR-containment pins to migrate, and the file is
+not among the 17 key-carrying slice files.
 
 ## json-helpers.json
 
-This file carries the `irContains`/`irNotContains` keys with empty arrays only —
-zero IR-containment pins to migrate.
+This file carries no `irContains`/`irNotContains` keys at all (verified: zero
+occurrences of either key) — zero IR-containment pins to migrate, and the file is
+not among the 17 key-carrying slice files.
 
 ## jvm-arrays-slice.json
 
@@ -464,8 +467,9 @@ zero IR-containment pins to migrate.
 
 ## jvm-v1.2-known-fail.json
 
-This file carries the `irContains`/`irNotContains` keys with empty arrays only —
-zero IR-containment pins to migrate.
+This file carries no `irContains`/`irNotContains` keys at all (verified: zero
+occurrences of either key) — zero IR-containment pins to migrate, and the file is
+not among the 17 key-carrying slice files.
 
 ## jvm-v12-slice.json
 
@@ -490,13 +494,15 @@ File totals: 9 `irContains`, 0 `irNotContains`, 9 pins — all retained (0 dropp
 
 ## luajit-std-json-unicode.json
 
-This file carries the `irContains`/`irNotContains` keys with empty arrays only —
-zero IR-containment pins to migrate.
+This file carries no `irContains`/`irNotContains` keys at all (verified: zero
+occurrences of either key) — zero IR-containment pins to migrate, and the file is
+not among the 17 key-carrying slice files.
 
 ## module-semantics.json
 
-This file carries the `irContains`/`irNotContains` keys with empty arrays only —
-zero IR-containment pins to migrate.
+This file carries no `irContains`/`irNotContains` keys at all (verified: zero
+occurrences of either key) — zero IR-containment pins to migrate, and the file is
+not among the 17 key-carrying slice files.
 
 ## type-descriptors.json
 
@@ -554,6 +560,9 @@ File totals: 30 `irContains`, 15 `irNotContains`, 45 pins — all retained (0 dr
 
 - Slice files carrying the `irContains`/`irNotContains` keys: 17 (all have a section above)
 - Of those, files carrying non-empty pins: 14 (the remaining 3 carry empty arrays only)
+- Slice files without the keys (no pins to migrate, sections above state so): 6 —
+  error-shape.json, js-skeleton.json, json-helpers.json, jvm-v1.2-known-fail.json,
+  luajit-std-json-unicode.json, module-semantics.json
 - Cases carrying pins: 203
 - Pins recorded: 380
 - Dropped pins: 0
