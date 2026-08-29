@@ -51,7 +51,8 @@ import java.util.Objects;
  *       check logic — a view that fails under {@code RuntimeValidation}
  *       still passes under the proof, and the proof path never requires a
  *       context; a policy outside the closed 11 fails closed as a
- *       producer defect.</li>
+ *       producer defect; a null descriptor on the proof path throws the
+ *       documented NPE.</li>
  *   <li>Combined behavior with T1: every descriptor is built through
  *       {@code DescriptorService.describe} from checked {@code Type}s.</li>
  *   <li>Determinism: repeated checks are byte-identical.</li>
@@ -97,6 +98,21 @@ public class BoundaryExecutorTest {
             passed++;
         } catch (Throwable other) {
             fail("expected IllegalArgumentException for " + what + ", got "
+                + other.getClass().getSimpleName() + ": " + other.getMessage());
+        }
+    }
+
+    /** Pins a documented NullPointerException with the exact message. */
+    private static void expectNpe(Runnable runnable, String message, String what) {
+        try {
+            runnable.run();
+            fail("expected NullPointerException for " + what + ", but no exception was raised");
+        } catch (NullPointerException expected) {
+            check(message.equals(expected.getMessage()),
+                what + " NPE message: expected [" + message + "], got ["
+                    + expected.getMessage() + "]");
+        } catch (Throwable other) {
+            fail("expected NullPointerException for " + what + ", got "
                 + other.getClass().getSimpleName() + ": " + other.getMessage());
         }
     }
@@ -1074,6 +1090,15 @@ public class BoundaryExecutorTest {
             BoundaryContext.none(), new BoundaryRealization.RepresentationProof("sig"));
         expectPass(provedNoContext,
             "a proved HOST_PARAMETER cell passes without its context (no check logic)");
+
+        // The documented null contract holds on the proof path too: a null
+        // descriptor throws NPE instead of silently passing — the proof
+        // branch never succeeds through an unvalidated input.
+        expectNpe(() -> BoundaryExecutor.execute(FailurePolicyId.TYPE_DESCRIPTOR, null,
+                BoundaryValueView.ofNumber(1.0), BoundaryContext.none(),
+                new BoundaryRealization.RepresentationProof("sig")),
+            "descriptor must not be null",
+            "execute on the RepresentationProof path with a null descriptor");
 
         // RuntimeValidation dispatches to the check engine with equal outcomes.
         BoundaryOutcome validated = BoundaryExecutor.execute(FailurePolicyId.TYPE_DESCRIPTOR,

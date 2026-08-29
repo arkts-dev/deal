@@ -212,6 +212,7 @@ public final class BoundaryExecutor {
                                           BoundaryValueView view, BoundaryContext context,
                                           BoundaryRealization realization) {
         Objects.requireNonNull(policy, "policy must not be null");
+        Objects.requireNonNull(descriptor, "descriptor must not be null");
         Objects.requireNonNull(view, "view must not be null");
         Objects.requireNonNull(context, "context must not be null");
         Objects.requireNonNull(realization, "realization must not be null");
