@@ -15,6 +15,7 @@ import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.CallMode;
 import deal.semantic.ir.CanonicalJson;
+import deal.semantic.ir.CapabilityRequirementCatalog;
 import deal.semantic.ir.CaptureMode;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassLayout;
@@ -112,6 +113,13 @@ import java.util.Set;
  *       the remainder via typed construction.</li>
  *   <li>Deterministic first-failure order (the S6 rule enumeration order
  *       across independent defects) and repeated-run determinism.</li>
+ *   <li>Lock pins (ISSUE-0368): the reserved selector
+ *       {@code TIME_NOW_MILLIS} (not an enum member, listed in
+ *       {@code RESERVED_NAMES}) is rejected with R-RESERVED-NAME through
+ *       the text surface, and a unit claiming {@code STDLIB_TIME_CONFLICT}
+ *       — the empty-evidence routing marker — fails R-CAPABILITY
+ *       on both the typed and the text surface, so no common-lowering
+ *       path admits it.</li>
  * </ol>
  */
 public class SemanticIrValidatorTest {
@@ -2005,6 +2013,118 @@ public class SemanticIrValidatorTest {
     }
 
     // =========================================================================
+    // 6. Lock pins (ISSUE-0368): the reserved TIME_NOW_MILLIS selector and
+    //    the STDLIB_TIME_CONFLICT routing marker stay locked
+    // =========================================================================
+
+    private static boolean enumMember(Class<? extends Enum<?>> closed, String name) {
+        for (Enum<?> value : closed.getEnumConstants()) {
+            if (value.name().equals(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void testLockPins() {
+        System.out.println("-- Lock pins (ISSUE-0368): TIME_NOW_MILLIS reserved; "
+            + "STDLIB_TIME_CONFLICT never valid IR --");
+
+        // Fact 1 — the reserved-selector lock: TIME_NOW_MILLIS is not an
+        // enum member, stays in RESERVED_NAMES, and isReservedName is true.
+        check(!enumMember(StdlibFunctionId.class, "TIME_NOW_MILLIS"),
+            "TIME_NOW_MILLIS is not a StdlibFunctionId enum member");
+        check(StdlibFunctionId.RESERVED_NAMES.contains("TIME_NOW_MILLIS"),
+            "TIME_NOW_MILLIS stays listed in StdlibFunctionId.RESERVED_NAMES");
+        check(StdlibFunctionId.isReservedName("TIME_NOW_MILLIS"),
+            "isReservedName(\"TIME_NOW_MILLIS\") is true");
+
+        // Fact 1 — a unit whose stdlib selector is TIME_NOW_MILLIS is
+        // rejected with R-RESERVED-NAME on the real validator surfaces
+        // (the pinned invalid-IR injection route carries the raw name; the
+        // typed closed-selector family cannot express a reserved name).
+        {
+            LoweredModuleUnit base = unit(List.of(
+                op(SemanticOpKind.STDLIB_CALL,
+                    new KindPayload.StdlibCallPayload(StdlibFunctionId.CONSOLE_LOG, List.of(),
+                        SemanticCapability.STDLIB_SEMANTICS),
+                    nextValue(), RuntimeDescriptor.Null.INSTANCE,
+                    FailurePolicyId.INFRASTRUCTURE_ONLY, null)));
+            assertPass(SemanticIrValidator.validate(base, FACTS),
+                "stdlib injection base (typed surface)");
+            String reserved = substituteStdlibFunction(SemanticIrValidator.toUnitText(base),
+                "CONSOLE_LOG", "TIME_NOW_MILLIS");
+            Optional<CompilerDiagnostic> diagnostic =
+                SemanticIrValidator.validateText(reserved, FACTS);
+            assertE6005(diagnostic, "R-RESERVED-NAME", "TIME_NOW_MILLIS");
+            check(diagnostic.get().message().contains("TIME_NOW_MILLIS"),
+                "the observed R-RESERVED-NAME rejection names TIME_NOW_MILLIS literally");
+            System.out.println("    observed TIME_NOW_MILLIS rejection: "
+                + diagnostic.get().message());
+
+            // The dispatch contrast: an unknown non-reserved stdlib name
+            // fails R-ENUM — only the RESERVED_NAMES listing selects
+            // R-RESERVED-NAME for TIME_NOW_MILLIS.
+            String unknown = substituteStdlibFunction(SemanticIrValidator.toUnitText(base),
+                "CONSOLE_LOG", "NOT_A_STDLIB_ID");
+            assertE6005(SemanticIrValidator.validateText(unknown, FACTS),
+                "R-ENUM", "NOT_A_STDLIB_ID");
+        }
+
+        // Fact 2 — the routing-marker lock: the S4 evidence set of
+        // STDLIB_TIME_CONFLICT is empty (never valid IR).
+        check(CapabilityRequirementCatalog.requiredOperations(
+                SemanticCapability.STDLIB_TIME_CONFLICT).isEmpty(),
+            "STDLIB_TIME_CONFLICT maps to {} (empty required-operation evidence — a "
+                + "routing marker only, never valid IR)");
+
+        // Fact 2 — a unit claiming STDLIB_TIME_CONFLICT fails R-CAPABILITY
+        // on the typed surface and the text surface (the validator is the
+        // admission gate of every common-lowering path).
+        {
+            LoweredModuleUnit forged = unit("mod.a",
+                Set.of(SemanticCapability.STDLIB_TIME_CONFLICT),
+                Map.of(), Map.of(), List.of());
+            Optional<CompilerDiagnostic> typed = SemanticIrValidator.validate(forged, FACTS);
+            assertE6005(typed, "R-CAPABILITY", "STDLIB_TIME_CONFLICT");
+            System.out.println("    observed STDLIB_TIME_CONFLICT rejection (typed): "
+                + typed.get().message());
+            Optional<CompilerDiagnostic> text = SemanticIrValidator.validateText(
+                SemanticIrValidator.toUnitText(forged), FACTS);
+            assertE6005(text, "R-CAPABILITY", "STDLIB_TIME_CONFLICT");
+            check(typed.get().message().equals(text.get().message()),
+                "both surfaces report the identical R-CAPABILITY rejection for the forged "
+                    + "STDLIB_TIME_CONFLICT claim");
+        }
+
+        // Fact 2 — no produced op set can satisfy the claim: a unit that
+        // fully satisfies its other claims still fails on the
+        // empty-evidence claim, so no lowering path admits a
+        // conflict-claiming module.
+        {
+            LoweredModuleUnit forged = unit("mod.a",
+                Set.of(SemanticCapability.FOUNDATION_VALUES,
+                    SemanticCapability.STDLIB_TIME_CONFLICT),
+                Map.of(), Map.of(), List.of(
+                    constOp(),
+                    op(SemanticOpKind.UNARY,
+                        new KindPayload.UnaryPayload(UnarySelector.BOOL_NOT),
+                        nextValue(), BOOL, FailurePolicyId.NO_DEAL_FAILURE, null),
+                    op(SemanticOpKind.BINARY,
+                        new KindPayload.BinaryPayload(BinarySelector.INT32_ADD, null, null),
+                        nextValue(), INT, FailurePolicyId.INT32_RESULT, null),
+                    op(SemanticOpKind.STRING_CONCAT,
+                        new KindPayload.StringConcatPayload(List.of(nextValue())),
+                        nextValue(), STR, FailurePolicyId.NO_DEAL_FAILURE, null)));
+            assertE6005(SemanticIrValidator.validate(forged, FACTS),
+                "R-CAPABILITY", "STDLIB_TIME_CONFLICT");
+            assertE6005(SemanticIrValidator.validateText(
+                    SemanticIrValidator.toUnitText(forged), FACTS),
+                "R-CAPABILITY", "STDLIB_TIME_CONFLICT");
+        }
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -2018,6 +2138,7 @@ public class SemanticIrValidatorTest {
         testNegatives();
         testTextNegatives();
         testDeterminism();
+        testLockPins();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
