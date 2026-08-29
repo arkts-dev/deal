@@ -2,19 +2,19 @@ package deal;
 
 import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
-import deal.semantic.CompilerInvocation;
-import deal.semantic.CompilerProfileProvider;
-import deal.semantic.ReleaseConfiguration;
 import deal.diagnostics.DiagnosticFormatter;
 import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.module.CompilationOrchestrator;
-import deal.module.DealConfig;
-import deal.module.DealConfig.DealConfigParseResult;
+import deal.project.CliOverrides;
+import deal.project.ProjectContext;
+import deal.project.ProjectLocator;
+import deal.semantic.CompilerInvocation;
+import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ReleaseConfiguration;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -23,18 +23,21 @@ import java.util.List;
  *
  * <p>Usage:
  * <pre>{@code
- * deal compile <entry.deal> [--output <dir>] [--backend <lua|jvm|js>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]
+ * deal compile <entry.deal> [--output <dir>] [--backend <lua|luajit|jvm>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]
  * }</pre>
  *
  * <p>Options:
  * <ul>
  *   <li>{@code compile <entry.deal>} — compile a DEAL project (required)</li>
  *   <li>{@code --output <dir>} / {@code -o <dir>} — output directory
- *       (default: ./build/lua, ./build/jvm with {@code --backend jvm},
- *       or ./build/js with {@code --backend js})</li>
- *   <li>{@code --backend <name>} — code-generation backend, {@code lua}/{@code luajit}
- *       (default), {@code jvm} (ISSUE-0091), or {@code js}. A {@code deal.json}
- *       {@code "backend"} field is used when the flag is absent.</li>
+ *       (CWD-relative; overrides the manifest {@code output}; the default
+ *       is {@code <manifestDirectory>/build/lua} or {@code build/jvm}
+ *       per the effective backend)</li>
+ *   <li>{@code --backend <name>} — code-generation backend: the CLI
+ *       aliases {@code lua}/{@code luajit} (default) or {@code jvm}.
+ *       A {@code deal.json} {@code "backend"} field
+ *       ({@code "luajit"} | {@code "jvm"}) is used when the flag is
+ *       absent.</li>
  *   <li>{@code --verbose} / {@code -v} — verbose output with per-module timing</li>
  *   <li>{@code --dump-ir} — produce IR dump files at {@code <outputDir>/<module-path>.ir.txt}</li>
  *   <li>{@code --source-map} — produce source map sidecar files ({@code .deal.map.json})</li>
@@ -44,6 +47,23 @@ import java.util.List;
  *       write failure is a deterministic I/O diagnostic on stderr with
  *       exit 1</li>
  * </ul>
+ *
+ * <p><b>Exact-v1.2 project location (ISSUE-0269 migration, design
+ * source {@code strict-project-context-resolution-identity} D1/D7,
+ * {@code deal-v1.2-directives-and-c-ffi-declarations} D10/D11).</b> The
+ * CLI consumes {@link ProjectLocator#locate(String, CliOverrides)}: one
+ * ancestor {@code deal.json} with {@code languageVersion: "1.2"} governs
+ * the graph, the strict manifest is read/decoded/parsed before any
+ * override is consulted, roots/output/externals/stdlib surface come from
+ * the published immutable {@link ProjectContext}, and no implicit
+ * entry-directory root or stdlib heuristic exists here. A manifest
+ * failure is one E2010 printed through the canonical formatter (with the
+ * structured document honored when {@code --diagnostics-json} is set);
+ * a malformed entry or malformed CLI override is a
+ * {@code CliDiagnostic} (exit 1); a post-validation write failure is a
+ * deterministic compiler I/O diagnostic (exit 1), never E2010 and never
+ * a raw exception. Output directories are created only in the write
+ * phase.</p>
  */
 public final class Main {
 
@@ -76,7 +96,7 @@ public final class Main {
         // Parse options
         String[] remaining = Arrays.copyOfRange(args, 1, args.length);
         String entryPath = null;
-        Path outputDir = null;
+        String outputOverride = null;
         String backendName = null;
         boolean verbose = false;
         boolean dumpIr = false;
@@ -92,11 +112,11 @@ public final class Main {
                         System.err.println("deal: --output requires a directory argument");
                         return 1;
                     }
-                    outputDir = Path.of(remaining[++i]).toAbsolutePath();
+                    outputOverride = remaining[++i];
                 }
                 case "--backend" -> {
                     if (i + 1 >= remaining.length) {
-                        System.err.println("deal: --backend requires a backend name (lua|jvm|js)");
+                        System.err.println("deal: --backend requires a backend name (lua|luajit|jvm)");
                         return 1;
                     }
                     backendName = remaining[++i];
@@ -132,102 +152,43 @@ public final class Main {
             return 1;
         }
 
+        // Exact-v1.2 location (D1): entry validation, ancestor-manifest
+        // discovery, strict UTF-8 read/decode, strict parse, override
+        // validation, root/externals conversion, effective backend and
+        // output, the pinned stdlib surface, and the deployment identity.
+        // The CLI overrides are the raw strings — the locator owns their
+        // validation (a valid alias lua|luajit|jvm overrides the manifest
+        // backend; the trimmed CLI output overrides the manifest output;
+        // an invalid override is a CliDiagnostic and publishes no
+        // context; an override can never bypass a malformed manifest).
+        ProjectLocator.LocateResult located = ProjectLocator.locate(entryPath,
+            new CliOverrides(backendName, outputOverride));
+
+        if (located.e2010() != null) {
+            CompilerDiagnostic e2010 = located.e2010();
+            System.err.println(DiagnosticFormatter.format(e2010));
+            return writeDiagnosticsJson(List.of(e2010), diagnosticsJsonPath);
+        }
+        if (located.cliDiagnostic() != null) {
+            System.err.println(located.cliDiagnostic().message());
+            return 1;
+        }
+
+        ProjectContext context = located.context();
+        Backend backend = Backend.fromCliName(context.backend()).orElseThrow();
         Path entryFile = Path.of(entryPath).toAbsolutePath().normalize();
-        if (!Files.exists(entryFile)) {
-            System.err.println("deal: entry file not found: " + entryFile);
-            return 1;
-        }
-
-        // Try to load deal.json from the entry file's directory. An absent
-        // manifest keeps today's null-config default path; invalid content
-        // is exactly one ranged E2012 printed through the canonical
-        // formatter with exit 1 (D10). Filesystem read failures still
-        // throw IOException (explicit exclusion until ISSUE-0154).
-        Path projectDir = entryFile.getParent();
-        DealConfig config;
-        DealConfigParseResult configResult = DealConfig.load(projectDir);
-        config = configResult.config();
-        if (!configResult.diagnostics().isEmpty()) {
-            for (CompilerDiagnostic diagnostic : configResult.diagnostics()) {
-                System.err.println(DiagnosticFormatter.format(diagnostic));
-            }
-            if (diagnosticsJsonPath != null) {
-                try {
-                    Files.writeString(diagnosticsJsonPath,
-                        DiagnosticStructuredOutput.toJson(
-                            configResult.diagnostics()));
-                } catch (IOException e) {
-                    // Deterministic I/O diagnostic: no raw path exception
-                    // escapes (D8, parent D11).
-                    System.err.println("deal: cannot write diagnostics JSON to '"
-                        + diagnosticsJsonPath + "': " + e.getMessage());
-                    return 1;
-                }
-            }
-            return 1;
-        }
-
-        // Resolve the backend: CLI flag wins, then deal.json, then LuaJIT
-        // (the default — the CLI and every pre-ISSUE-0091 path select it).
-        Backend backend;
-        if (backendName != null) {
-            backend = Backend.fromCliName(backendName).orElse(null);
-            if (backend == null) {
-                System.err.println("deal: unknown backend '" + backendName
-                    + "'. Supported backends: lua, luajit, jvm, js");
-                return 1;
-            }
-        } else if (config != null && config.backend() != null) {
-            // DealConfig already validated the manifest value.
-            backend = Backend.fromCliName(config.backend()).orElseThrow();
-        } else {
-            backend = Backend.LUAJIT;
-        }
-
-        // Determine output directory
-        if (outputDir == null) {
-            if (config != null && config.output() != null) {
-                outputDir = projectDir.resolve(config.output()).normalize();
-            } else {
-                String defaultDir = switch (backend) {
-                    case JVM -> "build/jvm";
-                    case JS -> "build/js";
-                    case LUAJIT -> "build/lua";
-                };
-                outputDir = Path.of(defaultDir).toAbsolutePath().normalize();
-            }
-        }
-
-        // Determine module roots
-        List<Path> moduleRoots = new ArrayList<>();
-        if (config != null && config.moduleRoots() != null) {
-            for (String root : config.moduleRoots()) {
-                moduleRoots.add(projectDir.resolve(root).normalize());
-            }
-        }
-        // Always include the project directory
-        if (!moduleRoots.contains(projectDir)) {
-            moduleRoots.add(projectDir);
-        }
-
-        // Determine stdlib directory (the parent of std/ — Orchestrator prepends "std/" itself)
-        Path stdlibDir = null;
-        // Try project-local std/ first
-        Path localStd = projectDir.resolve("std");
-        if (Files.isDirectory(localStd)) {
-            stdlibDir = projectDir;
-        }
-        // Also try relative to current working dir
-        if (stdlibDir == null && Files.isDirectory(Path.of("std"))) {
-            stdlibDir = Path.of("").toAbsolutePath();
-        }
+        Path outputDir = Path.of(context.outputPath().absoluteNormalizedPath());
 
         if (verbose) {
             System.out.println("Entry: " + entryFile);
             System.out.println("Backend: " + backend.cliName());
             System.out.println("Output: " + outputDir);
-            System.out.println("Module roots: " + moduleRoots);
-            System.out.println("Stdlib dir: " + (stdlibDir != null ? stdlibDir : "none"));
+            System.out.println("Module roots: " + context.configuredModuleRoots().stream()
+                .map(r -> r.configuredText() + " -> " + r.absoluteNormalizedPath())
+                .toList());
+            System.out.println("Stdlib surface: "
+                + (context.stdlibSurfacePath() != null
+                    ? context.stdlibSurfacePath() : "none"));
             if (dumpIr) {
                 System.out.println("IR dump: enabled");
             }
@@ -247,20 +208,31 @@ public final class Main {
             ReleaseConfiguration.CURRENT_RELEASE_STATE,
             ReleaseConfiguration.releaseCapabilityRegistry());
 
-        // Run compilation
-        // When --dump-ir is passed, also enable source maps since they
-        // are part of IR hardening. When --source-map is explicitly passed,
-        // enable source maps without enabling IR dumps.
+        // Run compilation. The context is the single configuration
+        // authority: the backend, the output root (created only in the
+        // orchestrator's write phase), the module roots, the externals
+        // declarations, the stdlib surface, and the deployment identity.
         // The orchestrator writes the structured diagnostics document for
         // every compilation — successful or failed — when
-        // --diagnostics-json is set (D8); manifest-configuration failures
-        // are written by this CLI directly above.
+        // --diagnostics-json is set; manifest-configuration failures are
+        // written by this CLI directly above.
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entryFile, outputDir, verbose, dumpIr, dumpIr || sourceMap, sourceMap,
-            backend, config, moduleRoots, stdlibDir, diagnosticsJsonPath,
-            invocation);
+            context, entryFile, verbose, dumpIr, dumpIr || sourceMap,
+            sourceMap, diagnosticsJsonPath, invocation);
 
-        boolean success = orchestrator.compile();
+        boolean success;
+        try {
+            success = orchestrator.compile();
+        } catch (IOException e) {
+            // Post-validation write failure (D3/D11): a deterministic
+            // compiler I/O diagnostic with exit 1 — never E2010, never a
+            // raw path exception. The output directory is created only in
+            // the write phase; a permission/device failure there surfaces
+            // here.
+            System.err.println("deal: cannot write output to '"
+                + outputDir + "': " + e.getMessage());
+            return 1;
+        }
 
         if (!success) {
             return 1;
@@ -269,12 +241,33 @@ public final class Main {
         return 0;
     }
 
+    /**
+     * Writes the structured diagnostics document for the manifest
+     * configuration failure (D8, parent D11): a write failure is a
+     * deterministic compiler I/O diagnostic on stderr with exit 1 — no
+     * raw path exception escapes.
+     */
+    private static int writeDiagnosticsJson(List<CompilerDiagnostic> diagnostics,
+                                            Path diagnosticsJsonPath) {
+        if (diagnosticsJsonPath == null) {
+            return 1;
+        }
+        try {
+            Files.writeString(diagnosticsJsonPath,
+                DiagnosticStructuredOutput.toJson(diagnostics));
+        } catch (IOException e) {
+            System.err.println("deal: cannot write diagnostics JSON to '"
+                + diagnosticsJsonPath + "': " + e.getMessage());
+        }
+        return 1;
+    }
+
     private static void printUsage() {
-        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--backend <lua|jvm|js>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]");
+        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--backend <lua|luajit|jvm>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]");
         System.err.println();
         System.err.println("Options:");
-        System.err.println("  --output, -o <dir>   Output directory (default: ./build/lua, ./build/jvm with --backend jvm, or ./build/js with --backend js)");
-        System.err.println("  --backend <name>     Code-generation backend: lua/luajit (default), jvm, or js");
+        System.err.println("  --output, -o <dir>   Output directory (CWD-relative; default: build/lua or build/jvm per the effective backend)");
+        System.err.println("  --backend <name>     Code-generation backend: lua/luajit (default) or jvm");
         System.err.println("  --verbose, -v        Verbose output with per-module timing");
         System.err.println("  --dump-ir            Produce IR dump files at <outputDir>/<module-path>.ir.txt");
         System.err.println("  --source-map         Produce source map sidecar files (.deal.map.json)");

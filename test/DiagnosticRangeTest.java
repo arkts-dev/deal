@@ -1416,7 +1416,7 @@ public class DiagnosticRangeTest {
     // =========================================================================
 
     /**
-     * Verification-2 combined program-span fixture: E2010/E2011
+     * Verification-2 combined program-span fixture: E2012/E2011
      * ({@link CompilationOrchestrator} entry-main validation) and
      * JvmBackend E6004 share the parser's program-span anchor. A first
      * statement that does not start at (1,1) carries a SOURCE range
@@ -1427,14 +1427,14 @@ public class DiagnosticRangeTest {
      * formatted and structured surfaces (D8).
      */
     private static void testProgramSpanAnchorsCombined() throws Exception {
-        System.out.println("-- Program-span anchors: E2010/E2011/E6004 combined fixture --");
+        System.out.println("-- Program-span anchors: E2012/E2011/E6004 combined fixture --");
 
         Path tmp = Files.createTempDirectory("deal_range_progspan_");
         try {
             Path srcDir = Files.createDirectories(tmp.resolve("src"));
             List<Path> moduleRoots = List.of(srcDir.toAbsolutePath());
 
-            // PS1: E2010 — an entry without main whose first statement
+            // PS1: E2012 — an entry without main whose first statement
             // starts at 2:1 after a leading comment. The orchestrator
             // prints failed-compilation diagnostics on stderr; capture it
             // so the gate output stays clean.
@@ -1455,8 +1455,8 @@ public class DiagnosticRangeTest {
                 System.setErr(originalErr);
             }
             check(ps1Failed, "PS1: commented entry without main fails compilation");
-            CompilerDiagnostic e2010 = firstCode(e2010Orch.diagnostics(), "E2010");
-            check(e2010 != null, "PS1: E2010 present: " + e2010Orch.diagnostics());
+            CompilerDiagnostic e2010 = firstCode(e2010Orch.diagnostics(), "E2012");
+            check(e2010 != null, "PS1: E2012 present: " + e2010Orch.diagnostics());
             if (e2010 != null) {
                 int expectedStart = ScalarSourceCursor.scalarCount(commented, 0,
                     commented.indexOf("export"));
@@ -1466,10 +1466,10 @@ public class DiagnosticRangeTest {
                         && r.startScalarOffset() == expectedStart
                         && r.endScalarOffset() > r.startScalarOffset()
                         && r.scalarLength() == r.endScalarOffset() - r.startScalarOffset(),
-                    "PS1: E2010 anchors SOURCE at 2:1 with the exact non-zero start offset ("
+                    "PS1: E2012 anchors SOURCE at 2:1 with the exact non-zero start offset ("
                         + expectedStart + "): " + r);
                 check(e2010.notes().isEmpty(),
-                    "PS1: the SOURCE-anchored E2010 carries no anchor note: "
+                    "PS1: the SOURCE-anchored E2012 carries no anchor note: "
                         + e2010.notes());
                 checkFormattedStructuredAgree(e2010, "PS1");
             }
@@ -1512,7 +1512,7 @@ public class DiagnosticRangeTest {
                 checkFormattedStructuredAgree(e2011, "PS2");
             }
 
-            // PS3: E2010 for an empty entry pins the explicit zero-length
+            // PS3: E2012 for an empty entry pins the explicit zero-length
             // SOURCE range at file start — never SYNTHETIC, no note.
             Path emptyEntry = srcDir.resolve("ps_empty.deal");
             Files.writeString(emptyEntry, "");
@@ -1528,22 +1528,22 @@ public class DiagnosticRangeTest {
                 System.setErr(originalErr);
             }
             check(ps3Failed, "PS3: empty entry fails compilation");
-            CompilerDiagnostic emptyE2010 = firstCode(emptyOrch.diagnostics(), "E2010");
-            check(emptyE2010 != null,
-                "PS3: empty entry produces E2010: " + emptyOrch.diagnostics());
-            if (emptyE2010 != null) {
-                DiagnosticRange r = emptyE2010.range();
+            CompilerDiagnostic emptyE2012 = firstCode(emptyOrch.diagnostics(), "E2012");
+            check(emptyE2012 != null,
+                "PS3: empty entry produces E2012: " + emptyOrch.diagnostics());
+            if (emptyE2012 != null) {
+                DiagnosticRange r = emptyE2012.range();
                 check(r.origin() == RangeOrigin.SOURCE
                         && r.startLine() == 1 && r.startColumn() == 1
                         && r.endLine() == 1 && r.endColumn() == 1
                         && r.startScalarOffset() == 0
                         && r.endScalarOffset() == 0
                         && r.scalarLength() == 0,
-                    "PS3: empty entry E2010 pins (file,1,1,1,1,0,0,0,SOURCE): " + r);
-                check(emptyE2010.notes().isEmpty(),
-                    "PS3: empty entry E2010 carries no anchor note: "
-                        + emptyE2010.notes());
-                checkFormattedStructuredAgree(emptyE2010, "PS3");
+                    "PS3: empty entry E2012 pins (file,1,1,1,1,0,0,0,SOURCE): " + r);
+                check(emptyE2012.notes().isEmpty(),
+                    "PS3: empty entry E2012 carries no anchor note: "
+                        + emptyE2012.notes());
+                checkFormattedStructuredAgree(emptyE2012, "PS3");
             }
 
             // PS4: whitespace-only entry — the same pinned document-start
@@ -1563,22 +1563,22 @@ public class DiagnosticRangeTest {
                 System.setErr(originalErr);
             }
             check(ps4Failed, "PS4: whitespace-only entry fails compilation");
-            CompilerDiagnostic wsE2010 = firstCode(wsOrch.diagnostics(), "E2010");
-            check(wsE2010 != null,
-                "PS4: whitespace-only entry produces E2010: " + wsOrch.diagnostics());
-            if (wsE2010 != null) {
-                DiagnosticRange r = wsE2010.range();
+            CompilerDiagnostic wsE2012 = firstCode(wsOrch.diagnostics(), "E2012");
+            check(wsE2012 != null,
+                "PS4: whitespace-only entry produces E2012: " + wsOrch.diagnostics());
+            if (wsE2012 != null) {
+                DiagnosticRange r = wsE2012.range();
                 check(r.origin() == RangeOrigin.SOURCE
                         && r.startLine() == 1 && r.startColumn() == 1
                         && r.endLine() == 1 && r.endColumn() == 1
                         && r.startScalarOffset() == 0
                         && r.endScalarOffset() == 0
                         && r.scalarLength() == 0,
-                    "PS4: whitespace-only entry E2010 pins (file,1,1,1,1,0,0,0,SOURCE): "
+                    "PS4: whitespace-only entry E2012 pins (file,1,1,1,1,0,0,0,SOURCE): "
                         + r);
-                check(wsE2010.notes().isEmpty(),
-                    "PS4: whitespace-only entry E2010 carries no anchor note: "
-                        + wsE2010.notes());
+                check(wsE2012.notes().isEmpty(),
+                    "PS4: whitespace-only entry E2012 carries no anchor note: "
+                        + wsE2012.notes());
             }
 
             // PS5: JvmBackend E6004 on the same commented program shape —

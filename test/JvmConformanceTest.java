@@ -7,10 +7,11 @@ import deal.diagnostics.CompilerDiagnostic;
 import deal.codegen.jvm.JvmBackend;
 import deal.lexer.*;
 import deal.module.CompilationOrchestrator;
-import deal.module.DealConfig;
+import deal.module.ExportExtractor;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.ir.SemanticProfile;
-import deal.module.ExportExtractor;
+import deal.project.ProjectContext;
+import deal.project.ProjectLocator;
 import deal.module.StdlibModuleResolver;
 import deal.parser.*;
 import deal.types.Type;
@@ -1043,7 +1044,10 @@ public class JvmConformanceTest {
             this.testFileDir = testFile.toAbsolutePath().getParent();
             this.profile = java.util.Objects.requireNonNull(profile,
                 "profile must not be null");
-            this.stdlibExports = StdlibModuleResolver.stdlibExports();
+            // ISSUE-0269: the resolved distribution surface (the
+            // CWD-relative no-arg read is retired).
+            this.stdlibExports = StdlibModuleResolver.stdlibExports(
+                Path.of("std").toAbsolutePath().normalize().toString());
         }
 
         @Override
@@ -1304,28 +1308,37 @@ public class JvmConformanceTest {
             projectRoot = Files.createTempDirectory("deal_jvm_conf_");
 
             // 1. Materialize the test file and its transitive companion
-            // closure into the temp project root (flat stem namespace;
-            // the corpus has no duplicate stems). Relative imports
-            // resolve on disk from the corpus directories.
+            // closure under the configured root "src" of the temp
+            // project (flat stem namespace; the corpus has no duplicate
+            // stems). Relative imports resolve on disk from the corpus
+            // directories.
             Map<String, Path> written = new LinkedHashMap<>();
-            writeModuleFiles(projectRoot, test.path(), written);
-            String entryRel = corpusStem(test.path()) + ".deal";
+            writeModuleFiles(projectRoot.resolve("src"), test.path(), written);
+            String entryRel = "src/" + corpusStem(test.path()) + ".deal";
             Path entryFile = projectRoot.resolve(entryRel);
             Path outputRoot = projectRoot.resolve("out");
 
-            // 2. Host-ABI tests: a real deal.json externals entry wires
-            // the raw host import path to the host declaration, and the
-            // Java host implementation compiles with the artifacts.
-            DealConfig config = null;
+            // 2. Every harness project receives an injected exact-v1.2
+            // deal.json and routes through production ProjectLocator
+            // (ISSUE-0269, parent D12): moduleRoots ["src"] (the
+            // representable configured root), output "out", backend
+            // "jvm" — host-ABI fixtures additionally carry the
+            // externals map wiring every raw host import path to its
+            // declaration under the project root (bindings/).
             Set<String> hostNames = hostImports(test.path());
+            StringBuilder dealJson = new StringBuilder();
+            dealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
+            dealJson.append("  \"moduleRoots\": [\"src\"],\n");
+            dealJson.append("  \"output\": \"out\",\n");
+            dealJson.append("  \"backend\": \"jvm\"");
             if (!hostNames.isEmpty()) {
                 // ISSUE-0272 D8 item 2b: producer-side seam — the host
                 // declaration materialization strips classification
-                // headers before the bytes reach the orchestrator.
+                // headers before the bytes reach the orchestrator, and
+                // each raw host import path is wired to its declaration
+                // under the project root (bindings/).
                 copyHostBindings(projectRoot, hostFixturesRoot, hostNames);
-                StringBuilder dealJson = new StringBuilder();
-                dealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
-                dealJson.append("  \"externals\": {\n");
+                dealJson.append(",\n  \"externals\": {\n");
                 boolean first = true;
                 for (String hostName : hostNames) {
                     if (!first) dealJson.append(",\n");
@@ -1335,28 +1348,29 @@ public class JvmConformanceTest {
                         .append("\": { \"declaration\": \"")
                         .append(declRel).append("\" }");
                 }
-                dealJson.append("\n  }\n}\n");
-                Files.writeString(projectRoot.resolve("deal.json"),
-                    dealJson);
-                DealConfig.DealConfigParseResult configResult =
-                    DealConfig.load(projectRoot);
-                config = configResult.config();
-                if (config == null || !configResult.diagnostics().isEmpty()) {
-                    throw new IllegalStateException(
-                        "generated deal.json did not load");
-                }
+                dealJson.append("\n  }");
+            }
+            dealJson.append("\n}\n");
+            Files.writeString(projectRoot.resolve("deal.json"), dealJson);
+            ProjectLocator.LocateResult located =
+                ProjectLocator.locate(entryFile.toString(), null);
+            if (located.context() == null) {
+                throw new IllegalStateException(
+                    "generated deal.json did not locate strictly: "
+                        + located.e2010());
             }
 
             // 3. The real whole-project pipeline: module discovery,
             // signature extraction, dependency ordering, name resolution,
-            // type checking, per-module JvmBackend codegen. The A5 seam
+            // type checking, per-module JvmBackend codegen — driven by
+            // the published immutable ProjectContext. The A5 seam
             // selects the per-case invocation from the catalog decision
             // (catalogued -> LEGACY_REGRESSION + LEGACY_SAFE_INT; else
             // COMMON_SHADOW + DEAL_V1_2_INT32, zero shadow requests).
             CompilerInvocation invocation = LegacyProfileRegressionCatalog
                 .invocationFor(test.relativePath());
-            OrchestratorRun run = runOrchestrator(projectRoot, entryFile,
-                outputRoot, config, invocation);
+            OrchestratorRun run = runOrchestrator(entryFile,
+                located.context(), invocation);
             if (!run.success()) {
                 if (knownFailProbe) {
                     return new Outcome(test, classified, false,
@@ -1509,16 +1523,17 @@ public class JvmConformanceTest {
                                    String capturedOutput) {}
 
     /**
-     * Runs the real {@link CompilationOrchestrator} with
-     * {@link Backend#JVM} over the temp project: module discovery,
+     * Runs the real {@link CompilationOrchestrator} with the
+     * context-driven production constructor over the temp project
+     * (ISSUE-0269): the published immutable {@link ProjectContext}
+     * supplies the backend, the output root, the module roots, the
+     * externals declarations, and the stdlib surface. Module discovery,
      * signature extraction, dependency ordering, name resolution, type
-     * checking, and per-module JvmBackend codegen into
-     * {@code outputRoot}. Stdout/stderr is captured so per-test output
-     * stays clean.
+     * checking, and per-module JvmBackend codegen run unchanged.
+     * Stdout/stderr is captured so per-test output stays clean.
      */
-    private static OrchestratorRun runOrchestrator(Path projectRoot,
-            Path entryFile, Path outputRoot, DealConfig config,
-            CompilerInvocation invocation) {
+    private static OrchestratorRun runOrchestrator(Path entryFile,
+            ProjectContext context, CompilerInvocation invocation) {
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         synchronized (CONSOLE_LOCK) {
             PrintStream originalOut = System.out;
@@ -1530,12 +1545,9 @@ public class JvmConformanceTest {
                     StandardCharsets.UTF_8));
                 CompilationOrchestrator orchestrator =
                     new CompilationOrchestrator(
+                        context,
                         entryFile.toAbsolutePath().normalize(),
-                        outputRoot.toAbsolutePath().normalize(),
-                        false, false, false, false, Backend.JVM,
-                        config,
-                        List.of(projectRoot.toAbsolutePath().normalize()),
-                        null, null, invocation);
+                        false, false, false, false, null, invocation);
                 boolean success = orchestrator.compile();
                 return new OrchestratorRun(success,
                     orchestrator.diagnostics(),
@@ -1572,6 +1584,7 @@ public class JvmConformanceTest {
      */
     private static void writeModuleFiles(Path projectRoot, Path entry,
             Map<String, Path> written) throws IOException {
+        Files.createDirectories(projectRoot);
         copyTransitively(entry, projectRoot, written);
     }
 
@@ -1761,6 +1774,12 @@ public class JvmConformanceTest {
      */
     private static String entryClassName(String entryRel) {
         String path = entryRel;
+        // ISSUE-0269: the entry key carries the configured-root prefix
+        // (src/...); the orchestrator's module name is the root-relative
+        // path, so the prefix is stripped before deriving the class name.
+        if (path.startsWith("src/")) {
+            path = path.substring("src/".length());
+        }
         if (path.endsWith(".deal")) {
             path = path.substring(0, path.length() - ".deal".length());
         }

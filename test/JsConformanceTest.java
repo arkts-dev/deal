@@ -6,7 +6,6 @@ import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.lexer.*;
 import deal.module.CompilationOrchestrator;
-import deal.module.DealConfig;
 import deal.module.ExportExtractor;
 import deal.module.ModuleShapeValidator;
 import deal.module.StdlibModuleResolver;
@@ -1204,7 +1203,8 @@ module.exports = {
 
         FrontendModuleResolver(Path testFile) {
             this.testFileDir = testFile.toAbsolutePath().getParent();
-            this.stdlibExports = StdlibModuleResolver.stdlibExports();
+            this.stdlibExports = StdlibModuleResolver.stdlibExports(
+                Path.of("std").toAbsolutePath().normalize().toString());
         }
 
         @Override
@@ -1504,13 +1504,17 @@ module.exports = {
             // host-fixtures declaration (the JvmConformanceTest
             // externals-wiring pattern).
             Set<String> hostNames = hostImports(written.values());
-            DealConfig config = writeProjectManifest(projectRoot, hostNames);
+            Map<String, String> externals =
+                writeProjectManifest(projectRoot, hostNames);
 
             // 3. The real whole-project pipeline: module discovery,
             // signature extraction, dependency ordering, name resolution,
-            // type checking, per-module JsBackend codegen.
+            // type checking, per-module JsBackend codegen — the
+            // isolated-phase Backend.JS path with the externals wiring
+            // (the JS backend stays outside the strict backend set until
+            // the skeleton epic extends the schema).
             OrchestratorRun run = runOrchestrator(projectRoot, entryFile,
-                outputRoot, config);
+                outputRoot, externals);
             if (!run.success()) {
                 if (!knownFailProbe) {
                     applicableFailed.incrementAndGet();
@@ -1658,7 +1662,8 @@ module.exports = {
      * stderr is captured so per-test output stays clean.
      */
     private static OrchestratorRun runOrchestrator(Path projectRoot,
-            Path entryFile, Path outputRoot, DealConfig config) {
+            Path entryFile, Path outputRoot,
+            Map<String, String> externalsDeclarations) {
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         synchronized (CONSOLE_LOCK) {
             PrintStream originalOut = System.out;
@@ -1673,7 +1678,7 @@ module.exports = {
                         entryFile.toAbsolutePath().normalize(),
                         outputRoot.toAbsolutePath().normalize(),
                         false, false, false, Backend.JS,
-                        config,
+                        externalsDeclarations,
                         List.of(projectRoot.toAbsolutePath().normalize()),
                         REPO_ROOT);
                 boolean success = orchestrator.compile();
@@ -1701,10 +1706,28 @@ module.exports = {
      * declaration or a manifest the harness generated that does not
      * load is a harness failure.
      */
-    private static DealConfig writeProjectManifest(Path projectRoot,
-            Set<String> hostNames) throws IOException {
+    /**
+     * Writes the injected project manifest (exact-v1.2 shape:
+     * languageVersion "1.2", moduleRoots ["."], output "out", backend
+     * "js", plus the externals map wiring every bare {@code host/<name>}
+     * import to the copied {@code bindings/<name>.d.deal} declaration)
+     * and returns the externals wiring map (raw specifier → absolute
+     * declaration path) the isolated-phase Backend.JS orchestrator
+     * consumes. The JS backend stays outside the strict backend set
+     * ({@code "js"} is E2010 until the skeleton epic extends the
+     * schema), so the harness drives {@link Backend#JS} through the
+     * test-only isolated-phase constructor; the injected manifest keeps
+     * the harness-project configuration exact-v1.2-shaped (ISSUE-0269,
+     * parent D12).
+     */
+    private static Map<String, String> writeProjectManifest(
+            Path projectRoot, Set<String> hostNames) throws IOException {
         StringBuilder dealJson = new StringBuilder();
-        dealJson.append("{\n  \"languageVersion\": \"1.2\"");
+        dealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
+        dealJson.append("  \"moduleRoots\": [\".\"],\n");
+        dealJson.append("  \"output\": \"out\",\n");
+        dealJson.append("  \"backend\": \"js\"");
+        Map<String, String> externals = new LinkedHashMap<>();
         if (!hostNames.isEmpty()) {
             dealJson.append(",\n  \"externals\": {\n");
             boolean first = true;
@@ -1721,24 +1744,19 @@ module.exports = {
                 first = false;
                 String declRel = "bindings/" + hostName + ".d.deal";
                 Files.createDirectories(projectRoot.resolve("bindings"));
-                Files.copy(decl, projectRoot.resolve(declRel));
+                Path declTarget = projectRoot.resolve(declRel);
+                Files.copy(decl, declTarget);
                 dealJson.append("    \"host/").append(hostName)
                     .append("\": { \"declaration\": \"")
                     .append(declRel).append("\" }");
+                externals.put("host/" + hostName,
+                    declTarget.toAbsolutePath().normalize().toString());
             }
             dealJson.append("\n  }");
         }
         dealJson.append("\n}\n");
         Files.writeString(projectRoot.resolve("deal.json"), dealJson);
-
-        DealConfig.DealConfigParseResult configResult =
-            DealConfig.load(projectRoot);
-        DealConfig config = configResult.config();
-        if (config == null || !configResult.diagnostics().isEmpty()) {
-            throw new HarnessFailure("generated deal.json did not load: "
-                + configResult.diagnostics());
-        }
-        return config;
+        return externals;
     }
 
     /** The corpus-relative file stem (name without {@code .deal}). */

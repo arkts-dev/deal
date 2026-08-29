@@ -2062,7 +2062,11 @@ public class ConformanceTest {
             this.catalog = catalog;
             this.profile = java.util.Objects.requireNonNull(profile,
                 "profile must not be null");
-            this.stdlibExports = StdlibModuleResolver.stdlibExports();
+            // The resolved distribution surface (ISSUE-0269: the
+            // CWD-relative no-arg read is retired; the surface path
+            // is the harness's resolved std directory).
+            this.stdlibExports = StdlibModuleResolver.stdlibExports(
+                Path.of("std").toAbsolutePath().normalize().toString());
             this.hostRegistry = catalog != null
                 ? catalog.hostRegistry
                 : new HostRegistry(profile);

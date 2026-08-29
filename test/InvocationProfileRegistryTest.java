@@ -465,6 +465,10 @@ public class InvocationProfileRegistryTest {
         Files.createDirectories(src);
         Files.writeString(src.resolve("trivial.deal"),
             "export function main(): null { return null; }\n");
+        // ISSUE-0269: the CLI locates exactly one ancestor exact-v1.2
+        // manifest — the temp project carries its own.
+        Files.writeString(dir.resolve("deal.json"),
+            "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\"src\"]}\n");
         Path entry = src.resolve("trivial.deal").toAbsolutePath();
         List<Path> roots = List.of(src.toAbsolutePath());
 
@@ -696,6 +700,10 @@ public class InvocationProfileRegistryTest {
         Files.createDirectories(src);
         Files.writeString(src.resolve("cli.deal"),
             "export function main(): null { return null; }\n");
+        // ISSUE-0269: the CLI locates exactly one ancestor exact-v1.2
+        // manifest — the temp project carries its own.
+        Files.writeString(dir.resolve("deal.json"),
+            "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\"src\"]}\n");
         Path entry = src.resolve("cli.deal").toAbsolutePath();
         Path out = dir.resolve("build/cli");
 

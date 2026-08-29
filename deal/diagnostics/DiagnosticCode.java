@@ -162,14 +162,26 @@ public enum DiagnosticCode {
     /** Import of external host module not declared in deal.json externals. */
     E2009(Phase.FRONTEND, "Import of external host module not declared in deal.json externals"),
 
-    /** Entry module does not export 'main'. */
-    E2010(Phase.FRONTEND, "Entry module must export 'main'"),
+    /**
+     * Invalid project configuration or class identity (ISSUE-0269
+     * re-registration, design source
+     * {@code strict-project-context-resolution-identity} D7): every
+     * manifest/discovery/decode/schema/duplicate/root/
+     * externals-declaration (including stdlib-overlap)/manifest-output/
+     * public-class-identity error of the exact-v1.2 project stack.
+     */
+    E2010(Phase.FRONTEND, "Invalid project configuration or class identity"),
 
     /** Entry module 'main' has the wrong signature. */
     E2011(Phase.FRONTEND, "Entry module 'main' must have non-async signature '(): null'"),
 
-    /** Invalid project configuration. */
-    E2012(Phase.FRONTEND, "Invalid project configuration"),
+    /**
+     * Entry module does not export 'main' (ISSUE-0269 re-registration,
+     * design source {@code strict-project-context-resolution-identity}
+     * D7): the former E2010 entry-main-missing meaning; the
+     * orchestrator's {@code validateEntryMain} emits this code.
+     */
+    E2012(Phase.FRONTEND, "Entry module must export 'main'"),
 
     // =========================================================================
     // E3xxx — type checking (FRONTEND)

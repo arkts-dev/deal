@@ -51,7 +51,9 @@ public class StdlibContractTest {
             System.out.println("WARNING: LuaJIT not available — runtime contract checks will be skipped");
         }
 
-        Map<String, Map<String, Type>> stdlibExports = StdlibModuleResolver.stdlibExports();
+        String surface = Path.of("std").toAbsolutePath().normalize().toString();
+        Map<String, Map<String, Type>> stdlibExports =
+            StdlibModuleResolver.stdlibExports(surface);
 
         for (String modulePath : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
             testModule(modulePath, stdlibExports.get(modulePath));
@@ -321,7 +323,8 @@ public class StdlibContractTest {
         System.out.println("\n-- Non-spec module exclusion --");
 
         // std/coroutine and std/io exist on disk but should NOT be in spec list
-        List<String> allDeclFiles = StdlibModuleResolver.discoverAllDeclFiles();
+        String surface = Path.of("std").toAbsolutePath().normalize().toString();
+        List<String> allDeclFiles = StdlibModuleResolver.discoverAllDeclFiles(surface);
 
         for (String modulePath : allDeclFiles) {
             if (!StdlibModuleResolver.isSpecStdlibModule(modulePath)) {
@@ -329,7 +332,8 @@ public class StdlibContractTest {
                     + ": correctly excluded from spec stdlib list");
 
                 // Verify it's not in the exports map
-                Map<String, Map<String, Type>> exports = StdlibModuleResolver.stdlibExports();
+                Map<String, Map<String, Type>> exports =
+                    StdlibModuleResolver.stdlibExports(surface);
                 check(!exports.containsKey(modulePath),
                     modulePath + ": not present in stdlib exports map");
             }
@@ -337,7 +341,8 @@ public class StdlibContractTest {
 
         // Verify the 6 spec modules ARE in the exports map
         for (String modulePath : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
-            Map<String, Map<String, Type>> exports = StdlibModuleResolver.stdlibExports();
+            Map<String, Map<String, Type>> exports =
+                StdlibModuleResolver.stdlibExports(surface);
             check(exports.containsKey(modulePath),
                 modulePath + ": present in stdlib exports map");
         }
