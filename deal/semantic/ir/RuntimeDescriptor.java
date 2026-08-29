@@ -108,7 +108,10 @@ public sealed interface RuntimeDescriptor extends OpResultType
             // ')' / ']' / ',' (none of those may appear inside a module
             // path or class name) or at the end of the text; the module
             // path is everything before the last '/', the class name
-            // everything after it.
+            // everything after it. An empty module path is the pinned
+            // builtin spelling (@/Error == ClassId.ERROR); no-slash
+            // segments (@User) and empty class names (@src/, @/) stay
+            // rejected.
             int end = pos[0] + 1;
             while (end < text.length() && text.charAt(end) != ')'
                     && text.charAt(end) != ']' && text.charAt(end) != ',') {
@@ -116,7 +119,7 @@ public sealed interface RuntimeDescriptor extends OpResultType
             }
             java.lang.String segment = text.substring(pos[0] + 1, end);
             int slash = segment.lastIndexOf('/');
-            if (slash <= 0 || slash == segment.length() - 1) {
+            if (slash < 0 || slash == segment.length() - 1) {
                 throw new SemanticIrTextDecodeException(
                     "not a canonical descriptor text (class text lacks modulePath/ClassName): \""
                         + text + "\"");

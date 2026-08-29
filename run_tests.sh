@@ -60,6 +60,7 @@ javac --release 25 -proc:none -d build \
   test/DiagnosticClassificationTest.java \
   test/LoweringFoundationTest.java \
   test/SemanticIrSchemaTest.java \
+  test/DescriptorServiceTest.java \
   test/FailureContractRegistryTest.java \
   test/CanonicalJsonTest.java \
   test/SemanticIrValidatorTest.java \
@@ -254,6 +255,10 @@ java -ea -cp build deal.test.InvocationProfileRegistryTest
 echo ""
 echo "=== Running Semantic IR Schema Tests (ISSUE-0282) ==="
 java -ea -cp build deal.test.SemanticIrSchemaTest
+
+echo ""
+echo "=== Running Descriptor Service Tests (ISSUE-0233 D1/D2) ==="
+java -ea -cp build deal.test.DescriptorServiceTest
 
 echo ""
 echo "=== Running Failure Contract Registry Tests (ISSUE-0285) ==="
