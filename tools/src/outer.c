@@ -7,8 +7,10 @@
  * bootstrap, the COORD_READY verification, the continuous 1 MiB
  * coordinator stream drains, the D8 escalation machinery with the
  * COORDINATOR_HANG escalation-deadline trigger, the
- * COORDINATOR_STARTUP_FAILED by-pid termination scope, and the
- * final-proof skeleton.
+ * COORDINATOR_STARTUP_FAILED by-pid termination scope, the
+ * final-proof skeleton, and (ISSUE-0295) the authenticated AF_UNIX
+ * broker socket + the HELLO/READY handshake channel state machine +
+ * the framing-level PROTOCOL_ERROR close rule + the stall rule.
  *
  * See outer.h for the pinned surfaces (dealpg4-outer-supervisor-engine
  * D1/D2/D5/D6; outer-coordinator-and-broker D1-D9 preserved):
@@ -27,16 +29,24 @@
  *    the outer-pre-coord-fork / coord-post-fork /
  *    coord-pre-ready-write delay sites) land with this file.
  *
- * Stage invariants: no broker socket, no registry, no nested forks
+ * Stage invariants: the broker socket and the handshake channel
+ * machine are real (D1/D5: 0700 dir, stale-path unlink, 0600 bind,
+ * one SO_PEERCRED-verified connection, HELLO_OK 4 <caps> /
+ * READY_ACK <nonce> through the POLLOUT relay queue, the stall rule);
+ * a well-formed record in BROKER_LIVE is state-unexpected at this
+ * stage (the live-phase rows land with the registry child) and closes
+ * per the D5 PROTOCOL_ERROR rule. No registry and no nested forks
  * anywhere in this file except the production fork_nested seam (which
  * is invoked only by the registration machinery of a later sequencing
- * step); the broker socket, registry, nested forks, fallbacks, and the
- * remaining final-sequence discrimination land with the next
- * sequencing steps. At this stage the run completes when the
- * coordinator is reaped (clean exit or COORDINATOR_LOST /
- * COORDINATOR_STARTUP_FAILED), at the pinned escalation deadline
- * (COORDINATOR_HANG), on shell loss (immediate bounded escalation), or
- * at the total deadline (OVERALL_TIMEOUT — the hard bound).
+ * step); the registry, nested forks, fallbacks, and the remaining
+ * final-sequence discrimination land with the next sequencing steps.
+ * The run completes when the coordinator is reaped (clean exit or
+ * COORDINATOR_LOST / COORDINATOR_STARTUP_FAILED), at the pinned
+ * escalation deadline (COORDINATOR_HANG / the PROTOCOL_ERROR and
+ * AUTH_FAILED aftermath), on shell loss (immediate bounded
+ * escalation), on BROKER_STALLED (immediate escalation after the
+ * vacuous total-cancel), or at the total deadline (OVERALL_TIMEOUT —
+ * the hard bound).
  */
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
@@ -55,6 +65,9 @@
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/signalfd.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -194,6 +207,40 @@ typedef struct dealpg4_outer_state {
                                         so the cross-check never races
                                         the coordinator's exit) */
     int streams_created;
+
+    /* Broker channel (engine D5). */
+    int broker_listen_fd;   /* -1 until bound */
+    int broker_conn_fd;     /* -1 until the one connection is
+                               accepted */
+    int broker_accepted_any; /* the one connection was accepted at
+                                the socket level (further connections
+                                are rejected) */
+    int broker_closed;      /* no connection open (the channel is
+                               closed) */
+    int broker_eof;         /* read-side EOF observed (the D8
+                               discrimination slot) */
+    int broker_created;     /* bind/listen completed */
+    int broker_path_computed;
+    char broker_path[PATH_MAX];
+    int broker_state;       /* dealpg4_outer_broker_state */
+    dealpg4_expectation_set broker_expected;
+    dealpg4_outer_writeq broker_q;
+    int broker_q_eagain;    /* the most recent flush attempt hit
+                               EAGAIN (POLLOUT not ready) with data
+                               pending */
+    int broker_peer_verified;
+    int broker_hello_ok_sent;
+    int broker_ready_acked;
+    int broker_conns_rejected;
+    int broker_socket_unlinked;
+    size_t broker_rbuf_len; /* bytes buffered without a complete
+                               record line */
+    /* Broker stall rule (D5). */
+    int stall_armed;         /* the stall deadline is currently armed */
+    int stall_ever_armed;    /* it was armed at least once */
+    int stall_fired;         /* BROKER_STALLED decided */
+    int64_t stall_deadline_ms; /* absolute CLOCK_MONOTONIC */
+    int64_t stall_arm_ms;      /* absolute CLOCK_MONOTONIC arm time */
 
     /* Pre-exec pipe read side. */
     int ready_pipe_rd;
@@ -540,6 +587,533 @@ int dealpg4_outer_writeq_flush(dealpg4_outer_writeq *q)
             return 1; /* POLLOUT: the owner polls, a write never blocks */
         return -1;    /* EPIPE or any other error: hop loss */
     }
+    return 0;
+}
+
+/* === Broker socket mechanics + authentication (engine D1/D5) =========== */
+
+/* The real socket-setup surface (outer.h contract): one code path
+ * shared by the core and the component tests. */
+int dealpg4_outer_broker_bind_path(const char *socket_dir,
+                                   const char outer_nonce[33],
+                                   char *path_out, size_t path_cap,
+                                   int *listen_fd)
+{
+    struct sockaddr_un sun;
+    struct stat sb;
+    char path[PATH_MAX];
+    int n;
+    int fd = -1;
+
+    if (socket_dir == NULL || socket_dir[0] == '\0' || outer_nonce == NULL
+        || !dealpg4_nonce_is_valid(outer_nonce) || listen_fd == NULL
+        || (path_out != NULL && path_cap == 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    *listen_fd = -1;
+
+    /* The socket dir: mkdir 0700 tolerating EEXIST for an existing
+     * directory, then chmod 0700 so the mode is exact regardless of
+     * the creating umask. */
+    if (mkdir(socket_dir, 0700) != 0 && errno != EEXIST)
+        return -1;
+    if (stat(socket_dir, &sb) != 0 || !S_ISDIR(sb.st_mode)) {
+        errno = ENOTDIR;
+        return -1;
+    }
+    if (chmod(socket_dir, 0700) != 0)
+        return -1;
+
+    /* The per-run path: build/.dealpg4-broker-<outerNonce>.sock (the
+     * same shape the coordinator child exports via DEALPG4_BROKER_PATH
+     * — D1/D5). */
+    n = snprintf(path, sizeof path, "%s/.dealpg4-broker-%s.sock",
+                 socket_dir, outer_nonce);
+    if (n <= 0 || (size_t)n >= sizeof path
+        || (size_t)n >= sizeof sun.sun_path) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    /* Stale same-name path unlinked before bind (D1/D5). */
+    if (unlink(path) != 0 && errno != ENOENT)
+        return -1;
+
+    fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0)
+        return -1;
+    /* Fd hygiene: O_NONBLOCK (accept never blocks) and FD_CLOEXEC
+     * (never inherited across an exec). */
+    {
+        int fl = fcntl(fd, F_GETFL);
+
+        if (fl == -1 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) == -1)
+            goto fail;
+        if (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1)
+            goto fail;
+    }
+
+    memset(&sun, 0, sizeof sun);
+    sun.sun_family = AF_UNIX;
+    memcpy(sun.sun_path, path, (size_t)n + 1);
+
+    /* FI_OUTER_BIND: a scripted nonzero value forces the bind failure
+     * with the scripted value as errno (0 = the real bind). */
+    {
+        int injected = dealpg4_fi_hooks.fail(FI_OUTER_BIND);
+
+        if (injected != 0) {
+            errno = injected;
+            goto fail;
+        }
+    }
+    if (bind(fd, (struct sockaddr *)&sun, sizeof sun) != 0)
+        goto fail;
+
+    /* chmod 0600 immediately after bind, before listen (D1/D5). */
+    if (chmod(path, 0600) != 0)
+        goto fail;
+    if (listen(fd, 8) != 0)
+        goto fail;
+
+    if (path_out != NULL) {
+        if (path_cap < (size_t)n + 1) {
+            errno = ENOBUFS;
+            goto fail;
+        }
+        memcpy(path_out, path, (size_t)n + 1);
+    }
+    *listen_fd = fd;
+    return 0;
+
+fail:
+    {
+        int err = errno;
+
+        close(fd);
+        (void)unlink(path); /* the stale path was already unlinked;
+                               this removes the half-created socket */
+        errno = err;
+        return -1;
+    }
+}
+
+/* Accept one broker connection and verify SO_PEERCRED before any
+ * record (outer.h contract; the production accept path). */
+int dealpg4_outer_broker_accept_peer(int listen_fd, pid_t coordinator_pid,
+                                     uid_t expected_uid, int *conn_fd)
+{
+    struct ucred cred;
+    socklen_t cred_len = sizeof cred;
+    int fd;
+
+    if (conn_fd == NULL || listen_fd < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    *conn_fd = -1;
+    fd = accept(listen_fd, NULL, NULL);
+    if (fd < 0)
+        return -1; /* EAGAIN = nothing pending (the normal outcome
+                      on the non-blocking listen socket) */
+    /* Fd hygiene on the accepted connection: O_NONBLOCK (record reads
+     * and relay writes never block) and FD_CLOEXEC (never inherited
+     * across an exec). */
+    {
+        int fl = fcntl(fd, F_GETFL);
+
+        if (fl == -1 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) == -1)
+            goto fail;
+        if (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1)
+            goto fail;
+    }
+    /* SO_PEERCRED before any record (parent D5): pid ==
+     * coordinatorPid AND uid == getuid(). */
+    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &cred_len) != 0
+        || cred_len != sizeof cred || cred.pid != coordinator_pid
+        || cred.uid != expected_uid) {
+        close(fd);
+        errno = EACCES;
+        return -1;
+    }
+    *conn_fd = fd;
+    return 0;
+
+fail:
+    {
+        int err = errno;
+
+        close(fd);
+        errno = err;
+        return -1;
+    }
+}
+
+/* === Broker channel state machine (engine D5) ========================== */
+
+static void dealpg4_outer_broker_close(dealpg4_outer_state *st);
+
+/* Close the broker channel (idempotent): the connection is closed, the
+ * channel state goes terminal, undelivered relay writes are dropped
+ * (writeq_clear keeps the overflow consequence — the queued-write
+ * discard), and the stall deadline disarms. The listen socket stays
+ * open until the final cleanup so any further connection attempt is
+ * deterministically rejected. */
+static void dealpg4_outer_broker_close(dealpg4_outer_state *st)
+{
+    if (st->broker_conn_fd >= 0) {
+        close(st->broker_conn_fd);
+        st->broker_conn_fd = -1;
+    }
+    st->broker_closed = 1;
+    st->broker_state = DEALPG4_OUTER_BROKER_CLOSED;
+    st->stall_armed = 0;
+    st->broker_q_eagain = 0;
+    dealpg4_outer_writeq_clear(&st->broker_q);
+}
+
+/* PROTOCOL_ERROR aftermath (the parent's recorded pin): close the
+ * broker, gate nonzero; the coordinator reaps on its own or is
+ * terminated at the pinned escalation deadline by the T2 machinery
+ * (evaluate's COORDINATOR_HANG trigger — the D8 escalation runs only
+ * at the pinned escalation deadline when the coordinator has not
+ * exited). */
+static void dealpg4_outer_broker_protocol_error(dealpg4_outer_state *st)
+{
+    dealpg4_outer_gate_token(st, "PROTOCOL_ERROR");
+    dealpg4_outer_broker_close(st);
+}
+
+/* AUTH_FAILED (peer credentials or the HELLO nonce): connection
+ * closed, the readiness obligation discharged, gate nonzero; the
+ * ppoll loop keeps running until the coordinator reaps on its own or
+ * is terminated at the pinned escalation deadline (D5). */
+static void dealpg4_outer_broker_auth_failed(dealpg4_outer_state *st)
+{
+    dealpg4_outer_gate_token(st, "AUTH_FAILED");
+    dealpg4_outer_broker_close(st);
+}
+
+/* One broker flush attempt: the FI_CONGEST_BROKER seam (mode
+ * BROKER_WRITE_STALL) reports EAGAIN without attempting the syscall
+ * (POLLOUT never ready while relay data is pending — arms and fires
+ * the stall rule; a native deadline is never suspended), otherwise
+ * the real non-blocking flush. The most recent EAGAIN fact feeds the
+ * stall arming. */
+static int dealpg4_outer_broker_flush(dealpg4_outer_state *st)
+{
+    if (dealpg4_fi_hooks.congest(FI_CONGEST_BROKER, BROKER_WRITE_STALL,
+                                 NULL) != 0) {
+        st->broker_q_eagain = 1;
+        return 1; /* EAGAIN-equivalent */
+    }
+    {
+        int rc = dealpg4_outer_writeq_flush(&st->broker_q);
+
+        st->broker_q_eagain = (rc == 1);
+        return rc;
+    }
+}
+
+/* Queue one serialized broker record through the non-blocking POLLOUT
+ * path (parent D5 write-side contract): catalog-bounded control
+ * records never count toward the payload cap; the flush attempt runs
+ * immediately and a write-hop loss (EPIPE/error) closes the broker —
+ * the D8 discrimination then owns the coordinator reap. */
+static void dealpg4_outer_broker_queue_line(dealpg4_outer_state *st,
+                                            dealpg4_record_type type,
+                                            const dealpg4_field_value *fields,
+                                            size_t nfields)
+{
+    char line[DEALPG4_MAX_LINE_OTHER_BYTES + 1];
+    size_t written = 0;
+
+    if (dealpg4_serialize(type, fields, nfields, line, sizeof line,
+                          &written) != 0)
+        return; /* caller defect: a malformed line is never emitted */
+    if (dealpg4_outer_writeq_queue(&st->broker_q, line, written, 1, 0)
+        != 0)
+        return;
+    if (dealpg4_outer_broker_flush(st) < 0)
+        dealpg4_outer_broker_close(st); /* write-hop loss */
+}
+
+/* HELLO_OK 4 <caps> (caps = the stage bitmask 31, selftest.h). */
+static void dealpg4_outer_broker_queue_hello_ok(dealpg4_outer_state *st)
+{
+    char caps[16];
+    dealpg4_field_value fields[2];
+
+    snprintf(caps, sizeof caps, "%d", DEALPG4_PROBE_CAPS);
+    fields[0].data = "4";
+    fields[0].len = 1;
+    fields[1].data = caps;
+    fields[1].len = strlen(caps);
+    dealpg4_outer_broker_queue_line(st, DEALPG4_REC_HELLO_OK, fields, 2);
+}
+
+/* READY_ACK <coordinatorNonce>. */
+static void dealpg4_outer_broker_queue_ready_ack(dealpg4_outer_state *st)
+{
+    dealpg4_field_value fields[1];
+
+    fields[0].data = st->coordinator_nonce;
+    fields[0].len = DEALPG4_NONCE_HEX_CHARS;
+    dealpg4_outer_broker_queue_line(st, DEALPG4_REC_READY_ACK, fields, 1);
+}
+
+/* One complete broker record line (the segment includes the LF). The
+ * uniform framing-level split: every parse defect (unparseable fields,
+ * non-hex/odd-length hex, field-count violations, CR anywhere,
+ * unknown record types, oversize records — INVOKE <= 131072 bytes
+ * with <= 65536 raw argv bytes, OUT <= 65536 hex chars, every other
+ * record <= 8192 bytes) classifies PROTOCOL_ERROR and closes the
+ * broker; a parse-OK record outside the current channel-state
+ * expectation set likewise. The two handshake rows are fully
+ * implemented here; the live-phase rows land with the registry child
+ * (at this stage the BROKER_LIVE expectation set is empty). */
+static void dealpg4_outer_broker_record(dealpg4_outer_state *st,
+                                        const char *line, size_t len)
+{
+    static char linebuf[DEALPG4_MAX_LINE_INVOKE_BYTES + 1];
+    dealpg4_parsed parsed;
+    dealpg4_parse_status ps;
+    dealpg4_classification cls;
+    const dealpg4_field_slice *f;
+
+    if (len == 0 || len > sizeof linebuf - 1) {
+        dealpg4_outer_broker_protocol_error(st);
+        return;
+    }
+    memcpy(linebuf, line, len);
+    linebuf[len] = '\0';
+
+    ps = dealpg4_parse(linebuf, len, &parsed);
+    if (ps != DEALPG4_PARSE_OK) {
+        /* Framing defect: PROTOCOL_ERROR close (the canonical split
+         * — the record-level semantic handlers are the registry
+         * child's). */
+        dealpg4_outer_broker_protocol_error(st);
+        return;
+    }
+    cls = dealpg4_expectation_check(&st->broker_expected, &parsed);
+    if (cls != DEALPG4_CLASS_OK) {
+        /* A record unexpected in the current channel state. */
+        dealpg4_outer_broker_protocol_error(st);
+        return;
+    }
+    switch (st->broker_state) {
+    case DEALPG4_OUTER_BROKER_AWAIT_HELLO:
+        /* HELLO only (the expectation set enforced it). The nonce
+         * must equal the env-delivered coordinator nonce; a mismatch
+         * is AUTH_FAILED (D5). */
+        f = dealpg4_parsed_field(&parsed, 0);
+        if (f == NULL || f->len != DEALPG4_NONCE_HEX_CHARS
+            || memcmp(f->p, st->coordinator_nonce, f->len) != 0) {
+            dealpg4_outer_broker_auth_failed(st);
+            return;
+        }
+        dealpg4_outer_broker_queue_hello_ok(st);
+        if (!st->broker_closed) {
+            st->broker_hello_ok_sent = 1;
+            st->broker_state = DEALPG4_OUTER_BROKER_AWAIT_READY;
+            dealpg4_expectation_set_init(&st->broker_expected);
+            dealpg4_expectation_set_add(&st->broker_expected,
+                                        DEALPG4_REC_FEATURE_READY);
+        }
+        break;
+    case DEALPG4_OUTER_BROKER_AWAIT_READY:
+        /* FEATURE_READY only, and only after HELLO_OK. The nonce
+         * must equal the coordinator nonce — a mismatch or any other
+         * record is PROTOCOL_ERROR (D5). */
+        f = dealpg4_parsed_field(&parsed, 0);
+        if (f == NULL || f->len != DEALPG4_NONCE_HEX_CHARS
+            || memcmp(f->p, st->coordinator_nonce, f->len) != 0) {
+            dealpg4_outer_broker_protocol_error(st);
+            return;
+        }
+        dealpg4_outer_broker_queue_ready_ack(st);
+        /* The transition to BROKER_LIVE occurs exactly after the
+         * READY_ACK write is queued (D5). */
+        st->broker_ready_acked = 1;
+        if (!st->broker_closed) {
+            st->broker_state = DEALPG4_OUTER_BROKER_LIVE;
+            dealpg4_expectation_set_init(&st->broker_expected);
+        }
+        break;
+    default:
+        /* BROKER_LIVE: the empty expectation set already rejected
+         * every record above. */
+        dealpg4_outer_broker_protocol_error(st);
+        break;
+    }
+}
+
+/* Non-blocking record reads: accumulate complete LF-terminated record
+ * lines, enforce the global record bound while buffering (a line that
+ * exceeds the largest record cap without an LF is PROTOCOL_ERROR),
+ * process each line through the state machine, and apply the EOF
+ * decision (EOF in BROKER_LIVE is the accepted channel event feeding
+ * the D8 discrimination slot — at this stage, with zero records, EOF
+ * plus a reaped status-0 coordinator proceeds through the final
+ * proof). A read error other than EAGAIN/EINTR is the hop loss: the
+ * broker closes and the D8 discrimination owns the coordinator reap. */
+static void dealpg4_outer_broker_read(dealpg4_outer_state *st)
+{
+    /* One slack byte keeps the read size >= 1 while len stays under
+     * the record bound, so a full buffer never turns a zero-size read
+     * into a false EOF. */
+    static unsigned char rbuf[DEALPG4_MAX_LINE_INVOKE_BYTES + 2];
+    size_t len = st->broker_rbuf_len;
+
+    if (st->broker_conn_fd < 0)
+        return;
+    for (;;) {
+        /* Complete lines first (arrival order). */
+        for (;;) {
+            unsigned char *nl = memchr(rbuf, '\n', len);
+            size_t seg;
+
+            if (nl == NULL)
+                break;
+            seg = (size_t)(nl - rbuf) + 1;
+            dealpg4_outer_broker_record(st, (const char *)rbuf, seg);
+            if (st->broker_closed) {
+                st->broker_rbuf_len = 0;
+                return;
+            }
+            memmove(rbuf, rbuf + seg, len - seg);
+            len -= seg;
+        }
+        /* Oversize: the buffered bytes hold no LF, and no valid
+         * record line can reach DEALPG4_MAX_LINE_INVOKE_BYTES without
+         * one (the per-type caps are re-enforced by dealpg4_parse
+         * once a line completes). */
+        if (len >= DEALPG4_MAX_LINE_INVOKE_BYTES) {
+            dealpg4_outer_broker_protocol_error(st);
+            st->broker_rbuf_len = 0;
+            return;
+        }
+        {
+            ssize_t r = read(st->broker_conn_fd, rbuf + len,
+                             sizeof rbuf - 1 - len);
+
+            if (r > 0) {
+                len += (size_t)r;
+                continue;
+            }
+            if (r < 0 && errno == EINTR)
+                continue;
+            if (r == 0) {
+                st->broker_eof = 1;
+                st->broker_rbuf_len = 0;
+                dealpg4_outer_broker_close(st);
+                return;
+            }
+            if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+                break;
+            /* Read error: the hop is lost — close and let the D8
+             * discrimination own the reap. */
+            st->broker_rbuf_len = 0;
+            dealpg4_outer_broker_close(st);
+            return;
+        }
+    }
+    st->broker_rbuf_len = len;
+}
+
+/* Accept one connection: the first accepted connection becomes the
+ * broker channel (SO_PEERCRED verified before any record; a peer
+ * mismatch is AUTH_FAILED with the connection closed); every further
+ * connection is rejected — accepted and closed without a read
+ * (exactly one connection, D5). */
+static void dealpg4_outer_broker_accept(dealpg4_outer_state *st)
+{
+    if (st->broker_listen_fd < 0)
+        return;
+    for (;;) {
+        int fd;
+        int rc;
+
+        if (st->broker_accepted_any) {
+            /* Every further connection is rejected without a read
+             * (exactly one connection, D5) — before any credential
+             * check: the rejection does not depend on who connected,
+             * so a credential-failing second connection can never
+             * produce an AUTH_FAILED decision. */
+            fd = accept(st->broker_listen_fd, NULL, NULL);
+            if (fd < 0) {
+                if (errno == EINTR)
+                    continue;
+                return; /* EAGAIN / ECONNABORTED / genuine failure:
+                           nothing more to accept right now */
+            }
+            close(fd);
+            st->broker_conns_rejected++;
+            continue;
+        }
+        rc = dealpg4_outer_broker_accept_peer(st->broker_listen_fd,
+                                              st->coordinator_pid,
+                                              getuid(), &fd);
+        if (rc != 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK
+                || errno == EINTR || errno == ECONNABORTED)
+                return; /* nothing pending / a raced-away queued
+                           connection */
+            if (errno == EACCES) {
+                /* Peer verification failed (pid or uid mismatch):
+                 * AUTH_FAILED, connection closed, gate nonzero. The
+                 * connection was accepted at the socket level (the
+                 * accept syscall succeeded) — exactly one connection
+                 * is ever accepted. */
+                st->broker_accepted_any = 1;
+                dealpg4_outer_broker_auth_failed(st);
+                return;
+            }
+            /* Genuine accept-surface failure: fail closed with the
+             * broker bind token (the broker surface is unusable). */
+            dealpg4_outer_gate_token(st, "BROKER_BIND_FAILED");
+            dealpg4_outer_broker_close(st);
+            return;
+        }
+        st->broker_accepted_any = 1;
+        st->broker_conn_fd = fd;
+        st->broker_closed = 0;
+        st->broker_peer_verified = 1;
+        st->broker_q.fd = fd;
+        /* The channel state stays BROKER_AWAIT_HELLO (set at start);
+         * the expectation set expects exactly HELLO. */
+    }
+}
+
+/* Broker setup before the coordinator fork (D5): the real socket
+ * mechanics (0700 dir, stale unlink, 0600 bind, listen) plus the
+ * channel-state and write-queue initialization. Returns 0 on success,
+ * -1 on failure (the caller's BROKER_BIND_FAILED path — no fork, no
+ * socket left behind). */
+static int dealpg4_outer_broker_start(dealpg4_outer_state *st)
+{
+    static unsigned char q_arena[DEALPG4_OUTER_WRITEQ_ARENA_BYTES];
+
+    st->broker_listen_fd = -1;
+    if (dealpg4_outer_broker_bind_path(st->socket_dir, st->outer_nonce,
+                                       st->broker_path,
+                                       sizeof st->broker_path,
+                                       &st->broker_listen_fd) != 0)
+        return -1;
+    st->broker_path_computed = 1;
+    st->broker_created = 1;
+    st->broker_closed = 1; /* no connection open yet */
+    st->broker_state = DEALPG4_OUTER_BROKER_AWAIT_HELLO;
+    dealpg4_expectation_set_init(&st->broker_expected);
+    dealpg4_expectation_set_add(&st->broker_expected, DEALPG4_REC_HELLO);
+    dealpg4_outer_writeq_init(&st->broker_q, -1, q_arena, sizeof q_arena);
+    if (st->nwriteqs < DEALPG4_OUTER_MAX_WRITEQ_HOPS) {
+        st->writeqs[st->nwriteqs] = &st->broker_q;
+        st->nwriteqs++;
+    }
+    st->broker_rbuf_len = 0;
     return 0;
 }
 
@@ -1431,7 +2005,17 @@ static void dealpg4_outer_proof_pass(dealpg4_outer_state *st)
         st->proof_streams_eof = 1; /* vacuous (nothing was forked) */
     }
     dealpg4_outer_scan_proc(st, now);
-    st->proof_broker_clean = 1;  /* vacuous until the broker child */
+    /* (f) the broker connection closed and the socket path unlinked
+     * (parent D8): the unlink runs during final cleanup, once the
+     * channel is closed — a second connection attempt then finds no
+     * rendezvous path. */
+    if (st->broker_path_computed && st->broker_closed
+        && !st->broker_socket_unlinked) {
+        if (unlink(st->broker_path) == 0 || errno == ENOENT)
+            st->broker_socket_unlinked = 1;
+    }
+    st->proof_broker_clean = st->broker_closed
+                             && st->broker_socket_unlinked;
     st->proof_registry_clean = (st->records_live == 0);
 
     clean = st->proof_reap_echild && st->proof_adopted_clean
@@ -1474,6 +2058,8 @@ static int64_t dealpg4_outer_next_deadline(dealpg4_outer_state *st)
     if (st->proof_active && st->proof_next_pass_ms > 0
         && st->proof_next_pass_ms < d)
         d = st->proof_next_pass_ms;
+    if (st->stall_armed && st->stall_deadline_ms < d)
+        d = st->stall_deadline_ms;
     return d;
 }
 
@@ -1560,6 +2146,40 @@ static void dealpg4_outer_evaluate(dealpg4_outer_state *st)
     if (st->escalation_active && !st->escalation_kill_issued
         && now >= st->escalation_kill_ms)
         dealpg4_outer_escalation_kill(st);
+
+    /* Broker stall rule (D5): the stall deadline arms at
+     * now + brokerStallMs while relay data is pending and POLLOUT is
+     * not ready (the most recent flush hit EAGAIN), and disarms
+     * whenever the relay queue drains. Firing with data still pending
+     * is BROKER_STALLED: the D7 total-cancel marking is vacuous at
+     * this stage (no live records), the undelivered queue is dropped,
+     * the broker closes, and the D8 escalation terminates the
+     * coordinator (the escalation begins immediately — the
+     * coordinator stopped reading the broker). */
+    if (st->stall_armed) {
+        if (dealpg4_outer_writeq_empty(&st->broker_q)) {
+            st->stall_armed = 0; /* the queue drained */
+            st->broker_q_eagain = 0;
+        }
+    } else if (!st->stall_fired && !dealpg4_outer_writeq_empty(&st->broker_q)
+               && st->broker_q_eagain) {
+        st->stall_armed = 1;
+        st->stall_ever_armed = 1;
+        st->stall_arm_ms = now;
+        st->stall_deadline_ms = now + st->limits->brokerStallMs;
+    }
+    if (st->stall_armed && now >= st->stall_deadline_ms) {
+        st->stall_armed = 0;
+        if (!dealpg4_outer_writeq_empty(&st->broker_q)) {
+            st->stall_fired = 1;
+            dealpg4_outer_gate_token(st, "BROKER_STALLED");
+            dealpg4_outer_writeq_clear(&st->broker_q);
+            st->broker_q_eagain = 0;
+            dealpg4_outer_broker_close(st);
+            if (!st->coordinator_reaped && !st->escalation_active)
+                dealpg4_outer_begin_escalation(st, st->ready_verified);
+        }
+    }
 
     /* The pinned escalation trigger (D5): the D8 escalation runs only
      * at totalDeadline - killAndProofReserveMs and only when the
@@ -1697,6 +2317,18 @@ static void dealpg4_outer_loop(dealpg4_outer_state *st)
             pfds[n].revents = 0;
             n++;
         }
+        if (st->broker_listen_fd >= 0) {
+            pfds[n].fd = st->broker_listen_fd;
+            pfds[n].events = POLLIN | POLLERR;
+            pfds[n].revents = 0;
+            n++;
+        }
+        if (st->broker_conn_fd >= 0) {
+            pfds[n].fd = st->broker_conn_fd;
+            pfds[n].events = POLLIN | POLLHUP;
+            pfds[n].revents = 0;
+            n++;
+        }
         /* The first writeq POLLOUT slot index, captured before the
          * slots are appended (the fixed fds precede them). */
         nfixed = n;
@@ -1766,6 +2398,16 @@ static void dealpg4_outer_loop(dealpg4_outer_state *st)
                                              &st->drain_err);
                 k++;
             }
+            if (st->broker_listen_fd >= 0) {
+                if (pfds[k].revents & (POLLIN | POLLHUP | POLLERR))
+                    dealpg4_outer_broker_accept(st);
+                k++;
+            }
+            if (st->broker_conn_fd >= 0) {
+                if (pfds[k].revents & (POLLIN | POLLHUP | POLLERR))
+                    dealpg4_outer_broker_read(st);
+                k++;
+            }
         }
         {
             size_t dropped[DEALPG4_OUTER_MAX_WRITEQ_HOPS];
@@ -1780,11 +2422,22 @@ static void dealpg4_outer_loop(dealpg4_outer_state *st)
                 if (dealpg4_outer_writeq_empty(st->writeqs[i]))
                     continue;
                 if (pfds[qi].revents & POLLOUT) {
-                    if (dealpg4_outer_writeq_flush(st->writeqs[i]) < 0) {
+                    int is_broker = (st->writeqs[i] == &st->broker_q);
+                    int rc = is_broker
+                                 ? dealpg4_outer_broker_flush(st)
+                                 : dealpg4_outer_writeq_flush(
+                                       st->writeqs[i]);
+
+                    if (rc < 0) {
                         /* Hop loss (EPIPE/error): the queue leaves
                          * the poll set; the record fallback lands
-                         * with the channel children. */
+                         * with the channel children. A lost broker
+                         * write hop closes the broker (the D8
+                         * discrimination then owns the coordinator
+                         * reap). */
                         dealpg4_outer_writeq_clear(st->writeqs[i]);
+                        if (is_broker)
+                            dealpg4_outer_broker_close(st);
                         if (ndropped < DEALPG4_OUTER_MAX_WRITEQ_HOPS)
                             dropped[ndropped++] = i;
                     }
@@ -1961,6 +2614,25 @@ static void dealpg4_outer_copy_view(dealpg4_outer_state *st, int status)
     v.proof_broker_clean = st->proof_broker_clean;
     v.proof_registry_clean = st->proof_registry_clean;
     v.shell_lost = st->shell_lost;
+
+    v.broker_created = st->broker_created;
+    v.broker_conn_accepted = st->broker_accepted_any;
+    v.broker_peer_verified = st->broker_peer_verified;
+    v.broker_hello_ok_sent = st->broker_hello_ok_sent;
+    v.broker_ready_acked = st->broker_ready_acked;
+    v.broker_state = st->broker_state;
+    v.broker_closed = st->broker_closed;
+    v.broker_eof = st->broker_eof;
+    v.broker_socket_unlinked = st->broker_socket_unlinked;
+    v.broker_conns_rejected = st->broker_conns_rejected;
+    v.broker_stall_armed = st->stall_ever_armed;
+    v.broker_stall_fired = st->stall_fired;
+    v.broker_stall_arm_ms = st->stall_ever_armed
+                                ? st->stall_arm_ms - st->t0o
+                                : 0;
+    v.broker_stall_deadline_ms = st->stall_ever_armed
+                                     ? st->stall_deadline_ms - st->t0o
+                                     : 0;
     v.coord_stdout_bytes = st->drain_out.total_read;
     v.coord_stderr_bytes = st->drain_err.total_read;
     v.coord_stdout_truncated = st->drain_out.truncated;
@@ -2004,6 +2676,17 @@ static void dealpg4_outer_close_fds(dealpg4_outer_state *st)
         close(st->coord_err_fd);
         st->coord_err_fd = -1;
     }
+    if (st->broker_conn_fd >= 0) {
+        close(st->broker_conn_fd);
+        st->broker_conn_fd = -1;
+    }
+    if (st->broker_listen_fd >= 0) {
+        close(st->broker_listen_fd);
+        st->broker_listen_fd = -1;
+    }
+    if (st->broker_path_computed && !st->broker_socket_unlinked)
+        st->broker_socket_unlinked = (unlink(st->broker_path) == 0
+                                      || errno == ENOENT);
     if (st->sig_fd >= 0) {
         close(st->sig_fd);
         st->sig_fd = -1;
@@ -2041,6 +2724,8 @@ int dealpg4_outer_core(const OuterLimits *limits,
     st.ready_pipe_rd = -1;
     st.coord_out_fd = -1;
     st.coord_err_fd = -1;
+    st.broker_listen_fd = -1;
+    st.broker_conn_fd = -1;
 
     /* Fail-closed core-entry validation, before any fork/socket/
      * channel (D2). The mode entry validates the same shapes on its
@@ -2098,11 +2783,29 @@ int dealpg4_outer_core(const OuterLimits *limits,
     if (st.escalation_deadline < st.dl.readinessDeadline)
         st.escalation_deadline = st.dl.readinessDeadline;
 
-    /* Coordinator start (D1): pipes + fork + pre-exec bootstrap. A
-     * pipe failure (injected via FI_OUTER_PIPE or real) fails closed
-     * with no fork — the unverified-group discharge holds trivially
-     * (nothing was ever forked) and the final proof runs. */
-    if (dealpg4_outer_start_coordinator(&st) != 0) {
+    /* Broker socket (D5): the real socket mechanics (0700 dir, stale
+     * unlink, 0600 bind, listen) before the coordinator fork — the
+     * coordinator child receives the derived path via
+     * DEALPG4_BROKER_PATH. A setup failure (injected via
+     * FI_OUTER_BIND or real) is fail-closed with no fork: the
+     * BROKER_BIND_FAILED token, the unverified-group discharge holds
+     * trivially (nothing was ever forked), and the final proof runs. */
+    if (dealpg4_outer_broker_start(&st) != 0) {
+        st.startup_failed = 1;
+        st.ready_resolved = 1;
+        st.broker_closed = 1;
+        st.broker_socket_unlinked = 1; /* nothing was created, or the
+                                          failed setup unlinked its
+                                          half-created path */
+        dealpg4_outer_gate_token(&st, "BROKER_BIND_FAILED");
+        st.proof_active = 1;
+        st.proof_next_pass_ms = st.t0o;
+    } else if (dealpg4_outer_start_coordinator(&st) != 0) {
+        /* Coordinator start (D1): pipes + fork + pre-exec bootstrap.
+         * A pipe failure (injected via FI_OUTER_PIPE or real) fails
+         * closed with no fork — the unverified-group discharge holds
+         * trivially (nothing was ever forked) and the final proof
+         * runs. */
         st.startup_failed = 1;
         st.ready_resolved = 1;
         dealpg4_outer_gate_token(&st, "COORDINATOR_STARTUP_FAILED");
