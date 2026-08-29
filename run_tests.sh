@@ -159,8 +159,52 @@ fi
 echo "  Migration gate scans pass (no legacy record, no legacy references, no production defect-note creation)."
 
 # =========================================================================
-# Run all tests
+# Run all tests.
+#
+# The five heavy suites (backend conformance, JVM backend, the JUnit
+# ABI/typing suite, and the two conformance runners) are independent:
+# each confines its generated artifacts and subprocess work to its own
+# PID-unique temp directories and reads the shared fixture/stdlib trees
+# read-only. They run concurrently in the background while the remaining
+# phases run sequentially in the foreground, so the whole gate fits its
+# wall-clock budget even on a loaded machine. Each background suite is
+# waited on before the final verdict; any background failure fails the
+# gate exactly like a foreground failure.
 # =========================================================================
+BACKGROUND_PIDS=""
+
+launch_background() {
+  "$@" &
+  BACKGROUND_PIDS="$BACKGROUND_PIDS $!"
+}
+
+cleanup_background() {
+  # shellcheck disable=SC2086
+  if [ -n "$BACKGROUND_PIDS" ]; then
+    kill $BACKGROUND_PIDS 2>/dev/null || true
+  fi
+}
+trap cleanup_background EXIT
+
+echo ""
+echo "=== Launching Backend Conformance Tests (background) ==="
+launch_background java -ea -cp build deal.test.BackendConformanceTest
+
+echo ""
+echo "=== Launching JVM Backend Tests (background) ==="
+launch_background java -ea -cp build deal.test.JvmBackendTest
+
+echo ""
+echo "=== Launching Lua ABI Unit Tests (background; JUnit4 + Hamcrest) ==="
+launch_background java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.LuaAbiTest deal.test.LuaAbiBackendTest deal.test.CrossModuleTypingTest
+
+echo ""
+echo "=== Launching Conformance Tests (background) ==="
+launch_background java -ea -cp build deal.test.ConformanceTest test/conformance/
+
+echo ""
+echo "=== Launching JVM Conformance Tests (background; ISSUE-0102 origin — ISSUE-0168 capability accounting) ==="
+launch_background java -ea -cp build deal.test.JvmConformanceTest test/conformance/
 
 echo ""
 echo "=== Running ContainedProcessBroker Framing Tests ==="
@@ -295,14 +339,6 @@ echo "=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310/0311) ==="
 java -ea -cp build deal.test.CanonicalRuntimeTypeDescriptorTest
 
 echo ""
-echo "=== Running Backend Conformance Tests ==="
-java -ea -cp build deal.test.BackendConformanceTest
-
-echo ""
-echo "=== Running JVM Backend Tests ==="
-java -ea -cp build deal.test.JvmBackendTest
-
-echo ""
 echo "=== Running JS Backend Unit Tests ==="
 java -ea -cp build deal.test.JsBackendTest
 
@@ -317,10 +353,6 @@ java -ea -cp build deal.test.LuaBackendTest
 echo ""
 echo "=== Running Lua Backend Integration Tests ==="
 java -ea -cp build deal.test.LuaBackendIntegrationTest
-
-echo ""
-echo "=== Running Lua ABI Unit Tests (JUnit4 + Hamcrest) ==="
-java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.LuaAbiTest deal.test.LuaAbiBackendTest deal.test.CrossModuleTypingTest
 
 echo ""
 echo "=== Running Module System Tests ==="
@@ -406,12 +438,18 @@ fi
 rm -f "$TEMP_FILE"
 
 echo ""
-echo "=== Running Conformance Tests ==="
-java -ea -cp build deal.test.ConformanceTest test/conformance/
-
-echo ""
-echo ""
-echo "=== Running JVM Conformance Tests (ISSUE-0102 origin — ISSUE-0168 capability accounting) ==="
-java -ea -cp build deal.test.JvmConformanceTest test/conformance/
+echo "=== Waiting for background suites ==="
+BACKGROUND_FAILED=0
+# shellcheck disable=SC2086
+for pid in $BACKGROUND_PIDS; do
+  if ! wait "$pid"; then
+    BACKGROUND_FAILED=1
+  fi
+done
+if [ "$BACKGROUND_FAILED" -eq 1 ]; then
+  echo "=== A background test suite failed ===" >&2
+  exit 1
+fi
+trap - EXIT
 
 echo "=== All Tests Passed ==="
