@@ -1071,15 +1071,22 @@ public class CanonicalJsonTest {
             "exactly the six pinned production components serialize canonical JSON: "
                 + filesContaining("deal/semantic", "CanonicalJson.serializeBytes("));
 
-        // The pre-existing hash/parse sites elsewhere in the compiler are
-        // untouched (they are not canonical JSON: source parsing, path
-        // hashing, and their own test helper).
+        // The compiler-wide SHA-256 sites form a closed registry: the
+        // project path/deployment-digest facility (ProjectLocator, T4),
+        // the module identity-digest facility (deal.module.IdentityDigests,
+        // ISSUE-0267 T6 — deploymentModuleId and providerContractDigest
+        // domains), and the single canonical facility (CanonicalJson) —
+        // plus each facility's test helper. Any other SHA-256 site
+        // violates the single-implementation discipline.
         check(filesContaining("deal", "MessageDigest").equals(
-                List.of("deal/project/ProjectLocator.java",
+                List.of("deal/module/IdentityDigests.java",
+                    "deal/module/SourceModuleResolverTest.java",
+                    "deal/project/ProjectLocator.java",
                     "deal/project/ProjectLocatorTest.java",
                     "deal/semantic/ir/CanonicalJson.java")),
-            "the only SHA-256 sites in the compiler are the pre-existing path facility "
-                + "and the single canonical facility: " + filesContaining("deal", "MessageDigest"));
+            "the only SHA-256 sites in the compiler are the pinned digest facilities "
+                + "(project path/identity, module identity, canonical) and their test "
+                + "helpers: " + filesContaining("deal", "MessageDigest"));
     }
 
     // =========================================================================

@@ -225,7 +225,6 @@ public final class ModuleIdentityResolver {
     public static ModuleClassification classify(ProjectContext context,
                                                 String canonicalSourceUri) {
         Objects.requireNonNull(context, "context");
-        Objects.requireNonNull(canonicalSourceUri, "canonicalSourceUri");
 
         Path sourcePath = sourcePathOf(canonicalSourceUri);
 
@@ -284,6 +283,9 @@ public final class ModuleIdentityResolver {
      * (defensive totality for inputs outside the pinned domain).
      */
     private static Path sourcePathOf(String canonicalSourceUri) {
+        if (canonicalSourceUri == null) {
+            return null; // totality: a null URI is no identity
+        }
         URI uri;
         try {
             uri = URI.create(canonicalSourceUri);
