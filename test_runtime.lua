@@ -911,6 +911,418 @@ test("deep copy: nested tables are independent", function()
   assert(b.data.x.y == 1)
 end)
 
+-- ==================== class_plan_ tests (runtime page D4) ====================
+
+test("class_plan_ basic construction tags and publishes", function()
+  local plan = {
+    { name = "name", descriptor = "string", optional = false, evaluator = function() return "" end },
+    { name = "nick", descriptor = "string", optional = true },
+  }
+  local u = __rt.class_plan_("@mod/User", plan, { name = "Ada" }, "f.deal", 3, 5)
+  assert(u.name == "Ada")
+  assert(u.nick == nil)
+  assert(u.__kind == "class")
+  assert(u.__classname == "@mod/User")
+end)
+
+test("class_plan_ omitted required default evaluates exactly once per attempt", function()
+  local calls = 0
+  local plan = {
+    { name = "id", descriptor = "int", optional = false, evaluator = function() calls = calls + 1 return 7 end },
+    { name = "nick", descriptor = "string", optional = true },
+  }
+  local u = __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
+  assert(u.id == 7)
+  assert(calls == 1)
+  local v = __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
+  assert(v.id == 7)
+  assert(calls == 2)
+end)
+
+test("class_plan_ provided field suppresses its evaluator", function()
+  local calls = 0
+  local plan = {
+    { name = "id", descriptor = "int", optional = false, evaluator = function() calls = calls + 1 return 7 end },
+  }
+  local u = __rt.class_plan_("C", plan, { id = 42 }, "f.deal", 1, 1)
+  assert(u.id == 42)
+  assert(calls == 0)
+end)
+
+test("class_plan_ extra provided field raises E8007 with zero default evaluation", function()
+  local calls = 0
+  local plan = {
+    { name = "id", descriptor = "int", optional = false, evaluator = function() calls = calls + 1 return 7 end },
+  }
+  local err = assert_error(function()
+    __rt.class_plan_("C", plan, { extra = 1 }, "f.deal", 4, 9)
+  end, "E8007")
+  assert(calls == 0)
+  assert(string.find(err.message, "extra") ~= nil)
+  assert(string.find(err.message, "C") ~= nil)
+  assert(err.file == "f.deal" and err.line == 4 and err.column == 9)
+end)
+
+test("class_plan_ omitted defaults run in class source order", function()
+  local log = {}
+  local function mk(name)
+    return function() log[#log + 1] = name return 0 end
+  end
+  local plan = {
+    { name = "a", descriptor = "int", optional = false, evaluator = mk("a") },
+    { name = "b", descriptor = "int", optional = false, evaluator = mk("b") },
+    { name = "c", descriptor = "int", optional = true },
+  }
+  __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
+  assert(#log == 2 and log[1] == "a" and log[2] == "b")
+end)
+
+test("class_plan_ optional omissions stay absent", function()
+  local plan = {
+    { name = "a", descriptor = "int", optional = false, evaluator = function() return 0 end },
+    { name = "b", descriptor = "int", optional = true },
+    { name = "c", descriptor = "int", optional = true },
+  }
+  local u = __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
+  assert(u.b == nil)
+  assert(u.c == nil)
+  assert(__rt.has(u, "b") == false)
+end)
+
+test("class_plan_ evaluator results are retained by reference", function()
+  local shared = { 1, 2 }
+  local plan = {
+    { name = "items", descriptor = "[int]", optional = false, evaluator = function() return shared end },
+  }
+  local u = __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
+  assert(u.items == shared)
+end)
+
+test("class_plan_ per-attempt typed mutable literals are freshly constructed by the evaluator", function()
+  local plan = {
+    { name = "items", descriptor = "[int]", optional = false, evaluator = function() return { 1 } end },
+  }
+  local a = __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
+  local b = __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
+  assert(a.items ~= b.items)
+  a.items[1] = 99
+  assert(b.items[1] == 1)
+end)
+
+test("class_plan_ phase 3 validates provided fields through the canonical matcher", function()
+  local plan = {
+    { name = "id", descriptor = "int", optional = false, evaluator = function() return 0 end },
+  }
+  local err = assert_error(function()
+    __rt.class_plan_("C", plan, { id = "not-an-int" }, "f.deal", 2, 3)
+  end, "E8001")
+  assert(err.file == "f.deal" and err.line == 2 and err.column == 3)
+end)
+
+test("class_plan_ phase 3 validates evaluated defaults through the canonical matcher", function()
+  local plan = {
+    { name = "id", descriptor = "int", optional = false, evaluator = function() return "bad" end },
+  }
+  assert_error(function()
+    __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
+  end, "E8001")
+end)
+
+test("class_plan_ defaults run even when a provided field is invalid (phases 1-3 order)", function()
+  local calls = 0
+  local plan = {
+    { name = "bad", descriptor = "int", optional = false, evaluator = function() return 1 end },
+    { name = "good", descriptor = "int", optional = false, evaluator = function() calls = calls + 1 return 2 end },
+  }
+  assert_error(function()
+    __rt.class_plan_("C", plan, { bad = "nope" }, "f.deal", 1, 1)
+  end, "E8001")
+  assert(calls == 1)
+end)
+
+test("class_plan_ failure publishes no instance", function()
+  local published = false
+  local plan = {
+    { name = "id", descriptor = "int", optional = false, evaluator = function() return 1 end },
+  }
+  local ok, inst = pcall(__rt.class_plan_, "C", plan, { id = "x" }, "f.deal", 1, 1)
+  assert(ok == false)
+  assert(type(inst) ~= "table" or inst.__kind ~= "class")
+end)
+
+test("class_plan_ evaluator-raised DEAL errors propagate unchanged", function()
+  local plan = {
+    { name = "id", descriptor = "int", optional = false,
+      evaluator = function() error(__rt._err("E8004", "boom", "inner.deal", 9, 4, nil, nil)) end },
+  }
+  local err = assert_error(function()
+    __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
+  end, "E8004")
+  assert(err.message == "boom")
+  assert(err.file == "inner.deal" and err.line == 9 and err.column == 4)
+end)
+
+test("class_plan_ rejects legacy dialect descriptors through the canonical matcher", function()
+  local plan = {
+    { name = "xs", descriptor = "int[]", optional = false, evaluator = function() return { 1 } end },
+  }
+  assert_error(function()
+    __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
+  end, "E8001")
+end)
+
+test("class_plan_ supports bytes fields through the canonical matcher", function()
+  local plan = {
+    { name = "b", descriptor = "bytes", optional = false, evaluator = function() return __rt.bytes_new(2) end },
+  }
+  local u = __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
+  assert(u.b.__kind == "bytes")
+  assert(__rt.bytes_length(u.b) == 2)
+  assert_error(function()
+    __rt.class_plan_("C", plan, { b = "nope" }, "f.deal", 1, 1)
+  end, "E8001")
+end)
+
+test("class_plan_ int fields normalize -0 to 0 through the canonical matcher", function()
+  local plan = {
+    { name = "x", descriptor = "int", optional = false, evaluator = function() return 0 end },
+  }
+  local u = __rt.class_plan_("C", plan, { x = -0.0 }, "f.deal", 1, 1)
+  assert(u.x == 0)
+  assert(1 / u.x == math.huge)
+end)
+
+test("class_plan_ int fields raise E8004 out of range through the canonical matcher", function()
+  local plan = {
+    { name = "x", descriptor = "int", optional = false, evaluator = function() return 0 end },
+  }
+  assert_error(function()
+    __rt.class_plan_("C", plan, { x = 2147483648 }, "f.deal", 1, 1)
+  end, "E8004")
+end)
+
+test("class_plan_ nullable fields accept explicit null", function()
+  local plan = {
+    { name = "v", descriptor = "?string", optional = true },
+  }
+  local u = __rt.class_plan_("C", plan, { v = __rt.__NULL }, "f.deal", 1, 1)
+  assert(u.v == __rt.__NULL)
+  assert(__rt.has(u, "v") == true)
+end)
+
+test("class_plan_ explicit null on a non-nullable field fails validation", function()
+  local plan = {
+    { name = "v", descriptor = "string", optional = false, evaluator = function() return "" end },
+  }
+  assert_error(function()
+    __rt.class_plan_("C", plan, { v = __rt.__NULL }, "f.deal", 1, 1)
+  end, "E8001")
+end)
+
+test("class_plan_ array fields validate elements through the canonical matcher", function()
+  local plan = {
+    { name = "xs", descriptor = "[int]", optional = false, evaluator = function() return { 1, 2 } end },
+  }
+  local u = __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
+  assert(u.xs[1] == 1 and u.xs[2] == 2)
+  assert_error(function()
+    __rt.class_plan_("C", plan, { xs = { 1, "x" } }, "f.deal", 1, 1)
+  end, "E8003")
+end)
+
+test("class_plan_ function fields compare signatures byte-for-byte", function()
+  local plan = {
+    { name = "f", descriptor = "(int)->int", optional = false,
+      evaluator = function() return __rt.function_("(int)->int", function(x) return x end) end },
+  }
+  local u = __rt.class_plan_("C", plan, {}, "f.deal", 1, 1)
+  assert(u.f.__kind == "function")
+  assert_error(function()
+    __rt.class_plan_("C", plan, { f = __rt.function_("(string)->int", function() return 1 end) },
+      "f.deal", 1, 1)
+  end, "E8010")
+end)
+
+test("class_plan_ malformed plan shapes raise E8001", function()
+  assert_error(function() __rt.class_plan_("C", "not-a-table", {}, "f.deal", 1, 1) end, "E8001")
+  assert_error(function() __rt.class_plan_("C", { "x" }, {}, "f.deal", 1, 1) end, "E8001")
+  assert_error(function() __rt.class_plan_("C", { { name = 1, descriptor = "int", optional = false } }, {}, "f.deal", 1, 1) end, "E8001")
+  assert_error(function() __rt.class_plan_("C", { { name = "x", descriptor = 2, optional = false } }, {}, "f.deal", 1, 1) end, "E8001")
+  assert_error(function() __rt.class_plan_("C", { { name = "x", descriptor = "int", optional = "yes" } }, {}, "f.deal", 1, 1) end, "E8001")
+  assert_error(function() __rt.class_plan_("C", { { name = "x", descriptor = "int", optional = false, evaluator = 3 } }, {}, "f.deal", 1, 1) end, "E8001")
+  assert_error(function()
+    __rt.class_plan_("C", {
+      { name = "x", descriptor = "int", optional = false },
+      { name = "x", descriptor = "int", optional = false },
+    }, {}, "f.deal", 1, 1)
+  end, "E8001")
+end)
+
+test("class_plan_ non-table provided raises E8001", function()
+  local plan = { { name = "x", descriptor = "int", optional = false, evaluator = function() return 0 end } }
+  assert_error(function()
+    __rt.class_plan_("C", plan, 42, "f.deal", 1, 1)
+  end, "E8001")
+end)
+
+test("class_plan_ nil provided treats as empty", function()
+  local plan = { { name = "x", descriptor = "int", optional = false, evaluator = function() return 5 end } }
+  local u = __rt.class_plan_("C", plan, nil, "f.deal", 1, 1)
+  assert(u.x == 5)
+end)
+
+-- ==================== json_from_plan tests (runtime page D4) ====================
+
+local function int_plan()
+  return {
+    { name = "id", descriptor = "int", optional = false, evaluator = function() return 0 end },
+    { name = "name", descriptor = "string", optional = false, evaluator = function() return "anon" end },
+    { name = "nick", descriptor = "string", optional = true },
+  }
+end
+
+test("json_from_plan decodes provided fields, evaluates omitted defaults, and tags", function()
+  local calls = 0
+  local plan = {
+    { name = "id", descriptor = "int", optional = false, evaluator = function() calls = calls + 1 return 7 end },
+    { name = "name", descriptor = "string", optional = false, evaluator = function() return "anon" end },
+    { name = "nick", descriptor = "string", optional = true },
+  }
+  local u = __rt.json_from_plan("@mod/User", plan, { id = 42 }, "f.deal", 1, 1)
+  assert(u ~= nil)
+  assert(u.id == 42)
+  assert(u.name == "anon")
+  assert(u.nick == nil)
+  assert(u.__kind == "class")
+  assert(u.__classname == "@mod/User")
+  assert(calls == 0)
+end)
+
+test("json_from_plan provided-value failure returns nil and runs no defaults", function()
+  local calls = 0
+  local plan = {
+    { name = "id", descriptor = "int", optional = false, evaluator = function() calls = calls + 1 return 7 end },
+    { name = "name", descriptor = "string", optional = false, evaluator = function() return "anon" end },
+  }
+  local u = __rt.json_from_plan("C", plan, { id = "bad" }, "f.deal", 1, 1)
+  assert(u == nil)
+  assert(calls == 0)
+end)
+
+test("json_from_plan extra keys return nil", function()
+  local u = __rt.json_from_plan("C", int_plan(), { id = 1, extra = true }, "f.deal", 1, 1)
+  assert(u == nil)
+end)
+
+test("json_from_plan non-table parsed input returns nil", function()
+  local plan = int_plan()
+  assert(__rt.json_from_plan("C", plan, 42, "f.deal", 1, 1) == nil)
+  assert(__rt.json_from_plan("C", plan, "x", "f.deal", 1, 1) == nil)
+  assert(__rt.json_from_plan("C", plan, true, "f.deal", 1, 1) == nil)
+  assert(__rt.json_from_plan("C", plan, nil, "f.deal", 1, 1) == nil)
+end)
+
+test("json_from_plan parsed __NULL returns nil", function()
+  assert(__rt.json_from_plan("C", int_plan(), __rt.__NULL, "f.deal", 1, 1) == nil)
+end)
+
+test("json_from_plan non-empty array-shaped input returns nil", function()
+  assert(__rt.json_from_plan("C", int_plan(), { 1, 2 }, "f.deal", 1, 1) == nil)
+end)
+
+test("json_from_plan empty parsed input decodes the defaulted instance", function()
+  -- In the Lua value model the {} and [] parse collapse is invisible
+  -- (both parse to one empty table), so the decoded instance is the
+  -- defaulted one either way.
+  local u = __rt.json_from_plan("C", int_plan(), {}, "f.deal", 1, 1)
+  assert(u ~= nil and u.id == 0 and u.name == "anon" and u.nick == nil)
+end)
+
+test("json_from_plan evaluator failure returns nil", function()
+  local plan = {
+    { name = "id", descriptor = "int", optional = false,
+      evaluator = function() error(__rt._err("E8004", "boom", "inner.deal", 2, 2, nil, nil)) end },
+  }
+  local u = __rt.json_from_plan("C", plan, {}, "f.deal", 1, 1)
+  assert(u == nil)
+end)
+
+test("json_from_plan evaluator result failing final validation returns nil", function()
+  local plan = {
+    { name = "id", descriptor = "int", optional = false, evaluator = function() return "bad" end },
+  }
+  local u = __rt.json_from_plan("C", plan, {}, "f.deal", 1, 1)
+  assert(u == nil)
+end)
+
+test("json_from_plan provided __NULL on nullable field is present null", function()
+  local plan = {
+    { name = "v", descriptor = "?string", optional = true },
+  }
+  local u = __rt.json_from_plan("C", plan, { v = __rt.__NULL }, "f.deal", 1, 1)
+  assert(u ~= nil)
+  assert(u.v == __rt.__NULL)
+end)
+
+test("json_from_plan provided __NULL on non-nullable field returns nil", function()
+  local plan = {
+    { name = "v", descriptor = "string", optional = false, evaluator = function() return "" end },
+  }
+  assert(__rt.json_from_plan("C", plan, { v = __rt.__NULL }, "f.deal", 1, 1) == nil)
+end)
+
+test("json_from_plan int range validation returns nil (E8004 inside the matcher)", function()
+  local plan = {
+    { name = "x", descriptor = "int", optional = false, evaluator = function() return 0 end },
+  }
+  assert(__rt.json_from_plan("C", plan, { x = 2147483648 }, "f.deal", 1, 1) == nil)
+end)
+
+test("json_from_plan int fields normalize -0 to 0", function()
+  local plan = {
+    { name = "x", descriptor = "int", optional = false, evaluator = function() return 0 end },
+  }
+  local u = __rt.json_from_plan("C", plan, { x = -0.0 }, "f.deal", 1, 1)
+  assert(u ~= nil and u.x == 0 and 1 / u.x == math.huge)
+end)
+
+test("json_from_plan rejects legacy dialect descriptors through the canonical matcher", function()
+  local plan = {
+    { name = "xs", descriptor = "int[]", optional = false, evaluator = function() return { 1 } end },
+  }
+  assert(__rt.json_from_plan("C", plan, {}, "f.deal", 1, 1) == nil)
+end)
+
+test("json_from_plan array fields validate element-wise", function()
+  local plan = {
+    { name = "xs", descriptor = "[int]", optional = false, evaluator = function() return { 1, 2 } end },
+  }
+  local u = __rt.json_from_plan("C", plan, { xs = { 1, 2 } }, "f.deal", 1, 1)
+  assert(u ~= nil and u.xs[1] == 1 and u.xs[2] == 2)
+  assert(__rt.json_from_plan("C", plan, { xs = { 1, "x" } }, "f.deal", 1, 1) == nil)
+end)
+
+test("json_from_plan evaluator results are retained by reference and fresh per attempt", function()
+  local plan = {
+    { name = "items", descriptor = "[int]", optional = false, evaluator = function() return { 1 } end },
+  }
+  local a = __rt.json_from_plan("C", plan, {}, "f.deal", 1, 1)
+  local b = __rt.json_from_plan("C", plan, {}, "f.deal", 1, 1)
+  assert(a ~= nil and b ~= nil and a.items ~= b.items)
+  a.items[1] = 99
+  assert(b.items[1] == 1)
+end)
+
+test("json_from_plan malformed plan returns nil and never throws", function()
+  assert(__rt.json_from_plan("C", "not-a-table", {}, "f.deal", 1, 1) == nil)
+  assert(__rt.json_from_plan("C", { "x" }, {}, "f.deal", 1, 1) == nil)
+  assert(__rt.json_from_plan("C", { { name = 1, descriptor = "int", optional = false } }, {}, "f.deal", 1, 1) == nil)
+  assert(__rt.json_from_plan("C", {
+    { name = "x", descriptor = "int", optional = false },
+    { name = "x", descriptor = "int", optional = false },
+  }, {}, "f.deal", 1, 1) == nil)
+end)
+
 -- ==================== export_class tests ====================
 
 test("export_class returns correct shape", function()
@@ -2215,6 +2627,30 @@ test("load_host class export validates identity and copies defaults", function()
   assert(host.ServerConfig.__classname == "@host.cfg/ServerConfig")
   assert(type(host.ServerConfig_defaults) == "table")
   assert(host.ServerConfig_defaults.port == 80)
+end)
+
+test("load_host synthesizes no <C>_plan key and host classes keep the defaults-map seam", function()
+  local host = __rt.load_host(HOST_FIXTURE, {
+    ServerConfig = "@host.cfg/ServerConfig",
+  })
+  -- The loader copies META and <C>_defaults through and synthesizes
+  -- nothing else: no <C>_plan artifact ever exists on a host module
+  -- (runtime page D4 host seam re-contract).
+  assert(host.ServerConfig_plan == nil)
+  -- Construction through the preserved class_ defaults-map entry:
+  -- per-instance deep copies (the host's own defaults table is never
+  -- mutated or tagged), provided overlays stay instance-local, and
+  -- extra provided names still raise E8007.
+  local a = __rt.class_("@host.cfg/ServerConfig", host.ServerConfig_defaults, { port = 9000 })
+  local b = __rt.class_("@host.cfg/ServerConfig", host.ServerConfig_defaults, { port = 8080 })
+  assert(a.port == 9000)
+  assert(b.port == 8080)
+  assert(host.ServerConfig_defaults.port == 80)
+  assert(host.ServerConfig_defaults.__kind == nil)
+  assert(host.ServerConfig_defaults.__classname == nil)
+  assert_error(function()
+    __rt.class_("@host.cfg/ServerConfig", host.ServerConfig_defaults, { port = 1, extra = true })
+  end, "E8007")
 end)
 
 test("load_host class identity mismatch raises E8011", function()

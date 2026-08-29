@@ -1,0 +1,47 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: Host-declared class construction deep-copies the <C>_defaults table per attempt — the __MISSING removal and provided overlays on one instance never mutate the host defaults table, so two instances never share a default table and a later construction sees the pristine defaults.
+// @expected: runtime-ok
+// @features: modules, host-abi, classes
+
+import * as cfg from "host/cfg"
+
+export function test_host_class_default_isolation(): string {
+  // First instance omits the optional tags/note fields: construction
+  // removes their __MISSING defaults from this instance only. Were the
+  // defaults table shared, that removal (and the port overlay) would
+  // leak into the next construction, which provides both optional
+  // fields — and the second construction would raise E8007 instead of
+  // succeeding.
+  let a: cfg.ServerConfig = {
+    port: 9090,
+    endpoint: { path: "/first" },
+  };
+  let b: cfg.ServerConfig = {
+    port: 8080,
+    endpoint: { path: "/second" },
+    tags: ["two"],
+    note: null,
+  };
+  if (a.port !== 9090) {
+    throw { code: "TEST_FAIL", message: "first instance port mismatch" };
+  }
+  if (b.port !== 8080) {
+    throw { code: "TEST_FAIL", message: "default table shared across instances" };
+  }
+  let tags: string[] | null = b.tags;
+  if (tags !== null) {
+    if (tags[0] !== "two") {
+      throw { code: "TEST_FAIL", message: "second instance tag value mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "second instance optional field lost" };
+  }
+  if (b.note !== null) {
+    throw { code: "TEST_FAIL", message: "second instance nullable field mismatch" };
+  }
+  return "host class default isolation ok";
+}
+
+export function main(): null {
+  return null;
+}

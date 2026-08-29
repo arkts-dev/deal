@@ -139,8 +139,10 @@ public class SidecarCorpusValidationTest {
      * change: int32-boundary-parse and json-stringify-roundtrip; plus
      * the ISSUE-0397 I6 arithmetic/int32-mod-min-neg-one fixture — the
      * truncated remainder -2147483648 % -1 == 0 on all three lanes —
-     * added with its uniform sidecar in the same change). */
-    private static final int RUNTIME_OK_COUNT = 208;
+     * added with its uniform sidecar in the same change; plus the
+     * host-class-default-isolation fixture ISSUE-0334 added with its
+     * sidecar in the same change). */
+    private static final int RUNTIME_OK_COUNT = 209;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -166,9 +168,11 @@ public class SidecarCorpusValidationTest {
      * ISSUE-0397 I6 arithmetic pow-band fixtures — int32-pow-overflow
      * (2 ** 62 → E8004, the finite band) and int32-pow-infinity
      * (2 ** 1024 → E8001 infinity, the NaN/infinity-first band) — each
-     * added with its uniform three-backend sidecar in the same change).
+     * added with its uniform three-backend sidecar in the same change;
+     * plus the host-class-extra-field E8007 fixture ISSUE-0334 added
+     * with its sidecar in the same change).
      */
-    private static final int RUNTIME_ERROR_COUNT = 79;
+    private static final int RUNTIME_ERROR_COUNT = 80;
 
     /**
      * ISSUE-0397 count-pin criterion record (MR-0305 review cycles 1
@@ -202,6 +206,13 @@ public class SidecarCorpusValidationTest {
      * written 193/65 would deterministically fail the completeness
      * checks, and reverting the corpus to the written population would
      * revert unrelated merged sibling-issue work (out of scope).
+     *
+     * ISSUE-0334 lands on the amended 208/79 corpus and adds exactly
+     * two host-class fixtures with their sidecars in the same change:
+     * the runtime-ok host-class-default-isolation fixture (pins move
+     * 208 -> 209) and the runtime-error E8007 host-class-extra-field
+     * fixture (pins move 79 -> 80). The known-fail population stays
+     * empty. The pins below carry those ISSUE-0334 deltas.
      */
 
     /** The G4.6 lane error framing prefixes. */

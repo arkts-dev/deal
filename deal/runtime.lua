@@ -1326,6 +1326,115 @@ function __rt.class_(classname, defaults, provided, file, line, column)
   return instance
 end
 
+--- Fail-closed plan-shape validation shared by class_plan_ and
+-- json_from_plan (runtime page D4): the plan is the ordered field-entry
+-- list { {name=..., descriptor=..., optional=..., evaluator=...}, ... } in
+-- class source order. Returns the declared-name set on success, or nil
+-- plus a reason on failure. Never throws, never mutates. An entry must be
+-- a table with a string name, a string canonical descriptor, a boolean
+-- optional flag, and a nil-or-function evaluator; duplicate names are
+-- rejections.
+local function plan_declared_names(plan)
+  if type(plan) ~= "table" then
+    return nil, "class default plan must be a table"
+  end
+  local declared = {}
+  for _, entry in ipairs(plan) do
+    if type(entry) ~= "table" or type(entry.name) ~= "string"
+        or type(entry.descriptor) ~= "string"
+        or type(entry.optional) ~= "boolean"
+        or (entry.evaluator ~= nil and type(entry.evaluator) ~= "function") then
+      return nil, "malformed class default plan entry"
+    end
+    if declared[entry.name] then
+      return nil, "duplicate field in class default plan: '"
+        .. entry.name .. "'"
+    end
+    declared[entry.name] = true
+  end
+  return declared
+end
+
+--- Construct a compiler-class instance from a runtime default plan (RCP —
+-- runtime page D4; the runtime half of RuntimeClassDefaultPlan). The plan
+-- is the ordered field-entry list
+--   { {name=..., descriptor=..., optional=..., evaluator=function() ... end}, ... }
+-- in class source order, produced by the emitter's default-plan lowerer
+-- (emitter page D4). Evaluator closures are created at module load and
+-- never invoked there; the provided object literal already evaluated its
+-- field expressions left-to-right at the construction call site.
+--
+-- The four construction phases (deal-v1.2-int32-and-bytes-architecture D5):
+--   1. Provided fields copy into unpublished slots. An extra provided name
+--      raises E8007 immediately — no default evaluation and no field
+--      validation has run.
+--   2. Omitted required-present defaults invoke their evaluator() exactly
+--      once per attempt, in class source order. Optional omissions stay
+--      absent. Evaluator results are retained by reference — no generic
+--      deep copy (typed mutable literals are freshly constructed inside
+--      the generated evaluator; emitter-owned).
+--   3. Every present field validates against its canonical descriptor in
+--      class source order through check_canonical_type (RCP — the
+--      canonical matcher entry).
+--   4. Tag __classname = identity, __kind = "class", publish.
+--
+-- Failure publishes no instance (the slots are local and discarded);
+-- completed evaluator or native side effects are not rolled back; one
+-- attempt per construction with independent unpublished slots.
+--
+-- Errors: E8001 (malformed plan, non-table provided, field validation),
+-- E8007 (extra provided field), E8004 (int range via the canonical
+-- matcher); evaluator-raised DEAL errors propagate unchanged.
+function __rt.class_plan_(identity, plan, provided, file, line, column)
+  local declared, reason = plan_declared_names(plan)
+  if declared == nil then
+    error(__rt._err("E8001", reason, file, line, column, nil, nil))
+  end
+
+  -- Phase 1: provided fields into unpublished slots; an extra name raises
+  -- E8007 before any default evaluation or field validation runs.
+  local slots = {}
+  if provided ~= nil then
+    if type(provided) ~= "table" then
+      error(__rt._err("E8001", "class field values must be a table",
+        file, line, column, "table", type(provided)))
+    end
+    for k, v in pairs(provided) do
+      if not declared[k] then
+        error(__rt._err("E8007", "extra field '" .. tostring(k)
+          .. "' in class '" .. tostring(identity) .. "'",
+          file, line, column, nil, nil))
+      end
+      slots[k] = v
+    end
+  end
+
+  -- Phase 2: omitted required-present defaults invoke their evaluator()
+  -- exactly once per attempt, in class source order; optional omissions
+  -- stay absent.
+  for _, entry in ipairs(plan) do
+    if slots[entry.name] == nil and entry.evaluator ~= nil
+        and not entry.optional then
+      slots[entry.name] = entry.evaluator()
+    end
+  end
+
+  -- Phase 3: validate every present field against its canonical descriptor
+  -- in class source order (the canonical matcher entry).
+  for _, entry in ipairs(plan) do
+    local v = slots[entry.name]
+    if v ~= nil then
+      slots[entry.name] = __rt.check_canonical_type(
+        entry.descriptor, v, file, line, column)
+    end
+  end
+
+  -- Phase 4: tag and publish.
+  slots.__classname = identity
+  slots.__kind = "class"
+  return slots
+end
+
 --- Create a class export descriptor for module exports.
 function __rt.export_class(name)
   return { __kind = "class", __classname = name }
@@ -1708,6 +1817,95 @@ function __rt._json_validate_entry(entry, decode)
     return true
   end
   return false
+end
+
+--- Decode one already-parsed JSON object into a tagged compiler-class
+-- instance through the runtime default plan (runtime page D4). The
+-- generated C$fromJson wrapper parses the JSON text and maps a nil result
+-- to DEAL null. Never throws: every failure returns nil (parent D5: a
+-- parse, key, provided-value, evaluator, or final-validation failure
+-- returns DEAL null and publishes no instance). The phase order is the
+-- parent's C$fromJson order:
+--   1. top-level input gate — a non-table parsed value or the __NULL
+--      sentinel rejects;
+--   2. key gate — every parsed key must be a declared plan field name
+--      (extra/unknown keys and non-empty array-shaped input reject; the
+--      empty {} / [] parse collapse decodes the defaulted instance);
+--   3. provided-value validation in class source order through
+--      check_canonical_type — a failure returns nil immediately and no
+--      defaults run (a provided-value failure runs no defaults);
+--   4. omitted-default evaluation in class source order: omitted
+--      required-present defaults invoke their evaluator() exactly once per
+--      attempt under pcall — an evaluator failure returns nil;
+--   5. final validation — every present field re-checks against its
+--      canonical descriptor in class source order;
+--   6. tag __classname = identity, __kind = "class", publish.
+-- Optional omissions stay absent; evaluator results are retained by
+-- reference (no generic deep copy).
+function __rt.json_from_plan(identity, plan, parsed, file, line, column)
+  local declared = plan_declared_names(plan)
+  if declared == nil then
+    return nil
+  end
+  if type(parsed) ~= "table" then
+    return nil
+  end
+  if parsed == __rt.__NULL then
+    return nil
+  end
+  for k in pairs(parsed) do
+    if not declared[k] then
+      return nil
+    end
+  end
+
+  local slots = {}
+  local ok, checked
+
+  -- Provided-value validation in class source order; a failure returns
+  -- nil before any default evaluation (parent D5).
+  for _, entry in ipairs(plan) do
+    local raw = parsed[entry.name]
+    if raw ~= nil then
+      ok, checked = pcall(__rt.check_canonical_type,
+        entry.descriptor, raw, file, line, column)
+      if not ok then
+        return nil
+      end
+      slots[entry.name] = checked
+    end
+  end
+
+  -- Omitted-default evaluation, once per attempt, in class source order,
+  -- under pcall — an evaluator failure returns nil (completed evaluator
+  -- side effects are not rolled back).
+  for _, entry in ipairs(plan) do
+    if slots[entry.name] == nil and entry.evaluator ~= nil
+        and not entry.optional then
+      ok, checked = pcall(entry.evaluator)
+      if not ok then
+        return nil
+      end
+      slots[entry.name] = checked
+    end
+  end
+
+  -- Final validation of every present field in class source order.
+  for _, entry in ipairs(plan) do
+    local v = slots[entry.name]
+    if v ~= nil then
+      ok, checked = pcall(__rt.check_canonical_type,
+        entry.descriptor, v, file, line, column)
+      if not ok then
+        return nil
+      end
+      slots[entry.name] = checked
+    end
+  end
+
+  slots.__classname = identity
+  slots.__kind = "class"
+  return slots
 end
 
 --- Deserialize a parsed JSON table into a tagged class instance.

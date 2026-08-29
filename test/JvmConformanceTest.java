@@ -318,6 +318,14 @@ public class JvmConformanceTest {
             "host class exports unsupported on JVM: E3004 \"Unknown "
                 + "class 'Config'\" (same root cause).",
             "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-class-default-isolation.deal",
+            "host class exports unsupported on JVM: E3004 \"Unknown "
+                + "class 'ServerConfig'\" (same root cause as "
+                + "host-class-export).", "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-class-extra-field.deal",
+            "host class exports unsupported on JVM: E3004 \"Unknown "
+                + "class 'Config'\" (same root cause as "
+                + "host-export-presence).", "JVM-GAP-HOST-ABI-SHAPES");
         skip("backend-runtime/host-abi/host-prewrapped-ok.deal",
             "the Lua pre-wrapped export form (sig-annotated tables) is a "
                 + "LuaJIT host-loader mechanism with no JVM analog (no "
