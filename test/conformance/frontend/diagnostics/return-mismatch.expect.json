@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E5003",
+    "line": 7,
+    "column": 10,
+    "message": "Return type mismatch: expected int, got number"
+  }
+}
