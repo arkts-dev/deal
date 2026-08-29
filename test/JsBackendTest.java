@@ -90,7 +90,7 @@ public class JsBackendTest {
             testArrayElementDeleteEmission();
             testHostGlobalHygiene();
             testUnsupportedConstructsRejected();
-            testSourceMapWarningNoSidecars();
+            testSourceMapSidecarsEmitted();
             testIntArithmeticEdgeCodes();
             testNumModFloored();
             testScalarStringOps();
@@ -1152,8 +1152,8 @@ public class JsBackendTest {
         }
     }
 
-    private static void testSourceMapWarningNoSidecars() throws Exception {
-        System.out.println("-- Orchestrator: --source-map warning, no sidecars --");
+    private static void testSourceMapSidecarsEmitted() throws Exception {
+        System.out.println("-- Orchestrator: --source-map sidecars, warning retired --");
 
         writeFile("src/sm_main.deal",
             "export function main(): null { return null; }\n"
@@ -1177,17 +1177,30 @@ public class JsBackendTest {
             System.setErr(originalErr);
         }
         String stderrText = captured.toString(StandardCharsets.UTF_8);
-        check(stderrText.contains("Warning: --source-map produces no source-map "
-            + "sidecars with the JavaScript backend"),
-            "the explicit --source-map warning prints: " + stderrText);
-        boolean anySidecar = false;
-        try (var stream = Files.walk(outputDir)) {
-            anySidecar = stream.anyMatch(
-                p -> p.toString().endsWith(".deal.map.json"));
-        }
-        check(!anySidecar, "no .deal.map.json sidecars are produced");
+        check(!stderrText.contains("source-map"),
+            "the explicit --source-map run prints no warning (the warning "
+                + "retired): " + stderrText);
 
-        // Without the explicit flag, no warning fires.
+        // The explicit --source-map run writes one sidecar per clean
+        // module, next to the emitted artifact, in the spec format.
+        Path artifact = outputDir.resolve("sm_main.js");
+        Path sidecar = outputDir.resolve("sm_main.deal.map.json");
+        check(Files.exists(artifact), "the sm_main.js artifact is written");
+        check(Files.exists(sidecar),
+            "the .deal.map.json sidecar is written next to the artifact");
+        if (Files.exists(sidecar)) {
+            String json = Files.readString(sidecar);
+            check(json.contains("\"version\": 1"), "sidecar version is 1");
+            check(json.contains("\"source\": \"src/sm_main.deal\""),
+                "sidecar source is the project-relative .deal path: " + json);
+            check(json.contains("\"generated\": \"build/sm_js/sm_main.js\""),
+                "sidecar generated is the project-relative .js artifact "
+                    + "path: " + json);
+            check(json.contains("\"mappings\""), "sidecar carries mappings");
+        }
+
+        // Without the effective flag, no warning fires and no sidecar is
+        // written.
         Path outputDir2 = tmpDir.resolve("build/sm_js2");
         ByteArrayOutputStream captured2 = new ByteArrayOutputStream();
         try {
@@ -1205,6 +1218,8 @@ public class JsBackendTest {
         check(!captured2.toString(StandardCharsets.UTF_8).contains("source-map"),
             "no source-map warning without the explicit flag: "
                 + captured2.toString(StandardCharsets.UTF_8));
+        check(!Files.exists(outputDir2.resolve("sm_main.deal.map.json")),
+            "no .deal.map.json sidecar without the effective flag");
     }
 
     // =========================================================================

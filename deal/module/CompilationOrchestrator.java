@@ -3,6 +3,7 @@ package deal.module;
 import deal.ast.*;
 import deal.checker.*;
 import deal.codegen.Backend;
+import deal.codegen.SourceMapGenerator;
 import deal.codegen.jvm.JvmBackend;
 import deal.codegen.js.JsBackend;
 import deal.codegen.lua.LuaBackend;
@@ -1752,20 +1753,12 @@ public final class CompilationOrchestrator {
      * dot→slash artifact mapping is injective over the module-path
      * domain, so no class-name-collision gate is needed (unlike
      * codegenAllJvm's). The deployment copies run unconditionally at the
-     * end of phase 4 (Lua deployment parity).
+     * end of phase 4 (Lua deployment parity). js-v12-source-maps D1:
+     * the explicit --source-map warning retired — the effective
+     * sourceMap flag (explicit or --dump-ir-derived) drives the
+     * per-module .deal.map.json sidecar writes in pass 2 instead.
      */
     private void codegenAllJs() throws IOException {
-        if (sourceMapExplicit) {
-            // Source-map sidecars (.deal.map.json) are produced only by the
-            // LuaJIT emitter; surface that to the CLI user instead of
-            // silently producing no sidecars. Fired only when --source-map
-            // was explicitly requested: a --dump-ir-derived sourceMap flag
-            // (IR hardening enables source maps with dumps) must not print
-            // the warning.
-            System.err.println("Warning: --source-map produces no source-map "
-                + "sidecars with the JavaScript backend (source maps are "
-                + "LuaJIT-only)");
-        }
         // Pass 1: generate every module and merge diagnostics. Rejected
         // modules write no artifact.
         List<ModuleInfo> cleanModules = new ArrayList<>();
@@ -1805,9 +1798,16 @@ public final class CompilationOrchestrator {
                 }
             }
             boolean isEntry = info.sourcePath.equals(entryFile.toString());
+            // js-v12-source-maps D2: the effective sourceMap flag
+            // (explicit --source-map or --dump-ir-derived) attaches a
+            // mapping recorder to the generation — the optional
+            // SourceMapGenerator parameter (the Lua generateResult
+            // precedent). A rejected module never serializes its
+            // recorder: pass 2 runs for clean modules only.
             JsBackend.JsCodegenResult res = JsBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
-                importResolutions, hostModules, isEntry);
+                importResolutions, hostModules, isEntry,
+                sourceMap ? new SourceMapGenerator() : null);
             // Native ranged backend list (T12): the backend emits
             // CompilerDiagnostic entries directly, so the orchestrator
             // merge needs no boundary conversion — real spans keep their
@@ -1827,7 +1827,15 @@ public final class CompilationOrchestrator {
             results.put(info, res);
         }
 
-        // Pass 2: write artifacts for clean modules only.
+        // Pass 2: write artifacts for clean modules only. With the
+        // effective sourceMap flag, each clean module additionally
+        // writes its .deal.map.json sidecar (js-v12-source-maps D1):
+        // one <modulePath with '/' for '.'>.deal.map.json next to the
+        // artifact, serialized from the module's recorded mappings via
+        // SourceMapGenerator.toJson with the same project-relative
+        // source/generated path strings the Lua arm passes. A rejected
+        // module writes no .js and no sidecar (the two-pass
+        // no-partial-artifact contract).
         for (ModuleInfo info : cleanModules) {
             JsBackend.JsCodegenResult res = results.get(info);
             Path outputPath = outputRoot.resolve(
@@ -1835,10 +1843,60 @@ public final class CompilationOrchestrator {
             Files.createDirectories(outputPath.getParent());
             Files.writeString(outputPath, res.source());
             log("  Generated: " + outputPath);
+
+            if (sourceMap && res.sourceMap() != null
+                    && res.sourceMap().hasMappings()) {
+                String[] paths = sourceMapSidecarPaths(info.sourcePath,
+                    outputRoot, outputPath);
+                String mapJson = res.sourceMap().toJson(paths[0], paths[1]);
+                Path mapPath = outputRoot.resolve(
+                    res.modulePath().replace('.', '/')
+                        + ".deal.map.json");
+                Files.writeString(mapPath, mapJson);
+                log("  Source map: " + mapPath);
+            }
         }
 
         copyJsRuntimeLibrary();
         copyStdlibJsModules();
+    }
+
+    /**
+     * The source/generated path pair passed to
+     * {@link SourceMapGenerator#toJson} for a JS sidecar — the exact
+     * strings the Lua arm passes (LuaBackend.generateToFile's
+     * project-relative normalization, mirrored verbatim): the source
+     * path and the generated artifact path relativized against the
+     * project root inferred as {@code outputRoot/../..} when the
+     * relativization stays inside the project; otherwise the fallback
+     * pair — the raw source path and the output-root-relative
+     * generated path.
+     */
+    private static String[] sourceMapSidecarPaths(String sourcePath,
+                                                  Path outputRoot,
+                                                  Path outputPath) {
+        String relSourcePath = sourcePath;
+        String relGeneratedPath = outputRoot.relativize(outputPath).toString();
+
+        try {
+            Path absOutputRoot = outputRoot.toAbsolutePath().normalize();
+            Path projectRoot = absOutputRoot.resolve("..").resolve("..").normalize();
+            Path absSource = Path.of(sourcePath).toAbsolutePath();
+
+            Path srcRel = projectRoot.relativize(absSource);
+            if (!srcRel.startsWith("..")) {
+                relSourcePath = srcRel.toString();
+            }
+
+            Path genRel = projectRoot.relativize(outputPath.toAbsolutePath());
+            if (!genRel.startsWith("..")) {
+                relGeneratedPath = genRel.toString();
+            }
+        } catch (IllegalArgumentException e) {
+            // Keep fallback paths if relativization fails
+        }
+
+        return new String[] { relSourcePath, relGeneratedPath };
     }
 
     /**

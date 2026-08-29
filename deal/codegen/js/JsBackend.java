@@ -53,6 +53,7 @@ import deal.ast.WhileStatement;
 import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
+import deal.codegen.SourceMapGenerator;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 import deal.module.StdlibModuleResolver;
@@ -208,8 +209,15 @@ import java.util.Set;
  * {@code hasErrors()} hold, so the orchestrator's two-pass
  * {@code codegenAllJs()} writes no artifact for the rejected module —
  * a clean sibling's artifact is unaffected — and the compilation
- * fails with the standard diagnostic report. The explicit
- * {@code --source-map} CLI warning is orchestrator-side (T1).
+ * fails with the standard diagnostic report.
+ *
+ * <p>js-v12-source-maps: the optional {@link SourceMapGenerator}
+ * parameter on {@link #generate} enables mapping recording at every
+ * generated statement-group boundary (D2) — the wrapper, check, and
+ * entry-shim emission sites included — and the orchestrator's pass 2
+ * serializes the per-module {@code .deal.map.json} sidecars from the
+ * returned recorder (D1), retiring the explicit {@code --source-map}
+ * warning.
  *
  * <p>The backend consumes the checked AST exactly like
  * {@code JvmBackend} ({@code CheckResult.typeMap()}/{@code symbolTable()})
@@ -224,14 +232,18 @@ public final class JsBackend {
     /**
      * Result of JavaScript code generation: the dotted module path (the
      * artifact path is {@code modulePath with '/' for '.' + ".js"}), the
-     * generated CommonJS source, and any backend diagnostics.
+     * generated CommonJS source, any backend diagnostics, and the
+     * optional source-map recorder ({@code null} when mapping recording
+     * was not requested — the caller passes a {@link SourceMapGenerator}
+     * to {@link #generate} and serializes the sidecar afterwards).
      * {@link #hasErrors()} gates the artifact (the
      * {@code JvmCodegenResult} shape,
      * deal/codegen/jvm/JvmBackend.java:605-618, with {@code modulePath} in
      * place of {@code className}).
      */
     public record JsCodegenResult(String modulePath, String source,
-                                  List<CompilerDiagnostic> diagnostics) {
+                                  List<CompilerDiagnostic> diagnostics,
+                                  SourceMapGenerator sourceMap) {
         public JsCodegenResult {
             java.util.Objects.requireNonNull(modulePath, "modulePath must not be null");
             java.util.Objects.requireNonNull(source, "source must not be null");
@@ -391,6 +403,18 @@ public final class JsBackend {
      * emitted; {@code return} statements check their expression against
      * it. */
     private Type currentReturnType = null;
+    /** Optional source-map recording (js-v12-source-maps D2): null
+     * disables mapping collection (the
+     * {@code LuaBackend.sourceMapGenerator} precedent); a non-null
+     * generator receives one {@link SourceMapGenerator#emitStatement}
+     * per generated statement-group boundary from
+     * {@link #recordMapping}. */
+    private final SourceMapGenerator sourceMapGenerator;
+    /** While {@link #captureOutput} is active, the 1-based artifact
+     * line on which the captured buffer's first line will land (the
+     * captured prefix ends with a newline, so captured line k lands on
+     * {@code captureLineOffset + k}); 0 when not capturing. */
+    private int captureLineOffset = 0;
 
     /**
      * True while the walk sits at module level; false inside a
@@ -447,7 +471,7 @@ public final class JsBackend {
                       String sourcePath, String modulePath,
                       Map<String, String> importResolutions,
                       Map<String, Map<String, Type>> hostModules,
-                      boolean isEntry) {
+                      boolean isEntry, SourceMapGenerator sourceMapGenerator) {
         this.typeMap = typeMap;
         this.symbols = symbols;
         this.sourcePath = sourcePath;
@@ -455,6 +479,7 @@ public final class JsBackend {
         this.importResolutions = importResolutions;
         this.hostModules = hostModules;
         this.isEntry = isEntry;
+        this.sourceMapGenerator = sourceMapGenerator;
         localScopes.add(new HashSet<>());
     }
 
@@ -485,6 +510,28 @@ public final class JsBackend {
                                            Map<String, String> importResolutions,
                                            Map<String, Map<String, Type>> hostModules,
                                            boolean isEntry) {
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, hostModules, isEntry, null);
+    }
+
+    /**
+     * Source-map variant (js-v12-source-maps D2): {@code sourceMap} may
+     * be {@code null} to disable mapping recording, otherwise the
+     * emitter records one mapping at each generated statement-group
+     * boundary — the current output line/column at the emission site
+     * mapped to the AST statement's {@link Span} start (the Lua
+     * {@code LuaBackend.generateResult} optional-generator precedent) —
+     * and the returned result carries the recorder so the caller
+     * serializes the sidecar after codegen.
+     *
+     * @param sourceMap         the mapping recorder (or {@code null})
+     */
+    public static JsCodegenResult generate(ProgramNode program, CheckResult result,
+                                           String sourcePath, String modulePath,
+                                           Map<String, String> importResolutions,
+                                           Map<String, Map<String, Type>> hostModules,
+                                           boolean isEntry,
+                                           SourceMapGenerator sourceMap) {
         java.util.Objects.requireNonNull(program, "program must not be null");
         java.util.Objects.requireNonNull(result, "result must not be null");
         java.util.Objects.requireNonNull(importResolutions,
@@ -492,7 +539,8 @@ public final class JsBackend {
         java.util.Objects.requireNonNull(hostModules,
             "hostModules must not be null");
         JsBackend backend = new JsBackend(result.typeMap(), result.symbolTable(),
-            sourcePath, modulePath, importResolutions, hostModules, isEntry);
+            sourcePath, modulePath, importResolutions, hostModules, isEntry,
+            sourceMap);
         return backend.generateProgram(program);
     }
 
@@ -563,10 +611,11 @@ public final class JsBackend {
         // declarations in the artifact (T4 populates it).
         emitExportsSection();
         if (isEntry && entryMain != null) {
-            emitEntryShim();
+            emitEntryShim(entryMain);
         }
 
-        return new JsCodegenResult(modulePath, out.toString(), diagnostics);
+        return new JsCodegenResult(modulePath, out.toString(), diagnostics,
+            sourceMapGenerator);
     }
 
     // =========================================================================
@@ -835,8 +884,14 @@ public final class JsBackend {
      * host-global. A location-less error prints the bare
      * {@code DEAL_ERROR_CODE} line.
      */
-    private void emitEntryShim() {
+    private void emitEntryShim(FunctionDeclaration entryMain) {
+        // js-v12-source-maps D2: the entry-shim emission records its
+        // mapping at the shim's source-comment site (the emission sits
+        // outside the statement walk, so no visitStatement recording
+        // covers it) — after the separating blank line, so the recorded
+        // generated position is the comment line itself.
         out.append("\n");
+        recordMapping(entryMain.span());
         out.append("// Entry invocation: runs the exported main exactly once when this\n");
         out.append("// artifact is the node entry; an uncaught error prints the\n");
         out.append("// DEAL_ERROR_CODE line with the source-location suffix and sets\n");
@@ -991,6 +1046,14 @@ public final class JsBackend {
      * statement kind lowers fully.
      */
     private void visitStatement(StatementNode stmt) {
+        // js-v12-source-maps D2: one mapping per generated
+        // statement-group boundary — recorded at the current output
+        // position (the source-comment emission site for wrapper,
+        // class, and entry-shim groups) mapped to the AST statement's
+        // span start (the LuaBackend.visitStatement precedent,
+        // deal/codegen/lua/LuaBackend.java:1051-1054).
+        recordMapping(stmt.span());
+
         switch (stmt) {
             case ImportDeclaration imp -> {
                 // Shape step 5 emitted the binding in the header (a
@@ -1214,6 +1277,13 @@ public final class JsBackend {
      */
     private void emitWrappedBody(List<Parameter> params, Block body,
                                  Type returnType, Span fallOffSpan) {
+        // js-v12-source-maps D2: the wrapper's entry parameter-check
+        // group records its mapping at the emission site too (the first
+        // parameter's type span — the span the emitted checks forward) —
+        // wrapper, check, and entry-shim emissions record the same way.
+        if (!params.isEmpty()) {
+            recordMapping(params.get(0).type().span());
+        }
         for (Parameter param : params) {
             Type paramType = resolveTypeNode(param.type());
             if (paramType != null && !(paramType instanceof Type.Error)
@@ -2498,6 +2568,12 @@ public final class JsBackend {
             ? f.returnType() : null;
         boolean isAsync = funcType instanceof Type.Func f && f.isAsync();
 
+        // js-v12-source-maps D2: the inline wrapper emission records
+        // one mapping at the wrapper site (the expression position in
+        // the main buffer); the captured body's statement mappings
+        // rebase through captureOutput.
+        recordMapping(fe.span());
+
         Type savedReturn = currentReturnType;
         currentReturnType = returnType;
 
@@ -2861,14 +2937,63 @@ public final class JsBackend {
     private String captureOutput(Runnable action) {
         StringBuilder saved = out;
         int savedIndent = indent;
+        int savedOffset = captureLineOffset;
+        // The captured text is spliced after a prefix ending in a
+        // newline, so its first line lands on the artifact line after
+        // the outer buffer's current line: rebase mappings recorded
+        // inside the capture (js-v12-source-maps D2 exactness).
+        int currentLine = currentGeneratedLine();
         out = new StringBuilder();
+        captureLineOffset = savedOffset + currentLine;
         try {
             action.run();
             return out.toString();
         } finally {
             out = saved;
             indent = savedIndent;
+            captureLineOffset = savedOffset;
         }
+    }
+
+    /**
+     * Returns the current 1-based line number in the output buffer
+     * (the {@code LuaBackend.currentGeneratedLine} mechanics,
+     * deal/codegen/lua/LuaBackend.java:800-806).
+     */
+    private int currentGeneratedLine() {
+        int line = 1;
+        for (int i = 0; i < out.length(); i++) {
+            if (out.charAt(i) == '\n') line++;
+        }
+        return line;
+    }
+
+    /**
+     * Returns the current 1-based column number in the output buffer
+     * (the {@code LuaBackend.currentGeneratedColumn} mechanics).
+     */
+    private int currentGeneratedColumn() {
+        int lastNewline = out.lastIndexOf("\n");
+        if (lastNewline == -1) return out.length() + 1;
+        return out.length() - lastNewline;
+    }
+
+    /**
+     * Records a source mapping for the given AST span at the current
+     * output position (js-v12-source-maps D2): the generated position
+     * is computed from the emitter's output-buffer state, mapped to
+     * the span's start line/column. Inside a {@link #captureOutput}
+     * splice the position rebases through {@link #captureLineOffset}
+     * so captured-body mappings stay exact in the final artifact.
+     */
+    private void recordMapping(Span span) {
+        if (sourceMapGenerator == null || span == null) return;
+        int generatedLine = currentGeneratedLine();
+        if (captureLineOffset != 0) {
+            generatedLine = captureLineOffset + generatedLine;
+        }
+        sourceMapGenerator.emitStatement(generatedLine,
+            currentGeneratedColumn(), span);
     }
 
     /**

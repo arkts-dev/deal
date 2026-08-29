@@ -3,15 +3,20 @@ package deal.test;
 import deal.ast.*;
 import deal.checker.*;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.codegen.Backend;
 import deal.codegen.SourceMapGenerator;
+import deal.codegen.js.JsBackend;
 import deal.codegen.lua.LuaBackend;
 import deal.lexer.*;
+import deal.module.CompilationOrchestrator;
 import deal.parser.*;
 import deal.types.Type;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Source map generation and round-trip tests.
@@ -22,6 +27,12 @@ import java.util.*;
  *   <li>JSON sidecar format matches the spec</li>
  *   <li>All mapping entries have positive positions within bounds</li>
  *   <li>Round-trip position assertions pass for known positions</li>
+ *   <li>JS backend (js-v12-source-maps D4): emitter-side mapping
+ *       recording through the optional SourceMapGenerator parameter,
+ *       orchestrator-side per-module .deal.map.json sidecar writes for
+ *       every clean module with the --source-map warning retired, and
+ *       node runtime-location pins (array bounds, division by zero,
+ *       throw) reporting the original .deal file/line/column</li>
  * </ul>
  */
 public class SourceMapTest {
@@ -150,6 +161,11 @@ public class SourceMapTest {
         testSourceMapMultipleStatements();
         testSourceMapNoSourceMapFlag();
         testSourceMapGeneratedPath();
+        testJsEmitterMappingRecording();
+        testJsSidecarsRealPipeline();
+        testJsSidecarsDumpIrDerived();
+        testJsSidecarRejectedModule();
+        testJsNodeRuntimeLocations();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -483,5 +499,587 @@ public class SourceMapTest {
         check(json.contains("\"source\": \"src/main.deal\""), "source path correct");
         check(json.contains("\"generated\": \"build/lua/main.lua\""),
             "generated path correct");
+    }
+
+    // =========================================================================
+    // JS cases (js-v12-source-maps D4)
+    // =========================================================================
+
+    private static boolean nodeAvailable = probeNode();
+
+    /** Counts one toolchain skip (node unavailable) — a skip, never a
+     * failure (the JsBackendTest node-case toolchain rule). */
+    private static void skipNode(String reason) {
+        System.out.println("  SKIP (node unavailable): " + reason);
+    }
+
+    private static boolean probeNode() {
+        try {
+            Process node = new ProcessBuilder("node", "--version")
+                .redirectErrorStream(true).start();
+            return node.waitFor() == 0;
+        } catch (IOException | InterruptedException e) {
+            return false;
+        }
+    }
+
+    private static void deleteDir(Path dir) {
+        try {
+            Files.walk(dir).sorted(Comparator.reverseOrder())
+                .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+    }
+
+    /** The frontend compile shared by the JS cases (the JsBackendTest
+     * adapter shape: checker module path {@code Main}, the
+     * {@code StubModuleResolver}). */
+    private record JsFrontend(ProgramNode program, CheckResult checkResult) {}
+
+    private static JsFrontend parseChecked(String source, String filename) {
+        LexResult lex = new Lexer(source, filename).tokenize();
+        if (lex.hasErrors()) {
+            fail("JS case lex errors: " + lex.diagnostics());
+            return null;
+        }
+        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        if (parse.hasErrors()) {
+            fail("JS case parse errors: " + parse.diagnostics());
+            return null;
+        }
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("Main", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
+        CheckResult result = TypeChecker.check("Main", symTable, nr,
+            parse.program());
+        diags.addAll(result.diagnostics());
+        if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
+            fail("JS case frontend errors: " + diags);
+            return null;
+        }
+        return new JsFrontend(parse.program(), result);
+    }
+
+    /** 1-based line count of a multi-line string. */
+    private static int lineCount(String text) {
+        int lines = 1;
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == '\n') lines++;
+        }
+        return lines;
+    }
+
+    /** Extracts a string-valued JSON field ({@code "key": "value"}). */
+    private static String extractString(String json, String key) {
+        int keyIdx = json.indexOf("\"" + key + "\"");
+        if (keyIdx < 0) return null;
+        int colonIdx = json.indexOf(':', keyIdx);
+        if (colonIdx < 0) return null;
+        int valStart = json.indexOf('"', colonIdx);
+        if (valStart < 0) return null;
+        int valEnd = json.indexOf('"', valStart + 1);
+        if (valEnd < 0) return null;
+        return json.substring(valStart + 1, valEnd);
+    }
+
+    /**
+     * Emitter-side recording (js-v12-source-maps D2): the optional
+     * SourceMapGenerator parameter records one mapping at each generated
+     * statement-group boundary — wrapper, body statement, and return
+     * groups — with the generated position from the emitter's
+     * output-buffer state mapped to the AST statement's span start. The
+     * positions stay within the final artifact bounds and round-trip to
+     * the statement's generated line. The 7-arg generate overload keeps
+     * source-map recording disabled (null recorder).
+     */
+    static void testJsEmitterMappingRecording() {
+        System.out.println("-- JS emitter: mapping recording at statement groups --");
+
+        String source =
+            "function helper(x: int): int { return x; }\n" +   // line 1
+            "export function test(): int {\n" +                  // line 2
+            "  let a: int = 1;\n" +                               // line 3
+            "  let b: int = helper(a) + 2;\n" +                   // line 4
+            "  let cb: () => int = function(): int { return b; };\n"
+                +                                                 // line 5
+            "  return b;\n" +                                     // line 6
+            "}\n";                                                // line 7
+
+        JsFrontend frontend = parseChecked(source, "jsmap-emitter.deal");
+        if (frontend == null) return;
+
+        SourceMapGenerator smg = new SourceMapGenerator();
+        JsBackend.JsCodegenResult res = JsBackend.generate(frontend.program(),
+            frontend.checkResult(), "jsmap-emitter.deal", "Main", Map.of(),
+            Map.of(), false, smg);
+        check(res != null && !res.hasErrors(), "JS emitter codegen clean: "
+            + (res == null ? "<null>" : res.diagnostics()));
+        if (res == null || res.hasErrors()) return;
+        check(res.sourceMap() == smg, "the result carries the recorder");
+
+        // The 7-arg overload disables recording (null recorder).
+        JsBackend.JsCodegenResult plain = JsBackend.generate(frontend.program(),
+            frontend.checkResult(), "jsmap-emitter.deal", "Main", Map.of(),
+            Map.of(), false);
+        check(plain.sourceMap() == null,
+            "the recorder-less generate overload carries a null source map");
+
+        List<SourceMapGenerator.Mapping> mappings = smg.mappings();
+        check(smg.hasMappings(), "the recorder collected mappings");
+        String[] artifactLines = res.source().split("\n", -1);
+
+        // Statement-group coverage: the wrapper declarations (lines 1-2)
+        // and the body statements (lines 3-5) each carry a mapping at
+        // their span start (column 1 for declarations, column 3 for
+        // indented body statements).
+        check(hasMappingAt(mappings, 1, 1), "helper declaration mapped (1:1)");
+        check(hasMappingAt(mappings, 2, 1), "test declaration mapped (2:1)");
+        check(hasMappingAt(mappings, 3, 3), "let a mapped (3:3)");
+        check(hasMappingAt(mappings, 4, 3), "let b mapped (4:3)");
+        check(hasMappingAt(mappings, 5, 3),
+            "function-expression declaration mapped (5:3)");
+        check(hasMappingAt(mappings, 6, 3), "return b mapped (6:3)");
+
+        // Bounds: every generated position lands inside the artifact,
+        // every source position inside the source.
+        int sourceLines = lineCount(source);
+        boolean allInBounds = true;
+        for (SourceMapGenerator.Mapping m : mappings) {
+            if (m.generatedLine() < 1
+                    || m.generatedLine() > artifactLines.length
+                    || m.generatedColumn() < 1
+                    || m.generatedColumn() > artifactLines[
+                        m.generatedLine() - 1].length() + 1
+                    || m.sourceLine() < 1 || m.sourceLine() > sourceLines
+                    || m.sourceColumn() < 1) {
+                allInBounds = false;
+                fail("mapping out of bounds: " + m);
+            }
+        }
+        check(allInBounds, "every mapping within source/generated bounds");
+
+        // Round-trip: the pinned statements' mappings land on the
+        // artifact lines carrying their generated code.
+        for (SourceMapGenerator.Mapping m : mappings) {
+            if (m.sourceLine() == 3 && m.sourceColumn() == 3) {
+                check(artifactLines[m.generatedLine() - 1].contains("let a"),
+                    "line 3 round-trips to the 'let a' artifact line: "
+                        + artifactLines[m.generatedLine() - 1]);
+            }
+            if (m.sourceLine() == 4 && m.sourceColumn() == 3) {
+                check(artifactLines[m.generatedLine() - 1].contains("helper.$f"),
+                    "line 4 round-trips to the helper.$f call line: "
+                        + artifactLines[m.generatedLine() - 1]);
+            }
+            if (m.sourceLine() == 5 && m.sourceColumn() == 41) {
+                check(artifactLines[m.generatedLine() - 1]
+                        .contains("return $rt.checkInt(b"),
+                    "the function-expression body statement round-trips "
+                        + "to the capture-rebased artifact line: "
+                        + artifactLines[m.generatedLine() - 1]);
+            }
+        }
+
+        // Generated positions are monotonically increasing (emission order).
+        int prevGenLine = 0;
+        boolean monotonic = true;
+        for (SourceMapGenerator.Mapping m : mappings) {
+            if (m.generatedLine() < prevGenLine) {
+                monotonic = false;
+                break;
+            }
+            prevGenLine = m.generatedLine();
+        }
+        check(monotonic, "mappings are in monotonically increasing generated line order");
+
+        System.out.println("  Mappings: " + mappings.size());
+        for (SourceMapGenerator.Mapping m : mappings) {
+            System.out.println("    gen L" + m.generatedLine() + ":" + m.generatedColumn()
+                + " -> src L" + m.sourceLine() + ":" + m.sourceColumn());
+        }
+    }
+
+    private static boolean hasMappingAt(List<SourceMapGenerator.Mapping> mappings,
+                                        int sourceLine, int sourceColumn) {
+        for (SourceMapGenerator.Mapping m : mappings) {
+            if (m.sourceLine() == sourceLine
+                    && m.sourceColumn() == sourceColumn) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The real-pipeline sidecar contract (js-v12-source-maps D1/D4):
+     * an explicit-flag --source-map compile through the orchestrator
+     * prints no warning and writes one {@code <module>.deal.map.json}
+     * per clean module with the spec format fields, bounded mappings,
+     * per-statement coverage, and round-trip positions — the artifacts
+     * the orchestrator serializes from the emitter's recorded mappings,
+     * so an emitter/orchestrator divergence breaks the round-trip pins.
+     */
+    static void testJsSidecarsRealPipeline() {
+        System.out.println("-- JS sidecars: real pipeline --");
+        Path proj = null;
+        try {
+            proj = Files.createTempDirectory("sourcemap_js_");
+            Path src = proj.resolve("src");
+            Files.createDirectories(src);
+            Path mainSrc = src.resolve("main.deal");
+            Files.writeString(mainSrc, """
+                import * as lib from "./lib"
+                export function main(): null {
+                  let a: int = 1;
+                  let b: int = lib.count();
+                  return null;
+                }
+                """);
+            Files.writeString(src.resolve("lib.deal"),
+                "export function count(): int { return 7; }\n");
+
+            Path outputRoot = proj.resolve("build/js");
+            PrintStream originalErr = System.err;
+            ByteArrayOutputStream captured = new ByteArrayOutputStream();
+            boolean ok;
+            try {
+                System.setErr(new PrintStream(captured, true,
+                    StandardCharsets.UTF_8));
+                CompilationOrchestrator orchestrator =
+                    new CompilationOrchestrator(mainSrc, outputRoot, false,
+                        false, true, Backend.JS, (deal.module.DealConfig) null,
+                        List.of(src), Path.of(".").toAbsolutePath().normalize());
+                ok = orchestrator.compile();
+            } finally {
+                System.err.flush();
+                System.setErr(originalErr);
+            }
+            check(ok, "the explicit --source-map JS compile succeeds");
+            check(!captured.toString(StandardCharsets.UTF_8)
+                    .contains("source-map"),
+                "the explicit --source-map JS run prints no warning: "
+                    + captured.toString(StandardCharsets.UTF_8));
+
+            // One sidecar per clean module, next to the artifact.
+            Path mainArtifact = outputRoot.resolve("main.js");
+            Path mainSidecar = outputRoot.resolve("main.deal.map.json");
+            Path libArtifact = outputRoot.resolve("lib.js");
+            Path libSidecar = outputRoot.resolve("lib.deal.map.json");
+            check(Files.exists(mainArtifact), "main.js emitted");
+            check(Files.exists(mainSidecar), "main.deal.map.json emitted");
+            check(Files.exists(libArtifact), "lib.js emitted");
+            check(Files.exists(libSidecar), "lib.deal.map.json emitted");
+
+            if (Files.exists(mainSidecar)) {
+                String json = Files.readString(mainSidecar);
+                check(json.contains("\"version\": 1"),
+                    "sidecar version is 1");
+                check("src/main.deal".equals(extractString(json, "source")),
+                    "sidecar source is the project-relative .deal path: "
+                        + extractString(json, "source"));
+                check("build/js/main.js".equals(extractString(json, "generated")),
+                    "sidecar generated is the project-relative artifact "
+                        + "path: " + extractString(json, "generated"));
+                List<MapEntry> entries = parseSourceMapJson(json);
+                check(!entries.isEmpty(), "main sidecar carries mappings");
+
+                String[] artifactLines = Files.readString(mainArtifact)
+                    .split("\n", -1);
+                String source = Files.readString(mainSrc);
+                int sourceLines = lineCount(source);
+                boolean inBounds = true;
+                for (MapEntry e : entries) {
+                    if (e.generatedLine() < 1
+                            || e.generatedLine() > artifactLines.length
+                            || e.generatedColumn() < 1
+                            || e.generatedColumn() > artifactLines[
+                                e.generatedLine() - 1].length() + 1
+                            || e.sourceLine() < 1
+                            || e.sourceLine() > sourceLines
+                            || e.sourceColumn() < 1) {
+                        inBounds = false;
+                        fail("main sidecar mapping out of bounds: " + e);
+                    }
+                }
+                check(inBounds, "every main mapping within bounds");
+
+                // Per-statement coverage: source lines 3-5 (the pinned
+                // statements) each carry at least one mapping at the
+                // span start (column 3).
+                for (int line : new int[] { 3, 4, 5 }) {
+                    boolean found = false;
+                    for (MapEntry e : entries) {
+                        if (e.sourceLine() == line && e.sourceColumn() == 3) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    check(found, "source line " + line + " has a mapping");
+                }
+
+                // Round-trip: the pinned statements' mappings land on
+                // the artifact lines carrying their generated code, and
+                // the entry-shim mapping (the main declaration span,
+                // 2:8) lands on the shim's source-comment site.
+                for (MapEntry e : entries) {
+                    if (e.sourceLine() == 3 && e.sourceColumn() == 3) {
+                        check(artifactLines[e.generatedLine() - 1]
+                                .contains("let a"),
+                            "line 3 round-trips to the 'let a' artifact "
+                                + "line: "
+                                + artifactLines[e.generatedLine() - 1]);
+                    }
+                    if (e.sourceLine() == 4 && e.sourceColumn() == 3) {
+                        check(artifactLines[e.generatedLine() - 1]
+                                .contains("lib.count.$f"),
+                            "line 4 round-trips to the lib.count.$f call "
+                                + "line: "
+                                + artifactLines[e.generatedLine() - 1]);
+                    }
+                    if (e.sourceLine() == 2 && e.sourceColumn() == 8) {
+                        check(artifactLines[e.generatedLine() - 1]
+                                .contains("Entry invocation"),
+                            "the entry-shim mapping (2:8) lands on the "
+                                + "shim's source-comment site: "
+                                + artifactLines[e.generatedLine() - 1]);
+                    }
+                }
+            }
+            if (Files.exists(libSidecar)) {
+                String json = Files.readString(libSidecar);
+                check(json.contains("\"version\": 1"),
+                    "lib sidecar version is 1");
+                check("src/lib.deal".equals(extractString(json, "source")),
+                    "lib sidecar source path correct: "
+                        + extractString(json, "source"));
+                check("build/js/lib.js".equals(extractString(json, "generated")),
+                    "lib sidecar generated path correct: "
+                        + extractString(json, "generated"));
+                check(!parseSourceMapJson(json).isEmpty(),
+                    "lib sidecar carries mappings");
+            }
+        } catch (IOException e) {
+            fail("JS sidecar pipeline threw: " + e);
+        } finally {
+            if (proj != null) deleteDir(proj);
+        }
+    }
+
+    /**
+     * The effective sourceMap flag governs emission: a --dump-ir-derived
+     * flag (Main passes {@code dumpIr || sourceMap} as the effective
+     * flag, explicit {@code false}) writes sidecars and prints no
+     * warning.
+     */
+    static void testJsSidecarsDumpIrDerived() {
+        System.out.println("-- JS sidecars: --dump-ir-derived effective flag --");
+        Path proj = null;
+        try {
+            proj = Files.createTempDirectory("sourcemap_js_dumpir_");
+            Path src = proj.resolve("src");
+            Files.createDirectories(src);
+            Path mainSrc = src.resolve("main.deal");
+            Files.writeString(mainSrc, """
+                export function main(): null {
+                  let a: int = 1;
+                  return null;
+                }
+                """);
+            Path outputRoot = proj.resolve("build/js");
+
+            PrintStream originalErr = System.err;
+            ByteArrayOutputStream captured = new ByteArrayOutputStream();
+            boolean ok;
+            try {
+                System.setErr(new PrintStream(captured, true,
+                    StandardCharsets.UTF_8));
+                CompilationOrchestrator orchestrator =
+                    new CompilationOrchestrator(mainSrc, outputRoot, false,
+                        true, true, false, Backend.JS,
+                        (deal.module.DealConfig) null, List.of(src),
+                        Path.of(".").toAbsolutePath().normalize());
+                ok = orchestrator.compile();
+            } finally {
+                System.err.flush();
+                System.setErr(originalErr);
+            }
+            check(ok, "--dump-ir-derived sourceMap compile succeeds");
+            check(!captured.toString(StandardCharsets.UTF_8)
+                    .contains("source-map"),
+                "no warning for the dump-ir-derived effective flag: "
+                    + captured.toString(StandardCharsets.UTF_8));
+            check(Files.exists(outputRoot.resolve("main.deal.map.json")),
+                "the dump-ir-derived effective flag writes the sidecar");
+        } catch (IOException e) {
+            fail("JS dump-ir sidecar case threw: " + e);
+        } finally {
+            if (proj != null) deleteDir(proj);
+        }
+    }
+
+    /**
+     * The two-pass no-partial-artifact contract: a rejected module
+     * writes no {@code .js} and no sidecar while a clean sibling keeps
+     * both.
+     */
+    static void testJsSidecarRejectedModule() {
+        System.out.println("-- JS sidecars: rejected module writes no sidecar --");
+        Path proj = null;
+        try {
+            proj = Files.createTempDirectory("sourcemap_js_reject_");
+            Path src = proj.resolve("src");
+            Files.createDirectories(src);
+            Path mainSrc = src.resolve("main.deal");
+            Files.writeString(mainSrc, """
+                import * as bad from "./bad"
+                export function main(): null {
+                  let a: int = 1;
+                  return null;
+                }
+                """);
+            Files.writeString(src.resolve("bad.deal"), """
+                // @jsonable
+                export class Data {
+                  v: int = 0;
+                }
+                """);
+            Path outputRoot = proj.resolve("build/js");
+
+            CompilationOrchestrator orchestrator =
+                new CompilationOrchestrator(mainSrc, outputRoot, false,
+                    false, true, Backend.JS,
+                    (deal.module.DealConfig) null, List.of(src),
+                    Path.of(".").toAbsolutePath().normalize());
+            boolean ok = orchestrator.compile();
+            check(!ok, "the rejected module fails the compilation");
+            check(!Files.exists(outputRoot.resolve("bad.js")),
+                "the rejected module writes no .js artifact");
+            check(!Files.exists(outputRoot.resolve("bad.deal.map.json")),
+                "the rejected module writes no sidecar");
+            check(Files.exists(outputRoot.resolve("main.js")),
+                "the clean sibling writes its artifact (two-pass model)");
+            check(Files.exists(outputRoot.resolve("main.deal.map.json")),
+                "the clean sibling writes its sidecar (two-pass model)");
+        } catch (IOException e) {
+            fail("JS rejected-module sidecar case threw: " + e);
+        } finally {
+            if (proj != null) deleteDir(proj);
+        }
+    }
+
+    /**
+     * Node runtime-location pins (js-v12-source-maps D3/D4): array
+     * bounds, division by zero, and throw errors at pinned source
+     * positions report the original {@code .deal} file/line/column
+     * through the {@code DEAL_ERROR_CODE} stderr surface (the
+     * entry-shim catch composes the located error object's
+     * file/line/column fields into the message) — executed through the
+     * real node binary, node unavailability skips (the JsBackendTest
+     * node-case pattern).
+     */
+    static void testJsNodeRuntimeLocations() {
+        System.out.println("-- JS node: runtime locations on pinned errors --");
+        if (!nodeAvailable) { skipNode("JS runtime locations"); return; }
+
+        Path proj = null;
+        try {
+            proj = Files.createTempDirectory("sourcemap_js_node_");
+            Path src = proj.resolve("src");
+            Files.createDirectories(src);
+            Path mainSrc = src.resolve("main.deal");
+
+            // Array bounds: the negative index raises E8002 at the
+            // index expression's span start (line 3, column 16).
+            Files.writeString(mainSrc, """
+                export function main(): null {
+                  let xs: int[] = [1, 2];
+                  let v: int = xs[-1];
+                  return null;
+                }
+                """);
+            NodeRun bounds = compileAndRunNode(proj, mainSrc, "build1");
+            check(bounds != null && bounds.exitCode() == 1
+                    && bounds.output().contains("DEAL_ERROR_CODE: E8002")
+                    && bounds.output().contains("negative array index")
+                    && bounds.output().contains(" at " + mainSrc.toString()
+                        + ":3:16"),
+                "array bounds error reports the original file/line/column: "
+                    + (bounds == null ? "<null>" : bounds.output()));
+
+            // Division by zero: E8005 at the binary expression's span
+            // start (line 2, column 16).
+            Files.writeString(mainSrc, """
+                export function main(): null {
+                  let q: int = 5 / 0;
+                  return null;
+                }
+                """);
+            NodeRun divz = compileAndRunNode(proj, mainSrc, "build2");
+            check(divz != null && divz.exitCode() == 1
+                    && divz.output().contains("DEAL_ERROR_CODE: E8005")
+                    && divz.output().contains("integer division by zero")
+                    && divz.output().contains(" at " + mainSrc.toString()
+                        + ":2:16"),
+                "division-by-zero error reports the original file/line/column: "
+                    + (divz == null ? "<null>" : divz.output()));
+
+            // Throw: the error value carries the throw statement's span
+            // (line 2, column 3).
+            Files.writeString(mainSrc, """
+                export function main(): null {
+                  throw { code: "E9999", message: "boom" };
+                  return null;
+                }
+                """);
+            NodeRun thr = compileAndRunNode(proj, mainSrc, "build3");
+            check(thr != null && thr.exitCode() == 1
+                    && thr.output().contains("DEAL_ERROR_CODE: E9999")
+                    && thr.output().contains("boom at " + mainSrc.toString()
+                        + ":2:3"),
+                "throw error reports the original file/line/column: "
+                    + (thr == null ? "<null>" : thr.output()));
+        } catch (IOException e) {
+            fail("JS node location case threw: " + e);
+        } finally {
+            if (proj != null) deleteDir(proj);
+        }
+    }
+
+    private record NodeRun(String output, int exitCode) {}
+
+    /** Compiles the entry through the real orchestrator pipeline and
+     * runs {@code node <output>/main.js}. */
+    private static NodeRun compileAndRunNode(Path proj, Path mainSrc,
+                                             String outDirName)
+            throws IOException {
+        Path outputRoot = proj.resolve(outDirName);
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            mainSrc, outputRoot, false, false, false, Backend.JS,
+            (deal.module.DealConfig) null, List.of(proj.resolve("src")),
+            Path.of(".").toAbsolutePath().normalize());
+        boolean ok = orchestrator.compile();
+        if (!ok) {
+            fail("node-location fixture compile failed: "
+                + orchestrator.diagnostics());
+            return null;
+        }
+        try {
+            ProcessBuilder pb = new ProcessBuilder("node", "main.js");
+            pb.directory(outputRoot.toFile());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            if (!p.waitFor(60, TimeUnit.SECONDS)) {
+                p.destroyForcibly();
+                fail("node run timed out");
+                return null;
+            }
+            String out = new String(p.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8).trim();
+            return new NodeRun(out, p.exitValue());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            fail("node run interrupted: " + e);
+            return null;
+        }
     }
 }
