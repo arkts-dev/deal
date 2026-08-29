@@ -29,11 +29,14 @@ import java.util.concurrent.TimeUnit;
  *   <li>Round-trip position assertions pass for known positions</li>
  *   <li>JS backend (js-v12-source-maps D4): emitter-side mapping
  *       recording through the optional SourceMapGenerator parameter,
- *       orchestrator-side per-module .deal.map.json sidecar writes for
- *       every clean module (statement-less modules included, with an
- *       empty mappings array) with the --source-map warning retired,
- *       and node runtime-location pins (array bounds, division by
- *       zero, throw) reporting the original .deal file/line/column</li>
+ *       exact rebasing for sibling function expressions assembled on
+ *       one emitted line (array-literal elements, function-typed class
+ *       field defaults), orchestrator-side per-module
+ *       .deal.map.json sidecar writes for every clean module
+ *       (statement-less modules included, with an empty mappings
+ *       array) with the --source-map warning retired, and node
+ *       runtime-location pins (array bounds, division by zero, throw)
+ *       reporting the original .deal file/line/column</li>
  * </ul>
  */
 public class SourceMapTest {
@@ -163,6 +166,7 @@ public class SourceMapTest {
         testSourceMapNoSourceMapFlag();
         testSourceMapGeneratedPath();
         testJsEmitterMappingRecording();
+        testJsFunctionExprSiblingRebasing();
         testJsSidecarsRealPipeline();
         testJsSidecarStatementlessModule();
         testJsSidecarsDumpIrDerived();
@@ -710,6 +714,177 @@ public class SourceMapTest {
             }
         }
         return false;
+    }
+
+    /**
+     * Sibling function expressions on one emitted line
+     * (js-v12-source-maps D2 exactness): a statement's expression text
+     * is assembled in memory before {@code line()} splices it into the
+     * artifact, so when one statement carries two or more function
+     * expressions (array-literal elements, function-typed class field
+     * defaults), each wrapper and each captured body statement must
+     * map to the artifact line carrying its OWN generated code — the
+     * capture splice rebase adds the in-flight newlines of the
+     * expression text already assembled on the current line, and the
+     * second wrapper's body never re-maps to the first wrapper's
+     * lines (the review-cycle-2 positional defect). The generated-line
+     * sequence stays monotonically increasing.
+     */
+    static void testJsFunctionExprSiblingRebasing() {
+        System.out.println(
+            "-- JS emitter: sibling function-expression rebasing --");
+
+        // Array-literal case: two function expressions in one statement
+        // (the first wrapper/body on the statement's own artifact line
+        // and the next; the second wrapper/body on the following two).
+        String arraySource =
+            "export function main(): null {\n" +                     // line 1
+            "  let fs: (() => int)[] = [function(): int { return 1; }, function(): int { return 2; }];\n"
+                +                                                     // line 2
+            "  return null;\n" +                                     // line 3
+            "}\n";                                                   // line 4
+        String[] arrayLines = arraySource.split("\n", -1);
+        int aWrap1 = arrayLines[1].indexOf("function") + 1;
+        int aRet1 = arrayLines[1].indexOf("return 1") + 1;
+        int aWrap2 = arrayLines[1].indexOf("function", aWrap1) + 1;
+        int aRet2 = arrayLines[1].indexOf("return 2") + 1;
+
+        JsFrontend frontend = parseChecked(arraySource,
+            "jsmap-siblings.deal");
+        if (frontend == null) return;
+        SourceMapGenerator smg = new SourceMapGenerator();
+        JsBackend.JsCodegenResult res = JsBackend.generate(
+            frontend.program(), frontend.checkResult(),
+            "jsmap-siblings.deal", "Main", Map.of(), Map.of(), false, smg);
+        check(res != null && !res.hasErrors(), "sibling codegen clean: "
+            + (res == null ? "<null>" : res.diagnostics()));
+        if (res == null || res.hasErrors()) return;
+
+        String[] artifactLines = res.source().split("\n", -1);
+        List<SourceMapGenerator.Mapping> mappings = smg.mappings();
+        checkSiblingGroup(mappings, artifactLines, 2, aWrap1, aRet1,
+            "first array wrapper", "let fs", "checkInt(1",
+            "$rt.function(\"()->int\"");
+        checkSiblingGroup(mappings, artifactLines, 2, aWrap2, aRet2,
+            "second array wrapper", "}), $rt.function", "checkInt(2",
+            "$rt.function(\"()->int\"");
+        int aWrap1Gen = generatedLineOf(mappings, 2, aWrap1);
+        int aWrap2Gen = generatedLineOf(mappings, 2, aWrap2);
+        int aRet1Gen = generatedLineOf(mappings, 2, aRet1);
+        int aRet2Gen = generatedLineOf(mappings, 2, aRet2);
+        check(aWrap1Gen < aRet1Gen && aRet1Gen < aWrap2Gen
+                && aWrap2Gen < aRet2Gen,
+            "array sibling positions strictly increase "
+                + "(wrapper1 " + aWrap1Gen + " < body1 " + aRet1Gen
+                + " < wrapper2 " + aWrap2Gen + " < body2 " + aRet2Gen
+                + ")");
+
+        // Class-field case: two function-typed defaults in one class
+        // declaration (the defaults thunk assembles both on one
+        // artifact line).
+        String classSource =
+            "class Box {\n" +                                         // line 1
+            "  a: () => int = function(): int { return 1; };\n" +    // line 2
+            "  b: () => int = function(): int { return 2; };\n" +    // line 3
+            "}\n" +                                                   // line 4
+            "export function main(): null { return null; }\n";       // line 5
+        String[] classLines = classSource.split("\n", -1);
+        int cWrap1 = classLines[1].indexOf("function") + 1;
+        int cRet1 = classLines[1].indexOf("return 1") + 1;
+        int cWrap2 = classLines[2].indexOf("function") + 1;
+        int cRet2 = classLines[2].indexOf("return 2") + 1;
+
+        JsFrontend clsFrontend = parseChecked(classSource,
+            "jsmap-class-defaults.deal");
+        if (clsFrontend == null) return;
+        SourceMapGenerator clsSmg = new SourceMapGenerator();
+        JsBackend.JsCodegenResult clsRes = JsBackend.generate(
+            clsFrontend.program(), clsFrontend.checkResult(),
+            "jsmap-class-defaults.deal", "Main", Map.of(), Map.of(),
+            false, clsSmg);
+        check(clsRes != null && !clsRes.hasErrors(),
+            "class-default codegen clean: "
+                + (clsRes == null ? "<null>" : clsRes.diagnostics()));
+        if (clsRes == null || clsRes.hasErrors()) return;
+
+        String[] clsArtifact = clsRes.source().split("\n", -1);
+        List<SourceMapGenerator.Mapping> clsMappings = clsSmg.mappings();
+        checkSiblingGroup(clsMappings, clsArtifact, 2, cWrap1, cRet1,
+            "first class default wrapper", "[\"a\"]: $rt.function",
+            "checkInt(1", "$rt.function(\"()->int\"");
+        checkSiblingGroup(clsMappings, clsArtifact, 3, cWrap2, cRet2,
+            "second class default wrapper", "[\"b\"]: $rt.function",
+            "checkInt(2", "$rt.function(\"()->int\"");
+        int cWrap1Gen = generatedLineOf(clsMappings, 2, cWrap1);
+        int cRet1Gen = generatedLineOf(clsMappings, 2, cRet1);
+        int cWrap2Gen = generatedLineOf(clsMappings, 3, cWrap2);
+        int cRet2Gen = generatedLineOf(clsMappings, 3, cRet2);
+        check(cWrap1Gen < cRet1Gen && cRet1Gen < cWrap2Gen
+                && cWrap2Gen < cRet2Gen,
+            "class-default positions strictly increase "
+                + "(wrapper1 " + cWrap1Gen + " < body1 " + cRet1Gen
+                + " < wrapper2 " + cWrap2Gen + " < body2 " + cRet2Gen
+                + ")");
+
+        // The whole sequence stays monotonic in both cases.
+        check(monotonicGeneratedLines(mappings),
+            "array case generated lines monotonically increase");
+        check(monotonicGeneratedLines(clsMappings),
+            "class case generated lines monotonically increase");
+    }
+
+    /**
+     * One wrapper/body pair's exact rebasing pins: the wrapper mapping
+     * lands on the artifact line carrying the wrapper's opening (which
+     * must also carry the distinguishing marker), and the body mapping
+     * lands on the artifact line carrying its own generated return.
+     */
+    private static void checkSiblingGroup(
+            List<SourceMapGenerator.Mapping> mappings,
+            String[] artifactLines, int sourceLine, int wrapCol,
+            int bodyCol, String label, String wrapMarker,
+            String bodyMarker, String wrapperSig) {
+        int wrapGen = generatedLineOf(mappings, sourceLine, wrapCol);
+        int bodyGen = generatedLineOf(mappings, sourceLine, bodyCol);
+        check(wrapGen > 0, label + " mapping exists at "
+            + sourceLine + ":" + wrapCol);
+        check(bodyGen > 0, label + " body mapping exists at "
+            + sourceLine + ":" + bodyCol);
+        if (wrapGen > 0) {
+            check(artifactLines[wrapGen - 1].contains(wrapMarker)
+                    && artifactLines[wrapGen - 1].contains(wrapperSig),
+                label + " round-trips to its own wrapper line: "
+                    + artifactLines[wrapGen - 1]);
+        }
+        if (bodyGen > 0) {
+            check(artifactLines[bodyGen - 1].contains(bodyMarker),
+                label + " body round-trips to its own return line: "
+                    + artifactLines[bodyGen - 1]);
+        }
+    }
+
+    /** The generated line recorded for the mapping pinned at the given
+     * source position, or 0 when absent. */
+    private static int generatedLineOf(
+            List<SourceMapGenerator.Mapping> mappings, int sourceLine,
+            int sourceColumn) {
+        for (SourceMapGenerator.Mapping m : mappings) {
+            if (m.sourceLine() == sourceLine
+                    && m.sourceColumn() == sourceColumn) {
+                return m.generatedLine();
+            }
+        }
+        return 0;
+    }
+
+    private static boolean monotonicGeneratedLines(
+            List<SourceMapGenerator.Mapping> mappings) {
+        int prev = 0;
+        for (SourceMapGenerator.Mapping m : mappings) {
+            if (m.generatedLine() < prev) return false;
+            prev = m.generatedLine();
+        }
+        return true;
     }
 
     /**

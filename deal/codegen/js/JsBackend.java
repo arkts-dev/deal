@@ -415,6 +415,17 @@ public final class JsBackend {
      * captured prefix ends with a newline, so captured line k lands on
      * {@code captureLineOffset + k}); 0 when not capturing. */
     private int captureLineOffset = 0;
+    /** The number of newlines already present in expression text that
+     * is assembled in memory but not yet appended to the current
+     * {@link #out} buffer (js-v12-source-maps D2 exactness): a
+     * statement's expression text is built in full before {@link #line}
+     * splices it into the buffer, so a second function expression on
+     * the same artifact line must rebase its wrapper and captured-body
+     * mappings past the first expression's assembled body lines.
+     * Scoped per emission level: {@link #captureOutput} saves and
+     * resets the enclosing value, and {@link #line} clears the current
+     * level's count once the assembled text lands in the buffer. */
+    private int inFlightNewlines = 0;
 
     /**
      * True while the walk sits at module level; false inside a
@@ -2590,9 +2601,16 @@ public final class JsBackend {
         currentReturnType = savedReturn;
 
         String keyword = isAsync ? "async function" : "function";
-        return "$rt.function(\"" + sig + "\", " + keyword + "("
+        String text = "$rt.function(\"" + sig + "\", " + keyword + "("
             + buildParamList(fe.params()) + ") {\n" + body
             + "  ".repeat(indent) + "})";
+        // The wrapper text carries the captured body's lines into the
+        // enclosing statement's in-memory assembly: count them all so
+        // a later sibling on the same artifact line rebases past them
+        // (the capture's own counter was discarded with the captured
+        // buffer, so the body's newlines are counted here).
+        inFlightNewlines += newlineCount(text);
+        return text;
     }
 
     private String emitHas(HasExpr has) {
@@ -2856,6 +2874,13 @@ public final class JsBackend {
         }
         sb.append("  ".repeat(indent)).append("})");
         String adapter = sb.toString();
+        // The adapter body contributes its own lines to the enclosing
+        // statement's in-memory assembly (the wrapper-prefix newline,
+        // one entry-check line per target parameter, and the return
+        // line); the embedded value expression's newlines were already
+        // counted when that expression was emitted, so only the
+        // adapter's own newlines are added here.
+        inFlightNewlines += newlineCount(adapter) - newlineCount(valueExpr);
         if (valueHasAwait && !asyncBody) {
             return "(($fn) => " + adapter + ")(" + valueExpr + ")";
         }
@@ -2924,9 +2949,17 @@ public final class JsBackend {
     // Emission helpers
     // =========================================================================
 
-    /** Appends one indented source line to the accumulator. */
+    /**
+     * Appends one indented source line to the accumulator. This is the
+     * flush point for assembled expression text: once the statement
+     * (any embedded function-expression body lines included) lands in
+     * the buffer, the current level's in-flight newline count is
+     * cleared — {@link #currentGeneratedLine} then reports the true
+     * position for the next statement group.
+     */
     private void line(String s) {
         out.append("  ".repeat(indent)).append(s).append("\n");
+        inFlightNewlines = 0;
     }
 
     /**
@@ -2938,13 +2971,23 @@ public final class JsBackend {
         StringBuilder saved = out;
         int savedIndent = indent;
         int savedOffset = captureLineOffset;
+        int savedInFlight = inFlightNewlines;
         // The captured text is spliced after a prefix ending in a
         // newline, so its first line lands on the artifact line after
         // the outer buffer's current line: rebase mappings recorded
-        // inside the capture (js-v12-source-maps D2 exactness).
-        int currentLine = currentGeneratedLine();
+        // inside the capture (js-v12-source-maps D2 exactness). The
+        // rebase also adds the enclosing level's in-flight newlines —
+        // expression text already assembled on the current statement's
+        // line but not yet appended to the outer buffer (an earlier
+        // sibling function expression's body), which shifts the splice
+        // position down by that many lines. The capture gets its own
+        // fresh in-flight count: its statements flush into the captured
+        // buffer through {@link #line}, so sibling function expressions
+        // inside the capture rebase against each other the same way.
+        int currentLine = currentGeneratedLine() + inFlightNewlines;
         out = new StringBuilder();
         captureLineOffset = savedOffset + currentLine;
+        inFlightNewlines = 0;
         try {
             action.run();
             return out.toString();
@@ -2952,6 +2995,7 @@ public final class JsBackend {
             out = saved;
             indent = savedIndent;
             captureLineOffset = savedOffset;
+            inFlightNewlines = savedInFlight;
         }
     }
 
@@ -2966,6 +3010,17 @@ public final class JsBackend {
             if (out.charAt(i) == '\n') line++;
         }
         return line;
+    }
+
+    /** The number of {@code '\n'} characters in the given assembled
+     * text — the line shift the text contributes once spliced into the
+     * output buffer. */
+    private static int newlineCount(String text) {
+        int count = 0;
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == '\n') count++;
+        }
+        return count;
     }
 
     /**
@@ -2988,7 +3043,12 @@ public final class JsBackend {
      */
     private void recordMapping(Span span) {
         if (sourceMapGenerator == null || span == null) return;
-        int generatedLine = currentGeneratedLine();
+        // The current level's in-flight newlines shift the recorded
+        // position past sibling expression text already assembled on
+        // the current line (js-v12-source-maps D2 exactness); inside a
+        // capture the position additionally rebases through the splice
+        // offset.
+        int generatedLine = currentGeneratedLine() + inFlightNewlines;
         if (captureLineOffset != 0) {
             generatedLine = captureLineOffset + generatedLine;
         }
