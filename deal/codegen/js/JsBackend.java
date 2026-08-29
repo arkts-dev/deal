@@ -1491,7 +1491,6 @@ public final class JsBackend {
         Type targetType = hasAnnotation
             ? resolveTypeNode(node.typeAnnotation().get()) : null;
         Type exprType = typeOf(node.initializer());
-        String init = emitExpression(node.initializer());
 
         Span span = hasAnnotation
             ? node.typeAnnotation().get().span()
@@ -1499,8 +1498,12 @@ public final class JsBackend {
 
         if (hasAnnotation && targetType != null
                 && !(targetType instanceof Type.Error)) {
+            // The annotated target crosses the initializer's typed
+            // boundary; boundaryValue emits the initializer itself, so
+            // an arity-extension adapter can splice the value text at
+            // its exact generated position (js-v12-source-maps D2).
             line(keyword + name + " = "
-                + boundaryValue(init, node.initializer(), targetType,
+                + boundaryValue(node.initializer(), targetType,
                     exprType, span) + ";");
         } else if (!hasAnnotation && exprType != null
                 && node.initializer() instanceof LiteralExpr
@@ -1509,8 +1512,10 @@ public final class JsBackend {
                     || exprType instanceof Type.String
                     || exprType instanceof Type.Number
                     || exprType instanceof Type.Null)) {
-            line(keyword + name + " = " + init + ";");
+            line(keyword + name + " = "
+                + emitExpression(node.initializer()) + ";");
         } else {
+            String init = emitExpression(node.initializer());
             Type checkType = targetType != null ? targetType : exprType;
             if (checkType != null
                     && !(checkType instanceof Type.Error)
@@ -2647,7 +2652,6 @@ public final class JsBackend {
      * transition), mirroring the declaration-site boundary checks.
      */
     private String emitAssignment(AssignmentExpr assign) {
-        String value = emitExpression(assign.value());
         Span span = assign.span();
 
         if (assign.target() instanceof IndexExpr idx) {
@@ -2655,6 +2659,7 @@ public final class JsBackend {
             if (containerType instanceof Type.Array arrT) {
                 String arr = emitExpression(idx.array());
                 String index = emitExpression(idx.index());
+                String value = emitExpression(assign.value());
                 boolean hasAwait = containsAwait(idx.array())
                     || containsAwait(idx.index())
                     || containsAwait(assign.value());
@@ -2689,10 +2694,11 @@ public final class JsBackend {
                         && isModuleAliasRef(id)) {
                     return "$rt.setProp(" + emitExpression(idx.array())
                         + ", " + emitExpression(idx.index()) + ", "
-                        + value + ")";
+                        + emitExpression(assign.value()) + ")";
                 }
                 return emitExpression(idx.array()) + ".set("
-                    + emitExpression(idx.index()) + ", " + value + ")";
+                    + emitExpression(idx.index()) + ", "
+                    + emitExpression(assign.value()) + ")";
             }
         }
         if (assign.target() instanceof MemberAccessExpr mae) {
@@ -2707,33 +2713,35 @@ public final class JsBackend {
                     && isModuleAliasRef(id)) {
                 return "$rt.setProp(" + emitExpression(mae.object())
                     + ", " + jsStringLiteral(mae.field()) + ", "
-                    + checkedAssignmentValue(value, assign.value(),
+                    + checkedAssignmentValue(assign.value(),
                         typeOf(assign.target()), typeOf(assign.value()),
                         span) + ")";
             }
             if (objType instanceof Type.Class) {
                 return "$rt.setProp(" + emitExpression(mae.object()) + ", "
                     + jsStringLiteral(mae.field()) + ", "
-                    + checkedAssignmentValue(value, assign.value(),
+                    + checkedAssignmentValue(assign.value(),
                         typeOf(assign.target()), typeOf(assign.value()),
                         span) + ")";
             }
             if (objType instanceof Type.Table) {
                 return emitExpression(mae.object()) + ".set("
-                    + jsStringLiteral(mae.field()) + ", " + value + ")";
+                    + jsStringLiteral(mae.field()) + ", "
+                    + emitExpression(assign.value()) + ")";
             }
             return emitExpression(mae.object()) + "." + mae.field()
-                + " = " + value;
+                + " = " + emitExpression(assign.value());
         }
         if (assign.target() instanceof IdentifierExpr id) {
             return jsName(id.name()) + " = "
-                + checkedAssignmentValue(value, assign.value(),
+                + checkedAssignmentValue(assign.value(),
                     typeOf(assign.target()), typeOf(assign.value()), span);
         }
         // Defensive plain form: unreachable for checker-accepted
         // programs (E3017 rejects array .length targets, the checker
         // rejects every other unsupported target shape).
-        return emitExpression(assign.target()) + " = " + value;
+        return emitExpression(assign.target()) + " = "
+            + emitExpression(assign.value());
     }
 
     /**
@@ -2742,46 +2750,48 @@ public final class JsBackend {
      * the type map, so a dynamic value like a table read crossing into a
      * typed binding or field is checked exactly where the transition
      * happens): a {@code Type.Error}/{@code null} type and the unchecked
-     * table target pass the value through verbatim; every other target
-     * type crosses the runtime typed boundary with the assignment-span
+     * table target emit the value verbatim; every other target type
+     * crosses the runtime typed boundary with the assignment-span
      * location — function targets via the exact-{@code $sig}
      * {@code checkType} E8010 check, with the arity-extension adapter
      * replacing it when the value's declared signature is assignably
      * narrower ({@link #boundaryValue}, the
      * {@code LuaBackend.emitArityAdapter} mirror).
      */
-    private String checkedAssignmentValue(String value,
-                                          ExpressionNode valueNode,
+    private String checkedAssignmentValue(ExpressionNode valueNode,
                                           Type targetType, Type valueType,
                                           Span span) {
         if (targetType == null || targetType instanceof Type.Error
                 || targetType instanceof Type.Table) {
-            return value;
+            return emitExpression(valueNode);
         }
-        return boundaryValue(value, valueNode, targetType, valueType, span);
+        return boundaryValue(valueNode, targetType, valueType, span);
     }
 
     /**
      * The value emission for a typed transition (declaration-site,
-     * assignment-site): an arity-extension pair — a function value whose
-     * declared signature is assignable to the target but declares fewer
-     * parameters — emits the adapter closure (js-backend-emitter D6);
-     * every other value crosses the runtime typed-boundary check —
+     * assignment-site): the node is emitted here — never pre-emitted by
+     * the caller — so the arity-extension adapter can place the value
+     * at its exact splice position (js-v12-source-maps D2). An
+     * arity-extension pair — a function value whose declared signature
+     * is assignable to the target but declares fewer parameters —
+     * emits the adapter closure (js-backend-emitter D6); every other
+     * value crosses the runtime typed-boundary check —
      * function targets compare the wrapper's {@code $sig} against the
      * expected descriptor exactly, so a wrong-signature wrapper surfaces
      * the E8010 mismatch from the runtime {@code checkType} function
      * branch (js-backend-runtime D3).
      */
-    private String boundaryValue(String value, ExpressionNode valueNode,
+    private String boundaryValue(ExpressionNode valueNode,
                                  Type targetType, Type valueType,
                                  Span span) {
         if (targetType instanceof Type.Func tf
                 && valueType instanceof Type.Func vf
                 && isArityExtension(vf, tf)) {
-            return emitArityAdapter(tf, vf, value, containsAwait(valueNode),
-                span);
+            return emitArityAdapter(tf, vf, valueNode,
+                containsAwait(valueNode), span);
         }
-        return emitCheckExpr(value, targetType, span);
+        return emitCheckExpr(emitExpression(valueNode), targetType, span);
     }
 
     /**
@@ -2835,9 +2845,26 @@ public final class JsBackend {
      * creation site — the source-level assignment semantics.
      */
     private String emitArityAdapter(Type.Func targetFunc, Type.Func valueFunc,
-                                    String valueExpr, boolean valueHasAwait,
+                                    ExpressionNode valueNode,
+                                    boolean valueHasAwait,
                                     Span span) {
         boolean asyncBody = valueHasAwait && targetFunc.isAsync();
+        // The adapter's structural prefix: the wrapper-opening line
+        // plus one extended-parameter check line per target parameter.
+        // The embedded value text lands on the adapter's return line,
+        // exactly prefixNewlines lines below the enclosing statement's
+        // line; the sync-target await-bearing form appends the value
+        // after the adapter's closing, one structural line lower (its
+        // return line). The value is emitted at that splice position
+        // (js-v12-source-maps D2 exactness) so its wrapper and
+        // captured-body mappings rebase past the adapter's structural
+        // lines to the lines carrying their own generated code —
+        // emitting it at the plain statement position would pin them
+        // to the adapter's opening/check lines instead.
+        int prefixNewlines = 1 + targetFunc.paramTypes().size();
+        int valueShift = asyncBody || !valueHasAwait
+            ? prefixNewlines : prefixNewlines + 1;
+        String valueExpr = emitExpressionAtOffset(valueShift, valueNode);
         String innerRef = asyncBody ? valueExpr
             : (valueHasAwait ? "$fn" : valueExpr);
         StringBuilder params = new StringBuilder();
@@ -2963,6 +2990,48 @@ public final class JsBackend {
     private void line(String s) {
         out.append("  ".repeat(indent)).append(s).append("\n");
         inFlightNewlines = 0;
+    }
+
+    /**
+     * Emits an expression whose text will be spliced
+     * {@code extraLines} lines below the enclosing statement's current
+     * assembly line (js-v12-source-maps D2 exactness): the
+     * arity-extension adapter assembles its structural prefix
+     * (wrapper-opening and extended-parameter check lines) before the
+     * embedded value text lands, so the value's recorded mappings must
+     * rebase past those lines. The emission runs against a fresh
+     * scratch buffer with the capture offset placed at the future
+     * splice line, so every mapping the value records
+     * (function-expression wrappers and their captured bodies, nested
+     * siblings included) lands on the line carrying its own generated
+     * code; the returned text and the accumulated in-flight newline
+     * count then join the enclosing statement's assembly exactly like
+     * a plain {@link #emitExpression} call (the adapter adds only the
+     * net new-line contribution of its structural text).
+     * {@code extraLines} must be &ge; 1 (the adapter's structural
+     * prefix always carries at least its wrapper-opening line), which
+     * keeps the capture offset non-zero so {@link #recordMapping}
+     * applies the rebase.
+     */
+    private String emitExpressionAtOffset(int extraLines,
+                                          ExpressionNode node) {
+        StringBuilder savedOut = out;
+        int savedOffset = captureLineOffset;
+        int savedInFlight = inFlightNewlines;
+        int spliceLine = currentGeneratedLine() + savedInFlight
+            + extraLines;
+        out = new StringBuilder();
+        captureLineOffset = savedOffset + spliceLine - 1;
+        inFlightNewlines = 0;
+        try {
+            String text = emitExpression(node);
+            savedInFlight += inFlightNewlines;
+            return text;
+        } finally {
+            out = savedOut;
+            captureLineOffset = savedOffset;
+            inFlightNewlines = savedInFlight;
+        }
     }
 
     /**

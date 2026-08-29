@@ -31,7 +31,10 @@ import java.util.concurrent.TimeUnit;
  *       recording through the optional SourceMapGenerator parameter,
  *       exact rebasing for sibling function expressions assembled on
  *       one emitted line (array-literal elements, function-typed class
- *       field defaults), orchestrator-side per-module
+ *       field defaults), exact rebasing for function-expression values
+ *       embedded in arity-extension adapters (sync/async forms and
+ *       sibling-shifted splice positions), orchestrator-side
+ *       per-module
  *       .deal.map.json sidecar writes for every clean module
  *       (statement-less modules included, with an empty mappings
  *       array) with the --source-map warning retired, and node
@@ -167,6 +170,7 @@ public class SourceMapTest {
         testSourceMapGeneratedPath();
         testJsEmitterMappingRecording();
         testJsFunctionExprSiblingRebasing();
+        testJsArityAdapterValueRebasing();
         testJsSidecarsRealPipeline();
         testJsSidecarStatementlessModule();
         testJsSidecarsDumpIrDerived();
@@ -985,6 +989,199 @@ public class SourceMapTest {
             prev = m.generatedLine();
         }
         return true;
+    }
+
+    /**
+     * Arity-adapter-embedded function-expression values
+     * (js-v12-source-maps D2 exactness, review-cycle-3 correction):
+     * when a function-typed target declares more parameters than the
+     * value, the arity-extension adapter assembles its structural
+     * prefix (wrapper-opening and extended-parameter check lines)
+     * before splicing the pre-emitted value text into its return
+     * line — the value's wrapper and captured-body mappings must
+     * rebase past those structural lines to the artifact lines
+     * carrying their OWN generated code, never stay pinned to the
+     * enclosing statement line (the adapter's opening line). Covers
+     * the sync embedded form, the async embedded form, and the
+     * sibling case where expression text already assembled on the
+     * statement's line shifts the splice position further.
+     */
+    static void testJsArityAdapterValueRebasing() {
+        System.out.println("-- JS emitter: arity-adapter value rebasing --");
+
+        // Sync embedded form: the zero-parameter value crosses into the
+        // one-parameter target; the adapter's structural prefix is its
+        // wrapper-opening line plus one extended-parameter check line.
+        String syncSource =
+            "export function main(): null {\n" +                    // line 1
+            "  let f: (a: int) => int = function(): int { return 1; };\n"
+                +                                                    // line 2
+            "  return null;\n" +                                    // line 3
+            "}\n";                                                  // line 4
+        String[] syncLines = syncSource.split("\n", -1);
+        int sWrap = syncLines[1].indexOf("function") + 1;
+        int sBody = syncLines[1].indexOf("return 1") + 1;
+
+        JsFrontend syncFrontend = parseChecked(syncSource,
+            "jsmap-adapter-sync.deal");
+        if (syncFrontend == null) return;
+        SourceMapGenerator syncSmg = new SourceMapGenerator();
+        JsBackend.JsCodegenResult syncRes = JsBackend.generate(
+            syncFrontend.program(), syncFrontend.checkResult(),
+            "jsmap-adapter-sync.deal", "Main", Map.of(), Map.of(),
+            false, syncSmg);
+        check(syncRes != null && !syncRes.hasErrors(),
+            "sync adapter codegen clean: "
+                + (syncRes == null ? "<null>" : syncRes.diagnostics()));
+        if (syncRes == null || syncRes.hasErrors()) return;
+
+        String[] syncArtifact = syncRes.source().split("\n", -1);
+        List<SourceMapGenerator.Mapping> syncMappings = syncSmg.mappings();
+        int sWrapGen = generatedLineOf(syncMappings, 2, sWrap);
+        int sBodyGen = generatedLineOf(syncMappings, 2, sBody);
+        check(sWrapGen > 0, "sync adapter wrapper mapping exists at 2:"
+            + sWrap);
+        check(sBodyGen > 0, "sync adapter body mapping exists at 2:"
+            + sBody);
+        if (sWrapGen > 0) {
+            String wrapLine = syncArtifact[sWrapGen - 1];
+            check(wrapLine.contains("$rt.function(\"()->int\"")
+                    && wrapLine.contains("return $rt.checkInt(")
+                    && !wrapLine.contains("$p0"),
+                "sync adapter wrapper round-trips to the adapter return "
+                    + "line carrying its own opening (never the adapter "
+                    + "opening line): " + wrapLine);
+        }
+        if (sBodyGen > 0) {
+            check(syncArtifact[sBodyGen - 1]
+                    .contains("return $rt.checkInt(1"),
+                "sync adapter body round-trips to its own return line: "
+                    + syncArtifact[sBodyGen - 1]);
+        }
+        check(sWrapGen > 0 && sBodyGen > 0 && sWrapGen < sBodyGen,
+            "sync adapter positions strictly increase (wrapper "
+                + sWrapGen + " < body " + sBodyGen + ")");
+        check(monotonicGeneratedLines(syncMappings),
+            "sync adapter case generated lines monotonically increase");
+
+        // Async embedded form: the async target's adapter carries the
+        // same structural prefix shape around the embedded async value.
+        String asyncSource =
+            "export async function g(): int { return 7; }\n" +       // line 1
+            "export function main(): null {\n" +                     // line 2
+            "  let f: async (a: int) => int = async function(): int { return await g(); };\n"
+                +                                                    // line 3
+            "  return null;\n" +                                    // line 4
+            "}\n";                                                  // line 5
+        String[] asyncLines = asyncSource.split("\n", -1);
+        // The async FunctionExpr span starts at the 'async' keyword
+        // (the emitter records the span start), so the wrapper pin
+        // anchors on the value's 'async function' spelling.
+        int aWrap = asyncLines[2].indexOf("async function") + 1;
+        int aBody = asyncLines[2].indexOf("return", aWrap) + 1;
+
+        JsFrontend asyncFrontend = parseChecked(asyncSource,
+            "jsmap-adapter-async.deal");
+        if (asyncFrontend == null) return;
+        SourceMapGenerator asyncSmg = new SourceMapGenerator();
+        JsBackend.JsCodegenResult asyncRes = JsBackend.generate(
+            asyncFrontend.program(), asyncFrontend.checkResult(),
+            "jsmap-adapter-async.deal", "Main", Map.of(), Map.of(),
+            false, asyncSmg);
+        check(asyncRes != null && !asyncRes.hasErrors(),
+            "async adapter codegen clean: "
+                + (asyncRes == null ? "<null>" : asyncRes.diagnostics()));
+        if (asyncRes == null || asyncRes.hasErrors()) return;
+
+        String[] asyncArtifact = asyncRes.source().split("\n", -1);
+        List<SourceMapGenerator.Mapping> asyncMappings = asyncSmg.mappings();
+        int aWrapGen = generatedLineOf(asyncMappings, 3, aWrap);
+        int aBodyGen = generatedLineOf(asyncMappings, 3, aBody);
+        check(aWrapGen > 0, "async adapter wrapper mapping exists at 3:"
+            + aWrap);
+        check(aBodyGen > 0, "async adapter body mapping exists at 3:"
+            + aBody);
+        if (aWrapGen > 0) {
+            String wrapLine = asyncArtifact[aWrapGen - 1];
+            check(wrapLine.contains("$rt.function(\"async()->int\"")
+                    && wrapLine.contains("return $rt.function(")
+                    && !wrapLine.contains("$p0"),
+                "async adapter wrapper round-trips to the adapter return "
+                    + "line carrying its own opening (never the adapter "
+                    + "opening line): " + wrapLine);
+        }
+        if (aBodyGen > 0) {
+            check(asyncArtifact[aBodyGen - 1]
+                    .contains("return $rt.checkInt((await g.$f("),
+                "async adapter body round-trips to its own return line: "
+                    + asyncArtifact[aBodyGen - 1]);
+        }
+        check(aWrapGen > 0 && aBodyGen > 0 && aWrapGen < aBodyGen,
+            "async adapter positions strictly increase (wrapper "
+                + aWrapGen + " < body " + aBodyGen + ")");
+        check(monotonicGeneratedLines(asyncMappings),
+            "async adapter case generated lines monotonically increase");
+
+        // Sibling case: an adapter value in expression position after a
+        // sibling function expression already assembled on the
+        // statement's line — the value's splice position rebases past
+        // the sibling's body lines AND the adapter's structural prefix.
+        String siblingSource =
+            "export function consume(a: () => int, b: (x: int) => int): int { return a() + b(1); }\n"
+                +                                                    // line 1
+            "let f: (a: int) => int = function(a: int): int { return a; };\n"
+                +                                                    // line 2
+            "export function main(): int {\n" +                      // line 3
+            "  return consume(function(): int { return 2; }, f = function(): int { return 1; });\n"
+                +                                                    // line 4
+            "}\n";                                                  // line 5
+        String[] siblingLines = siblingSource.split("\n", -1);
+        int sibWrap = siblingLines[3].indexOf("function", 30) + 1;
+        int sibBody = siblingLines[3].indexOf("return 1") + 1;
+
+        JsFrontend siblingFrontend = parseChecked(siblingSource,
+            "jsmap-adapter-sibling.deal");
+        if (siblingFrontend == null) return;
+        SourceMapGenerator siblingSmg = new SourceMapGenerator();
+        JsBackend.JsCodegenResult siblingRes = JsBackend.generate(
+            siblingFrontend.program(), siblingFrontend.checkResult(),
+            "jsmap-adapter-sibling.deal", "Main", Map.of(), Map.of(),
+            false, siblingSmg);
+        check(siblingRes != null && !siblingRes.hasErrors(),
+            "sibling adapter codegen clean: "
+                + (siblingRes == null ? "<null>"
+                    : siblingRes.diagnostics()));
+        if (siblingRes == null || siblingRes.hasErrors()) return;
+
+        String[] siblingArtifact = siblingRes.source().split("\n", -1);
+        List<SourceMapGenerator.Mapping> siblingMappings =
+            siblingSmg.mappings();
+        int sibWrapGen = generatedLineOf(siblingMappings, 4, sibWrap);
+        int sibBodyGen = generatedLineOf(siblingMappings, 4, sibBody);
+        check(sibWrapGen > 0, "sibling adapter wrapper mapping exists at 4:"
+            + sibWrap);
+        check(sibBodyGen > 0, "sibling adapter body mapping exists at 4:"
+            + sibBody);
+        if (sibWrapGen > 0) {
+            String wrapLine = siblingArtifact[sibWrapGen - 1];
+            check(wrapLine.contains("$rt.function(\"()->int\"")
+                    && wrapLine.contains("return $rt.checkInt("),
+                "sibling adapter wrapper round-trips to the line "
+                    + "carrying its own opening past the sibling's body "
+                    + "lines: " + wrapLine);
+        }
+        if (sibBodyGen > 0) {
+            check(siblingArtifact[sibBodyGen - 1]
+                    .contains("return $rt.checkInt(1"),
+                "sibling adapter body round-trips to its own return "
+                    + "line: " + siblingArtifact[sibBodyGen - 1]);
+        }
+        check(sibWrapGen > 0 && sibBodyGen > 0 && sibWrapGen < sibBodyGen,
+            "sibling adapter positions strictly increase (wrapper "
+                + sibWrapGen + " < body " + sibBodyGen + ")");
+        check(monotonicGeneratedLines(siblingMappings),
+            "sibling adapter case generated lines monotonically "
+                + "increase");
     }
 
     /**
