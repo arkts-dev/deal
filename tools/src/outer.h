@@ -19,6 +19,38 @@
  * and the PROTOCOL_ERROR/AUTH_FAILED aftermath (deadline-bounded D8
  * escalation through the T2 machinery).
  *
+ * This child (ISSUE-0296, epic Sequencing steps 4-5) adds: the
+ * SupervisorRecord registry with register-before-fork (parent D2/D3
+ * record shape, invocation-id/nonce/deadline assignment, ordered
+ * state history, the first-ACK tracking field for the D6 validation,
+ * <= 128 concurrent live records, records retained until the final
+ * report); the serve-surface nested fork through the
+ * dealpg4_outer_spawn seam (per-invocation AF_UNIX socketpair control
+ * channel with the outer end O_NONBLOCK|FD_CLOEXEC and the child end
+ * dup2'd onto fd 0, serve argv [self, serve, <decodedCwd>, --,
+ * <target-argv...>] with self = /proc/self/exe, the DEALPG4_NONCE /
+ * DEALPG4_BUDGET_MS / DEALPG4_INVOCATION_ID env pins child-side at
+ * the fork, T = min(invocationLimits.overallTimeoutMs, nestedStopMs -
+ * nowMs), the 15000 ms budget floor); the pre-fork terminal-record
+ * rejections (MALFORMED_INVOKE / REGISTRY_FULL / BUDGET_EXHAUSTED /
+ * FORK_FAILED / NONCE_FAILED -- immediate terminal FAILED records
+ * with no pid, no channels, no fork, answered REJECT over the open
+ * broker); the BROKER_LIVE and BROKER_POST_DONE channel rows (INVOKE
+ * semantic/framing split, the full parent-D6 ACK condition with the
+ * outer-side state == TARGET_PUBLISHED check, the CANCEL record-level
+ * validation, BYE in BROKER_LIVE = PROTOCOL_ERROR, the EOF
+ * caller-loss mark); the INVOKE acceptance cutoff (T0o +
+ * nestedStopMs, live records marked CANCELLING at expiry) with the
+ * cutoff-anchored DONE emission trigger (exactly once, only after
+ * the cutoff with a non-empty fully-terminal registry, every
+ * terminal answer queued before DONE, the verdict computed at the
+ * queueing moment) and the post-DONE INVOKE answer (REJECT <id> <tag>
+ * BUDGET_EXHAUSTED + immediate terminal FAILED record over the open
+ * broker -- never PROTOCOL_ERROR, never a close); and the
+ * coordinator-side dispatch contract pinned for the Java-client
+ * boundary in coordinator-observable terms (see the contract block
+ * below).
+ *
  * See dealpg4-outer-supervisor-engine D1/D2/D5/D6 for the pinned
  * surfaces (outer-coordinator-and-broker D1-D9 preserved):
  *  - the mode entry owns only surface binding: the pinned argv shape
@@ -31,17 +63,15 @@
  *    SIGHUP/SIGPIPE, subreaper set + read-back, shellPid, T0o, the
  *    timerfd, signalfd(SIGCHLD), the outerNonce), the coordinator
  *    lifecycle (pre-exec pipe, COORD_READY wait + cross-check, the
- *    stream drains, the D8 escalation, the final proof), the ppoll
- *    loop (the single timerfd carrying the earliest applicable
- *    deadline; never blocked on a write), the write-side discipline,
- *    the final report, and the exit-status mapping.
- * The registry, nested forks, fallbacks, and the remaining
- * final-sequence discrimination land with the next sequencing steps;
- * this child additionally owns the broker socket and handshake channel
- * machine; a well-formed record arriving in BROKER_LIVE is
- * state-unexpected (the live-phase expectation set and its handlers
- * land with the registry child) and closes per the D5 PROTOCOL_ERROR
- * rule.
+ *    stream drains, the D8 escalation, the final proof), the registry
+ *    and the nested forks, the broker channel state machine (the
+ *    live-phase and post-DONE rows), the write-side discipline, the
+ *    final report, and the exit-status mapping.
+ * The nested control-channel state machine (STUB_FORKED/STUB_READY
+ * handling, the ACK relay with RELEASED-at-write-completion, the
+ * CANCEL fan-out application), the D7 fallbacks/wedge rule, the
+ * cancellation execution, and the remaining final-sequence
+ * discrimination land with the next sequencing steps.
  */
 #ifndef DEALPG4_OUTER_H
 #define DEALPG4_OUTER_H
@@ -52,6 +82,7 @@
 
 #include "drain.h"
 #include "monotonic.h"
+#include "protocol.h"
 
 /* === Exit statuses (engine D1) ========================================= */
 
@@ -114,19 +145,42 @@ enum dealpg4_outer_broker_state {
                                              PROTOCOL_ERROR) */
     DEALPG4_OUTER_BROKER_LIVE = 2,        /* entered exactly after the
                                              READY_ACK write was
-                                             queued; the live-phase
-                                             expectation set is empty
-                                             at this stage — a
-                                             well-formed record is
+                                             queued; expects INVOKE /
+                                             ACK / CANCEL — BYE (and
+                                             any other record) is
                                              state-unexpected and
                                              closes per the D5
                                              PROTOCOL_ERROR rule (the
-                                             live-phase rows land with
-                                             the registry child); EOF
-                                             is the accepted channel
-                                             event feeding the D8
-                                             discrimination slot */
-    DEALPG4_OUTER_BROKER_CLOSED = 3       /* terminal: the connection
+                                             frame pins DONE -> BYE);
+                                             EOF is the accepted
+                                             channel event feeding the
+                                             D8 discrimination slot
+                                             with the caller-loss
+                                             mark on live records */
+    DEALPG4_OUTER_BROKER_POST_DONE = 3,   /* entered when the outer has
+                                             queued DONE (the
+                                             cutoff-anchored trigger
+                                             below); expects BYE /
+                                             INVOKE / ACK / CANCEL —
+                                             BYE is accepted and the
+                                             outer then closes its
+                                             end; a post-DONE INVOKE
+                                             keeps the unconditional
+                                             post-cutoff answer
+                                             (REJECT <id> <tag>
+                                             BUDGET_EXHAUSTED +
+                                             immediate terminal FAILED
+                                             record over the open
+                                             broker — never
+                                             PROTOCOL_ERROR, never a
+                                             close); ACK/CANCEL keep
+                                             the record-level
+                                             validation; HELLO /
+                                             FEATURE_READY and any
+                                             other record are
+                                             state-unexpected ->
+                                             PROTOCOL_ERROR */
+    DEALPG4_OUTER_BROKER_CLOSED = 4       /* terminal: the connection
                                              is closed, no further
                                              records are read */
 };
@@ -156,6 +210,150 @@ int dealpg4_outer_broker_bind_path(const char *socket_dir,
  * caller's AUTH_FAILED path), the accept(2)/fcntl errno otherwise. */
 int dealpg4_outer_broker_accept_peer(int listen_fd, pid_t coordinator_pid,
                                      uid_t expected_uid, int *conn_fd);
+
+/* === Registry (engine D2/D3/D4; outer-coordinator-and-broker D2-D4)
+ * ========================================================================
+ * SupervisorRecord(invocationId, clientTag, nonce, supervisorPid,
+ * controlFd, stubPid?, targetPgid?, targetSessionId?, state, deadlineMs,
+ * history, cleanupAcknowledged) — parent D2. invocationId is
+ * outer-assigned, monotonic, unique (a counter from 1); the nonce is
+ * generated at registration via dealpg4_nonce_hex (getrandom(2)); the
+ * deadline (the delivered nested budget T) is computed at registration;
+ * the ordered (state, monotonicMs) history retains every transition;
+ * the first-ACK tracking field backs the D6 ACK validation (set when
+ * the outer validates and accepts the ACK for relay — at queueing,
+ * before any write completes; cleared only when a validated CANCEL or
+ * the terminal queued-write discard drops the queued-but-unwritten ACK —
+ * the channel-machine child's application). Register-before-fork: the
+ * record is inserted (state FORKING, nonce and deadline computed)
+ * before the fork syscall; supervisorPid is attached immediately after
+ * fork returns; INVOKED is answered only after insertion. At most 128
+ * concurrent live records (REGISTRY_FULL); records are never deleted
+ * before the final report. Pre-fork rejection records are inserted
+ * directly terminal FAILED with no pid, no channels, no fork, and no
+ * fallback work.
+ *
+ * The live (pre-terminal) states are FORKING / STUB_BLOCKED /
+ * TARGET_PUBLISHED / RELEASED / CANCELLING; terminal states are CLEAN /
+ * FAILED. The caller-loss mark (broker EOF/close with live records)
+ * and the INVOKE-cutoff expiry mark every live record CANCELLING —
+ * the cancellation execution (the CANCEL fan-out, fallback
+ * completions) lands with the fallback child.
+ */
+
+/* <= 128 concurrent live records (parent D2: REGISTRY_FULL at 128). */
+#define DEALPG4_OUTER_MAX_LIVE_RECORDS 128
+
+/* Bounded ordered state history per record (the full transition path
+ * FORKING -> STUB_BLOCKED -> TARGET_PUBLISHED -> RELEASED ->
+ * CANCELLING -> CLEAN|FAILED is at most 6 entries). */
+#define DEALPG4_OUTER_HISTORY_MAX 16
+
+/* In-process observability buffers (component tests / ISSUE-0184
+ * battery). */
+#define DEALPG4_OUTER_TAG_VIEW_BYTES 128
+#define DEALPG4_OUTER_TOKEN_VIEW_BYTES 32
+
+/* Registry record states (parent D2). */
+typedef enum dealpg4_outer_record_state {
+    DEALPG4_OUTER_REC_FORKING = 0,         /* inserted pre-fork */
+    DEALPG4_OUTER_REC_STUB_BLOCKED = 1,    /* STUB_FORKED retained */
+    DEALPG4_OUTER_REC_TARGET_PUBLISHED = 2,/* verified STUB_READY
+                                              forwarded */
+    DEALPG4_OUTER_REC_RELEASED = 3,        /* entered exactly when the
+                                              outer's ACK write into the
+                                              nested control channel
+                                              completes */
+    DEALPG4_OUTER_REC_CANCELLING = 4,      /* coordinator loss / outer
+                                              deadline / shell loss /
+                                              valid CANCEL */
+    DEALPG4_OUTER_REC_CLEAN = 5,           /* terminal: success or
+                                              cancelled (clean_final) */
+    DEALPG4_OUTER_REC_FAILED = 6           /* terminal: failure_token */
+} dealpg4_outer_record_state;
+
+typedef struct dealpg4_outer_history_entry {
+    int state;        /* dealpg4_outer_record_state */
+    int64_t at_ms;    /* absolute CLOCK_MONOTONIC ms of the transition */
+} dealpg4_outer_history_entry;
+
+/* Read-only record view (in-process observability; valid until the
+ * next core call). */
+typedef struct dealpg4_outer_record_view {
+    int64_t invocation_id;
+    char client_tag[DEALPG4_OUTER_TAG_VIEW_BYTES];
+    char nonce[DEALPG4_NONCE_HEX_CHARS + 1]; /* "" for pre-fork
+                                                rejection records */
+    pid_t supervisor_pid;  /* -1 until attached / for pre-fork
+                              rejection records */
+    int control_fd;        /* -1 until attached / for pre-fork
+                              rejection records */
+    pid_t stub_pid;        /* -1 until retained */
+    pid_t target_pgid;     /* 0 until verified */
+    pid_t target_session_id; /* 0 until verified */
+    int state;             /* dealpg4_outer_record_state */
+    int64_t deadline_ms;   /* the delivered nested budget T (0 for
+                              pre-fork rejection records) */
+    int64_t deadline_abs_ms; /* registration time + T (0 for pre-fork
+                                rejection records) */
+    int ack_applied;       /* first-ACK tracking (D6): set when the
+                              outer validates and accepts the ACK for
+                              relay (at queueing, before any write
+                              completes) */
+    int cleanup_acknowledged; /* outer completed the fallback proof */
+    int clean_final;       /* CLEAN records: 1 = success, 0 =
+                              cancelled */
+    char failure_token[DEALPG4_OUTER_TOKEN_VIEW_BYTES]; /* FAILED
+                                                           records */
+    size_t history_count;
+    dealpg4_outer_history_entry history[DEALPG4_OUTER_HISTORY_MAX];
+} dealpg4_outer_record_view;
+
+/* Read-only registry access (component tests and the ISSUE-0184
+ * battery; also valid DURING a core call — the spawn-seam
+ * compositions use it to prove register-before-fork): count records,
+ * then copy each view. The live registry is visible while a core call
+ * runs; afterwards the most recent call's snapshot is retained until
+ * the next core call (a call refused before the preamble leaves an
+ * empty snapshot). */
+size_t dealpg4_outer_registry_count(void);
+int dealpg4_outer_registry_record(size_t idx, dealpg4_outer_record_view *out);
+
+/* === Coordinator-side dispatch contract (engine D5, pinned here for
+ * the Java-client boundary — coordinator-observable terms only; the
+ * coordinator's own sent records and received answers, never
+ * outer-registry knowledge) ==============================================
+ * (1) The coordinator may send INVOKEs at any time before the cutoff;
+ *     each pre-cutoff INVOKE is answered INVOKED or a record-level
+ *     REJECT over the open broker — the coordinator needs no
+ *     knowledge of any other record's registry state.
+ * (2) Once any of its INVOKEs is answered REJECT <id> <tag>
+ *     BUDGET_EXHAUSTED, the dispatch window is closed and the
+ *     coordinator sends no further INVOKEs.
+ * (3) DONE arrives only after the cutoff, once every registry record
+ *     is terminal, with every terminal answer preceding it; after
+ *     receiving DONE the coordinator sends BYE and then closes — or
+ *     simply closes: exit 0 with no live records is the clean exit
+ *     per parent D8 either way.
+ * (4) A coordinator that dispatched no records must not wait for DONE
+ *     (the registry is empty — DONE is never queued) and closes +
+ *     exits 0, the clean exit.
+ * (5) At any point — including before the cutoff — the coordinator
+ *     may close the broker and exit 0 once every record it dispatched
+ *     has a terminal answer and it will dispatch no more: the clean
+ *     exit per parent D8 (exit 0 without BYE after all records
+ *     terminal).
+ * (6) While records are live it may interleave CANCEL for a live
+ *     record (validated per parent D7), and it must not send a CANCEL
+ *     for a record whose terminal answer it has already received.
+ * The outer side implements this contract through the BROKER_LIVE /
+ * BROKER_POST_DONE rows and the cutoff-anchored DONE trigger below:
+ * pre-cutoff INVOKEs are processed before DONE exists; post-cutoff
+ * INVOKEs receive the objective's deterministic REJECT <id> <tag>
+ * BUDGET_EXHAUSTED answer before or after DONE alike; a coordinator
+ * that sends BYE before DONE is BROKER_LIVE-state unexpected ->
+ * PROTOCOL_ERROR (the frame pins DONE -> BYE).
+ */
 
 /* === Mode entry / core entry (engine D1/D2) ============================ */
 
@@ -241,10 +439,33 @@ enum dealpg4_outer_fi_fail_site {
                                   * report lies; the outer's
                                   * report//proc cross-check disagrees)
                                   * -> COORDINATOR_STARTUP_FAILED */
-    FI_OUTER_BIND = 7              /* the broker socket bind fails with
+    FI_OUTER_BIND = 7,             /* the broker socket bind fails with
                                     * the scripted value as errno ->
                                     * BROKER_BIND_FAILED, no
                                     * coordinator fork */
+    FI_OUTER_SOCKETPAIR = 8,      /* the per-invocation control
+                                    * socketpair fails with the
+                                    * scripted value as errno -> the
+                                    * already-inserted record goes
+                                    * terminal FAILED FORK_FAILED and
+                                    * the answer is REJECT <id> <tag>
+                                    * FORK_FAILED — no pid, no
+                                    * channels, no fork (D3) */
+    FI_OUTER_FORK = 9,            /* the nested-supervisor fork(2)
+                                    * fails with the scripted value as
+                                    * errno -> the same FORK_FAILED
+                                    * path (the record was already
+                                    * inserted — register-before-fork;
+                                    * D3) */
+    FI_OUTER_INVOKE_NONCE = 10    /* registration-time nonce
+                                    * generation fails (unrecoverable
+                                    * getrandom(2)) -> REJECT <id>
+                                    * <tag> NONCE_FAILED + terminal
+                                    * FAILED <id> NONCE_FAILED record,
+                                    * no fork, no channels (D3); the
+                                    * production nonce path
+                                    * (dealpg4_nonce_hex) is unchanged
+                                    * when the site is unscripted */
 };
 
 /* Named congest target/mode tags (int tags through
@@ -402,6 +623,30 @@ typedef struct dealpg4_outer_result {
     int coord_stderr_eof;
     uint64_t reap_count;        /* children reaped by the outer */
     uint64_t adopt_count;       /* adopted descendants found/scanned */
+
+    /* Registry + DONE trigger (engine D2-D5). */
+    int records_total;          /* registry records (terminal and
+                                   live) */
+    int records_live;           /* pre-terminal registry records */
+    int records_failed;         /* terminal FAILED records */
+    int records_clean;          /* terminal CLEAN records (success or
+                                   cancelled) */
+    int64_t next_invocation_id; /* the next outer-assigned id (the
+                                   monotonic counter) */
+    int cutoff_cancelled;       /* the cutoff expiry marked every
+                                   live record CANCELLING */
+    int64_t cutoff_mark_ms;     /* t0o-relative cutoff-mark time (0
+                                   when never marked) */
+    int caller_loss_marked;     /* a broker close/EOF marked live
+                                   records CANCELLING (the caller-loss
+                                   mark) */
+    int done_queued;            /* the cutoff-anchored DONE trigger
+                                   fired exactly once */
+    int done_clean;             /* the DONE verdict computed at the
+                                   queueing moment (1 = clean, every
+                                   record CLEAN success or clean
+                                   cancelled) */
+    int64_t done_ms;            /* t0o-relative DONE queueing time */
 } dealpg4_outer_result;
 
 /* Copy the most recent core call's result view (zeroed when no core
