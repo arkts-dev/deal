@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: ASYNC_IMPORTED_SOURCE\nDEAL_ERROR_SNAPSHOT: {\"code\":\"ASYNC_IMPORTED_SOURCE\",\"message\":\"imported async source\",\"sourceFile\":\"backend-runtime/source-location-precision/imported_async_source_lib.deal\",\"line\":7,\"column\":3}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "ASYNC_IMPORTED_SOURCE",
+      "message": "imported async source",
+      "sourceFile": "backend-runtime/source-location-precision/imported_async_source_lib.deal",
+      "line": 7,
+      "column": 3
+    }
+  }
+}

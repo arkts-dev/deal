@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"parameter 2 type mismatch: expected array\",\"sourceFile\":\"backend-runtime/host-abi/host-rest-bad.deal\",\"line\":13,\"column\":10,\"expected\":\"string[]\",\"actual\":\"number\"}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8010",
+      "message": "parameter 2 type mismatch: expected array",
+      "sourceFile": "backend-runtime/host-abi/host-rest-bad.deal",
+      "line": 13,
+      "column": 10,
+      "expected": "string[]",
+      "actual": "number"
+    }
+  }
+}

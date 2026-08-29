@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"return value 1 type mismatch: expected null\",\"sourceFile\":\"backend-runtime/host-abi/host-null-return-bad.deal\",\"line\":9,\"column\":3,\"expected\":\"null\",\"actual\":\"string\"}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8010",
+      "message": "return value 1 type mismatch: expected null",
+      "sourceFile": "backend-runtime/host-abi/host-null-return-bad.deal",
+      "line": 9,
+      "column": 3,
+      "expected": "null",
+      "actual": "string"
+    }
+  }
+}

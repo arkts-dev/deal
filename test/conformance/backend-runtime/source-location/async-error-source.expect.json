@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: ASYNC_SOURCE_FAIL\nDEAL_ERROR_SNAPSHOT: {\"code\":\"ASYNC_SOURCE_FAIL\",\"message\":\"async source fail\",\"sourceFile\":\"backend-runtime/source-location/async-error-source.deal\",\"line\":7,\"column\":3}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "ASYNC_SOURCE_FAIL",
+      "message": "async source fail",
+      "sourceFile": "backend-runtime/source-location/async-error-source.deal",
+      "line": 7,
+      "column": 3
+    }
+  }
+}

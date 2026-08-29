@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8006\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8006\",\"message\":\"integer exponent must be non-negative\",\"sourceFile\":\"backend-runtime/arithmetic/int-pow-negative.deal\",\"line\":7,\"column\":10}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8006",
+      "message": "integer exponent must be non-negative",
+      "sourceFile": "backend-runtime/arithmetic/int-pow-negative.deal",
+      "line": 7,
+      "column": 10
+    }
+  }
+}

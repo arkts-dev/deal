@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8011\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8011\",\"message\":\"missing host export 'missing' in module 'host/missing_export'\",\"sourceFile\":\"backend-runtime/host-abi/host-missing-export.deal\",\"line\":6,\"column\":1}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8011",
+      "message": "missing host export 'missing' in module 'host/missing_export'",
+      "sourceFile": "backend-runtime/host-abi/host-missing-export.deal",
+      "line": 6,
+      "column": 1
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: CROSS_FUNCTION_RETHROW\nDEAL_ERROR_SNAPSHOT: {\"code\":\"CROSS_FUNCTION_RETHROW\",\"message\":\"boom\",\"sourceFile\":\"backend-runtime/runtime-errors/rethrow-across-function-boundary.deal\",\"line\":7,\"column\":3}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "CROSS_FUNCTION_RETHROW",
+      "message": "boom",
+      "sourceFile": "backend-runtime/runtime-errors/rethrow-across-function-boundary.deal",
+      "line": 7,
+      "column": 3
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8003\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8003\",\"message\":\"array element 1 type mismatch: expected class instance\",\"sourceFile\":\"backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal\",\"line\":12,\"column\":11,\"expected\":\"@backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal/Box\",\"actual\":\"table\"}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8003",
+      "message": "array element 1 type mismatch: expected class instance",
+      "sourceFile": "backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal",
+      "line": 12,
+      "column": 11,
+      "expected": "@backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal/Box",
+      "actual": "table"
+    }
+  }
+}

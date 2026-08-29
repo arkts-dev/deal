@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: MODULE_EXPLICIT_FAIL\nDEAL_ERROR_SNAPSHOT: {\"code\":\"MODULE_EXPLICIT_FAIL\",\"message\":\"module function fail\",\"sourceFile\":\"backend-runtime/module-failures/explicit_fail_lib.deal\",\"line\":7,\"column\":3}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "MODULE_EXPLICIT_FAIL",
+      "message": "module function fail",
+      "sourceFile": "backend-runtime/module-failures/explicit_fail_lib.deal",
+      "line": 7,
+      "column": 3
+    }
+  }
+}

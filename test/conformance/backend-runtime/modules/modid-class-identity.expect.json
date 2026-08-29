@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected instance of @backend-runtime/modules/modid_lib_b.deal/Point, got @backend-runtime/modules/modid_lib_a.deal/Point\",\"sourceFile\":\"backend-runtime/modules/modid_lib_b.deal\",\"line\":15,\"column\":28,\"expected\":\"@backend-runtime/modules/modid_lib_b.deal/Point\",\"actual\":\"@backend-runtime/modules/modid_lib_a.deal/Point\"}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8001",
+      "message": "expected instance of @backend-runtime/modules/modid_lib_b.deal/Point, got @backend-runtime/modules/modid_lib_a.deal/Point",
+      "sourceFile": "backend-runtime/modules/modid_lib_b.deal",
+      "line": 15,
+      "column": 28,
+      "expected": "@backend-runtime/modules/modid_lib_b.deal/Point",
+      "actual": "@backend-runtime/modules/modid_lib_a.deal/Point"
+    }
+  }
+}

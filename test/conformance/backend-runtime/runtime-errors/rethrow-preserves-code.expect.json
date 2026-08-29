@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: USER_RETHROW\nDEAL_ERROR_SNAPSHOT: {\"code\":\"USER_RETHROW\",\"message\":\"boom\",\"sourceFile\":\"backend-runtime/runtime-errors/rethrow-preserves-code.deal\",\"line\":8,\"column\":5}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "USER_RETHROW",
+      "message": "boom",
+      "sourceFile": "backend-runtime/runtime-errors/rethrow-preserves-code.deal",
+      "line": 8,
+      "column": 5
+    }
+  }
+}

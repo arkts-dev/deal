@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"return value 1 type mismatch: expected string, got invalid UTF-8 encoding\",\"sourceFile\":\"backend-runtime/host-abi/host-invalid-utf8-e8010.deal\",\"line\":11,\"column\":19,\"expected\":\"string\",\"actual\":\"string\"}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8010",
+      "message": "return value 1 type mismatch: expected string, got invalid UTF-8 encoding",
+      "sourceFile": "backend-runtime/host-abi/host-invalid-utf8-e8010.deal",
+      "line": 11,
+      "column": 19,
+      "expected": "string",
+      "actual": "string"
+    }
+  }
+}
