@@ -9,6 +9,7 @@ import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.diagnostics.DiagnosticCode;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -599,11 +600,20 @@ public final class JvmBackend {
     /**
      * Result of JVM code generation: the public class name (the
      * {@code .java} file name is {@code className + ".java"}), the generated
-     * Java source, and any backend diagnostics. {@link #hasErrors()} gates
-     * compilation of the artifact.
+     * Java source, any backend diagnostics, and the backend-wide int mode
+     * the generating backend stored (ISSUE-0374 profile plumb).
+     * {@link #hasErrors()} gates compilation of the artifact.
+     *
+     * @param int32Mode true when the generating backend ran under the
+     *                  {@code DEAL_V1_2_INT32} semantic profile (the one
+     *                  backend-wide mode derived from
+     *                  {@code profile == DEAL_V1_2_INT32}); the recorded
+     *                  mode is the real stored backend state, never a
+     *                  mirrored constant
      */
     public record JvmCodegenResult(String className, String source,
-                                   List<CompilerDiagnostic> diagnostics) {
+                                   List<CompilerDiagnostic> diagnostics,
+                                   boolean int32Mode) {
         public JvmCodegenResult {
             Objects.requireNonNull(className, "className must not be null");
             Objects.requireNonNull(source, "source must not be null");
@@ -631,6 +641,20 @@ public final class JvmBackend {
      * class (the orchestrator's selected entry module or the standalone
      * single-module adapter). */
     private final boolean emitSharedTable;
+
+    /**
+     * The backend-wide int mode derived from the invocation's
+     * project-wide semantic profile (ISSUE-0374 profile plumb): true
+     * exactly when the profile passed to {@link #generate} was
+     * {@link SemanticProfile#DEAL_V1_2_INT32}. One derivation per
+     * backend instance — no static/global flag, no system property, and
+     * no source, CLI, or environment selection surface exists. The mode
+     * is recorded on the emitted {@link JvmCodegenResult} so tests
+     * observe the real stored backend state; no int32 emission branches
+     * off it yet, so every emitted artifact stays byte-identical to the
+     * legacy emission.
+     */
+    private final boolean int32Mode;
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     /** The generated Java source accumulator. Swapped to a temporary
      * buffer while an inline function-expression body emits (ISSUE-0102),
@@ -1114,13 +1138,15 @@ public final class JvmBackend {
                        Map<String, String> importResolutions,
                        Map<String, Map<String, ClassDeclaration>> importedClasses,
                        Map<String, Map<String, Type>> hostModules,
-                       boolean isEntry, boolean emitSharedTable) {
+                       boolean isEntry, boolean emitSharedTable,
+                       SemanticProfile semanticProfile) {
         this.typeMap = typeMap;
         this.symbols = symbols;
         this.sourcePath = sourcePath;
         this.modulePath = modulePath;
         this.isEntry = isEntry;
         this.emitSharedTable = emitSharedTable;
+        this.int32Mode = semanticProfile == SemanticProfile.DEAL_V1_2_INT32;
         this.importResolutions = importResolutions == null
             ? Map.of() : Map.copyOf(importResolutions);
         this.importedClasses = importedClasses == null
@@ -1243,11 +1269,41 @@ public final class JvmBackend {
                                             Map<String, Map<String, ClassDeclaration>> importedClasses,
                                             Map<String, Map<String, Type>> hostModules,
                                             boolean isEntry) {
-        // The orchestrator's per-module path: only the selected ENTRY
-        // module emits the shared table class (one per compiled project).
+        // The pre-plumb per-module path: only the selected ENTRY module
+        // emits the shared table class (one per compiled project). The
+        // unchanged signature defaults to the LEGACY_SAFE_INT semantic
+        // profile (ISSUE-0374 profile plumb), so untouched direct
+        // callers keep legacy behavior by construction.
         return generate(program, result, sourcePath, modulePath,
             importResolutions, importedClasses, hostModules, isEntry,
-            isEntry);
+            isEntry, SemanticProfile.LEGACY_SAFE_INT);
+    }
+
+    /**
+     * The profile-plumbed orchestrator per-module path (ISSUE-0374):
+     * {@code CompilationOrchestrator.codegenAllJvm} passes
+     * {@code invocation.semanticProfile()} here, and the backend derives
+     * and stores one backend-wide int mode from
+     * {@code profile == DEAL_V1_2_INT32} — recorded on the result as
+     * {@link JvmCodegenResult#int32Mode()}. Only the selected ENTRY
+     * module emits the shared table class (one per compiled project).
+     * Source and the CLI gain no profile surface; the existing overloads
+     * without a profile argument keep their signatures and default to
+     * {@link SemanticProfile#LEGACY_SAFE_INT}.
+     *
+     * @param semanticProfile the invocation's project-wide semantic
+     *                        profile; non-null
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            Map<String, String> importResolutions,
+                                            Map<String, Map<String, ClassDeclaration>> importedClasses,
+                                            Map<String, Map<String, Type>> hostModules,
+                                            boolean isEntry,
+                                            SemanticProfile semanticProfile) {
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, importedClasses, hostModules, isEntry,
+            isEntry, semanticProfile);
     }
 
     /**
@@ -1255,6 +1311,8 @@ public final class JvmBackend {
      * (E6004 main check, the JVM entry point), {@code emitSharedTable}
      * gates the shared {@code $DealRt} table class (the orchestrator's
      * selected entry module and the standalone single-module adapter).
+     * The unchanged signature defaults to the {@code LEGACY_SAFE_INT}
+     * semantic profile (ISSUE-0374 profile plumb).
      */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
@@ -1263,9 +1321,39 @@ public final class JvmBackend {
                                             Map<String, Map<String, Type>> hostModules,
                                             boolean isEntry,
                                             boolean emitSharedTable) {
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, importedClasses, hostModules, isEntry,
+            emitSharedTable, SemanticProfile.LEGACY_SAFE_INT);
+    }
+
+    /**
+     * Full generate entry with the invocation's project-wide semantic
+     * profile (ISSUE-0374 profile plumb): the backend stores one
+     * backend-wide int mode derived from
+     * {@code profile == DEAL_V1_2_INT32} and records it on the result.
+     * {@code isEntry} gates the v1.2 entry surface (E6004 main check,
+     * the JVM entry point), {@code emitSharedTable} gates the shared
+     * {@code $DealRt} table class (the orchestrator's selected entry
+     * module and the standalone single-module adapter). Every overload
+     * without a profile argument defaults to
+     * {@link SemanticProfile#LEGACY_SAFE_INT}.
+     *
+     * @param semanticProfile the invocation's project-wide semantic
+     *                        profile; non-null
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            Map<String, String> importResolutions,
+                                            Map<String, Map<String, ClassDeclaration>> importedClasses,
+                                            Map<String, Map<String, Type>> hostModules,
+                                            boolean isEntry,
+                                            boolean emitSharedTable,
+                                            SemanticProfile semanticProfile) {
+        Objects.requireNonNull(semanticProfile,
+            "semanticProfile must not be null");
         JvmBackend backend = new JvmBackend(result.typeMap(), result.symbolTable(),
             sourcePath, modulePath, importResolutions, importedClasses,
-            hostModules, isEntry, emitSharedTable);
+            hostModules, isEntry, emitSharedTable, semanticProfile);
         return backend.generateProgram(program);
     }
 
@@ -1594,7 +1682,8 @@ public final class JvmBackend {
             out.insert(wrapperInsertion, arrayHelpers.toString());
         }
 
-        return new JvmCodegenResult(className, out.toString(), diagnostics);
+        return new JvmCodegenResult(className, out.toString(), diagnostics,
+            int32Mode);
     }
 
     /**

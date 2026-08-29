@@ -123,6 +123,21 @@ public final class CompilationOrchestrator {
     private boolean hasErrors = false;
 
     /**
+     * The JVM codegen pass-1 results of this compile (ISSUE-0374 profile
+     * plumb observability): module source path → the
+     * {@link JvmBackend.JvmCodegenResult} the backend generated for every
+     * module it accepted — including the backend's recorded int32 mode,
+     * the real stored backend state the profile plumb selected
+     * ({@link #invocation()}'s semantic profile → {@link
+     * JvmBackend#generate}). Read-only; empty before the JVM codegen
+     * phase runs or when the backend rejected every module. A pass-2
+     * class-name collision does not remove a pass-1 entry (it only
+     * blocks the artifact write).
+     */
+    private final Map<String, JvmBackend.JvmCodegenResult> jvmGeneratedResults =
+        new LinkedHashMap<>();
+
+    /**
      * The {@code --diagnostics-json} output path, or {@code null} when the
      * structured document was not requested. When set, the orchestrator
      * writes the {@link DiagnosticStructuredOutput} document for every
@@ -294,6 +309,18 @@ public final class CompilationOrchestrator {
      */
     public CompilerInvocation invocation() {
         return invocation;
+    }
+
+    /**
+     * Read-only view of {@link #jvmGeneratedResults}: the backend's
+     * generated JVM artifact records of this compile keyed by module
+     * source path (ISSUE-0374 profile plumb observability).
+     *
+     * @return the pass-1 accepted module results; empty before the JVM
+     *         codegen phase runs
+     */
+    public Map<String, JvmBackend.JvmCodegenResult> jvmGeneratedResults() {
+        return Collections.unmodifiableMap(jvmGeneratedResults);
     }
 
     /**
@@ -1693,9 +1720,14 @@ public final class CompilationOrchestrator {
                 }
             }
             boolean isEntry = info.sourcePath.equals(entryFile.toString());
+            // ISSUE-0374 profile plumb: the backend derives its
+            // backend-wide int mode from the invocation's project-wide
+            // semantic profile — never from a static flag, a system
+            // property, or any source/CLI/environment surface.
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
-                importResolutions, importedClasses, hostModules, isEntry);
+                importResolutions, importedClasses, hostModules, isEntry,
+                invocation.semanticProfile());
             for (CompilerDiagnostic d : res.diagnostics()) {
                 diagnostics.add(d);
                 hasErrors = true;
@@ -1707,6 +1739,7 @@ public final class CompilationOrchestrator {
             }
             cleanModules.add(info);
             results.put(info, res);
+            jvmGeneratedResults.put(info.sourcePath, res);
         }
 
         // Pass 2: write artifacts for clean modules, rejecting class-name

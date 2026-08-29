@@ -23,6 +23,11 @@ import deal.module.DealConfig;
 import deal.module.DealConfig.DealConfigParseResult;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
+import deal.semantic.CapabilityRegistry;
+import deal.semantic.CompilerInvocation;
+import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ir.ReleaseState;
+import deal.semantic.ir.SemanticProfile;
 import deal.source.ScalarSourceCursor;
 
 import java.io.ByteArrayOutputStream;
@@ -413,6 +418,7 @@ public class JvmBackendTest {
             new TestCase("testModuleLevelCallReadingLaterField", () -> testModuleLevelCallReadingLaterField()),
             new TestCase("testModuleLevelCallBeforeFunctionDeclarationRejected", () -> testModuleLevelCallBeforeFunctionDeclarationRejected()),
             new TestCase("testRunnerModuleErrorCodeWithExport", () -> testRunnerModuleErrorCodeWithExport()),
+            new TestCase("testProfilePlumbIntMode", () -> testProfilePlumbIntMode()),
             new TestCase("testOrchestratorJvmBackend", () -> testOrchestratorJvmBackend()),
             new TestCase("testOrchestratorDefaultStaysLua", () -> testOrchestratorDefaultStaysLua()),
             new TestCase("testOrchestratorJvmRejectsUnsupported", () -> testOrchestratorJvmRejectsUnsupported()),
@@ -7050,6 +7056,143 @@ public class JvmBackendTest {
             "module-level error without export rejected with E1049: "
                 + noExport.errors());
     
+    }
+
+    /**
+     * ISSUE-0374 profile plumb pins: the default generate overloads keep
+     * their signatures and derive the backend-wide LEGACY int mode; the
+     * explicit-profile overload derives the int32 mode from a real
+     * {@code DEAL_V1_2_INT32} profile; and the orchestrator's
+     * {@code codegenAllJvm} plumb carries
+     * {@code invocation.semanticProfile()} into {@link JvmBackend#generate}
+     * under both the default ({@code PRE_ACTIVATION → LEGACY_SAFE_INT})
+     * and an explicit {@code V1_2_ACTIVE} invocation. Every mode
+     * assertion reads the real stored backend state recorded on each
+     * generated result — never a mirrored constant or a mocked profile —
+     * and the plumb changes no emitted artifact: all profile variants
+     * emit byte-identical source while no int32 emission exists.
+     */
+    private static void testProfilePlumbIntMode() throws Exception {
+        System.out.println("-- Profile plumb: backend-wide int mode derivation --");
+
+        String source = "export function main(): null { return null; }\n"
+            + "export function run(): int { return 41 + 1; }\n";
+        Frontend f = compileFrontend(source, "jvmtest-profile-plumb.deal");
+        check(f.errors().isEmpty(), "plumb fixture frontend clean: " + f.errors());
+        if (!f.errors().isEmpty()) return;
+
+        // Default overload: legacy mode by construction, signature
+        // unchanged.
+        JvmBackend.JvmCodegenResult legacyDefault = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-profile-plumb.deal",
+            "main");
+        check(!legacyDefault.int32Mode(),
+            "default generate overload derives the LEGACY int mode");
+        check(!legacyDefault.hasErrors(),
+            "default overload codegen clean: " + legacyDefault.diagnostics());
+
+        // The same default emission through the new full profile entry:
+        // an explicit LEGACY_SAFE_INT profile derives the legacy mode and
+        // an identical artifact (the plumb adds no emission branch).
+        JvmBackend.JvmCodegenResult legacyFull = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-profile-plumb.deal",
+            "main", Map.of(), Map.of(), Map.of(), false, true,
+            SemanticProfile.LEGACY_SAFE_INT);
+        check(!legacyFull.int32Mode(),
+            "explicit LEGACY_SAFE_INT profile derives the LEGACY mode");
+        check(legacyDefault.source().equals(legacyFull.source()),
+            "default overload and the profile entry emit byte-identical "
+                + "artifacts under LEGACY_SAFE_INT");
+
+        // The plumbed generate entry with a real DEAL_V1_2_INT32 profile:
+        // the backend derives and stores the int32 mode.
+        JvmBackend.JvmCodegenResult int32 = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-profile-plumb.deal",
+            "main", Map.of(), Map.of(), Map.of(), false,
+            SemanticProfile.DEAL_V1_2_INT32);
+        check(int32.int32Mode(),
+            "explicit DEAL_V1_2_INT32 profile derives the int32 mode");
+
+        // The derivation boundary through the same plumbed entry: an
+        // explicit LEGACY_SAFE_INT profile derives the legacy mode and an
+        // identical artifact (no int32 emission exists yet).
+        JvmBackend.JvmCodegenResult legacyExplicit = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-profile-plumb.deal",
+            "main", Map.of(), Map.of(), Map.of(), false,
+            SemanticProfile.LEGACY_SAFE_INT);
+        check(!legacyExplicit.int32Mode(),
+            "explicit LEGACY_SAFE_INT profile derives the LEGACY mode");
+        check(legacyExplicit.source().equals(int32.source()),
+            "legacy and int32 plumb entries emit byte-identical artifacts "
+                + "(no int32 emission yet)");
+
+        // The real plumb path: the orchestrator's codegenAllJvm passes
+        // invocation.semanticProfile() into JvmBackend.generate, and the
+        // recorded per-module result carries the real stored backend
+        // mode.
+        writeFile("src/plumb_main.deal", source);
+        Path entryFile = tmpDir.get().resolve("src/plumb_main.deal")
+            .toAbsolutePath().normalize();
+        Path outputRoot = tmpDir.get().resolve("build/plumb");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
+
+        CompilerInvocation int32Invocation = CompilerProfileProvider.resolve(
+            ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
+        check(int32Invocation.semanticProfile()
+                == SemanticProfile.DEAL_V1_2_INT32,
+            "V1_2_ACTIVE invocation resolves DEAL_V1_2_INT32");
+        check(int32Invocation.releaseState() == ReleaseState.V1_2_ACTIVE,
+            "explicit invocation records V1_2_ACTIVE");
+
+        CompilationOrchestrator int32Orchestrator =
+            new CompilationOrchestrator(
+                entryFile, outputRoot, false, false, false, false,
+                Backend.JVM, null, roots,
+                Path.of(".").toAbsolutePath().normalize(), null,
+                int32Invocation);
+        boolean int32Ok = int32Orchestrator.compile();
+        check(int32Ok, "int32-profile orchestrator compile succeeds: "
+            + int32Orchestrator.diagnostics());
+        if (int32Ok) {
+            JvmBackend.JvmCodegenResult plumbed =
+                int32Orchestrator.jvmGeneratedResults()
+                    .get(entryFile.toString());
+            check(plumbed != null && plumbed.int32Mode(),
+                "codegenAllJvm plumbed invocation.semanticProfile() into "
+                    + "JvmBackend.generate: the recorded result carries "
+                    + "the real stored int32 mode");
+        }
+
+        // The default orchestrator invocation stays
+        // PRE_ACTIVATION → LEGACY_SAFE_INT and plumbs the legacy mode.
+        CompilationOrchestrator legacyOrchestrator =
+            new CompilationOrchestrator(
+                entryFile, outputRoot, false, false, false, Backend.JVM,
+                null, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean legacyOk = legacyOrchestrator.compile();
+        check(legacyOk, "default orchestrator compile succeeds: "
+            + legacyOrchestrator.diagnostics());
+        check(legacyOrchestrator.invocation().semanticProfile()
+                == SemanticProfile.LEGACY_SAFE_INT,
+            "orchestrator default invocation stays "
+                + "PRE_ACTIVATION → LEGACY_SAFE_INT");
+        if (legacyOk) {
+            JvmBackend.JvmCodegenResult plumbed =
+                legacyOrchestrator.jvmGeneratedResults()
+                    .get(entryFile.toString());
+            check(plumbed != null && !plumbed.int32Mode(),
+                "default invocation plumbs the LEGACY int mode into the "
+                    + "backend");
+        }
+        if (int32Ok && legacyOk) {
+            String int32Source = int32Orchestrator.jvmGeneratedResults()
+                .get(entryFile.toString()).source();
+            String legacySource = legacyOrchestrator.jvmGeneratedResults()
+                .get(entryFile.toString()).source();
+            check(int32Source.equals(legacySource),
+                "orchestrator artifacts byte-identical across profiles "
+                    + "(no int32 emission yet)");
+        }
     }
 
     private static void testOrchestratorJvmBackend() throws Exception {
