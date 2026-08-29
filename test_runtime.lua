@@ -2355,36 +2355,35 @@ test("canonical parser rejects invalid class atoms", function()
 end)
 
 test("canonical parser applies the scalar-level component alphabet (Unicode)", function()
-  -- The canonical service walks decoded scalars: every scalar the JDK
-  -- classifies as whitespace or a space char (Character.isWhitespace /
-  -- isSpaceChar) and every surrogate code point is forbidden inside a
-  -- class component, so the byte-level Lua parser rejects their UTF-8
-  -- encodings too. U+0085 NEL is a Cc control and neither JDK whitespace
-  -- nor a space char (Character.isWhitespace('\u0085') and
-  -- Character.isSpaceChar('\u0085') are both false), so the authority
-  -- keeps it legal inside non-final components.
+  -- The canonical service walks decoded scalars: every scalar of the full
+  -- pinned Unicode White_Space property (UAX #44 PropList
+  -- White_Space=Yes: 0009-000D, 0020, 0085, 00A0, 1680, 2000-200A,
+  -- 2028, 2029, 202F, 205F, 3000 — the single component-exclusion
+  -- authority shared with ModuleIdentityResolver.isUnicodeWhiteSpace and
+  -- the JS runtime's $CANONICAL_WS; never Character.isWhitespace/
+  -- isSpaceChar, whose isWhitespace excludes U+0085 NEXT LINE since
+  -- JDK 5) and every surrogate code point is forbidden inside a class
+  -- component, so the byte-level Lua parser rejects their UTF-8
+  -- encodings too.
   local nb = string.char(0xC2, 0xA0)        -- U+00A0 NO-BREAK SPACE
   local em = string.char(0xE2, 0x80, 0x83)  -- U+2003 EM SPACE
   local isp = string.char(0xE3, 0x80, 0x80) -- U+3000 IDEOGRAPHIC SPACE
-  local nel = string.char(0xC2, 0x85)       -- U+0085 NEXT LINE (Cc, legal)
+  local nel = string.char(0xC2, 0x85)       -- U+0085 NEXT LINE (White_Space=Yes)
   local sur = string.char(0xED, 0xA0, 0x80) -- U+D800 (lone surrogate)
   local rejected = {
     "@x" .. nb .. "y/Name", "@lib" .. em .. "/User", "@lib" .. isp .. "/User",
     "@lib" .. sur .. "/User", "@a/b" .. nb .. "c",
+    "@a" .. nel .. "/B", "@lib" .. nel .. "/User",
   }
   for _, t in ipairs(rejected) do
     assert_parse_rejected(t)
   end
-  -- Positive controls: NEL in a non-final component parses exactly as the
-  -- authoritative service parses it, and a non-whitespace multi-byte
-  -- scalar is legal there too (dots and other text remain opaque in
-  -- non-final components).
+  -- Positive control: a non-whitespace multi-byte scalar is legal inside
+  -- a non-final component (dots and other text remain opaque there).
   local eacute = string.char(0xC3, 0xA9) -- U+00E9 LATIN SMALL LETTER E WITH ACUTE
-  for _, t in ipairs({ "@a" .. nel .. "/B", "@lib" .. eacute .. "/User" }) do
-    local ok = assert_parse_ok(t)
-    assert(ok.kind == "class")
-    assert(ok.name == t)
-  end
+  local ok = assert_parse_ok("@lib" .. eacute .. "/User")
+  assert(ok.kind == "class")
+  assert(ok.name == "@lib" .. eacute .. "/User")
 end)
 
 test("canonical parser requires complete consumption", function()
