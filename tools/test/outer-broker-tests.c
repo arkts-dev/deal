@@ -15,14 +15,19 @@
  * canned frame responses.
  *
  * Case groups:
- *  1. socket mechanics (the real bind-path surface): a pre-created
- *     stale socket file at the same path is unlinked before bind
- *     (bind succeeds), the socket path mode is 0600 and the dir 0700
- *     after bind, the listen socket is O_NONBLOCK|FD_CLOEXEC, the
- *     fork+exec fd probe reports both the listen socket and the
- *     accepted connection closed across exec (CLOEXEC), SO_PEERCRED
- *     accepts the real connector's pid/uid and rejects a pid or uid
- *     mismatch with EACCES before any record;
+ *  1. socket mechanics (the real bind-path surface): first-run
+ *     clean — the 0700 bind dir is created by the bind surface
+ *     itself on a scratch name (asserted, then removed), and the
+ *     stale-pre-bind dir is created in-setup so a clean checkout
+ *     passes without depending on a prior run's leftover state; a
+ *     pre-created stale socket file at the same path is unlinked
+ *     before bind (bind succeeds), the socket path mode is 0600 and
+ *     the dir 0700 after bind, the listen socket is O_NONBLOCK|
+ *     FD_CLOEXEC, the fork+exec fd probe reports both the listen
+ *     socket and the accepted connection closed across exec
+ *     (CLOEXEC), SO_PEERCRED accepts the real connector's pid/uid
+ *     and rejects a pid or uid mismatch with EACCES before any
+ *     record;
  *  2. full handshake success through the core: the scripted
  *     coordinator connects, asserts the socket/dir modes from the
  *     coordinator side, HELLO -> HELLO_OK 4 31 -> FEATURE_READY ->
@@ -1213,19 +1218,52 @@ static int accept_peer_retry(int listen_fd, pid_t want_pid,
 static int socket_mechanics_fn(void)
 {
     char path[256];
+    char fresh_dir[64];
+    char fresh_path[256];
     int listen_fd = -1;
+    int fresh_fd = -1;
     int conn_fd = -1;
     struct stat sb;
     pid_t conn_pid;
     int st;
     int fl;
 
+    /* Fresh-dir creation: the bind surface must create the 0700
+     * socket dir itself when it does not exist. This group runs first
+     * on a clean checkout and the main path below pre-creates "build"
+     * for the stale pre-bind, so the creation path is asserted here
+     * on a scratch dir name (removed afterwards — no leftover state).
+     */
+    {
+        snprintf(fresh_dir, sizeof fresh_dir, "build-fresh-%d",
+                 (int)getpid());
+        CHECK(stat(fresh_dir, &sb) != 0 && errno == ENOENT);
+        CHECK(dealpg4_outer_broker_bind_path(fresh_dir, NONCE,
+                                             fresh_path,
+                                             sizeof fresh_path,
+                                             &fresh_fd) == 0);
+        CHECK(stat(fresh_dir, &sb) == 0 && S_ISDIR(sb.st_mode));
+        CHECK((sb.st_mode & 0777) == 0700);
+        CHECK(stat(fresh_path, &sb) == 0 && S_ISSOCK(sb.st_mode));
+        CHECK((sb.st_mode & 0777) == 0600);
+        close(fresh_fd);
+        CHECK(unlink(fresh_path) == 0);
+        CHECK(rmdir(fresh_dir) == 0);
+    }
+
     /* The stale same-name socket: pre-created at the exact path the
-     * bind surface will use — bind must unlink it first and succeed. */
+     * bind surface will use — bind must unlink it first and succeed.
+     * First-run cleanliness (the suite must pass 90/90 on a clean
+     * checkout without depending on a prior run's leftover state):
+     * the bind dir does not exist yet, so it is created 0700 before
+     * the stale pre-bind — the bind surface then takes its documented
+     * EEXIST-tolerant path and chmods the dir 0700 itself. */
     {
         struct sockaddr_un sun;
-        int stale = socket(AF_UNIX, SOCK_STREAM, 0);
+        int stale;
 
+        CHECK(mkdir("build", 0700) == 0 || errno == EEXIST);
+        stale = socket(AF_UNIX, SOCK_STREAM, 0);
         CHECK(stale >= 0);
         memset(&sun, 0, sizeof sun);
         sun.sun_family = AF_UNIX;
