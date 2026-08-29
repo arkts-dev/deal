@@ -19,8 +19,11 @@ import deal.semantic.CheckedProjectBuilder;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.LoweringSupport;
+import deal.semantic.MigrationPlanner;
 import deal.semantic.ModuleFact;
 import deal.semantic.RequirementManifestResult;
+import deal.semantic.RoutePlanResult;
+import deal.semantic.Target;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ReleaseState;
 import deal.types.Type;
@@ -102,6 +105,17 @@ public final class CompilationOrchestrator {
      * {@link #diagnostics()}.
      */
     private RequirementManifestResult requirementManifests;
+
+    /**
+     * The route-plan foundation result of this compile (ISSUE-0290): one
+     * {@code ModuleRoutePlan} for the compile's target after the
+     * manifests — {@code null} before the route-plan phase runs, when a
+     * preceding phase failed, or for the JS backend (the closed
+     * route-plan target axis is LUAJIT|JVM, foundation F4). Planner
+     * E6005 diagnostics (fact defects, never a crash) are also merged
+     * into {@link #diagnostics()}.
+     */
+    private RoutePlanResult routePlan;
 
     private final Map<String, ModuleInfo> modules = new LinkedHashMap<>();
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
@@ -309,6 +323,22 @@ public final class CompilationOrchestrator {
         return requirementManifests;
     }
 
+    /**
+     * The route-plan foundation result of this compile (ISSUE-0290):
+     * exactly one deterministic {@code ModuleRoutePlan} for the
+     * compile's target in dependency order — {@code null} before the
+     * route-plan phase runs, when a preceding phase failed, or when the
+     * backend is JS (no closed route-plan target exists for JS in this
+     * epic; the phase is skipped and the retained JS path is
+     * untouched).
+     *
+     * @return the route-plan result, or {@code null} when the phase did
+     *         not run
+     */
+    public RoutePlanResult routePlan() {
+        return routePlan;
+    }
+
     // =========================================================================
     // Public API
     // =========================================================================
@@ -387,6 +417,18 @@ public final class CompilationOrchestrator {
         // fail the compile exactly like frontend errors.
         log("Phase 3.6: Semantic requirement manifests");
         computeRequirementManifests();
+        if (hasErrors) { printDiagnostics(); return false; }
+
+        // Foundation phase (F4/F8): after the manifests, MigrationPlanner
+        // produces exactly one deterministic ModuleRoutePlan for the
+        // compile's target in dependency order (closed routing rules, the
+        // closed E6005-vs-LEGACY-reroute split, plan-time TargetModuleAbi
+        // records). Read-only over the checked facts; its E6005
+        // diagnostics fail the compile exactly like frontend errors. The
+        // JS backend has no closed route-plan target in this epic, so the
+        // phase is skipped and the retained JS path is untouched.
+        log("Phase 3.7: Route plan");
+        planRoutesForCompile();
         if (hasErrors) { printDiagnostics(); return false; }
 
         log("Phase 4: Code generation");
@@ -1252,6 +1294,45 @@ public final class CompilationOrchestrator {
         if (result.hasErrors()) {
             hasErrors = true;
             log("  Requirement manifest computation failed: " + result.diagnostics());
+        }
+    }
+
+    /**
+     * Runs the route-plan foundation after the manifests (ISSUE-0290):
+     * hands the checked project, the interface index, the manifests, the
+     * release capability registry, and the compile's target to
+     * {@link MigrationPlanner} — one deterministic plan per target over
+     * the closed routing rules (F4). Public builds stay all-LEGACY while
+     * the release state is {@code PRE_ACTIVATION}; planner E6005
+     * diagnostics merge into {@link #diagnostics()} and fail the
+     * compile. The JS backend skips the phase: the closed route-plan
+     * target axis is {@code LUAJIT|JVM} (foundation F4/F5), and no
+     * closed target exists for JS in this epic.
+     */
+    private void planRoutesForCompile() {
+        CheckedProjectBuildResult checked = this.checkedProjectBuild;
+        if (checked == null || checked.hasErrors()) {
+            return; // a pre-planner phase failure already gates the compile
+        }
+        if (this.requirementManifests == null || this.requirementManifests.hasErrors()) {
+            return; // a pre-planner phase failure already gates the compile
+        }
+        Target target = switch (this.backend) {
+            case LUAJIT -> Target.LUAJIT;
+            case JVM -> Target.JVM;
+            case JS -> null;
+        };
+        if (target == null) {
+            return; // JS: no closed route-plan target in this epic
+        }
+        RoutePlanResult result = MigrationPlanner.planRoutes(
+            invocation, CapabilityRegistry.releaseRegistry(), checked.input(),
+            checked.index(), this.requirementManifests.manifests(), target, Set.of());
+        this.routePlan = result;
+        diagnostics.addAll(result.diagnostics());
+        if (result.hasErrors()) {
+            hasErrors = true;
+            log("  Route planning failed: " + result.diagnostics());
         }
     }
 

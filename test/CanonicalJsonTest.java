@@ -1028,10 +1028,14 @@ public class CanonicalJsonTest {
                 + filesContaining("deal/semantic", "\"referencedSemanticIds\""));
         // The pinned digest-input key appears only in the pinned record
         // shapes and their single derivation helpers: the lowering-context
-        // pair (T3) and the ISSUE-0284 release-state-hash derivation (F1).
-        // No other component names canonical JSON keys.
+        // pair (T3), the ISSUE-0284 release-state-hash derivation (F1), and
+        // the ISSUE-0290 route-plan invocation hash (F4: invocationHash =
+        // SHA-256(canonical JSON {purpose, semanticProfile, releaseState,
+        // capabilityRegistryHash, interfaceIndexDigest, target})). No other
+        // component names canonical JSON keys.
         check(filesContaining("deal/semantic", "\"capabilityRegistryHash\"").equals(
                 List.of("deal/semantic/CompilerProfileProvider.java",
+                    "deal/semantic/MigrationPlanner.java",
                     "deal/semantic/ir/LoweringContext.java",
                     "deal/semantic/ir/LoweringContextHash.java")),
             "the pinned digest-input key lives only in the pinned record/derivation "
@@ -1046,19 +1050,25 @@ public class CanonicalJsonTest {
         // (T3), the ISSUE-0284 F1/F7 release-state-hash and
         // capability-registry components (CompilerProfileProvider /
         // CapabilityRegistry — records mapped onto the single value model,
-        // no serializer of their own), and the ISSUE-0288 interface index
+        // no serializer of their own), the ISSUE-0288 interface index
         // (ProjectInterfaceIndex.interfaceIndexDigest = SHA-256(canonical
         // JSON of the index), foundation F2 — a record mapped onto the
+        // single value model through the same facility, no serializer of
+        // its own), and the ISSUE-0290 route planner (MigrationPlanner:
+        // invocationHash = SHA-256(canonical JSON {purpose,
+        // semanticProfile, releaseState, capabilityRegistryHash,
+        // interfaceIndexDigest, target}), foundation F4 — mapped onto the
         // single value model through the same facility, no serializer of
         // its own). The MessageDigest/hex-float scans above still pin the
         // machinery to CanonicalJson alone.
         check(filesContaining("deal/semantic", "CanonicalJson.serializeBytes(").equals(
                 List.of("deal/semantic/CapabilityRegistry.java",
                     "deal/semantic/CompilerProfileProvider.java",
+                    "deal/semantic/MigrationPlanner.java",
                     "deal/semantic/ir/ContractSnapshotCanonicalizer.java",
                     "deal/semantic/ir/LoweringContextHash.java",
                     "deal/semantic/ir/ProjectInterfaceIndex.java")),
-            "exactly the five pinned production components serialize canonical JSON: "
+            "exactly the six pinned production components serialize canonical JSON: "
                 + filesContaining("deal/semantic", "CanonicalJson.serializeBytes("));
 
         // The pre-existing hash/parse sites elsewhere in the compiler are

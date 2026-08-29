@@ -29,8 +29,14 @@ public record FieldInterface(String name, String declaredType, boolean optional,
         Objects.requireNonNull(declaredType, "declaredType must not be null");
     }
 
-    /** The canonical JSON object of this field entry (sorted keys). */
-    CanonicalJson.Value toCanonicalJson() {
+    /**
+     * The canonical JSON object of this field entry (sorted keys) — the
+     * single mapping the interface index and the {@code TargetModuleAbi}
+     * class-layout serialization both use.
+     *
+     * @return the canonical JSON object
+     */
+    public CanonicalJson.Value toCanonicalJson() {
         return CanonicalJson.obj(
             CanonicalJson.e("name", CanonicalJson.str(name)),
             CanonicalJson.e("declaredType", CanonicalJson.str(declaredType)),

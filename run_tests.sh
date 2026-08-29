@@ -52,6 +52,7 @@ javac --release 25 -proc:none -d build \
   test/StubModuleResolver.java \
   test/CheckedProjectBuilderTest.java \
   test/LoweringSupportTest.java \
+  test/MigrationPlannerTest.java \
   test/InvocationProfileRegistryTest.java \
   test/DiagnosticRangeTest.java \
   test/DiagnosticClassificationTest.java \
@@ -186,6 +187,10 @@ java -ea -cp build deal.test.CheckedProjectBuilderTest
 echo ""
 echo "=== Running Lowering Support / Requirement Manifest Tests (ISSUE-0289) ==="
 java -ea -cp build deal.test.LoweringSupportTest
+
+echo ""
+echo "=== Running Migration Planner / Route Plan Tests (ISSUE-0290) ==="
+java -ea -cp build deal.semantic.MigrationPlannerTest
 
 echo ""
 echo "=== Running Invocation / Profile / Capability Registry Tests (ISSUE-0284) ==="
