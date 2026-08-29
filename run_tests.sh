@@ -95,7 +95,8 @@ javac --release 25 -proc:none -d build \
   deal/test/conformance/SidecarCorpusValidationTest.java \
   deal/test/containment/ContainedProcessBrokerFramingTest.java \
   deal/test/containment/ContainedProcessBrokerStateTest.java \
-  deal/project/ProjectLocatorTest.java
+  deal/project/ProjectLocatorTest.java \
+  deal/module/ModuleIdentityResolverTest.java
   touch "$STAMP"
 else
   echo "=== DEAL sources and tests unchanged since the last build; reusing build/ ==="
@@ -232,6 +233,10 @@ java -ea -cp build deal.project.OutputConfigResolverTest
 echo ""
 echo "=== Running Project Locator Tests (ISSUE-0265 T4) ==="
 java -ea -cp build deal.project.ProjectLocatorTest
+
+echo ""
+echo "=== Running Module Identity Resolver Classifier Tests (ISSUE-0266 T5) ==="
+java -ea -cp build deal.module.ModuleIdentityResolverTest
 
 echo ""
 echo "=== Running AST/Types Tests ==="

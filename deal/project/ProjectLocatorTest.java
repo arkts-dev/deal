@@ -107,6 +107,7 @@ public final class ProjectLocatorTest {
             testExternalsDeclarationValidation();
             testExternalsDuplicateDeclarations();
             testStdlibOverlapRejection();
+            testStdlibDeclarationFilesPublication();
             testOutputResolution();
             testStdlibSurface();
             testDeploymentIdentity();
@@ -145,6 +146,8 @@ public final class ProjectLocatorTest {
         ProjectContext context = result.context();
         System.out.println("SURFACE=" + (context.stdlibSurfacePath() == null
             ? "absent" : context.stdlibSurfacePath()));
+        System.out.println("STDLIB_FILES="
+            + context.stdlibDeclarationFiles().size());
         return 0;
     }
 
@@ -1148,6 +1151,67 @@ public final class ProjectLocatorTest {
     }
 
     // =========================================================================
+    // Stdlib declaration files publication (canonical-file keying)
+    // =========================================================================
+
+    private static void testStdlibDeclarationFilesPublication() throws Exception {
+        System.out.println("-- Stdlib declaration files publication (canonical)");
+
+        // A symlinked spec-listed file under a project-local surface: the
+        // published list carries the fully symlink-resolved target of the
+        // file, never the lexical surface spelling; existing regular
+        // siblings are published and missing files are omitted.
+        Path dir = fixture("stdlib-files-symlink");
+        Files.createDirectories(dir.resolve("std"));
+        Path outside = fixture("stdlib-files-outside");
+        writeText(outside.resolve("console.d.deal"), "// console declaration\n");
+        Files.createSymbolicLink(dir.resolve("std/console.d.deal"),
+            outside.resolve("console.d.deal"));
+        writeText(dir.resolve("std/string.d.deal"), "// string declaration\n");
+        writeEntry(dir, "main.deal");
+        writeText(dir.resolve("deal.json"), VALID_MANIFEST);
+        ProjectContext context = locateOk(dir.resolve("main.deal"));
+        if (context != null) {
+            String resolvedTarget =
+                outside.resolve("console.d.deal").toRealPath().toString();
+            check(context.stdlibDeclarationFiles() != null
+                    && context.stdlibDeclarationFiles().contains(resolvedTarget),
+                "the symlinked spec-listed file publishes its resolved target: "
+                    + context.stdlibDeclarationFiles());
+            check(context.stdlibDeclarationFiles() != null
+                    && context.stdlibSurfacePath() != null
+                    && !context.stdlibDeclarationFiles().contains(
+                        context.stdlibSurfacePath() + "/console.d.deal"),
+                "the lexical surface spelling is never published");
+            check(context.stdlibDeclarationFiles() != null
+                    && context.stdlibDeclarationFiles().size() == 2
+                    && context.stdlibDeclarationFiles().contains(
+                        dir.resolve("std/string.d.deal").toRealPath().toString()),
+                "existing regular siblings are published in pinned order;"
+                    + " missing files are omitted: "
+                    + context.stdlibDeclarationFiles());
+        }
+
+        // A missing spec-listed file and a directory named like a
+        // spec-listed file are both omitted, never errors.
+        Path oddDir = fixture("stdlib-files-odd");
+        Files.createDirectories(oddDir.resolve("std/json.d.deal"));
+        writeText(oddDir.resolve("std/time.d.deal"), "// time declaration\n");
+        writeEntry(oddDir, "main.deal");
+        writeText(oddDir.resolve("deal.json"), VALID_MANIFEST);
+        ProjectContext oddContext = locateOk(oddDir.resolve("main.deal"));
+        if (oddContext != null) {
+            check(oddContext.stdlibDeclarationFiles() != null
+                    && oddContext.stdlibDeclarationFiles().size() == 1
+                    && oddContext.stdlibDeclarationFiles().contains(
+                        oddDir.resolve("std/time.d.deal").toRealPath().toString()),
+                "a directory named *.d.deal is not a declaration file and a"
+                    + " missing file is simply absent: "
+                    + oddContext.stdlibDeclarationFiles());
+        }
+    }
+
+    // =========================================================================
     // Output resolution (verification 4)
     // =========================================================================
 
@@ -1321,6 +1385,13 @@ public final class ProjectLocatorTest {
             Path expected = localDir.resolve("std").toRealPath();
             check(expected.toString().equals(localContext.stdlibSurfacePath()),
                 "project-local std/ wins: " + localContext.stdlibSurfacePath());
+            check(localContext.stdlibDeclarationFiles() != null
+                    && localContext.stdlibDeclarationFiles().equals(List.of(
+                        localDir.resolve("std/console.d.deal").toRealPath()
+                            .toString())),
+                "only the existing spec-listed file is published canonically"
+                    + " (missing siblings are omitted): "
+                    + localContext.stdlibDeclarationFiles());
         }
 
         // Without a project-local std/, the language-distribution surface
@@ -1336,6 +1407,11 @@ public final class ProjectLocatorTest {
                         fallbackContext.stdlibSurfacePath()),
                     "without project-local std/, the process-CWD surface is selected: "
                         + fallbackContext.stdlibSurfacePath());
+                check(fallbackContext.stdlibDeclarationFiles() != null
+                        && fallbackContext.stdlibDeclarationFiles().size() == 6,
+                    "the CWD distribution surface publishes all six canonical"
+                        + " declaration files: "
+                        + fallbackContext.stdlibDeclarationFiles());
             } else {
                 fail("repo-root std/ should exist as a directory for the fallback test");
             }
@@ -1367,6 +1443,9 @@ public final class ProjectLocatorTest {
         String subOutput = subLocate(absentEntry.toString());
         check(subOutput.contains("SURFACE=absent"),
             "absent surface: locate succeeds with an absent stdlibSurfacePath ("
+                + subOutput + ")");
+        check(subOutput.contains("STDLIB_FILES=0"),
+            "absent surface: the published stdlib declaration files are empty ("
                 + subOutput + ")");
 
         // With an absent surface the stdlib-overlap check cannot fire.
@@ -1656,6 +1735,15 @@ public final class ProjectLocatorTest {
         check(context.stdlibSurfacePath() != null && context.stdlibSurfacePath().equals(
                 projectReal.resolve("std").toRealPath().toString()),
             "stdlibSurfacePath is the project-local surface");
+        List<String> expectedStdlibFiles = new ArrayList<>();
+        for (String module : ProjectLocator.SPEC_STDLIB_MODULES) {
+            expectedStdlibFiles.add(projectReal.resolve("std")
+                .resolve(module + ".d.deal").toRealPath().toString());
+        }
+        check(context.stdlibDeclarationFiles() != null
+                && context.stdlibDeclarationFiles().equals(expectedStdlibFiles),
+            "the six stdlib declaration files are published canonically: "
+                + context.stdlibDeclarationFiles());
         ProjectDeploymentIdentity identity = context.projectDeploymentIdentity();
         check(identity.canonicalManifestUri().equals(
                 manifestFile.toRealPath().toUri().toString()),
