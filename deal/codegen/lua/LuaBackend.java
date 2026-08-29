@@ -2208,6 +2208,19 @@ public final class LuaBackend implements Visitor<Void> {
             defaultsRef = hasVisibleNestedClassDeclaration(className)
                 ? className + "_defaults"
                 : LuaAbi.helperRef(className, LuaAbi.HelperKind.DEFAULTS);
+        } else if (cls.modulePath() != null && !cls.modulePath().isEmpty()
+                && cls.modulePath().equals(modulePath)) {
+            // Same-module class that is not in the root symbol table: a
+            // nested declaration (block/function-local). Reference the
+            // scope-local <C>_defaults artifact when it is lexically
+            // visible at the construction site (lua-abi-emission-layer
+            // D2.6) — the checker (ISSUE-0318 seam) now types these
+            // literals as class constructions. A non-visible reference
+            // can only come from a checker-error program, so the {}
+            // fallback mirrors the imported-class defensive arm.
+            defaultsRef = hasVisibleNestedClassDeclaration(className)
+                ? className + "_defaults"
+                : "{}";
         } else if (cls.modulePath() != null && !cls.modulePath().isEmpty()) {
             // Imported class: find the import alias and use alias._defaults
             String alias = findImportAliasForClass(className, cls.modulePath());

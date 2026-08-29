@@ -196,7 +196,7 @@ import java.util.Set;
  * Sync wrappers and the entry gate (non-async {@code main(): null},
  * E2010/E2011) are unchanged.
  *
- * <p>ISSUE-0252 rejection pass: the full D8 rejection table with exact
+ * <p>ISSUE-0252 rejection pass: the D8 rejection table with exact
  * error-severity diagnostics at their documented sites — a
  * {@code @extern-c}-marked import is E6003 containing
  * {@code FFI_UNSUPPORTED_BACKEND} at the import statement, keyed on
@@ -207,9 +207,7 @@ import java.util.Set;
  * entry) is E6000 (host ABI deferred) at the import statement;
  * {@code @jsonable} on an exported class emits the two exported
  * wrappers plus the hidden {@code C$fields} descriptor export
- * (js-v12-jsonable-completion D1-D2); a nested
- * (below-module-level) class declaration is E6000 at the declaration
- * site (the arm fires through walked function-expression bodies); and
+ * (js-v12-jsonable-completion D1-D2); and
  * the defensive {@code bytes} arm (js-backend-architecture A1 — the
  * frontend cannot produce a bytes program today) keys on the AST
  * spelling: a {@link NamedType} spelled {@code bytes} or a
@@ -219,6 +217,13 @@ import java.util.Set;
  * {@code codegenAllJs()} writes no artifact for the rejected module —
  * a clean sibling's artifact is unaffected — and the compilation
  * fails with the standard diagnostic report.
+ *
+ * <p>ISSUE-0318 nested-class slice: the former D6 nested-class E6000
+ * arm (below-module-level {@link ClassDeclaration}) is retired — a
+ * nested class declaration emits the same scope-local
+ * {@code C$new}/{@code C$meta} artifact pair as a module-level class,
+ * predeclared at the top of the enclosing block and assigned at the
+ * declaration site (js-v12-completion-architecture D4).
  *
  * <p>js-v12-source-maps: the optional {@link SourceMapGenerator}
  * parameter on {@link #generate} enables mapping recording at every
@@ -402,11 +407,11 @@ public final class JsBackend {
 
     /**
      * True while the walk sits at module level; false inside a
-     * function-expression body walk. The D6 rejection table fires its
-     * nested-class E6000 arm when a {@link ClassDeclaration} is met
-     * below module level (js-backend-emitter D8) — function-expression
-     * bodies ARE walked at this slice (function-typed class defaults),
-     * so the arm is live.
+     * function-body walk. Nested class declarations no longer reject
+     * below module level (ISSUE-0318 retired the arm): the flag now
+     * only distinguishes module-level type resolution (the hoisted
+     * symbol table) from AST-derived nested types
+     * ({@link #visit(FunctionDeclaration)}).
      */
     private boolean atModuleLevel = true;
 
@@ -435,6 +440,30 @@ public final class JsBackend {
      * reference that must lower to the class META artifact.
      */
     private final List<Set<String>> localScopes = new ArrayList<>();
+
+    /**
+     * Parallel stack of nested class names visible at the current walk
+     * position (one frame per {@link #localScopes} frame): a class
+     * declaration hoisted in a statement list registers its name here
+     * (js-v12-completion-architecture D4), so a class-META reference
+     * inside the declaring scope lowers to the scope-local
+     * {@code <C>$meta} artifact even though the nested ClassSymbol is
+     * invisible to the module-level symbol table. The frame-index
+     * comparison against {@link #localScopes} mirrors the checker's
+     * lexical resolution: the innermost binding wins.
+     */
+    private final List<Set<String>> localClassScopes = new ArrayList<>();
+
+    /**
+     * Statement-list nesting depth: 0 while the module statement list
+     * walks (generateProgram), +1 per open {@link #walkStatements}
+     * (blocks, branch/loop/try bodies, function bodies). A nested
+     * exported class writes its export assignments inline at the
+     * declaration site — its scope-local artifacts are not visible at
+     * the module-end export section (js-v12-completion-architecture
+     * D4).
+     */
+    private int statementDepth = 0;
 
     /**
      * Stack of hoisted function-name sets for the statement lists
@@ -1204,6 +1233,13 @@ public final class JsBackend {
                 // exported class additionally exports the hidden
                 // compiler-generated <C>$new closure (imported
                 // construction runs the declaring module's closure).
+                // A nested (below-module-statement-list) exported class
+                // writes its two assignments inline at the declaration
+                // site instead (js-v12-completion-architecture D4): its
+                // scope-local <C>$meta/<C>$new bindings are not visible
+                // at the module-end section, and the block executes at
+                // declaration position — the ordinary export path with
+                // the same raw keys.
                 switch (ed.declaration()) {
                     case ClassDeclaration cd -> {
                         // js-v12-jsonable-completion D1: an exported
@@ -1214,14 +1250,30 @@ public final class JsBackend {
                         // DEAL identifiers cannot contain $, while JS
                         // identifiers may — no translation table is
                         // needed, unlike the Lua __deal namespace).
+                        // @jsonable stays module-level-export-class-only
+                        // (checker-owned): nested classes are never
+                        // jsonable, so the wrapper/fields export
+                        // assignments emit for module-level declarations
+                        // only — a nested site's scope-local artifacts
+                        // are invisible at the module-end section
+                        // (js-v12-completion-architecture D4).
                         visit(cd);
-                        exportAssignments.add("$rt.setProp($exports, "
-                            + jsStringLiteral(cd.name()) + ", "
-                            + cd.name() + "$meta);");
-                        exportAssignments.add("$rt.setProp($exports, "
-                            + jsStringLiteral(cd.name() + "$new") + ", "
-                            + cd.name() + "$new);");
-                        if (cd.isJsonable()) {
+                        if (statementDepth == 0) {
+                            exportAssignments.add("$rt.setProp($exports, "
+                                + jsStringLiteral(cd.name()) + ", "
+                                + cd.name() + "$meta);");
+                            exportAssignments.add("$rt.setProp($exports, "
+                                + jsStringLiteral(cd.name() + "$new") + ", "
+                                + cd.name() + "$new);");
+                        } else {
+                            line("$rt.setProp($exports, "
+                                + jsStringLiteral(cd.name()) + ", "
+                                + cd.name() + "$meta);");
+                            line("$rt.setProp($exports, "
+                                + jsStringLiteral(cd.name() + "$new") + ", "
+                                + cd.name() + "$new);");
+                        }
+                        if (cd.isJsonable() && statementDepth == 0) {
                             exportAssignments.add("$rt.setProp($exports, "
                                 + jsStringLiteral(cd.name() + "$fromJson")
                                 + ", " + cd.name() + "$fromJson);");
@@ -1403,9 +1455,10 @@ public final class JsBackend {
      * D5) — without it the Promise would resolve with the nil
      * equivalent {@code undefined} and the awaiter's {@code null}
      * boundary would raise E8001, where the reference maps the
-     * coroutine's nil fall-off to DEAL null. The body sits below
-     * module level, so a nested class declaration fires the D6 E6000
-     * arm. Return statements inside the body check against
+     * coroutine's nil fall-off to DEAL null. A nested class declaration
+     * in the body emits its scope-local artifact pair through
+     * {@link #walkStatements} (ISSUE-0318: the D6 E6000 arm retired).
+     * Return statements inside the body check against
      * {@link #currentReturnType} at the return site.
      */
     private void emitWrappedBody(List<Parameter> params, Block body,
@@ -1458,29 +1511,34 @@ public final class JsBackend {
     }
 
     /**
-     * Class declaration (js-backend-emitter D4 step 7): the predeclared
-     * artifact {@code let}s carry the header (step 6); the declaration
-     * site assigns the construction closure — a zero-arg defaults thunk
-     * builds the defaults object with computed keys, fresh per
-     * construction, with {@code $rt.MISSING} for absent optional fields —
-     * and the inline META pair. The identity is the module-qualified
-     * descriptor {@code @<modulePath>/<Name>} (runtime-class-identity
-     * D1-D2). A nested (non-module-level) class declaration is the D6
-     * rejection table's E6000 arm: the walk meets it through
-     * function-expression bodies (function-typed class defaults), which
-     * ARE emitted at this slice, and the arm fires at the declaration
-     * site instead of emitting assignments to undeclared
-     * {@code <C>$new}/{@code <C>$meta} bindings — never a silent
-     * miscompile (js-backend-emitter D8).
+     * Class declaration (js-backend-emitter D4 step 7, extended by
+     * js-v12-completion-architecture D4): the artifact {@code let}s are
+     * predeclared at the top of the enclosing block — the header (shape
+     * step 6) at module level, the per-scope hoisting loop of
+     * {@link #walkStatements} for a nested (below-module-level)
+     * declaration — and the declaration site assigns the construction
+     * closure plus the inline META pair in both positions. The
+     * assignment shape is identical at every level: a zero-arg defaults
+     * thunk emitted inline at the declaration site (the arrow closes
+     * over the declaring scope, so a scope-local default function
+     * captures the declaring scope's bindings and re-evaluates on every
+     * construction — {@code $rt.makeClass} invokes the thunk once per
+     * construction, js-backend-runtime D5) with computed keys and
+     * {@code $rt.MISSING} for absent optional fields. The identity is
+     * the module-qualified canonical projection
+     * {@code @<configuredRootText>/<relativeModuleComponents>/<Name>}
+     * through the one descriptor service (js-v12-completion-architecture
+     * D3/D4): nested classes share the declaring module's identity
+     * space. The former D6 nested-class E6000 arm is retired — a
+     * checker-accepted nested class declaration is an ordinary feature,
+     * never a rejection (js-v12-completion-architecture D4). The
+     * {@code @jsonable} generation stays module-level-export-class-only
+     * (checker-owned, js-v12-completion-architecture D4): a nested
+     * class emits no {@code C$fromJson}/{@code C$toJson}/{@code C$fields}
+     * artifacts and no jsonable exports (the module-end export section
+     * cannot see a nested site's scope-local bindings).
      */
     private void visit(ClassDeclaration cd) {
-        if (!atModuleLevel) {
-            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6000,
-                "JavaScript backend: nested class declarations are not "
-                    + "supported (ISSUE-0169 skeleton)",
-                cd.span()));
-            return;
-        }
         out.append("// Class: ").append(cd.name())
             .append(" — construction closure, defaults thunk, and metadata.\n");
         line(cd.name() + "$new = (provided, $file, $line, $column) => "
@@ -1489,7 +1547,7 @@ public final class JsBackend {
             + classDefaultsThunk(cd) + ", provided, $file, $line, $column);");
         line(cd.name() + "$meta = { $kind: \"class\", $classname: "
             + jsStringLiteral(qualifiedClassName(cd.name())) + " };");
-        if (cd.isJsonable()) {
+        if (cd.isJsonable() && statementDepth == 0) {
             emitJsonableArtifacts(cd);
         }
         out.append("\n");
@@ -2189,31 +2247,78 @@ public final class JsBackend {
      * checker's block scopes) while a same-list var-before-function
      * pair shares the binding through a plain assignment
      * ({@link #hoistedFunctionNames}).
+     *
+     * <p>Every class declaration in the list (bare or export-wrapped)
+     * predeclares its artifact pair {@code let <C>$new; let <C>$meta;}
+     * at the top of this scope before any statement emits
+     * (js-v12-completion-architecture D4 — the module-shape
+     * predeclare-then-assign pattern applied per scope): construction
+     * sites in the same list and later-declared functions resolve
+     * through the hoisted bindings, and the declaration-site assignment
+     * of {@link #visit(ClassDeclaration)} runs in source order. The
+     * first-declaration-kind record mirrors the checker's define rule
+     * (walkFuncDecl/walkClassDecl skip an already-defined name): when a
+     * function or variable precedes a same-named class in one list, the
+     * checker binds the earlier declaration, so the class name is not
+     * registered for class-META resolution (the class artifacts still
+     * emit); when the class comes first, its name registers and the
+     * function name skips the variable-frame registration.
      */
     private void walkStatements(List<StatementNode> statements) {
         Set<String> hoisted = new LinkedHashSet<>();
+        Set<String> hoistedClasses = new LinkedHashSet<>();
+        Map<String, String> firstKind = new LinkedHashMap<>();
         for (StatementNode stmt : statements) {
-            FunctionDeclaration function = switch (stmt) {
-                case FunctionDeclaration fd -> fd;
-                case ExportDeclaration ed
-                        when ed.declaration()
-                            instanceof FunctionDeclaration fd -> fd;
-                default -> null;
-            };
-            if (function != null) {
-                hoisted.add(function.name());
+            switch (stmt) {
+                case FunctionDeclaration fd -> {
+                    hoisted.add(fd.name());
+                    firstKind.putIfAbsent(fd.name(), "function");
+                }
+                case ClassDeclaration cd -> {
+                    hoistedClasses.add(cd.name());
+                    firstKind.putIfAbsent(cd.name(), "class");
+                }
+                case ExportDeclaration ed -> {
+                    switch (ed.declaration()) {
+                        case FunctionDeclaration fd -> {
+                            hoisted.add(fd.name());
+                            firstKind.putIfAbsent(fd.name(), "function");
+                        }
+                        case ClassDeclaration cd -> {
+                            hoistedClasses.add(cd.name());
+                            firstKind.putIfAbsent(cd.name(), "class");
+                        }
+                        default -> {
+                            // Unreachable: ExportDeclaration wraps only
+                            // function/class declarations.
+                        }
+                    }
+                }
+                case VariableDeclaration vd ->
+                    firstKind.putIfAbsent(vd.name(), "variable");
+                default -> { }
             }
         }
         for (String name : hoisted) {
             line("let " + jsName(name) + ";");
-            declareLocal(name);
+            if (!"class".equals(firstKind.get(name))) {
+                declareLocal(name);
+            }
+        }
+        for (String name : hoistedClasses) {
+            line("let " + name + "$new; let " + name + "$meta;");
+            if ("class".equals(firstKind.get(name))) {
+                declareLocalClass(name);
+            }
         }
         hoistedFunctionNames.push(hoisted);
+        statementDepth++;
         try {
             for (StatementNode stmt : statements) {
                 visitStatement(stmt);
             }
         } finally {
+            statementDepth--;
             hoistedFunctionNames.pop();
         }
     }
@@ -2242,14 +2347,43 @@ public final class JsBackend {
 
     private void pushLocalScope() {
         localScopes.add(new HashSet<>());
+        localClassScopes.add(new HashSet<>());
     }
 
     private void popLocalScope() {
         localScopes.remove(localScopes.size() - 1);
+        localClassScopes.remove(localClassScopes.size() - 1);
     }
 
     private void declareLocal(String name) {
         localScopes.get(localScopes.size() - 1).add(name);
+    }
+
+    /**
+     * Registers a nested class name in the current scope frame
+     * (js-v12-completion-architecture D4): a class-META reference in
+     * expression position lowers to the scope-local {@code <C>$meta}
+     * artifact. Only the checker-resolved first declaration of the name
+     * in a statement list registers ({@link #walkStatements} gates the
+     * call on the first-declaration kind).
+     */
+    private void declareLocalClass(String name) {
+        localClassScopes.get(localClassScopes.size() - 1).add(name);
+    }
+
+    /**
+     * The innermost frame index of {@code scopes} that binds
+     * {@code name}, or -1 when no frame binds it (innermost frames are
+     * last).
+     */
+    private static int innermostFrame(List<Set<String>> scopes,
+                                      String name) {
+        for (int i = scopes.size() - 1; i >= 0; i--) {
+            if (scopes.get(i).contains(name)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /** True when the identifier is bound by a declaration visible at
@@ -2373,25 +2507,35 @@ public final class JsBackend {
     /**
      * Identifier reference: the binding-position translation (a variable
      * named {@code static}/{@code eval} binds and references as
-     * {@code static$}/{@code eval$}). A module-level class-symbol
-     * reference in expression position (a class META as a value —
-     * checker-accepted, spec §Export forms: exporting a class exports
-     * class metadata) lowers to the predeclared {@code <C>$meta}
-     * artifact (the header-seeded {@code Error$meta} for the builtin
-     * Error) — never a bare unbound identifier, because the artifact
-     * binds only {@code <C>$new}/{@code <C>$meta}. The lexical scope
-     * stack disambiguates shadowing locals (a function parameter or
-     * {@code let} named like a class resolves to its variable binding),
-     * mirroring the checker's scoping.
+     * {@code static$}/{@code eval$}). A class-symbol reference in
+     * expression position (a class META as a value — checker-accepted,
+     * spec §Export forms: exporting a class exports class metadata)
+     * lowers to the {@code <C>$meta} artifact (the header-seeded
+     * {@code Error$meta} for the builtin Error) — never a bare unbound
+     * identifier, because the artifact binds only
+     * {@code <C>$new}/{@code <C>$meta}. The innermost-frame comparison
+     * between the variable scopes and the nested-class scopes
+     * (js-v12-completion-architecture D4) mirrors the checker's lexical
+     * resolution: a shadowing local (a function parameter or {@code let}
+     * named like a class) wins in its own frame, a nested class wins
+     * over an outer frame's binding, and a module-level class symbol
+     * carries the fallback.
      */
     private String emitIdentifier(IdentifierExpr id) {
-        if (!isLocalName(id.name())) {
-            Symbol sym = symbols.resolve(id.name());
-            if (sym instanceof Symbol.ClassSymbol) {
-                return id.name() + "$meta";
-            }
+        String name = id.name();
+        int variableFrame = innermostFrame(localScopes, name);
+        int classFrame = innermostFrame(localClassScopes, name);
+        if (classFrame >= 0
+                && (variableFrame < 0 || classFrame >= variableFrame)) {
+            return name + "$meta";
         }
-        return jsName(id.name());
+        if (variableFrame >= 0) {
+            return jsName(name);
+        }
+        if (symbols.resolve(name) instanceof Symbol.ClassSymbol) {
+            return name + "$meta";
+        }
+        return jsName(name);
     }
 
     /**

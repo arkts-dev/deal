@@ -131,6 +131,12 @@ public final class TypeChecker {
         SymbolTable stmtScope = scopeMap.get(stmt);
         if (stmtScope != null) {
             currentScope = stmtScope;
+            // Keep the resolver's scope pointer in sync so
+            // resolveTypeNode resolves nested class names against the
+            // scope that lexically contains the resolved annotation
+            // (ISSUE-0318 seam: a class declared inside a function body
+            // must type class-typed lets/defaults in that body).
+            nameResolver.setCurrentScope(stmtScope);
         }
 
         switch (stmt) {
@@ -155,6 +161,7 @@ public final class TypeChecker {
         }
 
         currentScope = savedScope;
+        nameResolver.setCurrentScope(savedScope);
     }
 
     // =======================================================================
@@ -1368,8 +1375,10 @@ public final class TypeChecker {
         SymbolTable feScope = scopeMap.get(fe.body());
         if (feScope != null) {
             currentScope = feScope;
+            nameResolver.setCurrentScope(feScope);
         } else {
             currentScope = currentScope.enterScope();
+            nameResolver.setCurrentScope(currentScope);
 
             // F6: Check for duplicate parameters before defining
             Set<String> paramNames = new HashSet<>();
@@ -1402,6 +1411,7 @@ public final class TypeChecker {
         currentReturnType = savedReturnType;
         insideAsyncFunction = savedInsideAsync;
         currentScope = savedScope;
+        nameResolver.setCurrentScope(savedScope);
 
         return funcType;
     }

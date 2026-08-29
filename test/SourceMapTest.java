@@ -1488,14 +1488,16 @@ public class SourceMapTest {
                   return null;
                 }
                 """);
-            // The retired @jsonable E6000 (ISSUE-0326) no longer drives
-            // this pin; the still-live nested-class E6000 arm keeps the
+            // The retired @jsonable E6000 (ISSUE-0326) and the retired
+            // nested-class E6000 (ISSUE-0318) no longer drive this
+            // pin; the still-live host-ABI E6000 arm keeps the
             // rejected-module model covered.
+            Files.writeString(src.resolve("host.d.deal"), """
+                export function hostFn(x: int): int;
+                """);
             Files.writeString(src.resolve("bad.deal"), """
-                export function make(): int {
-                  class Inner { w: int = 0; }
-                  return 1;
-                }
+                import * as host from "./host"
+                export function make(): int { return host.hostFn(1); }
                 """);
             Path outputRoot = proj.resolve("build/js");
 

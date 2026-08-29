@@ -450,6 +450,15 @@
       "expectedExitCode": 1
     },
     {
+      "name": "js-nested-class-scope-local",
+      "description": "js-nested-class-scope-local",
+      "source": "export function test(): int {\n  let seed: int = 40;\n  function next(): int { return seed + 2; }\n  class Inner {\n    v?: int = next();\n  }\n  let a: Inner = { };\n  seed = 100;\n  let b: Inner = { };\n  if (!has(a.v) || !has(b.v)) { return 0; }\n  let av: int | null = a.v;\n  if (av !== null) {\n    if (av !== 42) { return 0; }\n  } else {\n    return 0;\n  }\n  let bv: int | null = b.v;\n  if (bv !== null) {\n    if (bv !== 102) { return 0; }\n  } else {\n    return 0;\n  }\n  return 1;\n}",
+      "backends": [
+        "js"
+      ],
+      "expectedOutput": "1"
+    },
+    {
       "name": "js-frontend-compile-error",
       "description": "js-frontend-compile-error",
       "source": "export function test(): int {\n  let p: MissingClass = {};\n  return 1;\n}",

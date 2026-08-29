@@ -98,6 +98,8 @@ public class JsBackendTest {
             testJsonableEmissionPins();
             testJsonableRoundTripNode();
             testOrchestratorJsonableCrossModule();
+            testNestedClassEmissionPins();
+            testNestedClassNodeSemantics();
             testEntryShimAndE6004();
             testSourceLocationArguments();
             testOwnPropertySafeProtoEmission();
@@ -225,6 +227,31 @@ public class JsBackendTest {
     private static Frontend compileFrontend(String source, String filename,
                                             String modulePath,
                                             ModuleResolver moduleResolver) {
+        return compileFrontend(source, filename, modulePath, moduleResolver,
+            true);
+    }
+
+    /**
+     * Frontend compile WITHOUT the module-shape validation pass (the
+     * {@code LuaAbiBackendTest} harness shape): the backend-level
+     * surface exercises backend contracts the shape rules do not cover —
+     * a nested {@code export class} is frontend-rejected (E1050), but
+     * the JS backend's scope-local export path
+     * (js-v12-completion-architecture D4) still has to hold for the AST
+     * shape.
+     */
+    @SuppressWarnings("deprecation")
+    private static Frontend compileFrontendUnshaped(String source,
+                                                    String filename) {
+        return compileFrontend(source, filename, "Main",
+            new BackendConformanceTest.StubModuleResolver(), false);
+    }
+
+    @SuppressWarnings("deprecation")
+    private static Frontend compileFrontend(String source, String filename,
+                                            String modulePath,
+                                            ModuleResolver moduleResolver,
+                                            boolean shapeValidate) {
         List<CompilerDiagnostic> errors = new ArrayList<>();
 
         LexResult lex = new Lexer(source, filename).tokenize();
@@ -249,15 +276,18 @@ public class JsBackendTest {
         }
 
         // Post-parse module shape validation (v1.2 module top level),
-        // mirroring the orchestrator pipeline.
-        for (CompilerDiagnostic d : ModuleShapeValidator.validate(parseResult.program(),
-                filename, filename.endsWith(".d.deal"))) {
-            if ("error".equals(d.severity())) {
-                errors.add(d);
+        // mirroring the orchestrator pipeline (skipped by the unshaped
+        // backend-level surface).
+        if (shapeValidate) {
+            for (CompilerDiagnostic d : ModuleShapeValidator.validate(parseResult.program(),
+                    filename, filename.endsWith(".d.deal"))) {
+                if ("error".equals(d.severity())) {
+                    errors.add(d);
+                }
             }
-        }
-        if (!errors.isEmpty()) {
-            return new Frontend(null, null, errors);
+            if (!errors.isEmpty()) {
+                return new Frontend(null, null, errors);
+            }
         }
 
         NameResolver nr = new NameResolver(modulePath, moduleResolver);
@@ -305,6 +335,19 @@ public class JsBackendTest {
         return JsBackend.generate(f.program(), f.checkResult(),
             "jstest-" + name + ".deal", modulePath, importResolutions,
             hostModules, isEntry);
+    }
+
+    /** The adapter-shape generation call over the unshaped frontend
+     * (no module-shape validation) — the backend-level surface for
+     * contracts the shape rules do not cover (a nested export class). */
+    private static JsBackend.JsCodegenResult generateUnshaped(String source,
+                                                              String name) {
+        Frontend f = compileFrontendUnshaped(source, "jstest-" + name + ".deal");
+        if (f.program() == null) {
+            return null;
+        }
+        return JsBackend.generate(f.program(), f.checkResult(),
+            "jstest-" + name + ".deal", "Main", Map.of(), Map.of(), false);
     }
 
     private record NodeResult(String output, int exitCode) {}
@@ -1033,6 +1076,243 @@ public class JsBackendTest {
         }
     }
 
+    private static void testNestedClassEmissionPins() {
+        System.out.println("-- Nested class declarations: scope-local artifacts (ISSUE-0318) --");
+
+        // The former D6 rejection case now generates clean: a block-level
+        // class emits the scope-local predeclare/assign pair inside the
+        // enclosing block, the defaults thunk closes over the declaring
+        // scope, and the identity is the canonical module-qualified text
+        // (js-v12-completion-architecture D4).
+        JsBackend.JsCodegenResult nested = generate("""
+            export function test(): int {
+              let seed: int = 40;
+              class Inner { v: int = seed + 2; }
+              return 1;
+            }
+            """, "nestedclass");
+        check(nested != null && !nested.hasErrors(),
+            "nested class declaration generates with no diagnostics: "
+                + (nested == null ? "<null>" : nested.diagnostics()));
+        if (nested == null || nested.hasErrors()) return;
+
+        String js = nested.source();
+        int wrapper = js.indexOf("test$f(");
+        int predeclare = js.indexOf("let Inner$new; let Inner$meta;");
+        int assign = js.indexOf("Inner$new = (provided, $file, $line, $column)");
+        check(wrapper >= 0 && predeclare > wrapper && assign > predeclare,
+            "the scope-local predeclare pair sits at the top of the "
+                + "enclosing block before the declaration-site assignment");
+        check(!js.contains("let Inner$new; let Inner$meta;\nconst $rt"),
+            "the nested class artifacts never predeclare in the module header");
+        check(js.contains("let Inner$new; let Inner$meta;"),
+            "the scope-local predeclare pair binds the artifact names");
+        check(js.contains("Inner$new = (provided, $file, $line, $column) => "
+                + "$rt.makeClass(\"Inner\", \"@Main/Inner\", "
+                + "() => ({ [\"v\"]: $rt.intAdd(seed, 2, "),
+            "the declaration-site construction closure carries the "
+                + "canonical identity and a defaults thunk closing over seed");
+        check(js.contains("Inner$meta = { $kind: \"class\", "
+                + "$classname: \"@Main/Inner\" };"),
+            "the inline META pair carries the canonical identity text");
+
+        // A scope-local default function is captured by the thunk.
+        JsBackend.JsCodegenResult func = generate("""
+            export function test(): int {
+              let seed: int = 40;
+              function next(): int { return seed + 2; }
+              class Inner { v?: int = next(); }
+              return 1;
+            }
+            """, "nestedclass-func");
+        check(func != null && !func.hasErrors(),
+            "nested class with a scope-local default function generates: "
+                + (func == null ? "<null>" : func.diagnostics()));
+        if (func != null && !func.hasErrors()) {
+            check(func.source().contains(
+                    "() => ({ [\"v\"]: next.$f("),
+                "the defaults thunk captures the scope-local function "
+                    + "(call through its wrapper)");
+        }
+
+        // An exported nested class writes its two export assignments
+        // inline at the declaration site (the scope-local artifacts are
+        // not visible at the module-end section) through the ordinary
+        // raw-key own-property-safe path.
+        JsBackend.JsCodegenResult exported = generateUnshaped("""
+            export function test(): int {
+              export class Outer { x: int = 1; }
+              return 1;
+            }
+            """, "nestedclass-export");
+        check(exported != null && !exported.hasErrors(),
+            "exported nested class generates with no diagnostics: "
+                + (exported == null ? "<null>" : exported.diagnostics()));
+        if (exported != null && !exported.hasErrors()) {
+            String xjs = exported.source();
+            int block = xjs.indexOf("let Outer$new; let Outer$meta;");
+            int metaExport = xjs.indexOf(
+                "$rt.setProp($exports, \"Outer\", Outer$meta);");
+            int newExport = xjs.indexOf(
+                "$rt.setProp($exports, \"Outer$new\", Outer$new);");
+            int testExport = xjs.indexOf(
+                "$rt.setProp($exports, \"test\", test);");
+            check(block >= 0 && metaExport > block && newExport > metaExport,
+                "the exported nested class assigns its inline exports at "
+                    + "the declaration site inside the block");
+            check(metaExport > 0 && metaExport < testExport,
+                "the inline META export precedes the module-end section");
+            check(xjs.contains("$rt.setProp($exports, \"Outer\", Outer$meta);")
+                    && xjs.contains(
+                        "$rt.setProp($exports, \"Outer$new\", Outer$new);"),
+                "the exported nested class exports C$meta and the hidden "
+                    + "C$new under the ordinary raw keys");
+        }
+
+        // A nested exported class carrying the @jsonable directive is
+        // never jsonable (module-level-export-class-only, checker-owned):
+        // the backend applies no @jsonable generation at a nested site —
+        // no C$fromJson/C$toJson/C$fields artifacts and no jsonable
+        // exports (js-v12-completion-architecture D4).
+        JsBackend.JsCodegenResult jsonableNested = generateUnshaped("""
+            export function test(): int {
+              // @jsonable
+              export class Outer { x: int = 1; }
+              return 1;
+            }
+            """, "nestedclass-jsonable");
+        check(jsonableNested != null && !jsonableNested.hasErrors(),
+            "a nested @jsonable export class generates with no diagnostics: "
+                + (jsonableNested == null ? "<null>" : jsonableNested.diagnostics()));
+        if (jsonableNested != null && !jsonableNested.hasErrors()) {
+            String jjs = jsonableNested.source();
+            check(!jjs.contains("Outer$fromJson")
+                    && !jjs.contains("Outer$toJson")
+                    && !jjs.contains("Outer$fields"),
+                "the backend applies no @jsonable generation to a nested "
+                    + "class (no C$fromJson/C$toJson/C$fields text)");
+            check(!jjs.contains("$rt.setProp($exports, \"Outer$fromJson\""),
+                "no jsonable wrapper export assignment references a nested "
+                    + "site's scope-local bindings");
+        }
+
+        // Scan: the nested-class E6000 arm is gone from the backend.
+        try {
+            String backend = Files.readString(
+                Path.of("deal/codegen/js/JsBackend.java"));
+            check(!backend.contains("nested class declarations are not "
+                    + "supported"),
+                "deal/codegen/js/JsBackend.java no longer carries the "
+                    + "nested-class E6000 message");
+        } catch (IOException e) {
+            fail("nested-class retirement scan failed: " + e.getMessage());
+        }
+    }
+
+    private static void testNestedClassNodeSemantics() throws Exception {
+        System.out.println("-- Node: nested-class defaults scope and per-construction evaluation --");
+        if (!nodeAvailable) { skipNode("nested-class defaults scope"); return; }
+
+        // A block-level class whose optional default calls a scope-local
+        // function: two constructions observe independent evaluations of
+        // the capturing default (40 + 2 then 100 + 2).
+        NodeResult run = runDealNode("""
+            export function test(): int {
+              let seed: int = 40;
+              function next(): int { return seed + 2; }
+              class Inner {
+                v?: int = next();
+              }
+              let a: Inner = { };
+              seed = 100;
+              let b: Inner = { };
+              if (!has(a.v) || !has(b.v)) { return 0; }
+              let av: int | null = a.v;
+              if (av !== null) {
+                if (av !== 42) { return 0; }
+              } else {
+                return 0;
+              }
+              let bv: int | null = b.v;
+              if (bv !== null) {
+                if (bv !== 102) { return 0; }
+              } else {
+                return 0;
+              }
+              return 1;
+            }
+            """, "nestedclass-node");
+        check(run.exitCode() == 0 && run.output().equals("1"),
+            "per-construction defaults evaluate in the declaring scope "
+                + "(42 then 102): " + run.output() + " (exit "
+                + run.exitCode() + ")");
+
+        // The exported nested class's module exports carry the scope-local
+        // C$meta and the hidden <C>$new keys, and the META carries the
+        // canonical identity text (js-v12-completion-architecture D3/D4).
+        Frontend f = compileFrontendUnshaped("""
+            export function test(): int {
+              export class Outer { x: int = 1; }
+              return 1;
+            }
+            """, "jstest-nestedclass-export.deal");
+        check(f.errors().isEmpty(),
+            "exported nested class frontend clean: " + f.errors());
+        if (!f.errors().isEmpty()) return;
+        JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
+            f.checkResult(), "jstest-nestedclass-export.deal", "Main",
+            Map.of(), Map.of(), false);
+        check(res != null && !res.hasErrors(),
+            "exported nested class codegen clean: "
+                + (res == null ? "<null>" : res.diagnostics()));
+        if (res == null || res.hasErrors()) return;
+        Path dir = deployArtifacts(res, "Main.js");
+        Files.writeString(dir.resolve("probe.js"),
+            "const m = require(\"./Main.js\");\n"
+            + "m.test.$f(\"probe\", 1, 1);\n"
+            + "if (m.Outer == null || m.Outer.$kind !== \"class\")"
+            + " { throw new Error(\"exports.Outer missing\"); }\n"
+            + "if (m.Outer.$classname !== \"@Main/Outer\")"
+            + " { throw new Error(\"identity: \" + m.Outer.$classname); }\n"
+            + "if (typeof m[\"Outer$new\"] !== \"function\")"
+            + " { throw new Error(\"exports.Outer$new missing\"); }\n"
+            + "const c = m[\"Outer$new\"]({}, \"probe\", 1, 1);\n"
+            + "if (c.x !== 1) { throw new Error(\"construction: \" + c.x); }\n"
+            + "console.log(\"nested-export-ok\");\n");
+        NodeResult probe = runNodeScript(dir, "probe.js");
+        deleteDir(dir);
+        check(probe.exitCode() == 0
+                && probe.output().equals("nested-export-ok"),
+            "the exported nested class's module exports carry C$meta and "
+                + "C$new with the canonical identity: " + probe.output()
+                + " (exit " + probe.exitCode() + ")");
+
+        // Per-scope shadowing: a function-local class shadowing a
+        // module-level class of the same name stays legal strict-mode JS
+        // (the nested predeclared pair shadows the module-level pair in
+        // its own block scope — never a same-scope duplicate binding),
+        // and construction inside the function uses the nested class.
+        NodeResult shadow = runDealNode("""
+            class Shadowed { v: int = 1; }
+            export function test(): int {
+              class Shadowed { w?: int = 2; }
+              let s: Shadowed = { };
+              if (!has(s.w)) { return 0; }
+              let w: int | null = s.w;
+              if (w !== null) {
+                if (w !== 2) { return 0; }
+              } else {
+                return 0;
+              }
+              return 1;
+            }
+            """, "nestedclass-shadow");
+        check(shadow.exitCode() == 0 && shadow.output().equals("1"),
+            "a function-local class shadows the module-level class of "
+                + "the same name (nested construction): " + shadow.output()
+                + " (exit " + shadow.exitCode() + ")");
+    }
+
     private static void testEntryShimAndE6004() {
         System.out.println("-- Entry shim and the E6004 backstop --");
 
@@ -1340,24 +1620,9 @@ public class JsBackendTest {
 
         // @jsonable emission retired the E6000 arm
         // (js-v12-jsonable-completion D1): the passing emission pins
-        // live in testJsonableEmissionPins().
-
-        // Nested class declaration: E6000 at the declaration site.
-        JsBackend.JsCodegenResult nested = generate("""
-            export function test(): int {
-              class Inner { v: int = 0; }
-              return 1;
-            }
-            """, "rej-nested");
-        check(nested != null && nested.hasErrors(), "nested class rejected");
-        if (nested != null) {
-            check(nested.diagnostics().stream().anyMatch(d ->
-                    "E6000".equals(d.code())
-                        && d.message().contains("nested class declarations")
-                        && d.range().startLine() == 2),
-                "nested-class rejection is E6000 at the declaration site: "
-                    + nested.diagnostics());
-        }
+        // live in testJsonableEmissionPins(). The nested-class E6000
+        // arm retired with ISSUE-0318: the passing emission pins live
+        // in testNestedClassEmissionPins().
 
         // Host ABI (non-stdlib declaration-file import): E6000 at the
         // import statement.
@@ -2903,20 +3168,20 @@ public class JsBackendTest {
         System.out.println("-- Orchestrator: no-partial-artifact on rejection --");
 
         // The retired @jsonable rejection (js-v12-jsonable-completion
-        // D1) no longer drives this two-pass pin; the still-live
-        // nested-class E6000 arm keeps the no-partial-artifact
-        // rejection model covered (the host-ABI E6000 model lives in
-        // testNoPartialArtifactOnRejection).
+        // D1) and the retired nested-class rejection (ISSUE-0318) no
+        // longer drive this two-pass pin; the still-live host-ABI
+        // E6000 arm keeps the no-partial-artifact rejection model
+        // covered — the rejected lib writes no artifact while the
+        // clean sibling entry still writes its own (the single-module
+        // host-ABI model lives in testNoPartialArtifactOnRejection).
         writeFile("rej_proj/deal.json",
             "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}");
+        writeFile("rej_proj/src/host.d.deal", """
+            export function hostFn(x: int): int;
+            """);
         writeFile("rej_proj/src/lib.deal", """
-            export class Outer {
-              v: int = 0;
-            }
-            export function make(): int {
-              class Inner { w: int = 0; }
-              return 1;
-            }
+            import * as host from "./host"
+            export function use(): int { return host.hostFn(1); }
             """);
         writeFile("rej_proj/src/rej_main.deal", """
             import * as lib from "./lib"
@@ -2933,7 +3198,7 @@ public class JsBackendTest {
             entryFile, outputDir, false, false, false, Backend.JS, config, roots,
             Path.of(".").toAbsolutePath().normalize());
         boolean success = orchestrator.compile();
-        check(!success, "the nested-class project fails the compilation");
+        check(!success, "the host-ABI project fails the compilation");
         check(orchestrator.diagnostics().stream().anyMatch(d ->
                 "E6000".equals(d.code())),
             "the orchestrator reports E6000: " + orchestrator.diagnostics());
