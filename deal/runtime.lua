@@ -661,11 +661,14 @@ local function parse_canonical_descriptor(text)
 
   -- The pinned component alphabet, byte-exact against the canonical
   -- service's scalar-level set: C0/DEL controls, ASCII whitespace, the
-  -- structural scalars @ [ ] ? ( ) , , every Unicode whitespace scalar
-  -- (Character.isWhitespace / isSpaceChar: U+0085, U+00A0, U+1680,
-  -- U+2000..U+200A, U+2028, U+2029, U+202F, U+205F, U+3000), and
-  -- surrogate code points — each ends the maximal run ('/' is the
-  -- component separator, handled by the class parser). The checks walk
+  -- structural scalars @ [ ] ? ( ) , , every scalar the JDK classifies
+  -- as whitespace or a space char (Character.isWhitespace /
+  -- isSpaceChar: U+00A0, U+1680, U+2000..U+200A, U+2028, U+2029,
+  -- U+202F, U+205F, U+3000), and surrogate code points — each ends the
+  -- maximal run ('/' is the component separator, handled by the class
+  -- parser). U+0085 NEL is a Cc control that is neither JDK whitespace
+  -- nor a space char, so it stays legal inside non-final components,
+  -- exactly as the authoritative service parses it. The checks walk
   -- UTF-8 bytes, which is exact: no continuation byte collides with a
   -- forbidden ASCII byte and every forbidden non-ASCII scalar is matched
   -- by its full encoded sequence.
@@ -680,8 +683,8 @@ local function parse_canonical_descriptor(text)
     end
     local b2 = pos + 1 <= n and string.byte(text, pos + 1) or nil
     local b3 = pos + 2 <= n and string.byte(text, pos + 2) or nil
-    if b == 0xC2 and (b2 == 0x85 or b2 == 0xA0) then
-      return true  -- U+0085 NEL, U+00A0 NO-BREAK SPACE
+    if b == 0xC2 and b2 == 0xA0 then
+      return true  -- U+00A0 NO-BREAK SPACE
     end
     if b == 0xE1 and b2 == 0x9A and b3 == 0x80 then
       return true  -- U+1680 OGHAM SPACE MARK
