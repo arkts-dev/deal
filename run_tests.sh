@@ -420,6 +420,14 @@ else
 fi
 
 echo ""
+echo "=== Running Jsonable Runtime JS Tests ==="
+if command -v node &> /dev/null; then
+  node test_jsonable_js.js
+else
+  echo "WARNING: node not found, skipping jsonable runtime JS tests"
+fi
+
+echo ""
 echo "=== Running Standard Library Tests ==="
 if command -v luajit &> /dev/null; then
   luajit test_stdlib.lua
