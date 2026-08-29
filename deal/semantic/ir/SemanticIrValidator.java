@@ -106,7 +106,9 @@ public final class SemanticIrValidator {
     /** The R-ENUM rule: an open or reserved enum value in a closed position. */
     public static final String R_ENUM = "R-ENUM";
 
-    /** The R-CAPABILITY rule: a claimed capability without a required operation. */
+    /** The R-CAPABILITY rule: a claimed capability without a required operation
+     *  (an empty S4 evidence set is unsatisfiable by construction and is
+     *  rejected — {@code STDLIB_TIME_CONFLICT}, never valid IR). */
     public static final String R_CAPABILITY = "R-CAPABILITY";
 
     /** The R-POLICY-KIND rule: a failure policy not allowed for its selector/kind. */
@@ -926,10 +928,22 @@ public final class SemanticIrValidator {
             if (capability == null) {
                 continue; // R-ENUM owns an out-of-set capability name.
             }
-            for (CapabilityRequirementCatalog.RequiredOperation required
-                    : CapabilityRequirementCatalog.requiredOperations(capability)) {
+            List<CapabilityRequirementCatalog.RequiredOperation> required =
+                CapabilityRequirementCatalog.requiredOperations(capability);
+            if (required.isEmpty()) {
+                // An empty S4 evidence set is unsatisfiable by construction:
+                // the unit can never contain a required operation, so the
+                // claim is rejected — STDLIB_TIME_CONFLICT is a routing
+                // marker only and is never valid IR (S4).
+                return fail(unit, facts, R_CAPABILITY, capability,
+                    origin(R_CAPABILITY, "claimed capability " + capabilityName
+                        + " without a required operation (the S4 catalog defines no "
+                        + "required operation for " + capabilityName
+                        + " — a routing marker only, never valid IR)"));
+            }
+            for (CapabilityRequirementCatalog.RequiredOperation requiredOp : required) {
                 boolean satisfied = false;
-                for (SemanticOpKind kind : required.kinds()) {
+                for (SemanticOpKind kind : requiredOp.kinds()) {
                     if (produced.contains(kind)) {
                         satisfied = true;
                         break;
@@ -938,7 +952,7 @@ public final class SemanticIrValidator {
                 if (!satisfied) {
                     return fail(unit, facts, R_CAPABILITY, capability,
                         origin(R_CAPABILITY, "claimed capability " + capabilityName
-                            + " without a required operation (" + required.verbatim() + ")"));
+                            + " without a required operation (" + requiredOp.verbatim() + ")"));
                 }
             }
         }
