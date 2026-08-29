@@ -43,11 +43,15 @@ import java.util.regex.Pattern;
  *   <li>The invocation record: exactly the five pinned components in the
  *       pinned order with the pinned types, immutable, and the derived
  *       release-state hash enforced at construction (never selectable).</li>
- *   <li>The full release-state × purpose resolution matrix: PUBLIC_BUILD
- *       derives the profile from the release state; COMMON_SHADOW
- *       requires DEAL_V1_2_INT32 and LEGACY_REGRESSION requires
- *       LEGACY_SAFE_INT — the two mismatches are rejected at invocation
- *       resolution, before checking or lowering.</li>
+ *   <li>The full A1 purpose × profile × release-state matrix:
+ *       PUBLIC_BUILD derives the profile from the release state through
+ *       the derivation-only {@code resolve(releaseState, registry)}
+ *       entry; COMMON_SHADOW takes the profile explicitly and requires
+ *       DEAL_V1_2_INT32 under any release state; LEGACY_REGRESSION takes
+ *       the profile explicitly and requires LEGACY_SAFE_INT under any
+ *       release state. Every wrong-profile combination is rejected at
+ *       invocation resolution and at the record guard, before checking
+ *       or lowering.</li>
  *   <li>The release-state hash equals the SHA-256 of the pinned canonical
  *       JSON golden and is asserted on the invocation record for verbose
  *       and non-verbose paths alike.</li>
@@ -208,7 +212,7 @@ public class InvocationProfileRegistryTest {
     // =========================================================================
 
     static void testResolutionMatrix() {
-        System.out.println("-- Release-state × purpose resolution matrix --");
+        System.out.println("-- A1 purpose × profile × release-state matrix --");
 
         CapabilityRegistry registry = CapabilityRegistry.releaseRegistry();
         String registryHash = registry.capabilityRegistryHash();
@@ -222,9 +226,11 @@ public class InvocationProfileRegistryTest {
                 == SemanticProfile.DEAL_V1_2_INT32,
             "V1_2_ACTIVE derives DEAL_V1_2_INT32");
 
-        // PUBLIC_BUILD × PRE_ACTIVATION: admitted, legacy profile.
+        // PUBLIC_BUILD × both release states: strictly derived through the
+        // derivation-only release-state entry — the only PUBLIC_BUILD
+        // constructor.
         CompilerInvocation publicPre = CompilerProfileProvider.resolve(
-            InvocationPurpose.PUBLIC_BUILD, ReleaseState.PRE_ACTIVATION, registry);
+            ReleaseState.PRE_ACTIVATION, registry);
         check(publicPre.purpose() == InvocationPurpose.PUBLIC_BUILD
                 && publicPre.semanticProfile() == SemanticProfile.LEGACY_SAFE_INT
                 && publicPre.releaseState() == ReleaseState.PRE_ACTIVATION
@@ -232,9 +238,8 @@ public class InvocationProfileRegistryTest {
                 && PINNED_RELEASE_STATE_HASH_PRE.equals(publicPre.releaseStateHash()),
             "PUBLIC_BUILD + PRE_ACTIVATION resolves LEGACY_SAFE_INT with the recorded hash");
 
-        // PUBLIC_BUILD × V1_2_ACTIVE: admitted, v1.2 profile.
         CompilerInvocation publicActive = CompilerProfileProvider.resolve(
-            InvocationPurpose.PUBLIC_BUILD, ReleaseState.V1_2_ACTIVE, registry);
+            ReleaseState.V1_2_ACTIVE, registry);
         check(publicActive.purpose() == InvocationPurpose.PUBLIC_BUILD
                 && publicActive.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32
                 && publicActive.releaseState() == ReleaseState.V1_2_ACTIVE
@@ -242,76 +247,124 @@ public class InvocationProfileRegistryTest {
                 && PINNED_RELEASE_STATE_HASH_ACTIVE.equals(publicActive.releaseStateHash()),
             "PUBLIC_BUILD + V1_2_ACTIVE resolves DEAL_V1_2_INT32 with the recorded hash");
 
-        // COMMON_SHADOW + LEGACY_SAFE_INT (PRE_ACTIVATION): rejected before
-        // checking/lowering — a plain resolution rejection, not a diagnostic.
-        try {
-            CompilerProfileProvider.resolve(InvocationPurpose.COMMON_SHADOW,
-                ReleaseState.PRE_ACTIVATION, registry);
-            fail("COMMON_SHADOW + PRE_ACTIVATION (LEGACY_SAFE_INT) must be rejected");
-        } catch (IllegalArgumentException expected) {
-            check(expected.getMessage().contains("COMMON_SHADOW requires DEAL_V1_2_INT32"),
-                "COMMON_SHADOW + LEGACY_SAFE_INT rejected before checking/lowering: "
-                    + expected.getMessage());
-        }
+        // COMMON_SHADOW + DEAL_V1_2_INT32: admitted under both release
+        // states (A1 — pre- and post-activation shadowing; the E11
+        // pre-activation common-closure evidence path).
+        CompilerInvocation shadowPre = CompilerProfileProvider.resolveCommonShadow(
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION, registry);
+        check(shadowPre.purpose() == InvocationPurpose.COMMON_SHADOW
+                && shadowPre.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32
+                && shadowPre.releaseState() == ReleaseState.PRE_ACTIVATION
+                && registryHash.equals(shadowPre.capabilityRegistryHash())
+                && PINNED_RELEASE_STATE_HASH_PRE.equals(shadowPre.releaseStateHash()),
+            "COMMON_SHADOW + DEAL_V1_2_INT32 resolves under PRE_ACTIVATION");
 
-        // COMMON_SHADOW + DEAL_V1_2_INT32 (V1_2_ACTIVE): admitted internally.
-        CompilerInvocation shadowActive = CompilerProfileProvider.resolve(
-            InvocationPurpose.COMMON_SHADOW, ReleaseState.V1_2_ACTIVE, registry);
+        CompilerInvocation shadowActive = CompilerProfileProvider.resolveCommonShadow(
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE, registry);
         check(shadowActive.purpose() == InvocationPurpose.COMMON_SHADOW
                 && shadowActive.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32
                 && shadowActive.releaseState() == ReleaseState.V1_2_ACTIVE
+                && registryHash.equals(shadowActive.capabilityRegistryHash())
                 && PINNED_RELEASE_STATE_HASH_ACTIVE.equals(shadowActive.releaseStateHash()),
-            "COMMON_SHADOW + V1_2_ACTIVE resolves DEAL_V1_2_INT32 internally");
+            "COMMON_SHADOW + DEAL_V1_2_INT32 resolves under V1_2_ACTIVE");
 
-        // LEGACY_REGRESSION + LEGACY_SAFE_INT (PRE_ACTIVATION): admitted.
-        CompilerInvocation legacyPre = CompilerProfileProvider.resolve(
-            InvocationPurpose.LEGACY_REGRESSION, ReleaseState.PRE_ACTIVATION, registry);
+        // COMMON_SHADOW + LEGACY_SAFE_INT: rejected under both release
+        // states — a plain resolution rejection, not a diagnostic.
+        try {
+            CompilerProfileProvider.resolveCommonShadow(SemanticProfile.LEGACY_SAFE_INT,
+                ReleaseState.PRE_ACTIVATION, registry);
+            fail("COMMON_SHADOW + LEGACY_SAFE_INT (PRE_ACTIVATION) must be rejected");
+        } catch (IllegalArgumentException expected) {
+            check(expected.getMessage().contains("COMMON_SHADOW requires DEAL_V1_2_INT32"),
+                "COMMON_SHADOW + LEGACY_SAFE_INT (PRE_ACTIVATION) rejected before "
+                    + "checking/lowering: " + expected.getMessage());
+        }
+        try {
+            CompilerProfileProvider.resolveCommonShadow(SemanticProfile.LEGACY_SAFE_INT,
+                ReleaseState.V1_2_ACTIVE, registry);
+            fail("COMMON_SHADOW + LEGACY_SAFE_INT (V1_2_ACTIVE) must be rejected");
+        } catch (IllegalArgumentException expected) {
+            check(true, "COMMON_SHADOW + LEGACY_SAFE_INT (V1_2_ACTIVE) rejected before "
+                + "checking/lowering");
+        }
+
+        // LEGACY_REGRESSION + LEGACY_SAFE_INT: admitted under both release
+        // states (A1 — the retention window extends past activation).
+        CompilerInvocation legacyPre = CompilerProfileProvider.resolveLegacyRegression(
+            SemanticProfile.LEGACY_SAFE_INT, ReleaseState.PRE_ACTIVATION, registry);
         check(legacyPre.purpose() == InvocationPurpose.LEGACY_REGRESSION
                 && legacyPre.semanticProfile() == SemanticProfile.LEGACY_SAFE_INT
                 && legacyPre.releaseState() == ReleaseState.PRE_ACTIVATION
+                && registryHash.equals(legacyPre.capabilityRegistryHash())
                 && PINNED_RELEASE_STATE_HASH_PRE.equals(legacyPre.releaseStateHash()),
-            "LEGACY_REGRESSION + PRE_ACTIVATION resolves LEGACY_SAFE_INT internally");
+            "LEGACY_REGRESSION + LEGACY_SAFE_INT resolves under PRE_ACTIVATION");
 
-        // LEGACY_REGRESSION + DEAL_V1_2_INT32 (V1_2_ACTIVE): rejected before
-        // checking/lowering.
+        CompilerInvocation legacyActive =
+            CompilerProfileProvider.resolveLegacyRegression(
+                SemanticProfile.LEGACY_SAFE_INT, ReleaseState.V1_2_ACTIVE, registry);
+        check(legacyActive.purpose() == InvocationPurpose.LEGACY_REGRESSION
+                && legacyActive.semanticProfile() == SemanticProfile.LEGACY_SAFE_INT
+                && legacyActive.releaseState() == ReleaseState.V1_2_ACTIVE
+                && registryHash.equals(legacyActive.capabilityRegistryHash())
+                && PINNED_RELEASE_STATE_HASH_ACTIVE.equals(legacyActive.releaseStateHash()),
+            "LEGACY_REGRESSION + LEGACY_SAFE_INT resolves under V1_2_ACTIVE");
+
+        // LEGACY_REGRESSION + DEAL_V1_2_INT32: rejected under both release
+        // states.
         try {
-            CompilerProfileProvider.resolve(InvocationPurpose.LEGACY_REGRESSION,
-                ReleaseState.V1_2_ACTIVE, registry);
-            fail("LEGACY_REGRESSION + V1_2_ACTIVE (DEAL_V1_2_INT32) must be rejected");
+            CompilerProfileProvider.resolveLegacyRegression(
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION, registry);
+            fail("LEGACY_REGRESSION + DEAL_V1_2_INT32 (PRE_ACTIVATION) must be rejected");
         } catch (IllegalArgumentException expected) {
             check(expected.getMessage().contains("LEGACY_REGRESSION requires LEGACY_SAFE_INT"),
-                "LEGACY_REGRESSION + DEAL_V1_2_INT32 rejected before checking/lowering: "
-                    + expected.getMessage());
-        }
-
-        // The three convenience entries: the release-owned public resolve and
-        // the two internal harness factories behave exactly like the matrix.
-        CompilerInvocation publicConvenience = CompilerProfileProvider.resolve(
-            ReleaseState.PRE_ACTIVATION, registry);
-        check(publicConvenience.equals(publicPre),
-            "resolve(releaseState, registry) is the release-owned PUBLIC_BUILD entry");
-        check(CompilerProfileProvider.resolveCommonShadow(ReleaseState.V1_2_ACTIVE, registry)
-                .equals(shadowActive),
-            "resolveCommonShadow is the internal COMMON_SHADOW harness factory");
-        check(CompilerProfileProvider.resolveLegacyRegression(ReleaseState.PRE_ACTIVATION,
-                registry).equals(legacyPre),
-            "resolveLegacyRegression is the internal LEGACY_REGRESSION harness factory");
-        try {
-            CompilerProfileProvider.resolveCommonShadow(ReleaseState.PRE_ACTIVATION, registry);
-            fail("resolveCommonShadow + PRE_ACTIVATION must be rejected");
-        } catch (IllegalArgumentException expected) {
-            check(true, "resolveCommonShadow rejects the legacy profile");
+                "LEGACY_REGRESSION + DEAL_V1_2_INT32 (PRE_ACTIVATION) rejected before "
+                    + "checking/lowering: " + expected.getMessage());
         }
         try {
-            CompilerProfileProvider.resolveLegacyRegression(ReleaseState.V1_2_ACTIVE, registry);
-            fail("resolveLegacyRegression + V1_2_ACTIVE must be rejected");
+            CompilerProfileProvider.resolveLegacyRegression(
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE, registry);
+            fail("LEGACY_REGRESSION + DEAL_V1_2_INT32 (V1_2_ACTIVE) must be rejected");
         } catch (IllegalArgumentException expected) {
-            check(true, "resolveLegacyRegression rejects the v1.2 profile");
+            check(true, "LEGACY_REGRESSION + DEAL_V1_2_INT32 (V1_2_ACTIVE) rejected before "
+                + "checking/lowering");
         }
 
-        // Deterministic: identical inputs produce identical records.
+        // The record guard: the A1 matrix holds at the record, not only at
+        // the factories.
+        try {
+            new CompilerInvocation(InvocationPurpose.COMMON_SHADOW,
+                SemanticProfile.LEGACY_SAFE_INT, ReleaseState.PRE_ACTIVATION,
+                registryHash, PINNED_RELEASE_STATE_HASH_PRE);
+            fail("the record must reject COMMON_SHADOW + LEGACY_SAFE_INT");
+        } catch (IllegalArgumentException expected) {
+            check(expected.getMessage().contains("COMMON_SHADOW requires DEAL_V1_2_INT32"),
+                "CompilerInvocation rejects COMMON_SHADOW + LEGACY_SAFE_INT at "
+                    + "construction: " + expected.getMessage());
+        }
+        try {
+            new CompilerInvocation(InvocationPurpose.LEGACY_REGRESSION,
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+                registryHash, PINNED_RELEASE_STATE_HASH_ACTIVE);
+            fail("the record must reject LEGACY_REGRESSION + DEAL_V1_2_INT32");
+        } catch (IllegalArgumentException expected) {
+            check(expected.getMessage().contains("LEGACY_REGRESSION requires LEGACY_SAFE_INT"),
+                "CompilerInvocation rejects LEGACY_REGRESSION + DEAL_V1_2_INT32 at "
+                    + "construction: " + expected.getMessage());
+        }
+        try {
+            new CompilerInvocation(InvocationPurpose.PUBLIC_BUILD,
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+                registryHash, PINNED_RELEASE_STATE_HASH_PRE);
+            fail("the record must reject a non-derived PUBLIC_BUILD profile");
+        } catch (IllegalArgumentException expected) {
+            check(expected.getMessage().contains("PUBLIC_BUILD"),
+                "CompilerInvocation rejects a PUBLIC_BUILD profile that is not the "
+                    + "release-state derivation");
+        }
+
+        // Determinism: identical inputs produce identical records.
         CompilerInvocation again = CompilerProfileProvider.resolve(
-            InvocationPurpose.PUBLIC_BUILD, ReleaseState.PRE_ACTIVATION, registry);
+            ReleaseState.PRE_ACTIVATION, registry);
         check(again.equals(publicPre) && again.releaseStateHash().equals(publicPre.releaseStateHash()),
             "repeated resolution is byte-identical (one immutable profile per invocation)");
 
@@ -377,19 +430,26 @@ public class InvocationProfileRegistryTest {
             "PRE_ACTIVATION and V1_2_ACTIVE release-state hashes differ");
 
         // The hash is recorded on every invocation the provider resolves —
-        // all four admitted matrix cells carry the derived golden.
+        // all six admitted A1 matrix cells carry the derived golden.
         CompilerInvocation[] resolved = {
-            CompilerProfileProvider.resolve(InvocationPurpose.PUBLIC_BUILD,
-                ReleaseState.PRE_ACTIVATION, registry),
-            CompilerProfileProvider.resolve(InvocationPurpose.PUBLIC_BUILD,
-                ReleaseState.V1_2_ACTIVE, registry),
-            CompilerProfileProvider.resolve(InvocationPurpose.COMMON_SHADOW,
-                ReleaseState.V1_2_ACTIVE, registry),
-            CompilerProfileProvider.resolve(InvocationPurpose.LEGACY_REGRESSION,
-                ReleaseState.PRE_ACTIVATION, registry)};
+            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION, registry),
+            CompilerProfileProvider.resolve(ReleaseState.V1_2_ACTIVE, registry),
+            CompilerProfileProvider.resolveCommonShadow(
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+                registry),
+            CompilerProfileProvider.resolveCommonShadow(
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+                registry),
+            CompilerProfileProvider.resolveLegacyRegression(
+                SemanticProfile.LEGACY_SAFE_INT, ReleaseState.PRE_ACTIVATION,
+                registry),
+            CompilerProfileProvider.resolveLegacyRegression(
+                SemanticProfile.LEGACY_SAFE_INT, ReleaseState.V1_2_ACTIVE,
+                registry)};
         String[] goldens = {PINNED_RELEASE_STATE_HASH_PRE,
-            PINNED_RELEASE_STATE_HASH_ACTIVE, PINNED_RELEASE_STATE_HASH_ACTIVE,
-            PINNED_RELEASE_STATE_HASH_PRE};
+            PINNED_RELEASE_STATE_HASH_ACTIVE, PINNED_RELEASE_STATE_HASH_PRE,
+            PINNED_RELEASE_STATE_HASH_ACTIVE, PINNED_RELEASE_STATE_HASH_PRE,
+            PINNED_RELEASE_STATE_HASH_ACTIVE};
         for (int i = 0; i < resolved.length; i++) {
             check(goldens[i].equals(resolved[i].releaseStateHash()),
                 "invocation " + resolved[i].purpose() + " + "
@@ -670,9 +730,10 @@ public class InvocationProfileRegistryTest {
         check(!mainSource.contains("--profile") && !mainSource.contains("--purpose"),
             "deal/Main.java gains no --profile/--purpose option string");
         check(mainSource.contains("CompilerProfileProvider.resolve")
-                && mainSource.contains("ReleaseState.PRE_ACTIVATION")
-                && mainSource.contains("CapabilityRegistry.releaseRegistry()"),
-            "deal/Main.java constructs PUBLIC_BUILD through the provider");
+                && mainSource.contains("ReleaseConfiguration.CURRENT_RELEASE_STATE")
+                && mainSource.contains("ReleaseConfiguration.releaseCapabilityRegistry()"),
+            "deal/Main.java constructs PUBLIC_BUILD through the provider from "
+                + "ReleaseConfiguration (the single release-owned selection point)");
 
         Set<String> options = new LinkedHashSet<>();
         Matcher matcher = Pattern.compile("--[a-z][a-z-]*").matcher(mainSource);
@@ -765,10 +826,35 @@ public class InvocationProfileRegistryTest {
         // (compile-time closedness — parameter/component types are the
         // closed enum types, so no open value can compile).
         Method resolve = CompilerProfileProvider.class.getDeclaredMethod("resolve",
-            InvocationPurpose.class, ReleaseState.class, CapabilityRegistry.class);
-        check(resolve.getParameterTypes()[0] == InvocationPurpose.class
-                && resolve.getParameterTypes()[1] == ReleaseState.class,
-            "resolve() admits only the closed InvocationPurpose × ReleaseState enums");
+            ReleaseState.class, CapabilityRegistry.class);
+        check(Arrays.equals(resolve.getParameterTypes(),
+                new Class<?>[]{ReleaseState.class, CapabilityRegistry.class}),
+            "resolve(releaseState, registry) is the derivation-only PUBLIC_BUILD entry");
+        Method resolveShadow = CompilerProfileProvider.class.getDeclaredMethod(
+            "resolveCommonShadow", SemanticProfile.class, ReleaseState.class,
+            CapabilityRegistry.class);
+        check(Arrays.equals(resolveShadow.getParameterTypes(),
+                new Class<?>[]{SemanticProfile.class, ReleaseState.class,
+                    CapabilityRegistry.class}),
+            "resolveCommonShadow takes the explicit profile plus release state and "
+                + "registry");
+        Method resolveLegacy = CompilerProfileProvider.class.getDeclaredMethod(
+            "resolveLegacyRegression", SemanticProfile.class, ReleaseState.class,
+            CapabilityRegistry.class);
+        check(Arrays.equals(resolveLegacy.getParameterTypes(),
+                new Class<?>[]{SemanticProfile.class, ReleaseState.class,
+                    CapabilityRegistry.class}),
+            "resolveLegacyRegression takes the explicit profile plus release state "
+                + "and registry");
+        try {
+            CompilerProfileProvider.class.getDeclaredMethod("resolve",
+                InvocationPurpose.class, ReleaseState.class, CapabilityRegistry.class);
+            fail("the derivation-based purpose overload must be superseded (A1)");
+        } catch (NoSuchMethodException expected) {
+            check(true, "no factory derives a non-PUBLIC_BUILD profile from the "
+                + "release state alone (the derivation-based purpose overload is "
+                + "superseded)");
+        }
         check(Arrays.equals(new String[]{"PUBLIC_BUILD", "COMMON_SHADOW", "LEGACY_REGRESSION"},
                 Arrays.stream(InvocationPurpose.values()).map(Enum::name).toArray()),
             "InvocationPurpose is exactly the T1 closed set");

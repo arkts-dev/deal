@@ -16,7 +16,6 @@ import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
 import deal.parser.*;
-import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedProjectBuildResult;
 import deal.semantic.CheckedProjectBuilder;
 import deal.semantic.CompilerInvocation;
@@ -24,11 +23,11 @@ import deal.semantic.CompilerProfileProvider;
 import deal.semantic.LoweringSupport;
 import deal.semantic.MigrationPlanner;
 import deal.semantic.ModuleFact;
+import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.RoutePlanResult;
 import deal.semantic.Target;
 import deal.semantic.ir.ModuleId;
-import deal.semantic.ir.ReleaseState;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -312,16 +311,19 @@ public final class CompilationOrchestrator {
     /**
      * The default release-owned invocation used by every constructor that
      * is not given one explicitly: {@code PUBLIC_BUILD} resolved through
-     * {@link CompilerProfileProvider} with this epic's release state
-     * {@code PRE_ACTIVATION} (the derived public profile is
-     * {@code LEGACY_SAFE_INT} and production SHARED routing stays
-     * unreachable, foundation F1/F4). The provider is the only
-     * invocation constructor — the orchestrator never constructs an
-     * invocation itself.
+     * {@link CompilerProfileProvider} from
+     * {@link ReleaseConfiguration#CURRENT_RELEASE_STATE} and the release
+     * capability registry (A2 — the single release-owned selection
+     * point; while the release state is {@code PRE_ACTIVATION} the
+     * derived public profile is {@code LEGACY_SAFE_INT} and production
+     * SHARED routing stays unreachable, foundation F1/F4). The provider
+     * is the only invocation constructor — the orchestrator never
+     * constructs an invocation itself.
      */
     private static CompilerInvocation defaultInvocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
-            CapabilityRegistry.releaseRegistry());
+        return CompilerProfileProvider.resolve(
+            ReleaseConfiguration.CURRENT_RELEASE_STATE,
+            ReleaseConfiguration.releaseCapabilityRegistry());
     }
 
     /**
@@ -1379,8 +1381,9 @@ public final class CompilationOrchestrator {
             return; // JS: no closed route-plan target in this epic
         }
         RoutePlanResult result = MigrationPlanner.planRoutes(
-            invocation, CapabilityRegistry.releaseRegistry(), checked.input(),
-            checked.index(), this.requirementManifests.manifests(), target, Set.of());
+            invocation, ReleaseConfiguration.releaseCapabilityRegistry(),
+            checked.input(), checked.index(),
+            this.requirementManifests.manifests(), target, Set.of());
         this.routePlan = result;
         diagnostics.addAll(result.diagnostics());
         if (result.hasErrors()) {

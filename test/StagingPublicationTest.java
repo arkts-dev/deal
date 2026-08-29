@@ -136,7 +136,8 @@ public class StagingPublicationTest {
     private static final RuntimeDescriptor DESC_POINT = new RuntimeDescriptor.Class(POINT);
 
     private static CompilerInvocation commonShadowInvocation() {
-        return CompilerProfileProvider.resolveCommonShadow(ReleaseState.V1_2_ACTIVE,
+        return CompilerProfileProvider.resolveCommonShadow(
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 

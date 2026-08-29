@@ -1,5 +1,6 @@
 package deal.test;
 
+import deal.Main;
 import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
@@ -17,6 +18,7 @@ import deal.semantic.ModuleRoute;
 import deal.semantic.ModuleRoutePlan;
 import deal.semantic.OperationContractManifest;
 import deal.semantic.ProjectArtifactStager;
+import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.RoutePlanResult;
 import deal.semantic.SemanticRequirementManifest;
@@ -97,6 +99,37 @@ import java.util.stream.Stream;
  *       profile, release state, and the release-state hash equal to the
  *       invocation record field; a non-verbose invocation still records
  *       the hash on the invocation.</li>
+ *   <li>A1 matrix: the provider factories admit the closed
+ *       purpose × profile × release-state matrix ({@code PUBLIC_BUILD}
+ *       derivation-only; {@code COMMON_SHADOW} requires an explicit
+ *       {@code DEAL_V1_2_INT32} under any release state;
+ *       {@code LEGACY_REGRESSION} requires an explicit
+ *       {@code LEGACY_SAFE_INT} under any release state), each
+ *       wrong-profile combination is rejected at resolution and at the
+ *       {@code CompilerInvocation} record guard.</li>
+ *   <li>ReleaseConfiguration consumers (A2):
+ *       {@code CURRENT_RELEASE_STATE} is pinned to
+ *       {@code PRE_ACTIVATION}; {@code deal/Main.java} and
+ *       {@code CompilationOrchestrator.defaultInvocation()} both consume
+ *       the constant with no hardcoded release-state literal remaining;
+ *       the default invocation and the CLI path resolve the public build
+ *       from the release configuration.</li>
+ *   <li>Armed gate + rollback owned halves (A2/A3): a
+ *       {@code PRE_ACTIVATION} public build of an int-using module
+ *       derives {@code LEGACY_SAFE_INT} with an all-LEGACY plan and
+ *       empty {@code shadowModules}; an internal {@code V1_2_ACTIVE}
+ *       construction derives {@code DEAL_V1_2_INT32}; a
+ *       {@code V1_2_ACTIVE} public build over the all-SHADOW release
+ *       registry produces the route-only terminal state (profile
+ *       {@code DEAL_V1_2_INT32}, release state {@code V1_2_ACTIVE},
+ *       source/AST unchanged, only routes LEGACY); no provider, record,
+ *       or guard path revives a legacy public profile after
+ *       activation.</li>
+ *   <li>Wiring proof (A1): an orchestrator compile with
+ *       {@code COMMON_SHADOW + DEAL_V1_2_INT32 + PRE_ACTIVATION} passes
+ *       phase 3.7 and returns an all-LEGACY route plan with empty
+ *       {@code shadowModules} (provider + record guard + planner guard +
+ *       F4 rules through the real orchestrator).</li>
  * </ol>
  */
 public class FoundationIntegrationTest {
@@ -125,6 +158,10 @@ public class FoundationIntegrationTest {
             testFaultIncompleteAbiRecord();
             testLegacyProfileLoweringRejection();
             testVerboseReportWiring();
+            testA1MatrixResolutionAndRecordGuard();
+            testReleaseConfigurationConsumers();
+            testArmedStateAndRollbackOwnedHalves();
+            testCommonShadowPreActivationWiringProof();
         } catch (Throwable t) {
             failed++;
             System.err.println("FAIL: unexpected " + t);
@@ -412,7 +449,8 @@ public class FoundationIntegrationTest {
 
         // T4: profile selection — the internal shadow invocation.
         CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
-            ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+            CapabilityRegistry.releaseRegistry());
 
         // F8 wiring: the orchestrator carries the resolved invocation,
         // runs phases 0-4, and runs the foundation phase after phase 3
@@ -825,7 +863,8 @@ public class FoundationIntegrationTest {
                 Map.of(MOD_MAIN, ModuleRoute.SHARED), Set.of(MOD_MAIN), List.of(), hash,
                 MigrationPlanner.planIdFor(hash));
             LoweredModuleUnit unit = validUnit(MOD_MAIN, index,
-                CompilerProfileProvider.resolveCommonShadow(ReleaseState.V1_2_ACTIVE,
+                CompilerProfileProvider.resolveCommonShadow(
+                    SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
                     CapabilityRegistry.releaseRegistry()));
             ModuleEmissionResult result = new ModuleEmissionResult(
                 List.of(new StagedArtifact("main/artifact.lua", bytes("main-artifact"))),
@@ -869,7 +908,8 @@ public class FoundationIntegrationTest {
             Path entry = src.resolve("trivial.deal").toAbsolutePath();
             List<Path> roots = List.of(src.toAbsolutePath());
             CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
-                ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+                CapabilityRegistry.releaseRegistry());
 
             // Non-verbose path: the derived hash is recorded on the
             // invocation regardless of the report.
@@ -937,6 +977,405 @@ public class FoundationIntegrationTest {
                     && verbose.routePlan() != null && !verbose.routePlan().hasErrors(),
                 "the verbose compile computes exactly one manifest set and one route "
                     + "plan (foundation phase before phase 4)");
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    // =========================================================================
+    // 5. A1 matrix + record guard (provider factories, CompilerInvocation)
+    // =========================================================================
+
+    static void testA1MatrixResolutionAndRecordGuard() {
+        System.out.println("-- A1 matrix: provider factories + CompilerInvocation record guard --");
+
+        CapabilityRegistry registry = CapabilityRegistry.releaseRegistry();
+        String registryHash = registry.capabilityRegistryHash();
+
+        // PUBLIC_BUILD is derivation-only through resolve(releaseState,
+        // registry) — the only PUBLIC_BUILD constructor.
+        CompilerInvocation publicPre = CompilerProfileProvider.resolve(
+            ReleaseState.PRE_ACTIVATION, registry);
+        check(publicPre.purpose() == InvocationPurpose.PUBLIC_BUILD
+                && publicPre.semanticProfile() == SemanticProfile.LEGACY_SAFE_INT
+                && publicPre.releaseState() == ReleaseState.PRE_ACTIVATION,
+            "PUBLIC_BUILD + PRE_ACTIVATION derives LEGACY_SAFE_INT");
+        CompilerInvocation publicActive = CompilerProfileProvider.resolve(
+            ReleaseState.V1_2_ACTIVE, registry);
+        check(publicActive.purpose() == InvocationPurpose.PUBLIC_BUILD
+                && publicActive.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32
+                && publicActive.releaseState() == ReleaseState.V1_2_ACTIVE,
+            "PUBLIC_BUILD + V1_2_ACTIVE derives DEAL_V1_2_INT32");
+
+        // COMMON_SHADOW + DEAL_V1_2_INT32: admitted under both release states.
+        CompilerInvocation shadowPre = CompilerProfileProvider.resolveCommonShadow(
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION, registry);
+        check(shadowPre.purpose() == InvocationPurpose.COMMON_SHADOW
+                && shadowPre.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32
+                && shadowPre.releaseState() == ReleaseState.PRE_ACTIVATION,
+            "COMMON_SHADOW + DEAL_V1_2_INT32 resolves under PRE_ACTIVATION");
+        CompilerInvocation shadowActive = CompilerProfileProvider.resolveCommonShadow(
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE, registry);
+        check(shadowActive.purpose() == InvocationPurpose.COMMON_SHADOW
+                && shadowActive.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32
+                && shadowActive.releaseState() == ReleaseState.V1_2_ACTIVE,
+            "COMMON_SHADOW + DEAL_V1_2_INT32 resolves under V1_2_ACTIVE");
+
+        // LEGACY_REGRESSION + LEGACY_SAFE_INT: admitted under both release
+        // states (the retention window extends past activation).
+        CompilerInvocation legacyPre = CompilerProfileProvider.resolveLegacyRegression(
+            SemanticProfile.LEGACY_SAFE_INT, ReleaseState.PRE_ACTIVATION, registry);
+        check(legacyPre.purpose() == InvocationPurpose.LEGACY_REGRESSION
+                && legacyPre.semanticProfile() == SemanticProfile.LEGACY_SAFE_INT
+                && legacyPre.releaseState() == ReleaseState.PRE_ACTIVATION,
+            "LEGACY_REGRESSION + LEGACY_SAFE_INT resolves under PRE_ACTIVATION");
+        CompilerInvocation legacyActive =
+            CompilerProfileProvider.resolveLegacyRegression(
+                SemanticProfile.LEGACY_SAFE_INT, ReleaseState.V1_2_ACTIVE, registry);
+        check(legacyActive.purpose() == InvocationPurpose.LEGACY_REGRESSION
+                && legacyActive.semanticProfile() == SemanticProfile.LEGACY_SAFE_INT
+                && legacyActive.releaseState() == ReleaseState.V1_2_ACTIVE,
+            "LEGACY_REGRESSION + LEGACY_SAFE_INT resolves under V1_2_ACTIVE");
+
+        // Wrong-profile combinations rejected at resolution, under both
+        // release states.
+        for (ReleaseState state : ReleaseState.values()) {
+            try {
+                CompilerProfileProvider.resolveCommonShadow(
+                    SemanticProfile.LEGACY_SAFE_INT, state, registry);
+                fail("COMMON_SHADOW + LEGACY_SAFE_INT + " + state + " must be rejected");
+            } catch (IllegalArgumentException expected) {
+                check(true, "COMMON_SHADOW + LEGACY_SAFE_INT + " + state
+                    + " is rejected at resolution");
+            }
+            try {
+                CompilerProfileProvider.resolveLegacyRegression(
+                    SemanticProfile.DEAL_V1_2_INT32, state, registry);
+                fail("LEGACY_REGRESSION + DEAL_V1_2_INT32 + " + state
+                    + " must be rejected");
+            } catch (IllegalArgumentException expected) {
+                check(true, "LEGACY_REGRESSION + DEAL_V1_2_INT32 + " + state
+                    + " is rejected at resolution");
+            }
+        }
+
+        // The record guard: the matrix holds at the record, not only at
+        // the factories.
+        try {
+            new CompilerInvocation(InvocationPurpose.COMMON_SHADOW,
+                SemanticProfile.LEGACY_SAFE_INT, ReleaseState.PRE_ACTIVATION,
+                registryHash, CompilerProfileProvider.deriveReleaseStateHash(
+                    ReleaseState.PRE_ACTIVATION, registryHash));
+            fail("the record must reject COMMON_SHADOW + LEGACY_SAFE_INT");
+        } catch (IllegalArgumentException expected) {
+            check(true, "the record guard rejects COMMON_SHADOW + LEGACY_SAFE_INT");
+        }
+        try {
+            new CompilerInvocation(InvocationPurpose.LEGACY_REGRESSION,
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+                registryHash, CompilerProfileProvider.deriveReleaseStateHash(
+                    ReleaseState.V1_2_ACTIVE, registryHash));
+            fail("the record must reject LEGACY_REGRESSION + DEAL_V1_2_INT32");
+        } catch (IllegalArgumentException expected) {
+            check(true, "the record guard rejects LEGACY_REGRESSION + DEAL_V1_2_INT32");
+        }
+        try {
+            new CompilerInvocation(InvocationPurpose.PUBLIC_BUILD,
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+                registryHash, CompilerProfileProvider.deriveReleaseStateHash(
+                    ReleaseState.PRE_ACTIVATION, registryHash));
+            fail("the record must reject a non-derived PUBLIC_BUILD profile");
+        } catch (IllegalArgumentException expected) {
+            check(true, "the record guard rejects a non-derived PUBLIC_BUILD profile");
+        }
+
+        // The provider-derived records are admitted by the record guard.
+        new CompilerInvocation(InvocationPurpose.COMMON_SHADOW,
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+            registryHash, shadowPre.releaseStateHash());
+        new CompilerInvocation(InvocationPurpose.LEGACY_REGRESSION,
+            SemanticProfile.LEGACY_SAFE_INT, ReleaseState.V1_2_ACTIVE,
+            registryHash, legacyActive.releaseStateHash());
+        check(true, "the A1 provider-derived records are admitted by the record guard");
+    }
+
+    // =========================================================================
+    // 6. ReleaseConfiguration consumers (A2)
+    // =========================================================================
+
+    static void testReleaseConfigurationConsumers() throws Exception {
+        System.out.println("-- ReleaseConfiguration: single selection point consumed by Main + defaultInvocation --");
+
+        // Armed, not fired: the constant is pinned to PRE_ACTIVATION at
+        // this stage's gate and carries the release registry.
+        check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.PRE_ACTIVATION,
+            "ReleaseConfiguration.CURRENT_RELEASE_STATE == PRE_ACTIVATION at the gate");
+        check(ReleaseConfiguration.releaseCapabilityRegistry().capabilityRegistryHash()
+                .equals(CapabilityRegistry.releaseRegistry().capabilityRegistryHash()),
+            "ReleaseConfiguration carries the release capability registry");
+
+        // Both former hardcoded selection sites now read the constant:
+        // no ReleaseState.PRE_ACTIVATION selection literal remains in
+        // deal/Main.java or the orchestrator.
+        String mainSource = Files.readString(Path.of("deal/Main.java"));
+        check(mainSource.contains("ReleaseConfiguration.CURRENT_RELEASE_STATE")
+                && !mainSource.contains("ReleaseState.PRE_ACTIVATION"),
+            "deal/Main.java consumes ReleaseConfiguration.CURRENT_RELEASE_STATE and "
+                + "carries no hardcoded release-state literal");
+        String orchestratorSource =
+            Files.readString(Path.of("deal/module/CompilationOrchestrator.java"));
+        check(orchestratorSource.contains("ReleaseConfiguration.CURRENT_RELEASE_STATE")
+                && !orchestratorSource.contains("ReleaseState.PRE_ACTIVATION"),
+            "CompilationOrchestrator.defaultInvocation consumes "
+                + "ReleaseConfiguration.CURRENT_RELEASE_STATE and carries no hardcoded "
+                + "release-state literal");
+
+        Path tmp = Files.createTempDirectory("deal-foundation-release-config");
+        try {
+            Path src = tmp.resolve("src");
+            Files.createDirectories(src);
+            Files.writeString(src.resolve("main.deal"),
+                "export function main(): null { return null; }\n");
+            List<Path> roots = List.of(src.toAbsolutePath());
+
+            // defaultInvocation: an orchestrator compile without an
+            // explicit invocation resolves the public build from the
+            // release configuration.
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                src.resolve("main.deal").toAbsolutePath(), tmp.resolve("build"), false,
+                false, false, false, Backend.LUAJIT, null, roots,
+                Path.of("std").toAbsolutePath().normalize());
+            boolean ok = orchestrator.compile();
+            check(ok, "the default-invocation compile succeeds: "
+                + orchestrator.diagnostics());
+            CompilerInvocation invocation = orchestrator.invocation();
+            check(invocation.purpose() == InvocationPurpose.PUBLIC_BUILD
+                    && invocation.releaseState()
+                        == ReleaseConfiguration.CURRENT_RELEASE_STATE
+                    && invocation.semanticProfile()
+                        == CompilerProfileProvider.publicProfile(
+                            ReleaseConfiguration.CURRENT_RELEASE_STATE),
+                "defaultInvocation resolves PUBLIC_BUILD from "
+                    + "ReleaseConfiguration.CURRENT_RELEASE_STATE");
+
+            // deal/Main's CLI path consumes the same configuration.
+            ByteArrayOutputStream cliOut = new ByteArrayOutputStream();
+            PrintStream originalOut = System.out;
+            System.setOut(new PrintStream(cliOut, true, StandardCharsets.UTF_8));
+            int rc;
+            try {
+                rc = Main.run(new String[]{"compile",
+                    src.resolve("main.deal").toAbsolutePath().toString(),
+                    "--output", tmp.resolve("build-cli").toString(), "--verbose"});
+            } finally {
+                System.setOut(originalOut);
+            }
+            check(rc == 0, "the CLI compile exits 0");
+            check(cliOut.toString(StandardCharsets.UTF_8)
+                    .contains("Release state: PRE_ACTIVATION"),
+                "the CLI verbose report prints the release state read from the "
+                    + "release configuration");
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    // =========================================================================
+    // 7. Armed gate facts (A2) + rollback owned halves (A3)
+    // =========================================================================
+
+    static void testArmedStateAndRollbackOwnedHalves() throws Exception {
+        System.out.println("-- Armed gate (A2) + rollback owned halves (A3) --");
+
+        CapabilityRegistry registry = CapabilityRegistry.releaseRegistry();
+
+        // Armed gate fact: the public flip is E12's action; this stage
+        // keeps PRE_ACTIVATION.
+        check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.PRE_ACTIVATION,
+            "the gate is armed at PRE_ACTIVATION (the public flip is E12's action)");
+
+        Path tmp = Files.createTempDirectory("deal-foundation-armed");
+        try {
+            Path src = tmp.resolve("src");
+            Files.createDirectories(src);
+            Files.writeString(src.resolve("main.deal"), """
+                export function add(x: int, y: int): int {
+                  return x + y
+                }
+
+                export function main(): null {
+                  add(2147483647, 1)
+                  return null
+                }
+                """);
+            List<Path> roots = List.of(src.toAbsolutePath());
+            Path entry = src.resolve("main.deal").toAbsolutePath();
+
+            // A public build of an int-using module: LEGACY_SAFE_INT, an
+            // all-LEGACY plan, and empty shadowModules (production SHARED
+            // ineligible — F4 rule 3).
+            CompilerInvocation publicPre = CompilerProfileProvider.resolve(
+                ReleaseState.PRE_ACTIVATION, registry);
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                entry, tmp.resolve("build"), false, false, false, false,
+                Backend.LUAJIT, null, roots, Path.of("std").toAbsolutePath().normalize(),
+                null, publicPre);
+            boolean ok = orchestrator.compile();
+            check(ok, "the PRE_ACTIVATION public int-using build compiles: "
+                + orchestrator.diagnostics());
+            check(orchestrator.invocation().semanticProfile()
+                    == SemanticProfile.LEGACY_SAFE_INT,
+                "a PRE_ACTIVATION public build of an int-using module derives "
+                    + "LEGACY_SAFE_INT");
+            RoutePlanResult plan = orchestrator.routePlan();
+            check(plan != null && !plan.hasErrors() && plan.plan() != null,
+                "the public build produces exactly one route plan");
+            if (plan != null && !plan.hasErrors() && plan.plan() != null) {
+                check(plan.plan().entries().values().stream()
+                        .allMatch(route -> route == ModuleRoute.LEGACY),
+                    "the PRE_ACTIVATION public plan is all-LEGACY (F4 rule 3)");
+                check(plan.plan().shadowModules().isEmpty(),
+                    "the PRE_ACTIVATION public plan has empty shadowModules "
+                        + "(production SHARED ineligible)");
+            }
+
+            // An internal V1_2_ACTIVE construction derives
+            // DEAL_V1_2_INT32 (F4 rule 4 structurally reachable).
+            CompilerInvocation internalActive = CompilerProfileProvider.resolve(
+                ReleaseState.V1_2_ACTIVE, registry);
+            check(internalActive.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32
+                    && internalActive.releaseState() == ReleaseState.V1_2_ACTIVE,
+                "an internal V1_2_ACTIVE construction derives DEAL_V1_2_INT32");
+
+            // A3 owned halves: a V1_2_ACTIVE PUBLIC_BUILD invocation over
+            // the all-SHADOW release registry derives DEAL_V1_2_INT32 and
+            // produces an all-LEGACY plan — the route-only terminal state
+            // a post-activation demotion produces (profile
+            // DEAL_V1_2_INT32, release state V1_2_ACTIVE, source/AST
+            // unchanged, only routes LEGACY).
+            CompilationOrchestrator activeOrchestrator =
+                new CompilationOrchestrator(entry, tmp.resolve("build-active"), false,
+                    false, false, false, Backend.LUAJIT, null, roots,
+                    Path.of("std").toAbsolutePath().normalize(), null, internalActive);
+            boolean activeOk = activeOrchestrator.compile();
+            check(activeOk, "the V1_2_ACTIVE public build compiles: "
+                + activeOrchestrator.diagnostics());
+            RoutePlanResult activePlan = activeOrchestrator.routePlan();
+            check(activePlan != null && !activePlan.hasErrors()
+                    && activePlan.plan() != null,
+                "the V1_2_ACTIVE public build produces exactly one route plan");
+            if (activePlan != null && !activePlan.hasErrors()
+                    && activePlan.plan() != null) {
+                check(activeOrchestrator.invocation().semanticProfile()
+                        == SemanticProfile.DEAL_V1_2_INT32
+                        && activeOrchestrator.invocation().releaseState()
+                            == ReleaseState.V1_2_ACTIVE,
+                    "the rollback terminal state keeps DEAL_V1_2_INT32 under "
+                        + "V1_2_ACTIVE");
+                check(activePlan.plan().entries().values().stream()
+                        .allMatch(route -> route == ModuleRoute.LEGACY),
+                    "the V1_2_ACTIVE build over the all-SHADOW registry routes "
+                        + "all-LEGACY (F4 rule 4: no PROMOTED capability)");
+                check(activePlan.plan().shadowModules().isEmpty()
+                        && activePlan.plan().abiEdges().isEmpty(),
+                    "the route-only terminal plan carries no shadow entries and no "
+                        + "ABI edges — only ModuleRoutePlan.entries hold routes");
+            }
+            if (ok && activeOk) {
+                check(orchestrator.checkedProject().index().interfaceIndexDigest()
+                        .equals(activeOrchestrator.checkedProject().index()
+                            .interfaceIndexDigest()),
+                    "source/AST are unchanged across the route-only terminal state "
+                        + "(identical interface index digest)");
+            }
+
+            // No legacy-public revival path: V1_2_ACTIVE derives
+            // DEAL_V1_2_INT32; no record and no factory revives a legacy
+            // public profile after activation.
+            check(CompilerProfileProvider.publicProfile(ReleaseState.V1_2_ACTIVE)
+                    == SemanticProfile.DEAL_V1_2_INT32,
+                "publicProfile(V1_2_ACTIVE) = DEAL_V1_2_INT32 (no derivation back "
+                    + "to a legacy public profile)");
+            String registryHash = registry.capabilityRegistryHash();
+            try {
+                new CompilerInvocation(InvocationPurpose.LEGACY_REGRESSION,
+                    SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+                    registryHash, CompilerProfileProvider.deriveReleaseStateHash(
+                        ReleaseState.V1_2_ACTIVE, registryHash));
+                fail("a legacy-public revival record must be rejected");
+            } catch (IllegalArgumentException expected) {
+                check(true, "no record revives LEGACY_SAFE_INT under V1_2_ACTIVE");
+            }
+            try {
+                CompilerProfileProvider.class.getDeclaredMethod("resolve",
+                    InvocationPurpose.class, ReleaseState.class,
+                    CapabilityRegistry.class);
+                fail("the purpose-taking derivation factory must not exist");
+            } catch (NoSuchMethodException expected) {
+                check(true, "no provider factory derives a non-PUBLIC_BUILD profile "
+                    + "from the release state alone (no revival path)");
+            }
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    // =========================================================================
+    // 8. Wiring proof: COMMON_SHADOW + DEAL_V1_2_INT32 + PRE_ACTIVATION
+    // =========================================================================
+
+    static void testCommonShadowPreActivationWiringProof() throws Exception {
+        System.out.println("-- Wiring proof: COMMON_SHADOW + DEAL_V1_2_INT32 + PRE_ACTIVATION "
+            + "through the real orchestrator --");
+
+        Path tmp = Files.createTempDirectory("deal-foundation-shadow-pre");
+        try {
+            Path src = tmp.resolve("src");
+            Files.createDirectories(src);
+            Files.writeString(src.resolve("a.deal"), """
+                export function add(x: int, y: int): int {
+                  return x + y
+                }
+                """);
+            Files.writeString(src.resolve("main.deal"), """
+                import * as a from "./a"
+
+                export function main(): null {
+                  a.add(1, 2)
+                  return null
+                }
+                """);
+
+            // The internal pre-activation shadow invocation: provider +
+            // record guard admit it; the planner guard admits it at phase
+            // 3.7; F4 rule 5 leaves every module on the LEGACY route with
+            // zero shadow requests.
+            CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry());
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                src.resolve("main.deal").toAbsolutePath(), tmp.resolve("build"), false,
+                false, false, false, Backend.LUAJIT, null,
+                List.of(src.toAbsolutePath()),
+                Path.of("std").toAbsolutePath().normalize(), null, invocation);
+            boolean ok = orchestrator.compile();
+            check(ok, "the COMMON_SHADOW + DEAL_V1_2_INT32 + PRE_ACTIVATION compile "
+                + "succeeds end to end (phase 3.7 no longer throws): "
+                + orchestrator.diagnostics());
+            RoutePlanResult result = orchestrator.routePlan();
+            check(result != null && !result.hasErrors() && result.plan() != null,
+                "phase 3.7 produced exactly one route plan with zero diagnostics: "
+                    + (result == null ? "null" : result.diagnostics()));
+            if (result != null && !result.hasErrors() && result.plan() != null) {
+                ModuleRoutePlan plan = result.plan();
+                check(plan.entries().size() == 2
+                        && plan.entries().values().stream()
+                            .allMatch(route -> route == ModuleRoute.LEGACY),
+                    "the plan routes every implementation module LEGACY (F4 rule 5, "
+                        + "zero shadow requests)");
+                check(plan.shadowModules().isEmpty() && plan.abiEdges().isEmpty(),
+                    "the plan has empty shadowModules and no ABI records");
+            }
         } finally {
             deleteRecursively(tmp);
         }

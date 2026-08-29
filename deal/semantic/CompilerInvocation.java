@@ -25,13 +25,29 @@ import java.util.Objects;
  * The record is immutable: every component is final and there is no
  * mutator.</p>
  *
- * @param purpose               the invocation purpose; non-null
- * @param semanticProfile       the single project-wide profile; non-null
- * @param releaseState          the release-owned release state; non-null
+ * <p>The compact constructor additionally enforces the closed A1
+ * purpose×profile×release-state matrix (the same matrix
+ * {@link CompilerProfileProvider} applies at resolution and
+ * {@code MigrationPlanner.requireInvocationConsistent} applies as the
+ * defensive planning backstop), so the matrix holds at the record too,
+ * not only at the factories:</p>
+ * <ul>
+ *   <li>{@code PUBLIC_BUILD} — the profile must equal
+ *       {@link CompilerProfileProvider#publicProfile(ReleaseState)}
+ *       (strict derivation);</li>
+ *   <li>{@code COMMON_SHADOW} — the profile must be
+ *       {@code DEAL_V1_2_INT32} regardless of release state;</li>
+ *   <li>{@code LEGACY_REGRESSION} — the profile must be
+ *       {@code LEGACY_SAFE_INT} regardless of release state.</li>
+ * </ul>
+ *
+ * @param purpose                the invocation purpose; non-null
+ * @param semanticProfile        the single project-wide profile; non-null
+ * @param releaseState           the release-owned release state; non-null
  * @param capabilityRegistryHash the closed capability-registry digest
- *                              (foundation F7); non-null
- * @param releaseStateHash      the derived release-state hash recorded at
- *                              resolution (F1); non-null
+ *                               (foundation F7); non-null
+ * @param releaseStateHash       the derived release-state hash recorded at
+ *                               resolution (F1); non-null
  */
 public record CompilerInvocation(
     InvocationPurpose purpose,
@@ -41,15 +57,20 @@ public record CompilerInvocation(
     String releaseStateHash) {
 
     /**
-     * Enforces the immutability and derived-field invariants: every
-     * component is non-null and the recorded {@code releaseStateHash}
+     * Enforces the immutability, derived-field, and A1 matrix invariants:
+     * every component is non-null, the recorded {@code releaseStateHash}
      * equals the recomputed pinned derivation
-     * {@code SHA-256(canonical JSON {releaseState, capabilityRegistryHash})}.
+     * {@code SHA-256(canonical JSON {releaseState, capabilityRegistryHash})},
+     * and the purpose×profile combination is exactly one closed A1 matrix
+     * row ({@code PUBLIC_BUILD} derived from the release state;
+     * {@code COMMON_SHADOW} → {@code DEAL_V1_2_INT32};
+     * {@code LEGACY_REGRESSION} → {@code LEGACY_SAFE_INT}).
      *
-     * @throws IllegalArgumentException when a component is null or the
+     * @throws IllegalArgumentException when a component is null, the
      *         recorded hash differs from the recomputed derivation (the
      *         hash is derived by {@link CompilerProfileProvider}, never
-     *         selectable)
+     *         selectable), or the purpose×profile combination violates
+     *         the A1 matrix
      */
     public CompilerInvocation {
         Objects.requireNonNull(purpose, "purpose must not be null");
@@ -65,6 +86,31 @@ public record CompilerInvocation(
                     + "capabilityRegistryHash}): the hash is derived and recorded by "
                     + "CompilerProfileProvider at invocation resolution, never a "
                     + "selectable input");
+        }
+        switch (purpose) {
+            case PUBLIC_BUILD -> {
+                SemanticProfile derived =
+                    CompilerProfileProvider.publicProfile(releaseState);
+                if (semanticProfile != derived) {
+                    throw new IllegalArgumentException(
+                        "PUBLIC_BUILD profile must equal the release-state derivation: "
+                            + releaseState + " derives " + derived + ", got "
+                            + semanticProfile);
+                }
+            }
+            case COMMON_SHADOW -> {
+                if (semanticProfile != SemanticProfile.DEAL_V1_2_INT32) {
+                    throw new IllegalArgumentException(
+                        "COMMON_SHADOW requires DEAL_V1_2_INT32; got " + semanticProfile);
+                }
+            }
+            case LEGACY_REGRESSION -> {
+                if (semanticProfile != SemanticProfile.LEGACY_SAFE_INT) {
+                    throw new IllegalArgumentException(
+                        "LEGACY_REGRESSION requires LEGACY_SAFE_INT; got "
+                            + semanticProfile);
+                }
+            }
         }
     }
 }

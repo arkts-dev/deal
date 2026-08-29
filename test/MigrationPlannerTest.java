@@ -129,12 +129,14 @@ public class MigrationPlannerTest {
     }
 
     private static CompilerInvocation commonShadow() {
-        return CompilerProfileProvider.resolveCommonShadow(ReleaseState.V1_2_ACTIVE,
+        return CompilerProfileProvider.resolveCommonShadow(
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
     private static CompilerInvocation legacyRegression() {
-        return CompilerProfileProvider.resolveLegacyRegression(ReleaseState.PRE_ACTIVATION,
+        return CompilerProfileProvider.resolveLegacyRegression(
+            SemanticProfile.LEGACY_SAFE_INT, ReleaseState.PRE_ACTIVATION,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -1159,24 +1161,81 @@ public class MigrationPlannerTest {
             "ArtifactOwner is exactly {SHARED, RETAINED_LUAJIT, RETAINED_JVM}; got "
                 + owners);
 
-        // Profile/purpose mismatches are rejected at invocation resolution
-        // (T4's boundary), never at plan time.
+        // A1 matrix: wrong-profile internal combinations are rejected at
+        // invocation resolution and at the record guard (T4's boundary),
+        // never at plan time.
         try {
-            CompilerProfileProvider.resolve(InvocationPurpose.COMMON_SHADOW,
+            CompilerProfileProvider.resolveCommonShadow(SemanticProfile.LEGACY_SAFE_INT,
                 ReleaseState.PRE_ACTIVATION, CapabilityRegistry.releaseRegistry());
             fail("COMMON_SHADOW with a legacy profile must be rejected at resolution");
         } catch (IllegalArgumentException shadowMismatch) {
             check(true, "COMMON_SHADOW + LEGACY_SAFE_INT is rejected at invocation "
-                + "resolution (T4 boundary)");
+                + "resolution (A1 boundary)");
         }
         try {
-            CompilerProfileProvider.resolve(InvocationPurpose.LEGACY_REGRESSION,
-                ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
+            CompilerProfileProvider.resolveLegacyRegression(
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+                CapabilityRegistry.releaseRegistry());
             fail("LEGACY_REGRESSION with a v1.2 profile must be rejected at resolution");
         } catch (IllegalArgumentException regressionMismatch) {
             check(true, "LEGACY_REGRESSION + DEAL_V1_2_INT32 is rejected at invocation "
-                + "resolution (T4 boundary)");
+                + "resolution (A1 boundary)");
         }
+        String registryHash = CapabilityRegistry.releaseRegistry().capabilityRegistryHash();
+        try {
+            new CompilerInvocation(InvocationPurpose.COMMON_SHADOW,
+                SemanticProfile.LEGACY_SAFE_INT, ReleaseState.PRE_ACTIVATION,
+                registryHash, CompilerProfileProvider.deriveReleaseStateHash(
+                    ReleaseState.PRE_ACTIVATION, registryHash));
+            fail("the record must reject COMMON_SHADOW + LEGACY_SAFE_INT");
+        } catch (IllegalArgumentException recordShadowMismatch) {
+            check(true, "the CompilerInvocation record guard rejects COMMON_SHADOW + "
+                + "LEGACY_SAFE_INT (A1 matrix at the record)");
+        }
+        try {
+            new CompilerInvocation(InvocationPurpose.LEGACY_REGRESSION,
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+                registryHash, CompilerProfileProvider.deriveReleaseStateHash(
+                    ReleaseState.V1_2_ACTIVE, registryHash));
+            fail("the record must reject LEGACY_REGRESSION + DEAL_V1_2_INT32");
+        } catch (IllegalArgumentException recordRegressionMismatch) {
+            check(true, "the CompilerInvocation record guard rejects LEGACY_REGRESSION + "
+                + "DEAL_V1_2_INT32 (A1 matrix at the record)");
+        }
+
+        // A1 matrix: the planner's invocation-consistency guard admits the
+        // pre-activation shadow path — COMMON_SHADOW + DEAL_V1_2_INT32 +
+        // PRE_ACTIVATION with zero shadow requests plans all-LEGACY under
+        // F4 rule 5 (the wiring proof every later child's verification
+        // uses).
+        CompilerInvocation shadowPre = CompilerProfileProvider.resolveCommonShadow(
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+            CapabilityRegistry.releaseRegistry());
+        Project shadowPreProject = new Project(shadowPre,
+            List.of(exportOf("f", "() => int")), List.of());
+        RoutePlanResult shadowPreResult = MigrationPlanner.planRoutes(
+            shadowPreProject.invocation, CapabilityRegistry.releaseRegistry(),
+            shadowPreProject.input, shadowPreProject.index, shadowPreProject.manifests,
+            Target.LUAJIT, Set.of());
+        assertAllLegacy(shadowPreResult,
+            List.of(shadowPreProject.libId, shadowPreProject.mainId),
+            "COMMON_SHADOW + DEAL_V1_2_INT32 + PRE_ACTIVATION");
+
+        // A1 matrix: LEGACY_REGRESSION + LEGACY_SAFE_INT + V1_2_ACTIVE is
+        // admitted (the retention window extends past activation) and
+        // routes all-LEGACY under rule 1.
+        CompilerInvocation legacyActive = CompilerProfileProvider.resolveLegacyRegression(
+            SemanticProfile.LEGACY_SAFE_INT, ReleaseState.V1_2_ACTIVE,
+            CapabilityRegistry.releaseRegistry());
+        Project legacyActiveProject = new Project(legacyActive,
+            List.of(exportOf("f", "() => int")), List.of());
+        RoutePlanResult legacyActiveResult = MigrationPlanner.planRoutes(
+            legacyActiveProject.invocation, CapabilityRegistry.releaseRegistry(),
+            legacyActiveProject.input, legacyActiveProject.index,
+            legacyActiveProject.manifests, Target.JVM, Set.of());
+        assertAllLegacy(legacyActiveResult,
+            List.of(legacyActiveProject.libId, legacyActiveProject.mainId),
+            "LEGACY_REGRESSION + LEGACY_SAFE_INT + V1_2_ACTIVE");
 
         // The registry's capability × target lookup drives rule 4: every
         // release-registry entry is SHADOW in this epic, so the lookup

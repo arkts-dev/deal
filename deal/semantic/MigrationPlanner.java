@@ -799,38 +799,49 @@ public final class MigrationPlanner {
     // =========================================================================
 
     /**
-     * The defensive invocation-consistency guard (F1/F4): profile and
-     * purpose contradictions are rejected at invocation resolution by
-     * {@link CompilerProfileProvider} before checking/lowering, so the
+     * The defensive invocation-consistency guard (F1/F4; A1): the
+     * planner admits exactly the closed purpose×profile matrix —
+     * {@code PUBLIC_BUILD} → the profile must equal
+     * {@link CompilerProfileProvider#publicProfile(ReleaseState)};
+     * {@code COMMON_SHADOW} → {@code DEAL_V1_2_INT32} regardless of
+     * release state (pre- and post-activation shadowing);
+     * {@code LEGACY_REGRESSION} → {@code LEGACY_SAFE_INT} regardless of
+     * release state (the retention window extends past activation).
+     * Purpose/profile contradictions are rejected at invocation
+     * resolution by {@link CompilerProfileProvider} and at the record by
+     * {@link CompilerInvocation} before checking/lowering, so the
      * planner never observes a mismatched invocation; this backstop
      * raises {@link IllegalArgumentException} (a producer-defect guard,
-     * not a planner E6005 condition).
+     * not a planner E6005 condition). The closed F4 routing rules are
+     * unchanged: this guard is the planner's defensive wiring backstop,
+     * not a routing rule.
      */
     private static void requireInvocationConsistent(CompilerInvocation invocation) {
-        SemanticProfile derived =
-            CompilerProfileProvider.publicProfile(invocation.releaseState());
-        if (invocation.semanticProfile() != derived) {
-            throw new IllegalArgumentException(
-                "the invocation profile must equal the release-state derivation: "
-                    + invocation.releaseState() + " derives " + derived + ", got "
-                    + invocation.semanticProfile());
-        }
         switch (invocation.purpose()) {
             case PUBLIC_BUILD -> {
-                // The derived public profile is always admitted (F1).
+                SemanticProfile derived =
+                    CompilerProfileProvider.publicProfile(invocation.releaseState());
+                if (invocation.semanticProfile() != derived) {
+                    throw new IllegalArgumentException(
+                        "the PUBLIC_BUILD profile must equal the release-state "
+                            + "derivation: " + invocation.releaseState() + " derives "
+                            + derived + ", got " + invocation.semanticProfile());
+                }
             }
             case COMMON_SHADOW -> {
                 if (invocation.semanticProfile() != SemanticProfile.DEAL_V1_2_INT32) {
                     throw new IllegalArgumentException(
-                        "COMMON_SHADOW requires DEAL_V1_2_INT32 (rejected at "
-                            + "invocation resolution, F1)");
+                        "COMMON_SHADOW requires DEAL_V1_2_INT32 regardless of release "
+                            + "state; got " + invocation.semanticProfile() + " under "
+                            + invocation.releaseState());
                 }
             }
             case LEGACY_REGRESSION -> {
                 if (invocation.semanticProfile() != SemanticProfile.LEGACY_SAFE_INT) {
                     throw new IllegalArgumentException(
-                        "LEGACY_REGRESSION requires LEGACY_SAFE_INT (rejected at "
-                            + "invocation resolution, F1)");
+                        "LEGACY_REGRESSION requires LEGACY_SAFE_INT regardless of "
+                            + "release state; got " + invocation.semanticProfile()
+                            + " under " + invocation.releaseState());
                 }
             }
         }
