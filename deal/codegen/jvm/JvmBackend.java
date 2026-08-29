@@ -5743,6 +5743,15 @@ public final class JvmBackend {
                     : javaLocalType(declaredType, cf.span());
                 defaultCode = coerceNullValueCode(defaultCode, def,
                     fieldJava, def.span());
+                // ISSUE-0375 D3 seam: the default expression is a
+                // declared int boundary — a wider (time) or boxed
+                // (host) int value crosses through the signed32
+                // checkInt before the typed field slot (int,
+                // java.lang.Integer, or the Object optional slot),
+                // so javac never sees a narrowing mismatch and an
+                // out-of-range value raises exactly E8004.
+                defaultCode = adaptIntBoundary(def, defaultCode,
+                    declaredType);
             } else {
                 // Required field with NO declared default: the reference
                 // defaults table (LuaBackend.defaultValueForTypeNode)
@@ -8575,6 +8584,15 @@ public final class JvmBackend {
                 } else if (valueNode != null) {
                     code = coerceNullValueCode(code, valueNode,
                         "java.lang.Object", valueNode.span());
+                    // ISSUE-0375 D3 seam: the optional slot is a
+                    // declared int boundary — a wider (time) or
+                    // boxed (host) int value (provided or defaulted)
+                    // crosses through the signed32 checkInt before
+                    // boxing into the Object slot, so no unchecked
+                    // boxed Long is ever stored and an out-of-range
+                    // value raises exactly E8004.
+                    code = adaptIntBoundary(valueNode, code,
+                        classFieldDeclaredType(cd, cf));
                 }
                 args.add(code);
                 continue;
@@ -11729,7 +11747,18 @@ public final class JvmBackend {
                 yield "0L";
             }
             case "number" -> {
-                if (argType instanceof Type.Int) yield "numberFromInt(" + emitted + ")";
+                if (argType instanceof Type.Int) {
+                    // ISSUE-0375 D3 seam: the int argument is a
+                    // declared int boundary — a wider (time) or
+                    // boxed (host) int value routes through the
+                    // signed32 checkInt before numberFromInt, so the
+                    // int32 carrier overload (numberFromInt(int))
+                    // never meets a narrower-incompatible Java value
+                    // and an out-of-range value raises exactly E8004.
+                    yield "numberFromInt("
+                        + adaptIntBoundary(arg, emitted,
+                            Type.Int.INSTANCE) + ")";
+                }
                 if (argType instanceof Type.Number) yield emitted;
                 if (argType instanceof Type.Nullable nn
                         && nn.inner() instanceof Type.Number) {

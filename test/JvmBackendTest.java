@@ -420,6 +420,7 @@ public class JvmBackendTest {
             new TestCase("testRunnerModuleErrorCodeWithExport", () -> testRunnerModuleErrorCodeWithExport()),
             new TestCase("testProfilePlumbIntMode", () -> testProfilePlumbIntMode()),
             new TestCase("testInt32TimeBoundary", () -> testInt32TimeBoundary()),
+            new TestCase("testInt32BoundarySeamSites", () -> testInt32BoundarySeamSites()),
             new TestCase("testInt32EdgeMatrix", () -> testInt32EdgeMatrix()),
             new TestCase("testLegacyByteCompat", () -> testLegacyByteCompat()),
             new TestCase("testOrchestratorJvmBackend", () -> testOrchestratorJvmBackend()),
@@ -7372,6 +7373,14 @@ public class JvmBackendTest {
         return res.source();
     }
 
+    /** Counts non-overlapping occurrences of {@code needle} in
+     * {@code haystack} (the exact-once raise pins). */
+    private static int countOccurrences(String haystack,
+                                        String needle) {
+        return haystack.split(
+            java.util.regex.Pattern.quote(needle), -1).length - 1;
+    }
+
     /** The DEAL time-boundary pins (ISSUE-0375 D4/verification 1): under
      * {@code DEAL_V1_2_INT32} a real compiled program calling
      * {@code time.nowMillis()} through the full pipeline raises exactly
@@ -7445,6 +7454,194 @@ public class JvmBackendTest {
                 + legacy.output());
         check(!legacy.output().isBlank(),
             "legacy time run printed its value: " + legacy.output());
+    }
+
+    /** The D3 declared-int-boundary seam coverage pins for the
+     * review-cycle-2 sites (the intrinsic {@code number()} int argument
+     * and the jsonable default-expression emission): under
+     * {@code DEAL_V1_2_INT32} the retained time expression crossing
+     * these int-typed boundaries routes through the signed32
+     * {@code checkInt} — each raises exactly E8004 once at the boundary,
+     * no javac-rejected narrowing mismatch is left behind, no unchecked
+     * boxed Long is stored in the jsonable Object slot, and the
+     * untouched default invocation keeps the pre-tree byte shape and
+     * runs green. */
+    private static void testInt32BoundarySeamSites() throws Exception {
+        System.out.println("-- Int32 boundary seam sites: number() argument and jsonable defaults --");
+
+        // The intrinsic number() int argument is a declared int boundary.
+        String numSource = """
+            import * as time from "std/time"
+            export function main(): null { return null; }
+            export function test(): number {
+              let n: number = number(time.nowMillis());
+              return n;
+            }
+            """;
+        ExecResult num = runInt32Project(numSource, "number_arg_boundary");
+        check(num.exitCode() == 1, "number(time.nowMillis()) run exits 1: "
+            + num.output());
+        check(countOccurrences(num.output(),
+                "DEAL_ERROR_CODE: E8004 int out of safe range") == 1,
+            "number(time.nowMillis()) raises exactly E8004 once at the "
+                + "number() argument boundary: " + num.output());
+        String numJava = int32Artifact(numSource, "number_arg_artifact");
+        check(numJava.contains("numberFromInt(checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L))"),
+            "the number() int argument routes through the signed32 "
+                + "checkInt: "
+                + numJava.lines().filter(l -> l.contains("numberFromInt"))
+                .findFirst().orElse("<missing>"));
+        check(!numJava.contains("numberFromInt((java.lang.System.currentTimeMillis() / 1000L)"),
+            "no bare long-to-int pass-through at the number() argument");
+
+        // Jsonable required int default: the $fromJsonValue default is a
+        // declared int boundary. The checkInt gate raises there, and the
+        // public C$fromJson wrapper's never-throw contract (the
+        // jsonable slice's pinned surface — LuaJIT's _json_from_instance
+        // "never throws") converts the boundary raise to the DEAL null —
+        // the gate provably ran, since an unchecked boxed-Long store
+        // would return a live instance instead.
+        String reqSource = """
+            import * as time from "std/time"
+            // @jsonable
+            export class C {
+              f: int = time.nowMillis();
+            }
+            export function main(): null { return null; }
+            export function test(): string {
+              let c: C | null = C$fromJson("{}");
+              if (c === null) { return "null-ok"; }
+              return "bad";
+            }
+            """;
+        ExecResult req = runInt32Project(reqSource, "jsonable_req_default");
+        check(req.exitCode() == 0,
+            "jsonable required-int default run exits 0 (never-throw): "
+                + req.output());
+        check(req.output().contains("null-ok"),
+            "jsonable required-int default boundary raise converts to "
+                + "the DEAL null (the gate ran at the boundary): "
+                + req.output());
+        String reqJava = int32Artifact(reqSource, "jsonable_req_default_artifact");
+        check(reqJava.contains("int f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
+            "the jsonable required-int default field slot gates through "
+                + "checkInt: "
+                + reqJava.lines().filter(l -> l.contains("f0 = "))
+                .findFirst().orElse("<missing>"));
+        check(!reqJava.contains("int f0 = (java.lang.System.currentTimeMillis() / 1000L)"),
+            "no javac-rejected long-to-int default field slot");
+
+        // Jsonable nullable-required int default: the java.lang.Integer
+        // field slot gates through checkInt the same way (pre-fix this
+        // shape emitted a javac-rejected long-to-Integer default slot).
+        String nullableReqSource = """
+            import * as time from "std/time"
+            // @jsonable
+            export class C {
+              f: int | null = time.nowMillis();
+            }
+            export function main(): null { return null; }
+            export function test(): string {
+              let c: C | null = C$fromJson("{}");
+              if (c === null) { return "null-ok"; }
+              return "bad";
+            }
+            """;
+        ExecResult nullableReq = runInt32Project(nullableReqSource,
+            "jsonable_nullable_req_default");
+        check(nullableReq.exitCode() == 0
+                && nullableReq.output().contains("null-ok"),
+            "jsonable nullable-required int default boundary raise "
+                + "converts to the DEAL null (never-throw): "
+                + nullableReq.output());
+        String nullableReqJava = int32Artifact(nullableReqSource,
+            "jsonable_nullable_req_default_artifact");
+        check(nullableReqJava.contains("java.lang.Integer f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
+            "the jsonable nullable-required int default Integer slot "
+                + "gates through checkInt: "
+                + nullableReqJava.lines().filter(l -> l.contains("f0 = "))
+                .findFirst().orElse("<missing>"));
+        check(!nullableReqJava.contains("java.lang.Integer f0 = (java.lang.System.currentTimeMillis() / 1000L)"),
+            "no javac-rejected long-to-Integer default field slot");
+
+        // Jsonable optional int default via $fromJsonValue: the Object
+        // slot stores checkInt's Integer (never an unchecked boxed Long),
+        // and the boundary raise converts to the DEAL null like the
+        // required variant.
+        String optSource = """
+            import * as time from "std/time"
+            // @jsonable
+            export class C {
+              f?: int = time.nowMillis();
+            }
+            export function main(): null { return null; }
+            export function test(): string {
+              let c: C | null = C$fromJson("{}");
+              if (c === null) { return "null-ok"; }
+              return "bad";
+            }
+            """;
+        ExecResult opt = runInt32Project(optSource, "jsonable_opt_default");
+        check(opt.exitCode() == 0,
+            "jsonable optional-int default run exits 0 (never-throw): "
+                + opt.output());
+        check(opt.output().contains("null-ok"),
+            "jsonable optional-int default boundary raise converts to "
+                + "the DEAL null (no unchecked boxed-Long instance): "
+                + opt.output());
+        String optJava = int32Artifact(optSource, "jsonable_opt_default_artifact");
+        check(optJava.contains("java.lang.Object f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
+            "the jsonable optional-int default Object slot gates through "
+                + "checkInt: "
+                + optJava.lines().filter(l -> l.contains("f0 = "))
+                .findFirst().orElse("<missing>"));
+
+        // Jsonable optional int default at direct construction: the
+        // constructor optional slot raises exactly E8004 once at the
+        // boundary (no never-throw wrapper on the construction path).
+        String ctorSource = """
+            import * as time from "std/time"
+            // @jsonable
+            export class C {
+              f?: int = time.nowMillis();
+            }
+            export function main(): null { return null; }
+            export function test(): string {
+              let c: C = {};
+              return "ok";
+            }
+            """;
+        ExecResult ctor = runInt32Project(ctorSource, "jsonable_ctor_opt_slot");
+        check(ctor.exitCode() == 1,
+            "jsonable constructor optional slot run exits 1: "
+                + ctor.output());
+        check(countOccurrences(ctor.output(),
+                "DEAL_ERROR_CODE: E8004 int out of safe range") == 1,
+            "jsonable constructor optional slot raises exactly E8004 "
+                + "once at the boundary: " + ctor.output());
+        String ctorJava = int32Artifact(ctorSource,
+            "jsonable_ctor_opt_slot_artifact");
+        check(ctorJava.contains("new $C_C(checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L))"),
+            "the jsonable constructor optional slot gates through "
+                + "checkInt: "
+                + ctorJava.lines().filter(l -> l.contains("new $C_C"))
+                .findFirst().orElse("<missing>"));
+
+        // Integration over the plumbed profile (T1): the same programs
+        // under the untouched default invocation emit the legacy byte
+        // shape (no checkInt at these sites) and run green.
+        String legacyNumJava = legacyArtifact(numSource, "number_arg_legacy");
+        check(legacyNumJava.contains("numberFromInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L)"),
+            "legacy number() argument keeps the pre-tree byte shape "
+                + "(no checkInt wrap)");
+        ExecResult legacyOpt = runLegacyProject(optSource,
+            "jsonable_opt_default_legacy");
+        check(legacyOpt.exitCode() == 0,
+            "legacy jsonable optional-int default run exits 0: "
+                + legacyOpt.output());
+        check(!legacyOpt.output().contains("DEAL_ERROR_CODE"),
+            "legacy jsonable default raises nothing (no int32 gate): "
+                + legacyOpt.output());
     }
 
     /** The signed32 helper edge matrix (ISSUE-0375 anti-hollow; the Task
