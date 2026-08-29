@@ -124,14 +124,14 @@ test("check_int(-1) returns -1", function()
   assert(r == -1)
 end)
 
-test("check_int(9007199254740991) returns itself", function()
-  local r = __rt.check_int(9007199254740991)
-  assert(r == 9007199254740991)
+test("check_int(2147483647) returns itself", function()
+  local r = __rt.check_int(2147483647)
+  assert(r == 2147483647)
 end)
 
-test("check_int(-9007199254740991) returns itself", function()
-  local r = __rt.check_int(-9007199254740991)
-  assert(r == -9007199254740991)
+test("check_int(-2147483648) returns itself", function()
+  local r = __rt.check_int(-2147483648)
+  assert(r == -2147483648)
 end)
 
 test("check_int(-0) returns 0 (normalization)", function()
@@ -167,11 +167,11 @@ test("check_int on non-integer errors with E8001", function()
 end)
 
 test("check_int on out-of-range errors with E8004", function()
-  assert_error(function() __rt.check_int(9007199254740992) end, "E8004")
+  assert_error(function() __rt.check_int(2147483648) end, "E8004")
 end)
 
 test("check_int on out-of-range negative errors with E8004", function()
-  assert_error(function() __rt.check_int(-9007199254740992) end, "E8004")
+  assert_error(function() __rt.check_int(-2147483649) end, "E8004")
 end)
 
 -- ==================== check_number tests ====================
@@ -480,7 +480,270 @@ test("int_pow(2, -1) errors with E8006", function()
 end)
 
 test("int arithmetic overflow errors with E8004", function()
-  assert_error(function() __rt.int_add(9007199254740991, 1) end, "E8004")
+  assert_error(function() __rt.int_add(2147483647, 1) end, "E8004")
+end)
+
+test("int_add(2147483647, 0) returns 2147483647 (max stays)", function()
+  assert(__rt.int_add(2147483647, 0) == 2147483647)
+end)
+
+test("int_add(-2147483648, 0) returns -2147483648 (min stays)", function()
+  assert(__rt.int_add(-2147483648, 0) == -2147483648)
+end)
+
+test("int_add(2147483647, 1) errors with E8004 (int32 overflow)", function()
+  assert_error(function() __rt.int_add(2147483647, 1) end, "E8004")
+end)
+
+test("int_sub(-2147483648, 1) errors with E8004 (int32 overflow)", function()
+  assert_error(function() __rt.int_sub(-2147483648, 1) end, "E8004")
+end)
+
+test("int_mul(65536, 65536) errors with E8004 (int32 overflow)", function()
+  assert_error(function() __rt.int_mul(65536, 65536) end, "E8004")
+end)
+
+test("int_pow(2, 31) errors with E8004 (int32 overflow)", function()
+  assert_error(function() __rt.int_pow(2, 31) end, "E8004")
+end)
+
+test("int_div(-2147483648, -1) errors with E8004 (MIN / -1)", function()
+  assert_error(function() __rt.int_div(-2147483648, -1) end, "E8004")
+end)
+
+test("int_mod(-2147483648, -1) errors with E8004 (MIN % -1)", function()
+  assert_error(function() __rt.int_mod(-2147483648, -1) end, "E8004")
+end)
+
+test("int_div(5, 0) errors with E8005", function()
+  assert_error(function() __rt.int_div(5, 0) end, "E8005")
+end)
+
+test("int_div(-5, -0) errors with E8005 (negative zero divisor)", function()
+  assert_error(function() __rt.int_div(-5, -0) end, "E8005")
+end)
+
+test("int_mod(5, 0) errors with E8005", function()
+  assert_error(function() __rt.int_mod(5, 0) end, "E8005")
+end)
+
+test("int_neg(5) returns -5", function()
+  assert(__rt.int_neg(5) == -5)
+end)
+
+test("int_neg(-5) returns 5", function()
+  assert(__rt.int_neg(-5) == 5)
+end)
+
+test("int_neg(-0) returns 0 (normalization)", function()
+  local r = __rt.int_neg(-0)
+  assert(r == 0)
+  assert(1 / r == math.huge)
+end)
+
+test("int_neg(-2147483648) errors with E8004 (MIN negation)", function()
+  assert_error(function() __rt.int_neg(-2147483648) end, "E8004")
+end)
+
+test("int_div(5, -2) returns -2 (truncation toward zero)", function()
+  assert(__rt.int_div(5, -2) == -2)
+end)
+
+test("int_div(-5, -2) returns 2 (truncation toward zero)", function()
+  assert(__rt.int_div(-5, -2) == 2)
+end)
+
+test("int_mod(5, -2) returns 1 (truncated remainder)", function()
+  assert(__rt.int_mod(5, -2) == 1)
+end)
+
+test("int_mod(-5, -2) returns -1 (truncated remainder)", function()
+  assert(__rt.int_mod(-5, -2) == -1)
+end)
+
+test("int_convert(2147483647.0) returns 2147483647", function()
+  assert(__rt.int_convert(2147483647.0) == 2147483647)
+end)
+
+test("int_convert(-2147483648.0) returns -2147483648", function()
+  assert(__rt.int_convert(-2147483648.0) == -2147483648)
+end)
+
+test("int_convert(2147483648.0) errors with E8004 (int32 range)", function()
+  assert_error(function() __rt.int_convert(2147483648.0) end, "E8004")
+end)
+
+test("int_convert(-2147483649.0) errors with E8004 (int32 range)", function()
+  assert_error(function() __rt.int_convert(-2147483649.0) end, "E8004")
+end)
+
+test("int_convert(NaN) errors with E8001", function()
+  assert_error(function() __rt.int_convert(0/0) end, "E8001")
+end)
+
+test("int_convert(Infinity) errors with E8001", function()
+  assert_error(function() __rt.int_convert(1/0) end, "E8001")
+end)
+
+test("int_convert(-Infinity) errors with E8001", function()
+  assert_error(function() __rt.int_convert(-1/0) end, "E8001")
+end)
+
+test("int_convert(0.5) errors with E8001 (non-integer)", function()
+  assert_error(function() __rt.int_convert(0.5) end, "E8001")
+end)
+
+test("int_convert(-0.0) returns 0 (normalization)", function()
+  local r = __rt.int_convert(-0.0)
+  assert(r == 0)
+  assert(1 / r == math.huge)
+end)
+
+test("int_add(-0, 0) returns 0 (normalization)", function()
+  local r = __rt.int_add(-0, 0)
+  assert(r == 0)
+  assert(1 / r == math.huge)
+end)
+
+-- ==================== bytes tests ====================
+
+test("bytes_new(4) returns tagged bytes with length 4", function()
+  local b = __rt.bytes_new(4)
+  assert(type(b) == "table")
+  assert(b.__kind == "bytes")
+  assert(b.__len == 4)
+end)
+
+test("bytes_new zero-fills storage", function()
+  local b = __rt.bytes_new(4)
+  assert(b.__data[0] == 0 and b.__data[1] == 0 and b.__data[2] == 0 and b.__data[3] == 0)
+end)
+
+test("bytes_length returns the immutable length", function()
+  local b = __rt.bytes_new(3)
+  assert(__rt.bytes_length(b) == 3)
+end)
+
+test("bytes_get returns unsigned bytes in 0..255", function()
+  local b = __rt.bytes_new(2)
+  __rt.bytes_set(b, 0, 0)
+  __rt.bytes_set(b, 1, 255)
+  assert(__rt.bytes_get(b, 0) == 0)
+  assert(__rt.bytes_get(b, 1) == 255)
+end)
+
+test("bytes_set returns the written value", function()
+  local b = __rt.bytes_new(1)
+  assert(__rt.bytes_set(b, 0, 128) == 128)
+end)
+
+test("bytes_set roundtrips 0..255", function()
+  local b = __rt.bytes_new(256)
+  for i = 0, 255 do
+    __rt.bytes_set(b, i, i)
+  end
+  for i = 0, 255 do
+    assert(__rt.bytes_get(b, i) == i, "byte " .. i .. " mismatch")
+  end
+end)
+
+test("bytes_new(-1) errors with E8012", function()
+  assert_error(function() __rt.bytes_new(-1) end, "E8012")
+end)
+
+test("bytes_new(0.5) errors with E8001 (non-int length)", function()
+  assert_error(function() __rt.bytes_new(0.5) end, "E8001")
+end)
+
+test("bytes_get index -1 errors with E8012", function()
+  local b = __rt.bytes_new(2)
+  assert_error(function() __rt.bytes_get(b, -1) end, "E8012")
+end)
+
+test("bytes_get index == length errors with E8012", function()
+  local b = __rt.bytes_new(2)
+  assert_error(function() __rt.bytes_get(b, 2) end, "E8012")
+end)
+
+test("bytes_get non-int index errors with E8001", function()
+  local b = __rt.bytes_new(2)
+  assert_error(function() __rt.bytes_get(b, 0.5) end, "E8001")
+end)
+
+test("bytes_set index -1 errors with E8012", function()
+  local b = __rt.bytes_new(2)
+  assert_error(function() __rt.bytes_set(b, -1, 1) end, "E8012")
+end)
+
+test("bytes_set index == length errors with E8012", function()
+  local b = __rt.bytes_new(2)
+  assert_error(function() __rt.bytes_set(b, 2, 1) end, "E8012")
+end)
+
+test("bytes_set value 256 errors with E8013", function()
+  local b = __rt.bytes_new(2)
+  assert_error(function() __rt.bytes_set(b, 0, 256) end, "E8013")
+end)
+
+test("bytes_set value -1 errors with E8013", function()
+  local b = __rt.bytes_new(2)
+  assert_error(function() __rt.bytes_set(b, 0, -1) end, "E8013")
+end)
+
+test("bytes_set non-int value errors with E8001", function()
+  local b = __rt.bytes_new(2)
+  assert_error(function() __rt.bytes_set(b, 0, 0.5) end, "E8001")
+end)
+
+test("bytes_set non-int index errors with E8001", function()
+  local b = __rt.bytes_new(2)
+  assert_error(function() __rt.bytes_set(b, 0.5, 1) end, "E8001")
+end)
+
+test("failed bytes writes change no storage", function()
+  local b = __rt.bytes_new(2)
+  __rt.bytes_set(b, 0, 42)
+  assert_error(function() __rt.bytes_set(b, 2, 7) end, "E8012")
+  assert_error(function() __rt.bytes_set(b, 0, 256) end, "E8013")
+  assert(__rt.bytes_get(b, 0) == 42)
+  assert(__rt.bytes_get(b, 1) == 0)
+end)
+
+test("bytes reference aliasing: writes are visible through aliases", function()
+  local b = __rt.bytes_new(2)
+  local alias = b
+  __rt.bytes_set(alias, 1, 7)
+  assert(__rt.bytes_get(b, 1) == 7)
+end)
+
+test("zero-length buffer keeps stable storage", function()
+  local b = __rt.bytes_new(0)
+  assert(__rt.bytes_length(b) == 0)
+  assert(b.__data ~= nil)
+  assert_error(function() __rt.bytes_get(b, 0) end, "E8012")
+  assert_error(function() __rt.bytes_set(b, 0, 1) end, "E8012")
+end)
+
+test("bytes_new(2147483648) errors with E8004 (length out of int32)", function()
+  assert_error(function() __rt.bytes_new(2147483648) end, "E8004")
+end)
+
+test("bytes_new allocation failure raises E8001 'bytes allocation failed'", function()
+  local ffi = require("ffi")
+  local orig_new = ffi.new
+  ffi.new = function(...) error("simulated allocator failure") end
+  local ok, err = pcall(function() __rt.bytes_new(4) end)
+  ffi.new = orig_new
+  assert(ok == false)
+  assert(type(err) == "table")
+  assert(err.code == "E8001", "expected E8001, got " .. tostring(err.code))
+  assert(err.message == "bytes allocation failed")
+end)
+
+test("bytes_new on non-bytes kind errors with E8001", function()
+  assert_error(function() __rt.bytes_length({}) end, "E8001")
+  assert_error(function() __rt.bytes_get(42, 0) end, "E8001")
+  assert_error(function() __rt.bytes_set("x", 0, 1) end, "E8001")
 end)
 
 -- ==================== function_ tests ====================
@@ -720,7 +983,7 @@ test("error() from check_int produces table with code and message", function()
 end)
 
 test("error() from check_int on overflow produces E8004", function()
-  local ok, err = pcall(function() __rt.check_int(9007199254740992) end)
+  local ok, err = pcall(function() __rt.check_int(2147483648) end)
   assert(ok == false)
   assert(err.code == "E8004")
 end)
@@ -1046,7 +1309,7 @@ test("int_convert(-Infinity) errors with E8001", function()
   assert_error(function() __rt.int_convert(-1/0) end, "E8001")
 end)
 
-test("int_convert(1e308) errors with E8004 (out of safe range)", function()
+test("int_convert(1e308) errors with E8004 (out of range)", function()
   assert_error(function() __rt.int_convert(1e308) end, "E8004")
 end)
 
