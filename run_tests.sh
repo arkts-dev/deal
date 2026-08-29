@@ -304,6 +304,10 @@ echo "=== Running Module Identity Resolver Classifier Tests (ISSUE-0266 T5) ==="
 java -ea -cp build deal.module.ModuleIdentityResolverTest
 
 echo ""
+echo "=== Running Module Identity Assembly Tests (ISSUE-0268 T7) ==="
+java -ea -cp build deal.module.ModuleIdentityAssemblyTest
+
+echo ""
 echo "=== Running AST/Types Tests ==="
 java -ea -cp build deal.test.AstAndTypesTest
 

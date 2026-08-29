@@ -37,8 +37,8 @@ import java.util.Objects;
  *       externals entry's declaration file, {@code ProjectModule} for a
  *       rooted {@code .deal} source, {@code null} otherwise).
  *       {@code CanonicalClassIdentity} assembly stays eligibility-gated
- *       at consumer time (the assembly half of the resolver, a later
- *       epic item).</li>
+ *       at consumer time ({@link ModuleIdentityAssembly}, the assembly
+ *       half of the resolver).</li>
  * </ul>
  *
  * <p><b>Privacy invariant:</b> {@code deploymentModuleId}, the identity

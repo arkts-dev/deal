@@ -31,8 +31,9 @@ import java.util.Objects;
  * provenance of the location's {@code projectIdentity} plus the
  * module-level classification; {@code CanonicalClassIdentity} assembly,
  * eligibility gates, the {@code CanonicalClassIdentityIndex}, and the
- * intrinsic {@code Error} synthesis consume the resolved-source stream in
- * the identity-assembly half of this epic.</p>
+ * intrinsic {@code Error} synthesis consume the resolved-source stream
+ * through {@link ModuleIdentityAssembly} — the identity-assembly half
+ * of this component (epic sequencing item 7).</p>
  *
  * <p>The identity carriers this classifier produces are the neutral
  * JDK-only shapes pinned by {@code deal.identity}
@@ -87,8 +88,9 @@ import java.util.Objects;
  * contained roots attaining equal maximal containment — unreachable for a
  * valid manifest because duplicate normalized roots are already E2010 at
  * locate) is detected and reported as {@link Issue#EQUAL_ROOT_TIE} rather
- * than silently picking one root; the identity-assembly half maps these
- * outcomes to the pinned E2010-when-required behavior.</p>
+ * than silently picking one root; the identity-assembly half
+ * ({@link ModuleIdentityAssembly}) maps these outcomes to the pinned
+ * E2010-when-required behavior.</p>
  *
  * <h2>Containment (D6)</h2>
  *

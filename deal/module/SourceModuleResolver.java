@@ -90,7 +90,7 @@ import java.util.Objects;
  * once per resolved source: the result is the provenance of
  * {@code projectIdentity} and the module-level classification recorded
  * on the location; {@code CanonicalClassIdentity} assembly stays
- * eligibility-gated at consumer time (a later epic item). A bare import
+ * eligibility-gated at consumer time ({@link ModuleIdentityAssembly}). A bare import
  * additionally evaluates the classification before memoization to apply
  * the file-keyed E2009 gate, so a bare import of a previously
  * relatively-resolved undeclared declaration file still fails E2009.</p>
