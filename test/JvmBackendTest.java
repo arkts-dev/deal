@@ -419,6 +419,9 @@ public class JvmBackendTest {
             new TestCase("testModuleLevelCallBeforeFunctionDeclarationRejected", () -> testModuleLevelCallBeforeFunctionDeclarationRejected()),
             new TestCase("testRunnerModuleErrorCodeWithExport", () -> testRunnerModuleErrorCodeWithExport()),
             new TestCase("testProfilePlumbIntMode", () -> testProfilePlumbIntMode()),
+            new TestCase("testInt32TimeBoundary", () -> testInt32TimeBoundary()),
+            new TestCase("testInt32EdgeMatrix", () -> testInt32EdgeMatrix()),
+            new TestCase("testLegacyByteCompat", () -> testLegacyByteCompat()),
             new TestCase("testOrchestratorJvmBackend", () -> testOrchestratorJvmBackend()),
             new TestCase("testOrchestratorDefaultStaysLua", () -> testOrchestratorDefaultStaysLua()),
             new TestCase("testOrchestratorJvmRejectsUnsupported", () -> testOrchestratorJvmRejectsUnsupported()),
@@ -7068,9 +7071,11 @@ public class JvmBackendTest {
      * under both the default ({@code PRE_ACTIVATION → LEGACY_SAFE_INT})
      * and an explicit {@code V1_2_ACTIVE} invocation. Every mode
      * assertion reads the real stored backend state recorded on each
-     * generated result — never a mirrored constant or a mocked profile —
-     * and the plumb changes no emitted artifact: all profile variants
-     * emit byte-identical source while no int32 emission exists.
+     * generated result — never a mirrored constant or a mocked profile.
+     * ISSUE-0375 landed the carrier/range switch on top of the plumb, so
+     * the profile variants now emit their own carrier surfaces: the
+     * legacy arm stays byte-identical to the pre-tree base while the
+     * int32 arm emits the signed32 carriers.
      */
     private static void testProfilePlumbIntMode() throws Exception {
         System.out.println("-- Profile plumb: backend-wide int mode derivation --");
@@ -7122,9 +7127,16 @@ public class JvmBackendTest {
             SemanticProfile.LEGACY_SAFE_INT);
         check(!legacyExplicit.int32Mode(),
             "explicit LEGACY_SAFE_INT profile derives the LEGACY mode");
-        check(legacyExplicit.source().equals(int32.source()),
-            "legacy and int32 plumb entries emit byte-identical artifacts "
-                + "(no int32 emission yet)");
+        check(!legacyExplicit.source().equals(int32.source()),
+            "the plumbed int32 entry now emits the DEAL_V1_2_INT32 "
+                + "carrier surface (ISSUE-0375 switch)");
+        check(int32.source().contains(
+                "static int checkInt(long v) { if (v > 2147483647L"),
+            "int32 artifact carries the signed32 checkInt gate");
+        check(int32.source().contains("static int intAdd(int a, int b)"),
+            "int32 artifact carries the primitive int carriers");
+        check(!legacyExplicit.source().contains("static int intAdd(int a, int b)"),
+            "explicit LEGACY_SAFE_INT keeps the legacy long carriers");
 
         // The real plumb path: the orchestrator's codegenAllJvm passes
         // invocation.semanticProfile() into JvmBackend.generate, and the
@@ -7189,10 +7201,404 @@ public class JvmBackendTest {
                 .get(entryFile.toString()).source();
             String legacySource = legacyOrchestrator.jvmGeneratedResults()
                 .get(entryFile.toString()).source();
-            check(int32Source.equals(legacySource),
-                "orchestrator artifacts byte-identical across profiles "
-                    + "(no int32 emission yet)");
+            check(!int32Source.equals(legacySource),
+                "orchestrator artifacts carry their profile's carrier "
+                    + "surface (the int32 switch is profile-gated)");
+            check(int32Source.contains("static int intAdd(int a, int b)")
+                    && !legacySource.contains("static int intAdd(int a, int b)"),
+                "orchestrator plumb selects the backend int mode: int32 "
+                    + "carriers under V1_2_ACTIVE, legacy carriers under "
+                    + "the default PRE_ACTIVATION invocation");
         }
+    }
+
+    private static final String LEGACY_BASE_INT_HELPERS = String.join("\n",
+        "    // DEAL int safe range: \u00b1(2^53-1), mirroring deal/runtime.lua's",
+        "    // check_int (v < -9007199254740991 or v > 9007199254740991 raises",
+        "    // E8004). Every int-producing operation checks its result, exactly",
+        "    // like LuaJIT's int_add = check_int(a + b) family.",
+        "    static long checkInt(long v) { if (v > 9007199254740991L || v < -9007199254740991L) throw new DealError(\"E8004\", \"int out of safe range\"); return v; }",
+        "    // int arithmetic: E8004 out of safe range, E8005 division by zero, E8006 negative exponent.",
+        "    static long intAdd(long a, long b) { try { return checkInt(java.lang.Math.addExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }",
+        "    static long intSub(long a, long b) { try { return checkInt(java.lang.Math.subtractExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }",
+        "    static long intMul(long a, long b) { try { return checkInt(java.lang.Math.multiplyExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }",
+        "    static long intDiv(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); try { return checkInt(a / b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }",
+        "    static long intMod(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); try { return checkInt(a % b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }",
+        "    static long intPow(long a, long b) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\"); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (p > 9007199254740991.0 || p < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) p; }",
+        "    static long intNeg(long a) { try { return checkInt(java.lang.Math.negateExact(a)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }",
+        "    // number %: Lua-style floored modulo (a - floor(a/b)*b), unlike Java's truncated %.",
+        "    static double numMod(double a, double b) { return a - java.lang.Math.floor(a / b) * b; }",
+        "    // int(v) / number(v) conversion intrinsics (E8001 bad value, E8004 out of range).",
+        "    static long intFromNumber(double v) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) v; }",
+        "    static double numberFromInt(long v) { return (double) v; }");
+
+    // =========================================================================
+    // ISSUE-0375 profile-gated carrier/range switch
+    // =========================================================================
+
+    /** Compiles and runs one real program through the full pipeline
+     * (orchestrator → JvmBackend → javac → java) under the explicit
+     * {@code DEAL_V1_2_INT32} invocation — the plumbed profile, never a
+     * mirrored constant. The emitted artifact's recorded int32 mode is
+     * asserted before execution, so a broken profile plumb (T1) fails
+     * here even when the legacy program would not raise. */
+    private static ExecResult runInt32Project(String source, String name)
+            throws Exception {
+        writeFile("src/i32_" + name + ".deal", source);
+        Path entryFile = tmpDir.get().resolve("src/i32_" + name + ".deal")
+            .toAbsolutePath().normalize();
+        Path outputRoot = tmpDir.get().resolve("build/i32_" + name);
+        List<Path> roots = List.of(
+            tmpDir.get().resolve("src").toAbsolutePath());
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(
+            ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputRoot, false, false, false, false,
+            Backend.JVM, null, roots,
+            Path.of(".").toAbsolutePath().normalize(), null, invocation);
+        boolean ok = orchestrator.compile();
+        check(ok, "int32 orchestrator compile succeeds for " + name + ": "
+            + orchestrator.diagnostics());
+        if (!ok) return new ExecResult("", 1);
+        JvmBackend.JvmCodegenResult res =
+            orchestrator.jvmGeneratedResults().get(entryFile.toString());
+        check(res != null && res.int32Mode(),
+            "codegenAllJvm recorded the real stored int32 mode for " + name);
+        if (res == null || !res.int32Mode()) return new ExecResult("", 1);
+        Frontend f = compileFrontend(source, "i32_" + name + ".deal");
+        Files.writeString(outputRoot.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(f.program(),
+                res.className()));
+        List<String> javaFiles = new ArrayList<>();
+        try (var stream = Files.list(outputRoot)) {
+            stream.filter(p -> p.toString().endsWith(".java"))
+                  .sorted()
+                  .forEach(p -> javaFiles.add(p.getFileName().toString()));
+        }
+        StringBuilder javacErr = new StringBuilder();
+        boolean javacOk = BackendConformanceTest.compileWithJavac(outputRoot,
+            javaFiles, javacErr);
+        if (!javacOk) {
+            throw new RuntimeException("javac failed for " + name + ": "
+                + javacErr);
+        }
+        ProcessBuilder java = new ProcessBuilder("java", "-cp",
+            outputRoot.toString(), "JvmConformanceRunner");
+        java.redirectErrorStream(true);
+        Process p2 = java.start();
+        String out = new String(p2.getInputStream().readAllBytes()).trim();
+        int exit = p2.waitFor();
+        return new ExecResult(out, exit);
+    }
+
+    /** The same full-pipeline run under the untouched default invocation
+     * ({@code PRE_ACTIVATION → LEGACY_SAFE_INT}) — the integration
+     * counterpart that proves a missing or defaulted profile produces
+     * legacy artifacts where the int32 edges do not raise. */
+    private static ExecResult runLegacyProject(String source, String name)
+            throws Exception {
+        writeFile("src/legacy_" + name + ".deal", source);
+        Path entryFile = tmpDir.get().resolve("src/legacy_" + name + ".deal")
+            .toAbsolutePath().normalize();
+        Path outputRoot = tmpDir.get().resolve("build/legacy_" + name);
+        List<Path> roots = List.of(
+            tmpDir.get().resolve("src").toAbsolutePath());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputRoot, false, false, false, false,
+            Backend.JVM, null, roots,
+            Path.of(".").toAbsolutePath().normalize());
+        boolean ok = orchestrator.compile();
+        check(ok, "legacy orchestrator compile succeeds for " + name + ": "
+            + orchestrator.diagnostics());
+        if (!ok) return new ExecResult("", 1);
+        JvmBackend.JvmCodegenResult res =
+            orchestrator.jvmGeneratedResults().get(entryFile.toString());
+        check(res != null && !res.int32Mode(),
+            "default invocation plumbs the LEGACY int mode for " + name);
+        if (res == null || res.int32Mode()) return new ExecResult("", 1);
+        Frontend f = compileFrontend(source, "legacy_" + name + ".deal");
+        Files.writeString(outputRoot.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(f.program(),
+                res.className()));
+        List<String> javaFiles = new ArrayList<>();
+        try (var stream = Files.list(outputRoot)) {
+            stream.filter(p -> p.toString().endsWith(".java"))
+                  .sorted()
+                  .forEach(p -> javaFiles.add(p.getFileName().toString()));
+        }
+        StringBuilder javacErr = new StringBuilder();
+        boolean javacOk = BackendConformanceTest.compileWithJavac(outputRoot,
+            javaFiles, javacErr);
+        if (!javacOk) {
+            throw new RuntimeException("javac failed for " + name + ": "
+                + javacErr);
+        }
+        ProcessBuilder java = new ProcessBuilder("java", "-cp",
+            outputRoot.toString(), "JvmConformanceRunner");
+        java.redirectErrorStream(true);
+        Process p2 = java.start();
+        String out = new String(p2.getInputStream().readAllBytes()).trim();
+        int exit = p2.waitFor();
+        return new ExecResult(out, exit);
+    }
+
+    /** The emitted artifact of {@code source} under the explicit
+     * {@code DEAL_V1_2_INT32} profile (the plumbed generate entry, entry
+     * module surface). */
+    private static String int32Artifact(String source, String name) {
+        Frontend f = compileFrontend(source, "jvmtest-" + name + ".deal");
+        check(f.errors().isEmpty(), name + " frontend clean: " + f.errors());
+        if (!f.errors().isEmpty()) return "";
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-" + name + ".deal",
+            "main", Map.of(), Map.of(), Map.of(), true,
+            SemanticProfile.DEAL_V1_2_INT32);
+        check(res.int32Mode() && !res.hasErrors(),
+            name + " int32 artifact clean: " + res.diagnostics());
+        return res.source();
+    }
+
+    /** The emitted artifact of {@code source} under the default
+     * {@code LEGACY_SAFE_INT} profile. */
+    private static String legacyArtifact(String source, String name) {
+        Frontend f = compileFrontend(source, "jvmtest-" + name + ".deal");
+        check(f.errors().isEmpty(), name + " frontend clean: " + f.errors());
+        if (!f.errors().isEmpty()) return "";
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-" + name + ".deal",
+            "main");
+        check(!res.int32Mode() && !res.hasErrors(),
+            name + " legacy artifact clean: " + res.diagnostics());
+        return res.source();
+    }
+
+    /** The DEAL time-boundary pins (ISSUE-0375 D4/verification 1): under
+     * {@code DEAL_V1_2_INT32} a real compiled program calling
+     * {@code time.nowMillis()} through the full pipeline raises exactly
+     * E8004 with {@code int out of safe range} at the declared int
+     * boundary — pinned at both a declaration initializer and a direct
+     * int return. The emitted artifact wraps the byte-identical retained
+     * {@code emitStdlibTimeMemberCall} expression in {@code checkInt(...)}
+     * and applies no bare {@code (int)} narrowing to it. The untouched
+     * default invocation keeps the legacy carriers and does not raise. */
+    private static void testInt32TimeBoundary() throws Exception {
+        System.out.println("-- Int32 time boundary: E8004 at the declared int boundary --");
+
+        String initSource = """
+            import * as time from "std/time"
+            export function main(): null { return null; }
+            export function test(): int {
+              let t: int = time.nowMillis();
+              return t;
+            }
+            """;
+        ExecResult init = runInt32Project(initSource, "time_init");
+        check(init.exitCode() == 1, "int32 time initializer run exits 1: "
+            + init.output());
+        check(init.output().contains(
+                "DEAL_ERROR_CODE: E8004 int out of safe range"),
+            "declaration initializer raises exactly E8004 with the pinned "
+                + "message: " + init.output());
+
+        String retSource = """
+            import * as time from "std/time"
+            export function main(): null { return null; }
+            function now(): int { return time.nowMillis(); }
+            export function test(): int { return now(); }
+            """;
+        ExecResult ret = runInt32Project(retSource, "time_return");
+        check(ret.exitCode() == 1, "int32 time return run exits 1: "
+            + ret.output());
+        check(ret.output().contains(
+                "DEAL_ERROR_CODE: E8004 int out of safe range"),
+            "direct int return raises exactly E8004 with the pinned "
+                + "message: " + ret.output());
+
+        // Artifact pins: the retained time expression is byte-identical
+        // and wrapped by the signed32 checkInt at the boundary; no bare
+        // (int) narrowing of the time value exists anywhere in the
+        // artifact.
+        String java = int32Artifact(initSource, "time_init_pin");
+        check(java.contains("int t = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
+            "artifact wraps the byte-identical retained time expression in "
+                + "checkInt at the declaration initializer");
+        check(!java.contains("(int) (java.lang.System.currentTimeMillis()"),
+            "no bare (int) narrowing of the retained time expression "
+                + "(the narrowing lives inside checkInt, behind the "
+                + "signed32 gate)");
+        check(java.contains("static int checkInt(long v) { if (v > 2147483647L || v < -2147483648L) throw new DealError(\"E8004\", \"int out of safe range\"); return (int) v; }"),
+            "int32 checkInt gate is [-2147483648, 2147483647] with E8004 "
+                + "and the pinned message");
+
+        // The untouched default invocation stays legacy: the retained
+        // expression crosses no int32 gate, the program runs green, and
+        // the positive second-truncated value is observable.
+        String legacyJava = legacyArtifact(initSource, "time_init_legacy");
+        check(legacyJava.contains("long t = (java.lang.System.currentTimeMillis() / 1000L) * 1000L;"),
+            "default (PRE_ACTIVATION → LEGACY_SAFE_INT) artifact keeps the "
+                + "retained expression byte-identical with no int32 wrap");
+        ExecResult legacy = runLegacyProject(initSource, "time_init_legacy");
+        check(legacy.exitCode() == 0, "legacy time run exits 0: "
+            + legacy.output());
+        check(!legacy.output().contains("DEAL_ERROR_CODE"),
+            "legacy time run raises nothing (no int32 gate): "
+                + legacy.output());
+        check(!legacy.output().isBlank(),
+            "legacy time run printed its value: " + legacy.output());
+    }
+
+    /** The signed32 helper edge matrix (ISSUE-0375 anti-hollow; the Task
+     * verification edge list): one real program per edge, compiled and
+     * run through the full pipeline under the explicit
+     * {@code DEAL_V1_2_INT32} invocation, each asserting the exact code
+     * (E8004/E8005/E8006/E8001) and message, with in-range cases
+     * asserting the correct stored value. Every raise is observed from
+     * the executed artifact — never from reading helper source. */
+    private static void testInt32EdgeMatrix() throws Exception {
+        System.out.println("-- Int32 signed32 helper edge matrix (full pipeline) --");
+
+        record EdgePin(String name, String body, String expected) {}
+        List<EdgePin> pins = List.of(
+            new EdgePin("add-overflow", "return 2147483647 + 1;",
+                "E8004 int out of safe range"),
+            new EdgePin("sub-underflow",
+                "let x: int = int(-2147483648.0);\n"
+                + "      return x - 1;",
+                "E8004 int out of safe range"),
+            new EdgePin("mul-overflow", "return 50000 * 50000;",
+                "E8004 int out of safe range"),
+            new EdgePin("div-min-by-minus-one",
+                "let x: int = int(-2147483648.0);\n"
+                + "      return x / -1;",
+                "E8004 int out of safe range"),
+            new EdgePin("mod-min-by-minus-one",
+                "let x: int = int(-2147483648.0);\n"
+                + "      return x % -1;",
+                "E8004 int out of safe range"),
+            new EdgePin("div-by-zero", "return 1 / 0;",
+                "E8005 integer division by zero"),
+            new EdgePin("mod-by-zero", "return 1 % 0;",
+                "E8005 integer division by zero"),
+            new EdgePin("neg-min",
+                "let x: int = int(-2147483648.0);\n"
+                + "      return -(x);",
+                "E8004 int out of safe range"),
+            new EdgePin("neg-zero", "return -(0);", "0"),
+            new EdgePin("pow-negative-exponent", "return 2 ** -1;",
+                "E8006 integer exponent must be non-negative"),
+            new EdgePin("pow-out-of-range", "return 2 ** 31;",
+                "E8004 int out of safe range"),
+            new EdgePin("pow-nonfinite", "return 10 ** 400;",
+                "E8001 expected int, got infinity"),
+            new EdgePin("pow-in-range", "return 2 ** 30;", "1073741824"),
+            new EdgePin("intfrom-nan", "return int(0.0 / 0.0);",
+                "E8001 expected int, got NaN"),
+            new EdgePin("intfrom-infinity", "return int(1.0 / 0.0);",
+                "E8001 expected int, got infinity"),
+            new EdgePin("intfrom-noninteger", "return int(0.5);",
+                "E8001 expected int, got non-integer number"),
+            new EdgePin("intfrom-out-of-range-hi",
+                "return int(2147483648.0);",
+                "E8004 int out of safe range"),
+            new EdgePin("intfrom-out-of-range-lo",
+                "return int(-2147483649.0);",
+                "E8004 int out of safe range"),
+            new EdgePin("intfrom-in-range",
+                "return int(2147483647.0) + int(-2147483648.0);", "-1"),
+            new EdgePin("trunc-div", "return (-5) / 2;", "-2"),
+            new EdgePin("trunc-mod", "return (-5) % 2;", "-1"));
+        for (EdgePin pin : pins) {
+            String source = "export function main(): null { return null; }\n"
+                + "export function test(): int {\n      " + pin.body() + "\n"
+                + "    }\n";
+            ExecResult r = runInt32Project(source, pin.name());
+            if (pin.expected().startsWith("E8")) {
+                check(r.exitCode() == 1,
+                    pin.name() + " run exits 1: " + r.output());
+                check(r.output().contains("DEAL_ERROR_CODE: "
+                        + pin.expected()),
+                    pin.name() + " raises exactly " + pin.expected()
+                        + ": " + r.output());
+            } else {
+                check(r.exitCode() == 0,
+                    pin.name() + " run exits 0: " + r.output());
+                check(r.output().contains(pin.expected()),
+                    pin.name() + " stores the correct value "
+                        + pin.expected() + ": " + r.output());
+            }
+        }
+
+        // The integration proof over the plumbed profile (T1): the same
+        // add-overflow program under the untouched DEFAULT invocation
+        // emits legacy artifacts, where 2147483647 + 1 stays inside the
+        // ±(2^53-1) safe range and does not raise — a missing or
+        // defaulted profile can never produce the int32 raise.
+        String addSource = "export function main(): null { return null; }\n"
+            + "export function test(): int {\n      return 2147483647 + 1;\n"
+            + "    }\n";
+        ExecResult legacy = runLegacyProject(addSource, "add_overflow_legacy");
+        check(legacy.exitCode() == 0,
+            "default-profile add-overflow run exits 0: " + legacy.output());
+        check(legacy.output().contains("2147483648"),
+            "default-profile add-overflow stays in the legacy safe range: "
+                + legacy.output());
+    }
+
+    /** The legacy byte-compat pin (ISSUE-0375 D1 legacy arm / Task
+     * verification): under {@code LEGACY_SAFE_INT} the emitted
+     * preamble/helpers are byte-identical to the pre-tree base (the
+     * {@link #LEGACY_BASE_INT_HELPERS} capture), the int32 carrier never
+     * leaks into the legacy artifact, the retained time expression stays
+     * unwrapped, and the legacy runtime behavior is unchanged — a
+     * 2147483648-scale safe-int value still passes while the ±(2^53-1)
+     * overflow gate still raises E8004. */
+    private static void testLegacyByteCompat() throws Exception {
+        System.out.println("-- Legacy byte-compat pin (pre-tree base helpers) --");
+
+        String source = """
+            import * as time from "std/time"
+            function add(a: int, b: int): int { return a + b; }
+            export function test(): int {
+              let t: int = time.nowMillis();
+              let x: int = add(40, 2);
+              let n: number = number(7);
+              let i2: int = int(3.0);
+              return x + i2 + int(n);
+            }
+            """;
+        String java = legacyArtifact(source, "bytecompat");
+        check(java.contains(LEGACY_BASE_INT_HELPERS),
+            "LEGACY_SAFE_INT preamble/helpers are byte-identical to the "
+                + "pre-tree base (the captured helper block appears "
+                + "verbatim)");
+        check(!java.contains("static int checkInt("),
+            "no int32 checkInt carrier leaks into the legacy artifact");
+        check(!java.contains("static int intAdd(int a, int b)"),
+            "no int32 intAdd carrier leaks into the legacy artifact");
+        check(java.contains("static long intAdd(long a, long b)"),
+            "legacy long carriers kept");
+        check(java.contains("long t = (java.lang.System.currentTimeMillis() / 1000L) * 1000L;"),
+            "legacy retained time expression byte-identical, no int32 wrap");
+
+        // Legacy runtime unchanged: a 2147483648-scale safe-int value
+        // still passes, and the legacy overflow gate still raises E8004
+        // at the ±(2^53-1) boundary.
+        ExecResult inRange = compileAndRunJvm("""
+            export function test(): int { return 2147483648; }
+            """, "legacy-safe-scale");
+        check(inRange.exitCode() == 0,
+            "legacy safe-scale run exits 0: " + inRange.output());
+        check(inRange.output().contains("2147483648"),
+            "legacy ±(2^53-1) safe-int value unchanged: "
+                + inRange.output());
+
+        ExecResult over = compileAndRunJvm("""
+            export function test(): int { return 9007199254740991 + 1; }
+            """, "legacy-safe-overflow");
+        check(over.exitCode() == 1
+                && over.output().contains(
+                    "DEAL_ERROR_CODE: E8004 int out of safe range"),
+            "legacy safe-range overflow gate unchanged: " + over.output());
     }
 
     private static void testOrchestratorJvmBackend() throws Exception {

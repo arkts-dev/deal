@@ -1417,7 +1417,14 @@ public final class JvmBackend {
      * parameter types match a helper exactly would emit a duplicate Java
      * method; such declarations are rejected with E6000 instead.
      */
-    private static final Map<String, List<String>> RUNTIME_HELPER_SIGNATURES = Map.ofEntries(
+    /**
+     * Emitted runtime-helper signatures under {@code LEGACY_SAFE_INT} —
+     * the pre-tree byte-identical base table (ISSUE-0375 keeps this arm
+     * untouched). A DEAL function whose translated name and mapped
+     * parameter types match a helper exactly would emit a duplicate Java
+     * method; such declarations are rejected with E6000 instead.
+     */
+    private static final Map<String, List<String>> LEGACY_RUNTIME_HELPER_SIGNATURES = Map.ofEntries(
         Map.entry("intAdd", List.of("long", "long")),
         Map.entry("intSub", List.of("long", "long")),
         Map.entry("intMul", List.of("long", "long")),
@@ -1436,6 +1443,47 @@ public final class JvmBackend {
         Map.entry("intFromNullable", List.of("java.lang.Long")),
         Map.entry("numberFromNullable", List.of("java.lang.Double")),
         Map.entry("checkSig", List.of("java.lang.String", "java.lang.String")));
+
+    /**
+     * Emitted runtime-helper signatures under {@code DEAL_V1_2_INT32}
+     * (ISSUE-0375 carrier/range switch, jvm-v12-int32-bytes D1): the
+     * signed32 helper carriers ({@code int}/{@code java.lang.Integer}).
+     * {@link #checkInt} still takes the wider {@code long} carrier — the
+     * D3 boundary seam feeds it wider/boxed/foreign values — while every
+     * other int-typed helper parameter and result is primitive {@code int}.
+     */
+    private static final Map<String, List<String>> INT32_RUNTIME_HELPER_SIGNATURES = Map.ofEntries(
+        Map.entry("intAdd", List.of("int", "int")),
+        Map.entry("intSub", List.of("int", "int")),
+        Map.entry("intMul", List.of("int", "int")),
+        Map.entry("intDiv", List.of("int", "int")),
+        Map.entry("intMod", List.of("int", "int")),
+        Map.entry("intPow", List.of("int", "int")),
+        Map.entry("intNeg", List.of("int")),
+        Map.entry("numMod", List.of("double", "double")),
+        Map.entry("intFromNumber", List.of("double")),
+        Map.entry("numberFromInt", List.of("int")),
+        Map.entry("scalarCompare", List.of("java.lang.String", "java.lang.String")),
+        Map.entry("checkInt", List.of("long")),
+        Map.entry("__hasUnpairedSurrogate", List.of("java.lang.String")),
+        Map.entry("loopCond", List.of("boolean")),
+        Map.entry("booleanNotNull", List.of("java.lang.Boolean")),
+        Map.entry("intFromNullable", List.of("java.lang.Integer")),
+        Map.entry("numberFromNullable", List.of("java.lang.Double")),
+        Map.entry("checkSig", List.of("java.lang.String", "java.lang.String")));
+
+    /**
+     * The emitted runtime-helper signature table for the backend's
+     * backend-wide int mode (ISSUE-0375): the legacy table under
+     * {@code LEGACY_SAFE_INT} (byte-identical to the pre-tree base) and
+     * the signed32 table under {@code DEAL_V1_2_INT32}. The collision
+     * guard keys on the table matching the helpers the artifact actually
+     * emits for this backend instance.
+     */
+    private Map<String, List<String>> runtimeHelperSignatures() {
+        return int32Mode ? INT32_RUNTIME_HELPER_SIGNATURES
+                         : LEGACY_RUNTIME_HELPER_SIGNATURES;
+    }
 
     /**
      * Translates a DEAL identifier to a Java identifier. The encoding is
@@ -3450,27 +3498,54 @@ public final class JvmBackend {
         emitLine("        this.code = code;");
         emitLine("    }");
         emitLine("}");
-        emitLine("// DEAL int safe range: ±(2^53-1), mirroring deal/runtime.lua's");
-        emitLine("// check_int (v < -9007199254740991 or v > 9007199254740991 raises");
-        emitLine("// E8004). Every int-producing operation checks its result, exactly");
-        emitLine("// like LuaJIT's int_add = check_int(a + b) family.");
-        emitLine("static long checkInt(long v) { if (v > 9007199254740991L || v < -9007199254740991L) throw new DealError(\"E8004\", \"int out of safe range\"); return v; }");
-        emitLine("// int arithmetic: E8004 out of safe range, E8005 division by zero, E8006 negative exponent.");
-        emitLine("static long intAdd(long a, long b) { try { return checkInt(java.lang.Math.addExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-        emitLine("static long intSub(long a, long b) { try { return checkInt(java.lang.Math.subtractExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-        emitLine("static long intMul(long a, long b) { try { return checkInt(java.lang.Math.multiplyExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-        emitLine("static long intDiv(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); try { return checkInt(a / b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-        emitLine("static long intMod(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); try { return checkInt(a % b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-        // NaN/Infinity first, matching deal/runtime.lua's check_int (LuaJIT
-        // "expected int, got infinity" for e.g. `10 ** 400`); only finite
-        // values outside the int safe range report E8004.
-        emitLine("static long intPow(long a, long b) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\"); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (p > 9007199254740991.0 || p < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) p; }");
-        emitLine("static long intNeg(long a) { try { return checkInt(java.lang.Math.negateExact(a)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-        emitLine("// number %: Lua-style floored modulo (a - floor(a/b)*b), unlike Java's truncated %.");
-        emitLine("static double numMod(double a, double b) { return a - java.lang.Math.floor(a / b) * b; }");
-        emitLine("// int(v) / number(v) conversion intrinsics (E8001 bad value, E8004 out of range).");
-        emitLine("static long intFromNumber(double v) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) v; }");
-        emitLine("static double numberFromInt(long v) { return (double) v; }");
+        if (int32Mode) {
+            // DEAL int: signed 32-bit under DEAL_V1_2_INT32 (ISSUE-0375
+            // carrier/range switch, jvm-v12-int32-bytes D1). checkInt
+            // narrows any wider/boxed value crossing a declared int
+            // boundary: the signed32 gate raises E8004 BEFORE the
+            // narrowing, so the (int) inside checkInt is never silent.
+            emitLine("// DEAL int: signed 32-bit under DEAL_V1_2_INT32 (jvm-v12-int32-bytes D1).");
+            emitLine("// checkInt gates every wider/boxed value crossing a declared int boundary on");
+            emitLine("// [-2147483648, 2147483647] (E8004 before the narrowing, never silent).");
+            emitLine("static int checkInt(long v) { if (v > 2147483647L || v < -2147483648L) throw new DealError(\"E8004\", \"int out of safe range\"); return (int) v; }");
+            emitLine("// int arithmetic: exact int32; E8004 overflow, E8005 division by zero, E8006 negative exponent.");
+            emitLine("static int intAdd(int a, int b) { try { return java.lang.Math.addExact(a, b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            emitLine("static int intSub(int a, int b) { try { return java.lang.Math.subtractExact(a, b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            emitLine("static int intMul(int a, int b) { try { return java.lang.Math.multiplyExact(a, b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            emitLine("static int intDiv(int a, int b) { if (b == 0) throw new DealError(\"E8005\", \"integer division by zero\"); if (a == java.lang.Integer.MIN_VALUE && b == -1) throw new DealError(\"E8004\", \"int out of safe range\"); return a / b; }");
+            emitLine("static int intMod(int a, int b) { if (b == 0) throw new DealError(\"E8005\", \"integer division by zero\"); if (a == java.lang.Integer.MIN_VALUE && b == -1) throw new DealError(\"E8004\", \"int out of safe range\"); return a % b; }");
+            // NaN/Infinity first (deal/runtime.lua check_int parity); only
+            // finite values outside the signed32 range report E8004.
+            emitLine("static int intPow(int a, int b) { if (b < 0) throw new DealError(\"E8006\", \"integer exponent must be non-negative\"); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (p > 2147483647.0 || p < -2147483648.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (int) p; }");
+            emitLine("static int intNeg(int a) { try { return java.lang.Math.negateExact(a); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            emitLine("// number %: Lua-style floored modulo (a - floor(a/b)*b), unlike Java's truncated %.");
+            emitLine("static double numMod(double a, double b) { return a - java.lang.Math.floor(a / b) * b; }");
+            emitLine("// int(v) / number(v) conversion intrinsics (E8001 bad value, E8004 out of range).");
+            emitLine("static int intFromNumber(double v) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v > 2147483647.0 || v < -2147483648.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (int) v; }");
+            emitLine("static double numberFromInt(int v) { return (double) v; }");
+        } else {
+            emitLine("// DEAL int safe range: ±(2^53-1), mirroring deal/runtime.lua's");
+            emitLine("// check_int (v < -9007199254740991 or v > 9007199254740991 raises");
+            emitLine("// E8004). Every int-producing operation checks its result, exactly");
+            emitLine("// like LuaJIT's int_add = check_int(a + b) family.");
+            emitLine("static long checkInt(long v) { if (v > 9007199254740991L || v < -9007199254740991L) throw new DealError(\"E8004\", \"int out of safe range\"); return v; }");
+            emitLine("// int arithmetic: E8004 out of safe range, E8005 division by zero, E8006 negative exponent.");
+            emitLine("static long intAdd(long a, long b) { try { return checkInt(java.lang.Math.addExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            emitLine("static long intSub(long a, long b) { try { return checkInt(java.lang.Math.subtractExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            emitLine("static long intMul(long a, long b) { try { return checkInt(java.lang.Math.multiplyExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            emitLine("static long intDiv(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); try { return checkInt(a / b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            emitLine("static long intMod(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); try { return checkInt(a % b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            // NaN/Infinity first, matching deal/runtime.lua's check_int (LuaJIT
+            // "expected int, got infinity" for e.g. `10 ** 400`); only finite
+            // values outside the int safe range report E8004.
+            emitLine("static long intPow(long a, long b) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\"); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (p > 9007199254740991.0 || p < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) p; }");
+            emitLine("static long intNeg(long a) { try { return checkInt(java.lang.Math.negateExact(a)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            emitLine("// number %: Lua-style floored modulo (a - floor(a/b)*b), unlike Java's truncated %.");
+            emitLine("static double numMod(double a, double b) { return a - java.lang.Math.floor(a / b) * b; }");
+            emitLine("// int(v) / number(v) conversion intrinsics (E8001 bad value, E8004 out of range).");
+            emitLine("static long intFromNumber(double v) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) v; }");
+            emitLine("static double numberFromInt(long v) { return (double) v; }");
+        }
         emitLine("// string ordering: Unicode scalar-value order. LuaJIT orders bytewise in");
         emitLine("// UTF-8, which is scalar-value order — including supplementary characters");
         emitLine("// (String.compareTo's UTF-16 code-unit order diverges there).");
@@ -3533,7 +3608,9 @@ public final class JvmBackend {
         emitLine("    }");
         emitLine("    switch (d) {");
         emitLine("        case \"int\":");
-        emitLine("            if (v instanceof java.lang.Long l) return checkInt(l.longValue());");
+        emitLine(int32Mode
+            ? "            if (v instanceof java.lang.Integer i) return checkInt(i);"
+            : "            if (v instanceof java.lang.Long l) return checkInt(l.longValue());");
         emitLine("            break;");
         emitLine("        case \"number\":");
         emitLine("            if (v instanceof java.lang.Double dd) return dd;");
@@ -3655,11 +3732,15 @@ public final class JvmBackend {
             Type.Number.INSTANCE));
         emitLine("static final Fn1_N_R_I _int$fn = new Fn1_N_R_I() {");
         emitLine("    @Override");
-        emitLine("    long invoke(double p0) { return intFromNumber(p0); }");
+        emitLine(int32Mode
+            ? "    int invoke(double p0) { return intFromNumber(p0); }"
+            : "    long invoke(double p0) { return intFromNumber(p0); }");
         emitLine("};");
         emitLine("static final Fn1_I_R_N _number$fn = new Fn1_I_R_N() {");
         emitLine("    @Override");
-        emitLine("    double invoke(long p0) { return numberFromInt(p0); }");
+        emitLine(int32Mode
+            ? "    double invoke(int p0) { return numberFromInt(p0); }"
+            : "    double invoke(long p0) { return numberFromInt(p0); }");
         emitLine("};");
         emitLine();
         emitLine("// ---- DEAL primitive array runtime support (ISSUE-0094) ----");
@@ -3670,7 +3751,9 @@ public final class JvmBackend {
         emitLine("// LuaJIT's shared 1-based table. Every name here uses the __ prefix, which is");
         emitLine("// unreachable from javaName's translation (each DEAL underscore escapes to");
         emitLine("// $u), so no user binding, method, or field can collide with it.");
-        emitLine("static final class __IntArray { long[] data; __IntArray(long[] data) { this.data = data; } }");
+        emitLine(int32Mode
+            ? "static final class __IntArray { int[] data; __IntArray(int[] data) { this.data = data; } }"
+            : "static final class __IntArray { long[] data; __IntArray(long[] data) { this.data = data; } }");
         emitLine("static final class __NumberArray { double[] data; __NumberArray(double[] data) { this.data = data; } }");
         emitLine("static final class __StringArray { java.lang.String[] data; __StringArray(java.lang.String[] data) { this.data = data; } }");
         emitLine("static final class __BooleanArray { boolean[] data; __BooleanArray(boolean[] data) { this.data = data; } }");
@@ -3680,7 +3763,9 @@ public final class JvmBackend {
         emitLine("// shape (spec §Bounds and nil behavior: `let x: int = xs[99]` → nil is not");
         emitLine("// int). A primitive Java array cannot yield nil, so the JVM read raises the");
         emitLine("// boundary failure directly.");
-        emitLine("static long __intArrayRead(__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int, got null\"); return a.data[(int) i]; }");
+        emitLine(int32Mode
+            ? "static int __intArrayRead(__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int, got null\"); return a.data[(int) i]; }"
+            : "static long __intArrayRead(__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int, got null\"); return a.data[(int) i]; }");
         emitLine("static double __numberArrayRead(__NumberArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected number, got null\"); return a.data[(int) i]; }");
         emitLine("static java.lang.String __stringArrayRead(__StringArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected string, got null\"); return a.data[(int) i]; }");
         emitLine("static boolean __booleanArrayRead(__BooleanArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected boolean, got null\"); return a.data[(int) i]; }");
@@ -3693,7 +3778,9 @@ public final class JvmBackend {
         emitLine("// LuaJIT nil), the element value otherwise. A negative index still raises");
         emitLine("// E8002 — LuaJIT emits that check unconditionally at the read, whatever");
         emitLine("// the surrounding position.");
-        emitLine("static java.lang.Long __intArrayReadBoxed(__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Long.valueOf(a.data[(int) i]); }");
+        emitLine(int32Mode
+            ? "static java.lang.Integer __intArrayReadBoxed(__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Integer.valueOf(a.data[(int) i]); }"
+            : "static java.lang.Long __intArrayReadBoxed(__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Long.valueOf(a.data[(int) i]); }");
         emitLine("static java.lang.Double __numberArrayReadBoxed(__NumberArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Double.valueOf(a.data[(int) i]); }");
         emitLine("static java.lang.String __stringArrayReadBoxed(__StringArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
         emitLine("static java.lang.Boolean __booleanArrayReadBoxed(__BooleanArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Boolean.valueOf(a.data[(int) i]); }");
@@ -3716,7 +3803,9 @@ public final class JvmBackend {
         emitLine("// contract). The write check runs after the value expression has been");
         emitLine("// evaluated — the helper call's Java arguments evaluate left to right before");
         emitLine("// the bounds check, per spec-v1.2 §Operational semantics rule 3.");
-        emitLine("static long __intArrayWrite(__IntArray a, long i, long v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); v = checkInt(v); if (i == (long) a.data.length) { long[] nd = new long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine(int32Mode
+            ? "static int __intArrayWrite(__IntArray a, long i, int v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { int[] nd = new int[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }"
+            : "static long __intArrayWrite(__IntArray a, long i, long v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); v = checkInt(v); if (i == (long) a.data.length) { long[] nd = new long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine("static double __numberArrayWrite(__NumberArray a, long i, double v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { double[] nd = new double[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine("static java.lang.String __stringArrayWrite(__StringArray a, long i, java.lang.String v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine("static boolean __booleanArrayWrite(__BooleanArray a, long i, boolean v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { boolean[] nd = new boolean[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
@@ -3729,11 +3818,15 @@ public final class JvmBackend {
         emitLine("// nil), and a negative index still raises E8002 (LuaJIT emits that check");
         emitLine("// unconditionally at the read). Writes accept null (check_nullable");
         emitLine("// permits it) and check only the index bounds.");
-        emitLine("static final class __IntOrNullArray { java.lang.Long[] data; __IntOrNullArray(java.lang.Long[] data) { this.data = data; } }");
+        emitLine(int32Mode
+            ? "static final class __IntOrNullArray { java.lang.Integer[] data; __IntOrNullArray(java.lang.Integer[] data) { this.data = data; } }"
+            : "static final class __IntOrNullArray { java.lang.Long[] data; __IntOrNullArray(java.lang.Long[] data) { this.data = data; } }");
         emitLine("static final class __NumberOrNullArray { java.lang.Double[] data; __NumberOrNullArray(java.lang.Double[] data) { this.data = data; } }");
         emitLine("static final class __StringOrNullArray { java.lang.String[] data; __StringOrNullArray(java.lang.String[] data) { this.data = data; } }");
         emitLine("static final class __BooleanOrNullArray { java.lang.Boolean[] data; __BooleanOrNullArray(java.lang.Boolean[] data) { this.data = data; } }");
-        emitLine("static java.lang.Long __intOrNullArrayWrite(__IntOrNullArray a, long i, java.lang.Long v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Long[] nd = new java.lang.Long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine(int32Mode
+            ? "static java.lang.Integer __intOrNullArrayWrite(__IntOrNullArray a, long i, java.lang.Integer v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Integer[] nd = new java.lang.Integer[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }"
+            : "static java.lang.Long __intOrNullArrayWrite(__IntOrNullArray a, long i, java.lang.Long v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Long[] nd = new java.lang.Long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine("static java.lang.Double __numberOrNullArrayWrite(__NumberOrNullArray a, long i, java.lang.Double v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Double[] nd = new java.lang.Double[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine("static java.lang.String __stringOrNullArrayWrite(__StringOrNullArray a, long i, java.lang.String v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine("static java.lang.Boolean __booleanOrNullArrayWrite(__BooleanOrNullArray a, long i, java.lang.Boolean v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
@@ -3741,7 +3834,9 @@ public final class JvmBackend {
         emitLine("// nullable element, so NO E8001 at the read) and the stored boxed");
         emitLine("// element otherwise; a negative index still raises E8002 (LuaJIT");
         emitLine("// emits that check unconditionally at the read).");
-        emitLine("static java.lang.Long __intOrNullArrayRead(__IntOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine(int32Mode
+            ? "static java.lang.Integer __intOrNullArrayRead(__IntOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }"
+            : "static java.lang.Long __intOrNullArrayRead(__IntOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
         emitLine("static java.lang.Double __numberOrNullArrayRead(__NumberOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
         emitLine("static java.lang.String __stringOrNullArrayRead(__StringOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
         emitLine("static java.lang.Boolean __booleanOrNullArrayRead(__BooleanOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
@@ -3765,7 +3860,9 @@ public final class JvmBackend {
         emitLine("// int(v: int | null) / number(v: number | null) conversion intrinsics:");
         emitLine("// null fails at runtime with E8001 (runtime.lua's int_convert/");
         emitLine("// number_convert \"cannot convert null to ...\" shapes).");
-        emitLine("static long intFromNullable(java.lang.Long v) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to int\"); return v; }");
+        emitLine(int32Mode
+            ? "static int intFromNullable(java.lang.Integer v) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to int\"); return v; }"
+            : "static long intFromNullable(java.lang.Long v) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to int\"); return v; }");
         emitLine("static double numberFromNullable(java.lang.Double v) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to number\"); return v; }");
         emitLine();
         emitLine("// ---- DEAL stdlib support (ISSUE-0097, ISSUE-0106 v1.2 scalar strings): std/string, std/math, std/time ----");
@@ -3776,7 +3873,9 @@ public final class JvmBackend {
         emitLine("// offsets with codePointCount/offsetByCodePoints, so supplementary");
         emitLine("// characters count as ONE scalar value. Search/replace/trim operate on");
         emitLine("// whole strings, where scalar-value and code-unit semantics coincide.");
-        emitLine("static long __strLength(java.lang.String s) { return (long) s.codePointCount(0, s.length()); }");
+        emitLine(int32Mode
+            ? "static int __strLength(java.lang.String s) { return s.codePointCount(0, s.length()); }"
+            : "static long __strLength(java.lang.String s) { return (long) s.codePointCount(0, s.length()); }");
         emitLine("// v1.2 reference semantics (std/string.lua): positions are Unicode");
         emitLine("// scalar values; a negative start behaves as 0, a negative end yields");
         emitLine("// the empty string, an end beyond the string clamps to n, and");
@@ -3937,13 +4036,19 @@ public final class JvmBackend {
         emitLine("if (descriptor.equals(\"table\")) { if (v instanceof $DealRt.Table t) return t; throw new DealError(\"E8001\", \"expected table, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"boolean\")) { if (v instanceof java.lang.Boolean b) return b; throw new DealError(\"E8001\", \"expected boolean, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"string\")) { if (v instanceof java.lang.String s) { if (__hasUnpairedSurrogate(s)) throw new DealError(\"E8001\", \"expected string, got string with unpaired surrogate code units\"); return s; } throw new DealError(\"E8001\", \"expected string, got \" + $describe(v)); }");
-        emitLine("if (descriptor.equals(\"int\")) { if (v instanceof java.lang.Long l) return checkInt(l); if (v instanceof java.lang.Double d) { if (d.isNaN()) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (d.isInfinite()) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (d % 1.0 != 0.0) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); return checkInt((long) (double) d); } throw new DealError(\"E8001\", \"expected int, got \" + $describe(v)); }");
-        emitLine("if (descriptor.equals(\"number\")) { if (v instanceof java.lang.Long l) return (double) l; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v)); }");
+        emitLine(int32Mode
+            ? "if (descriptor.equals(\"int\")) { if (v instanceof java.lang.Integer i) return checkInt(i); if (v instanceof java.lang.Double d) { if (d.isNaN()) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (d.isInfinite()) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (d % 1.0 != 0.0) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); return checkInt((long) (double) d); } throw new DealError(\"E8001\", \"expected int, got \" + $describe(v)); }"
+            : "if (descriptor.equals(\"int\")) { if (v instanceof java.lang.Long l) return checkInt(l); if (v instanceof java.lang.Double d) { if (d.isNaN()) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (d.isInfinite()) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (d % 1.0 != 0.0) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); return checkInt((long) (double) d); } throw new DealError(\"E8001\", \"expected int, got \" + $describe(v)); }");
+        emitLine(int32Mode
+            ? "if (descriptor.equals(\"number\")) { if (v instanceof java.lang.Integer i) return (double) i; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v)); }"
+            : "if (descriptor.equals(\"number\")) { if (v instanceof java.lang.Long l) return (double) l; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"[int]\")) { if (v instanceof __IntArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"[number]\")) { if (v instanceof __NumberArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"[string]\")) { if (v instanceof __StringArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"[boolean]\")) { if (v instanceof __BooleanArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("if (descriptor.equals(\"[?int]\")) { if (v instanceof __IntOrNullArray a) return a; if (v instanceof __IntArray a) { java.lang.Long[] nd = new java.lang.Long[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Long.valueOf(a.data[i]); return new __IntOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine(int32Mode
+            ? "if (descriptor.equals(\"[?int]\")) { if (v instanceof __IntOrNullArray a) return a; if (v instanceof __IntArray a) { java.lang.Integer[] nd = new java.lang.Integer[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Integer.valueOf(a.data[i]); return new __IntOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }"
+            : "if (descriptor.equals(\"[?int]\")) { if (v instanceof __IntOrNullArray a) return a; if (v instanceof __IntArray a) { java.lang.Long[] nd = new java.lang.Long[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Long.valueOf(a.data[i]); return new __IntOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"[?number]\")) { if (v instanceof __NumberOrNullArray a) return a; if (v instanceof __NumberArray a) { java.lang.Double[] nd = new java.lang.Double[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Double.valueOf(a.data[i]); return new __NumberOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"[?string]\")) { if (v instanceof __StringOrNullArray a) return a; if (v instanceof __StringArray a) { java.lang.String[] nd = new java.lang.String[a.data.length]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); return new __StringOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"[?boolean]\")) { if (v instanceof __BooleanOrNullArray a) return a; if (v instanceof __BooleanArray a) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Boolean.valueOf(a.data[i]); return new __BooleanOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
@@ -4406,13 +4511,15 @@ public final class JvmBackend {
                 + quoteJavaString(fn) + ", " + completion + ");";
         }
         String cast = switch (ret) {
-            case Type.Int ignored -> "java.lang.Long";
+            case Type.Int ignored ->
+                int32Mode ? "java.lang.Integer" : "java.lang.Long";
             case Type.Number ignored -> "java.lang.Double";
             case Type.Boolean ignored -> "java.lang.Boolean";
             case Type.String ignored -> "java.lang.String";
             case Type.Bytes ignored -> "java.lang.Object";
             case Type.Nullable n -> switch (n.inner()) {
-                case Type.Int ignored -> "java.lang.Long";
+                case Type.Int ignored ->
+                    int32Mode ? "java.lang.Integer" : "java.lang.Long";
                 case Type.Number ignored -> "java.lang.Double";
                 case Type.Boolean ignored -> "java.lang.Boolean";
                 case Type.String ignored -> "java.lang.String";
@@ -4493,13 +4600,14 @@ public final class JvmBackend {
      * declared DEAL type; {@code null} when unsupported. */
     private String hostParamJavaType(Type t) {
         return switch (t) {
-            case Type.Int ignored -> "long";
+            case Type.Int ignored -> int32Mode ? "int" : "long";
             case Type.Number ignored -> "double";
             case Type.Boolean ignored -> "boolean";
             case Type.String ignored -> "java.lang.String";
             case Type.Bytes ignored -> null;
             case Type.Nullable n -> switch (n.inner()) {
-                case Type.Int ignored -> "java.lang.Long";
+                case Type.Int ignored ->
+                    int32Mode ? "java.lang.Integer" : "java.lang.Long";
                 case Type.Number ignored -> "java.lang.Double";
                 case Type.Boolean ignored -> "java.lang.Boolean";
                 case Type.String ignored -> "java.lang.String";
@@ -4515,13 +4623,14 @@ public final class JvmBackend {
      * {@code getDeclaredMethod} signature check). */
     private String hostParamClassLiteral(Type t) {
         return switch (t) {
-            case Type.Int ignored -> "long.class";
+            case Type.Int ignored -> int32Mode ? "int.class" : "long.class";
             case Type.Number ignored -> "double.class";
             case Type.Boolean ignored -> "boolean.class";
             case Type.String ignored -> "java.lang.String.class";
             case Type.Bytes ignored -> "java.lang.Object.class";
             case Type.Nullable n -> switch (n.inner()) {
-                case Type.Int ignored -> "java.lang.Long.class";
+                case Type.Int ignored ->
+                    int32Mode ? "java.lang.Integer.class" : "java.lang.Long.class";
                 case Type.Number ignored -> "java.lang.Double.class";
                 case Type.Boolean ignored -> "java.lang.Boolean.class";
                 case Type.String ignored -> "java.lang.String.class";
@@ -4977,7 +5086,8 @@ public final class JvmBackend {
                     inner = nn.inner();
                 }
                 String javaType = switch (inner) {
-                    case Type.Int ignored -> "java.lang.Long";
+                    case Type.Int ignored ->
+                        int32Mode ? "java.lang.Integer" : "java.lang.Long";
                     case Type.Number ignored -> "java.lang.Double";
                     case Type.Boolean ignored -> "java.lang.Boolean";
                     case Type.String ignored -> "java.lang.String";
@@ -5413,7 +5523,9 @@ public final class JvmBackend {
             case Type.Int ignored ->
                 emitLine(optional
                     ? "out.put(" + name + ", " + valueCode + ");"
-                    : "out.put(" + name + ", java.lang.Long.valueOf(" + valueCode + "));");
+                    : "out.put(" + name + ", "
+                        + (int32Mode ? "java.lang.Integer" : "java.lang.Long")
+                        + ".valueOf(" + valueCode + "));");
             case Type.Number ignored ->
                 emitLine(optional
                     ? "out.put(" + name + ", " + valueCode + ");"
@@ -5514,12 +5626,13 @@ public final class JvmBackend {
     /** Java iteration type of an array wrapper's {@code .data} storage. */
     private String jsonArrayIterType(Type elem) {
         return switch (elem) {
-            case Type.Int ignored -> "long";
+            case Type.Int ignored -> int32Mode ? "int" : "long";
             case Type.Number ignored -> "double";
             case Type.Boolean ignored -> "boolean";
             case Type.String ignored -> "java.lang.String";
             case Type.Nullable ne -> switch (ne.inner()) {
-                case Type.Int ignored -> "java.lang.Long";
+                case Type.Int ignored ->
+                    int32Mode ? "java.lang.Integer" : "java.lang.Long";
                 case Type.Number ignored -> "java.lang.Double";
                 case Type.Boolean ignored -> "java.lang.Boolean";
                 case Type.String ignored -> "java.lang.String";
@@ -5537,7 +5650,9 @@ public final class JvmBackend {
                                         String eVar, int idx) {
         switch (elem) {
             case Type.Int ignored ->
-                emitLine(arrVar + ".add(java.lang.Long.valueOf(" + eVar + "));");
+                emitLine(arrVar + ".add("
+                    + (int32Mode ? "java.lang.Integer" : "java.lang.Long")
+                    + ".valueOf(" + eVar + "));");
             case Type.Number ignored ->
                 emitLine(arrVar + ".add(java.lang.Double.valueOf(" + eVar + "));");
             case Type.Boolean ignored ->
@@ -5730,10 +5845,12 @@ public final class JvmBackend {
                                  int idx, boolean boxed) {
         switch (t) {
             case Type.Int ignored -> {
-                emitLine("java.lang.Long cv" + idx + " = __jsonInt(" + rawVar + ");");
+                emitLine((int32Mode ? "java.lang.Integer" : "java.lang.Long")
+                    + " cv" + idx + " = __jsonInt(" + rawVar + ");");
                 emitLine("if (cv" + idx + " == null) return null;");
                 emitLine(targetVar + " = " + (boxed ? "cv" + idx
-                    : "cv" + idx + ".longValue()") + ";");
+                    : "cv" + idx + (int32Mode ? ".intValue()" : ".longValue()"))
+                    + ";");
             }
             case Type.Number ignored -> {
                 emitLine("java.lang.Double cv" + idx + " = __jsonNumber(" + rawVar + ");");
@@ -5806,12 +5923,13 @@ public final class JvmBackend {
     /** Java storage type of a jsonable array's element array. */
     private String jsonArrayStorageType(Type elem) {
         return switch (elem) {
-            case Type.Int ignored -> "long";
+            case Type.Int ignored -> int32Mode ? "int" : "long";
             case Type.Number ignored -> "double";
             case Type.Boolean ignored -> "boolean";
             case Type.String ignored -> "java.lang.String";
             case Type.Nullable ne -> switch (ne.inner()) {
-                case Type.Int ignored -> "java.lang.Long";
+                case Type.Int ignored ->
+                    int32Mode ? "java.lang.Integer" : "java.lang.Long";
                 case Type.Number ignored -> "java.lang.Double";
                 case Type.Boolean ignored -> "java.lang.Boolean";
                 case Type.String ignored -> "java.lang.String";
@@ -5844,7 +5962,8 @@ public final class JvmBackend {
     /** Java boxed type of a nullable-element array element local. */
     private String jsonBoxedType(Type inner, int idx) {
         return switch (inner) {
-            case Type.Int ignored -> "java.lang.Long";
+            case Type.Int ignored ->
+                int32Mode ? "java.lang.Integer" : "java.lang.Long";
             case Type.Number ignored -> "java.lang.Double";
             case Type.Boolean ignored -> "java.lang.Boolean";
             case Type.String ignored -> "java.lang.String";
@@ -6112,7 +6231,9 @@ public final class JvmBackend {
         indent++;
         emitLine("if (d.doubleValue() == java.lang.Math.floor(d.doubleValue()) && !java.lang.Double.isInfinite(d.doubleValue())");
         indent++;
-        emitLine("        && d.doubleValue() >= -9007199254740991.0 && d.doubleValue() <= 9007199254740991.0) { return java.lang.Long.valueOf(d.longValue()); }");
+        emitLine(int32Mode
+            ? "        && d.doubleValue() >= -2147483648.0 && d.doubleValue() <= 2147483647.0) { return java.lang.Integer.valueOf((int) d.longValue()); }"
+            : "        && d.doubleValue() >= -9007199254740991.0 && d.doubleValue() <= 9007199254740991.0) { return java.lang.Long.valueOf(d.longValue()); }");
         indent--;
         emitLine("return d;");
         indent--;
@@ -6140,7 +6261,9 @@ public final class JvmBackend {
         emitLine("if (v == null) { sb.append(\"null\"); return; }");
         emitLine("if (v instanceof java.lang.Boolean b) { sb.append(b.booleanValue() ? \"true\" : \"false\"); return; }");
         emitLine("if (v instanceof java.lang.String s) { sb.append(__jsonQuote(s)); return; }");
-        emitLine("if (v instanceof java.lang.Long l) { sb.append(l.toString()); return; }");
+        emitLine(int32Mode
+            ? "if (v instanceof java.lang.Integer i) { sb.append(i.toString()); return; }"
+            : "if (v instanceof java.lang.Long l) { sb.append(l.toString()); return; }");
         emitLine("if (v instanceof java.lang.Number n) {");
         indent++;
         emitLine("double d = n.doubleValue();");
@@ -6200,7 +6323,9 @@ public final class JvmBackend {
         emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
-        emitLine("for (long e : a.data) { if (!first) sb.append(','); first = false; sb.append(java.lang.Long.toString(e)); }");
+        emitLine(int32Mode
+            ? "for (int e : a.data) { if (!first) sb.append(','); first = false; sb.append(java.lang.Integer.toString(e)); }"
+            : "for (long e : a.data) { if (!first) sb.append(','); first = false; sb.append(java.lang.Long.toString(e)); }");
         emitLine("sb.append(']');");
         emitLine("stack.remove(v);");
         emitLine("return;");
@@ -6244,7 +6369,9 @@ public final class JvmBackend {
         emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
-        emitLine("for (java.lang.Long e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append(e.toString()); } }");
+        emitLine(int32Mode
+            ? "for (java.lang.Integer e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append(e.toString()); } }"
+            : "for (java.lang.Long e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append(e.toString()); } }");
         emitLine("sb.append(']');");
         emitLine("stack.remove(v);");
         emitLine("return;");
@@ -6311,7 +6438,9 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("// fromJson field-value validators: null on a type mismatch (the");
         emitLine("// fromJson validation-failure contract — never a throw).");
-        emitLine("static java.lang.Long __jsonInt(java.lang.Object v) { if (!(v instanceof java.lang.Number)) return null; double d = ((java.lang.Number) v).doubleValue(); if (d != java.lang.Math.floor(d) || d > 9007199254740991.0 || d < -9007199254740991.0) return null; return java.lang.Long.valueOf((long) d); }");
+        emitLine(int32Mode
+            ? "static java.lang.Integer __jsonInt(java.lang.Object v) { if (!(v instanceof java.lang.Number)) return null; double d = ((java.lang.Number) v).doubleValue(); if (d != java.lang.Math.floor(d) || d > 2147483647.0 || d < -2147483648.0) return null; return java.lang.Integer.valueOf((int) d); }"
+            : "static java.lang.Long __jsonInt(java.lang.Object v) { if (!(v instanceof java.lang.Number)) return null; double d = ((java.lang.Number) v).doubleValue(); if (d != java.lang.Math.floor(d) || d > 9007199254740991.0 || d < -9007199254740991.0) return null; return java.lang.Long.valueOf((long) d); }");
         emitLine("static java.lang.Double __jsonNumber(java.lang.Object v) { return (v instanceof java.lang.Number) ? java.lang.Double.valueOf(((java.lang.Number) v).doubleValue()) : null; }");
         emitLine("static java.lang.String __jsonString(java.lang.Object v) { return (v instanceof java.lang.String) ? (java.lang.String) v : null; }");
         emitLine("static java.lang.Boolean __jsonBoolean(java.lang.Object v) { return (v instanceof java.lang.Boolean) ? (java.lang.Boolean) v : null; }");
@@ -6337,6 +6466,8 @@ public final class JvmBackend {
         }
         initializer = coerceNullValueCode(initializer, vd.initializer(),
             javaType, vd.span());
+        initializer = adaptIntBoundary(vd.initializer(), initializer,
+            declaredType);
         String visibility = moduleLevel ? "static " : "";
         String javaVar = declareLocal(vd.name(), declaredType);
         // ISSUE-0102 closure capture: a captured local lowers to a
@@ -6785,7 +6916,7 @@ public final class JvmBackend {
         // A DEAL function whose name and mapped signature collide with an
         // emitted runtime helper would produce a duplicate Java method.
         String javaFn = javaName(fd.name());
-        List<String> helperSignature = RUNTIME_HELPER_SIGNATURES.get(javaFn);
+        List<String> helperSignature = runtimeHelperSignatures().get(javaFn);
         if (helperSignature != null && helperSignature.equals(paramTypes)) {
             unsupported("function '" + fd.name() + "' whose signature "
                 + "collides with the emitted runtime helper '" + javaFn + "'",
@@ -7198,6 +7329,7 @@ public final class JvmBackend {
             return;
         }
         String value = emitTargeted(e, currentReturnType, true);
+        value = adaptIntBoundary(e, value, currentReturnType);
         if (needsBooleanBoundary(e, currentReturnType)) {
             // The boundary keys on the DECLARED return type: a
             // nil-capable boolean result crossing into a
@@ -7574,6 +7706,8 @@ public final class JvmBackend {
                 }
                 initVal = coerceNullValueCode(initVal, decl.initializer(),
                     javaType, decl.span());
+                initVal = adaptIntBoundary(decl.initializer(), initVal,
+                    loopType);
                 initCode = javaType + " " + loopVarPlain + " = " + initVal;
             } else if (fs.init().get() instanceof ForInit.AssignExpr ae) {
                 initCode = emitAssignmentCore(ae.expr());
@@ -7946,7 +8080,20 @@ public final class JvmBackend {
             } else {
                 String raw = emitCall(call);
                 flushPreStatements();
-                emitLine(raw + ";");
+                if (int32Mode && typeOf(call) instanceof Type.Int
+                        && intValueCodeIsWiderOrBoxed(call)) {
+                    // ISSUE-0375 D3 seam: a discarded int-typed call whose
+                    // emitted code is wider/boxed is not a valid Java
+                    // expression statement (the retained time expression
+                    // starts with a parenthesis). Lower it to a
+                    // dummy-local declaration typed by the emitted code
+                    // shape — the value crosses no declared boundary, so
+                    // no checkInt gate runs (never a phantom raise).
+                    emitLine(intValueEmittedJavaType(call) + " "
+                        + nextIgnoredName() + " = " + raw + ";");
+                } else {
+                    emitLine(raw + ";");
+                }
             }
             return;
         }
@@ -7984,9 +8131,18 @@ public final class JvmBackend {
         // A nil-aware && / || result is a boxed Boolean temporary (null =
         // the Lua nil); the dummy discard must not unbox it (a null would
         // NPE where LuaJIT silently drops the nil).
+        // The dummy-local declaration type follows the EMITTED code
+        // shape: a wider/boxed int code under int32 (the retained time
+        // expression, a host call result) declares its real Java type —
+        // the value is discarded with no declared boundary, so no
+        // checkInt gate runs here (D3: the gate is a declared-boundary
+        // seam, never a silent narrowing and never a phantom raise).
         String javaType = canYieldNil(es.expr())
             ? "java.lang.Boolean"
-            : javaLocalType(t, es.span());
+            : (int32Mode && t instanceof Type.Int
+                && intValueCodeIsWiderOrBoxed(es.expr())
+                ? intValueEmittedJavaType(es.expr())
+                : javaLocalType(t, es.span()));
         if (javaType == null) return; // diagnostic already recorded
         emitLine(javaType + " " + nextIgnoredName() + " = " + value + ";");
     }
@@ -8109,6 +8265,19 @@ public final class JvmBackend {
             case LiteralValue.BooleanLiteral b -> String.valueOf(b.value());
             case LiteralValue.IntLiteral i -> {
                 long v = i.value();
+                if (int32Mode) {
+                    // ISSUE-0375: under DEAL_V1_2_INT32 an in-range
+                    // literal renders as a plain Java int literal; an
+                    // out-of-signed32 literal routes through the
+                    // signed32 checkInt (E8004 at the point of use) —
+                    // never a silent narrowing, and the frontend-owned
+                    // E1036 gate is not landed yet, so the backend must
+                    // stay fail-safe for such literals.
+                    if (v > 2147483647L || v < -2147483648L) {
+                        yield "checkInt(" + v + "L)";
+                    }
+                    yield String.valueOf(v);
+                }
                 if (v > 9007199254740991L || v < -9007199254740991L) {
                     // Outside the DEAL int safe range ±(2^53-1): not a valid
                     // DEAL int value. LuaJIT silently rounds such literals
@@ -8468,6 +8637,10 @@ public final class JvmBackend {
                     : javaLocalType(declaredFieldType, cf.span());
                 code = coerceNullValueCode(code, valueNode, fieldJava,
                     valueNode.span());
+                // ISSUE-0375 D3 seam: a class-construction field value
+                // is a declared int boundary — a wider (time) value
+                // crosses through the signed32 checkInt.
+                code = adaptIntBoundary(valueNode, code, declaredFieldType);
             }
             args.add(code);
             if (cf.optional()) {
@@ -8479,10 +8652,10 @@ public final class JvmBackend {
 
     /** A placeholder for the defensive missing-required-field branch (the
      * artifact is discarded anyway — hasErrors gates compilation). */
-    private static String zeroValueFor(TypeNode typeNode) {
+    private String zeroValueFor(TypeNode typeNode) {
         if (typeNode instanceof NamedType nt) {
             return switch (nt.name()) {
-                case "int" -> "0L";
+                case "int" -> int32Mode ? "0" : "0L";
                 case "number" -> "0.0";
                 case "boolean" -> "false";
                 // The two-character quoted Java literal — the bare empty
@@ -8511,9 +8684,14 @@ public final class JvmBackend {
         List<String> codes = emitOperandsInOrder(valueNodes);
         StringBuilder sb = new StringBuilder("new $DealRt.Table()");
         for (int i = 0; i < ol.properties().size(); i++) {
+            // ISSUE-0375 D3 seam: the Object storage is a dynamic int
+            // boundary — a wider (time) int value crosses through the
+            // signed32 checkInt before boxing (Integer under int32).
+            String valueCode = adaptIntBoundary(valueNodes.get(i),
+                codes.get(i), typeOf(valueNodes.get(i)));
             sb.append(".put(")
                 .append(quoteJavaString(ol.properties().get(i).name()))
-                .append(", ").append(codes.get(i)).append(')');
+                .append(", ").append(valueCode).append(')');
         }
         return sb.toString();
     }
@@ -8759,7 +8937,8 @@ public final class JvmBackend {
         if (read instanceof Type.Null) return "null";
         if (!(declared instanceof Type.Nullable)) return code;
         return switch (read) {
-            case Type.Int ignored -> code + ".longValue()";
+            case Type.Int ignored -> code
+                + (int32Mode ? ".intValue()" : ".longValue()");
             case Type.Number ignored -> code + ".doubleValue()";
             case Type.Boolean ignored -> code + ".booleanValue()";
             default -> code;
@@ -8870,6 +9049,12 @@ public final class JvmBackend {
 
         // Integer arithmetic — always checked, with DEAL error codes.
         if (leftType instanceof Type.Int && rightType instanceof Type.Int) {
+            // ISSUE-0375 D3 seam: int-typed operand positions are
+            // declared int boundaries — a wider (time) or boxed (host)
+            // operand crosses through the signed32 checkInt before the
+            // int-parameterized helper/comparison.
+            left = adaptIntBoundary(bin.left(), left, Type.Int.INSTANCE);
+            right = adaptIntBoundary(bin.right(), right, Type.Int.INSTANCE);
             return switch (op) {
                 case ADD -> "intAdd(" + left + ", " + right + ")";
                 case SUB -> "intSub(" + left + ", " + right + ")";
@@ -9050,7 +9235,8 @@ public final class JvmBackend {
      * guarded the null cases). */
     private String nullableEq(String l, String r, Type inner) {
         return switch (inner) {
-            case Type.Int ignored -> l + ".longValue() == " + r + ".longValue()";
+            case Type.Int ignored -> l + (int32Mode ? ".intValue()" : ".longValue()")
+                + " == " + r + (int32Mode ? ".intValue()" : ".longValue()");
             case Type.Number ignored -> l + ".doubleValue() == " + r + ".doubleValue()";
             case Type.Boolean ignored -> l + ".booleanValue() == " + r + ".booleanValue()";
             case Type.String ignored -> l + ".equals(" + r + ")";
@@ -9062,7 +9248,8 @@ public final class JvmBackend {
     /** Value inequality of two non-null boxed nullable operands. */
     private String nullableNe(String l, String r, Type inner) {
         return switch (inner) {
-            case Type.Int ignored -> l + ".longValue() != " + r + ".longValue()";
+            case Type.Int ignored -> l + (int32Mode ? ".intValue()" : ".longValue()")
+                + " != " + r + (int32Mode ? ".intValue()" : ".longValue()");
             case Type.Number ignored -> l + ".doubleValue() != " + r + ".doubleValue()";
             case Type.Boolean ignored -> l + ".booleanValue() != " + r + ".booleanValue()";
             case Type.String ignored -> "(!" + l + ".equals(" + r + "))";
@@ -9479,8 +9666,9 @@ public final class JvmBackend {
      * reported success;</li>
      * <li>a nil-yielding read (a direct {@code T[]} read emitted at a
      * {@code T | null} target) carries the boxed element type
-     * ({@code java.lang.Long} for an int read), never the unboxed
-     * storage type;</li>
+     * ({@code java.lang.Long} under {@code LEGACY_SAFE_INT},
+     * {@code java.lang.Integer} under {@code DEAL_V1_2_INT32} for an int
+     * read), never the unboxed storage type;</li>
      * <li>a nil-aware {@code &&}/{@code ||} operand's emitted code is a
      * boxed {@code java.lang.Boolean} temporary (null = the Lua nil) —
      * a {@code boolean} declaration would auto-unbox and NPE on
@@ -9491,6 +9679,14 @@ public final class JvmBackend {
                                            Type target) {
         Type t = typeOf(node);
         if (t instanceof Type.Null) return "java.lang.Object";
+        // ISSUE-0375 D3 seam: a materialized temporary's Java type
+        // follows the emitted code shape — a wider/boxed int code under
+        // int32 declares its real Java type, and the consuming declared
+        // boundary routes the temporary through checkInt.
+        if (int32Mode && t instanceof Type.Int
+                && intValueCodeIsWiderOrBoxed(node)) {
+            return intValueEmittedJavaType(node);
+        }
         if (node instanceof IndexExpr idx
                 && isNilYieldingReadTarget(idx, target)) {
             Type element = ((Type.Array) typeOf(idx.array())).element();
@@ -9501,6 +9697,86 @@ public final class JvmBackend {
             return "java.lang.Boolean";
         }
         return javaLocalType(t, node.span());
+    }
+
+    /**
+     * The declared-int-boundary seam (ISSUE-0375 D3): under
+     * {@code DEAL_V1_2_INT32} any value crossing an int-typed declared
+     * boundary (variable-declaration initializer, assignment target,
+     * return, call/callback argument, await completion, array element
+     * write/read, table-read int target, class-construction field,
+     * array-literal element, table write/literal value, binary/unary
+     * operand, array index) routes through the signed32 {@code checkInt}
+     * whenever the value expression's emitted Java type is wider (the
+     * retained {@code emitStdlibTimeMemberCall} long expression — the
+     * D4 pin), boxed (host call results), or foreign. The range gate
+     * runs BEFORE any narrowing, so the narrowing inside
+     * {@code checkInt} is never silent; the emission never applies a
+     * bare {@code (int)} cast at a declared boundary and never leaves a
+     * narrowing mismatch for javac. Under {@code LEGACY_SAFE_INT} the
+     * code passes through unchanged (byte-identical base emission).
+     */
+    private String adaptIntBoundary(ExpressionNode e, String code,
+                                    Type target) {
+        if (int32Mode && isIntBoundaryTarget(target)
+                && intValueCodeIsWiderOrBoxed(e)) {
+            return "checkInt(" + code + ")";
+        }
+        return code;
+    }
+
+    /** True when {@code target} is an int-typed declared boundary —
+     * {@code int} itself or {@code int | null} (the value crossing into
+     * the nullable boxed carrier is still an int value). */
+    private boolean isIntBoundaryTarget(Type target) {
+        if (target instanceof Type.Int) return true;
+        return target instanceof Type.Nullable n
+            && n.inner() instanceof Type.Int;
+    }
+
+    /**
+     * True when, under {@code DEAL_V1_2_INT32}, the emitted Java code of
+     * the int-typed expression {@code e} is wider or boxed relative to
+     * the declared int boundary's primitive {@code int} carrier. The
+     * only such producers in the emitted surface are the retained
+     * {@code std/time.nowMillis} expression ({@code long} — the
+     * byte-identical D4 pin) and host-module call results
+     * ({@code java.lang.Integer}, boxed at the host boundary). Every
+     * other int-typed expression emits exactly {@code int} code under
+     * the int32 carriers (checked arithmetic, conversions, array reads,
+     * literals), so it passes through without a redundant gate.
+     */
+    private boolean intValueCodeIsWiderOrBoxed(ExpressionNode e) {
+        if (!(e instanceof CallExpr call)
+                || !(call.callee() instanceof MemberAccessExpr mae)
+                || !(mae.object() instanceof IdentifierExpr id)) {
+            return false;
+        }
+        return hostAliases.containsKey(id.name())
+            || "std/time".equals(importAliases.get(id.name()));
+    }
+
+    /**
+     * The emitted Java type of an int-typed expression whose code is
+     * wider or boxed under {@code DEAL_V1_2_INT32} ({@code long} for the
+     * retained time expression, {@code java.lang.Integer} for host call
+     * results) — used by materialized temporaries and dummy-local
+     * discards, whose Java declaration type must follow the emitted code
+     * shape, never the declared carrier (a mismatch there is exactly the
+     * javac-rejected artifact D3 forbids).
+     */
+    private String intValueEmittedJavaType(ExpressionNode e) {
+        if (e instanceof CallExpr call
+                && call.callee() instanceof MemberAccessExpr mae
+                && mae.object() instanceof IdentifierExpr id) {
+            if (hostAliases.containsKey(id.name())) {
+                return "java.lang.Integer";
+            }
+            if ("std/time".equals(importAliases.get(id.name()))) {
+                return "long";
+            }
+        }
+        return "int";
     }
 
     /**
@@ -9995,7 +10271,9 @@ public final class JvmBackend {
             }
             case NEG -> {
                 Type t = typeOf(u.expr());
-                if (t instanceof Type.Int) yield "intNeg(" + emitExpression(u.expr()) + ")";
+                if (t instanceof Type.Int) yield "intNeg("
+                    + adaptIntBoundary(u.expr(), emitExpression(u.expr()),
+                        Type.Int.INSTANCE) + ")";
                 if (t instanceof Type.Number) yield "(-" + emitExpression(u.expr()) + ")";
                 unsupported("unary - on " + typeName(t), u.span());
                 yield "0L";
@@ -10415,7 +10693,8 @@ public final class JvmBackend {
                     ae.span());
                 return "null";
             }
-            sb.append(argCodes.get(i));
+            sb.append(adaptIntBoundary(call.args().get(i),
+                argCodes.get(i), typeOf(call.args().get(i))));
         }
         return sb.append(')').toString();
     }
@@ -10443,8 +10722,10 @@ public final class JvmBackend {
         switch (mae.field()) {
             case "length" -> sb.append("__strLength(").append(a0).append(')');
             case "substring" -> sb.append("__strSubstring(").append(a0).append(", ")
-                .append(argCodes.get(1)).append(", ").append(argCodes.get(2))
-                .append(')');
+                .append(adaptIntBoundary(call.args().get(1), argCodes.get(1),
+                    Type.Int.INSTANCE)).append(", ")
+                .append(adaptIntBoundary(call.args().get(2), argCodes.get(2),
+                    Type.Int.INSTANCE)).append(')');
             case "contains" -> sb.append('(').append(a0).append(").contains(")
                 .append(argCodes.get(1)).append(')');
             case "startsWith" -> sb.append('(').append(a0).append(").startsWith(")
@@ -10486,10 +10767,14 @@ public final class JvmBackend {
             case "sqrt" -> "__mathSqrt(" + a0 + ")";
             case "absInt" -> "checkInt(java.lang.Math.abs(" + a0 + "))";
             case "absNumber" -> "java.lang.Math.abs(" + a0 + ")";
-            case "minInt" -> "java.lang.Math.min(" + a0 + ", "
-                + argCodes.get(1) + ")";
-            case "maxInt" -> "java.lang.Math.max(" + a0 + ", "
-                + argCodes.get(1) + ")";
+            case "minInt" -> "java.lang.Math.min("
+                + adaptIntBoundary(call.args().get(0), a0, Type.Int.INSTANCE)
+                + ", " + adaptIntBoundary(call.args().get(1), argCodes.get(1),
+                    Type.Int.INSTANCE) + ")";
+            case "maxInt" -> "java.lang.Math.max("
+                + adaptIntBoundary(call.args().get(0), a0, Type.Int.INSTANCE)
+                + ", " + adaptIntBoundary(call.args().get(1), argCodes.get(1),
+                    Type.Int.INSTANCE) + ")";
             default -> {
                 unsupported("export '" + mae.field() + "' of std/math",
                     mae.span());
@@ -10536,9 +10821,14 @@ public final class JvmBackend {
         Type valueType = typeOf(value);
         List<String> codes = emitOperandsInOrder(
             List.of(mae.object(), value));
+        // ISSUE-0375 D3 seam: the Object storage is a dynamic int
+        // boundary — a wider (time) int value crosses through the
+        // signed32 checkInt before boxing (Integer under int32).
+        String valueCode = adaptIntBoundary(value, codes.get(1), valueType);
         String boxed = switch (valueType) {
             case Type.Int ignored ->
-                "java.lang.Long.valueOf(" + codes.get(1) + ")";
+                (int32Mode ? "java.lang.Integer" : "java.lang.Long")
+                    + ".valueOf(" + valueCode + ")";
             case Type.Number ignored ->
                 "java.lang.Double.valueOf(" + codes.get(1) + ")";
             case Type.Boolean ignored ->
@@ -10548,7 +10838,7 @@ public final class JvmBackend {
             default -> codes.get(1);
         };
         String unbox = switch (valueType) {
-            case Type.Int ignored -> ".longValue()";
+            case Type.Int ignored -> int32Mode ? ".intValue()" : ".longValue()";
             case Type.Number ignored -> ".doubleValue()";
             case Type.Boolean ignored -> ".booleanValue()";
             case Type.Bytes ignored -> "";
@@ -10614,7 +10904,13 @@ public final class JvmBackend {
         Type objType = typeOf(mae.object());
         if (objType instanceof Type.Array && "length".equals(mae.field())) {
             String obj = emitExpression(mae.object());
-            return "((long) " + obj + ".data.length)";
+            // ISSUE-0375 carrier switch: array length is DEAL int —
+            // primitive int under DEAL_V1_2_INT32 (Java array lengths are
+            // signed 32-bit, so the narrowing is exact and silent
+            // truncation is impossible), the retained long carrier under
+            // LEGACY_SAFE_INT.
+            return int32Mode ? obj + ".data.length"
+                : "((long) " + obj + ".data.length)";
         }
         if (objType instanceof Type.Class cls && isBuiltinErrorType(cls)) {
             // ISSUE-0102: Error values are RuntimeExceptions from
@@ -10758,8 +11054,10 @@ public final class JvmBackend {
             if (nilHelper != null) {
                 List<String> codes = emitOperandsInOrder(
                     List.of(idx.array(), idx.index()));
+                String indexCode = adaptIntBoundary(idx.index(),
+                    codes.get(1), Type.Int.INSTANCE);
                 return nilHelper + "(" + codes.get(0) + ", "
-                    + codes.get(1) + ")";
+                    + indexCode + ")";
             }
             // Local-only class guard failed: fall through to the
             // element-typed chain below, which records the E6000.
@@ -10796,7 +11094,9 @@ public final class JvmBackend {
             return "null";
         }
         List<String> codes = emitOperandsInOrder(List.of(idx.array(), idx.index()));
-        return helper + "(" + codes.get(0) + ", " + codes.get(1) + ")";
+        String indexCode = adaptIntBoundary(idx.index(), codes.get(1),
+            Type.Int.INSTANCE);
+        return helper + "(" + codes.get(0) + ", " + indexCode + ")";
     }
 
     /**
@@ -11099,6 +11399,11 @@ public final class JvmBackend {
      * a {@code boolean} parameter fails with E8001. */
     private String boundaryArgCode(ExpressionNode arg, String code,
                                    Type paramType) {
+        // ISSUE-0375 D3 seam: an int-typed call/callback argument is a
+        // declared int boundary — a wider (time) or boxed (host) value
+        // crosses through the signed32 checkInt.
+        Type intTarget = paramType != null ? paramType : typeOf(arg);
+        code = adaptIntBoundary(arg, code, intTarget);
         if (needsBooleanBoundary(arg, paramType)) {
             return "booleanNotNull(" + code + ")";
         }
@@ -11158,7 +11463,8 @@ public final class JvmBackend {
     /** Java unboxing accessor for a boxed read temporary. */
     private String boxedUnbox(String boxed, Type element) {
         return switch (element) {
-            case Type.Int ignored -> boxed + ".longValue()";
+            case Type.Int ignored -> boxed
+                + (int32Mode ? ".intValue()" : ".longValue()");
             case Type.Number ignored -> boxed + ".doubleValue()";
             case Type.Boolean ignored -> boxed + ".booleanValue()";
             case Type.Bytes ignored -> boxed;
@@ -11206,6 +11512,8 @@ public final class JvmBackend {
             if (needsBooleanBoundary(al.elements().get(i), arr.element())) {
                 code = "booleanNotNull(" + code + ")";
             }
+            code = adaptIntBoundary(al.elements().get(i), code,
+                arr.element());
             sb.append(code);
         }
         return sb.append("})").toString();
@@ -11272,8 +11580,11 @@ public final class JvmBackend {
             // descriptor-driven seam — a Long passes (checked against
             // the int safe range), an integral in-range Double
             // converts, anything else raises E8001.
-            return "((java.lang.Long) $check(\"int\", " + get
-                + ")).longValue()";
+            return int32Mode
+                ? "((java.lang.Integer) $check(\"int\", " + get
+                    + ")).intValue()"
+                : "((java.lang.Long) $check(\"int\", " + get
+                    + ")).longValue()";
         }
         if (target instanceof Type.Number) {
             return "((java.lang.Double) $check(\"number\", " + get
@@ -11469,6 +11780,7 @@ public final class JvmBackend {
             if (targetType == null) targetType = typeOf(ae.value());
             String targetJava = javaLocalType(targetType, ae.span());
             value = coerceNullValueCode(value, ae.value(), targetJava, ae.span());
+            value = adaptIntBoundary(ae.value(), value, targetType);
             return target + " = " + value;
         }
         if (ae.target() instanceof IndexExpr idx) {
@@ -11539,7 +11851,15 @@ public final class JvmBackend {
             // storage type (the write helper's parameter type).
             rhs = coerceNullValueCode(rhs, ae.value(),
                 javaArrayElementType(indexType, ae.span()), ae.span());
-            return writeHelper + "(" + codes.get(0) + ", " + codes.get(1)
+            // ISSUE-0375 D3 seam: the stored element value and the
+            // array index are int-typed declared boundaries — a wider
+            // (time) value crosses through the signed32 checkInt, and a
+            // wider index code narrows the same way instead of leaving
+            // javac a long→int mismatch.
+            rhs = adaptIntBoundary(ae.value(), rhs, indexType);
+            String indexCode = adaptIntBoundary(idx.index(), codes.get(1),
+                Type.Int.INSTANCE);
+            return writeHelper + "(" + codes.get(0) + ", " + indexCode
                 + ", " + rhs + ")";
         }
         if (ae.target() instanceof MemberAccessExpr mae) {
@@ -11576,6 +11896,11 @@ public final class JvmBackend {
                         }
                         value = coerceNullValueCode(value, ae.value(),
                             "java.lang.Object", ae.span());
+                        // The boxed Object slot is a dynamic int boundary:
+                        // a wider int value narrows through checkInt
+                        // before boxing (Integer storage under int32).
+                        value = adaptIntBoundary(ae.value(), value,
+                            declaredFieldType(ccls, mae.field()));
                         return "(" + codes.get(0) + ")."
                             + javaName(mae.field()) + " = " + value;
                     }
@@ -11616,6 +11941,7 @@ public final class JvmBackend {
                     String fieldJava = javaLocalType(fieldType, ae.span());
                     value = coerceNullValueCode(value, ae.value(),
                         fieldJava, ae.span());
+                    value = adaptIntBoundary(ae.value(), value, fieldType);
                 }
                 // ISSUE-0102: an optional field write also sets the
                 // presence flag — routed through the per-class generic
@@ -12027,7 +12353,10 @@ public final class JvmBackend {
     /** Java type for a local/parameter/field. {@code null} when unsupported. */
     private String javaLocalType(Type t, Span span) {
         return switch (t) {
-            case Type.Int ignored -> "long";
+            // ISSUE-0375 carrier switch: primitive int under
+            // DEAL_V1_2_INT32 (jvm-v12-int32-bytes D1), the retained
+            // long carrier under LEGACY_SAFE_INT.
+            case Type.Int ignored -> int32Mode ? "int" : "long";
             case Type.Number ignored -> "double";
             case Type.Boolean ignored -> "boolean";
             case Type.String ignored -> "java.lang.String";
@@ -12147,7 +12476,10 @@ public final class JvmBackend {
      * for any out-of-slice inner type. */
     private String nullableJavaType(Type inner, Span span) {
         return switch (inner) {
-            case Type.Int ignored -> "java.lang.Long";
+            // ISSUE-0375 carrier switch: boxed Integer at dynamic
+            // boundaries under DEAL_V1_2_INT32 (jvm-v12-int32-bytes D1).
+            case Type.Int ignored ->
+                int32Mode ? "java.lang.Integer" : "java.lang.Long";
             case Type.Number ignored -> "java.lang.Double";
             case Type.Boolean ignored -> "java.lang.Boolean";
             case Type.String ignored -> "java.lang.String";
@@ -12219,12 +12551,13 @@ public final class JvmBackend {
      */
     private String javaArrayElementType(Type element, Span span) {
         return switch (element) {
-            case Type.Int ignored -> "long";
+            case Type.Int ignored -> int32Mode ? "int" : "long";
             case Type.Number ignored -> "double";
             case Type.String ignored -> "java.lang.String";
             case Type.Boolean ignored -> "boolean";
             case Type.Nullable ne -> switch (ne.inner()) {
-                case Type.Int ignored -> "java.lang.Long";
+                case Type.Int ignored ->
+                    int32Mode ? "java.lang.Integer" : "java.lang.Long";
                 case Type.Number ignored -> "java.lang.Double";
                 case Type.String ignored -> "java.lang.String";
                 case Type.Boolean ignored -> "java.lang.Boolean";
@@ -12373,7 +12706,8 @@ public final class JvmBackend {
      * primitive element type (nullable, unlike the storage types). */
     private String arrayBoxedJavaType(Type element) {
         return switch (element) {
-            case Type.Int ignored -> "java.lang.Long";
+            case Type.Int ignored ->
+                int32Mode ? "java.lang.Integer" : "java.lang.Long";
             case Type.Number ignored -> "java.lang.Double";
             case Type.String ignored -> "java.lang.String";
             case Type.Boolean ignored -> "java.lang.Boolean";
