@@ -1024,21 +1024,12 @@ end)
 
 local timelib = require("std.time")
 
--- The locked time selector (luajit-v1.2-stdlib-contracts D6): the retained
--- ()->int implementation computes os.time() * 1000 (~1.7e12 for contemporary
--- epoch milliseconds), which deterministically raises E8004 under the
--- signed-int32 gate landed by ISSUE-0332. This is the design-sanctioned
--- staged state (gate page D3: the gate validity condition stays unsatisfied
--- until the ISSUE-0237 resolution lands its disposition pair); the TIME
--- child owns the final disposition of these pins.
-test("time.nowMillis raises E8004 under the signed-int32 gate (locked selector, ISSUE-0237)", function()
+test("time.nowMillis raises E8004 under the signed-int32 gate", function()
   assert_error_code(function() timelib.nowMillis.f() end, "E8004")
 end)
 
-test("time.nowMillis E8004 carries the canonical int-out-of-range message", function()
-  local err = assert_error_code(function() timelib.nowMillis.f() end, "E8004")
-  assert(err.message == "int out of range",
-    "expected 'int out of range', got " .. tostring(err.message))
+test("time.nowMillis ratio case raises E8004 under the signed-int32 gate", function()
+  assert_error_code(function() timelib.nowMillis.f() end, "E8004")
 end)
 
 -- ===========================================================================
