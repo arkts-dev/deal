@@ -30,17 +30,19 @@ import java.util.List;
  * by {@code run_tests.sh} — a recorded pre-activation fact
  * (js-v12-completion-architecture D5), not a failure.
  *
- * <p>Lifecycle: the assertions pinning the pre-activation value of the two
- * surfaces the disposition-application unit is authorized to flip — the
- * fixture header ({@code @expected: runtime-ok}) and the unparameterized
- * runtime seam ({@code checkInt}'s single ±(2^53-1) arm, no
- * {@code setInt32Mode}/{@code $int32}) — are retired/updated in that single
- * unit together with the canonical {@code runtime-error E8004} header flip
- * and the three int32-gate activations, which must keep
- * {@code ./run_tests.sh} green at every landing (D4/D5). The retained
- * implementation texts, the runtime's no-time-member shape, the skip
- * registry absence, and the legacy slice pins are permanent under the epic
- * and must keep passing unchanged.
+ * <p>Lifecycle: the fixture-header assertions pin the pre-activation value
+ * of the surface the disposition-application unit (ISSUE-0237) is
+ * authorized to flip — {@code @expected: runtime-ok} — and are retired in
+ * that single unit together with the canonical {@code runtime-error E8004}
+ * header flip, which must keep {@code ./run_tests.sh} green at every
+ * landing (D4/D5). The runtime-seam assertions pin the parameterized seam
+ * the JS int32 gate activation (ISSUE-0321, js-v12-int32-bytes D1/D2)
+ * landed: {@code checkInt}'s single profile-gated range arm (the
+ * module-private {@code $int32} flag and the idempotent
+ * {@code setInt32Mode} selector), no JS-only legacy-range member, and no
+ * second range gate. The retained implementation texts, the runtime's
+ * no-time-member shape, the skip registry absence, and the legacy slice
+ * pins are permanent under the epic and must keep passing unchanged.
  */
 public class StdlibTimePreActivationPinTest {
 
@@ -129,18 +131,22 @@ public class StdlibTimePreActivationPinTest {
             "deal/runtime.js has no Date/time member");
         check(!text.contains("currentTimeMillis"),
             "deal/runtime.js has no currentTimeMillis reference");
-        check(!text.contains("setInt32Mode"),
-            "deal/runtime.js has no setInt32Mode selector yet");
-        check(!text.contains("$int32"),
-            "deal/runtime.js has no $int32 flag yet");
-        check(text.contains("if (v < -9007199254740991 || v > 9007199254740991) {"),
-            "checkInt's range arm is the retained ±(2^53-1) gate");
+        check(text.contains("setInt32Mode"),
+            "deal/runtime.js has the setInt32Mode profile selector "
+                + "(js-v12-int32-bytes D2)");
+        check(text.contains("let $int32 = false;"),
+            "deal/runtime.js has the module-private $int32 flag, false at "
+                + "load");
+        check(text.contains("if ($int32"),
+            "checkInt's final range arm consults the $int32 flag");
+        check(count(text, "v < -2147483648") == 1
+                && count(text, "v > 2147483647") == 1,
+            "each signed-32 bound appears exactly once — the profile-gated "
+                + "int32 arm");
         check(count(text, "v < -9007199254740991") == 1
                 && count(text, "v > 9007199254740991") == 1,
             "each ±(2^53-1) bound appears exactly once — checkInt is the "
                 + "single int range seam, no JS-only legacy-range member");
-        check(!text.contains("2147483647") && !text.contains("2147483648"),
-            "no signed-32 boundary constant exists yet — no second range gate");
     }
 
     // =========================================================================

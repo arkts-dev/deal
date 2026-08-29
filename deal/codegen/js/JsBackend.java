@@ -62,6 +62,7 @@ import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
 import deal.module.ModuleIdentityResolver;
 import deal.module.StdlibModuleResolver;
+import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -343,6 +344,20 @@ public final class JsBackend {
     private final Map<String, String> importResolutions;
     private final Map<String, Map<String, Type>> hostModules;
     private final boolean isEntry;
+    /**
+     * The backend-wide int mode derived from the invocation's
+     * project-wide semantic profile (ISSUE-0374 profile plumb,
+     * js-v12-int32-bytes D2): true exactly when the profile passed to
+     * {@link #generate} was {@link SemanticProfile#DEAL_V1_2_INT32}.
+     * One derivation per backend instance — no static/global flag, no
+     * system property, and no source, CLI, or environment selection
+     * surface exists. Under the int32 mode every emitted module calls
+     * {@code $rt.setInt32Mode(true)} immediately after the runtime
+     * {@code $require} (module shape step 3); under
+     * {@code LEGACY_SAFE_INT} the selector is absent and the retained
+     * ±(2^53-1) emission stays byte-identical to the legacy artifacts.
+     */
+    private final boolean int32Mode;
 
     /** Shape step 8: the export assignments collected during the
      * declaration walk in declaration order, emitted by
@@ -442,7 +457,8 @@ public final class JsBackend {
                       Map<String, Map<String, Type>> hostModules,
                       boolean isEntry,
                       CanonicalRuntimeTypeDescriptor descriptors,
-                      SourceMapGenerator sourceMapGenerator) {
+                      SourceMapGenerator sourceMapGenerator,
+                      SemanticProfile semanticProfile) {
         this.typeMap = typeMap;
         this.symbols = symbols;
         this.sourcePath = sourcePath;
@@ -452,6 +468,7 @@ public final class JsBackend {
         this.isEntry = isEntry;
         this.descriptors = descriptors;
         this.sourceMapGenerator = sourceMapGenerator;
+        this.int32Mode = semanticProfile == SemanticProfile.DEAL_V1_2_INT32;
         localScopes.add(new HashSet<>());
     }
 
@@ -483,10 +500,37 @@ public final class JsBackend {
                                            Map<String, Map<String, Type>> hostModules,
                                            boolean isEntry) {
         // Recorder-less convenience overload (js-v12-source-maps D2):
-        // mapping recording is disabled; the standalone identity surface
-        // is built by the source-map variant below.
+        // mapping recording is disabled and the profile defaults to
+        // LEGACY_SAFE_INT (no selector emission); the standalone
+        // identity surface is built by the source-map variant below.
         return generate(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, isEntry, null);
+            importResolutions, hostModules, isEntry,
+            SemanticProfile.LEGACY_SAFE_INT);
+    }
+
+    /**
+     * Profile-plumbed standalone overload (ISSUE-0374 profile plumb,
+     * js-v12-int32-bytes D2): the same recorder-less standalone surface
+     * as {@link #generate(ProgramNode, CheckResult, String, String, Map,
+     * Map, boolean)} with an explicit project-wide semantic profile —
+     * {@link SemanticProfile#DEAL_V1_2_INT32} derives the int32 mode and
+     * every emitted module calls {@code $rt.setInt32Mode(true)}
+     * immediately after the runtime {@code $require};
+     * {@link SemanticProfile#LEGACY_SAFE_INT} emits no selector and is
+     * byte-identical to the legacy artifacts. The profile is derived
+     * from the release-owned compiler invocation in the real pipeline;
+     * no source, CLI, or environment surface selects it.
+     *
+     * @param semanticProfile   the project-wide semantic profile
+     */
+    public static JsCodegenResult generate(ProgramNode program, CheckResult result,
+                                           String sourcePath, String modulePath,
+                                           Map<String, String> importResolutions,
+                                           Map<String, Map<String, Type>> hostModules,
+                                           boolean isEntry,
+                                           SemanticProfile semanticProfile) {
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, hostModules, isEntry, null, semanticProfile);
     }
 
     /**
@@ -504,7 +548,8 @@ public final class JsBackend {
      * {@link Span} start (the Lua
      * {@code LuaBackend.generateResult} optional-generator precedent) —
      * and the returned result carries the recorder so the caller
-     * serializes the sidecar after codegen.
+     * serializes the sidecar after codegen. The profile defaults to
+     * {@link SemanticProfile#LEGACY_SAFE_INT} (no selector emission).
      *
      * @param sourceMap         the mapping recorder (or {@code null})
      */
@@ -514,6 +559,28 @@ public final class JsBackend {
                                            Map<String, Map<String, Type>> hostModules,
                                            boolean isEntry,
                                            SourceMapGenerator sourceMap) {
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, hostModules, isEntry, sourceMap,
+            SemanticProfile.LEGACY_SAFE_INT);
+    }
+
+    /**
+     * Profile-plumbed standalone variant (ISSUE-0374 profile plumb,
+     * js-v12-int32-bytes D2): the {@code sourceMap} standalone surface
+     * above with an explicit project-wide semantic profile — the same
+     * standalone identity-index construction (the single-module adapter
+     * convention), then the production seam with the derived int mode.
+     *
+     * @param sourceMap         the mapping recorder (or {@code null})
+     * @param semanticProfile   the project-wide semantic profile
+     */
+    public static JsCodegenResult generate(ProgramNode program, CheckResult result,
+                                           String sourcePath, String modulePath,
+                                           Map<String, String> importResolutions,
+                                           Map<String, Map<String, Type>> hostModules,
+                                           boolean isEntry,
+                                           SourceMapGenerator sourceMap,
+                                           SemanticProfile semanticProfile) {
         Map<String, CanonicalModuleIdentity> byPath = new LinkedHashMap<>();
         byPath.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
         String effectiveModulePath = modulePath == null ? "" : modulePath;
@@ -527,7 +594,7 @@ public final class JsBackend {
             ModuleIdentityResolver.buildIndex(byPath);
         return generate(program, result, sourcePath, modulePath,
             importResolutions, hostModules, isEntry, standalone,
-            standalone.moduleIdentityLookup(), sourceMap);
+            standalone.moduleIdentityLookup(), sourceMap, semanticProfile);
     }
 
     /**
@@ -541,12 +608,25 @@ public final class JsBackend {
      * {@code sourceMap} recorder attaches optional mapping recording
      * (js-v12-source-maps D2); {@code null} disables it.
      *
+     * <p>ISSUE-0374 profile plumb (js-v12-int32-bytes D2): the
+     * {@code semanticProfile} — the orchestrator passes
+     * {@code invocation.semanticProfile()} — derives the backend-wide
+     * int mode exactly once per backend instance:
+     * {@link SemanticProfile#DEAL_V1_2_INT32} makes every emitted
+     * module call {@code $rt.setInt32Mode(true)} immediately after the
+     * runtime {@code $require}; {@link SemanticProfile#LEGACY_SAFE_INT}
+     * emits no selector (the retained ±(2^53-1) emission). All modules
+     * in one output root share one profile (F1), so one runtime
+     * instance and one flag are sound (the runtime is deployed once per
+     * output root).
+     *
      * @param identityIndex    the compilation's canonical class-identity
      *                         index (the orchestrator-built
      *                         {@code ModuleIdentityResolver.IdentityIndex})
      * @param moduleIdentities the compilation's dotted-module-path &rarr;
      *                         module-identity classification
      * @param sourceMap        the mapping recorder (or {@code null})
+     * @param semanticProfile  the project-wide semantic profile
      */
     public static JsCodegenResult generate(ProgramNode program, CheckResult result,
                                            String sourcePath, String modulePath,
@@ -555,7 +635,8 @@ public final class JsBackend {
                                            boolean isEntry,
                                            CanonicalClassIdentityIndex identityIndex,
                                            Function<String, CanonicalModuleIdentity> moduleIdentities,
-                                           SourceMapGenerator sourceMap) {
+                                           SourceMapGenerator sourceMap,
+                                           SemanticProfile semanticProfile) {
         java.util.Objects.requireNonNull(program, "program must not be null");
         java.util.Objects.requireNonNull(result, "result must not be null");
         java.util.Objects.requireNonNull(importResolutions,
@@ -566,10 +647,12 @@ public final class JsBackend {
             "identityIndex must not be null");
         java.util.Objects.requireNonNull(moduleIdentities,
             "moduleIdentities must not be null");
+        java.util.Objects.requireNonNull(semanticProfile,
+            "semanticProfile must not be null");
         JsBackend backend = new JsBackend(result.typeMap(), result.symbolTable(),
             sourcePath, modulePath, importResolutions, hostModules, isEntry,
             new CanonicalRuntimeTypeDescriptor(identityIndex, moduleIdentities),
-            sourceMap);
+            sourceMap, semanticProfile);
         return backend.generateProgram(program);
     }
 
@@ -684,6 +767,15 @@ public final class JsBackend {
         // module, ../deal/runtime for a nested one).
         out.append("const $rt = $require(\"")
             .append(runtimeRequireSpecifier()).append("\");\n");
+        if (int32Mode) {
+            // 3b. Profile selector (js-v12-int32-bytes D2): emitted only
+            // under DEAL_V1_2_INT32, immediately after the runtime
+            // $require, in every module of the output root. The call is
+            // idempotent and one-way; the runtime keeps a module-private
+            // flag, sound because one output root shares one profile
+            // (F1) and the runtime is deployed once per root.
+            out.append("$rt.setInt32Mode(true);\n");
+        }
         out.append("\n");
         // 4. Intrinsic header seeds: int/number are first-class function
         // values with the seeded static signatures, plus the module-private

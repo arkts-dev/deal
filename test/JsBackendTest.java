@@ -23,6 +23,11 @@ import deal.module.ModuleIdentityResolver;
 import deal.module.ModuleShapeValidator;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
+import deal.semantic.CapabilityRegistry;
+import deal.semantic.CompilerInvocation;
+import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ir.ReleaseState;
+import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -99,6 +104,9 @@ public class JsBackendTest {
             testUnsupportedConstructsRejected();
             testSourceMapSidecarsEmitted();
             testIntArithmeticEdgeCodes();
+            testInt32ProfileSelectorEmission();
+            testInt32OrchestratorPlumb();
+            testInt32MatrixNode();
             testNumModFloored();
             testScalarStringOps();
             testOptionalThreeState();
@@ -337,13 +345,30 @@ public class JsBackendTest {
      */
     private static NodeResult runDealNode(String source, String name)
             throws Exception {
+        // The retained legacy authority: the default LEGACY_SAFE_INT
+        // profile (no setInt32Mode emission, the ±(2^53-1) range).
+        return runDealNodeProfile(source, name, SemanticProfile.LEGACY_SAFE_INT);
+    }
+
+    /**
+     * The full JS chain under the real node binary with an explicit
+     * project-wide semantic profile: frontend → codegen (the profile
+     * plumbed into {@link JsBackend#generate}) → deployment → the
+     * conformance runner → node execution. Under DEAL_V1_2_INT32 the
+     * emitted artifact calls {@code $rt.setInt32Mode(true)} immediately
+     * after the runtime require, activating the signed-32 range before
+     * the runner invokes the export.
+     */
+    private static NodeResult runDealNodeProfile(String source, String name,
+                                                 SemanticProfile profile)
+            throws Exception {
         Frontend f = compileFrontend(source, "jstest-" + name + ".deal");
         if (!f.errors().isEmpty()) {
             throw new RuntimeException("frontend errors: " + f.errors());
         }
         JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
             f.checkResult(), "jstest-" + name + ".deal", "Main",
-            Map.of(), Map.of(), false);
+            Map.of(), Map.of(), false, profile);
         if (res.hasErrors()) {
             throw new RuntimeException("codegen errors: " + res.diagnostics());
         }
@@ -353,6 +378,16 @@ public class JsBackendTest {
         NodeResult result = runNodeScript(dir, "JsConformanceRunner.js");
         deleteDir(dir);
         return result;
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int n = 0;
+        int idx = 0;
+        while ((idx = haystack.indexOf(needle, idx)) >= 0) {
+            n++;
+            idx += needle.length();
+        }
+        return n;
     }
 
     /**
@@ -1332,6 +1367,347 @@ public class JsBackendTest {
             "int-mod-trunc");
         check(trunc.exitCode() == 0 && trunc.output().equals("-1"),
             "int % int is truncated (-7 % 3 === -1): " + trunc.output());
+    }
+
+    private static void testInt32ProfileSelectorEmission() throws Exception {
+        System.out.println("-- Emission pins: $rt.setInt32Mode(true) profile selector --");
+
+        String source = "export function test(): int { return 2147483647 + 1; }";
+        Frontend f = compileFrontend(source, "jstest-int32-selector.deal");
+        if (f.program() == null) {
+            fail("int32 selector frontend failed: " + f.errors());
+            return;
+        }
+
+        // DEAL_V1_2_INT32: the selector lands immediately after the
+        // runtime $require line, exactly once per module.
+        JsBackend.JsCodegenResult int32 = JsBackend.generate(f.program(),
+            f.checkResult(), "jstest-int32-selector.deal", "Main",
+            Map.of(), Map.of(), false, SemanticProfile.DEAL_V1_2_INT32);
+        check(!int32.hasErrors(),
+            "DEAL_V1_2_INT32 generation clean: " + int32.diagnostics());
+        String int32Source = int32.source();
+        check(int32Source.contains(
+                "const $rt = $require(\"./deal/runtime\");\n"
+                    + "$rt.setInt32Mode(true);\n"),
+            "DEAL_V1_2_INT32 emits $rt.setInt32Mode(true) immediately after "
+                + "the runtime $require");
+        check(countOccurrences(int32Source, "$rt.setInt32Mode(true);") == 1,
+            "the selector appears exactly once per emitted module");
+
+        // The legacy profile: no selector anywhere in the artifact, and
+        // the header is byte-identical to the int32 header minus the
+        // selector line (the selector is the only emission delta).
+        JsBackend.JsCodegenResult legacy = JsBackend.generate(f.program(),
+            f.checkResult(), "jstest-int32-selector.deal", "Main",
+            Map.of(), Map.of(), false); // default: LEGACY_SAFE_INT
+        check(!legacy.hasErrors(),
+            "LEGACY_SAFE_INT generation clean: " + legacy.diagnostics());
+        check(!legacy.source().contains("setInt32Mode"),
+            "LEGACY_SAFE_INT emits no selector");
+        check(legacy.source().equals(int32Source.replace(
+                "\n$rt.setInt32Mode(true);", "")),
+            "the selector line is the only artifact delta between the "
+                + "profiles (retained ±(2^53-1) emission unchanged)");
+    }
+
+    private static void testInt32OrchestratorPlumb() throws Exception {
+        System.out.println("-- Orchestrator plumb: invocation.semanticProfile() → selector in every module --");
+
+        writeFile("js_int32_proj/deal.json",
+            "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}");
+        writeFile("js_int32_proj/src/app/lib.deal",
+            "export function ping(): string { return \"pong\"; }");
+        writeFile("js_int32_proj/src/app/main.deal",
+            "import * as lib from \"./lib\"\n"
+                + "export function main(): null {\n"
+                + "  if (lib.ping() === \"pong\") { return null; }\n"
+                + "  return null;\n"
+                + "}\n");
+
+        Path entryFile = tmpDir.resolve("js_int32_proj/src/app/main.deal")
+            .toAbsolutePath();
+        Path outputDir = tmpDir.resolve("js_int32_proj/build/js");
+        List<Path> roots = List.of(tmpDir.resolve("js_int32_proj/src")
+            .toAbsolutePath());
+        DealConfig config = DealConfig.load(tmpDir.resolve("js_int32_proj")).config();
+        check(config != null && "js".equals(config.backend()),
+            "int32 plumb deal.json backend js parsed");
+
+        // The release-owned invocation the plumb must carry: PUBLIC_BUILD
+        // × V1_2_ACTIVE resolves DEAL_V1_2_INT32.
+        CompilerInvocation int32Invocation = CompilerProfileProvider.resolve(
+            ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
+        check(int32Invocation.semanticProfile()
+                == SemanticProfile.DEAL_V1_2_INT32,
+            "V1_2_ACTIVE invocation resolves DEAL_V1_2_INT32");
+
+        CompilationOrchestrator active = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, false, Backend.JS,
+            config, roots, Path.of(".").toAbsolutePath().normalize(), null,
+            int32Invocation);
+        boolean activeOk = active.compile();
+        check(activeOk, "int32-profile JS orchestrator compile succeeds: "
+            + active.diagnostics());
+        if (activeOk) {
+            for (String artifactName : List.of("app/main.js", "app/lib.js")) {
+                Path artifact = outputDir.resolve(artifactName);
+                check(Files.exists(artifact),
+                    "orchestrator wrote " + artifactName);
+                if (Files.exists(artifact)) {
+                    String js = Files.readString(artifact);
+                    check(js.contains("$rt.setInt32Mode(true);"),
+                        artifactName + " emits the selector under "
+                            + "DEAL_V1_2_INT32");
+                    check(countOccurrences(js, "$rt.setInt32Mode(true);") == 1,
+                        artifactName + " emits the selector exactly once");
+                }
+            }
+        }
+
+        // The default invocation stays PRE_ACTIVATION → LEGACY_SAFE_INT
+        // and plumbs the legacy mode: no selector in any module.
+        Path legacyOutputDir = tmpDir.resolve("js_int32_proj/build/js_legacy");
+        CompilationOrchestrator legacy = new CompilationOrchestrator(
+            entryFile, legacyOutputDir, false, false, false, Backend.JS,
+            config, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean legacyOk = legacy.compile();
+        check(legacyOk, "default JS orchestrator compile succeeds: "
+            + legacy.diagnostics());
+        check(legacy.invocation().semanticProfile()
+                == SemanticProfile.LEGACY_SAFE_INT,
+            "the orchestrator default invocation stays "
+                + "PRE_ACTIVATION → LEGACY_SAFE_INT");
+        if (legacyOk) {
+            for (String artifactName : List.of("app/main.js", "app/lib.js")) {
+                Path artifact = legacyOutputDir.resolve(artifactName);
+                check(Files.exists(artifact),
+                    "legacy orchestrator wrote " + artifactName);
+                if (Files.exists(artifact)) {
+                    check(!Files.readString(artifact).contains("setInt32Mode"),
+                        artifactName + " emits no selector under "
+                            + "LEGACY_SAFE_INT");
+                }
+            }
+        }
+    }
+
+    private static void testInt32MatrixNode() throws Exception {
+        System.out.println("-- Node: signed-int32 matrix under DEAL_V1_2_INT32 --");
+        if (!nodeAvailable) { skipNode("signed-int32 matrix"); return; }
+
+        // Boundary acceptance: the inclusive signed-32 extremes pass.
+        NodeResult maxOk = runDealNodeProfile(
+            "export function test(): int { return 2147483647; }",
+            "int32-max-ok", SemanticProfile.DEAL_V1_2_INT32);
+        check(maxOk.exitCode() == 0 && maxOk.output().equals("2147483647"),
+            "2147483647 is the accepted int32 maximum: " + maxOk.output());
+
+        NodeResult minOk = runDealNodeProfile(
+            "export function test(): int { return -2147483648; }",
+            "int32-min-ok", SemanticProfile.DEAL_V1_2_INT32);
+        check(minOk.exitCode() == 0 && minOk.output().equals("-2147483648"),
+            "-2147483648 is the accepted int32 minimum: " + minOk.output());
+
+        // Overflow on every producing site: E8004 with the pinned
+        // "int out of safe range" message, exit 1.
+        NodeResult addOver = runDealNodeProfile(
+            "export function test(): int { return 2147483647 + 1; }",
+            "int32-add-over", SemanticProfile.DEAL_V1_2_INT32);
+        check(addOver.exitCode() == 1
+                && addOver.output().contains("DEAL_ERROR_CODE: E8004")
+                && addOver.output().contains("int out of safe range"),
+            "2147483647 + 1 → E8004 'int out of safe range', exit 1: "
+                + addOver.output());
+
+        NodeResult subUnder = runDealNodeProfile(
+            "export function test(): int { return -2147483648 - 1; }",
+            "int32-sub-under", SemanticProfile.DEAL_V1_2_INT32);
+        check(subUnder.exitCode() == 1
+                && subUnder.output().contains("DEAL_ERROR_CODE: E8004")
+                && subUnder.output().contains("int out of safe range"),
+            "-2147483648 - 1 → E8004 'int out of safe range', exit 1: "
+                + subUnder.output());
+
+        NodeResult divOver = runDealNodeProfile(
+            "export function test(): int { return -2147483648 / -1; }",
+            "int32-div-over", SemanticProfile.DEAL_V1_2_INT32);
+        check(divOver.exitCode() == 1
+                && divOver.output().contains("DEAL_ERROR_CODE: E8004"),
+            "MIN_VALUE / -1 → E8004 (the truncated quotient leaves the "
+                + "int32 range), exit 1: " + divOver.output());
+
+        NodeResult modOver = runDealNodeProfile(
+            "export function test(): int { return -2147483648 % -1; }",
+            "int32-mod-over", SemanticProfile.DEAL_V1_2_INT32);
+        check(modOver.exitCode() == 1
+                && modOver.output().contains("DEAL_ERROR_CODE: E8004"),
+            "MIN_VALUE % -1 → E8004 (the reference's truncating-quotient "
+                + "gate), exit 1: " + modOver.output());
+
+        NodeResult negOver = runDealNodeProfile(
+            "export function test(): int { return -(-2147483648); }",
+            "int32-neg-over", SemanticProfile.DEAL_V1_2_INT32);
+        check(negOver.exitCode() == 1
+                && negOver.output().contains("DEAL_ERROR_CODE: E8004"),
+            "-(-2147483648) → E8004 via checkInt, exit 1: "
+                + negOver.output());
+
+        // E8005 first on a zero divisor (intDiv and intMod alike).
+        NodeResult divz = runDealNodeProfile(
+            "export function test(): int { return 5 / 0; }",
+            "int32-div-zero", SemanticProfile.DEAL_V1_2_INT32);
+        check(divz.exitCode() == 1
+                && divz.output().contains("DEAL_ERROR_CODE: E8005")
+                && divz.output().contains("integer division by zero"),
+            "zero divisor → E8005, exit 1: " + divz.output());
+
+        NodeResult modz = runDealNodeProfile(
+            "export function test(): int { return 5 % 0; }",
+            "int32-mod-zero", SemanticProfile.DEAL_V1_2_INT32);
+        check(modz.exitCode() == 1
+                && modz.output().contains("DEAL_ERROR_CODE: E8005"),
+            "mod by zero → E8005, exit 1: " + modz.output());
+
+        NodeResult negexp = runDealNodeProfile(
+            "export function test(): int { return 2 ** -1; }",
+            "int32-neg-exp", SemanticProfile.DEAL_V1_2_INT32);
+        check(negexp.exitCode() == 1
+                && negexp.output().contains("DEAL_ERROR_CODE: E8006"),
+            "negative exponent → E8006, exit 1: " + negexp.output());
+
+        NodeResult powOver = runDealNodeProfile(
+            "export function test(): int { return 2 ** 10000; }",
+            "int32-pow-over", SemanticProfile.DEAL_V1_2_INT32);
+        check(powOver.exitCode() == 1
+                && powOver.output().contains("DEAL_ERROR_CODE: E8001")
+                && powOver.output().contains("expected int, got infinity"),
+            "2 ** 10000 → E8001 'expected int, got infinity' (the "
+                + "±Infinity arm stays before the range arm), exit 1: "
+                + powOver.output());
+
+        // Truncating division/remainder signs stay truncation-toward-zero.
+        NodeResult trunc = runDealNodeProfile(
+            "export function test(): int { let a: int = -7 / 3; "
+                + "let b: int = 7 / -3; let c: int = -7 % 3; "
+                + "if (a === -2 && b === -2 && c === -1) { return 1; } "
+                + "return 0; }",
+            "int32-trunc-signs", SemanticProfile.DEAL_V1_2_INT32);
+        check(trunc.exitCode() == 0 && trunc.output().equals("1"),
+            "-7 / 3 === -2, 7 / -3 === -2, -7 % 3 === -1 (truncation "
+                + "toward zero): " + trunc.output());
+
+        // Conversion boundaries: int() of a finite out-of-range value is
+        // E8004; NaN/±Infinity/non-integer are E8001.
+        NodeResult convRange = runDealNodeProfile(
+            "export function test(): int { return int(2147483648.0); }",
+            "int32-conv-range", SemanticProfile.DEAL_V1_2_INT32);
+        check(convRange.exitCode() == 1
+                && convRange.output().contains("DEAL_ERROR_CODE: E8004")
+                && convRange.output().contains("int out of safe range"),
+            "int(2147483648.0) → E8004, exit 1: " + convRange.output());
+
+        NodeResult convNan = runDealNodeProfile(
+            "export function test(): int { return int(0.0 / 0.0); }",
+            "int32-conv-nan", SemanticProfile.DEAL_V1_2_INT32);
+        check(convNan.exitCode() == 1
+                && convNan.output().contains("DEAL_ERROR_CODE: E8001")
+                && convNan.output().contains("expected int, got NaN"),
+            "int(NaN) → E8001 'expected int, got NaN', exit 1: "
+                + convNan.output());
+
+        NodeResult convInf = runDealNodeProfile(
+            "export function test(): int { return int(1.0 / 0.0); }",
+            "int32-conv-inf", SemanticProfile.DEAL_V1_2_INT32);
+        check(convInf.exitCode() == 1
+                && convInf.output().contains("DEAL_ERROR_CODE: E8001")
+                && convInf.output().contains("expected int, got infinity"),
+            "int(Infinity) → E8001 'expected int, got infinity', exit 1: "
+                + convInf.output());
+
+        NodeResult convFrac = runDealNodeProfile(
+            "export function test(): int { return int(3.5); }",
+            "int32-conv-frac", SemanticProfile.DEAL_V1_2_INT32);
+        check(convFrac.exitCode() == 1
+                && convFrac.output().contains("DEAL_ERROR_CODE: E8001")
+                && convFrac.output().contains(
+                    "expected int, got non-integer number"),
+            "int(3.5) → E8001 non-integer, exit 1: " + convFrac.output());
+
+        // The nil-equivalent conversion arm through the activated runtime
+        // (the pinned message; only emitter mis-emission reaches it).
+        NodeResult convNull = runRuntimeProbe("int32-conv-null",
+            "\"use strict\";\n"
+                + "const $rt = require(\"./deal/runtime\");\n"
+                + "$rt.setInt32Mode(true);\n"
+                + "try {\n"
+                + "  $rt.intConvert(null, \"probe.js\", 1, 1);\n"
+                + "  console.log(\"FAIL: no throw\");\n"
+                + "} catch (e) {\n"
+                + "  if (e.$dealCode === \"E8001\" && e.message === \"cannot convert null to int\") {\n"
+                + "    console.log(\"E8001-NULL-OK\");\n"
+                + "  } else {\n"
+                + "    console.log(\"FAIL: \" + e.$dealCode + \" \" + e.message);\n"
+                + "  }\n"
+                + "}\n");
+        check(convNull.exitCode() == 0
+                && convNull.output().equals("E8001-NULL-OK"),
+            "int(null) → E8001 'cannot convert null to int' under the "
+                + "int32 profile: " + convNull.output());
+
+        // -0 normalizes to 0.
+        NodeResult negZero = runDealNodeProfile(
+            "export function test(): int { let z: int = -0; "
+                + "if (z === 0) { return 1; } return 0; }",
+            "int32-neg-zero", SemanticProfile.DEAL_V1_2_INT32);
+        check(negZero.exitCode() == 0 && negZero.output().equals("1"),
+            "-0 normalizes to 0 (-0 === 0): " + negZero.output());
+
+        // The combined gate: the int32 artifacts carry the canonical
+        // descriptor and check texts (T1's descriptor service and T3's
+        // range gate) — the matrix fails if either breaks.
+        Frontend canonical = compileFrontend(
+            "export function test(): int { return int(3.5); }",
+            "jstest-int32-canonical.deal");
+        if (canonical.program() == null) {
+            fail("int32 canonical frontend failed: " + canonical.errors());
+            return;
+        }
+        JsBackend.JsCodegenResult canonicalRes = JsBackend.generate(
+            canonical.program(), canonical.checkResult(),
+            "jstest-int32-canonical.deal", "Main",
+            Map.of(), Map.of(), false, SemanticProfile.DEAL_V1_2_INT32);
+        check(!canonicalRes.hasErrors(),
+            "int32 canonical generation clean: " + canonicalRes.diagnostics());
+        check(canonicalRes.source().contains("$rt.setInt32Mode(true);"),
+            "the int32 artifact carries the selector (the matrix runs "
+                + "through the activated range gate)");
+        check(canonicalRes.source().contains("$rt.checkInt("),
+            "the int32 artifact carries the checkInt boundary text (T3's "
+                + "parameterized range gate)");
+        check(canonicalRes.source().contains(
+                "$rt.function(\"(number)->int\""),
+            "the int32 artifact carries the canonical (number)->int "
+                + "wrapper seed (T1's canonical descriptors)");
+
+        // Legacy authority: under LEGACY_SAFE_INT the same sources keep
+        // the retained ±(2^53-1) behavior and no selector is emitted.
+        NodeResult legacyOver = runDealNodeProfile(
+            "export function test(): int { return 2147483647 + 1; }",
+            "legacy-add-over", SemanticProfile.LEGACY_SAFE_INT);
+        check(legacyOver.exitCode() == 0
+                && legacyOver.output().equals("2147483648"),
+            "under LEGACY_SAFE_INT 2147483647 + 1 stays inside the "
+                + "retained ±(2^53-1) range (2147483648): "
+                + legacyOver.output());
+
+        NodeResult legacyMax = runDealNodeProfile(
+            "export function test(): int { return 9007199254740991; }",
+            "legacy-safe-max", SemanticProfile.LEGACY_SAFE_INT);
+        check(legacyMax.exitCode() == 0
+                && legacyMax.output().equals("9007199254740991"),
+            "the ±(2^53-1) safe-range boundary passes under "
+                + "LEGACY_SAFE_INT: " + legacyMax.output());
     }
 
     private static void testNumModFloored() throws Exception {

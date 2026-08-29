@@ -1883,11 +1883,19 @@ public final class CompilationOrchestrator {
             // SourceMapGenerator parameter (the Lua generateResult
             // precedent). A rejected module never serializes its
             // recorder: pass 2 runs for clean modules only.
+            // ISSUE-0374 profile plumb (js-v12-int32-bytes D2): the
+            // backend derives its backend-wide int mode from the
+            // invocation's project-wide semantic profile — never from a
+            // static flag, a system property, or any source/CLI/
+            // environment surface. Under DEAL_V1_2_INT32 every emitted
+            // module calls $rt.setInt32Mode(true) immediately after the
+            // runtime $require; LEGACY_SAFE_INT emits no selector.
             JsBackend.JsCodegenResult res = JsBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
                 importResolutions, hostModules, isEntry, identityIndex,
                 identityIndex.moduleIdentityLookup(),
-                sourceMap ? new SourceMapGenerator() : null);
+                sourceMap ? new SourceMapGenerator() : null,
+                invocation.semanticProfile());
             // Native ranged backend list (T12): the backend emits
             // CompilerDiagnostic entries directly, so the orchestrator
             // merge needs no boundary conversion — real spans keep their
