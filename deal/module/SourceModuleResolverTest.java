@@ -1334,8 +1334,8 @@ public final class SourceModuleResolverTest {
         check(absent.moduleIdentity() == null,
             "with an absent surface no source carries BuiltinModule");
 
-        // Null, malformed, and non-file URIs classify to none without
-        // throwing (totality).
+        // Null, malformed, non-file, and path-less file URIs
+        // classify to none without throwing (totality).
         check(ModuleIdentityResolver.classify(context, null).moduleIdentity() == null,
             "null URI classifies to none");
         check(ModuleIdentityResolver.classify(context, "not a uri::%%%")
@@ -1344,6 +1344,16 @@ public final class SourceModuleResolverTest {
         check(ModuleIdentityResolver.classify(context, "http://example.test/x.deal")
                 .moduleIdentity() == null,
             "non-file URI classifies to none");
+        check(ModuleIdentityResolver.classify(context, "file:///")
+                .moduleIdentity() == null
+                && ModuleIdentityResolver.classify(context, "file:///")
+                    .projectIdentity() == null,
+            "path-less file URI (file:///) classifies to none");
+        check(ModuleIdentityResolver.classify(context, "file:/")
+                .moduleIdentity() == null
+                && ModuleIdentityResolver.classify(context, "file:/")
+                    .projectIdentity() == null,
+            "path-less file URI (file:/) classifies to none");
     }
 
     private static void testClassifierDefensiveReports() throws Exception {
