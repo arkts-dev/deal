@@ -42,6 +42,7 @@ import deal.types.Type;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -285,9 +286,10 @@ public class BoundaryRealizationReportTest {
     static void testPositives() {
         System.out.println("-- Positives: runtime validation on every cell family + the admissible proof --");
 
-        // RuntimeValidation on every cell family of the closed table
-        // (the descriptor-kind-rule cells, the array cells, the
-        // completion cell, the host-direction cells, the stdlib/external
+        // RuntimeValidation on every one of the 25 closed BoundaryKind
+        // values (the descriptor-kind-rule cells, the array cells, the
+        // completion cell, the construction/optional/contextual/imported
+        // read cells, the host-direction cells, the stdlib/external
         // cells, the JSON cells, and a physical check on the
         // proof-eligible DEAL_TO_HOST + HOST_PARAMETER cell).
         record Cell(String what, BoundaryKind kind, RuntimeDescriptor descriptor,
@@ -309,6 +311,18 @@ public class BoundaryRealizationReportTest {
                 FailurePolicyId.ARRAY_DELETE_BOUNDS),
             new Cell("ASYNC_COMPLETION", BoundaryKind.ASYNC_COMPLETION, STRING,
                 FailurePolicyId.ASYNC_COMPLETION),
+            new Cell("CLASS_LITERAL_FIELD", BoundaryKind.CLASS_LITERAL_FIELD, STRING,
+                FailurePolicyId.TYPE_DESCRIPTOR),
+            new Cell("CLASS_DEFAULT_FIELD", BoundaryKind.CLASS_DEFAULT_FIELD, STRING,
+                FailurePolicyId.TYPE_DESCRIPTOR),
+            new Cell("UNTYPED_CLASS_INPUT", BoundaryKind.UNTYPED_CLASS_INPUT, STRING,
+                FailurePolicyId.TYPE_DESCRIPTOR),
+            new Cell("OPTIONAL_FIELD_READ", BoundaryKind.OPTIONAL_FIELD_READ, STRING,
+                FailurePolicyId.TYPE_DESCRIPTOR),
+            new Cell("CONTEXTUAL_TABLE_READ", BoundaryKind.CONTEXTUAL_TABLE_READ, STRING,
+                FailurePolicyId.TYPE_DESCRIPTOR),
+            new Cell("IMPORTED_MEMBER_READ", BoundaryKind.IMPORTED_MEMBER_READ, STRING,
+                FailurePolicyId.TYPE_DESCRIPTOR),
             new Cell("FUNCTION_PARAMETER scalar", BoundaryKind.FUNCTION_PARAMETER, STRING,
                 FailurePolicyId.TYPE_DESCRIPTOR),
             new Cell("FUNCTION_PARAMETER function", BoundaryKind.FUNCTION_PARAMETER,
@@ -328,7 +342,27 @@ public class BoundaryRealizationReportTest {
             new Cell("MODULE_EXPORT", BoundaryKind.MODULE_EXPORT, STRING,
                 FailurePolicyId.TYPE_DESCRIPTOR),
             new Cell("DEAL_TO_HOST physical check", BoundaryKind.DEAL_TO_HOST, STRING,
-                FailurePolicyId.HOST_PARAMETER));
+                FailurePolicyId.HOST_PARAMETER),
+            new Cell("STDLIB_PARAMETER", BoundaryKind.STDLIB_PARAMETER, STRING,
+                FailurePolicyId.TYPE_DESCRIPTOR),
+            new Cell("EXTERNAL_PARAMETER", BoundaryKind.EXTERNAL_PARAMETER, STRING,
+                FailurePolicyId.TYPE_DESCRIPTOR));
+
+        // Closed-set pin: every one of the 25 closed BoundaryKind values
+        // appears with RuntimeValidation (the 24 non-proof cells plus a
+        // physical check on the proof-eligible DEAL_TO_HOST cell), so a
+        // kind added to the closed enum without a pinned cell — or a cell
+        // removed here — fails the suite instead of passing silently.
+        Set<BoundaryKind> pinnedKinds = new LinkedHashSet<>();
+        for (Cell cell : cells) {
+            pinnedKinds.add(cell.kind());
+        }
+        Set<BoundaryKind> allKinds = new LinkedHashSet<>(List.of(BoundaryKind.values()));
+        check(pinnedKinds.equals(allKinds),
+            "RuntimeValidation is pinned on all " + BoundaryKind.values().length
+                + " closed BoundaryKind values (24 non-proof cells + the DEAL_TO_HOST physical "
+                + "check); missing: "
+                + allKinds.stream().filter(k -> !pinnedKinds.contains(k)).toList());
 
         List<SemanticOp> ops = new ArrayList<>();
         int cellIndex = 1;
