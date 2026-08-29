@@ -117,6 +117,7 @@ public class JsBackendTest {
             testSpanParameterCollisionExecution();
             testStdJsonRoundTrips();
             testJsonStoredFunctionE8001();
+            testJsonableRuntimeWalkers();
             testIntrinsicFunctionValues();
             testAsyncCompletionAndErrors();
             testOrchestratorJsBackend();
@@ -2054,6 +2055,79 @@ public class JsBackendTest {
                     "unsupported type for JSON encoding: function"),
             "a stored function value raises E8001 from stringify: "
                 + run.output());
+    }
+
+    private static void testJsonableRuntimeWalkers() throws Exception {
+        System.out.println("-- Node: @jsonable runtime walkers (jsonFromJson/jsonToJson) --");
+        if (!nodeAvailable) { skipNode("jsonable runtime walkers"); return; }
+
+        // Direct $rt-surface probes of the pinned walker contract
+        // (js-v12-jsonable-completion D2-D5): the top-level gate and the
+        // {}/[] collapse, extra-key rejection, the three-state roundtrip,
+        // the int-range E8004 null collapse, the provided-value
+        // failure/zero-defaults phase order, and the toJson E8001 arms.
+        NodeResult run = runRuntimeProbe("jsonable-walkers", """
+            "use strict";
+            const $rt = require("./deal/runtime");
+            let $fail = "";
+            const $f = (n, j, o, x, e) => {
+              const $e = { name: n, jtype: j, optional: !!o, nullable: !!x, hasDefault: true };
+              if (e !== undefined) {
+                if (e.element !== undefined) $e.element = e.element;
+                if (e.className !== undefined) $e.className = e.className;
+                if (e.fields !== undefined) $e.fields = e.fields;
+              }
+              return $e;
+            };
+            const $fields = [$f("name", "string", false, false),
+              $f("nick", "string", true, true), $f("age", "int", false, false)];
+            const $thunk = () => ({ name: "", nick: $rt.MISSING, age: 0 });
+            // Top-level gate: scalars, null, and [1,2] are null; {}/[]
+            // both decode to the defaulted instance with equal texts.
+            if ($rt.jsonFromJson("@m/U", $fields, $thunk, "42", "p.js", 1, 1) !== null) $fail = "scalar";
+            if ($rt.jsonFromJson("@m/U", $fields, $thunk, "null", "p.js", 1, 1) !== null) $fail = "null-doc";
+            if ($rt.jsonFromJson("@m/U", $fields, $thunk, "[1,2]", "p.js", 1, 1) !== null) $fail = "array-doc";
+            const $o = $rt.jsonFromJson("@m/U", $fields, $thunk, "{}", "p.js", 1, 1);
+            const $a = $rt.jsonFromJson("@m/U", $fields, $thunk, "[]", "p.js", 1, 1);
+            if ($o === null || $a === null) $fail = "collapse-null";
+            if ($o.$kind !== "class" || $o.$classname !== "@m/U") $fail = "tags";
+            if ($rt.jsonToJson("@m/U", $o, $fields, "p.js", 1, 1)
+                !== $rt.jsonToJson("@m/U", $a, $fields, "p.js", 1, 1)) $fail = "collapse-text";
+            if ($rt.jsonToJson("@m/U", $o, $fields, "p.js", 1, 1)
+                !== '{"name":"","age":0}') $fail = "collapse-omit:" + $rt.jsonToJson("@m/U", $o, $fields, "p.js", 1, 1);
+            // Extra-key rejection, before any defaults run.
+            if ($rt.jsonFromJson("@m/U", $fields, $thunk, '{"name":"Ada","extra":1}', "p.js", 1, 1) !== null) $fail = "extra-key";
+            // Three-state: missing omitted, present-null kept, value kept.
+            const $m = $rt.jsonFromJson("@m/U", $fields, $thunk, '{"name":"A","age":1}', "p.js", 1, 1);
+            if ($m === null || $m.nick !== $rt.MISSING) $fail = "three-missing";
+            if ($rt.jsonToJson("@m/U", $m, $fields, "p.js", 1, 1) !== '{"name":"A","age":1}') $fail = "three-omit";
+            const $n = $rt.jsonFromJson("@m/U", $fields, $thunk, '{"name":"B","nick":null,"age":2}', "p.js", 1, 1);
+            if ($n === null || $n.nick !== null) $fail = "three-null";
+            if ($rt.jsonToJson("@m/U", $n, $fields, "p.js", 1, 1) !== '{"name":"B","nick":null,"age":2}') $fail = "three-null-text";
+            // Int range: 2^53 collapses to the DEAL null (E8004 inside).
+            if ($rt.jsonFromJson("@m/U", $fields, $thunk, '{"age":9007199254740992}', "p.js", 1, 1) !== null) $fail = "int-range";
+            // Provided-value failure runs no defaults (counting thunk).
+            let $runs = 0;
+            const $counting = () => { $runs++; return { name: "", nick: $rt.MISSING, age: 0 }; };
+            if ($rt.jsonFromJson("@m/U", $fields, $counting, '{"age":"x"}', "p.js", 1, 1) !== null) $fail = "bad-int";
+            if ($runs !== 0) $fail = "defaults-ran:" + $runs;
+            // toJson identity backstop and cycle rejection (E8001).
+            try { $rt.jsonToJson("@m/Other", $m, $fields, "p.js", 1, 1); $fail = "identity-pass"; }
+            catch (e) { if (e.$dealCode !== "E8001") $fail = "identity-code"; }
+            const $nodeFields = [$f("next", "class", false, true,
+              { className: "@m/Node", fields: [] })];
+            const $node = $rt.makeClass("Node", "@m/Node", () => ({ next: null }), null, "p.js", 1, 1);
+            $rt.setProp($node, "next", $node);
+            try { $rt.jsonToJson("@m/Node", $node, $nodeFields, "p.js", 1, 1); $fail = "cycle-pass"; }
+            catch (e) { if (e.$dealCode !== "E8001") $fail = "cycle-code"; }
+            console.log($fail === "" ? "JSONABLE-WALKERS-OK" : "JSONABLE-WALKERS-FAIL: " + $fail);
+            """);
+        check(run.exitCode() == 0
+                && run.output().equals("JSONABLE-WALKERS-OK"),
+            "the jsonable runtime walkers honor the top-level gate, the "
+                + "{}/[] collapse, extra-key rejection, the three-state "
+                + "roundtrip, the E8004 int collapse, the zero-defaults "
+                + "phase order, and the toJson E8001 arms: " + run.output());
     }
 
     private static void testIntrinsicFunctionValues() throws Exception {
