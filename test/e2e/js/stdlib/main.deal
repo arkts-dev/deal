@@ -53,7 +53,10 @@ export function main(): null {
   let kind: string = inner.__kind;
   if (kind !== "class") { throw { code: "TEST_FAIL", message: "class instance __kind tag" }; }
   let cls: string = inner.__classname;
-  if (cls !== "@main/Item") { throw { code: "TEST_FAIL", message: "class instance __classname tag" }; }
+  let clsParts: string[] = str.split(cls, "/");
+  if (!str.startsWith(cls, "@") || clsParts.length !== 2 || clsParts[1] !== "Item") {
+    throw { code: "TEST_FAIL", message: "class instance __classname tag" };
+  }
   let nm: string = inner.name;
   if (nm !== "n") { throw { code: "TEST_FAIL", message: "class instance encoded field" }; }
 

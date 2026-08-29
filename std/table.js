@@ -32,9 +32,9 @@ const $table = {};
 // string keys in insertion order — a stricter order than the reference's
 // unspecified pairs order, which it refines. The exit checkArray
 // validates the fresh array and every string element.
-$table.keys = $rt.function("(table)->string[]", function(t, $file, $line, $column) {
+$table.keys = $rt.function("(table)->[string]", function(t, $file, $line, $column) {
   $rt.checkTable(t, $file, $line, $column);
-  return $rt.checkArray("string[]", $Array.from(t.keys()), $file, $line, $column);
+  return $rt.checkArray("[string]", $Array.from(t.keys()), $file, $line, $column);
 });
 
 module.exports = $table;

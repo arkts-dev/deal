@@ -8,12 +8,18 @@ import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.codegen.Backend;
 import deal.codegen.js.JsBackend;
+import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.identity.CanonicalClassIdentity;
+import deal.identity.CanonicalClassIdentityIndex;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.module.CompilationOrchestrator;
 import deal.module.DealConfig;
 import deal.module.DealConfig.DealConfigParseResult;
+import deal.module.ModuleIdentityResolver;
 import deal.module.ModuleShapeValidator;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
@@ -81,6 +87,7 @@ public class JsBackendTest {
             testModuleShapeNestedRequires();
             testReservedWordTranslation();
             testWrapperShapeAndDescriptors();
+            testCheckSiteDescriptorPins();
             testSpanParameterCollisionEmission();
             testClassEmissionPins();
             testEntryShimAndE6004();
@@ -99,6 +106,10 @@ public class JsBackendTest {
             testE8010SignatureMismatch();
             testE8007ExtraClassFieldRuntime();
             testClassIdentityTagPair();
+            testCanonicalDescriptorMatcherPins();
+            testLegacyDescriptorRejectionPins();
+            testCanonicalClassIdentityIndex();
+            testLegacyDialectRetirementScan();
             testErrorDefaultFilling();
             testContextualErrorConstruction();
             testRethrowPreservesCode();
@@ -550,12 +561,14 @@ public class JsBackendTest {
             + "[\"message\"]: \"\" });"),
             "the header-synthesized $ErrorDefaults thunk");
         check(js.contains("const Error$new = (provided, $file, $line, $column) => "
-            + "$rt.makeClass(\"Error\", \"Error\", $ErrorDefaults, provided, "
+            + "$rt.makeClass(\"Error\", \"@$builtin/Error\", $ErrorDefaults, provided, "
             + "$file, $line, $column);"),
-            "the header-synthesized Error$new closure (identity Error)");
+            "the header-synthesized Error$new closure (canonical identity "
+                + "@$builtin/Error)");
         check(js.contains("const Error$meta = { $kind: \"class\", "
-            + "$classname: \"Error\" };"),
-            "the header-synthesized Error$meta META pair");
+            + "$classname: \"@$builtin/Error\" };"),
+            "the header-synthesized Error$meta META pair "
+                + "(canonical @$builtin/Error identity)");
         check(!js.contains("$rt.setProp($exports, \"$ErrorDefaults\""),
             "$ErrorDefaults stays module-private (never exported)");
         check(!js.contains("$rt.setProp($exports, \"Error$new\""),
@@ -638,7 +651,7 @@ public class JsBackendTest {
     }
 
     private static void testWrapperShapeAndDescriptors() {
-        System.out.println("-- Wrapper shapes and exact descriptors --");
+        System.out.println("-- Wrapper shapes and exact canonical descriptors --");
 
         JsBackend.JsCodegenResult res = generate("""
             class User { name: string = ""; }
@@ -646,7 +659,9 @@ public class JsBackendTest {
             function first(xs: int[]): int { return xs[0]; }
             function wrap(u: User): User { return u; }
             function maybe(s: string | null): string | null { return s; }
+            function maybeUser(u: User | null): User | null { return u; }
             function go(f: (x: int) => int, v: int): int { return f(v); }
+            async function aget(): int { return 1; }
             export function test(): int { return add(1, 2); }
             """, "wrappers");
         check(res != null && !res.hasErrors(), "wrapper codegen clean: "
@@ -661,14 +676,60 @@ public class JsBackendTest {
             "entry parameter check with the forwarded span");
         check(js.contains("$rt.checkInt(b, $file, $line, $column);"),
             "second parameter check in parameter order");
-        check(js.contains("first = $rt.function(\"(int[])->int\""),
-            "array descriptor int[] in the wrapper sig");
+        check(js.contains("first = $rt.function(\"([int])->int\""),
+            "canonical array descriptor [int] in the wrapper sig "
+                + "(the legacy int[] spelling is gone)");
         check(js.contains("wrap = $rt.function(\"(@Main/User)->@Main/User\""),
-            "class descriptors module-qualified (@Main/User)");
-        check(js.contains("maybe = $rt.function(\"(string|null)->string|null\""),
-            "nullable descriptors use the T|null form");
+            "canonical class atoms module-qualified (@Main/User)");
+        check(js.contains("maybe = $rt.function(\"(?string)->?string\""),
+            "canonical nullable descriptors (?string — the legacy "
+                + "T|null form is gone)");
+        check(js.contains("maybeUser = $rt.function(\"(?@Main/User)->?@Main/User\""),
+            "canonical nullable class atoms (?@Main/User-shaped ?D)");
         check(js.contains("go = $rt.function(\"((int)->int,int)->int\""),
             "function-typed parameters carry their descriptor");
+        check(js.contains("aget = $rt.function(\"async()->int\", "
+            + "async function aget$f("),
+            "async wrapper carries the exact async(...) -> D sig");
+        check(!js.contains("|null"),
+            "no legacy |null spelling anywhere in the artifact");
+        check(!js.contains("\"int[]\""),
+            "no legacy int[] descriptor spelling anywhere in the artifact");
+    }
+
+    private static void testCheckSiteDescriptorPins() {
+        System.out.println("-- checkType call-site descriptors (canonical text) --");
+
+        JsBackend.JsCodegenResult res = generate("""
+            class User { name: string = ""; }
+            export function test(): int {
+              let t: table = {};
+              let b: int[] = t.arr;
+              let a: int = t.n;
+              let m: int | null = t.m;
+              let u: User | null = t.u;
+              let c: User = t.c;
+              let g: (x: int) => int = t.g;
+              return a;
+            }
+            """, "checksites");
+        check(res != null && !res.hasErrors(), "check-site codegen clean: "
+            + (res == null ? "<null>" : res.diagnostics()));
+        if (res == null || res.hasErrors()) return;
+
+        String js = res.source();
+        check(js.contains("$rt.checkNullable(\"int\", t.get(\"m\")"),
+            "nullable int table read checks with the canonical int inner");
+        check(js.contains("$rt.checkNullable(\"@Main/User\", t.get(\"u\")"),
+            "nullable class-typed table read checks with the canonical "
+                + "class atom inner");
+        check(js.contains("$rt.checkType(\"@Main/User\", t.get(\"c\")"),
+            "class-typed table read checks with the canonical @Main/User atom");
+        check(js.contains("$rt.checkType(\"(int)->int\", t.get(\"g\")"),
+            "function-typed table read checks with the canonical (int)->int "
+                + "descriptor");
+        check(js.contains("$rt.checkArray(\"[int]\", t.get(\"arr\")"),
+            "array-typed table read routes through checkArray with [int]");
     }
 
     private static void testSpanParameterCollisionEmission() {
@@ -1485,6 +1546,252 @@ public class JsBackendTest {
             "instances carry $kind: \"class\" + $classname; checkType('@mod/Name') "
                 + "accepts the matching identity and rejects a mismatch: "
                 + tags.output());
+    }
+
+    private static void testCanonicalDescriptorMatcherPins() throws Exception {
+        System.out.println("-- Node: canonical descriptor matcher pins --");
+        if (!nodeAvailable) { skipNode("canonical matcher pins"); return; }
+
+        // The canonical grammar accepts ?D and [D] over ANY descriptor D —
+        // function descriptors included — and compares class atoms and
+        // function signatures byte-for-byte.
+        NodeResult run = runRuntimeProbe("matcher", """
+            "use strict";
+            const $rt = require("./deal/runtime");
+            let $fail = "";
+            // ?D and [D] over function descriptors.
+            const $f = $rt.function("(int)->int", function(x, $file, $line, $column) { return x; });
+            $rt.checkType("?(int)->int", $f, "probe.js", 1, 1);
+            $rt.checkType("[(int)->int]", [$f], "probe.js", 1, 1);
+            // Byte-for-byte class-atom comparison.
+            const $v = $rt.makeClass("C", "@m/C", () => ({ ["x"]: 0 }), { ["x"]: 1 }, "probe.js", 1, 1);
+            $rt.checkType("@m/C", $v, "probe.js", 1, 1);
+            try { $rt.checkType("@m/c", $v, "probe.js", 1, 1); $fail = "class-case"; } catch (e) {}
+            // Differential whitespace pin: U+200B ZERO WIDTH SPACE is a
+            // legal component scalar in the canonical alphabet (the Java
+            // parser and the identity index forbid only 2000-200A), so
+            // the class atom @a<U+200B>b/C parses and compares
+            // byte-for-byte; U+200A HAIR SPACE is forbidden whitespace
+            // and takes the pinned E8001 cannot-parse arm.
+            const $v2 = $rt.makeClass("C", "@a\\u200Bb/C", () => ({ ["x"]: 0 }), { ["x"]: 1 }, "probe.js", 1, 1);
+            $rt.checkType("@a\\u200Bb/C", $v2, "probe.js", 1, 1);
+            try {
+              $rt.checkType("@a\\u200Ab/C", $v2, "probe.js", 1, 1);
+              $fail = "u200a-accepted";
+            } catch (e) {
+              if (e.$dealCode !== "E8001"
+                  || e.message !== "internal: cannot parse type descriptor: @a\\u200Ab/C") {
+                $fail = "u200a-arm:" + e.$dealCode + ":" + e.message;
+              }
+            }
+            // U+0085 NEXT LINE is pinned White_Space property whitespace
+            // (the Java parser, the identity index, and $CANONICAL_WS
+            // all forbid it), so @a<U+0085>b/C takes the same pinned
+            // E8001 cannot-parse arm.
+            try {
+              $rt.checkType("@a\\u0085b/C", $v2, "probe.js", 1, 1);
+              $fail = "u0085-accepted";
+            } catch (e) {
+              if (e.$dealCode !== "E8001"
+                  || e.message !== "internal: cannot parse type descriptor: @a\\u0085b/C") {
+                $fail = "u0085-arm:" + e.$dealCode + ":" + e.message;
+              }
+            }
+            // E8003 pinned array-element message at the first failing index.
+            try {
+              $rt.checkType("[int]", [1, "x", 3], "probe.js", 1, 1);
+              $fail = "e8003";
+            } catch (e) {
+              if (e.$dealCode !== "E8003" || e.message !== "array element 2 type mismatch: expected int") {
+                $fail = "e8003-msg:" + e.$dealCode + ":" + e.message;
+              }
+            }
+            // E8010 pinned function-signature message on any descriptor delta.
+            const $g = $rt.function("(int,int)->int", function(a, b, $file, $line, $column) { return a + b; });
+            try {
+              $rt.checkType("(int)->int", $g, "probe.js", 1, 1);
+              $fail = "e8010";
+            } catch (e) {
+              if (e.$dealCode !== "E8010" || e.message !== "function signature mismatch: expected (int)->int, got (int,int)->int") {
+                $fail = "e8010-msg:" + e.$dealCode + ":" + e.message;
+              }
+            }
+            // E8004 pinned int safe-range message routes through checkInt.
+            try {
+              $rt.checkType("int", 2 ** 60, "probe.js", 1, 1);
+              $fail = "e8004";
+            } catch (e) {
+              if (e.$dealCode !== "E8004" || e.message !== "int out of safe range") {
+                $fail = "e8004-msg:" + e.$dealCode + ":" + e.message;
+              }
+            }
+            // The builtin Error identity is @$builtin/Error end-to-end.
+            const $err = $rt.errorValue("E_TEST", "boom", "probe.js", 1, 1);
+            if ($err.$kind !== "class" || $err.$classname !== "@$builtin/Error") {
+              $fail = "error-identity:" + String($err.$classname);
+            }
+            if ($rt.reifyError($err) !== $err) { $fail = "reify-passthrough"; }
+            if ($fail === "") { console.log("CANONICAL-MATCHER-OK"); }
+            else { console.log("FAIL: " + $fail); }
+            """);
+        check(run.exitCode() == 0 && run.output().equals("CANONICAL-MATCHER-OK"),
+            "canonical ?/[D] acceptance over function descriptors, byte-for-byte "
+                + "class atoms, and the pinned E8003/E8010/E8004/@$builtin/Error "
+                + "surfaces: " + run.output());
+    }
+
+    private static void testLegacyDescriptorRejectionPins() throws Exception {
+        System.out.println("-- Node: legacy descriptor spellings rejected (cannot-parse arm) --");
+        if (!nodeAvailable) { skipNode("legacy descriptor rejection"); return; }
+
+        NodeResult run = runRuntimeProbe("legacy-reject", """
+            "use strict";
+            const $rt = require("./deal/runtime");
+            let $fail = "";
+            const $legacy = ["int[]", "int|null", "table[]", "Error", "User",
+              "?Error", "Error|null", "(int)->int[]", "(int)->int|null",
+              "@Foo", "@src.models.User", "@m/c.Name", "??int", "?null",
+              "[]", "(int)int", "async[int]", "@a/", "@a//b", "int..."];
+            for (let $i = 0; $i < $legacy.length; $i++) {
+              try {
+                $rt.checkType($legacy[$i], null, "probe.js", 1, 1);
+                $fail = "accepted:" + $legacy[$i];
+                break;
+              } catch (e) {
+                if (e.$dealCode !== "E8001"
+                    || e.message !== "internal: cannot parse type descriptor: " + $legacy[$i]) {
+                  $fail = "wrong-arm:" + $legacy[$i] + " -> " + e.$dealCode + ": " + e.message;
+                  break;
+                }
+              }
+            }
+            if ($fail === "") { console.log("LEGACY-REJECTED-OK"); }
+            else { console.log("FAIL: " + $fail); }
+            """);
+        check(run.exitCode() == 0 && run.output().equals("LEGACY-REJECTED-OK"),
+            "every legacy spelling takes the pinned E8001 cannot-parse arm "
+                + "with the exact message: " + run.output());
+    }
+
+    private static void testCanonicalClassIdentityIndex() {
+        System.out.println("-- Canonical identity index projections and encode --");
+
+        Map<String, CanonicalModuleIdentity> byPath = new LinkedHashMap<>();
+        byPath.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        byPath.put("app.user",
+            new CanonicalModuleIdentity.ProjectModule(
+                new ProjectModuleIdentity("src", "/tmp/src", List.of("app"))));
+        byPath.put("orch_main",
+            new CanonicalModuleIdentity.ProjectModule(
+                new ProjectModuleIdentity("src", "/tmp/src", List.of())));
+        byPath.put("host.cfg",
+            new CanonicalModuleIdentity.ExternalModule("host/cfg"));
+        ModuleIdentityResolver.IdentityIndex index =
+            ModuleIdentityResolver.buildIndex(byPath);
+
+        check("@$builtin/Error".equals(index.descriptorTextFor(
+                new CanonicalClassIdentity(
+                    CanonicalModuleIdentity.BuiltinModule.INSTANCE, "Error"))),
+            "builtin Error projects @$builtin/Error");
+        check("@src/app/User".equals(index.descriptorTextFor(
+                new CanonicalClassIdentity(byPath.get("app.user"), "User"))),
+            "project class projects @<rootText>/<components>/<Name>");
+        check("@src/Helper".equals(index.descriptorTextFor(
+                new CanonicalClassIdentity(byPath.get("orch_main"), "Helper"))),
+            "root-level module projects @<rootText>/<Name>");
+        check("@$external/host/cfg/ServerConfig".equals(index.descriptorTextFor(
+                new CanonicalClassIdentity(byPath.get("host.cfg"), "ServerConfig"))),
+            "externals class projects @$external/<rawSpecifier>/<Name>");
+        check("@src/app/User".equals(index.descriptorTextFor("app.user", "User")),
+            "module-path convenience accessor round-trips");
+        check(new CanonicalClassIdentity(byPath.get("app.user"), "User")
+                .equals(index.identityForDescriptorText("@src/app/User")),
+            "identityForDescriptorText round-trips a produced text");
+
+        boolean builtinOtherThrows = false;
+        try {
+            index.descriptorTextFor(new CanonicalClassIdentity(
+                CanonicalModuleIdentity.BuiltinModule.INSTANCE, "Other"));
+        } catch (IllegalStateException e) {
+            builtinOtherThrows = true;
+        }
+        check(builtinOtherThrows,
+            "a non-Error builtin identity has no pinned projection (fail-closed)");
+
+        boolean unrepresentableThrows = false;
+        try {
+            ModuleIdentityResolver.IdentityIndex bad = ModuleIdentityResolver.buildIndex(
+                Map.of("", CanonicalModuleIdentity.BuiltinModule.INSTANCE,
+                    "m", new CanonicalModuleIdentity.ProjectModule(
+                        new ProjectModuleIdentity("bad root", "/x", List.of()))));
+            bad.descriptorTextFor(new CanonicalClassIdentity(byPath2Identity(bad, "m"), "C"));
+        } catch (IllegalStateException e) {
+            unrepresentableThrows = true;
+        }
+        check(unrepresentableThrows,
+            "an unrepresentable root text fails closed at projection");
+
+        // The one Type->text producer over the index.
+        CanonicalRuntimeTypeDescriptor service =
+            new CanonicalRuntimeTypeDescriptor(index, index.moduleIdentityLookup());
+        check("[@src/app/User]".equals(service.encode(
+                new Type.Array(Types.classType("User", "app.user")))),
+            "encode(Type) emits [@src/app/User] via the index");
+        check("(?@src/app/User)->boolean".equals(service.encode(
+                new Type.Func(List.of(new Type.Nullable(
+                    Types.classType("User", "app.user"))), Type.Boolean.INSTANCE))),
+            "encode(Type) emits ?D function parameters");
+        check("@$builtin/Error".equals(service.encode(Types.classType("Error", ""))),
+            "encode(Type) emits @$builtin/Error for the builtin Error type");
+        check("async(bytes)->bytes".equals(service.encode(
+                new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Bytes.INSTANCE, true))),
+            "encode(Type) emits async(bytes)->bytes");
+
+        boolean absentIdentityThrows = false;
+        try {
+            service.encode(Types.classType("Ghost", "unclassified.mod"));
+        } catch (IllegalStateException e) {
+            absentIdentityThrows = true;
+        }
+        check(absentIdentityThrows,
+            "a class from an unclassified module path fails closed (invariant)");
+        boolean errorSentinelThrows = false;
+        try {
+            service.encode(Type.Error.INSTANCE);
+        } catch (IllegalStateException e) {
+            errorSentinelThrows = true;
+        }
+        check(errorSentinelThrows,
+            "Type.Error has no canonical descriptor (invariant)");
+    }
+
+    /** The module identity of a dotted path inside a freshly built index. */
+    private static CanonicalModuleIdentity byPath2Identity(
+            CanonicalClassIdentityIndex index, String modulePath) {
+        if (index instanceof ModuleIdentityResolver.IdentityIndex ii) {
+            return ii.modulePathIdentities().get(modulePath);
+        }
+        throw new AssertionError("expected the module-identity index");
+    }
+
+    private static void testLegacyDialectRetirementScan() {
+        System.out.println("-- Scan: jsTypeDescriptor and the legacy dialect are gone --");
+        try {
+            String js = Files.readString(Path.of("deal/codegen/js/JsBackend.java"));
+            check(!js.contains("jsTypeDescriptor"),
+                "deal/codegen/js/JsBackend.java no longer contains jsTypeDescriptor");
+            check(!js.contains("|null"),
+                "deal/codegen/js/JsBackend.java spells no legacy |null text");
+            check(!js.contains("\"T[]\"") && !js.contains("+ \"[]\""),
+                "deal/codegen/js/JsBackend.java spells no legacy T[] suffix text");
+            String rt = Files.readString(Path.of("deal/runtime.js"));
+            check(rt.contains("internal: cannot parse type descriptor"),
+                "deal/runtime.js carries the pinned cannot-parse arm");
+            check(!rt.contains("$classname\", \"Error\")"),
+                "deal/runtime.js no longer tags the bare Error identity");
+        } catch (IOException e) {
+            fail("legacy-dialect scan failed: " + e.getMessage());
+        }
     }
 
     private static void testErrorDefaultFilling() throws Exception {

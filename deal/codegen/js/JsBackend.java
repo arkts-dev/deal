@@ -54,8 +54,13 @@ import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.codegen.SourceMapGenerator;
+import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.identity.CanonicalClassIdentityIndex;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
+import deal.module.ModuleIdentityResolver;
 import deal.module.StdlibModuleResolver;
 import deal.types.Type;
 import deal.types.Types;
@@ -66,7 +71,9 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.function.Function;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -80,7 +87,8 @@ import java.util.Set;
  * steps 1-9, with steps 5-8 structurally empty — later slices populate
  * the import bindings, the predeclared {@code let}s, the declarations,
  * and the export assignments), the {@link #jsName} binding-position
- * translation and {@link #jsTypeDescriptor} descriptor foundations, the
+ * translation and the canonical {@link CanonicalRuntimeTypeDescriptor}
+ * descriptor foundations, the
  * entry shim with the location-embedding catch body, and the E6004 entry
  * backstop.
  *
@@ -117,7 +125,7 @@ import java.util.Set;
  *
  * <p>ISSUE-0249 functions-and-closures slice: function declarations
  * and expressions emit as {@code $rt.function} wrappers with the exact
- * {@code jsTypeDescriptor} signature, the entry parameter checks in
+ * canonical descriptor signature, the entry parameter checks in
  * parameter order with the forwarded {@code $file}/{@code $line}/
  * {@code $column} span (parameter errors report the call site), the
  * return-site exit checks on every {@code return} path plus the
@@ -168,7 +176,7 @@ import java.util.Set;
  * function declarations and expressions emit as native
  * {@code async function} bodies inside the {@code $rt.function}
  * wrapper with the exact {@code async(...)} descriptor signature
- * (the {@code async} prefix from {@link #jsTypeDescriptor}, the T3
+ * (the {@code async} prefix from the canonical descriptor, the T3
  * wrapper mechanics intact), {@code await E} lowers to
  * {@code await <callee>.$f(<args>, <file>, <line>, <column>)} with
  * the literal call-site span arguments (the direct and the indirect
@@ -308,65 +316,6 @@ public final class JsBackend {
             ? identifier + "$" : identifier;
     }
 
-    /**
-     * The JS runtime type descriptor for an internal {@link Type},
-     * mirroring {@code LuaBackend.typeDescriptor} byte-for-byte
-     * (deal/codegen/lua/LuaBackend.java:884-933): {@code null}/primitive
-     * names, bare {@code Error}, {@code @<modulePath>/<Name>} classes,
-     * {@code T[]} with the {@code [T]} disambiguation form for
-     * function-involving elements, {@code T|null} with the {@code ?F}
-     * form for nullable function types, and {@code async(...)->R}
-     * (js-backend-emitter D5). Package-visible for the same-package
-     * harness.
-     */
-    static String jsTypeDescriptor(Type t) {
-        if (t == null) return "null";
-        return switch (t) {
-            case Type.Null ignored -> "null";
-            case Type.Boolean ignored -> "boolean";
-            case Type.Int ignored -> "int";
-            case Type.Number ignored -> "number";
-            case Type.String ignored -> "string";
-            case Type.Table ignored -> "table";
-            case Type.Bytes ignored -> "bytes";
-            case Type.Error ignored -> "Error";
-            case Type.Array arr -> {
-                String elem = jsTypeDescriptor(arr.element());
-                // Function-involving elements emit the spec bracket form,
-                // so "[(int)->int]" (array of functions) cannot be misread
-                // as "(int)->int[]" (function returning an int array).
-                yield elem.contains("->") ? "[" + elem + "]" : elem + "[]";
-            }
-            case Type.Nullable n -> {
-                // Nullable function types emit the spec "?F" form, so
-                // "?(int)->int" (nullable function) cannot be misread as
-                // "(int)->int|null" (function returning a nullable int).
-                // Every other nullable keeps the legacy "T|null" spelling.
-                if (n.inner() instanceof Type.Func) {
-                    yield "?" + jsTypeDescriptor(n.inner());
-                }
-                yield jsTypeDescriptor(n.inner()) + "|null";
-            }
-            case Type.Class cls -> {
-                if (cls.modulePath() != null && !cls.modulePath().isEmpty()) {
-                    yield "@" + cls.modulePath() + "/" + cls.name();
-                }
-                yield cls.name();
-            }
-            case Type.Func f -> {
-                StringBuilder sb = new StringBuilder();
-                if (f.isAsync()) sb.append("async");
-                sb.append("(");
-                for (int i = 0; i < f.paramTypes().size(); i++) {
-                    if (i > 0) sb.append(",");
-                    sb.append(jsTypeDescriptor(f.paramTypes().get(i)));
-                }
-                sb.append(")->").append(jsTypeDescriptor(f.returnType()));
-                yield sb.toString();
-            }
-        };
-    }
-
     // =========================================================================
     // State
     // =========================================================================
@@ -379,6 +328,15 @@ public final class JsBackend {
     private final SymbolTable symbols;
     private final String sourcePath;
     private final String modulePath;
+    /**
+     * The per-compilation canonical descriptor service
+     * ({@link CanonicalRuntimeTypeDescriptor#encode(Type)}) — the one
+     * {@code Type}&rarr;text producer this emitter consumes, constructed
+     * over the compilation's identity index and module-path
+     * classification (js-v12-completion-architecture D3).  No legacy
+     * descriptor spelling is ever emitted.
+     */
+    private final CanonicalRuntimeTypeDescriptor descriptors;
     // Import classification (raw import path → imported module path /
     // declared export map): consumed by the import-binding and rejection
     // slices (T4/T6); retained here for the module shape.
@@ -482,7 +440,9 @@ public final class JsBackend {
                       String sourcePath, String modulePath,
                       Map<String, String> importResolutions,
                       Map<String, Map<String, Type>> hostModules,
-                      boolean isEntry, SourceMapGenerator sourceMapGenerator) {
+                      boolean isEntry,
+                      CanonicalRuntimeTypeDescriptor descriptors,
+                      SourceMapGenerator sourceMapGenerator) {
         this.typeMap = typeMap;
         this.symbols = symbols;
         this.sourcePath = sourcePath;
@@ -490,6 +450,7 @@ public final class JsBackend {
         this.importResolutions = importResolutions;
         this.hostModules = hostModules;
         this.isEntry = isEntry;
+        this.descriptors = descriptors;
         this.sourceMapGenerator = sourceMapGenerator;
         localScopes.add(new HashSet<>());
     }
@@ -521,16 +482,26 @@ public final class JsBackend {
                                            Map<String, String> importResolutions,
                                            Map<String, Map<String, Type>> hostModules,
                                            boolean isEntry) {
+        // Recorder-less convenience overload (js-v12-source-maps D2):
+        // mapping recording is disabled; the standalone identity surface
+        // is built by the source-map variant below.
         return generate(program, result, sourcePath, modulePath,
             importResolutions, hostModules, isEntry, null);
     }
 
     /**
-     * Source-map variant (js-v12-source-maps D2): {@code sourceMap} may
-     * be {@code null} to disable mapping recording, otherwise the
-     * emitter records one mapping at each generated statement-group
-     * boundary — the current output line/column at the emission site
-     * mapped to the AST statement's {@link Span} start (the Lua
+     * Standalone-surface variant (js-v12-source-maps D2): no
+     * compilation-wide identity index is supplied, so the module path
+     * itself is the configured root text with no relative components
+     * (the single-module adapter convention — e.g. module path "Main"
+     * projects "@Main/<Name>") plus the intrinsic builtin Error
+     * classification.  The real pipeline calls the production seam
+     * below with the orchestrator-built per-compilation surface.
+     * {@code sourceMap} may be {@code null} to disable mapping
+     * recording, otherwise the emitter records one mapping at each
+     * generated statement-group boundary — the current output
+     * line/column at the emission site mapped to the AST statement's
+     * {@link Span} start (the Lua
      * {@code LuaBackend.generateResult} optional-generator precedent) —
      * and the returned result carries the recorder so the caller
      * serializes the sidecar after codegen.
@@ -543,14 +514,61 @@ public final class JsBackend {
                                            Map<String, Map<String, Type>> hostModules,
                                            boolean isEntry,
                                            SourceMapGenerator sourceMap) {
+        Map<String, CanonicalModuleIdentity> byPath = new LinkedHashMap<>();
+        byPath.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        String effectiveModulePath = modulePath == null ? "" : modulePath;
+        if (!effectiveModulePath.isEmpty()) {
+            byPath.put(effectiveModulePath,
+                new CanonicalModuleIdentity.ProjectModule(
+                    new ProjectModuleIdentity(effectiveModulePath,
+                        effectiveModulePath, List.of())));
+        }
+        ModuleIdentityResolver.IdentityIndex standalone =
+            ModuleIdentityResolver.buildIndex(byPath);
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, hostModules, isEntry, standalone,
+            standalone.moduleIdentityLookup(), sourceMap);
+    }
+
+    /**
+     * The production seam: generates one CommonJS artifact for a checked
+     * DEAL module over the compilation's canonical identity surface —
+     * the per-compilation identity index and the module-path
+     * classification (js-v12-completion-architecture D3).  Every
+     * {@code Type}&rarr;text production site consumes
+     * {@link CanonicalRuntimeTypeDescriptor#encode(Type)} built from
+     * that surface; no legacy descriptor spelling is emitted.  The
+     * {@code sourceMap} recorder attaches optional mapping recording
+     * (js-v12-source-maps D2); {@code null} disables it.
+     *
+     * @param identityIndex    the compilation's canonical class-identity
+     *                         index (the orchestrator-built
+     *                         {@code ModuleIdentityResolver.IdentityIndex})
+     * @param moduleIdentities the compilation's dotted-module-path &rarr;
+     *                         module-identity classification
+     * @param sourceMap        the mapping recorder (or {@code null})
+     */
+    public static JsCodegenResult generate(ProgramNode program, CheckResult result,
+                                           String sourcePath, String modulePath,
+                                           Map<String, String> importResolutions,
+                                           Map<String, Map<String, Type>> hostModules,
+                                           boolean isEntry,
+                                           CanonicalClassIdentityIndex identityIndex,
+                                           Function<String, CanonicalModuleIdentity> moduleIdentities,
+                                           SourceMapGenerator sourceMap) {
         java.util.Objects.requireNonNull(program, "program must not be null");
         java.util.Objects.requireNonNull(result, "result must not be null");
         java.util.Objects.requireNonNull(importResolutions,
             "importResolutions must not be null");
         java.util.Objects.requireNonNull(hostModules,
             "hostModules must not be null");
+        java.util.Objects.requireNonNull(identityIndex,
+            "identityIndex must not be null");
+        java.util.Objects.requireNonNull(moduleIdentities,
+            "moduleIdentities must not be null");
         JsBackend backend = new JsBackend(result.typeMap(), result.symbolTable(),
             sourcePath, modulePath, importResolutions, hostModules, isEntry,
+            new CanonicalRuntimeTypeDescriptor(identityIndex, moduleIdentities),
             sourceMap);
         return backend.generateProgram(program);
     }
@@ -680,15 +698,22 @@ public final class JsBackend {
             + "(v, $file, $line, $column) => $rt.numberConvert(v, $file, $line, $column));\n");
         out.append("const $ErrorDefaults = () => ({ [\"code\"]: \"\", "
             + "[\"message\"]: \"\" });\n");
+        // The builtin Error identity is the canonical @$builtin/Error
+        // atom, produced through the compilation's descriptor service
+        // (js-v12-completion-architecture D3 — the supersession of the
+        // v1.1 bare-`Error` spelling).
+        String $errorIdentity =
+            descriptors.encode(Types.classType("Error", ""));
         out.append("const Error$new = (provided, $file, $line, $column) => "
-            + "$rt.makeClass(\"Error\", \"Error\", $ErrorDefaults, provided, "
+            + "$rt.makeClass(\"Error\", " + jsStringLiteral($errorIdentity)
+            + ", $ErrorDefaults, provided, "
             + "$file, $line, $column);\n");
         // The builtin-Error META pair member: `Error` as a value is
         // checker-accepted class metadata exactly like any declared
-        // class's — module-private, identity `Error` bare, the inline
+        // class's — module-private, identity @$builtin/Error, the inline
         // META shape of js-backend-emitter D4 step 7.
         out.append("const Error$meta = { $kind: \"class\", "
-            + "$classname: \"Error\" };\n");
+            + "$classname: " + jsStringLiteral($errorIdentity) + " };\n");
         out.append("\n");
         // 5. Import bindings in import order: spec-stdlib raw paths
         // require <relpath>/std/<name>, project modules the relative
@@ -1177,7 +1202,7 @@ public final class JsBackend {
         if (funcType == null) {
             funcType = functionTypeFromAst(fd);
         }
-        String sig = funcType != null ? jsTypeDescriptor(funcType) : "()";
+        String sig = funcType != null ? descriptors.encode(funcType) : "()";
         Type returnType = funcType != null ? funcType.returnType() : null;
         boolean isAsync = funcType != null && funcType.isAsync();
 
@@ -1371,17 +1396,18 @@ public final class JsBackend {
     }
 
     /**
-     * The module-qualified runtime class identity for a class declared in
-     * this module: bare name when the module path is empty, else
-     * {@code @<modulePath>/<name>} (runtime-class-identity D1-D2, the
-     * {@code LuaBackend.qualifiedClassName} mirror).
+     * The canonical runtime class identity for a class declared in this
+     * module: the compilation's identity-index projection for this
+     * module's identity and the class name, produced through the one
+     * descriptor service (js-v12-completion-architecture D3) —
+     * {@code @<configuredRootText>/<relativeModuleComponents>/<Name>} in
+     * the real pipeline, {@code @<modulePath>/<Name>} under the
+     * standalone single-module surface.
      */
     private String qualifiedClassName(String name) {
         String mp = modulePath != null ? modulePath : sourcePath;
-        if (mp == null || mp.isEmpty()) {
-            return name;
-        }
-        return "@" + mp + "/" + name;
+        return descriptors.encode(
+            Types.classType(name, mp == null ? "" : mp));
     }
 
     /**
@@ -2579,7 +2605,7 @@ public final class JsBackend {
     private String emitFunctionExpr(FunctionExpr fe) {
         Type funcType = typeOf(fe);
         String sig = funcType instanceof Type.Func f
-            ? jsTypeDescriptor(f) : "()";
+            ? descriptors.encode(f) : "()";
         Type returnType = funcType instanceof Type.Func f
             ? f.returnType() : null;
         boolean isAsync = funcType instanceof Type.Func f && f.isAsync();
@@ -2877,7 +2903,7 @@ public final class JsBackend {
 
         StringBuilder sb = new StringBuilder();
         sb.append("$rt.function(")
-            .append(jsStringLiteral(jsTypeDescriptor(targetFunc)))
+            .append(jsStringLiteral(descriptors.encode(targetFunc)))
             .append(", ")
             .append(asyncBody ? "async function(" : "function(")
             .append(params).append(") {\n");
@@ -3209,16 +3235,16 @@ public final class JsBackend {
             case Type.Bytes ignored -> valueExpr;
             case Type.Error ignored -> valueExpr;
             case Type.Array arr ->
-                "$rt.checkArray(\"" + jsTypeDescriptor(type) + "\", "
+                "$rt.checkArray(\"" + descriptors.encode(type) + "\", "
                     + valueExpr + ", " + spanParam + ")";
             case Type.Nullable n ->
-                "$rt.checkNullable(\"" + jsTypeDescriptor(n.inner()) + "\", "
+                "$rt.checkNullable(\"" + descriptors.encode(n.inner()) + "\", "
                     + valueExpr + ", " + spanParam + ")";
             case Type.Class cls ->
-                "$rt.checkType(\"" + jsTypeDescriptor(cls) + "\", "
+                "$rt.checkType(\"" + descriptors.encode(cls) + "\", "
                     + valueExpr + ", " + spanParam + ")";
             case Type.Func f ->
-                "$rt.checkType(\"" + jsTypeDescriptor(f) + "\", "
+                "$rt.checkType(\"" + descriptors.encode(f) + "\", "
                     + valueExpr + ", " + spanParam + ")";
         };
     }

@@ -1,18 +1,23 @@
 package deal.descriptors;
 
+import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
+import deal.identity.CanonicalModuleIdentity;
 import deal.types.Type;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Function;
 
 /**
  * The canonical runtime type descriptor service (DEAL v1.2): one
  * per-compilation instance over the compilation's
- * {@link CanonicalClassIdentityIndex} (design source
- * {@code canonical-type-system-and-runtime-descriptors} D2/D5), with
- * strict static {@linkplain #parse(String) parsing}, verbatim static
+ * {@link CanonicalClassIdentityIndex} and the module-identity layer's
+ * module-path classification (design source
+ * {@code canonical-type-system-and-runtime-descriptors} D2/D5,
+ * {@code strict-project-context-resolution-identity} D6), with strict
+ * static {@linkplain #parse(String) parsing}, verbatim static
  * {@linkplain #render(DescriptorAst) rendering}, and the instance
  * {@linkplain #encode(Type) encode} surface — the single Type→text
  * authority; no second Type→text producer may exist.
@@ -48,20 +53,36 @@ import java.util.Objects;
  * {@code render(parse(text))} is byte-identical to {@code text}, and
  * {@code parse(render(ast))} round-trips for every atom.</p>
  *
- * <p>Encoding is total for class-free legal types and never emits a
- * legacy spelling ({@code T[]}, {@code T|null}, bare names, rest sigs):
- * primitives encode verbatim ({@code bytes} → {@code bytes});
- * {@code Array<T>} → {@code [D]}; {@code Nullable<T>} → {@code ?D};
- * functions carry the exact sync/async marker, the ordered parameter
- * descriptors, and the return descriptor.  {@link Type.Error} — the
- * internal sentinel — has no descriptor and is a pinned internal
- * invariant violation (internal error, never fallback text, never an
- * artifact).  {@link Type.Class} encoding lands with the
- * identity-carriage sibling: at this stage it is an explicit internal
- * invariant violation; the class branch consumes the held index.  For
- * every class-free legal type {@code T},
+ * <h2>The per-compilation encode service</h2>
+ *
+ * <p>One instance is constructed per compilation over the
+ * compilation's {@link CanonicalClassIdentityIndex} (the E2-produced
+ * identity index) plus the compilation's module-path classification
+ * function — the module-identity layer's surface that maps a checked
+ * {@link Type.Class#modulePath()} to its {@link CanonicalModuleIdentity}
+ * (builtin {@code Error} for the empty module path, an externals module
+ * for externals-listed declarations, a project module otherwise).  The
+ * classification is supplied, never recomputed: this class performs no
+ * resolution, classification, or descriptor-text projection of its own
+ * (design source {@code canonical-type-system-and-runtime-descriptors}
+ * D2/D3/D5, {@code js-v12-completion-architecture} D3).</p>
+ *
+ * <p>{@link #encode(Type)} is the one {@code Type}&rarr;text producer:
+ * {@code [D]} arrays, {@code ?D} nullables, {@code bytes}, exact
+ * {@code async? (...) -&gt; D} functions, and class atoms from
+ * {@code index.descriptorTextFor(identity)} byte-for-byte
+ * ({@code @&lt;configuredRootText&gt;/&lt;relativeModuleComponents&gt;/&lt;ClassName&gt;},
+ * {@code @$external/&lt;specifier&gt;/&lt;ClassName&gt;},
+ * {@code @$builtin/Error}).  It never emits a legacy spelling
+ * ({@code T[]}, {@code T|null}, bare class names, the bare {@code Error}
+ * atom).  For every legal type {@code T},
  * {@code render(parse(encode(T)))} equals {@code encode(T)}
  * byte-for-byte.</p>
+ *
+ * <p>{@link Type.Error} — the internal checker sentinel — and a class
+ * whose identity is absent from the index are pinned internal invariant
+ * violations: {@code encode} throws {@link IllegalStateException}, never
+ * silently emits text and never an artifact.</p>
  *
  * <p>The runtime matcher remains a separate service layer.</p>
  */
@@ -81,65 +102,61 @@ public final class CanonicalRuntimeTypeDescriptor {
     private static final List<String> PRIMITIVE_KEYWORDS =
         List.of("null", "boolean", "int", "number", "string", BYTES_DESCRIPTOR, "table");
 
-    /**
-     * The compilation's canonical class-identity index.  The class encode
-     * branch (the identity-carriage sibling) consumes this index; this
-     * class never recomputes or reverse-parses identity text.
-     */
+    // =========================================================================
+    // Per-compilation encode service
+    // =========================================================================
+
+    /** The compilation's canonical class-identity index (E2-produced). */
     private final CanonicalClassIdentityIndex index;
 
     /**
-     * Constructs the per-compilation descriptor service over the
-     * compilation's validated {@link CanonicalClassIdentityIndex}
-     * (design source {@code canonical-type-system-and-runtime-descriptors}
-     * D5: one service instance per compilation, constructed after the
-     * identity layer's index exists).
-     *
-     * @param index the compilation's canonical class-identity index;
-     *              never {@code null}
+     * The compilation's module-path classification: checked
+     * {@link Type.Class#modulePath()} &rarr; the canonical public module
+     * identity the module-identity layer assigned (supplied, never
+     * recomputed — design source {@code canonical-type-system-and-runtime-descriptors}
+     * D3/D5; {@code null} for a module path the layer classified as
+     * having no public identity, which {@link #encode} reports as the
+     * pinned invariant violation).
      */
-    public CanonicalRuntimeTypeDescriptor(CanonicalClassIdentityIndex index) {
-        this.index = Objects.requireNonNull(index, "index must not be null");
-    }
-
-    // =========================================================================
-    // encode
-    // =========================================================================
+    private final Function<String, CanonicalModuleIdentity> moduleIdentities;
 
     /**
-     * Encodes a checked {@link Type} to canonical descriptor text — the
-     * single Type→text authority of the compilation.
+     * Constructs the per-compilation descriptor service over the
+     * compilation's identity index and module-path classification
+     * (design source {@code canonical-type-system-and-runtime-descriptors}
+     * D5: one service instance per compilation, constructed after the
+     * identity layer's surfaces exist).
      *
-     * <ul>
-     *   <li>Primitives verbatim: {@code null}, {@code boolean},
-     *       {@code int}, {@code number}, {@code string}, {@code bytes},
-     *       {@code table}.</li>
-     *   <li>{@code Array<T>} → {@code [D]}; {@code Nullable<T>} →
-     *       {@code ?D}; functions carry the exact sync/async marker plus
-     *       the ordered parameter descriptors and the return
-     *       descriptor.</li>
-     *   <li>No legacy spelling ({@code T[]}, {@code T|null}, bare
-     *       names, rest sigs) is ever emitted for any input.</li>
-     * </ul>
+     * @param index            the canonical class-identity index; non-null
+     * @param moduleIdentities the module-path &rarr; module-identity
+     *                         classification function; non-null
+     */
+    public CanonicalRuntimeTypeDescriptor(CanonicalClassIdentityIndex index,
+            Function<String, CanonicalModuleIdentity> moduleIdentities) {
+        this.index = Objects.requireNonNull(index, "index must not be null");
+        this.moduleIdentities = Objects.requireNonNull(moduleIdentities,
+            "moduleIdentities must not be null");
+    }
+
+    /**
+     * Encodes a checked {@link Type} into canonical descriptor text —
+     * the one {@code Type}&rarr;text producer of the compilation.
      *
-     * <p>Total for class-free legal types: for every such {@code T},
-     * {@code render(parse(encode(T)))} equals {@code encode(T)}
-     * byte-for-byte.</p>
+     * <p>Total for legal types: primitives (including {@code bytes})
+     * render their names; {@link Type.Array} renders {@code [D]};
+     * {@link Type.Nullable} renders {@code ?D}; {@link Type.Func}
+     * renders the exact {@code async? (p1,p2) -&gt; R} form;
+     * {@link Type.Class} renders the index-registered class atom
+     * byte-for-byte.  {@link Type.Error} and a class whose identity is
+     * absent from the index throw {@link IllegalStateException} (pinned
+     * internal invariant violations — never silently emitted, never an
+     * artifact).</p>
      *
-     * <p><b>Internal invariant violations:</b> {@link Type.Error} (the
-     * internal sentinel) has no descriptor and {@link Type.Class} is not
-     * encodable until the class branch lands with the identity-carriage
-     * sibling; both raise {@link IllegalStateException} — an internal
-     * error with never a fallback text and never an artifact.</p>
-     *
-     * @param type the checked type to encode (never {@code null})
-     * @return the canonical descriptor text
-     * @throws NullPointerException     when {@code type} is {@code null}
-     * @throws IllegalStateException    when {@code type} is
-     *                                  {@link Type.Error} or
-     *                                  {@link Type.Class} (pinned
-     *                                  internal invariant violations at
-     *                                  this stage)
+     * @param type the checked type; non-null
+     * @return the byte-identical canonical descriptor text
+     * @throws NullPointerException  when {@code type} is {@code null}
+     * @throws IllegalStateException for the internal {@link Type.Error}
+     *         sentinel or an identity absent from the index
      */
     public String encode(Type type) {
         Objects.requireNonNull(type, "type must not be null");
@@ -151,25 +168,41 @@ public final class CanonicalRuntimeTypeDescriptor {
             case Type.String ignored -> "string";
             case Type.Bytes ignored -> BYTES_DESCRIPTOR;
             case Type.Table ignored -> "table";
-            case Type.Array a -> "[" + encode(a.element()) + "]";
-            case Type.Nullable n -> "?" + encode(n.inner());
-            case Type.Func f -> encodeFunction(f);
             case Type.Error ignored -> throw new IllegalStateException(
-                "Type.Error is the internal sentinel and has no canonical "
-                + "descriptor; it must never be silently emitted and never "
-                + "reach artifact publication");
-            case Type.Class c -> throw new IllegalStateException(
-                "Type.Class is not encodable in the class-free stage: the "
-                + "class branch lands with the identity-carriage sibling; "
-                + "got " + c);
+                "Type.Error reached a descriptor production site: the internal "
+                    + "checker sentinel has no canonical descriptor and must never "
+                    + "be emitted (internal invariant violation)");
+            case Type.Array arr -> "[" + encode(arr.element()) + "]";
+            case Type.Nullable n -> "?" + encode(n.inner());
+            case Type.Class cls -> encodeClass(cls);
+            case Type.Func f -> encodeFunction(f);
         };
     }
 
     /**
-     * {@code async? "(" (D ("," D)*)? ")" "->" D} — the exact sync/async
-     * marker, the ordered parameter descriptors, and the return
-     * descriptor.
+     * Encodes a nominal class type through the identity index: the
+     * module-path classification resolves the declaring module's
+     * {@link CanonicalModuleIdentity}, and
+     * {@code index.descriptorTextFor(identity)} supplies the pinned
+     * projection text byte-for-byte (never recomputed, never
+     * reverse-parsed).
      */
+    private String encodeClass(Type.Class cls) {
+        CanonicalModuleIdentity moduleIdentity =
+            moduleIdentities.apply(cls.modulePath());
+        if (moduleIdentity == null) {
+            throw new IllegalStateException(
+                "no canonical public module identity for class '" + cls.name()
+                    + "' declared in module path '" + cls.modulePath()
+                    + "': the module-identity layer classified this module "
+                    + "without a public identity, so a class there can never "
+                    + "be represented (internal invariant violation)");
+        }
+        return index.descriptorTextFor(
+            new CanonicalClassIdentity(moduleIdentity, cls.name()));
+    }
+
+    /** The exact {@code async? (p1,...,pn) -&gt; R} function form. */
     private String encodeFunction(Type.Func f) {
         StringBuilder sb = new StringBuilder();
         if (f.isAsync()) {
@@ -182,8 +215,7 @@ public final class CanonicalRuntimeTypeDescriptor {
             }
             sb.append(encode(f.paramTypes().get(i)));
         }
-        sb.append(")->");
-        sb.append(encode(f.returnType()));
+        sb.append(")->").append(encode(f.returnType()));
         return sb.toString();
     }
 
@@ -559,8 +591,27 @@ public final class CanonicalRuntimeTypeDescriptor {
                 }
                 default -> { }
             }
-            // Unicode whitespace (including space separators).
-            if (Character.isWhitespace(cp) || Character.isSpaceChar(cp)) {
+            // The full pinned Unicode White_Space property (UAX #44
+            // PropList White_Space=Yes): 0009-000D, 0020, 0085, 00A0,
+            // 1680, 2000-200A, 2028, 2029, 202F, 205F, 3000 — the
+            // single component-exclusion authority shared with
+            // ModuleIdentityResolver.isUnicodeWhiteSpace and the JS
+            // runtime's $CANONICAL_WS.  Checked explicitly, never via
+            // Character.isWhitespace/isSpaceChar: Java's isWhitespace
+            // excludes U+0085 NEXT LINE (a White_Space Cc control)
+            // since JDK 5, which would let that scalar pass the
+            // component alphabet and diverge from the runtime parser.
+            if ((cp >= 0x0009 && cp <= 0x000D)
+                    || cp == 0x0020
+                    || cp == 0x0085
+                    || cp == 0x00A0
+                    || cp == 0x1680
+                    || (cp >= 0x2000 && cp <= 0x200A)
+                    || cp == 0x2028
+                    || cp == 0x2029
+                    || cp == 0x202F
+                    || cp == 0x205F
+                    || cp == 0x3000) {
                 return true;
             }
             // A lone surrogate is not a decoded Unicode scalar.

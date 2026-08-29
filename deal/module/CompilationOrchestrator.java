@@ -13,6 +13,8 @@ import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticFormatter;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
 import deal.parser.*;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedProjectBuildResult;
@@ -72,6 +74,15 @@ public final class CompilationOrchestrator {
     private final boolean sourceMapExplicit;
     private final Backend backend;
     private final List<Path> moduleRoots;
+    /**
+     * The configured root texts, aligned index-wise with
+     * {@link #moduleRoots}: the manifest-spelled root text when the
+     * configuration carries one, else the resolved root path's final
+     * component (the implicit project root).  Consumed by the
+     * canonical identity classification of {@link #codegenAllJs()}
+     * (js-v12-completion-architecture D3).
+     */
+    private final List<String> configuredRootTexts;
     private final Path stdlibDir;
 
     /**
@@ -261,6 +272,20 @@ public final class CompilationOrchestrator {
         this.sourceMap = sourceMap;
         this.sourceMapExplicit = sourceMapExplicit;
         this.moduleRoots = moduleRoots;
+        List<String> rootTexts = new ArrayList<>(moduleRoots.size());
+        for (int i = 0; i < moduleRoots.size(); i++) {
+            String text = null;
+            if (config != null && config.moduleRoots() != null
+                    && i < config.moduleRoots().size()) {
+                text = config.moduleRoots().get(i);
+            }
+            if (text == null || text.isEmpty()) {
+                Path fileName = moduleRoots.get(i).getFileName();
+                text = fileName != null ? fileName.toString() : "";
+            }
+            rootTexts.add(text);
+        }
+        this.configuredRootTexts = List.copyOf(rootTexts);
         this.stdlibDir = stdlibDir;
         this.diagnosticsJsonPath = diagnosticsJsonPath;
 
@@ -1792,6 +1817,27 @@ public final class CompilationOrchestrator {
      * per-module .deal.map.json sidecar writes in pass 2 instead.
      */
     private void codegenAllJs() throws IOException {
+        // Canonical identity surface (js-v12-completion-architecture D3):
+        // one per-compilation identity index over the module-path
+        // classification, consumed by the JS emitter's descriptor
+        // service.  The intrinsic builtin Error classification (the
+        // checker's empty module path) and every known module join the
+        // map; a module the classification cannot give a public identity
+        // (an out-of-root relative source) stays absent — class-free
+        // code remains valid, and a class there fails closed at
+        // descriptor production (the pinned invariant violation).
+        Map<String, CanonicalModuleIdentity> modulePathIdentities =
+            new HashMap<>();
+        modulePathIdentities.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        for (ModuleInfo info : modules.values()) {
+            CanonicalModuleIdentity identity = classifyModuleIdentity(info);
+            if (identity != null) {
+                modulePathIdentities.put(info.modulePath, identity);
+            }
+        }
+        ModuleIdentityResolver.IdentityIndex identityIndex =
+            ModuleIdentityResolver.buildIndex(modulePathIdentities);
+
         // Pass 1: generate every module and merge diagnostics. Rejected
         // modules write no artifact.
         List<ModuleInfo> cleanModules = new ArrayList<>();
@@ -1839,7 +1885,8 @@ public final class CompilationOrchestrator {
             // recorder: pass 2 runs for clean modules only.
             JsBackend.JsCodegenResult res = JsBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
-                importResolutions, hostModules, isEntry,
+                importResolutions, hostModules, isEntry, identityIndex,
+                identityIndex.moduleIdentityLookup(),
                 sourceMap ? new SourceMapGenerator() : null);
             // Native ranged backend list (T12): the backend emits
             // CompilerDiagnostic entries directly, so the orchestrator
@@ -2320,24 +2367,36 @@ public final class CompilationOrchestrator {
     // Path computation
     // =========================================================================
 
-    private String computeModulePath(Path sourceFile) {
+    /**
+     * The index of the configured root that most specifically contains
+     * the source file (longest absolute normalized prefix), or {@code -1}
+     * when no root contains it.
+     */
+    private int bestRootIndex(Path sourceFile) {
         Path absFile = sourceFile.toAbsolutePath().normalize();
-        Path bestRoot = null;
+        int bestIndex = -1;
         int bestLength = -1;
 
-        for (Path root : moduleRoots) {
-            Path absRoot = root.toAbsolutePath().normalize();
+        for (int i = 0; i < moduleRoots.size(); i++) {
+            Path absRoot = moduleRoots.get(i).toAbsolutePath().normalize();
             if (absFile.startsWith(absRoot)) {
                 int len = absRoot.toString().length();
                 if (len > bestLength) {
                     bestLength = len;
-                    bestRoot = absRoot;
+                    bestIndex = i;
                 }
             }
         }
+        return bestIndex;
+    }
 
-        if (bestRoot != null) {
-            Path relative = bestRoot.relativize(absFile);
+    private String computeModulePath(Path sourceFile) {
+        Path absFile = sourceFile.toAbsolutePath().normalize();
+        int bestRoot = bestRootIndex(sourceFile);
+
+        if (bestRoot >= 0) {
+            Path relative = moduleRoots.get(bestRoot)
+                .toAbsolutePath().normalize().relativize(absFile);
             String path = relative.toString();
             if (path.endsWith(".d.deal")) {
                 path = path.substring(0, path.length() - ".d.deal".length());
@@ -2371,6 +2430,56 @@ public final class CompilationOrchestrator {
             return name.substring(0, name.length() - ".deal".length());
         }
         return name;
+    }
+
+    // =========================================================================
+    // Canonical module-identity classification (js-v12-completion-architecture D3)
+    // =========================================================================
+
+    /**
+     * The canonical public module identity of one compiled module, per
+     * the identity layer's classification (design source
+     * {@code strict-project-context-resolution-identity} D6):
+     * externals-listed declarations carry
+     * {@code ExternalModule(rawImportSpecifier)} (the manifest key
+     * exactly as written), spec stdlib modules and the intrinsic builtin
+     * {@code Error} module carry {@code BuiltinModule}, and a configured
+     * root-contained source module carries
+     * {@code ProjectModule(configuredRootText, relativeModuleComponents)}
+     * with the defining file's directory components below its most
+     * specific root.  {@code null} means the module has no public
+     * identity (an out-of-root relative source): class-free code stays
+     * valid, and a class there fails closed at descriptor production.
+     */
+    private CanonicalModuleIdentity classifyModuleIdentity(ModuleInfo info) {
+        String dotted = info.modulePath;
+        if (dotted == null || dotted.isEmpty()) {
+            return CanonicalModuleIdentity.BuiltinModule.INSTANCE;
+        }
+        // Externals-listed declarations: the externals key exactly as
+        // written (dotted module path -> raw key via the declaration path).
+        for (Map.Entry<String, String> entry : externalsDeclarations.entrySet()) {
+            String dottedPath = externalsModulePaths.get(entry.getValue());
+            if (dotted.equals(dottedPath)) {
+                return new CanonicalModuleIdentity.ExternalModule(entry.getKey());
+            }
+        }
+        if (isSpecStdlibModuleInfo(info)) {
+            return CanonicalModuleIdentity.BuiltinModule.INSTANCE;
+        }
+        int rootIndex = bestRootIndex(Path.of(info.sourcePath));
+        if (rootIndex < 0) {
+            return null;
+        }
+        String rootText = configuredRootTexts.get(rootIndex);
+        if (rootText == null || rootText.isEmpty()) {
+            return null;
+        }
+        Path rootPath = moduleRoots.get(rootIndex);
+        return new CanonicalModuleIdentity.ProjectModule(
+            new ProjectModuleIdentity(rootText,
+                rootPath.toAbsolutePath().normalize().toString(),
+                ModuleIdentityResolver.directoryComponents(dotted)));
     }
 
     // =========================================================================

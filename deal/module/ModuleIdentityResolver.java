@@ -1,18 +1,25 @@
 package deal.module;
 
+import deal.descriptors.CanonicalRuntimeTypeDescriptor;
+import deal.descriptors.DescriptorAst;
+import deal.descriptors.DescriptorParseResult;
+import deal.identity.CanonicalClassIdentity;
+import deal.identity.CanonicalClassIdentityIndex;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
 import deal.project.ConfiguredModuleRoot;
 import deal.project.ExternalEntry;
 import deal.project.ProjectContext;
-
 import java.net.URI;
 import java.nio.file.FileSystemNotFoundException;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.function.Function;
 
 /**
  * The pure classifier of public module identity plus the pinned descriptor
@@ -20,8 +27,8 @@ import java.util.Objects;
  * {@code strict-project-context-resolution-identity} D6,
  * {@code deal-v1.2-int32-and-bytes-architecture} D6).
  *
- * <p>This half of the resolver performs <b>no source resolution and no
- * identity assembly</b>: it is a pure function of a validated
+ * <p>The classifier below performs <b>no source resolution</b>: it is a
+ * pure function of a validated
  * {@link ProjectContext} and canonical (symlink-resolved) {@code file:}
  * source URIs, and it performs no filesystem access — every input is
  * pre-resolved by the upstream components (ProjectLocator for roots,
@@ -120,6 +127,57 @@ import java.util.Objects;
  * component is exactly one of them is unrepresentable as a project
  * identity. Class names are identifier-shaped by the grammar,
  * {@code [a-zA-Z_$][a-zA-Z0-9_$]*}.</p>
+ * <b>Per-compilation identity-index surface (ISSUE-0317):</b> beyond the
+ * pure classifier above, this class also publishes the per-compilation
+ * identity artifacts the JS descriptor lane consumes (design source
+ * {@code strict-project-context-resolution-identity} D6,
+ * {@code canonical-type-system-and-runtime-descriptors} D3/D5).
+ *
+ * <p>The classification itself — which resolved source carries which
+ * {@link CanonicalModuleIdentity} (builtin, externals-listed, configured
+ * root) — is computed by the compilation seams that hold the resolution
+ * inputs (the orchestrator's module map, the configured roots, and the
+ * externals manifest entries); this class owns the compiled identity
+ * artifacts those seams publish into:</p>
+ *
+ * <ul>
+ *   <li>the per-compilation {@link IdentityIndex} — a concrete
+ *       {@link CanonicalClassIdentityIndex} whose
+ *       {@code descriptorTextFor(identity)} returns the pinned
+ *       descriptor-text projection byte-for-byte:
+ *       {@code @&lt;configuredRootText&gt;/&lt;relativeModuleComponents&gt;/&lt;ClassName&gt;}
+ *       for project modules,
+ *       {@code @$external/&lt;rawImportSpecifier&gt;/&lt;ClassName&gt;} for
+ *       externals-listed declarations, and {@code @$builtin/Error} for the
+ *       intrinsic builtin {@code Error} class; and</li>
+ *   <li>the module-path classification function the per-compilation
+ *       {@link CanonicalRuntimeTypeDescriptor} consumes to resolve a
+ *       checked {@code Type.Class#modulePath()} into its module
+ *       identity.</li>
+ * </ul>
+ *
+ * <p>The index never recomputes or reverse-parses a root boundary from
+ * text: projections are derived from the supplied identity carriers
+ * only.  Every produced text is validated through the canonical strict
+ * parser ({@link CanonicalRuntimeTypeDescriptor#parse(String)}) and must
+ * be a byte-identical {@link DescriptorAst.ClassAtom}; an
+ * unrepresentable identity (a component outside the pinned alphabet, a
+ * non-identifier-shaped class name, or a builtin class other than the
+ * pinned {@code Error} projection) is the pinned internal invariant
+ * violation — {@link IllegalStateException}, never invented text and
+ * never a silent fallback (the eligibility gate that turns these cases
+ * into public E2010 diagnostics at declaration sites is the
+ * module-identity layer's, {@code strict-project-context-resolution-identity}
+ * D6).</p>
+ *
+ * <p>The reverse accessor {@code identityForDescriptorText(text)}
+ * returns the identity registered for a byte-identical produced text.
+ * Registration is production-driven: every text produced by
+ * {@code descriptorTextFor} registers both directions, so
+ * {@code identityForDescriptorText(descriptorTextFor(id))} always
+ * round-trips; a text no identity has been produced for is an absent
+ * lookup (pinned invariant violation).</p>
+
  */
 public final class ModuleIdentityResolver {
 
@@ -675,5 +733,221 @@ public final class ModuleIdentityResolver {
 
     private static boolean isDigit(char c) {
         return c >= '0' && c <= '9';
+    }
+
+    /**
+     * Builds the per-compilation identity index over the compilation's
+     * module-path classification (dotted module path &rarr; canonical
+     * module identity).  The empty module path entry classifies the
+     * intrinsic builtin {@code Error} module (the checker represents the
+     * builtin Error class as {@code Type.Class("Error", "")}).
+     *
+     * @param modulePathIdentities the dotted module path &rarr; module
+     *                             identity classification; non-null
+     * @return the per-compilation identity index
+     */
+    public static IdentityIndex buildIndex(
+            Map<String, CanonicalModuleIdentity> modulePathIdentities) {
+        return new IdentityIndex(modulePathIdentities);
+    }
+
+    /**
+     * The concrete per-compilation {@link CanonicalClassIdentityIndex}.
+     *
+     * <p>Immutable over the classification map; deterministic;
+     * single-threaded per compilation (the pinned concurrency model of
+     * the compilation seams that consume it).</p>
+     */
+    public static final class IdentityIndex implements CanonicalClassIdentityIndex {
+
+        /** The dotted module path &rarr; module-identity classification. */
+        private final Map<String, CanonicalModuleIdentity> byModulePath;
+
+        /** Produced identity &rarr; descriptor text (both directions registered per production). */
+        private final Map<CanonicalClassIdentity, String> textByIdentity =
+            new HashMap<>();
+
+        /** Produced descriptor text &rarr; identity (byte-for-byte). */
+        private final Map<String, CanonicalClassIdentity> identityByText =
+            new HashMap<>();
+
+        private IdentityIndex(Map<String, CanonicalModuleIdentity> modulePathIdentities) {
+            Objects.requireNonNull(modulePathIdentities,
+                "modulePathIdentities must not be null");
+            this.byModulePath = Map.copyOf(modulePathIdentities);
+        }
+
+        /**
+         * The module-path classification function the per-compilation
+         * {@link CanonicalRuntimeTypeDescriptor} consumes:
+         * {@code Type.Class#modulePath()} &rarr; {@link CanonicalModuleIdentity},
+         * {@code null} for a module path the classification does not
+         * carry (no public identity).
+         *
+         * @return the classification function; never null
+         */
+        public Function<String, CanonicalModuleIdentity> moduleIdentityLookup() {
+            return byModulePath::get;
+        }
+
+        @Override
+        public String descriptorTextFor(CanonicalClassIdentity identity) {
+            Objects.requireNonNull(identity, "identity must not be null");
+            String cached = textByIdentity.get(identity);
+            if (cached != null) {
+                return cached;
+            }
+            String text = projection(identity);
+            // Every produced text must be a canonical class atom
+            // byte-for-byte (design source
+            // canonical-type-system-and-runtime-descriptors D3): the
+            // strict parser is the single validation boundary, so no
+            // unrepresentable identity can ever be published.
+            DescriptorParseResult parsed = CanonicalRuntimeTypeDescriptor.parse(text);
+            if (!(parsed instanceof DescriptorAst.ClassAtom atom)
+                    || !atom.fullDescriptorText().equals(text)) {
+                throw new IllegalStateException(
+                    "identity projection '" + text + "' for class '"
+                        + identity.className() + "' is not a canonical class "
+                        + "descriptor atom: "
+                        + (parsed instanceof deal.descriptors.DescriptorSyntaxError err
+                            ? err.kind() + "@" + err.scalarOffset() + ": " + err.message()
+                            : "unexpected parse result " + parsed)
+                        + " (internal invariant violation — the identity is "
+                        + "unrepresentable)");
+            }
+            textByIdentity.put(identity, text);
+            identityByText.put(text, identity);
+            return text;
+        }
+
+        @Override
+        public CanonicalClassIdentity identityForDescriptorText(
+                String descriptorText) {
+            Objects.requireNonNull(descriptorText,
+                "descriptorText must not be null");
+            CanonicalClassIdentity identity = identityByText.get(descriptorText);
+            if (identity == null) {
+                throw new IllegalStateException(
+                    "descriptor text '" + descriptorText
+                        + "' is not registered in the compilation's identity "
+                        + "index (absent-lookup contract: internal invariant "
+                        + "violation)");
+            }
+            return identity;
+        }
+
+        /**
+         * The pinned descriptor-text projection of one class identity,
+         * derived from the identity carriers only — never from text.
+         */
+        private String projection(CanonicalClassIdentity identity) {
+            return switch (identity.moduleIdentity()) {
+                case CanonicalModuleIdentity.BuiltinModule ignored -> {
+                    if (!"Error".equals(identity.className())) {
+                        throw new IllegalStateException(
+                            "no pinned descriptor-text projection for builtin "
+                                + "class '" + identity.className()
+                                + "' (only the intrinsic Error class has the "
+                                + "pinned @$builtin/Error projection; a "
+                                + "required other builtin identity is "
+                                + "unrepresentable)");
+                    }
+                    yield "@$builtin/Error";
+                }
+                case CanonicalModuleIdentity.ExternalModule ext -> {
+                    if (!"$external".equals(firstComponent(ext.rawImportSpecifier()))) {
+                        yield "@$external/" + ext.rawImportSpecifier()
+                            + "/" + identity.className();
+                    }
+                    // A specifier whose first component is the reserved
+                    // $external text can never be projected (D6
+                    // representability: $external/$builtin are reserved as
+                    // exact first components).
+                    throw new IllegalStateException(
+                        "externals raw import specifier '" + ext.rawImportSpecifier()
+                            + "' is unrepresentable (reserved first component)");
+                }
+                case CanonicalModuleIdentity.ProjectModule proj -> {
+                    ProjectModuleIdentity projectIdentity = proj.projectIdentity();
+                    String rootText = projectIdentity.configuredRootText();
+                    // A project root whose first component is one of the
+                    // reserved namespaces can never be projected (D6).
+                    String first = firstComponent(rootText);
+                    if ("$external".equals(first) || "$builtin".equals(first)) {
+                        throw new IllegalStateException(
+                            "configured root text '" + rootText
+                                + "' is unrepresentable (reserved first component)");
+                    }
+                    StringBuilder sb = new StringBuilder("@").append(rootText);
+                    for (String component
+                            : projectIdentity.relativeModuleComponents()) {
+                        sb.append('/').append(component);
+                    }
+                    yield sb.append('/').append(identity.className()).toString();
+                }
+            };
+        }
+
+        /** The first slash-separated component of a text, or the text itself. */
+        private static String firstComponent(String text) {
+            int slash = text.indexOf('/');
+            return slash < 0 ? text : text.substring(0, slash);
+        }
+
+        /**
+         * The dotted module path &rarr; module identity classification of
+         * this index, exposed for diagnostics; never mutated.
+         *
+         * @return the classification map (unmodifiable)
+         */
+        public Map<String, CanonicalModuleIdentity> modulePathIdentities() {
+            return byModulePath;
+        }
+
+        /**
+         * Convenience: the registered descriptor-text projection for a
+         * class declared in the given dotted module path.
+         *
+         * @param modulePath the declaring module's dotted path
+         * @param className  the class name
+         * @return the byte-identical canonical descriptor text
+         * @throws IllegalStateException for an unclassified module path or
+         *         an unrepresentable identity
+         */
+        public String descriptorTextFor(String modulePath, String className) {
+            CanonicalModuleIdentity moduleIdentity = byModulePath.get(modulePath);
+            if (moduleIdentity == null) {
+                throw new IllegalStateException(
+                    "module path '" + modulePath
+                        + "' has no canonical public module identity in this "
+                        + "compilation (internal invariant violation)");
+            }
+            return descriptorTextFor(
+                new CanonicalClassIdentity(moduleIdentity, className));
+        }
+    }
+
+    /**
+     * Derives the relative-module directory components of a dotted
+     * module path whose final component is the source file stem (the
+     * orchestrator's module-path shape): all components except the
+     * final one are the defining file's directory components below its
+     * configured root ({@code strict-project-context-resolution-identity}
+     * D6 — the source suffix and file stem are omitted from identity
+     * components).
+     *
+     * @param dottedModulePath the dotted module path; non-null
+     * @return the directory components (possibly empty)
+     */
+    public static List<String> directoryComponents(String dottedModulePath) {
+        Objects.requireNonNull(dottedModulePath, "dottedModulePath must not be null");
+        String[] parts = dottedModulePath.split("\\.", -1);
+        List<String> directories = new java.util.ArrayList<>(
+            Math.max(0, parts.length - 1));
+        for (int i = 0; i < parts.length - 1; i++) {
+            directories.add(parts[i]);
+        }
+        return directories;
     }
 }

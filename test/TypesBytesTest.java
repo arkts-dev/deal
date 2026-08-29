@@ -1,6 +1,7 @@
 package deal.test;
 
 import deal.checker.SymbolTable;
+import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.ir.IrDumper;
 import deal.types.Type;
 import deal.types.Types;
@@ -408,17 +409,27 @@ public class TypesBytesTest {
             fail("LuaBackend.typeDescriptor reflection failed: " + t);
         }
 
-        // JsBackend.jsTypeDescriptor — package-private static producer.
-        try {
-            Method m = Class.forName("deal.codegen.js.JsBackend")
-                .getDeclaredMethod("jsTypeDescriptor", Type.class);
-            m.setAccessible(true);
-            String desc = (String) m.invoke(null, Type.Bytes.INSTANCE);
-            check("bytes".equals(desc),
-                "JsBackend.jsTypeDescriptor(bytes) == \"bytes\"");
-        } catch (Throwable t) {
-            fail("JsBackend.jsTypeDescriptor reflection failed: " + t);
-        }
+        // The canonical per-compilation descriptor service — the one
+        // Type-to-text producer the JS backend consumes since
+        // ISSUE-0317 retired JsBackend.jsTypeDescriptor.
+        deal.module.ModuleIdentityResolver.IdentityIndex index =
+            deal.module.ModuleIdentityResolver.buildIndex(
+                Map.of("", deal.identity.CanonicalModuleIdentity.BuiltinModule.INSTANCE));
+        CanonicalRuntimeTypeDescriptor service =
+            new CanonicalRuntimeTypeDescriptor(index, index.moduleIdentityLookup());
+        check("bytes".equals(service.encode(Type.Bytes.INSTANCE)),
+            "CanonicalRuntimeTypeDescriptor.encode(bytes) == \"bytes\"");
+        check("[bytes]".equals(service.encode(
+                new Type.Array(Type.Bytes.INSTANCE))),
+            "CanonicalRuntimeTypeDescriptor.encode([bytes]) == \"[bytes]\"");
+        check("?bytes".equals(service.encode(
+                new Type.Nullable(Type.Bytes.INSTANCE))),
+            "CanonicalRuntimeTypeDescriptor.encode(?bytes) == \"?bytes\"");
+        check("async(bytes)->bytes".equals(service.encode(
+                new Type.Func(List.of(Type.Bytes.INSTANCE),
+                    Type.Bytes.INSTANCE, true))),
+            "CanonicalRuntimeTypeDescriptor.encode(async(bytes)->bytes) == "
+                + "\"async(bytes)->bytes\"");
 
         // IrDumper.specTypeDescriptor — private instance producer.
         try {
