@@ -69,6 +69,7 @@ javac --release 25 -proc:none -d build \
   test/SemanticIrValidatorTest.java \
   test/SemanticIrDumperTest.java \
   test/SemanticTableTest.java \
+  test/ContainerOpsExecutorTest.java \
   test/AstAndTypesTest.java \
   test/TypesBytesTest.java \
   test/LexerTest.java \
@@ -295,6 +296,10 @@ java -ea -cp build deal.test.SemanticIrDumperTest
 echo ""
 echo "=== Running Semantic Table / Array Value Model Tests (ISSUE-0383 C2) ==="
 java -ea -cp build deal.test.SemanticTableTest
+
+echo ""
+echo "=== Running Container Ops Executor Tests (ISSUE-0384 C3) ==="
+java -ea -cp build deal.test.ContainerOpsExecutorTest
 
 echo ""
 echo "=== Running Protected Path Ops Tests (ISSUE-0262) ==="
