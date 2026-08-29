@@ -341,6 +341,11 @@ public class DiagnosticClassificationTest {
         coverage.put("E8011", "test_runtime.lua (host module load validation) / "
             + "BackendConformanceTest jvm-host-abi-slice "
             + "(missing host export) / JvmBackendTest (host ABI)");
+        coverage.put("E8012", "test_runtime.lua (bytes_new negative length; "
+            + "bytes_get/bytes_set index bounds) / JsBackendTest (bytes E8012 "
+            + "runtime pins)");
+        coverage.put("E8013", "test_runtime.lua (bytes_set value outside 0..255) / "
+            + "JsBackendTest (bytes E8013 runtime pins)");
 
         int total = DiagnosticCode.values().length;
         int covered = 0;

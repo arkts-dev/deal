@@ -318,7 +318,11 @@ public enum DiagnosticCode {
     /** Function signature mismatch at runtime. */
     E8010(Phase.RUNTIME, "Function signature mismatch"),
     /** Missing or invalid host export at module load. */
-    E8011(Phase.RUNTIME, "Missing or invalid host export");
+    E8011(Phase.RUNTIME, "Missing or invalid host export"),
+    /** Bytes length or byte-index out of bounds. */
+    E8012(Phase.RUNTIME, "Bytes length or index out of bounds"),
+    /** Bytes write value outside the 0..255 range. */
+    E8013(Phase.RUNTIME, "Bytes value out of range");
 
     // =========================================================================
     // Enum definition
