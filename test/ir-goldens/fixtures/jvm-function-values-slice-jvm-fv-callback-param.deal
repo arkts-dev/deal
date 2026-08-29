@@ -1,0 +1,6 @@
+// IR golden fixture: jvm-function-values-slice-jvm-fv-callback-param
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-function-values-slice.json case 'jvm-fv-callback-param' (ISSUE-0358).
+
+function inc(x: int): int { return x + 1; }
+function apply(f: (x: int) => int, v: int): int { return f(v); }
+export function test(): int { return apply(inc, 41); }

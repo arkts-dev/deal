@@ -1,0 +1,8 @@
+// IR golden fixture: jvm-classes-slice-jvm-class-default-expression-arithmetic
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-classes-slice.json case 'jvm-class-default-expression-arithmetic' (ISSUE-0358).
+
+class Point { x: int = 1 + 2; }
+export function test(): int {
+  let p: Point = {};
+  return p.x;
+}

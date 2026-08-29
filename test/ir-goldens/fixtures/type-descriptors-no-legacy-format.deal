@@ -1,0 +1,4 @@
+// IR golden fixture: type-descriptors-no-legacy-format
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'no-legacy-format' (ISSUE-0358).
+
+function f(a: int[], b: int | null, c: string | null, d: string[]): null { return; }

@@ -1,0 +1,31 @@
+module @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:4:1-9:1
+  function fact: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:4:1-8:6
+    param n: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:4:15-4:21
+      [boundary: param-entry]
+    body
+      if @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:5:3-6:8
+        binary <= : boolean @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:5:7-5:12
+          ident n : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:5:7-5:7
+          literal 1 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:5:12-5:12
+        block @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:5:15-5:27
+          return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:5:17-5:27
+            [boundary: return]
+            literal 1 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:5:24-5:24
+      return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:6:3-7:1
+        [boundary: return]
+        binary * : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:6:10-6:24
+          ident n : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:6:10-6:10
+          call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:6:14-6:24
+            ident fact : (int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:6:14-6:17
+            binary - : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:6:19-6:23
+              ident n : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:6:19-6:19
+              literal 1 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:6:23-6:23
+  export @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:8:1-9:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:8:8-9:1
+      body
+        return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:8:31-8:47
+          [boundary: return]
+          call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:8:38-8:44
+            ident fact : (int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:8:38-8:41
+            literal 6 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-self-recursion-factorial.deal:8:43-8:43

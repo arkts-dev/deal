@@ -1,0 +1,7 @@
+module @test/ir-goldens/fixtures/type-descriptors-primitive-int.deal:4:1-5:1
+  function f: null @test/ir-goldens/fixtures/type-descriptors-primitive-int.deal:4:1-5:1
+    body
+      let x: int @test/ir-goldens/fixtures/type-descriptors-primitive-int.deal:4:22-4:44
+        [boundary: var-annotation]
+        literal 42 : int @test/ir-goldens/fixtures/type-descriptors-primitive-int.deal:4:35-4:36
+      return @test/ir-goldens/fixtures/type-descriptors-primitive-int.deal:4:39-4:47

@@ -1,0 +1,23 @@
+module @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:4:1-9:1
+  class Point @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:4:1-4:41
+    field x: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:4:15-4:28
+      [boundary: class-default]
+      literal 10 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:4:24-4:25
+    field y: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:4:28-4:41
+      [boundary: class-default]
+      literal 20 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:4:37-4:38
+  export @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:5:1-9:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:5:8-9:1
+      body
+        let p: @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal/Point @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:6:3-7:8
+          [boundary: var-annotation]
+          object : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal/Point @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:6:18-6:19
+            [boundary: class-construct]
+        return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:7:3-8:1
+          [boundary: return]
+          binary + : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:7:10-7:18
+            member .x : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:7:10-7:12
+              ident p : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal/Point @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:7:10-7:10
+            member .y : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:7:16-7:18
+              ident p : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal/Point @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-construction-defaults.deal:7:16-7:16

@@ -1,0 +1,12 @@
+// IR golden fixture: jvm-async-slice-jvm-async-function-value-local-reassign
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-async-slice.json case 'jvm-async-function-value-local-reassign' (ISSUE-0358).
+
+async function a(): string { return "a"; }
+async function b(): string { return "b"; }
+export async function test(): string {
+  let f: async () => string = a;
+  let s: string = await f();
+  f = b;
+  let t: string = await f();
+  return s + t;
+}

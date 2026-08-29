@@ -1,0 +1,12 @@
+module @test/ir-goldens/fixtures/type-descriptors-no-legacy-format.deal:4:1-5:1
+  function f: null @test/ir-goldens/fixtures/type-descriptors-no-legacy-format.deal:4:1-5:1
+    param a: [int] @test/ir-goldens/fixtures/type-descriptors-no-legacy-format.deal:4:12-4:20
+      [boundary: param-entry]
+    param b: ?int @test/ir-goldens/fixtures/type-descriptors-no-legacy-format.deal:4:22-4:35
+      [boundary: param-entry]
+    param c: ?string @test/ir-goldens/fixtures/type-descriptors-no-legacy-format.deal:4:37-4:53
+      [boundary: param-entry]
+    param d: [string] @test/ir-goldens/fixtures/type-descriptors-no-legacy-format.deal:4:55-4:66
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/type-descriptors-no-legacy-format.deal:4:76-4:84

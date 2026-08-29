@@ -1,0 +1,33 @@
+// IR golden fixture: jvm-nullable-slice-jvm-nullable-fields
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-nullable-slice.json case 'jvm-nullable-fields' (ISSUE-0358).
+
+class Holder {
+  i: int | null = 1;
+  s: string | null = null;
+  flag: boolean | null = null;
+  box: Holder | null = null;
+}
+export function test(): int {
+  let h: Holder = {};
+  let r: int = 0;
+  let hi: int | null = h.i;
+  if (hi !== null) { r = hi; }
+  h.i = null;
+  let hi2: int | null = h.i;
+  if (hi2 === null) { r = r + 10; }
+  h.i = 5;
+  let hi3: int | null = h.i;
+  if (hi3 !== null) { r = r + hi3; }
+  let hs: string | null = h.s;
+  if (hs === null) { r = r + 1; }
+  h.flag = true;
+  let hf: boolean | null = h.flag;
+  if (hf !== null) { if (hf) { r = r + 1; } }
+  h.box = h;
+  let b: Holder | null = h.box;
+  if (b !== null) {
+    let bi: int | null = b.i;
+    if (bi !== null) { r = r + bi; }
+  }
+  return r;
+}

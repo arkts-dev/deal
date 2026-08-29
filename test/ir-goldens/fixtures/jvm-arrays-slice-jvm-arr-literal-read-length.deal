@@ -1,0 +1,7 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-literal-read-length
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-literal-read-length' (ISSUE-0358).
+
+export function test(): int {
+  let xs: int[] = [10, 20, 30];
+  return xs[0] + xs[1] + xs[2] + xs.length;
+}

@@ -1,0 +1,22 @@
+module @test/ir-goldens/fixtures/async-await-async-nested-await.deal:4:1-7:1
+  async function c: int @test/ir-goldens/fixtures/async-await-async-nested-await.deal:4:1-5:5
+    body
+      return @test/ir-goldens/fixtures/async-await-async-nested-await.deal:4:27-4:38
+        [boundary: async-completion]
+        literal 10 : int @test/ir-goldens/fixtures/async-await-async-nested-await.deal:4:34-4:35
+  async function b: int @test/ir-goldens/fixtures/async-await-async-nested-await.deal:5:1-6:6
+    body
+      return @test/ir-goldens/fixtures/async-await-async-nested-await.deal:5:27-5:45
+        [boundary: async-completion]
+        await : int @test/ir-goldens/fixtures/async-await-async-nested-await.deal:5:34-5:42
+          call : int @test/ir-goldens/fixtures/async-await-async-nested-await.deal:5:40-5:42
+            ident c : async()->int @test/ir-goldens/fixtures/async-await-async-nested-await.deal:5:40-5:40
+  export @test/ir-goldens/fixtures/async-await-async-nested-await.deal:6:1-7:1
+    [boundary: export]
+    async function a: int @test/ir-goldens/fixtures/async-await-async-nested-await.deal:6:8-7:1
+      body
+        return @test/ir-goldens/fixtures/async-await-async-nested-await.deal:6:34-6:52
+          [boundary: async-completion]
+          await : int @test/ir-goldens/fixtures/async-await-async-nested-await.deal:6:41-6:49
+            call : int @test/ir-goldens/fixtures/async-await-async-nested-await.deal:6:47-6:49
+              ident b : async()->int @test/ir-goldens/fixtures/async-await-async-nested-await.deal:6:47-6:47

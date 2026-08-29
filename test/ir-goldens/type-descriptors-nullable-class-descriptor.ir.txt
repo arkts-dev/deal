@@ -1,0 +1,10 @@
+module @test/ir-goldens/fixtures/type-descriptors-nullable-class-descriptor.deal:4:1-6:1
+  class User @test/ir-goldens/fixtures/type-descriptors-nullable-class-descriptor.deal:4:1-4:33
+    field name: string @test/ir-goldens/fixtures/type-descriptors-nullable-class-descriptor.deal:4:14-4:33
+      [boundary: class-default]
+      literal "" : string @test/ir-goldens/fixtures/type-descriptors-nullable-class-descriptor.deal:4:29-4:30
+  function f: null @test/ir-goldens/fixtures/type-descriptors-nullable-class-descriptor.deal:5:1-6:1
+    param u: ?User @test/ir-goldens/fixtures/type-descriptors-nullable-class-descriptor.deal:5:12-5:26
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/type-descriptors-nullable-class-descriptor.deal:5:36-5:44

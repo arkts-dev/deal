@@ -1,0 +1,4 @@
+// IR golden fixture: type-descriptors-primitive-string
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'primitive-string' (ISSUE-0358).
+
+function f(): null { let x: string = "hello"; return; }

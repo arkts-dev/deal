@@ -1,0 +1,4 @@
+// IR golden fixture: jvm-skeleton-jvm-int-safe-range-intrinsic
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-int-safe-range-intrinsic' (ISSUE-0358).
+
+export function test(): int { return int(9007199254740992.0); }

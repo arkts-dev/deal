@@ -1,0 +1,34 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:4:1-12:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function pass: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:5:1-6:6
+    param x: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:5:15-5:22
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:5:32-5:42
+        ident x : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:5:39-5:39
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:6:1-12:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:6:8-12:1
+      body
+        let a: string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:7:3-8:5
+          [boundary: var-annotation]
+          literal "x" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:7:19-7:21
+        let y: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:8:3-9:3
+          [boundary: var-annotation]
+          call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:8:17-8:36
+            ident pass : (null)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:8:17-8:20
+            call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:8:22-8:35
+              [boundary: stdlib-boundary]
+              member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:8:22-8:32
+                [boundary: table-read]
+                ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:8:22-8:28
+                  [boundary: import]
+              ident a : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:8:34-8:34
+        expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:9:3-9:9
+          assign = : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:9:3-9:9
+            [boundary: assignment]
+            ident a : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:9:3-9:3
+            literal "y" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:9:7-9:9
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-arg-capture.deal:10:3-11:1

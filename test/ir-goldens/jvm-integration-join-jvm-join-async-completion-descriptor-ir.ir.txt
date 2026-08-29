@@ -1,0 +1,17 @@
+module @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-async-completion-descriptor-ir.deal:4:1-9:1
+  async function fetch: string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-async-completion-descriptor-ir.deal:4:1-5:6
+    param x: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-async-completion-descriptor-ir.deal:4:22-4:28
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-async-completion-descriptor-ir.deal:4:40-4:52
+        [boundary: async-completion]
+        literal "s" : string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-async-completion-descriptor-ir.deal:4:47-4:49
+  export @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-async-completion-descriptor-ir.deal:5:1-9:1
+    [boundary: export]
+    function main: null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-async-completion-descriptor-ir.deal:5:8-9:1
+      body
+        let f: async(int)->string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-async-completion-descriptor-ir.deal:6:3-7:8
+          [boundary: var-annotation]
+          ident fetch : async(int)->string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-async-completion-descriptor-ir.deal:6:37-6:41
+        return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-async-completion-descriptor-ir.deal:7:3-8:1
+          literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-async-completion-descriptor-ir.deal:7:10-7:13

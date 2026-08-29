@@ -1,0 +1,31 @@
+module @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:4:1-7:1
+  function inc: int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:4:1-5:8
+    param x: int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:4:14-4:20
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:4:29-4:43
+        [boundary: return]
+        binary + : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:4:36-4:40
+          ident x : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:4:36-4:36
+          literal 1 : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:4:40-4:40
+  function apply: int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:5:1-6:6
+    param f: (int)->int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:5:16-5:34
+      [boundary: param-entry]
+    param v: int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:5:36-5:42
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:5:51-5:64
+        [boundary: return]
+        call : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:5:58-5:61
+          ident f : (int)->int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:5:58-5:58
+          ident v : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:5:60-5:60
+  export @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:6:1-7:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:6:8-7:1
+      body
+        return @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:6:31-6:54
+          [boundary: return]
+          call : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:6:38-6:51
+            ident apply : ((int)->int,int)->int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:6:38-6:42
+            ident inc : (int)->int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:6:44-6:46
+            literal 41 : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-callback-param.deal:6:49-6:50

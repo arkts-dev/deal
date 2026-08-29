@@ -1,0 +1,15 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-four-element-types
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-four-element-types' (ISSUE-0358).
+
+export function test(): string {
+  let ns: number[] = [1.5, 2.5];
+  ns[1] = ns[0] + 1.0;
+  let ss: string[] = ["a", "b"];
+  ss[0] = ss[1] + "x";
+  let bs: boolean[] = [true, false];
+  bs[1] = bs[0];
+  if (ns[0] === 1.5 && ns[1] === 2.5 && ss[0] === "bx" && ss[1] === "b" && bs[0] && bs[1] && ns.length === 2 && ss.length === 2 && bs.length === 2) {
+    return "ok";
+  }
+  return "bad";
+}

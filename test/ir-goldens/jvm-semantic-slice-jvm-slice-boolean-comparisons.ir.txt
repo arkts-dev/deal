@@ -1,0 +1,55 @@
+module @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:4:1-11:1
+  export @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:4:1-11:1
+    [boundary: export]
+    function test: boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:4:8-11:1
+      body
+        let a: boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:3-6:5
+          [boundary: var-annotation]
+          binary && : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:20-5:53
+            binary && : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:20-5:43
+              binary && : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:20-5:34
+                binary < : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:20-5:24
+                  literal 3 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:20-5:20
+                  literal 5 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:24-5:24
+                binary <= : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:29-5:34
+                  literal 5 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:29-5:29
+                  literal 5 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:34-5:34
+              binary > : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:39-5:43
+                literal 7 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:39-5:39
+                literal 2 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:43-5:43
+            binary >= : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:48-5:53
+              literal 2 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:48-5:48
+              literal 2 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:5:53-5:53
+        let b: boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:6:3-7:5
+          [boundary: var-annotation]
+          binary && : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:6:20-6:40
+            unary ! : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:6:20-6:28
+              binary === : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:6:22-6:28
+                literal 3 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:6:22-6:22
+                literal 4 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:6:28-6:28
+            binary !== : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:6:34-6:40
+              literal 3 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:6:34-6:34
+              literal 4 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:6:40-6:40
+        let c: boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:7:3-8:5
+          [boundary: var-annotation]
+          binary && : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:7:20-7:57
+            binary < : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:7:20-7:35
+              literal "alpha" : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:7:20-7:26
+              literal "beta" : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:7:30-7:35
+            binary !== : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:7:40-7:57
+              literal "beta" : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:7:40-7:45
+              literal "gamma" : string @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:7:51-7:57
+        let d: boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:8:3-9:8
+          [boundary: var-annotation]
+          binary || : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:8:20-8:32
+            literal false : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:8:20-8:24
+            literal true : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:8:29-8:32
+        return @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:9:3-10:1
+          [boundary: return]
+          binary && : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:9:10-9:25
+            binary && : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:9:10-9:20
+              binary && : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:9:10-9:15
+                ident a : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:9:10-9:10
+                ident b : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:9:15-9:15
+              ident c : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:9:20-9:20
+            ident d : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-boolean-comparisons.deal:9:25-9:25

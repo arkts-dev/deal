@@ -1,0 +1,12 @@
+// IR golden fixture: jvm-semantic-slice-jvm-slice-while-sum
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-semantic-slice.json case 'jvm-slice-while-sum' (ISSUE-0358).
+
+export function test(): int {
+  let i: int = 0;
+  let sum: int = 0;
+  while (i < 10) {
+    i = i + 1;
+    sum = sum + i;
+  }
+  return sum;
+}

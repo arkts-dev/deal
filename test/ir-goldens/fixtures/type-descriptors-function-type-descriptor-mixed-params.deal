@@ -1,0 +1,8 @@
+// IR golden fixture: type-descriptors-function-type-descriptor-mixed-params
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'function-type-descriptor-mixed-params' (ISSUE-0358).
+
+function check(x: int, s: string): boolean { return true; }
+export function main(): null {
+let f: (x: int, s: string) => boolean = check;
+return null;
+}

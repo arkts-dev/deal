@@ -1,0 +1,32 @@
+module @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:4:1-10:1
+  export @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:4:1-10:1
+    [boundary: export]
+    function test: number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:4:8-10:1
+      body
+        let x: number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:5:3-6:5
+          [boundary: var-annotation]
+          binary * : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:5:19-5:27
+            literal 2.5 : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:5:19-5:21
+            literal 2.0 : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:5:25-5:27
+        let y: number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:6:3-7:5
+          [boundary: var-annotation]
+          binary / : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:6:19-6:27
+            literal 7.0 : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:6:19-6:21
+            literal 2.0 : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:6:25-6:27
+        let m: number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:7:3-8:8
+          [boundary: var-annotation]
+          binary % : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:7:19-7:28
+            unary - : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:7:19-7:22
+              literal 7.0 : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:7:20-7:22
+            literal 3.0 : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:7:26-7:28
+        return @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:8:3-9:1
+          [boundary: return]
+          binary - : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:8:10-8:30
+            binary - : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:8:10-8:24
+              binary + : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:8:10-8:18
+                binary + : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:8:10-8:14
+                  ident x : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:8:10-8:10
+                  ident y : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:8:14-8:14
+                ident m : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:8:18-8:18
+              literal 2.5 : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:8:22-8:24
+            literal 3.0 : number @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-number-arithmetic.deal:8:28-8:30

@@ -1,0 +1,92 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:4:1-17:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function f: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:5:1-8:6
+    param xs: [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:5:12-5:25
+      [boundary: param-entry]
+    body
+      if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:6:3-7:1
+        binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:6:7-6:21
+          member .length : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:6:7-6:15
+            ident xs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:6:7-6:8
+          literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:6:21-6:21
+        block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:6:24-6:57
+          expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:6:26-6:54
+            call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:6:26-6:54
+              [boundary: stdlib-boundary]
+              member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:6:26-6:36
+                [boundary: table-read]
+                ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:6:26-6:32
+                  [boundary: import]
+              literal "param-len-zero" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:6:38-6:53
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:8:1-17:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:8:8-17:1
+      body
+        let bs: [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:9:3-10:5
+          [boundary: var-annotation]
+          array : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:9:23-9:28
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:9:24-9:27
+        let xs: [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:10:3-11:4
+          [boundary: var-annotation]
+          array : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:10:23-10:38
+            binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:10:24-10:37
+              index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:10:24-10:29
+                ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:10:24-10:25
+                literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:10:27-10:28
+              literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:10:34-10:37
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:11:3-12:3
+          binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:11:7-11:21
+            member .length : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:11:7-11:15
+              ident xs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:11:7-11:8
+            literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:11:21-11:21
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:11:24-11:56
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:11:26-11:53
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:11:26-11:53
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:11:26-11:36
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:11:26-11:32
+                    [boundary: import]
+                literal "decl-len-zero" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:11:38-11:52
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:12:3-12:21
+          call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:12:3-12:21
+            ident f : ([boolean])->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:12:3-12:3
+            array : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:12:5-12:20
+              binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:12:6-12:19
+                index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:12:6-12:11
+                  ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:12:6-12:7
+                  literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:12:9-12:10
+                literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:12:16-12:19
+        let ys: [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:13:3-14:4
+          [boundary: var-annotation]
+          array : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:13:23-13:44
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:13:24-13:27
+            binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:13:30-13:43
+              index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:13:30-13:35
+                ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:13:30-13:31
+                literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:13:33-13:34
+              literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:13:40-13:43
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:14:3-15:9
+          binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:14:7-14:21
+            member .length : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:14:7-14:15
+              ident ys : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:14:7-14:8
+            literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:14:21-14:21
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:14:24-14:56
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:14:26-14:53
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:14:26-14:53
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:14:26-14:36
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:14:26-14:32
+                    [boundary: import]
+                literal "mixed-len-one" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:14:38-14:52
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:15:3-15:21
+          call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:15:3-15:21
+            [boundary: stdlib-boundary]
+            member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:15:3-15:13
+              [boundary: table-read]
+              ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:15:3-15:9
+                [boundary: import]
+            literal "done" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse.deal:15:15-15:20

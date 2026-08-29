@@ -1,0 +1,76 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:4:1-21:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function intLit: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:5:1-6:8
+    body
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:5:26-5:37
+        [boundary: return]
+        literal 42 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:5:33-5:34
+  function numLit: number @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:6:1-7:8
+    body
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:6:29-6:41
+        [boundary: return]
+        literal 3.5 : number @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:6:36-6:38
+  function strLit: string @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:7:1-8:8
+    body
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:7:29-7:52
+        [boundary: return]
+        literal "jvm-literals" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:7:36-7:49
+  function boolLit: boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:8:1-9:6
+    body
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:8:31-8:44
+        [boundary: return]
+        literal true : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:8:38-8:41
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:9:1-21:1
+    [boundary: export]
+    function test: string @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:9:8-21:1
+      body
+        let z: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:10:3-11:5
+          [boundary: var-annotation]
+          literal null : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:10:17-10:20
+        let i: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:11:3-12:5
+          [boundary: var-annotation]
+          call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:11:16-11:23
+            ident intLit : ()->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:11:16-11:21
+        let n: number @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:12:3-13:5
+          [boundary: var-annotation]
+          call : number @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:12:19-12:26
+            ident numLit : ()->number @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:12:19-12:24
+        let b: boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:13:3-14:4
+          [boundary: var-annotation]
+          call : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:13:20-13:28
+            ident boolLit : ()->boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:13:20-13:26
+        if @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:14:3-19:8
+          binary && : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:14:7-14:32
+            binary && : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:14:7-14:27
+              binary === : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:14:7-14:14
+                ident i : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:14:7-14:7
+                literal 42 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:14:13-14:14
+              binary === : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:14:19-14:27
+                ident n : number @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:14:19-14:19
+                literal 3.5 : number @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:14:25-14:27
+            ident b : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:14:32-14:32
+          block @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:14:35-16:3
+            expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:15:5-15:25
+              call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:15:5-15:25
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:15:5-15:15
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:15:5-15:11
+                    [boundary: import]
+                call : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:15:17-15:24
+                  ident strLit : ()->string @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:15:17-15:22
+        block @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:16:10-18:3
+          expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:17:5-17:34
+            call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:17:5-17:34
+              [boundary: stdlib-boundary]
+              member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:17:5-17:15
+                [boundary: table-read]
+                ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:17:5-17:11
+                  [boundary: import]
+              literal "literals-broken" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:17:17-17:33
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:19:3-20:1
+          [boundary: return]
+          call : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:19:10-19:17
+            ident strLit : ()->string @test/ir-goldens/fixtures/jvm-skeleton-jvm-literals-output.deal:19:10-19:15

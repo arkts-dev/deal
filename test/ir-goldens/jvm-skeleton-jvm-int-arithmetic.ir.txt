@@ -1,0 +1,107 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:4:1-16:1
+  function add: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:4:1-5:8
+    param a: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:4:14-4:20
+      [boundary: param-entry]
+    param b: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:4:22-4:28
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:4:37-4:51
+        [boundary: return]
+        binary + : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:4:44-4:48
+          ident a : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:4:44-4:44
+          ident b : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:4:48-4:48
+  function sub: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:5:1-6:8
+    param a: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:5:14-5:20
+      [boundary: param-entry]
+    param b: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:5:22-5:28
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:5:37-5:51
+        [boundary: return]
+        binary - : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:5:44-5:48
+          ident a : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:5:44-5:44
+          ident b : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:5:48-5:48
+  function mul: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:6:1-7:8
+    param a: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:6:14-6:20
+      [boundary: param-entry]
+    param b: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:6:22-6:28
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:6:37-6:51
+        [boundary: return]
+        binary * : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:6:44-6:48
+          ident a : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:6:44-6:44
+          ident b : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:6:48-6:48
+  function div: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:7:1-8:8
+    param a: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:7:14-7:20
+      [boundary: param-entry]
+    param b: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:7:22-7:28
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:7:37-7:51
+        [boundary: return]
+        binary / : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:7:44-7:48
+          ident a : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:7:44-7:44
+          ident b : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:7:48-7:48
+  function mod: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:8:1-9:8
+    param a: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:8:14-8:20
+      [boundary: param-entry]
+    param b: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:8:22-8:28
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:8:37-8:51
+        [boundary: return]
+        binary % : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:8:44-8:48
+          ident a : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:8:44-8:44
+          ident b : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:8:48-8:48
+  function pow: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:9:1-10:6
+    param a: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:9:14-9:20
+      [boundary: param-entry]
+    param b: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:9:22-9:28
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:9:37-9:52
+        [boundary: return]
+        binary ** : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:9:44-9:49
+          ident a : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:9:44-9:44
+          ident b : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:9:49-9:49
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:10:1-16:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:10:8-16:1
+      body
+        let step1: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:11:3-12:5
+          [boundary: var-annotation]
+          call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:11:20-11:45
+            ident add : (int,int)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:11:20-11:22
+            call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:11:24-11:32
+              ident mul : (int,int)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:11:24-11:26
+              literal 7 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:11:28-11:28
+              literal 6 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:11:31-11:31
+            call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:11:35-11:44
+              ident div : (int,int)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:11:35-11:37
+              literal 25 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:11:39-11:40
+              literal 4 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:11:43-11:43
+        let step2: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:12:3-13:5
+          [boundary: var-annotation]
+          call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:12:20-12:41
+            ident sub : (int,int)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:12:20-12:22
+            ident step1 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:12:24-12:28
+            call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:12:31-12:40
+              ident mod : (int,int)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:12:31-12:33
+              literal 25 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:12:35-12:36
+              literal 4 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:12:39-12:39
+        let step3: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:13:3-14:8
+          [boundary: var-annotation]
+          call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:13:20-13:40
+            ident add : (int,int)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:13:20-13:22
+            ident step2 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:13:24-13:28
+            call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:13:31-13:39
+              ident pow : (int,int)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:13:31-13:33
+              literal 2 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:13:35-13:35
+              literal 3 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:13:38-13:38
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:14:3-15:1
+          [boundary: return]
+          call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:14:10-14:23
+            ident sub : (int,int)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:14:10-14:12
+            ident step3 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:14:14-14:18
+            literal 14 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-int-arithmetic.deal:14:21-14:22

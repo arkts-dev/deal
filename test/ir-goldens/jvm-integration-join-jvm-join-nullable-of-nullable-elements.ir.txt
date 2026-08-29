@@ -1,0 +1,94 @@
+module @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:4:1-26:1
+  function count: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:4:1-18:6
+    param xs: ?[?int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:4:16-4:41
+      [boundary: param-entry]
+    body
+      if @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:5:3-16:8
+        binary !== : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:5:7-5:17
+          ident xs : ?[?int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:5:7-5:8
+          literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:5:14-5:17
+        block @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:5:20-15:3
+          let arr: [?int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:6:5-7:7
+            [boundary: var-annotation]
+            ident xs : [?int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:6:31-6:32
+          let r: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:7:5-8:7
+            [boundary: var-annotation]
+            literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:7:18-7:18
+          let i: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:8:5-9:9
+            [boundary: var-annotation]
+            literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:8:18-8:18
+          while @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:9:5-14:10
+            binary < : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:9:12-9:25
+              ident i : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:9:12-9:12
+              member .length : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:9:16-9:25
+                ident arr : [?int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:9:16-9:18
+            block @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:9:28-13:5
+              let e: ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:10:7-11:8
+                [boundary: var-annotation]
+                index [] : ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:10:27-10:32
+                  ident arr : [?int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:10:27-10:29
+                  ident i : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:10:31-10:31
+              if @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:11:7-12:7
+                binary !== : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:11:11-11:20
+                  ident e : ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:11:11-11:11
+                  literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:11:17-11:20
+                block @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:11:23-11:36
+                  expr-stmt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:11:25-11:33
+                    assign = : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:11:25-11:33
+                      [boundary: assignment]
+                      ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:11:25-11:25
+                      binary + : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:11:29-11:33
+                        ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:11:29-11:29
+                        ident e : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:11:33-11:33
+              expr-stmt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:12:7-12:15
+                assign = : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:12:7-12:15
+                  [boundary: assignment]
+                  ident i : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:12:7-12:7
+                  binary + : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:12:11-12:15
+                    ident i : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:12:11-12:11
+                    literal 1 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:12:15-12:15
+          return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:14:5-15:3
+            [boundary: return]
+            ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:14:12-14:12
+      return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:16:3-17:1
+        [boundary: return]
+        unary - : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:16:10-16:11
+          literal 1 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:16:11-16:11
+  export @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:18:1-26:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:18:8-26:1
+      body
+        let xs: [?int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:19:3-20:4
+          [boundary: var-annotation]
+          array : [?int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:19:28-19:29
+        expr-stmt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:20:3-20:11
+          assign = : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:20:3-20:11
+            [boundary: array-write]
+            index [] : ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:20:3-20:7
+              ident xs : [?int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:20:3-20:4
+              literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:20:6-20:6
+            literal 2 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:20:11-20:11
+        expr-stmt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:21:3-21:14
+          assign = : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:21:3-21:14
+            [boundary: array-write]
+            index [] : ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:21:3-21:7
+              ident xs : [?int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:21:3-21:4
+              literal 1 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:21:6-21:6
+            literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:21:11-21:14
+        let got: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:22:3-23:5
+          [boundary: var-annotation]
+          call : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:22:18-22:26
+            ident count : (?[?int])->int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:22:18-22:22
+            ident xs : [?int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:22:24-22:25
+        let none: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:23:3-24:8
+          [boundary: var-annotation]
+          call : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:23:19-23:29
+            ident count : (?[?int])->int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:23:19-23:23
+            literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:23:25-23:28
+        return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:24:3-25:1
+          [boundary: return]
+          binary + : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:24:10-24:23
+            binary + : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:24:10-24:19
+              ident got : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:24:10-24:12
+              ident none : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:24:16-24:19
+            literal 3 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-of-nullable-elements.deal:24:23-24:23

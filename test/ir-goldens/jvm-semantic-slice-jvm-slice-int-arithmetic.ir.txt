@@ -1,0 +1,36 @@
+module @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:4:1-11:1
+  export @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:4:1-11:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:4:8-11:1
+      body
+        let a: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:5:3-6:5
+          [boundary: var-annotation]
+          binary * : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:5:16-5:20
+            literal 7 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:5:16-5:16
+            literal 6 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:5:20-5:20
+        let b: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:6:3-7:5
+          [boundary: var-annotation]
+          binary + : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:6:16-6:25
+            ident a : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:6:16-6:16
+            binary / : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:6:20-6:25
+              literal 25 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:6:20-6:21
+              literal 4 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:6:25-6:25
+        let c: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:7:3-8:5
+          [boundary: var-annotation]
+          binary - : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:7:16-7:25
+            ident b : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:7:16-7:16
+            binary % : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:7:20-7:25
+              literal 25 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:7:20-7:21
+              literal 4 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:7:25-7:25
+        let d: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:8:3-9:8
+          [boundary: var-annotation]
+          binary + : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:8:16-8:25
+            ident c : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:8:16-8:16
+            binary ** : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:8:20-8:25
+              literal 2 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:8:20-8:20
+              literal 3 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:8:25-8:25
+        return @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:9:3-10:1
+          [boundary: return]
+          binary - : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:9:10-9:15
+            ident d : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:9:10-9:10
+            literal 14 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-int-arithmetic.deal:9:14-9:15

@@ -1,0 +1,16 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-oob-read-e8001.deal:4:1-8:1
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-oob-read-e8001.deal:4:1-8:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-oob-read-e8001.deal:4:8-8:1
+      body
+        let xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-oob-read-e8001.deal:5:3-6:8
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-oob-read-e8001.deal:5:19-5:27
+            literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-oob-read-e8001.deal:5:20-5:20
+            literal 2 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-oob-read-e8001.deal:5:23-5:23
+            literal 3 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-oob-read-e8001.deal:5:26-5:26
+        return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-oob-read-e8001.deal:6:3-7:1
+          [boundary: return]
+          index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-oob-read-e8001.deal:6:10-6:15
+            ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-oob-read-e8001.deal:6:10-6:11
+            literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-oob-read-e8001.deal:6:13-6:14

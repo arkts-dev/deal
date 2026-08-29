@@ -1,0 +1,7 @@
+// IR golden fixture: jvm-function-values-slice-jvm-fv-intrinsic-value-number
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-function-values-slice.json case 'jvm-fv-intrinsic-value-number' (ISSUE-0358).
+
+export function test(): number {
+  let cn: (n: int) => number = number;
+  return cn(42);
+}

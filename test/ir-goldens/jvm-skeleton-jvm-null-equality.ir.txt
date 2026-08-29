@@ -1,0 +1,37 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:4:1-12:1
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:4:1-12:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:4:8-12:1
+      body
+        let z: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:5:3-6:5
+          [boundary: var-annotation]
+          literal null : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:5:17-5:20
+        let same: boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:6:3-7:5
+          [boundary: var-annotation]
+          binary === : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:6:23-6:32
+            ident z : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:6:23-6:23
+            literal null : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:6:29-6:32
+        let litSame: boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:7:3-8:5
+          [boundary: var-annotation]
+          binary === : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:7:26-7:38
+            literal null : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:7:26-7:29
+            literal null : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:7:35-7:38
+        let neq: boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:8:3-9:4
+          [boundary: var-annotation]
+          binary !== : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:8:22-8:34
+            literal null : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:8:22-8:25
+            literal null : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:8:31-8:34
+        if @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:9:3-10:8
+          binary && : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:9:7-9:29
+            binary && : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:9:7-9:21
+              ident same : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:9:7-9:10
+              ident litSame : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:9:15-9:21
+            unary ! : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:9:26-9:29
+              ident neq : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:9:27-9:29
+          block @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:9:32-9:44
+            return @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:9:34-9:44
+              [boundary: return]
+              literal 1 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:9:41-9:41
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:10:3-11:1
+          [boundary: return]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-equality.deal:10:10-10:10

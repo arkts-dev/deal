@@ -1,0 +1,6 @@
+// IR golden fixture: jvm-skeleton-jvm-shortcircuit-runs
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-shortcircuit-runs' (ISSUE-0358).
+
+import * as console from "std/console"
+function helper(): null { console.log("helper-ran"); }
+export function test(): boolean { return true && helper() === null; }

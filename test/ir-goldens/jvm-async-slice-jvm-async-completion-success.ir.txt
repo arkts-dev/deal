@@ -1,0 +1,25 @@
+module @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:4:1-11:1
+  async function flag: boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:4:1-5:5
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:4:34-4:47
+        [boundary: async-completion]
+        literal true : boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:4:41-4:44
+  async function noop: null @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:5:1-6:6
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:5:31-5:39
+  export @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:6:1-11:1
+    [boundary: export]
+    async function test: boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:6:8-11:1
+      body
+        expr-stmt @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:7:3-7:14
+          await : null @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:7:3-7:14
+            call : null @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:7:9-7:14
+              ident noop : async()->null @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:7:9-7:12
+        let b: boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:8:3-9:8
+          [boundary: var-annotation]
+          await : boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:8:20-8:31
+            call : boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:8:26-8:31
+              ident flag : async()->boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:8:26-8:29
+        return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:9:3-10:1
+          [boundary: async-completion]
+          ident b : boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-completion-success.deal:9:10-9:10

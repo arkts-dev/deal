@@ -444,7 +444,8 @@ public class JvmBackendTest {
             new TestCase("testOrchestratorJvmSourceMapWarning", () -> testOrchestratorJvmSourceMapWarning()),
             new TestCase("testDealConfigBackendField", () -> testDealConfigBackendField()),
             new TestCase("testCliBackendFlag", () -> testCliBackendFlag()),
-            new TestCase("testFixtureConfigValidation", () -> testFixtureConfigValidation()));
+            new TestCase("testFixtureConfigValidation", () -> testFixtureConfigValidation()),
+            new TestCase("testIrDumpExactMigration", () -> testIrDumpExactMigration()));
 
         int workers = Math.max(1, Math.min(
             2 * Runtime.getRuntime().availableProcessors(),
@@ -10345,5 +10346,1241 @@ public class JvmBackendTest {
         runtime.put("expectedExitCode", 0);
         check(BackendConformanceTest.fixtureConfigViolation(runtime) == null,
             "runtime fixture without expectedCompileError is valid");
+    }
+
+    /**
+     * ISSUE-0358 IR-pin migration: exact IR-dump assertions for the
+     * twelve multi-module JSON-slice cases whose
+     * {@code irContains}/{@code irNotContains} pins ran against the
+     * concatenated orchestrator {@code --dump-ir} output
+     * (BackendConformanceTest.collectIrDumps framing: one
+     * {@code === IR: <file> ===} header per module dump, sorted by
+     * file name). Every expected block is the exact dump text with
+     * the per-test temp project root normalized to {@code <PROJECT>};
+     * the comparison is full-text equality — never a substring check.
+     */
+    private static void testIrDumpExactMigration() throws Exception {
+        System.out.println("-- IR-dump exact migration (ISSUE-0358) --");
+
+        { // jvm-async-slice.json :: jvm-async-multi-module
+            String proj = "irpin00";
+            writeFile(proj + "/lib.deal", "export async function plus(a: int, b: int): int { return a + b; }\nexport async function tag(s: string): string { return \"[\" + s + \"]\"; }");
+            writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\nexport async function test(): int {\n  let s: string = await lib.tag(\"x\");\n  if (s === \"[x]\") { return await lib.plus(2, 3); }\n  return 0;\n}");
+            DealConfig irPinConfig = null;
+            Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
+            Path irPinEntry = irPinRoot.resolve("main.deal");
+            Path irPinOut = irPinRoot.resolve("out");
+            CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
+                irPinEntry, irPinOut, false, true, false, Backend.JVM,
+                irPinConfig, List.of(irPinRoot), null);
+            boolean irPinOk = irPinOrch.compile();
+            check(irPinOk, "jvm-async-slice.json :: jvm-async-multi-module: orchestrator --dump-ir compile succeeds: "
+                + irPinOrch.diagnostics());
+            StringBuilder irPinActual = new StringBuilder();
+            List<Path> irPinDumps = new ArrayList<>();
+            try (var stream = Files.list(irPinOut)) {
+                stream.filter(p -> p.toString().endsWith(".ir.txt"))
+                      .sorted()
+                      .forEach(irPinDumps::add);
+            }
+            for (Path irPinDump : irPinDumps) {
+                irPinActual.append("=== IR: ").append(irPinDump.getFileName())
+                    .append(" ===\n");
+                irPinActual.append(Files.readString(irPinDump));
+                irPinActual.append("\n");
+            }
+            String irPinNormalized = irPinActual.toString()
+                .replace(irPinRoot.toString(), "<PROJECT>");
+            String irPinExpected = """
+=== IR: lib.ir.txt ===
+module @<PROJECT>/lib.deal:1:1-2:71
+  export @<PROJECT>/lib.deal:1:1-2:6
+    [boundary: export]
+    async function plus: int @<PROJECT>/lib.deal:1:8-2:6
+      param a: int @<PROJECT>/lib.deal:1:28-1:34
+        [boundary: param-entry]
+      param b: int @<PROJECT>/lib.deal:1:36-1:42
+        [boundary: param-entry]
+      body
+        return @<PROJECT>/lib.deal:1:51-1:65
+          [boundary: async-completion]
+          binary + : int @<PROJECT>/lib.deal:1:58-1:62
+            ident a : int @<PROJECT>/lib.deal:1:58-1:58
+            ident b : int @<PROJECT>/lib.deal:1:62-1:62
+  export @<PROJECT>/lib.deal:2:1-2:71
+    [boundary: export]
+    async function tag: string @<PROJECT>/lib.deal:2:8-2:71
+      param s: string @<PROJECT>/lib.deal:2:27-2:36
+        [boundary: param-entry]
+      body
+        return @<PROJECT>/lib.deal:2:48-2:70
+          [boundary: async-completion]
+          binary + : string @<PROJECT>/lib.deal:2:55-2:67
+            binary + : string @<PROJECT>/lib.deal:2:55-2:61
+              literal "[" : string @<PROJECT>/lib.deal:2:55-2:57
+              ident s : string @<PROJECT>/lib.deal:2:61-2:61
+            literal "]" : string @<PROJECT>/lib.deal:2:65-2:67
+
+=== IR: main.ir.txt ===
+module @<PROJECT>/main.deal:1:1-7:2
+  import * as lib from "./lib" @<PROJECT>/main.deal:1:1-2:6
+    [boundary: import]
+  export @<PROJECT>/main.deal:2:1-3:6
+    [boundary: export]
+    function main: null @<PROJECT>/main.deal:2:8-3:6
+      body
+        return @<PROJECT>/main.deal:2:32-2:45
+          literal null : null @<PROJECT>/main.deal:2:39-2:42
+  export @<PROJECT>/main.deal:3:1-7:2
+    [boundary: export]
+    async function test: int @<PROJECT>/main.deal:3:8-7:2
+      body
+        let s: string @<PROJECT>/main.deal:4:3-5:4
+          [boundary: var-annotation]
+          await : string @<PROJECT>/main.deal:4:19-4:36
+            call : string @<PROJECT>/main.deal:4:25-4:36
+              member .tag : async(string)->string @<PROJECT>/main.deal:4:25-4:31
+                [boundary: table-read]
+                ident lib : table @<PROJECT>/main.deal:4:25-4:27
+                  [boundary: import]
+              literal "x" : string @<PROJECT>/main.deal:4:33-4:35
+        if @<PROJECT>/main.deal:5:3-6:8
+          binary === : boolean @<PROJECT>/main.deal:5:7-5:17
+            ident s : string @<PROJECT>/main.deal:5:7-5:7
+            literal "[x]" : string @<PROJECT>/main.deal:5:13-5:17
+          block @<PROJECT>/main.deal:5:20-5:51
+            return @<PROJECT>/main.deal:5:22-5:51
+              [boundary: async-completion]
+              await : int @<PROJECT>/main.deal:5:29-5:48
+                call : int @<PROJECT>/main.deal:5:35-5:48
+                  member .plus : async(int,int)->int @<PROJECT>/main.deal:5:35-5:42
+                    [boundary: table-read]
+                    ident lib : table @<PROJECT>/main.deal:5:35-5:37
+                      [boundary: import]
+                  literal 2 : int @<PROJECT>/main.deal:5:44-5:44
+                  literal 3 : int @<PROJECT>/main.deal:5:47-5:47
+        return @<PROJECT>/main.deal:6:3-7:1
+          [boundary: async-completion]
+          literal 0 : int @<PROJECT>/main.deal:6:10-6:10
+""";
+            if (!(irPinExpected + "\n").equals(irPinNormalized)) {
+                check(false, "jvm-async-slice.json :: jvm-async-multi-module: exact IR dump mismatch");
+                System.err.println("---- expected IR dump ----");
+                System.err.println(irPinExpected);
+                System.err.println("---- actual IR dump ----");
+                System.err.println(irPinNormalized);
+            }
+        }
+
+        { // jvm-host-abi-slice.json :: jvm-host-export-presence
+            String proj = "irpin01";
+            writeFile(proj + "/" + "bindings/log.d.deal", "export function info(level: int, s: string): null;\nexport function add(a: int, b: int): int;");
+            writeFile(proj + "/entry.deal", "import * as log from \"host/log\"\nexport function main(): null {\n  log.info(1, \"hello\");\n  return null;\n}\nexport function run(): int { return log.add(2, 3); }");
+            DealConfig irPinConfig = null;
+            StringBuilder irPinDealJson = new StringBuilder();
+            irPinDealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
+            irPinDealJson.append("  \"externals\": {\n");
+            irPinDealJson.append("    \"" + "host/log" + "\": { \"declaration\": \"" + "bindings/log.d.deal" + "\" }");
+            irPinDealJson.append("\n  }\n}\n");
+            writeFile(proj + "/deal.json", irPinDealJson.toString());
+            DealConfig.DealConfigParseResult irPinCfg =
+                DealConfig.load(tmpDir.get().resolve(proj));
+            irPinConfig = irPinCfg.config();
+            Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
+            Path irPinEntry = irPinRoot.resolve("entry.deal");
+            Path irPinOut = irPinRoot.resolve("out");
+            CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
+                irPinEntry, irPinOut, false, true, false, Backend.JVM,
+                irPinConfig, List.of(irPinRoot), null);
+            boolean irPinOk = irPinOrch.compile();
+            check(irPinOk, "jvm-host-abi-slice.json :: jvm-host-export-presence: orchestrator --dump-ir compile succeeds: "
+                + irPinOrch.diagnostics());
+            StringBuilder irPinActual = new StringBuilder();
+            List<Path> irPinDumps = new ArrayList<>();
+            try (var stream = Files.list(irPinOut)) {
+                stream.filter(p -> p.toString().endsWith(".ir.txt"))
+                      .sorted()
+                      .forEach(irPinDumps::add);
+            }
+            for (Path irPinDump : irPinDumps) {
+                irPinActual.append("=== IR: ").append(irPinDump.getFileName())
+                    .append(" ===\n");
+                irPinActual.append(Files.readString(irPinDump));
+                irPinActual.append("\n");
+            }
+            String irPinNormalized = irPinActual.toString()
+                .replace(irPinRoot.toString(), "<PROJECT>");
+            String irPinExpected = """
+=== IR: entry.ir.txt ===
+module @<PROJECT>/entry.deal:1:1-6:53
+  import * as log from "host/log" @<PROJECT>/entry.deal:1:1-2:6
+    [boundary: host-in]
+    [boundary: import]
+  export @<PROJECT>/entry.deal:2:1-6:6
+    [boundary: export]
+    function main: null @<PROJECT>/entry.deal:2:8-6:6
+      body
+        expr-stmt @<PROJECT>/entry.deal:3:3-3:22
+          call : null @<PROJECT>/entry.deal:3:3-3:22
+            [boundary: external-boundary]
+            member .info : (int,string)->null @<PROJECT>/entry.deal:3:3-3:10
+              [boundary: table-read]
+              ident log : table @<PROJECT>/entry.deal:3:3-3:5
+                [boundary: import]
+            literal 1 : int @<PROJECT>/entry.deal:3:12-3:12
+            literal "hello" : string @<PROJECT>/entry.deal:3:15-3:21
+        return @<PROJECT>/entry.deal:4:3-5:1
+          literal null : null @<PROJECT>/entry.deal:4:10-4:13
+  export @<PROJECT>/entry.deal:6:1-6:53
+    [boundary: export]
+    function run: int @<PROJECT>/entry.deal:6:8-6:53
+      body
+        return @<PROJECT>/entry.deal:6:30-6:52
+          [boundary: return]
+          call : int @<PROJECT>/entry.deal:6:37-6:49
+            [boundary: external-boundary]
+            member .add : (int,int)->int @<PROJECT>/entry.deal:6:37-6:43
+              [boundary: table-read]
+              ident log : table @<PROJECT>/entry.deal:6:37-6:39
+                [boundary: import]
+            literal 2 : int @<PROJECT>/entry.deal:6:45-6:45
+            literal 3 : int @<PROJECT>/entry.deal:6:48-6:48
+""";
+            if (!(irPinExpected + "\n").equals(irPinNormalized)) {
+                check(false, "jvm-host-abi-slice.json :: jvm-host-export-presence: exact IR dump mismatch");
+                System.err.println("---- expected IR dump ----");
+                System.err.println(irPinExpected);
+                System.err.println("---- actual IR dump ----");
+                System.err.println(irPinNormalized);
+            }
+        }
+
+        { // jvm-integration-join.json :: jvm-join-xmod-class-descriptor
+            String proj = "irpin02";
+            writeFile(proj + "/lib.deal", "export class Point { x: int = 0; }\nexport function make(x: int): Point { return { x: x }; }\n");
+            writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nfunction use(p: lib.Point): int { return p.x; }\nexport function run(): int {\n  let got: int = use(lib.make(7));\n  return got;\n}\nexport function main(): null { return null; }\n");
+            DealConfig irPinConfig = null;
+            Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
+            Path irPinEntry = irPinRoot.resolve("main.deal");
+            Path irPinOut = irPinRoot.resolve("out");
+            CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
+                irPinEntry, irPinOut, false, true, false, Backend.JVM,
+                irPinConfig, List.of(irPinRoot), null);
+            boolean irPinOk = irPinOrch.compile();
+            check(irPinOk, "jvm-integration-join.json :: jvm-join-xmod-class-descriptor: orchestrator --dump-ir compile succeeds: "
+                + irPinOrch.diagnostics());
+            StringBuilder irPinActual = new StringBuilder();
+            List<Path> irPinDumps = new ArrayList<>();
+            try (var stream = Files.list(irPinOut)) {
+                stream.filter(p -> p.toString().endsWith(".ir.txt"))
+                      .sorted()
+                      .forEach(irPinDumps::add);
+            }
+            for (Path irPinDump : irPinDumps) {
+                irPinActual.append("=== IR: ").append(irPinDump.getFileName())
+                    .append(" ===\n");
+                irPinActual.append(Files.readString(irPinDump));
+                irPinActual.append("\n");
+            }
+            String irPinNormalized = irPinActual.toString()
+                .replace(irPinRoot.toString(), "<PROJECT>");
+            String irPinExpected = """
+=== IR: lib.ir.txt ===
+module @<PROJECT>/lib.deal:1:1-3:1
+  export @<PROJECT>/lib.deal:1:1-2:6
+    [boundary: export]
+    class Point @<PROJECT>/lib.deal:1:8-1:34
+      field x: int @<PROJECT>/lib.deal:1:22-1:34
+        [boundary: class-default]
+        literal 0 : int @<PROJECT>/lib.deal:1:31-1:31
+  export @<PROJECT>/lib.deal:2:1-3:1
+    [boundary: export]
+    function make: Point @<PROJECT>/lib.deal:2:8-3:1
+      param x: int @<PROJECT>/lib.deal:2:22-2:28
+        [boundary: param-entry]
+      body
+        return @<PROJECT>/lib.deal:2:39-2:56
+          [boundary: return]
+          object : @lib/Point @<PROJECT>/lib.deal:2:46-2:53
+            [boundary: class-construct]
+            ident x : int @<PROJECT>/lib.deal:2:51-2:51
+
+=== IR: main.ir.txt ===
+module @<PROJECT>/main.deal:1:1-8:1
+  import * as lib from "./lib" @<PROJECT>/main.deal:1:1-2:8
+    [boundary: import]
+  function use: int @<PROJECT>/main.deal:2:1-3:6
+    param p: @lib/Point @<PROJECT>/main.deal:2:14-2:26
+      [boundary: param-entry]
+    body
+      return @<PROJECT>/main.deal:2:35-2:47
+        [boundary: return]
+        member .x : int @<PROJECT>/main.deal:2:42-2:44
+          ident p : @lib/Point @<PROJECT>/main.deal:2:42-2:42
+  export @<PROJECT>/main.deal:3:1-7:6
+    [boundary: export]
+    function run: int @<PROJECT>/main.deal:3:8-7:6
+      body
+        let got: int @<PROJECT>/main.deal:4:3-5:8
+          [boundary: var-annotation]
+          call : int @<PROJECT>/main.deal:4:18-4:33
+            ident use : (@lib/Point)->int @<PROJECT>/main.deal:4:18-4:20
+            call : @lib/Point @<PROJECT>/main.deal:4:22-4:32
+              member .make : (int)->@lib/Point @<PROJECT>/main.deal:4:22-4:29
+                [boundary: table-read]
+                ident lib : table @<PROJECT>/main.deal:4:22-4:24
+                  [boundary: import]
+              literal 7 : int @<PROJECT>/main.deal:4:31-4:31
+        return @<PROJECT>/main.deal:5:3-6:1
+          [boundary: return]
+          ident got : int @<PROJECT>/main.deal:5:10-5:12
+  export @<PROJECT>/main.deal:7:1-8:1
+    [boundary: export]
+    function main: null @<PROJECT>/main.deal:7:8-8:1
+      body
+        return @<PROJECT>/main.deal:7:32-7:45
+          literal null : null @<PROJECT>/main.deal:7:39-7:42
+""";
+            if (!(irPinExpected + "\n").equals(irPinNormalized)) {
+                check(false, "jvm-integration-join.json :: jvm-join-xmod-class-descriptor: exact IR dump mismatch");
+                System.err.println("---- expected IR dump ----");
+                System.err.println(irPinExpected);
+                System.err.println("---- actual IR dump ----");
+                System.err.println(irPinNormalized);
+            }
+        }
+
+        { // jvm-integration-join.json :: jvm-join-xmod-table-read-desc
+            String proj = "irpin03";
+            writeFile(proj + "/lib.deal", "export class Item { tag: string = \"\"; }\nexport function make(tag: string): Item { return { tag: tag }; }\n");
+            writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function run(): string {\n  let holder: table = { item: lib.make(\"x\") };\n  let i: lib.Item = holder.item;\n  return i.tag;\n}\nexport function main(): null { return null; }\n");
+            DealConfig irPinConfig = null;
+            Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
+            Path irPinEntry = irPinRoot.resolve("main.deal");
+            Path irPinOut = irPinRoot.resolve("out");
+            CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
+                irPinEntry, irPinOut, false, true, false, Backend.JVM,
+                irPinConfig, List.of(irPinRoot), null);
+            boolean irPinOk = irPinOrch.compile();
+            check(irPinOk, "jvm-integration-join.json :: jvm-join-xmod-table-read-desc: orchestrator --dump-ir compile succeeds: "
+                + irPinOrch.diagnostics());
+            StringBuilder irPinActual = new StringBuilder();
+            List<Path> irPinDumps = new ArrayList<>();
+            try (var stream = Files.list(irPinOut)) {
+                stream.filter(p -> p.toString().endsWith(".ir.txt"))
+                      .sorted()
+                      .forEach(irPinDumps::add);
+            }
+            for (Path irPinDump : irPinDumps) {
+                irPinActual.append("=== IR: ").append(irPinDump.getFileName())
+                    .append(" ===\n");
+                irPinActual.append(Files.readString(irPinDump));
+                irPinActual.append("\n");
+            }
+            String irPinNormalized = irPinActual.toString()
+                .replace(irPinRoot.toString(), "<PROJECT>");
+            String irPinExpected = """
+=== IR: lib.ir.txt ===
+module @<PROJECT>/lib.deal:1:1-3:1
+  export @<PROJECT>/lib.deal:1:1-2:6
+    [boundary: export]
+    class Item @<PROJECT>/lib.deal:1:8-1:39
+      field tag: string @<PROJECT>/lib.deal:1:21-1:39
+        [boundary: class-default]
+        literal "" : string @<PROJECT>/lib.deal:1:35-1:36
+  export @<PROJECT>/lib.deal:2:1-3:1
+    [boundary: export]
+    function make: Item @<PROJECT>/lib.deal:2:8-3:1
+      param tag: string @<PROJECT>/lib.deal:2:22-2:33
+        [boundary: param-entry]
+      body
+        return @<PROJECT>/lib.deal:2:43-2:64
+          [boundary: return]
+          object : @lib/Item @<PROJECT>/lib.deal:2:50-2:61
+            [boundary: class-construct]
+            ident tag : string @<PROJECT>/lib.deal:2:57-2:59
+
+=== IR: main.ir.txt ===
+module @<PROJECT>/main.deal:1:1-8:1
+  import * as lib from "./lib" @<PROJECT>/main.deal:1:1-2:6
+    [boundary: import]
+  export @<PROJECT>/main.deal:2:1-7:6
+    [boundary: export]
+    function run: string @<PROJECT>/main.deal:2:8-7:6
+      body
+        let holder: table @<PROJECT>/main.deal:3:3-4:5
+          [boundary: var-annotation]
+          object : table @<PROJECT>/main.deal:3:23-3:45
+            call : @lib/Item @<PROJECT>/main.deal:3:31-3:43
+              member .make : (string)->@lib/Item @<PROJECT>/main.deal:3:31-3:38
+                [boundary: table-read]
+                ident lib : table @<PROJECT>/main.deal:3:31-3:33
+                  [boundary: import]
+              literal "x" : string @<PROJECT>/main.deal:3:40-3:42
+        let i: @lib/Item @<PROJECT>/main.deal:4:3-5:8
+          [boundary: var-annotation]
+          member .item : @lib/Item @<PROJECT>/main.deal:4:21-4:31
+            [boundary: table-read]
+            ident holder : table @<PROJECT>/main.deal:4:21-4:26
+        return @<PROJECT>/main.deal:5:3-6:1
+          [boundary: return]
+          member .tag : string @<PROJECT>/main.deal:5:10-5:14
+            ident i : @lib/Item @<PROJECT>/main.deal:5:10-5:10
+  export @<PROJECT>/main.deal:7:1-8:1
+    [boundary: export]
+    function main: null @<PROJECT>/main.deal:7:8-8:1
+      body
+        return @<PROJECT>/main.deal:7:32-7:45
+          literal null : null @<PROJECT>/main.deal:7:39-7:42
+""";
+            if (!(irPinExpected + "\n").equals(irPinNormalized)) {
+                check(false, "jvm-integration-join.json :: jvm-join-xmod-table-read-desc: exact IR dump mismatch");
+                System.err.println("---- expected IR dump ----");
+                System.err.println(irPinExpected);
+                System.err.println("---- actual IR dump ----");
+                System.err.println(irPinNormalized);
+            }
+        }
+
+        { // jvm-integration-join.json :: jvm-join-xmod-mismatch-desc
+            String proj = "irpin04";
+            writeFile(proj + "/modela.deal", "export class Item { tag: string = \"\"; }\nexport function make(tag: string): Item { return { tag: tag }; }\n");
+            writeFile(proj + "/modelb.deal", "export class Item { tag: string = \"\"; }\n");
+            writeFile(proj + "/main.deal", "import * as modela from \"./modela\"\nimport * as modelb from \"./modelb\"\nexport function run(): string {\n  let holder: table = { item: modela.make(\"a\") };\n  let b: modelb.Item = holder.item;\n  return b.tag;\n}\nexport function main(): null { return null; }\n");
+            DealConfig irPinConfig = null;
+            Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
+            Path irPinEntry = irPinRoot.resolve("main.deal");
+            Path irPinOut = irPinRoot.resolve("out");
+            CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
+                irPinEntry, irPinOut, false, true, false, Backend.JVM,
+                irPinConfig, List.of(irPinRoot), null);
+            boolean irPinOk = irPinOrch.compile();
+            check(irPinOk, "jvm-integration-join.json :: jvm-join-xmod-mismatch-desc: orchestrator --dump-ir compile succeeds: "
+                + irPinOrch.diagnostics());
+            StringBuilder irPinActual = new StringBuilder();
+            List<Path> irPinDumps = new ArrayList<>();
+            try (var stream = Files.list(irPinOut)) {
+                stream.filter(p -> p.toString().endsWith(".ir.txt"))
+                      .sorted()
+                      .forEach(irPinDumps::add);
+            }
+            for (Path irPinDump : irPinDumps) {
+                irPinActual.append("=== IR: ").append(irPinDump.getFileName())
+                    .append(" ===\n");
+                irPinActual.append(Files.readString(irPinDump));
+                irPinActual.append("\n");
+            }
+            String irPinNormalized = irPinActual.toString()
+                .replace(irPinRoot.toString(), "<PROJECT>");
+            String irPinExpected = """
+=== IR: main.ir.txt ===
+module @<PROJECT>/main.deal:1:1-9:1
+  import * as modela from "./modela" @<PROJECT>/main.deal:1:1-2:6
+    [boundary: import]
+  import * as modelb from "./modelb" @<PROJECT>/main.deal:2:1-3:6
+    [boundary: import]
+  export @<PROJECT>/main.deal:3:1-8:6
+    [boundary: export]
+    function run: string @<PROJECT>/main.deal:3:8-8:6
+      body
+        let holder: table @<PROJECT>/main.deal:4:3-5:5
+          [boundary: var-annotation]
+          object : table @<PROJECT>/main.deal:4:23-4:48
+            call : @modela/Item @<PROJECT>/main.deal:4:31-4:46
+              member .make : (string)->@modela/Item @<PROJECT>/main.deal:4:31-4:41
+                [boundary: table-read]
+                ident modela : table @<PROJECT>/main.deal:4:31-4:36
+                  [boundary: import]
+              literal "a" : string @<PROJECT>/main.deal:4:43-4:45
+        let b: @modelb/Item @<PROJECT>/main.deal:5:3-6:8
+          [boundary: var-annotation]
+          member .item : @modelb/Item @<PROJECT>/main.deal:5:24-5:34
+            [boundary: table-read]
+            ident holder : table @<PROJECT>/main.deal:5:24-5:29
+        return @<PROJECT>/main.deal:6:3-7:1
+          [boundary: return]
+          member .tag : string @<PROJECT>/main.deal:6:10-6:14
+            ident b : @modelb/Item @<PROJECT>/main.deal:6:10-6:10
+  export @<PROJECT>/main.deal:8:1-9:1
+    [boundary: export]
+    function main: null @<PROJECT>/main.deal:8:8-9:1
+      body
+        return @<PROJECT>/main.deal:8:32-8:45
+          literal null : null @<PROJECT>/main.deal:8:39-8:42
+
+=== IR: modela.ir.txt ===
+module @<PROJECT>/modela.deal:1:1-3:1
+  export @<PROJECT>/modela.deal:1:1-2:6
+    [boundary: export]
+    class Item @<PROJECT>/modela.deal:1:8-1:39
+      field tag: string @<PROJECT>/modela.deal:1:21-1:39
+        [boundary: class-default]
+        literal "" : string @<PROJECT>/modela.deal:1:35-1:36
+  export @<PROJECT>/modela.deal:2:1-3:1
+    [boundary: export]
+    function make: Item @<PROJECT>/modela.deal:2:8-3:1
+      param tag: string @<PROJECT>/modela.deal:2:22-2:33
+        [boundary: param-entry]
+      body
+        return @<PROJECT>/modela.deal:2:43-2:64
+          [boundary: return]
+          object : @modela/Item @<PROJECT>/modela.deal:2:50-2:61
+            [boundary: class-construct]
+            ident tag : string @<PROJECT>/modela.deal:2:57-2:59
+
+=== IR: modelb.ir.txt ===
+module @<PROJECT>/modelb.deal:1:1-2:1
+  export @<PROJECT>/modelb.deal:1:1-2:1
+    [boundary: export]
+    class Item @<PROJECT>/modelb.deal:1:8-1:39
+      field tag: string @<PROJECT>/modelb.deal:1:21-1:39
+        [boundary: class-default]
+        literal "" : string @<PROJECT>/modelb.deal:1:35-1:36
+""";
+            if (!(irPinExpected + "\n").equals(irPinNormalized)) {
+                check(false, "jvm-integration-join.json :: jvm-join-xmod-mismatch-desc: exact IR dump mismatch");
+                System.err.println("---- expected IR dump ----");
+                System.err.println(irPinExpected);
+                System.err.println("---- actual IR dump ----");
+                System.err.println(irPinNormalized);
+            }
+        }
+
+        { // jvm-modules-slice.json :: jvm-mod-imported-direct-call
+            String proj = "irpin05";
+            writeFile(proj + "/lib.deal", "export function add(a: int, b: int): int { return a + b; }");
+            writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int { return lib.add(2, 3); }");
+            DealConfig irPinConfig = null;
+            Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
+            Path irPinEntry = irPinRoot.resolve("main.deal");
+            Path irPinOut = irPinRoot.resolve("out");
+            CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
+                irPinEntry, irPinOut, false, true, false, Backend.JVM,
+                irPinConfig, List.of(irPinRoot), null);
+            boolean irPinOk = irPinOrch.compile();
+            check(irPinOk, "jvm-modules-slice.json :: jvm-mod-imported-direct-call: orchestrator --dump-ir compile succeeds: "
+                + irPinOrch.diagnostics());
+            StringBuilder irPinActual = new StringBuilder();
+            List<Path> irPinDumps = new ArrayList<>();
+            try (var stream = Files.list(irPinOut)) {
+                stream.filter(p -> p.toString().endsWith(".ir.txt"))
+                      .sorted()
+                      .forEach(irPinDumps::add);
+            }
+            for (Path irPinDump : irPinDumps) {
+                irPinActual.append("=== IR: ").append(irPinDump.getFileName())
+                    .append(" ===\n");
+                irPinActual.append(Files.readString(irPinDump));
+                irPinActual.append("\n");
+            }
+            String irPinNormalized = irPinActual.toString()
+                .replace(irPinRoot.toString(), "<PROJECT>");
+            String irPinExpected = """
+=== IR: lib.ir.txt ===
+module @<PROJECT>/lib.deal:1:1-1:59
+  export @<PROJECT>/lib.deal:1:1-1:59
+    [boundary: export]
+    function add: int @<PROJECT>/lib.deal:1:8-1:59
+      param a: int @<PROJECT>/lib.deal:1:21-1:27
+        [boundary: param-entry]
+      param b: int @<PROJECT>/lib.deal:1:29-1:35
+        [boundary: param-entry]
+      body
+        return @<PROJECT>/lib.deal:1:44-1:58
+          [boundary: return]
+          binary + : int @<PROJECT>/lib.deal:1:51-1:55
+            ident a : int @<PROJECT>/lib.deal:1:51-1:51
+            ident b : int @<PROJECT>/lib.deal:1:55-1:55
+
+=== IR: main.ir.txt ===
+module @<PROJECT>/main.deal:1:1-4:53
+  import * as lib from "./lib" @<PROJECT>/main.deal:1:1-2:6
+    [boundary: import]
+  export @<PROJECT>/main.deal:2:1-4:6
+    [boundary: export]
+    function main: null @<PROJECT>/main.deal:2:8-4:6
+      body
+        return @<PROJECT>/main.deal:2:32-2:45
+          literal null : null @<PROJECT>/main.deal:2:39-2:42
+  export @<PROJECT>/main.deal:4:1-4:53
+    [boundary: export]
+    function run: int @<PROJECT>/main.deal:4:8-4:53
+      body
+        return @<PROJECT>/main.deal:4:30-4:52
+          [boundary: return]
+          call : int @<PROJECT>/main.deal:4:37-4:49
+            member .add : (int,int)->int @<PROJECT>/main.deal:4:37-4:43
+              [boundary: table-read]
+              ident lib : table @<PROJECT>/main.deal:4:37-4:39
+                [boundary: import]
+            literal 2 : int @<PROJECT>/main.deal:4:45-4:45
+            literal 3 : int @<PROJECT>/main.deal:4:48-4:48
+""";
+            if (!(irPinExpected + "\n").equals(irPinNormalized)) {
+                check(false, "jvm-modules-slice.json :: jvm-mod-imported-direct-call: exact IR dump mismatch");
+                System.err.println("---- expected IR dump ----");
+                System.err.println(irPinExpected);
+                System.err.println("---- actual IR dump ----");
+                System.err.println(irPinNormalized);
+            }
+        }
+
+        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-export-import
+            String proj = "irpin06";
+            writeFile(proj + "/lib.deal", "export class Point {\n  x: int = 0;\n  y: int = 0;\n}\nexport function make(x: int, y: int): Point { return { x: x, y: y }; }");
+            writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let p: lib.Point = lib.make(3, 4);\n  return p.x * 10 + p.y;\n}");
+            DealConfig irPinConfig = null;
+            Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
+            Path irPinEntry = irPinRoot.resolve("main.deal");
+            Path irPinOut = irPinRoot.resolve("out");
+            CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
+                irPinEntry, irPinOut, false, true, false, Backend.JVM,
+                irPinConfig, List.of(irPinRoot), null);
+            boolean irPinOk = irPinOrch.compile();
+            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-export-import: orchestrator --dump-ir compile succeeds: "
+                + irPinOrch.diagnostics());
+            StringBuilder irPinActual = new StringBuilder();
+            List<Path> irPinDumps = new ArrayList<>();
+            try (var stream = Files.list(irPinOut)) {
+                stream.filter(p -> p.toString().endsWith(".ir.txt"))
+                      .sorted()
+                      .forEach(irPinDumps::add);
+            }
+            for (Path irPinDump : irPinDumps) {
+                irPinActual.append("=== IR: ").append(irPinDump.getFileName())
+                    .append(" ===\n");
+                irPinActual.append(Files.readString(irPinDump));
+                irPinActual.append("\n");
+            }
+            String irPinNormalized = irPinActual.toString()
+                .replace(irPinRoot.toString(), "<PROJECT>");
+            String irPinExpected = """
+=== IR: lib.ir.txt ===
+module @<PROJECT>/lib.deal:1:1-5:71
+  export @<PROJECT>/lib.deal:1:1-5:6
+    [boundary: export]
+    class Point @<PROJECT>/lib.deal:1:8-4:1
+      field x: int @<PROJECT>/lib.deal:2:3-3:3
+        [boundary: class-default]
+        literal 0 : int @<PROJECT>/lib.deal:2:12-2:12
+      field y: int @<PROJECT>/lib.deal:3:3-4:1
+        [boundary: class-default]
+        literal 0 : int @<PROJECT>/lib.deal:3:12-3:12
+  export @<PROJECT>/lib.deal:5:1-5:71
+    [boundary: export]
+    function make: Point @<PROJECT>/lib.deal:5:8-5:71
+      param x: int @<PROJECT>/lib.deal:5:22-5:28
+        [boundary: param-entry]
+      param y: int @<PROJECT>/lib.deal:5:30-5:36
+        [boundary: param-entry]
+      body
+        return @<PROJECT>/lib.deal:5:47-5:70
+          [boundary: return]
+          object : @lib/Point @<PROJECT>/lib.deal:5:54-5:67
+            [boundary: class-construct]
+            ident x : int @<PROJECT>/lib.deal:5:59-5:59
+            ident y : int @<PROJECT>/lib.deal:5:65-5:65
+
+=== IR: main.ir.txt ===
+module @<PROJECT>/main.deal:1:1-7:2
+  import * as lib from "./lib" @<PROJECT>/main.deal:1:1-2:6
+    [boundary: import]
+  export @<PROJECT>/main.deal:2:1-4:6
+    [boundary: export]
+    function main: null @<PROJECT>/main.deal:2:8-4:6
+      body
+        return @<PROJECT>/main.deal:2:32-2:45
+          literal null : null @<PROJECT>/main.deal:2:39-2:42
+  export @<PROJECT>/main.deal:4:1-7:2
+    [boundary: export]
+    function run: int @<PROJECT>/main.deal:4:8-7:2
+      body
+        let p: @lib/Point @<PROJECT>/main.deal:5:3-6:8
+          [boundary: var-annotation]
+          call : @lib/Point @<PROJECT>/main.deal:5:22-5:35
+            member .make : (int,int)->@lib/Point @<PROJECT>/main.deal:5:22-5:29
+              [boundary: table-read]
+              ident lib : table @<PROJECT>/main.deal:5:22-5:24
+                [boundary: import]
+            literal 3 : int @<PROJECT>/main.deal:5:31-5:31
+            literal 4 : int @<PROJECT>/main.deal:5:34-5:34
+        return @<PROJECT>/main.deal:6:3-7:1
+          [boundary: return]
+          binary + : int @<PROJECT>/main.deal:6:10-6:23
+            binary * : int @<PROJECT>/main.deal:6:10-6:17
+              member .x : int @<PROJECT>/main.deal:6:10-6:12
+                ident p : @lib/Point @<PROJECT>/main.deal:6:10-6:10
+              literal 10 : int @<PROJECT>/main.deal:6:16-6:17
+            member .y : int @<PROJECT>/main.deal:6:21-6:23
+              ident p : @lib/Point @<PROJECT>/main.deal:6:21-6:21
+""";
+            if (!(irPinExpected + "\n").equals(irPinNormalized)) {
+                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-export-import: exact IR dump mismatch");
+                System.err.println("---- expected IR dump ----");
+                System.err.println(irPinExpected);
+                System.err.println("---- actual IR dump ----");
+                System.err.println(irPinNormalized);
+            }
+        }
+
+        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-construction-defaults
+            String proj = "irpin07";
+            writeFile(proj + "/lib.deal", "export class Point {\n  x: int = 10;\n  y: int = 20;\n}\nexport function sum(p: Point): int { return p.x + p.y; }");
+            writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let a: lib.Point = {};\n  let b: lib.Point = { y: 5, x: 2 };\n  return a.x + a.y * 10 + lib.sum(b);\n}");
+            DealConfig irPinConfig = null;
+            Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
+            Path irPinEntry = irPinRoot.resolve("main.deal");
+            Path irPinOut = irPinRoot.resolve("out");
+            CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
+                irPinEntry, irPinOut, false, true, false, Backend.JVM,
+                irPinConfig, List.of(irPinRoot), null);
+            boolean irPinOk = irPinOrch.compile();
+            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-construction-defaults: orchestrator --dump-ir compile succeeds: "
+                + irPinOrch.diagnostics());
+            StringBuilder irPinActual = new StringBuilder();
+            List<Path> irPinDumps = new ArrayList<>();
+            try (var stream = Files.list(irPinOut)) {
+                stream.filter(p -> p.toString().endsWith(".ir.txt"))
+                      .sorted()
+                      .forEach(irPinDumps::add);
+            }
+            for (Path irPinDump : irPinDumps) {
+                irPinActual.append("=== IR: ").append(irPinDump.getFileName())
+                    .append(" ===\n");
+                irPinActual.append(Files.readString(irPinDump));
+                irPinActual.append("\n");
+            }
+            String irPinNormalized = irPinActual.toString()
+                .replace(irPinRoot.toString(), "<PROJECT>");
+            String irPinExpected = """
+=== IR: lib.ir.txt ===
+module @<PROJECT>/lib.deal:1:1-5:57
+  export @<PROJECT>/lib.deal:1:1-5:6
+    [boundary: export]
+    class Point @<PROJECT>/lib.deal:1:8-4:1
+      field x: int @<PROJECT>/lib.deal:2:3-3:3
+        [boundary: class-default]
+        literal 10 : int @<PROJECT>/lib.deal:2:12-2:13
+      field y: int @<PROJECT>/lib.deal:3:3-4:1
+        [boundary: class-default]
+        literal 20 : int @<PROJECT>/lib.deal:3:12-3:13
+  export @<PROJECT>/lib.deal:5:1-5:57
+    [boundary: export]
+    function sum: int @<PROJECT>/lib.deal:5:8-5:57
+      param p: Point @<PROJECT>/lib.deal:5:21-5:29
+        [boundary: param-entry]
+      body
+        return @<PROJECT>/lib.deal:5:38-5:56
+          [boundary: return]
+          binary + : int @<PROJECT>/lib.deal:5:45-5:53
+            member .x : int @<PROJECT>/lib.deal:5:45-5:47
+              ident p : @lib/Point @<PROJECT>/lib.deal:5:45-5:45
+            member .y : int @<PROJECT>/lib.deal:5:51-5:53
+              ident p : @lib/Point @<PROJECT>/lib.deal:5:51-5:51
+
+=== IR: main.ir.txt ===
+module @<PROJECT>/main.deal:1:1-8:2
+  import * as lib from "./lib" @<PROJECT>/main.deal:1:1-2:6
+    [boundary: import]
+  export @<PROJECT>/main.deal:2:1-4:6
+    [boundary: export]
+    function main: null @<PROJECT>/main.deal:2:8-4:6
+      body
+        return @<PROJECT>/main.deal:2:32-2:45
+          literal null : null @<PROJECT>/main.deal:2:39-2:42
+  export @<PROJECT>/main.deal:4:1-8:2
+    [boundary: export]
+    function run: int @<PROJECT>/main.deal:4:8-8:2
+      body
+        let a: @lib/Point @<PROJECT>/main.deal:5:3-6:5
+          [boundary: var-annotation]
+          object : @lib/Point @<PROJECT>/main.deal:5:22-5:23
+            [boundary: class-construct]
+        let b: @lib/Point @<PROJECT>/main.deal:6:3-7:8
+          [boundary: var-annotation]
+          object : @lib/Point @<PROJECT>/main.deal:6:22-6:35
+            [boundary: class-construct]
+            literal 5 : int @<PROJECT>/main.deal:6:27-6:27
+            literal 2 : int @<PROJECT>/main.deal:6:33-6:33
+        return @<PROJECT>/main.deal:7:3-8:1
+          [boundary: return]
+          binary + : int @<PROJECT>/main.deal:7:10-7:36
+            binary + : int @<PROJECT>/main.deal:7:10-7:23
+              member .x : int @<PROJECT>/main.deal:7:10-7:12
+                ident a : @lib/Point @<PROJECT>/main.deal:7:10-7:10
+              binary * : int @<PROJECT>/main.deal:7:16-7:23
+                member .y : int @<PROJECT>/main.deal:7:16-7:18
+                  ident a : @lib/Point @<PROJECT>/main.deal:7:16-7:16
+                literal 10 : int @<PROJECT>/main.deal:7:22-7:23
+            call : int @<PROJECT>/main.deal:7:27-7:36
+              member .sum : (@lib/Point)->int @<PROJECT>/main.deal:7:27-7:33
+                [boundary: table-read]
+                ident lib : table @<PROJECT>/main.deal:7:27-7:29
+                  [boundary: import]
+              ident b : @lib/Point @<PROJECT>/main.deal:7:35-7:35
+""";
+            if (!(irPinExpected + "\n").equals(irPinNormalized)) {
+                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-construction-defaults: exact IR dump mismatch");
+                System.err.println("---- expected IR dump ----");
+                System.err.println(irPinExpected);
+                System.err.println("---- actual IR dump ----");
+                System.err.println(irPinNormalized);
+            }
+        }
+
+        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-param-pass
+            String proj = "irpin08";
+            writeFile(proj + "/lib.deal", "export class Pair {\n  left: int = 0;\n  right: int = 0;\n}\nexport function sum(p: Pair): int { return p.left + p.right; }");
+            writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let p: lib.Pair = { left: 5, right: 7 };\n  return lib.sum(p);\n}");
+            DealConfig irPinConfig = null;
+            Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
+            Path irPinEntry = irPinRoot.resolve("main.deal");
+            Path irPinOut = irPinRoot.resolve("out");
+            CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
+                irPinEntry, irPinOut, false, true, false, Backend.JVM,
+                irPinConfig, List.of(irPinRoot), null);
+            boolean irPinOk = irPinOrch.compile();
+            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-pass: orchestrator --dump-ir compile succeeds: "
+                + irPinOrch.diagnostics());
+            StringBuilder irPinActual = new StringBuilder();
+            List<Path> irPinDumps = new ArrayList<>();
+            try (var stream = Files.list(irPinOut)) {
+                stream.filter(p -> p.toString().endsWith(".ir.txt"))
+                      .sorted()
+                      .forEach(irPinDumps::add);
+            }
+            for (Path irPinDump : irPinDumps) {
+                irPinActual.append("=== IR: ").append(irPinDump.getFileName())
+                    .append(" ===\n");
+                irPinActual.append(Files.readString(irPinDump));
+                irPinActual.append("\n");
+            }
+            String irPinNormalized = irPinActual.toString()
+                .replace(irPinRoot.toString(), "<PROJECT>");
+            String irPinExpected = """
+=== IR: lib.ir.txt ===
+module @<PROJECT>/lib.deal:1:1-5:63
+  export @<PROJECT>/lib.deal:1:1-5:6
+    [boundary: export]
+    class Pair @<PROJECT>/lib.deal:1:8-4:1
+      field left: int @<PROJECT>/lib.deal:2:3-3:7
+        [boundary: class-default]
+        literal 0 : int @<PROJECT>/lib.deal:2:15-2:15
+      field right: int @<PROJECT>/lib.deal:3:3-4:1
+        [boundary: class-default]
+        literal 0 : int @<PROJECT>/lib.deal:3:16-3:16
+  export @<PROJECT>/lib.deal:5:1-5:63
+    [boundary: export]
+    function sum: int @<PROJECT>/lib.deal:5:8-5:63
+      param p: Pair @<PROJECT>/lib.deal:5:21-5:28
+        [boundary: param-entry]
+      body
+        return @<PROJECT>/lib.deal:5:37-5:62
+          [boundary: return]
+          binary + : int @<PROJECT>/lib.deal:5:44-5:59
+            member .left : int @<PROJECT>/lib.deal:5:44-5:49
+              ident p : @lib/Pair @<PROJECT>/lib.deal:5:44-5:44
+            member .right : int @<PROJECT>/lib.deal:5:53-5:59
+              ident p : @lib/Pair @<PROJECT>/lib.deal:5:53-5:53
+
+=== IR: main.ir.txt ===
+module @<PROJECT>/main.deal:1:1-7:2
+  import * as lib from "./lib" @<PROJECT>/main.deal:1:1-2:6
+    [boundary: import]
+  export @<PROJECT>/main.deal:2:1-4:6
+    [boundary: export]
+    function main: null @<PROJECT>/main.deal:2:8-4:6
+      body
+        return @<PROJECT>/main.deal:2:32-2:45
+          literal null : null @<PROJECT>/main.deal:2:39-2:42
+  export @<PROJECT>/main.deal:4:1-7:2
+    [boundary: export]
+    function run: int @<PROJECT>/main.deal:4:8-7:2
+      body
+        let p: @lib/Pair @<PROJECT>/main.deal:5:3-6:8
+          [boundary: var-annotation]
+          object : @lib/Pair @<PROJECT>/main.deal:5:21-5:41
+            [boundary: class-construct]
+            literal 5 : int @<PROJECT>/main.deal:5:29-5:29
+            literal 7 : int @<PROJECT>/main.deal:5:39-5:39
+        return @<PROJECT>/main.deal:6:3-7:1
+          [boundary: return]
+          call : int @<PROJECT>/main.deal:6:10-6:19
+            member .sum : (@lib/Pair)->int @<PROJECT>/main.deal:6:10-6:16
+              [boundary: table-read]
+              ident lib : table @<PROJECT>/main.deal:6:10-6:12
+                [boundary: import]
+            ident p : @lib/Pair @<PROJECT>/main.deal:6:18-6:18
+""";
+            if (!(irPinExpected + "\n").equals(irPinNormalized)) {
+                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-pass: exact IR dump mismatch");
+                System.err.println("---- expected IR dump ----");
+                System.err.println(irPinExpected);
+                System.err.println("---- actual IR dump ----");
+                System.err.println(irPinNormalized);
+            }
+        }
+
+        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-return-mutate-roundtrip
+            String proj = "irpin09";
+            writeFile(proj + "/lib.deal", "export class Box {\n  value: int = 0;\n}\nexport function makeBox(): Box { return { value: 7 }; }\nexport function readBox(b: Box): int { return b.value; }");
+            writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let b: lib.Box = lib.makeBox();\n  b.value = b.value + 5;\n  return lib.readBox(b);\n}");
+            DealConfig irPinConfig = null;
+            Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
+            Path irPinEntry = irPinRoot.resolve("main.deal");
+            Path irPinOut = irPinRoot.resolve("out");
+            CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
+                irPinEntry, irPinOut, false, true, false, Backend.JVM,
+                irPinConfig, List.of(irPinRoot), null);
+            boolean irPinOk = irPinOrch.compile();
+            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-return-mutate-roundtrip: orchestrator --dump-ir compile succeeds: "
+                + irPinOrch.diagnostics());
+            StringBuilder irPinActual = new StringBuilder();
+            List<Path> irPinDumps = new ArrayList<>();
+            try (var stream = Files.list(irPinOut)) {
+                stream.filter(p -> p.toString().endsWith(".ir.txt"))
+                      .sorted()
+                      .forEach(irPinDumps::add);
+            }
+            for (Path irPinDump : irPinDumps) {
+                irPinActual.append("=== IR: ").append(irPinDump.getFileName())
+                    .append(" ===\n");
+                irPinActual.append(Files.readString(irPinDump));
+                irPinActual.append("\n");
+            }
+            String irPinNormalized = irPinActual.toString()
+                .replace(irPinRoot.toString(), "<PROJECT>");
+            String irPinExpected = """
+=== IR: lib.ir.txt ===
+module @<PROJECT>/lib.deal:1:1-5:57
+  export @<PROJECT>/lib.deal:1:1-4:6
+    [boundary: export]
+    class Box @<PROJECT>/lib.deal:1:8-3:1
+      field value: int @<PROJECT>/lib.deal:2:3-3:1
+        [boundary: class-default]
+        literal 0 : int @<PROJECT>/lib.deal:2:16-2:16
+  export @<PROJECT>/lib.deal:4:1-5:6
+    [boundary: export]
+    function makeBox: Box @<PROJECT>/lib.deal:4:8-5:6
+      body
+        return @<PROJECT>/lib.deal:4:34-4:55
+          [boundary: return]
+          object : @lib/Box @<PROJECT>/lib.deal:4:41-4:52
+            [boundary: class-construct]
+            literal 7 : int @<PROJECT>/lib.deal:4:50-4:50
+  export @<PROJECT>/lib.deal:5:1-5:57
+    [boundary: export]
+    function readBox: int @<PROJECT>/lib.deal:5:8-5:57
+      param b: Box @<PROJECT>/lib.deal:5:25-5:31
+        [boundary: param-entry]
+      body
+        return @<PROJECT>/lib.deal:5:40-5:56
+          [boundary: return]
+          member .value : int @<PROJECT>/lib.deal:5:47-5:53
+            ident b : @lib/Box @<PROJECT>/lib.deal:5:47-5:47
+
+=== IR: main.ir.txt ===
+module @<PROJECT>/main.deal:1:1-8:2
+  import * as lib from "./lib" @<PROJECT>/main.deal:1:1-2:6
+    [boundary: import]
+  export @<PROJECT>/main.deal:2:1-4:6
+    [boundary: export]
+    function main: null @<PROJECT>/main.deal:2:8-4:6
+      body
+        return @<PROJECT>/main.deal:2:32-2:45
+          literal null : null @<PROJECT>/main.deal:2:39-2:42
+  export @<PROJECT>/main.deal:4:1-8:2
+    [boundary: export]
+    function run: int @<PROJECT>/main.deal:4:8-8:2
+      body
+        let b: @lib/Box @<PROJECT>/main.deal:5:3-6:3
+          [boundary: var-annotation]
+          call : @lib/Box @<PROJECT>/main.deal:5:20-5:32
+            member .makeBox : ()->@lib/Box @<PROJECT>/main.deal:5:20-5:30
+              [boundary: table-read]
+              ident lib : table @<PROJECT>/main.deal:5:20-5:22
+                [boundary: import]
+        expr-stmt @<PROJECT>/main.deal:6:3-6:23
+          assign = : int @<PROJECT>/main.deal:6:3-6:23
+            [boundary: field-write]
+            member .value : int @<PROJECT>/main.deal:6:3-6:9
+              ident b : @lib/Box @<PROJECT>/main.deal:6:3-6:3
+            binary + : int @<PROJECT>/main.deal:6:13-6:23
+              member .value : int @<PROJECT>/main.deal:6:13-6:19
+                ident b : @lib/Box @<PROJECT>/main.deal:6:13-6:13
+              literal 5 : int @<PROJECT>/main.deal:6:23-6:23
+        return @<PROJECT>/main.deal:7:3-8:1
+          [boundary: return]
+          call : int @<PROJECT>/main.deal:7:10-7:23
+            member .readBox : (@lib/Box)->int @<PROJECT>/main.deal:7:10-7:20
+              [boundary: table-read]
+              ident lib : table @<PROJECT>/main.deal:7:10-7:12
+                [boundary: import]
+            ident b : @lib/Box @<PROJECT>/main.deal:7:22-7:22
+""";
+            if (!(irPinExpected + "\n").equals(irPinNormalized)) {
+                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-return-mutate-roundtrip: exact IR dump mismatch");
+                System.err.println("---- expected IR dump ----");
+                System.err.println(irPinExpected);
+                System.err.println("---- actual IR dump ----");
+                System.err.println(irPinNormalized);
+            }
+        }
+
+        { // jvm-xmod-classes-slice.json :: jvm-xmod-same-name-isolation
+            String proj = "irpin10";
+            writeFile(proj + "/modela.deal", "export class Item {\n  tag: string = \"\";\n}\nexport function tag(i: Item): string { return \"a:\" + i.tag; }");
+            writeFile(proj + "/modelb.deal", "export class Item {\n  tag: string = \"\";\n}\nexport function tag(i: Item): string { return \"b:\" + i.tag; }");
+            writeFile(proj + "/main.deal", "import * as modela from \"./modela\"\nimport * as modelb from \"./modelb\"\nimport * as console from \"std/console\"\nexport function main(): null { return null; }\n\nexport function run(): null {\n  let a: modela.Item = { tag: \"one\" };\n  let b: modelb.Item = { tag: \"two\" };\n  console.log(modela.tag(a));\n  console.log(modelb.tag(b));\n}");
+            DealConfig irPinConfig = null;
+            Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
+            Path irPinEntry = irPinRoot.resolve("main.deal");
+            Path irPinOut = irPinRoot.resolve("out");
+            CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
+                irPinEntry, irPinOut, false, true, false, Backend.JVM,
+                irPinConfig, List.of(irPinRoot), null);
+            boolean irPinOk = irPinOrch.compile();
+            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-same-name-isolation: orchestrator --dump-ir compile succeeds: "
+                + irPinOrch.diagnostics());
+            StringBuilder irPinActual = new StringBuilder();
+            List<Path> irPinDumps = new ArrayList<>();
+            try (var stream = Files.list(irPinOut)) {
+                stream.filter(p -> p.toString().endsWith(".ir.txt"))
+                      .sorted()
+                      .forEach(irPinDumps::add);
+            }
+            for (Path irPinDump : irPinDumps) {
+                irPinActual.append("=== IR: ").append(irPinDump.getFileName())
+                    .append(" ===\n");
+                irPinActual.append(Files.readString(irPinDump));
+                irPinActual.append("\n");
+            }
+            String irPinNormalized = irPinActual.toString()
+                .replace(irPinRoot.toString(), "<PROJECT>");
+            String irPinExpected = """
+=== IR: main.ir.txt ===
+module @<PROJECT>/main.deal:1:1-11:2
+  import * as modela from "./modela" @<PROJECT>/main.deal:1:1-2:6
+    [boundary: import]
+  import * as modelb from "./modelb" @<PROJECT>/main.deal:2:1-3:6
+    [boundary: import]
+  import * as console from "std/console" @<PROJECT>/main.deal:3:1-4:6
+    [boundary: host-in]
+    [boundary: import]
+  export @<PROJECT>/main.deal:4:1-6:6
+    [boundary: export]
+    function main: null @<PROJECT>/main.deal:4:8-6:6
+      body
+        return @<PROJECT>/main.deal:4:32-4:45
+          literal null : null @<PROJECT>/main.deal:4:39-4:42
+  export @<PROJECT>/main.deal:6:1-11:2
+    [boundary: export]
+    function run: null @<PROJECT>/main.deal:6:8-11:2
+      body
+        let a: @modela/Item @<PROJECT>/main.deal:7:3-8:5
+          [boundary: var-annotation]
+          object : @modela/Item @<PROJECT>/main.deal:7:24-7:37
+            [boundary: class-construct]
+            literal "one" : string @<PROJECT>/main.deal:7:31-7:35
+        let b: @modelb/Item @<PROJECT>/main.deal:8:3-9:9
+          [boundary: var-annotation]
+          object : @modelb/Item @<PROJECT>/main.deal:8:24-8:37
+            [boundary: class-construct]
+            literal "two" : string @<PROJECT>/main.deal:8:31-8:35
+        expr-stmt @<PROJECT>/main.deal:9:3-9:28
+          call : null @<PROJECT>/main.deal:9:3-9:28
+            [boundary: stdlib-boundary]
+            member .log : (string)->null @<PROJECT>/main.deal:9:3-9:13
+              [boundary: table-read]
+              ident console : table @<PROJECT>/main.deal:9:3-9:9
+                [boundary: import]
+            call : string @<PROJECT>/main.deal:9:15-9:27
+              member .tag : (@modela/Item)->string @<PROJECT>/main.deal:9:15-9:24
+                [boundary: table-read]
+                ident modela : table @<PROJECT>/main.deal:9:15-9:20
+                  [boundary: import]
+              ident a : @modela/Item @<PROJECT>/main.deal:9:26-9:26
+        expr-stmt @<PROJECT>/main.deal:10:3-10:28
+          call : null @<PROJECT>/main.deal:10:3-10:28
+            [boundary: stdlib-boundary]
+            member .log : (string)->null @<PROJECT>/main.deal:10:3-10:13
+              [boundary: table-read]
+              ident console : table @<PROJECT>/main.deal:10:3-10:9
+                [boundary: import]
+            call : string @<PROJECT>/main.deal:10:15-10:27
+              member .tag : (@modelb/Item)->string @<PROJECT>/main.deal:10:15-10:24
+                [boundary: table-read]
+                ident modelb : table @<PROJECT>/main.deal:10:15-10:20
+                  [boundary: import]
+              ident b : @modelb/Item @<PROJECT>/main.deal:10:26-10:26
+
+=== IR: modela.ir.txt ===
+module @<PROJECT>/modela.deal:1:1-4:62
+  export @<PROJECT>/modela.deal:1:1-4:6
+    [boundary: export]
+    class Item @<PROJECT>/modela.deal:1:8-3:1
+      field tag: string @<PROJECT>/modela.deal:2:3-3:1
+        [boundary: class-default]
+        literal "" : string @<PROJECT>/modela.deal:2:17-2:18
+  export @<PROJECT>/modela.deal:4:1-4:62
+    [boundary: export]
+    function tag: string @<PROJECT>/modela.deal:4:8-4:62
+      param i: Item @<PROJECT>/modela.deal:4:21-4:28
+        [boundary: param-entry]
+      body
+        return @<PROJECT>/modela.deal:4:40-4:61
+          [boundary: return]
+          binary + : string @<PROJECT>/modela.deal:4:47-4:58
+            literal "a:" : string @<PROJECT>/modela.deal:4:47-4:50
+            member .tag : string @<PROJECT>/modela.deal:4:54-4:58
+              ident i : @modela/Item @<PROJECT>/modela.deal:4:54-4:54
+
+=== IR: modelb.ir.txt ===
+module @<PROJECT>/modelb.deal:1:1-4:62
+  export @<PROJECT>/modelb.deal:1:1-4:6
+    [boundary: export]
+    class Item @<PROJECT>/modelb.deal:1:8-3:1
+      field tag: string @<PROJECT>/modelb.deal:2:3-3:1
+        [boundary: class-default]
+        literal "" : string @<PROJECT>/modelb.deal:2:17-2:18
+  export @<PROJECT>/modelb.deal:4:1-4:62
+    [boundary: export]
+    function tag: string @<PROJECT>/modelb.deal:4:8-4:62
+      param i: Item @<PROJECT>/modelb.deal:4:21-4:28
+        [boundary: param-entry]
+      body
+        return @<PROJECT>/modelb.deal:4:40-4:61
+          [boundary: return]
+          binary + : string @<PROJECT>/modelb.deal:4:47-4:58
+            literal "b:" : string @<PROJECT>/modelb.deal:4:47-4:50
+            member .tag : string @<PROJECT>/modelb.deal:4:54-4:58
+              ident i : @modelb/Item @<PROJECT>/modelb.deal:4:54-4:54
+""";
+            if (!(irPinExpected + "\n").equals(irPinNormalized)) {
+                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-same-name-isolation: exact IR dump mismatch");
+                System.err.println("---- expected IR dump ----");
+                System.err.println(irPinExpected);
+                System.err.println("---- actual IR dump ----");
+                System.err.println(irPinNormalized);
+            }
+        }
+
+        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-param-return-local-fn
+            String proj = "irpin11";
+            writeFile(proj + "/lib.deal", "export class Point {\n  x: int = 0;\n  y: int = 0;\n}\nexport function sum(p: Point): int { return p.x + p.y; }");
+            writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nfunction shift(p: lib.Point): lib.Point {\n  p.x = p.x + 1;\n  return p;\n}\nexport function run(): int {\n  let p: lib.Point = { x: 3, y: 4 };\n  let q: lib.Point = shift(p);\n  return lib.sum(q) + q.y;\n}");
+            DealConfig irPinConfig = null;
+            Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
+            Path irPinEntry = irPinRoot.resolve("main.deal");
+            Path irPinOut = irPinRoot.resolve("out");
+            CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
+                irPinEntry, irPinOut, false, true, false, Backend.JVM,
+                irPinConfig, List.of(irPinRoot), null);
+            boolean irPinOk = irPinOrch.compile();
+            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-return-local-fn: orchestrator --dump-ir compile succeeds: "
+                + irPinOrch.diagnostics());
+            StringBuilder irPinActual = new StringBuilder();
+            List<Path> irPinDumps = new ArrayList<>();
+            try (var stream = Files.list(irPinOut)) {
+                stream.filter(p -> p.toString().endsWith(".ir.txt"))
+                      .sorted()
+                      .forEach(irPinDumps::add);
+            }
+            for (Path irPinDump : irPinDumps) {
+                irPinActual.append("=== IR: ").append(irPinDump.getFileName())
+                    .append(" ===\n");
+                irPinActual.append(Files.readString(irPinDump));
+                irPinActual.append("\n");
+            }
+            String irPinNormalized = irPinActual.toString()
+                .replace(irPinRoot.toString(), "<PROJECT>");
+            String irPinExpected = """
+=== IR: lib.ir.txt ===
+module @<PROJECT>/lib.deal:1:1-5:57
+  export @<PROJECT>/lib.deal:1:1-5:6
+    [boundary: export]
+    class Point @<PROJECT>/lib.deal:1:8-4:1
+      field x: int @<PROJECT>/lib.deal:2:3-3:3
+        [boundary: class-default]
+        literal 0 : int @<PROJECT>/lib.deal:2:12-2:12
+      field y: int @<PROJECT>/lib.deal:3:3-4:1
+        [boundary: class-default]
+        literal 0 : int @<PROJECT>/lib.deal:3:12-3:12
+  export @<PROJECT>/lib.deal:5:1-5:57
+    [boundary: export]
+    function sum: int @<PROJECT>/lib.deal:5:8-5:57
+      param p: Point @<PROJECT>/lib.deal:5:21-5:29
+        [boundary: param-entry]
+      body
+        return @<PROJECT>/lib.deal:5:38-5:56
+          [boundary: return]
+          binary + : int @<PROJECT>/lib.deal:5:45-5:53
+            member .x : int @<PROJECT>/lib.deal:5:45-5:47
+              ident p : @lib/Point @<PROJECT>/lib.deal:5:45-5:45
+            member .y : int @<PROJECT>/lib.deal:5:51-5:53
+              ident p : @lib/Point @<PROJECT>/lib.deal:5:51-5:51
+
+=== IR: main.ir.txt ===
+module @<PROJECT>/main.deal:1:1-12:2
+  import * as lib from "./lib" @<PROJECT>/main.deal:1:1-2:6
+    [boundary: import]
+  export @<PROJECT>/main.deal:2:1-4:8
+    [boundary: export]
+    function main: null @<PROJECT>/main.deal:2:8-4:8
+      body
+        return @<PROJECT>/main.deal:2:32-2:45
+          literal null : null @<PROJECT>/main.deal:2:39-2:42
+  function shift: @lib/Point @<PROJECT>/main.deal:4:1-8:6
+    param p: @lib/Point @<PROJECT>/main.deal:4:16-4:28
+      [boundary: param-entry]
+    body
+      expr-stmt @<PROJECT>/main.deal:5:3-5:15
+        assign = : int @<PROJECT>/main.deal:5:3-5:15
+          [boundary: field-write]
+          member .x : int @<PROJECT>/main.deal:5:3-5:5
+            ident p : @lib/Point @<PROJECT>/main.deal:5:3-5:3
+          binary + : int @<PROJECT>/main.deal:5:9-5:15
+            member .x : int @<PROJECT>/main.deal:5:9-5:11
+              ident p : @lib/Point @<PROJECT>/main.deal:5:9-5:9
+            literal 1 : int @<PROJECT>/main.deal:5:15-5:15
+      return @<PROJECT>/main.deal:6:3-7:1
+        [boundary: return]
+        ident p : @lib/Point @<PROJECT>/main.deal:6:10-6:10
+  export @<PROJECT>/main.deal:8:1-12:2
+    [boundary: export]
+    function run: int @<PROJECT>/main.deal:8:8-12:2
+      body
+        let p: @lib/Point @<PROJECT>/main.deal:9:3-10:5
+          [boundary: var-annotation]
+          object : @lib/Point @<PROJECT>/main.deal:9:22-9:35
+            [boundary: class-construct]
+            literal 3 : int @<PROJECT>/main.deal:9:27-9:27
+            literal 4 : int @<PROJECT>/main.deal:9:33-9:33
+        let q: @lib/Point @<PROJECT>/main.deal:10:3-11:8
+          [boundary: var-annotation]
+          call : @lib/Point @<PROJECT>/main.deal:10:22-10:29
+            ident shift : (@lib/Point)->@lib/Point @<PROJECT>/main.deal:10:22-10:26
+            ident p : @lib/Point @<PROJECT>/main.deal:10:28-10:28
+        return @<PROJECT>/main.deal:11:3-12:1
+          [boundary: return]
+          binary + : int @<PROJECT>/main.deal:11:10-11:25
+            call : int @<PROJECT>/main.deal:11:10-11:19
+              member .sum : (@lib/Point)->int @<PROJECT>/main.deal:11:10-11:16
+                [boundary: table-read]
+                ident lib : table @<PROJECT>/main.deal:11:10-11:12
+                  [boundary: import]
+              ident q : @lib/Point @<PROJECT>/main.deal:11:18-11:18
+            member .y : int @<PROJECT>/main.deal:11:23-11:25
+              ident q : @lib/Point @<PROJECT>/main.deal:11:23-11:23
+""";
+            if (!(irPinExpected + "\n").equals(irPinNormalized)) {
+                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-return-local-fn: exact IR dump mismatch");
+                System.err.println("---- expected IR dump ----");
+                System.err.println(irPinExpected);
+                System.err.println("---- actual IR dump ----");
+                System.err.println(irPinNormalized);
+            }
+        }
+
     }
 }

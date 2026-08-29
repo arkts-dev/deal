@@ -1,0 +1,113 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:4:1-20:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:4:1-5:6
+    [boundary: host-in]
+    [boundary: import]
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:5:1-20:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:5:8-20:1
+      body
+        let xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:6:3-7:4
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:6:19-6:30
+            literal 10 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:6:20-6:21
+            literal 20 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:6:24-6:25
+            literal 30 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:6:28-6:29
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:7:3-7:12
+          assign = : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:7:3-7:12
+            [boundary: array-write]
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:7:3-7:7
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:7:3-7:4
+              literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:7:6-7:6
+            literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:7:11-7:12
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:8:3-8:20
+          assign = : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:8:3-8:20
+            [boundary: array-write]
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:8:3-8:15
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:8:3-8:4
+              member .length : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:8:6-8:14
+                ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:8:6-8:7
+            literal 40 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:8:19-8:20
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:3-12:5
+          binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:7-9:85
+            binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:7-9:66
+              binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:7-9:50
+                binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:7-9:34
+                  binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:7-9:18
+                    index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:7-9:11
+                      ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:7-9:8
+                      literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:10-9:10
+                    literal 10 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:17-9:18
+                  binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:23-9:34
+                    index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:23-9:27
+                      ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:23-9:24
+                      literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:26-9:26
+                    literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:33-9:34
+                binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:39-9:50
+                  index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:39-9:43
+                    ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:39-9:40
+                    literal 2 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:42-9:42
+                  literal 30 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:49-9:50
+              binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:55-9:66
+                index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:55-9:59
+                  ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:55-9:56
+                  literal 3 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:58-9:58
+                literal 40 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:65-9:66
+            binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:71-9:85
+              member .length : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:71-9:79
+                ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:71-9:72
+              literal 4 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:85-9:85
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:9:88-11:3
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:10:5-10:31
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:10:5-10:31
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:10:5-10:15
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:10:5-10:11
+                    [boundary: import]
+                literal "array-parity" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:10:17-10:30
+        let ys: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:12:3-13:4
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:12:19-12:20
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:13:3-13:11
+          assign = : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:13:3-13:11
+            [boundary: array-write]
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:13:3-13:7
+              ident ys : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:13:3-13:4
+              literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:13:6-13:6
+            literal 7 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:13:11-13:11
+        let zs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:14:3-15:4
+          [boundary: var-annotation]
+          ident ys : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:14:19-14:20
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:15:3-15:11
+          assign = : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:15:3-15:11
+            [boundary: array-write]
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:15:3-15:7
+              ident zs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:15:3-15:4
+              literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:15:6-15:6
+            literal 8 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:15:11-15:11
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:3-19:1
+          binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:7-16:51
+            binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:7-16:32
+              binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:7-16:17
+                index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:7-16:11
+                  ident ys : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:7-16:8
+                  literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:10-16:10
+                literal 7 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:17-16:17
+              binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:22-16:32
+                index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:22-16:26
+                  ident ys : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:22-16:23
+                  literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:25-16:25
+                literal 8 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:32-16:32
+            binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:37-16:51
+              member .length : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:37-16:45
+                ident ys : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:37-16:38
+              literal 2 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:51-16:51
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:16:54-18:3
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:17:5-17:31
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:17:5-17:31
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:17:5-17:15
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:17:5-17:11
+                    [boundary: import]
+                literal "alias-parity" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-literal-read-write-length-parity.deal:17:17-17:30

@@ -1,0 +1,84 @@
+module @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:4:1-16:1
+  async function add: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:4:1-5:5
+    param a: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:4:20-4:26
+      [boundary: param-entry]
+    param b: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:4:28-4:34
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:4:43-4:57
+        [boundary: async-completion]
+        binary + : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:4:50-4:54
+          ident a : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:4:50-4:50
+          ident b : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:4:54-4:54
+  async function greet: string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:5:1-6:5
+    param name: string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:5:22-5:34
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:5:46-5:67
+        [boundary: async-completion]
+        binary + : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:5:53-5:64
+          literal "hi-" : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:5:53-5:57
+          ident name : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:5:61-5:64
+  async function flag: boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:6:1-7:5
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:6:34-6:47
+        [boundary: async-completion]
+        literal true : boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:6:41-6:44
+  async function half: number @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:7:1-8:6
+    param n: number @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:7:21-7:30
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:7:42-7:58
+        [boundary: async-completion]
+        binary / : number @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:7:49-7:55
+          ident n : number @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:7:49-7:49
+          literal 2.0 : number @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:7:53-7:55
+  export @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:8:1-16:1
+    [boundary: export]
+    async function test: string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:8:8-16:1
+      body
+        let x: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:9:3-10:5
+          [boundary: var-annotation]
+          await : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:9:16-9:30
+            call : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:9:22-9:30
+              ident add : async(int,int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:9:22-9:24
+              literal 2 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:9:26-9:26
+              literal 3 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:9:29-9:29
+        let y: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:10:3-11:5
+          [boundary: var-annotation]
+          await : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:10:16-10:30
+            call : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:10:22-10:30
+              ident add : async(int,int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:10:22-10:24
+              ident x : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:10:26-10:26
+              literal 5 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:10:29-10:29
+        let b: boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:11:3-12:5
+          [boundary: var-annotation]
+          await : boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:11:20-11:31
+            call : boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:11:26-11:31
+              ident flag : async()->boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:11:26-11:29
+        let h: number @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:12:3-13:4
+          [boundary: var-annotation]
+          await : number @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:12:19-12:33
+            call : number @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:12:25-12:33
+              ident half : async(number)->number @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:12:25-12:28
+              literal 6.0 : number @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:12:30-12:32
+        if @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:3-14:8
+          binary && : boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:7-13:32
+            binary && : boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:7-13:19
+              binary === : boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:7-13:14
+                ident y : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:7-13:7
+                literal 10 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:13-13:14
+              ident b : boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:19-13:19
+            binary === : boolean @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:24-13:32
+              ident h : number @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:24-13:24
+              literal 3.0 : number @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:30-13:32
+          block @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:35-13:64
+            return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:37-13:64
+              [boundary: async-completion]
+              await : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:44-13:61
+                call : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:50-13:61
+                  ident greet : async(string)->string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:50-13:54
+                  literal "jvm" : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:13:56-13:60
+        return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:14:3-15:1
+          [boundary: async-completion]
+          literal "bad" : string @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-value-positions.deal:14:10-14:14

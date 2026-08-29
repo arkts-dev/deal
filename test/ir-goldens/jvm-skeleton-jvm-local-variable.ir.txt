@@ -1,0 +1,39 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:4:1-15:1
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:4:1-15:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:4:8-15:1
+      body
+        let x: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:5:3-6:3
+          [boundary: var-annotation]
+          literal 10 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:5:16-5:17
+        expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:6:3-6:11
+          assign = : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:6:3-6:11
+            [boundary: assignment]
+            ident x : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:6:3-6:3
+            binary + : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:6:7-6:11
+              ident x : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:6:7-6:7
+              literal 1 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:6:11-6:11
+        let y: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:7:3-8:5
+          [boundary: var-annotation]
+          binary * : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:7:16-7:20
+            ident x : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:7:16-7:16
+            literal 2 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:7:20-7:20
+        let z: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:8:3-9:3
+          [boundary: var-annotation]
+          binary - : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:8:16-8:21
+            ident y : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:8:16-8:16
+            literal 10 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:8:20-8:21
+        block @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:9:3-12:3
+          let x: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:10:5-11:5
+            [boundary: var-annotation]
+            literal 99 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:10:18-10:19
+          expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:11:5-11:13
+            assign = : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:11:5-11:13
+              [boundary: assignment]
+              ident z : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:11:5-11:5
+              binary + : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:11:9-11:13
+                ident z : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:11:9-11:9
+                ident x : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:11:13-11:13
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:13:3-14:1
+          [boundary: return]
+          ident z : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-local-variable.deal:13:10-13:10

@@ -1,0 +1,16 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-lit-nil-element-luajit-collapse' (ISSUE-0358).
+
+import * as console from "std/console"
+function f(xs: boolean[]): null {
+  if (xs.length === 0) { console.log("param-len-zero"); }
+}
+export function test(): null {
+  let bs: boolean[] = [true];
+  let xs: boolean[] = [bs[99] && true];
+  if (xs.length === 0) { console.log("decl-len-zero"); }
+  f([bs[99] && true]);
+  let ys: boolean[] = [true, bs[99] && true];
+  if (ys.length === 1) { console.log("mixed-len-one"); }
+  console.log("done");
+}

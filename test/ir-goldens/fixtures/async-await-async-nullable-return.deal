@@ -1,0 +1,4 @@
+// IR golden fixture: async-await-async-nullable-return
+// Migrated IR-containment pins from test/conformance/fixtures/async-await.json case 'async-nullable-return' (ISSUE-0358).
+
+export async function f(): string | null { return null; }

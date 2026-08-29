@@ -1,0 +1,7 @@
+// IR golden fixture: jvm-functions-slice-jvm-fn-arg-eval-order
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-functions-slice.json case 'jvm-fn-arg-eval-order' (ISSUE-0358).
+
+import * as console from "std/console"
+function mark(label: string, value: int): int { console.log(label); return value; }
+function pair(a: int, b: int): int { return a * 10 + b; }
+export function test(): int { return pair(mark("first", 1), mark("second", 2)); }

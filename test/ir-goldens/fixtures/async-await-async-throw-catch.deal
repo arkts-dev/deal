@@ -1,0 +1,4 @@
+// IR golden fixture: async-await-async-throw-catch
+// Migrated IR-containment pins from test/conformance/fixtures/async-await.json case 'async-throw-catch' (ISSUE-0358).
+
+export async function f(): string { try { throw { code: "E_TEST", message: "test error" }; return "unreachable"; } catch (e) { return e.code; } }

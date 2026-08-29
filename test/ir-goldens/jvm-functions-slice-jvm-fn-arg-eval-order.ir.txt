@@ -1,0 +1,50 @@
+module @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:4:1-8:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function mark: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:5:1-6:8
+    param label: string @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:5:15-5:28
+      [boundary: param-entry]
+    param value: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:5:30-5:40
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:5:49-5:66
+        call : null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:5:49-5:66
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:5:49-5:59
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:5:49-5:55
+              [boundary: import]
+          ident label : string @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:5:61-5:65
+      return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:5:69-5:83
+        [boundary: return]
+        ident value : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:5:76-5:80
+  function pair: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:6:1-7:6
+    param a: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:6:15-6:21
+      [boundary: param-entry]
+    param b: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:6:23-6:29
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:6:38-6:57
+        [boundary: return]
+        binary + : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:6:45-6:54
+          binary * : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:6:45-6:50
+            ident a : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:6:45-6:45
+            literal 10 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:6:49-6:50
+          ident b : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:6:54-6:54
+  export @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:7:1-8:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:7:8-8:1
+      body
+        return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:7:31-7:81
+          [boundary: return]
+          call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:7:38-7:78
+            ident pair : (int,int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:7:38-7:41
+            call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:7:43-7:58
+              ident mark : (string,int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:7:43-7:46
+              literal "first" : string @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:7:48-7:54
+              literal 1 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:7:57-7:57
+            call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:7:61-7:77
+              ident mark : (string,int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:7:61-7:64
+              literal "second" : string @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:7:66-7:73
+              literal 2 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-arg-eval-order.deal:7:76-7:76

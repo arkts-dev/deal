@@ -1,0 +1,30 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:4:1-10:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function helper: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:5:1-9:6
+    param p: string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:5:17-5:26
+      [boundary: param-entry]
+    body
+      let z: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:6:3-7:3
+        [boundary: var-annotation]
+        call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:6:17-6:30
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:6:17-6:27
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:6:17-6:23
+              [boundary: import]
+          ident p : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:6:29-6:29
+      expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:7:3-7:15
+        assign = : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:7:3-7:15
+          [boundary: assignment]
+          ident p : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:7:3-7:3
+          literal "changed" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:7:7-7:15
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:9:1-10:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:9:8-10:1
+      body
+        expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:9:32-9:55
+          call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:9:32-9:55
+            ident helper : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:9:32-9:37
+            literal "param-captured" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-parameter.deal:9:39-9:54

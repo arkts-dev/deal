@@ -1,0 +1,17 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-shadowed-initializer.deal:4:1-8:1
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-shadowed-initializer.deal:4:1-8:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-shadowed-initializer.deal:4:8-8:1
+      body
+        let x: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-shadowed-initializer.deal:5:3-6:3
+          [boundary: var-annotation]
+          literal 5 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-shadowed-initializer.deal:5:16-5:16
+        block @test/ir-goldens/fixtures/jvm-skeleton-jvm-shadowed-initializer.deal:6:3-6:35
+          let x: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-shadowed-initializer.deal:6:5-6:30
+            [boundary: var-annotation]
+            binary + : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-shadowed-initializer.deal:6:18-6:22
+              ident x : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-shadowed-initializer.deal:6:18-6:18
+              literal 1 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-shadowed-initializer.deal:6:22-6:22
+          return @test/ir-goldens/fixtures/jvm-skeleton-jvm-shadowed-initializer.deal:6:25-6:35
+            [boundary: return]
+            ident x : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-shadowed-initializer.deal:6:32-6:32

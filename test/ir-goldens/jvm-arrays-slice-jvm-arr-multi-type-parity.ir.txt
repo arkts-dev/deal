@@ -1,0 +1,95 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:4:1-16:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:4:1-5:6
+    [boundary: host-in]
+    [boundary: import]
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:5:1-16:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:5:8-16:1
+      body
+        let ns: [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:6:3-7:4
+          [boundary: var-annotation]
+          array : [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:6:22-6:31
+            literal 1.5 : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:6:23-6:25
+            literal 2.5 : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:6:28-6:30
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:7:3-7:21
+          assign = : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:7:3-7:21
+            [boundary: array-write]
+            index [] : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:7:3-7:7
+              ident ns : [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:7:3-7:4
+              literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:7:6-7:6
+            binary + : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:7:11-7:21
+              index [] : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:7:11-7:15
+                ident ns : [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:7:11-7:12
+                literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:7:14-7:14
+              literal 1.0 : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:7:19-7:21
+        let ss: [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:8:3-9:4
+          [boundary: var-annotation]
+          array : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:8:22-8:31
+            literal "a" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:8:23-8:25
+            literal "b" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:8:28-8:30
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:9:3-9:13
+          assign = : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:9:3-9:13
+            [boundary: array-write]
+            index [] : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:9:3-9:7
+              ident ss : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:9:3-9:4
+              literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:9:6-9:6
+            literal "z" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:9:11-9:13
+        let bs: [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:10:3-11:4
+          [boundary: var-annotation]
+          array : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:10:23-10:35
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:10:24-10:27
+            literal false : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:10:30-10:34
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:11:3-11:15
+          assign = : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:11:3-11:15
+            [boundary: array-write]
+            index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:11:3-11:7
+              ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:11:3-11:4
+              literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:11:6-11:6
+            index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:11:11-11:15
+              ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:11:11-11:12
+              literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:11:14-11:14
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:3-15:1
+          binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:7-12:106
+            binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:7-12:88
+              binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:7-12:70
+                binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:7-12:53
+                  binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:7-12:36
+                    binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:7-12:19
+                      index [] : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:7-12:11
+                        ident ns : [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:7-12:8
+                        literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:10-12:10
+                      literal 2.5 : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:17-12:19
+                    binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:24-12:36
+                      index [] : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:24-12:28
+                        ident ns : [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:24-12:25
+                        literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:27-12:27
+                      literal 2.5 : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:34-12:36
+                  binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:41-12:53
+                    index [] : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:41-12:45
+                      ident ss : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:41-12:42
+                      literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:44-12:44
+                    literal "z" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:51-12:53
+                binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:58-12:70
+                  index [] : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:58-12:62
+                    ident ss : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:58-12:59
+                    literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:61-12:61
+                  literal "b" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:68-12:70
+              binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:75-12:88
+                index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:75-12:79
+                  ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:75-12:76
+                  literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:78-12:78
+                literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:85-12:88
+            binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:93-12:106
+              index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:93-12:97
+                ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:93-12:94
+                literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:96-12:96
+              literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:103-12:106
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:12:109-14:3
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:13:5-13:31
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:13:5-13:31
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:13:5-13:15
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:13:5-13:11
+                    [boundary: import]
+                literal "multi-parity" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-multi-type-parity.deal:13:17-13:30

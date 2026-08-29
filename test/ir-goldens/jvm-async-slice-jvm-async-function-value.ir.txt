@@ -1,0 +1,18 @@
+module @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value.deal:4:1-9:1
+  async function value: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value.deal:4:1-5:6
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value.deal:4:31-4:41
+        [boundary: async-completion]
+        literal 6 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value.deal:4:38-4:38
+  export @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value.deal:5:1-9:1
+    [boundary: export]
+    async function test: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value.deal:5:8-9:1
+      body
+        let f: async()->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value.deal:6:3-7:8
+          [boundary: var-annotation]
+          ident value : async()->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value.deal:6:28-6:32
+        return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value.deal:7:3-8:1
+          [boundary: async-completion]
+          await : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value.deal:7:10-7:18
+            call : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value.deal:7:16-7:18
+              ident f : async()->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-function-value.deal:7:16-7:16

@@ -1,0 +1,37 @@
+module @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:4:1-11:1
+  class P @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:4:1-4:31
+    field b: boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:4:11-4:31
+      [boundary: class-default]
+      literal false : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:4:24-4:28
+  export @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:5:1-11:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:5:8-11:1
+      body
+        let xs: [boolean] @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:6:3-7:5
+          [boundary: var-annotation]
+          array : [boolean] @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:6:23-6:35
+            literal true : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:6:24-6:27
+            literal false : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:6:30-6:34
+        let p: @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal/P @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:7:3-8:4
+          [boundary: var-annotation]
+          object : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal/P @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:7:14-7:34
+            [boundary: class-construct]
+            binary || : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:7:19-7:32
+              index [] : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:7:19-7:23
+                ident xs : [boolean] @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:7:19-7:20
+                literal 0 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:7:22-7:22
+              index [] : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:7:28-7:32
+                ident xs : [boolean] @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:7:28-7:29
+                literal 1 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:7:31-7:31
+        if @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:8:3-9:8
+          binary === : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:8:7-8:18
+            member .b : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:8:7-8:9
+              ident p : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal/P @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:8:7-8:7
+            literal true : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:8:15-8:18
+          block @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:8:21-8:33
+            return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:8:23-8:33
+              [boundary: return]
+              literal 1 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:8:30-8:30
+        return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:9:3-10:1
+          [boundary: return]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-bool-construction-value-in-bounds.deal:9:10-9:10

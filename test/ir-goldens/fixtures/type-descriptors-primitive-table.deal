@@ -1,0 +1,4 @@
+// IR golden fixture: type-descriptors-primitive-table
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'primitive-table' (ISSUE-0358).
+
+function f(): null { let t: table = {}; return; }

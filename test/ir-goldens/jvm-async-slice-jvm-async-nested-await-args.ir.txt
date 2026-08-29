@@ -1,0 +1,27 @@
+module @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:4:1-7:1
+  async function inner: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:4:1-5:5
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:4:31-4:41
+        [boundary: async-completion]
+        literal 7 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:4:38-4:38
+  async function outer: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:5:1-6:6
+    param x: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:5:22-5:28
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:5:37-5:51
+        [boundary: async-completion]
+        binary + : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:5:44-5:48
+          ident x : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:5:44-5:44
+          literal 1 : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:5:48-5:48
+  export @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:6:1-7:1
+    [boundary: export]
+    async function test: int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:6:8-7:1
+      body
+        return @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:6:37-6:72
+          [boundary: async-completion]
+          await : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:6:44-6:69
+            call : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:6:50-6:69
+              ident outer : async(int)->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:6:50-6:54
+              await : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:6:56-6:68
+                call : int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:6:62-6:68
+                  ident inner : async()->int @test/ir-goldens/fixtures/jvm-async-slice-jvm-async-nested-await-args.deal:6:62-6:66

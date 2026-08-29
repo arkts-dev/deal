@@ -1,0 +1,32 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:4:1-11:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function helper: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:5:1-6:6
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:5:27-5:51
+        call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:5:27-5:51
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:5:27-5:37
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:5:27-5:33
+              [boundary: import]
+          literal "helper-ran" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:5:39-5:50
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:6:1-11:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:6:8-11:1
+      body
+        let z: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:7:3-8:5
+          [boundary: var-annotation]
+          call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:7:17-7:41
+            [boundary: stdlib-boundary]
+            member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:7:17-7:27
+              [boundary: table-read]
+              ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:7:17-7:23
+                [boundary: import]
+            literal "assign-log" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:7:29-7:40
+        let w: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:8:3-9:8
+          [boundary: var-annotation]
+          call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:8:17-8:24
+            ident helper : ()->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:8:17-8:22
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-var-init.deal:9:3-10:1

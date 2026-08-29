@@ -1,0 +1,8 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-cmp-negative-index-parity
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-cmp-negative-index-parity' (ISSUE-0358).
+
+import * as console from "std/console"
+export function test(): null {
+  let xs: int[] = [1];
+  if (xs[-1] === 5) { console.log("bad"); }
+}

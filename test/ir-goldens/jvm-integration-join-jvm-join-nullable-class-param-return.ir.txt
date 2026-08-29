@@ -1,0 +1,55 @@
+module @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:4:1-16:1
+  class User @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:4:1-4:33
+    field name: string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:4:14-4:33
+      [boundary: class-default]
+      literal "" : string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:4:29-4:30
+  function greet: string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:5:1-9:6
+    param u: ?User @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:5:16-5:30
+      [boundary: param-entry]
+    body
+      if @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:6:3-7:8
+        binary !== : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:6:7-6:16
+          ident u : ?@test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal/User @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:6:7-6:7
+          literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:6:13-6:16
+        block @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:6:19-6:36
+          return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:6:21-6:36
+            [boundary: return]
+            member .name : string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:6:28-6:33
+              ident u : @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal/User @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:6:28-6:28
+      return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:7:3-8:1
+        [boundary: return]
+        literal "nobody" : string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:7:10-7:17
+  export @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:9:1-16:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:9:8-16:1
+      body
+        let a: @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal/User @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:10:3-11:5
+          [boundary: var-annotation]
+          object : @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal/User @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:10:17-10:31
+            [boundary: class-construct]
+            literal "ada" : string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:10:25-10:29
+        let s: string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:11:3-12:5
+          [boundary: var-annotation]
+          call : string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:11:19-11:26
+            ident greet : (?@test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal/User)->string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:11:19-11:23
+            ident a : @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal/User @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:11:25-11:25
+        let t: string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:12:3-13:4
+          [boundary: var-annotation]
+          call : string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:12:19-12:29
+            ident greet : (?@test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal/User)->string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:12:19-12:23
+            literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:12:25-12:28
+        if @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:13:3-14:8
+          binary && : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:13:7-13:35
+            binary === : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:13:7-13:17
+              ident s : string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:13:7-13:7
+              literal "ada" : string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:13:13-13:17
+            binary === : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:13:22-13:35
+              ident t : string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:13:22-13:22
+              literal "nobody" : string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:13:28-13:35
+          block @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:13:38-13:50
+            return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:13:40-13:50
+              [boundary: return]
+              literal 1 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:13:47-13:47
+        return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:14:3-15:1
+          [boundary: return]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-class-param-return.deal:14:10-14:10

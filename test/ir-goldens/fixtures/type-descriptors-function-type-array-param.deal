@@ -1,0 +1,4 @@
+// IR golden fixture: type-descriptors-function-type-array-param
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'function-type-array-param' (ISSUE-0358).
+
+function sumValues(xs: int[]): null { return; }

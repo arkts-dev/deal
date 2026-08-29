@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-classes-slice-jvm-class-fresh-instances-per-construction
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-classes-slice.json case 'jvm-class-fresh-instances-per-construction' (ISSUE-0358).
+
+class Bag { count: int = 0; }
+export function test(): int {
+  let a: Bag = {};
+  let b: Bag = {};
+  a.count = 7;
+  return a.count + b.count;
+}

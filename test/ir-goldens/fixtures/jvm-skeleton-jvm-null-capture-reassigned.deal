@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-skeleton-jvm-null-capture-reassigned
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-null-capture-reassigned' (ISSUE-0358).
+
+import * as console from "std/console"
+export function test(): null {
+  let a: string = "x";
+  let z: null = console.log(a);
+  a = "y";
+  return;
+}

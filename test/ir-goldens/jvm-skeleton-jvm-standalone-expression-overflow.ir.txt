@@ -1,0 +1,12 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-standalone-expression-overflow.deal:4:1-8:1
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-standalone-expression-overflow.deal:4:1-8:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-standalone-expression-overflow.deal:4:8-8:1
+      body
+        expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-standalone-expression-overflow.deal:5:3-5:25
+          binary + : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-standalone-expression-overflow.deal:5:3-5:25
+            literal 9223372036854775807 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-standalone-expression-overflow.deal:5:3-5:21
+            literal 1 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-standalone-expression-overflow.deal:5:25-5:25
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-standalone-expression-overflow.deal:6:3-7:1
+          [boundary: return]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-standalone-expression-overflow.deal:6:10-6:10

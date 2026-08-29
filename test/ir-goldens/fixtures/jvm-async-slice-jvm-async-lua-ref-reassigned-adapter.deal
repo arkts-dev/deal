@@ -1,0 +1,16 @@
+// IR golden fixture: jvm-async-slice-jvm-async-lua-ref-reassigned-adapter
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-async-slice.json case 'jvm-async-lua-ref-reassigned-adapter' (ISSUE-0358).
+
+import * as console from "std/console"
+async function one(x: int): int { return x; }
+async function two(x: int): int { return x + 10; }
+async function apply(cb: async (x: int) => int, v: int): int { return await cb(v); }
+export async function test(): int {
+  let g: async (x: int) => int = one;
+  let h: async (x: int, y: int) => int = g;
+  g = two;
+  await apply(g, 1);
+  let r: int = await h(1, 2);
+  if (r === 11) { console.log("jvm-async-lua-ref-reassigned-adapter-ok"); }
+  return 0;
+}

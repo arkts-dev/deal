@@ -1,0 +1,6 @@
+// IR golden fixture: jvm-function-values-slice-jvm-fv-return-function-value
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-function-values-slice.json case 'jvm-fv-return-function-value' (ISSUE-0358).
+
+function inc(x: int): int { return x + 1; }
+function picker(): (x: int) => int { return inc; }
+export function test(): int { return picker()(41); }

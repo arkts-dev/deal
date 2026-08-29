@@ -1,0 +1,19 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-and-boundary-parity.deal:4:1-9:1
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-and-boundary-parity.deal:4:1-9:1
+    [boundary: export]
+    function test: boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-and-boundary-parity.deal:4:8-9:1
+      body
+        let bs: [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-and-boundary-parity.deal:5:3-6:5
+          [boundary: var-annotation]
+          array : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-and-boundary-parity.deal:5:23-5:28
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-and-boundary-parity.deal:5:24-5:27
+        let b: boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-and-boundary-parity.deal:6:3-7:8
+          [boundary: var-annotation]
+          binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-and-boundary-parity.deal:6:20-6:33
+            index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-and-boundary-parity.deal:6:20-6:25
+              ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-and-boundary-parity.deal:6:20-6:21
+              literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-and-boundary-parity.deal:6:23-6:24
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-and-boundary-parity.deal:6:30-6:33
+        return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-and-boundary-parity.deal:7:3-8:1
+          [boundary: return]
+          ident b : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-and-boundary-parity.deal:7:10-7:10

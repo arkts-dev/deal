@@ -1,0 +1,47 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:4:1-11:1
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:4:1-11:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:4:8-11:1
+      body
+        let xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:5:3-6:4
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:5:19-5:20
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:6:3-6:19
+          assign = : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:6:3-6:19
+            [boundary: array-write]
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:6:3-6:15
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:6:3-6:4
+              member .length : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:6:6-6:14
+                ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:6:6-6:7
+            literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:6:19-6:19
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:7:3-7:19
+          assign = : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:7:3-7:19
+            [boundary: array-write]
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:7:3-7:15
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:7:3-7:4
+              member .length : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:7:6-7:14
+                ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:7:6-7:7
+            literal 2 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:7:19-7:19
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:8:3-8:11
+          assign = : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:8:3-8:11
+            [boundary: array-write]
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:8:3-8:7
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:8:3-8:4
+              literal 2 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:8:6-8:6
+            literal 4 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:8:11-8:11
+        return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:3-10:1
+          [boundary: return]
+          binary + : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:10-9:42
+            binary + : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:10-9:30
+              binary + : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:10-9:22
+                index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:10-9:14
+                  ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:10-9:11
+                  literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:13-9:13
+                index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:18-9:22
+                  ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:18-9:19
+                  literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:21-9:21
+              index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:26-9:30
+                ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:26-9:27
+                literal 2 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:29-9:29
+            member .length : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:34-9:42
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-append-at-length.deal:9:34-9:35

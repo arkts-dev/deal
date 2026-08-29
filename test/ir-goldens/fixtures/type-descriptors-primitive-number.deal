@@ -1,0 +1,4 @@
+// IR golden fixture: type-descriptors-primitive-number
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'primitive-number' (ISSUE-0358).
+
+function f(): null { let x: number = 3.14; return; }

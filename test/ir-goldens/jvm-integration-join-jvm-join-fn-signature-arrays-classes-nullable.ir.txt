@@ -1,0 +1,88 @@
+module @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:4:1-18:1
+  class Pair @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:4:1-4:26
+    field x: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:4:14-4:26
+      [boundary: class-default]
+      literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:4:23-4:23
+  function sig: ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:5:1-12:6
+    param a: [int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:5:14-5:22
+      [boundary: param-entry]
+    param p: ?Pair @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:5:24-5:38
+      [boundary: param-entry]
+    param xs: ?[string] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:5:40-5:59
+      [boundary: param-entry]
+    body
+      let r: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:6:3-7:4
+        [boundary: var-annotation]
+        literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:6:16-6:16
+      if @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:7:3-8:4
+        binary === : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:7:7-7:20
+          member .length : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:7:7-7:14
+            ident a : [int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:7:7-7:7
+          literal 2 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:7:20-7:20
+        block @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:7:23-7:39
+          expr-stmt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:7:25-7:36
+            assign = : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:7:25-7:36
+              [boundary: assignment]
+              ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:7:25-7:25
+              binary + : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:7:29-7:36
+                ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:7:29-7:29
+                index [] : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:7:33-7:36
+                  ident a : [int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:7:33-7:33
+                  literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:7:35-7:35
+      if @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:8:3-9:4
+        binary !== : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:8:7-8:16
+          ident p : ?@test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal/Pair @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:8:7-8:7
+          literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:8:13-8:16
+        block @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:8:19-8:34
+          expr-stmt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:8:21-8:31
+            assign = : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:8:21-8:31
+              [boundary: assignment]
+              ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:8:21-8:21
+              binary + : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:8:25-8:31
+                ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:8:25-8:25
+                member .x : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:8:29-8:31
+                  ident p : @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal/Pair @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:8:29-8:29
+      if @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:9:3-10:8
+        binary === : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:9:7-9:17
+          ident xs : ?[string] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:9:7-9:8
+          literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:9:14-9:17
+        block @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:9:20-9:33
+          expr-stmt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:9:22-9:30
+            assign = : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:9:22-9:30
+              [boundary: assignment]
+              ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:9:22-9:22
+              binary + : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:9:26-9:30
+                ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:9:26-9:26
+                literal 1 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:9:30-9:30
+      return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:10:3-11:1
+        [boundary: return]
+        ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:10:10-10:10
+  export @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:12:1-18:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:12:8-18:1
+      body
+        let pp: @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal/Pair @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:13:3-14:5
+          [boundary: var-annotation]
+          object : @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal/Pair @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:13:18-13:25
+            [boundary: class-construct]
+            literal 4 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:13:23-13:23
+        let out: ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:14:3-15:4
+          [boundary: var-annotation]
+          call : ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:14:25-14:45
+            ident sig : ([int],?@test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal/Pair,?[string])->?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:14:25-14:27
+            array : [int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:14:29-14:34
+              literal 5 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:14:30-14:30
+              literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:14:33-14:33
+            ident pp : @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal/Pair @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:14:37-14:38
+            literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:14:41-14:44
+        if @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:15:3-16:8
+          binary !== : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:15:7-15:18
+            ident out : ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:15:7-15:9
+            literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:15:15-15:18
+          block @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:15:21-15:35
+            return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:15:23-15:35
+              [boundary: return]
+              ident out : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:15:30-15:32
+        return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:16:3-17:1
+          [boundary: return]
+          literal 99 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable.deal:16:10-16:11

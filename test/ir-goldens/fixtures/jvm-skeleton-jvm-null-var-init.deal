@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-skeleton-jvm-null-var-init
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-null-var-init' (ISSUE-0358).
+
+import * as console from "std/console"
+function helper(): null { console.log("helper-ran"); }
+export function test(): null {
+  let z: null = console.log("assign-log");
+  let w: null = helper();
+  return;
+}

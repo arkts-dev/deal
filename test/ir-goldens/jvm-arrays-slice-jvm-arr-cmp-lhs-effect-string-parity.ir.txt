@@ -1,0 +1,48 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:4:1-10:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function markS: string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:5:1-6:6
+    param label: string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:5:16-5:29
+      [boundary: param-entry]
+    param v: string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:5:31-5:40
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:5:52-5:69
+        call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:5:52-5:69
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:5:52-5:62
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:5:52-5:58
+              [boundary: import]
+          ident label : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:5:64-5:68
+      return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:5:72-5:82
+        [boundary: return]
+        ident v : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:5:79-5:79
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:6:1-10:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:6:8-10:1
+      body
+        let ss: [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:7:3-8:4
+          [boundary: var-annotation]
+          array : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:7:22-7:26
+            literal "a" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:7:23-7:25
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:3-9:1
+          binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:7-8:35
+            call : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:7-8:24
+              ident markS : (string,string)->string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:7-8:11
+              literal "lhsS" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:13-8:18
+              literal "x" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:21-8:23
+            index [] : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:30-8:35
+              ident ss : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:30-8:31
+              unary - : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:33-8:34
+                literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:34-8:34
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:38-8:61
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:40-8:58
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:40-8:58
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:40-8:50
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:40-8:46
+                    [boundary: import]
+                literal "badS" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity.deal:8:52-8:57

@@ -1,0 +1,9 @@
+// IR golden fixture: jvm-classes-slice-jvm-class-primitive-field-types
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-classes-slice.json case 'jvm-class-primitive-field-types' (ISSUE-0358).
+
+class Mixed { i: int = 0; n: number = 0.0; b: boolean = false; s: string = ""; }
+export function test(): int {
+  let m: Mixed = { i: 3, n: 2.5, b: true, s: "jvm" };
+  if (m.b === true && m.s === "jvm" && m.i === 3 && m.n > 2.0 && m.n < 3.0) { return m.i + 1; }
+  return 0;
+}

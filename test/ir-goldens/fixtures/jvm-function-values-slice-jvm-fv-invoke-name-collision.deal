@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-function-values-slice-jvm-fv-invoke-name-collision
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-function-values-slice.json case 'jvm-fv-invoke-name-collision' (ISSUE-0358).
+
+function invoke(x: int): int { return x + 1; }
+function apply(f: (x: int) => int, v: int): int { return f(v); }
+export function test(): int {
+  let f: (x: int) => int = invoke;
+  let g: (a: int, b: int) => int = invoke;
+  return f(41) + g(0, 999) + apply(invoke, 0);
+}

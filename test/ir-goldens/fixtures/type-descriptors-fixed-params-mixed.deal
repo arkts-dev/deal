@@ -1,0 +1,4 @@
+// IR golden fixture: type-descriptors-fixed-params-mixed
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'fixed-params-mixed' (ISSUE-0358).
+
+function describe(label: string, values: int[]): null { return; }

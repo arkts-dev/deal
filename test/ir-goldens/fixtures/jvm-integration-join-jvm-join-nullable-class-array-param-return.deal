@@ -1,0 +1,19 @@
+// IR golden fixture: jvm-integration-join-jvm-join-nullable-class-array-param-return
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-nullable-class-array-param-return' (ISSUE-0358).
+
+class Pt { x: int = 0; }
+function head(ps: Pt[] | null): Pt | null {
+  if (ps !== null) { return ps[0]; }
+  return null;
+}
+export function test(): int {
+  let ps: Pt[] = [];
+  let p: Pt = { x: 9 };
+  ps[0] = p;
+  let h: Pt | null = head(ps);
+  let r: int = 0;
+  if (h !== null) { r = r + h.x; }
+  let none: Pt | null = head(null);
+  if (none === null) { r = r + 1; }
+  return r;
+}

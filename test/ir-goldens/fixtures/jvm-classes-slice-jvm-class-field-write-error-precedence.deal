@@ -1,0 +1,11 @@
+// IR golden fixture: jvm-classes-slice-jvm-class-field-write-error-precedence
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-classes-slice.json case 'jvm-class-field-write-error-precedence' (ISSUE-0358).
+
+import * as console from "std/console"
+class P { b: boolean = false; }
+function getP(): P { console.log("target"); return { b: false }; }
+export function test(): int {
+  let xs: boolean[] = [true, false];
+  getP().b = xs[0] && xs[5];
+  return 1;
+}

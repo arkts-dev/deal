@@ -1,0 +1,61 @@
+module @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:4:1-10:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:4:1-5:5
+    [boundary: host-in]
+    [boundary: import]
+  class Box @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:5:1-5:25
+    field x: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:5:13-5:25
+      [boundary: class-default]
+      literal 0 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:5:22-5:22
+  function note: null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:6:1-7:8
+    param s: string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:6:15-6:24
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:6:34-6:47
+        call : null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:6:34-6:47
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:6:34-6:44
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:6:34-6:40
+              [boundary: import]
+          ident s : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:6:46-6:46
+      return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:6:50-6:58
+  function getBox: Box @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:7:1-8:8
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:7:26-7:39
+        call : null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:7:26-7:39
+          ident note : (string)->null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:7:26-7:29
+          literal "target" : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:7:31-7:38
+      return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:7:42-7:59
+        [boundary: return]
+        object : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal/Box @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:7:49-7:56
+          [boundary: class-construct]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:7:54-7:54
+  function make: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:8:1-9:6
+    param v: null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:8:15-8:22
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:8:31-8:42
+        call : null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:8:31-8:42
+          ident note : (string)->null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:8:31-8:34
+          literal "make" : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:8:36-8:41
+      return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:8:45-8:55
+        [boundary: return]
+        literal 1 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:8:52-8:52
+  export @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:9:1-10:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:9:8-10:1
+      body
+        expr-stmt @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:9:31-9:62
+          assign = : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:9:31-9:62
+            [boundary: field-write]
+            member .x : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:9:31-9:40
+              call : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal/Box @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:9:31-9:38
+                ident getBox : ()->@test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal/Box @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:9:31-9:36
+            call : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:9:44-9:62
+              ident make : (null)->int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:9:44-9:47
+              call : null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:9:49-9:61
+                ident note : (string)->null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:9:49-9:52
+                literal "value" : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:9:54-9:60
+        return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:9:65-9:75
+          [boundary: return]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-eval-order-parity.deal:9:72-9:72

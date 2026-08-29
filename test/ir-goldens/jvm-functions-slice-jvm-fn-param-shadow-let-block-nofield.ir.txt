@@ -1,0 +1,28 @@
+module @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:4:1-10:1
+  function f: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:4:1-9:6
+    param g: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:4:12-4:18
+      [boundary: param-entry]
+    body
+      let g: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:5:3-6:3
+        [boundary: var-annotation]
+        binary + : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:5:16-5:21
+          ident g : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:5:16-5:16
+          literal 10 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:5:20-5:21
+      block @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:6:3-6:25
+        let g: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:6:5-6:25
+          [boundary: var-annotation]
+          binary + : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:6:18-6:22
+            ident g : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:6:18-6:18
+            literal 1 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:6:22-6:22
+      return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:7:3-8:1
+        [boundary: return]
+        ident g : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:7:10-7:10
+  export @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:9:1-10:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:9:8-10:1
+      body
+        return @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:9:31-9:44
+          [boundary: return]
+          call : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:9:38-9:41
+            ident f : (int)->int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:9:38-9:38
+            literal 5 : int @test/ir-goldens/fixtures/jvm-functions-slice-jvm-fn-param-shadow-let-block-nofield.deal:9:40-9:40

@@ -1,0 +1,11 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-eval-order-write-hoisted-parity
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-eval-order-write-hoisted-parity' (ISSUE-0358).
+
+import * as console from "std/console"
+function pick(label: string, z: null): int { console.log(label); return 0; }
+function getArr(label: string, xs: int[]): int[] { console.log(label); return xs; }
+export function test(): null {
+  let xs: int[] = [5, 6];
+  getArr("a", xs)[pick("i", console.log("b"))] = pick("v", console.log("c"));
+  if (xs[0] === 0) { console.log("write-ok"); }
+}

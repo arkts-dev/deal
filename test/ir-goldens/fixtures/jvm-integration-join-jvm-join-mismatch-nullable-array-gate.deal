@@ -1,0 +1,9 @@
+// IR golden fixture: jvm-integration-join-jvm-join-mismatch-nullable-array-gate
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-mismatch-nullable-array-gate' (ISSUE-0358).
+
+export function test(): int {
+  let holder: table = { item: ["s"] };
+  let xs: int[] | null = holder.item;
+  if (xs !== null) { return xs.length; }
+  return 0;
+}

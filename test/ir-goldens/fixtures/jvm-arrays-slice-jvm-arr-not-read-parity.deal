@@ -1,0 +1,13 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-not-read-parity
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-not-read-parity' (ISSUE-0358).
+
+import * as console from "std/console"
+export function test(): null {
+  let bs: boolean[] = [true];
+  let b: boolean = !bs[99];
+  if (b) { console.log("not-coerced-true"); }
+  if (!bs[99]) { console.log("not-taken"); }
+  let d: boolean = !(bs[99] && true);
+  if (d) { console.log("not-niland"); }
+  if (!bs[0]) { console.log("bad"); }
+}

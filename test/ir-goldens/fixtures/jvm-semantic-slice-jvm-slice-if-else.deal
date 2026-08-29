@@ -1,0 +1,19 @@
+// IR golden fixture: jvm-semantic-slice-jvm-slice-if-else
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-semantic-slice.json case 'jvm-slice-if-else' (ISSUE-0358).
+
+function classify(n: int): int {
+  if (n < 0) {
+    return 0;
+  } else if (n === 0) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+export function test(): int {
+  let a: int = classify(-5);
+  let b: int = classify(0);
+  let c: int = classify(7);
+  if (a === 0 && b === 1 && c === 2) { return 100; }
+  return 0;
+}

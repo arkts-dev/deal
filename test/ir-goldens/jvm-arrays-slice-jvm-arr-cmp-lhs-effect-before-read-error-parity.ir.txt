@@ -1,0 +1,48 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:4:1-10:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function mark: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:5:1-6:6
+    param label: string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:5:15-5:28
+      [boundary: param-entry]
+    param v: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:5:30-5:36
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:5:45-5:62
+        call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:5:45-5:62
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:5:45-5:55
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:5:45-5:51
+              [boundary: import]
+          ident label : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:5:57-5:61
+      return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:5:65-5:75
+        [boundary: return]
+        ident v : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:5:72-5:72
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:6:1-10:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:6:8-10:1
+      body
+        let xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:7:3-8:4
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:7:19-7:21
+            literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:7:20-7:20
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:3-9:1
+          binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:7-8:31
+            call : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:7-8:20
+              ident mark : (string,int)->int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:7-8:10
+              literal "lhs" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:12-8:16
+              literal 5 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:19-8:19
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:26-8:31
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:26-8:27
+              unary - : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:29-8:30
+                literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:30-8:30
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:34-8:56
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:36-8:53
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:36-8:53
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:36-8:46
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:36-8:42
+                    [boundary: import]
+                literal "bad" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-before-read-error-parity.deal:8:48-8:52

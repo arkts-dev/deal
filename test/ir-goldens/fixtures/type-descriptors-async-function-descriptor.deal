@@ -1,0 +1,8 @@
+// IR golden fixture: type-descriptors-async-function-descriptor
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'async-function-descriptor' (ISSUE-0358).
+
+async function fetch(x: int): string { return "data"; }
+export function main(): null {
+let f: async (x: int) => string = fetch;
+return null;
+}

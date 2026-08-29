@@ -1,0 +1,8 @@
+// IR golden fixture: jvm-async-slice-jvm-async-await-in-condition
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-async-slice.json case 'jvm-async-await-in-condition' (ISSUE-0358).
+
+async function flag(): boolean { return true; }
+export async function test(): int {
+  if (await flag()) { return 1; }
+  return 0;
+}

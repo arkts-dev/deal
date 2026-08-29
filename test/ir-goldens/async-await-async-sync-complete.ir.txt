@@ -1,0 +1,8 @@
+module @test/ir-goldens/fixtures/async-await-async-sync-complete.deal:4:1-5:1
+  export @test/ir-goldens/fixtures/async-await-async-sync-complete.deal:4:1-5:1
+    [boundary: export]
+    async function f: int @test/ir-goldens/fixtures/async-await-async-sync-complete.deal:4:8-5:1
+      body
+        return @test/ir-goldens/fixtures/async-await-async-sync-complete.deal:4:34-4:44
+          [boundary: async-completion]
+          literal 5 : int @test/ir-goldens/fixtures/async-await-async-sync-complete.deal:4:41-4:41

@@ -1,0 +1,10 @@
+// IR golden fixture: jvm-arrays-slice-jvm-arr-cmp-both-reads-inbounds-order-parity
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-cmp-both-reads-inbounds-order-parity' (ISSUE-0358).
+
+import * as console from "std/console"
+function makeArr(label: string, z: null): int[] { console.log(label); return [1]; }
+export function test(): null {
+  let ys: int[] = [1];
+  if (ys[0] !== makeArr("made", console.log("h"))[0]) { console.log("bad-neq"); }
+  if (ys[0] === makeArr("made2", console.log("h2"))[0]) { console.log("eq-ok"); }
+}

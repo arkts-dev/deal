@@ -1,0 +1,62 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:4:1-15:1
+  function fill: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:4:1-9:8
+    param xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:4:15-4:24
+      [boundary: param-entry]
+    param v: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:4:26-4:32
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:5:3-5:11
+        assign = : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:5:3-5:11
+          [boundary: array-write]
+          index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:5:3-5:7
+            ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:5:3-5:4
+            literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:5:6-5:6
+          ident v : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:5:11-5:11
+      expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:6:3-6:15
+        assign = : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:6:3-6:15
+          [boundary: array-write]
+          index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:6:3-6:7
+            ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:6:3-6:4
+            literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:6:6-6:6
+          binary + : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:6:11-6:15
+            ident v : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:6:11-6:11
+            literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:6:15-6:15
+      return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:7:3-8:1
+        [boundary: return]
+        ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:7:10-7:11
+  function total: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:9:1-10:6
+    param xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:9:16-9:25
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:9:34-9:56
+        [boundary: return]
+        binary + : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:9:41-9:53
+          index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:9:41-9:45
+            ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:9:41-9:42
+            literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:9:44-9:44
+          index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:9:49-9:53
+            ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:9:49-9:50
+            literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:9:52-9:52
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:10:1-15:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:10:8-15:1
+      body
+        let xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:11:3-12:5
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:11:19-11:24
+            literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:11:20-11:20
+            literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:11:23-11:23
+        let ys: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:12:3-13:8
+          [boundary: var-annotation]
+          call : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:12:19-12:30
+            ident fill : ([int],int)->[int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:12:19-12:22
+            ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:12:24-12:25
+            literal 10 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:12:28-12:29
+        return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:13:3-14:1
+          [boundary: return]
+          binary + : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:13:10-13:30
+            call : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:13:10-13:18
+              ident total : ([int])->int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:13:10-13:14
+              ident ys : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:13:16-13:17
+            member .length : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:13:22-13:30
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-function-param-return.deal:13:22-13:23

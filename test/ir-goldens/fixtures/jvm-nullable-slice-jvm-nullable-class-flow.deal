@@ -1,0 +1,13 @@
+// IR golden fixture: jvm-nullable-slice-jvm-nullable-class-flow
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-nullable-slice.json case 'jvm-nullable-class-flow' (ISSUE-0358).
+
+class Box { v: int = 7; }
+function make(): Box { return {}; }
+export function test(): int {
+  let b: Box | null = make();
+  if (b !== null) {
+    let x: int = b.v;
+    return x;
+  }
+  return 0;
+}

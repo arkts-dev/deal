@@ -1,0 +1,67 @@
+module @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:4:1-17:1
+  function first: ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:4:1-8:6
+    param xs: ?[int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:4:16-4:32
+      [boundary: param-entry]
+    body
+      if @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:5:3-6:8
+        binary !== : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:5:7-5:17
+          ident xs : ?[int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:5:7-5:8
+          literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:5:14-5:17
+        block @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:5:20-5:36
+          return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:5:22-5:36
+            [boundary: return]
+            index [] : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:5:29-5:33
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:5:29-5:30
+              literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:5:32-5:32
+      return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:6:3-7:1
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:6:10-6:13
+  export @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:8:1-17:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:8:8-17:1
+      body
+        let a: [int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:9:3-10:5
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:9:18-9:23
+            literal 7 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:9:19-9:19
+            literal 8 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:9:22-9:22
+        let got: ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:10:3-11:5
+          [boundary: var-annotation]
+          call : ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:10:25-10:32
+            ident first : (?[int])->?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:10:25-10:29
+            ident a : [int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:10:31-10:31
+        let none: ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:11:3-12:5
+          [boundary: var-annotation]
+          call : ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:11:26-11:36
+            ident first : (?[int])->?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:11:26-11:30
+            literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:11:32-11:35
+        let r: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:12:3-13:4
+          [boundary: var-annotation]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:12:16-12:16
+        if @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:13:3-14:4
+          binary !== : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:13:7-13:18
+            ident got : ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:13:7-13:9
+            literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:13:15-13:18
+          block @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:13:21-13:36
+            expr-stmt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:13:23-13:33
+              assign = : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:13:23-13:33
+                [boundary: assignment]
+                ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:13:23-13:23
+                binary + : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:13:27-13:33
+                  ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:13:27-13:27
+                  ident got : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:13:31-13:33
+        if @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:14:3-15:8
+          binary === : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:14:7-14:19
+            ident none : ?int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:14:7-14:10
+            literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:14:16-14:19
+          block @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:14:22-14:35
+            expr-stmt @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:14:24-14:32
+              assign = : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:14:24-14:32
+                [boundary: assignment]
+                ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:14:24-14:24
+                binary + : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:14:28-14:32
+                  ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:14:28-14:28
+                  literal 1 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:14:32-14:32
+        return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:15:3-16:1
+          [boundary: return]
+          ident r : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-nullable-array-param-return.deal:15:10-15:10

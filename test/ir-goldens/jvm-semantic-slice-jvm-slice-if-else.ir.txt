@@ -1,0 +1,64 @@
+module @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:4:1-20:1
+  function classify: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:4:1-13:6
+    param n: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:4:19-4:25
+      [boundary: param-entry]
+    body
+      if @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:5:3-12:1
+        binary < : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:5:7-5:11
+          ident n : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:5:7-5:7
+          literal 0 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:5:11-5:11
+        block @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:5:14-7:3
+          return @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:6:5-7:3
+            [boundary: return]
+            literal 0 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:6:12-6:12
+      if @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:7:10-12:1
+        binary === : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:7:14-7:20
+          ident n : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:7:14-7:14
+          literal 0 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:7:20-7:20
+        block @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:7:23-9:3
+          return @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:8:5-9:3
+            [boundary: return]
+            literal 1 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:8:12-8:12
+      block @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:9:10-11:3
+        return @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:10:5-11:3
+          [boundary: return]
+          literal 2 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:10:12-10:12
+  export @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:13:1-20:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:13:8-20:1
+      body
+        let a: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:14:3-15:5
+          [boundary: var-annotation]
+          call : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:14:16-14:27
+            ident classify : (int)->int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:14:16-14:23
+            unary - : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:14:25-14:26
+              literal 5 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:14:26-14:26
+        let b: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:15:3-16:5
+          [boundary: var-annotation]
+          call : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:15:16-15:26
+            ident classify : (int)->int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:15:16-15:23
+            literal 0 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:15:25-15:25
+        let c: int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:16:3-17:4
+          [boundary: var-annotation]
+          call : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:16:16-16:26
+            ident classify : (int)->int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:16:16-16:23
+            literal 7 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:16:25-16:25
+        if @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:3-18:8
+          binary && : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:7-17:35
+            binary && : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:7-17:24
+              binary === : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:7-17:13
+                ident a : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:7-17:7
+                literal 0 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:13-17:13
+              binary === : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:18-17:24
+                ident b : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:18-17:18
+                literal 1 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:24-17:24
+            binary === : boolean @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:29-17:35
+              ident c : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:29-17:29
+              literal 2 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:35-17:35
+          block @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:38-17:52
+            return @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:40-17:52
+              [boundary: return]
+              literal 100 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:17:47-17:49
+        return @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:18:3-19:1
+          [boundary: return]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-semantic-slice-jvm-slice-if-else.deal:18:10-18:10

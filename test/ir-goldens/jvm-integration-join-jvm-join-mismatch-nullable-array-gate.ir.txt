@@ -1,0 +1,27 @@
+module @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:4:1-10:1
+  export @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:4:1-10:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:4:8-10:1
+      body
+        let holder: table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:5:3-6:5
+          [boundary: var-annotation]
+          object : table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:5:23-5:37
+            array : [string] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:5:31-5:35
+              literal "s" : string @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:5:32-5:34
+        let xs: ?[int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:6:3-7:4
+          [boundary: var-annotation]
+          member .item : ?[int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:6:26-6:36
+            [boundary: table-read]
+            ident holder : table @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:6:26-6:31
+        if @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:7:3-8:8
+          binary !== : boolean @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:7:7-7:17
+            ident xs : ?[int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:7:7-7:8
+            literal null : null @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:7:14-7:17
+          block @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:7:20-7:40
+            return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:7:22-7:40
+              [boundary: return]
+              member .length : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:7:29-7:37
+                ident xs : [int] @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:7:29-7:30
+        return @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:8:3-9:1
+          [boundary: return]
+          literal 0 : int @test/ir-goldens/fixtures/jvm-integration-join-jvm-join-mismatch-nullable-array-gate.deal:8:10-8:10

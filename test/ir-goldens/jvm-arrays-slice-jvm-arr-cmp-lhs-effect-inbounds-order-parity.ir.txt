@@ -1,0 +1,77 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:4:1-12:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function mark: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:5:1-6:8
+    param label: string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:5:15-5:28
+      [boundary: param-entry]
+    param v: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:5:30-5:36
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:5:45-5:62
+        call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:5:45-5:62
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:5:45-5:55
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:5:45-5:51
+              [boundary: import]
+          ident label : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:5:57-5:61
+      return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:5:65-5:75
+        [boundary: return]
+        ident v : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:5:72-5:72
+  function pick: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:6:1-7:6
+    param label: string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:6:15-6:28
+      [boundary: param-entry]
+    param z: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:6:30-6:37
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:6:46-6:63
+        call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:6:46-6:63
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:6:46-6:56
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:6:46-6:52
+              [boundary: import]
+          ident label : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:6:58-6:62
+      return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:6:66-6:76
+        [boundary: return]
+        literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:6:73-6:73
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:7:1-12:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:7:8-12:1
+      body
+        let xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:8:3-9:5
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:8:19-8:21
+            literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:8:20-8:20
+        let zs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:9:3-10:4
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:9:19-9:21
+            literal 5 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:9:20-9:20
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:3-11:1
+          binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:7-10:56
+            call : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:7-10:20
+              ident mark : (string,int)->int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:7-10:10
+              literal "lhs" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:12-10:16
+              literal 5 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:19-10:19
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:26-10:56
+              ident zs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:26-10:27
+              call : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:29-10:55
+                ident pick : (string,null)->int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:29-10:32
+                literal "i" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:34-10:36
+                call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:39-10:54
+                  [boundary: stdlib-boundary]
+                  member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:39-10:49
+                    [boundary: table-read]
+                    ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:39-10:45
+                      [boundary: import]
+                  literal "h" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:51-10:53
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:59-10:83
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:61-10:80
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:61-10:80
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:61-10:71
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:61-10:67
+                    [boundary: import]
+                literal "eq-ok" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-lhs-effect-inbounds-order-parity.deal:10:73-10:79

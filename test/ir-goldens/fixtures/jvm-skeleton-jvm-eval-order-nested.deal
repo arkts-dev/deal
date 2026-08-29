@@ -1,0 +1,11 @@
+// IR golden fixture: jvm-skeleton-jvm-eval-order-nested
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-eval-order-nested' (ISSUE-0358).
+
+import * as console from "std/console"
+function g(): int { console.log("g-ran"); return 1; }
+function k(x: null): int { console.log("k-ran"); return 2; }
+function f(y: int, x: null): int { return y; }
+export function test(): null {
+  let r: int = f(g() + k(console.log("y")), console.log("x"));
+  if (r === 3) { console.log("nested-ok"); }
+}

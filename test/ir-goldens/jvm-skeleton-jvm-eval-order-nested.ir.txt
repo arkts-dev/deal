@@ -1,0 +1,81 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:4:1-12:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function g: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:5:1-6:8
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:5:21-5:40
+        call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:5:21-5:40
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:5:21-5:31
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:5:21-5:27
+              [boundary: import]
+          literal "g-ran" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:5:33-5:39
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:5:43-5:53
+        [boundary: return]
+        literal 1 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:5:50-5:50
+  function k: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:6:1-7:8
+    param x: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:6:12-6:19
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:6:28-6:47
+        call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:6:28-6:47
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:6:28-6:38
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:6:28-6:34
+              [boundary: import]
+          literal "k-ran" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:6:40-6:46
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:6:50-6:60
+        [boundary: return]
+        literal 2 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:6:57-6:57
+  function f: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:7:1-8:6
+    param y: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:7:12-7:18
+      [boundary: param-entry]
+    param x: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:7:20-7:27
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:7:36-7:46
+        [boundary: return]
+        ident y : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:7:43-7:43
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:8:1-12:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:8:8-12:1
+      body
+        let r: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:3-10:4
+          [boundary: var-annotation]
+          call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:16-9:61
+            ident f : (int,null)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:16-9:16
+            binary + : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:18-9:42
+              call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:18-9:20
+                ident g : ()->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:18-9:18
+              call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:24-9:42
+                ident k : (null)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:24-9:24
+                call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:26-9:41
+                  [boundary: stdlib-boundary]
+                  member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:26-9:36
+                    [boundary: table-read]
+                    ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:26-9:32
+                      [boundary: import]
+                  literal "y" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:38-9:40
+            call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:45-9:60
+              [boundary: stdlib-boundary]
+              member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:45-9:55
+                [boundary: table-read]
+                ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:45-9:51
+                  [boundary: import]
+              literal "x" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:9:57-9:59
+        if @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:10:3-11:1
+          binary === : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:10:7-10:13
+            ident r : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:10:7-10:7
+            literal 3 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:10:13-10:13
+          block @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:10:16-10:44
+            expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:10:18-10:41
+              call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:10:18-10:41
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:10:18-10:28
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:10:18-10:24
+                    [boundary: import]
+                literal "nested-ok" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-nested.deal:10:30-10:40

@@ -1,0 +1,48 @@
+module @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:4:1-12:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:4:1-5:5
+    [boundary: host-in]
+    [boundary: import]
+  class P @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:5:1-5:31
+    field b: boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:5:11-5:31
+      [boundary: class-default]
+      literal false : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:5:24-5:28
+  function getP: P @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:6:1-7:6
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:6:22-6:42
+        call : null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:6:22-6:42
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:6:22-6:32
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:6:22-6:28
+              [boundary: import]
+          literal "target" : string @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:6:34-6:41
+      return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:6:45-6:66
+        [boundary: return]
+        object : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal/P @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:6:52-6:63
+          [boundary: class-construct]
+          literal false : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:6:57-6:61
+  export @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:7:1-12:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:7:8-12:1
+      body
+        let xs: [boolean] @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:8:3-9:6
+          [boundary: var-annotation]
+          array : [boolean] @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:8:23-8:35
+            literal true : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:8:24-8:27
+            literal false : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:8:30-8:34
+        expr-stmt @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:9:3-9:27
+          assign = : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:9:3-9:27
+            [boundary: field-write]
+            member .b : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:9:3-9:10
+              call : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal/P @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:9:3-9:8
+                ident getP : ()->@test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal/P @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:9:3-9:6
+            binary && : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:9:14-9:27
+              index [] : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:9:14-9:18
+                ident xs : [boolean] @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:9:14-9:15
+                literal 0 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:9:17-9:17
+              index [] : boolean @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:9:23-9:27
+                ident xs : [boolean] @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:9:23-9:24
+                literal 5 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:9:26-9:26
+        return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:10:3-11:1
+          [boundary: return]
+          literal 1 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-field-write-error-precedence.deal:10:10-10:10

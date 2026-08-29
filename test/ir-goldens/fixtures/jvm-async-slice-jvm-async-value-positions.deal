@@ -1,0 +1,15 @@
+// IR golden fixture: jvm-async-slice-jvm-async-value-positions
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-async-slice.json case 'jvm-async-value-positions' (ISSUE-0358).
+
+async function add(a: int, b: int): int { return a + b; }
+async function greet(name: string): string { return "hi-" + name; }
+async function flag(): boolean { return true; }
+async function half(n: number): number { return n / 2.0; }
+export async function test(): string {
+  let x: int = await add(2, 3);
+  let y: int = await add(x, 5);
+  let b: boolean = await flag();
+  let h: number = await half(6.0);
+  if (y === 10 && b && h === 3.0) { return await greet("jvm"); }
+  return "bad";
+}

@@ -1,0 +1,8 @@
+// IR golden fixture: jvm-function-values-slice-jvm-fv-typed-variable-indirect-call
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-function-values-slice.json case 'jvm-fv-typed-variable-indirect-call' (ISSUE-0358).
+
+function add(a: int, b: int): int { return a + b; }
+export function test(): int {
+  let f: (a: int, b: int) => int = add;
+  return f(20, 22);
+}

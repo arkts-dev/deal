@@ -1,0 +1,58 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:4:1-11:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function g: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:5:1-6:8
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:5:21-5:40
+        call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:5:21-5:40
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:5:21-5:31
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:5:21-5:27
+              [boundary: import]
+          literal "g-ran" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:5:33-5:39
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:5:43-5:53
+        [boundary: return]
+        literal 7 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:5:50-5:50
+  function f: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:6:1-7:6
+    param y: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:6:12-6:18
+      [boundary: param-entry]
+    param x: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:6:20-6:27
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:6:36-6:46
+        [boundary: return]
+        ident y : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:6:43-6:43
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:7:1-11:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:7:8-11:1
+      body
+        let b: boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:8:3-9:4
+          [boundary: var-annotation]
+          binary && : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:8:20-8:57
+            literal true : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:8:20-8:23
+            binary === : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:8:28-8:57
+              call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:8:28-8:51
+                ident f : (int,null)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:8:28-8:28
+                call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:8:30-8:32
+                  ident g : ()->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:8:30-8:30
+                call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:8:35-8:50
+                  [boundary: stdlib-boundary]
+                  member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:8:35-8:45
+                    [boundary: table-read]
+                    ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:8:35-8:41
+                      [boundary: import]
+                  literal "x" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:8:47-8:49
+              literal 7 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:8:57-8:57
+        if @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:9:3-10:1
+          ident b : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:9:7-9:7
+          block @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:9:10-9:34
+            expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:9:12-9:31
+              call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:9:12-9:31
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:9:12-9:22
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:9:12-9:18
+                    [boundary: import]
+                literal "sc-ok" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-eval-order-shortcircuit.deal:9:24-9:30

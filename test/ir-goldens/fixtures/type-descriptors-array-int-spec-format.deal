@@ -1,0 +1,4 @@
+// IR golden fixture: type-descriptors-array-int-spec-format
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'array-int-spec-format' (ISSUE-0358).
+
+function f(a: int[]): null { return; }

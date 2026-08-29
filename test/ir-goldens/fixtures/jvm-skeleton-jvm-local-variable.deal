@@ -1,0 +1,14 @@
+// IR golden fixture: jvm-skeleton-jvm-local-variable
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-local-variable' (ISSUE-0358).
+
+export function test(): int {
+  let x: int = 10;
+  x = x + 1;
+  let y: int = x * 2;
+  let z: int = y - 10;
+  {
+    let x: int = 99;
+    z = z + x;
+  }
+  return z;
+}

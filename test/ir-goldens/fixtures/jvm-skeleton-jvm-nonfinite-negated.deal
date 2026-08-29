@@ -1,0 +1,4 @@
+// IR golden fixture: jvm-skeleton-jvm-nonfinite-negated
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-nonfinite-negated' (ISSUE-0358).
+
+export function test(): number { let x: number = -1e999; return x; }

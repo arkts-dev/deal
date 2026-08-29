@@ -1,0 +1,8 @@
+// IR golden fixture: type-descriptors-function-type-descriptor-array-param
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'function-type-descriptor-array-param' (ISSUE-0358).
+
+function head(xs: int[]): int { return xs[0]; }
+export function main(): null {
+let f: (xs: int[]) => int = head;
+return null;
+}

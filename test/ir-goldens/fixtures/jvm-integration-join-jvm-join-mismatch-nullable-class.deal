@@ -1,0 +1,12 @@
+// IR golden fixture: jvm-integration-join-jvm-join-mismatch-nullable-class
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-mismatch-nullable-class' (ISSUE-0358).
+
+class A { x: int = 0; }
+class B { x: int = 0; }
+export function test(): int {
+  let a: A = { x: 1 };
+  let holder: table = { item: a };
+  let b: B | null = holder.item;
+  if (b !== null) { return b.x; }
+  return 0;
+}

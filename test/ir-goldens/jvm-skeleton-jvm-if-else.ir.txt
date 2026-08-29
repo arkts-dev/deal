@@ -1,0 +1,47 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:4:1-16:1
+  function classify: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:4:1-13:6
+    param n: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:4:19-4:25
+      [boundary: param-entry]
+    body
+      if @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:5:3-12:1
+        binary < : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:5:7-5:11
+          ident n : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:5:7-5:7
+          literal 0 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:5:11-5:11
+        block @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:5:14-7:3
+          return @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:6:5-7:3
+            [boundary: return]
+            literal 0 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:6:12-6:12
+      if @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:7:10-12:1
+        binary === : boolean @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:7:14-7:20
+          ident n : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:7:14-7:14
+          literal 0 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:7:20-7:20
+        block @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:7:23-9:3
+          return @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:8:5-9:3
+            [boundary: return]
+            literal 1 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:8:12-8:12
+      block @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:9:10-11:3
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:10:5-11:3
+          [boundary: return]
+          literal 2 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:10:12-10:12
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:13:1-16:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:13:8-16:1
+      body
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:3-15:1
+          [boundary: return]
+          binary + : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:10-14:60
+            binary + : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:10-14:46
+              binary * : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:10-14:27
+                call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:10-14:21
+                  ident classify : (int)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:10-14:17
+                  unary - : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:19-14:20
+                    literal 5 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:20-14:20
+                literal 100 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:25-14:27
+              binary * : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:31-14:46
+                call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:31-14:41
+                  ident classify : (int)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:31-14:38
+                  literal 0 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:40-14:40
+                literal 10 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:45-14:46
+            call : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:50-14:60
+              ident classify : (int)->int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:50-14:57
+              literal 7 : int @test/ir-goldens/fixtures/jvm-skeleton-jvm-if-else.deal:14:59-14:59

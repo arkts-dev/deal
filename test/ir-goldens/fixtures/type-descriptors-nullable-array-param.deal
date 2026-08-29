@@ -1,0 +1,4 @@
+// IR golden fixture: type-descriptors-nullable-array-param
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'nullable-array-param' (ISSUE-0358).
+
+function f(a: int[] | null): null { return; }

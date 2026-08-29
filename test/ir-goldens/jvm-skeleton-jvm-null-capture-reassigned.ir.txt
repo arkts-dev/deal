@@ -1,0 +1,26 @@
+module @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:4:1-11:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:4:1-5:6
+    [boundary: host-in]
+    [boundary: import]
+  export @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:5:1-11:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:5:8-11:1
+      body
+        let a: string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:6:3-7:5
+          [boundary: var-annotation]
+          literal "x" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:6:19-6:21
+        let z: null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:7:3-8:3
+          [boundary: var-annotation]
+          call : null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:7:17-7:30
+            [boundary: stdlib-boundary]
+            member .log : (string)->null @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:7:17-7:27
+              [boundary: table-read]
+              ident console : table @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:7:17-7:23
+                [boundary: import]
+            ident a : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:7:29-7:29
+        expr-stmt @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:8:3-8:9
+          assign = : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:8:3-8:9
+            [boundary: assignment]
+            ident a : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:8:3-8:3
+            literal "y" : string @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:8:7-8:9
+        return @test/ir-goldens/fixtures/jvm-skeleton-jvm-null-capture-reassigned.deal:9:3-10:1

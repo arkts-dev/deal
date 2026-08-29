@@ -1,0 +1,167 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:4:1-20:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:4:1-5:6
+    [boundary: host-in]
+    [boundary: import]
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:5:1-20:1
+    [boundary: export]
+    function test: null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:5:8-20:1
+      body
+        let xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:6:3-7:5
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:6:19-6:21
+            literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:6:20-6:20
+        let ns: [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:7:3-8:5
+          [boundary: var-annotation]
+          array : [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:7:22-7:26
+            literal 1.5 : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:7:23-7:25
+        let ss: [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:8:3-9:5
+          [boundary: var-annotation]
+          array : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:8:22-8:26
+            literal "a" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:8:23-8:25
+        let bs: [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:9:3-10:4
+          [boundary: var-annotation]
+          array : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:9:23-9:28
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:9:24-9:27
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:10:3-11:4
+          binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:10:7-10:18
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:10:7-10:12
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:10:7-10:8
+              literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:10:10-10:11
+            literal 5 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:10:18-10:18
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:10:21-10:44
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:10:23-10:41
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:10:23-10:41
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:10:23-10:33
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:10:23-10:29
+                    [boundary: import]
+                literal "bad1" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:10:35-10:40
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:11:3-12:4
+          binary !== : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:11:7-11:18
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:11:7-11:12
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:11:7-11:8
+              literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:11:10-11:11
+            literal 5 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:11:18-11:18
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:11:21-11:47
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:11:23-11:44
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:11:23-11:44
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:11:23-11:33
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:11:23-11:29
+                    [boundary: import]
+                literal "int-neq" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:11:35-11:43
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:12:3-13:4
+          binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:12:7-12:23
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:12:7-12:12
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:12:7-12:8
+              literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:12:10-12:11
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:12:18-12:23
+              ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:12:18-12:19
+              literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:12:21-12:22
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:12:26-12:55
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:12:28-12:52
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:12:28-12:52
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:12:28-12:38
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:12:28-12:34
+                    [boundary: import]
+                literal "nil-eq-nil" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:12:40-12:51
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:13:3-14:4
+          binary !== : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:13:7-13:20
+            index [] : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:13:7-13:12
+              ident ns : [number] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:13:7-13:8
+              literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:13:10-13:11
+            literal 2.5 : number @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:13:18-13:20
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:13:23-13:52
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:13:25-13:49
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:13:25-13:49
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:13:25-13:35
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:13:25-13:31
+                    [boundary: import]
+                literal "number-neq" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:13:37-13:48
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:14:3-15:4
+          binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:14:7-14:20
+            index [] : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:14:7-14:12
+              ident ss : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:14:7-14:8
+              literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:14:10-14:11
+            literal "x" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:14:18-14:20
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:14:23-14:46
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:14:25-14:43
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:14:25-14:43
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:14:25-14:35
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:14:25-14:31
+                    [boundary: import]
+                literal "bad2" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:14:37-14:42
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:15:3-16:4
+          binary !== : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:15:7-15:20
+            index [] : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:15:7-15:12
+              ident ss : [string] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:15:7-15:8
+              literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:15:10-15:11
+            literal "x" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:15:18-15:20
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:15:23-15:52
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:15:25-15:49
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:15:25-15:49
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:15:25-15:35
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:15:25-15:31
+                    [boundary: import]
+                literal "string-neq" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:15:37-15:48
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:16:3-17:4
+          binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:16:7-16:21
+            index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:16:7-16:12
+              ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:16:7-16:8
+              literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:16:10-16:11
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:16:18-16:21
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:16:24-16:47
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:16:26-16:44
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:16:26-16:44
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:16:26-16:36
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:16:26-16:32
+                    [boundary: import]
+                literal "bad3" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:16:38-16:43
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:17:3-18:4
+          binary !== : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:17:7-17:21
+            index [] : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:17:7-17:12
+              ident bs : [boolean] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:17:7-17:8
+              literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:17:10-17:11
+            literal true : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:17:18-17:21
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:17:24-17:54
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:17:26-17:51
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:17:26-17:51
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:17:26-17:36
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:17:26-17:32
+                    [boundary: import]
+                literal "boolean-neq" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:17:38-17:50
+        if @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:3-19:1
+          binary && : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:7-18:33
+            binary === : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:7-18:17
+              index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:7-18:11
+                ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:7-18:8
+                literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:10-18:10
+              literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:17-18:17
+            binary !== : boolean @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:22-18:33
+              index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:22-18:27
+                ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:22-18:23
+                literal 99 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:25-18:26
+              literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:33-18:33
+          block @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:36-18:60
+            expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:38-18:57
+              call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:38-18:57
+                [boundary: stdlib-boundary]
+                member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:38-18:48
+                  [boundary: table-read]
+                  ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:38-18:44
+                    [boundary: import]
+                literal "mixed" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-cmp-past-end-parity.deal:18:50-18:56

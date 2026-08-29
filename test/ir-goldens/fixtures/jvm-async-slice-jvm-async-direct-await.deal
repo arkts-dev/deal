@@ -1,0 +1,5 @@
+// IR golden fixture: jvm-async-slice-jvm-async-direct-await
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-async-slice.json case 'jvm-async-direct-await' (ISSUE-0358).
+
+async function g(): int { return 42; }
+export async function test(): int { return await g(); }

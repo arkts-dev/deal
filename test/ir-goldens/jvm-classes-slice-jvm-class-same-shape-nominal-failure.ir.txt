@@ -1,0 +1,31 @@
+module @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:4:1-12:1
+  class A @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:4:1-4:23
+    field x: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:4:11-4:23
+      [boundary: class-default]
+      literal 0 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:4:20-4:20
+  class B @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:5:1-5:23
+    field x: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:5:11-5:23
+      [boundary: class-default]
+      literal 0 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:5:20-5:20
+  export @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:6:1-12:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:6:8-12:1
+      body
+        let a: @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal/A @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:7:3-8:5
+          [boundary: var-annotation]
+          object : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal/A @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:7:14-7:21
+            [boundary: class-construct]
+            literal 7 : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:7:19-7:19
+        let holder: table @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:8:3-9:5
+          [boundary: var-annotation]
+          object : table @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:8:23-8:33
+            ident a : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal/A @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:8:31-8:31
+        let b: @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal/B @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:9:3-10:8
+          [boundary: var-annotation]
+          member .item : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal/B @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:9:14-9:24
+            [boundary: table-read]
+            ident holder : table @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:9:14-9:19
+        return @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:10:3-11:1
+          [boundary: return]
+          member .x : int @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:10:10-10:12
+            ident b : @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal/B @test/ir-goldens/fixtures/jvm-classes-slice-jvm-class-same-shape-nominal-failure.deal:10:10-10:10

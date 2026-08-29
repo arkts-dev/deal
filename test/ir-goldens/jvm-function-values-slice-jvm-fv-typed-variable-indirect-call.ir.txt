@@ -1,0 +1,25 @@
+module @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:4:1-9:1
+  function add: int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:4:1-5:6
+    param a: int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:4:14-4:20
+      [boundary: param-entry]
+    param b: int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:4:22-4:28
+      [boundary: param-entry]
+    body
+      return @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:4:37-4:51
+        [boundary: return]
+        binary + : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:4:44-4:48
+          ident a : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:4:44-4:44
+          ident b : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:4:48-4:48
+  export @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:5:1-9:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:5:8-9:1
+      body
+        let f: (int,int)->int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:6:3-7:8
+          [boundary: var-annotation]
+          ident add : (int,int)->int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:6:36-6:38
+        return @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:7:3-8:1
+          [boundary: return]
+          call : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:7:10-7:18
+            ident f : (int,int)->int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:7:10-7:10
+            literal 20 : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:7:12-7:13
+            literal 22 : int @test/ir-goldens/fixtures/jvm-function-values-slice-jvm-fv-typed-variable-indirect-call.deal:7:16-7:17

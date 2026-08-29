@@ -1,0 +1,4 @@
+// IR golden fixture: type-descriptors-nested-array-spec-format
+// Migrated IR-containment pins from test/conformance/fixtures/type-descriptors.json case 'nested-array-spec-format' (ISSUE-0358).
+
+function f(a: int[][]): null { return; }

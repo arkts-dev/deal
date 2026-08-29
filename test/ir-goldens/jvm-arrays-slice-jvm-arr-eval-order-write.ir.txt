@@ -1,0 +1,69 @@
+module @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:4:1-12:1
+  import * as console from "std/console" @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:4:1-5:8
+    [boundary: host-in]
+    [boundary: import]
+  function mark: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:5:1-6:8
+    param label: string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:5:15-5:28
+      [boundary: param-entry]
+    param value: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:5:30-5:40
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:5:49-5:66
+        call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:5:49-5:66
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:5:49-5:59
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:5:49-5:55
+              [boundary: import]
+          ident label : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:5:61-5:65
+      return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:5:69-5:83
+        [boundary: return]
+        ident value : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:5:76-5:80
+  function get: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:6:1-7:6
+    param label: string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:6:14-6:27
+      [boundary: param-entry]
+    param xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:6:29-6:38
+      [boundary: param-entry]
+    body
+      expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:6:49-6:66
+        call : null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:6:49-6:66
+          [boundary: stdlib-boundary]
+          member .log : (string)->null @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:6:49-6:59
+            [boundary: table-read]
+            ident console : table @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:6:49-6:55
+              [boundary: import]
+          ident label : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:6:61-6:65
+      return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:6:69-6:80
+        [boundary: return]
+        ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:6:76-6:77
+  export @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:7:1-12:1
+    [boundary: export]
+    function test: int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:7:8-12:1
+      body
+        let xs: [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:8:3-9:5
+          [boundary: var-annotation]
+          array : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:8:19-8:27
+            literal 1 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:8:20-8:20
+            literal 2 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:8:23-8:23
+            literal 3 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:8:26-8:26
+        expr-stmt @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:3-9:50
+          assign = : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:3-9:50
+            [boundary: array-write]
+            index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:3-9:32
+              call : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:3-9:16
+                ident get : (string,[int])->[int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:3-9:5
+                literal "arr" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:7-9:11
+                ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:14-9:15
+              call : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:18-9:31
+                ident mark : (string,int)->int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:18-9:21
+                literal "idx" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:23-9:27
+                literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:30-9:30
+            call : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:36-9:50
+              ident mark : (string,int)->int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:36-9:39
+              literal "rhs" : string @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:41-9:45
+              literal 42 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:9:48-9:49
+        return @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:10:3-11:1
+          [boundary: return]
+          index [] : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:10:10-10:14
+            ident xs : [int] @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:10:10-10:11
+            literal 0 : int @test/ir-goldens/fixtures/jvm-arrays-slice-jvm-arr-eval-order-write.deal:10:13-10:13

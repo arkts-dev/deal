@@ -1,0 +1,11 @@
+// IR golden fixture: jvm-functions-slice-jvm-fn-multiple-params
+// Migrated IR-containment pins from test/conformance/fixtures/jvm-functions-slice.json case 'jvm-fn-multiple-params' (ISSUE-0358).
+
+function classify(a: int, b: int, c: int): int { return a * 100 + b * 10 + c; }
+function pick(flag: boolean, yes: string, no: string): string { if (flag) { return yes; } return no; }
+export function test(): int {
+  let i: int = classify(3, 2, 1);
+  let s: string = pick(true, "jvm", "lua");
+  if (s === "jvm") { return i; }
+  return 0;
+}
