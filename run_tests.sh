@@ -86,6 +86,7 @@ javac --release 25 -proc:none -d build \
   test/SourceMapTest.java \
   test/RuntimeSourceLocationTest.java \
   test/StdlibContractTest.java \
+  test/StdlibTimePreActivationPinTest.java \
   test/GenerateStdlibGoldenIr.java \
   test/ConformanceTest.java \
   test/JvmConformanceTest.java \
@@ -429,6 +430,10 @@ else
   echo "WARNING: luajit not found, skipping async nesting stress tests"
 fi
 java -ea -cp build deal.test.StdlibContractTest
+
+echo ""
+echo "=== std/time.nowMillis Pre-Activation Pin (ISSUE-0369) ==="
+java -ea -cp build deal.test.StdlibTimePreActivationPinTest
 
 echo ""
 echo "=== Stdlib Golden IR Check ==="
