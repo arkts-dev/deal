@@ -1,0 +1,26 @@
+// @spec: Standard library declarations — std/math.d.deal
+// @description: std/math.minInt and maxInt accept the signed-int32 extremes and return them through the int gate (v1.2: int is [-2147483648, 2147483647])
+// @expected: runtime-ok
+// @features: stdlib, math, int, v1.2
+
+import * as math from "std/math";
+
+export function test_math_int_extremes(): null {
+  if (math.minInt(-2147483648, 2147483647) !== -2147483648) {
+    throw { code: "TEST_FAIL", message: "minInt extremes mismatch" };
+  }
+  if (math.maxInt(-2147483648, 2147483647) !== 2147483647) {
+    throw { code: "TEST_FAIL", message: "maxInt extremes mismatch" };
+  }
+  if (math.minInt(-2147483648, -2147483648) !== -2147483648) {
+    throw { code: "TEST_FAIL", message: "minInt MIN/MIN mismatch" };
+  }
+  if (math.maxInt(2147483647, 2147483647) !== 2147483647) {
+    throw { code: "TEST_FAIL", message: "maxInt MAX/MAX mismatch" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

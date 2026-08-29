@@ -181,6 +181,10 @@ public class JvmConformanceTest {
             "E8004 from the int32-overflowing expression requires the "
                 + "signed-int32 gate; JvmBackend retains the ±(2^53−1) "
                 + "safe range (ISSUE-0277).", "JVM-GAP-INT32");
+        skip("backend-runtime/stdlib/math/int-abs-min-overflow.deal",
+            "E8004 for std/math.absInt(-2147483648) requires the "
+                + "signed-int32 gate; JvmBackend retains the ±(2^53−1) "
+                + "safe range (ISSUE-0277).", "JVM-GAP-INT32");
 
         // ---- JVM-GAP-JSONABLE-RESIDUAL: residual @jsonable JVM defects ----
         skip("backend-runtime/jsonable/jsonable-complex-roundtrip.deal",

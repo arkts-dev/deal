@@ -116,8 +116,10 @@ public class SidecarCorpusValidationTest {
         "backend-runtime/stdlib/console/import-log.deal";
     private static final String CONSOLE_STDOUT = "hello\n";
 
-    /** The exact runtime-ok population (ISSUE-0349 completeness). */
-    private static final int RUNTIME_OK_COUNT = 192;
+    /** The exact runtime-ok population (ISSUE-0349 completeness, plus
+     * the stdlib/math int-minmax-extremes fixture ISSUE-0337 added with
+     * its sidecar in the same change). */
+    private static final int RUNTIME_OK_COUNT = 193;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -125,9 +127,11 @@ public class SidecarCorpusValidationTest {
      * promoted int-add-overflow and the new int-sub-overflow,
      * int-mul-overflow, int-conversion-out-of-range, and
      * source-location/int32-overflow-source fixtures each land their
-     * sidecar in the same change as their expectation).
+     * sidecar in the same change as their expectation; plus the
+     * stdlib/math int-abs-min-overflow E8004 fixture ISSUE-0337 added
+     * with its sidecar in the same change).
      */
-    private static final int RUNTIME_ERROR_COUNT = 68;
+    private static final int RUNTIME_ERROR_COUNT = 69;
 
     /** The G4.6 lane error framing prefixes. */
     private static final String DEAL_ERROR_CODE_LINE = "DEAL_ERROR_CODE: ";
