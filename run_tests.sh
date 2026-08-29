@@ -54,6 +54,7 @@ javac --release 25 -proc:none -d build \
   test/LoweringSupportTest.java \
   test/MigrationPlannerTest.java \
   test/StagingPublicationTest.java \
+  test/FoundationIntegrationTest.java \
   test/InvocationProfileRegistryTest.java \
   test/DiagnosticRangeTest.java \
   test/DiagnosticClassificationTest.java \
@@ -196,6 +197,10 @@ java -ea -cp build deal.semantic.MigrationPlannerTest
 echo ""
 echo "=== Running Staging / ABI Validation / Atomic Publication Tests (ISSUE-0291) ==="
 java -ea -cp build deal.semantic.StagingPublicationTest
+
+echo ""
+echo "=== Running Foundation Integration Tests (ISSUE-0292) ==="
+java -ea -cp build deal.test.FoundationIntegrationTest
 
 echo ""
 echo "=== Running Invocation / Profile / Capability Registry Tests (ISSUE-0284) ==="

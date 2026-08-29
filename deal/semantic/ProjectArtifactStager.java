@@ -9,6 +9,7 @@ import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.SemanticCapability;
 import deal.semantic.ir.SemanticIrValidator;
+import deal.semantic.ir.SemanticProfile;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -132,6 +133,8 @@ public final class ProjectArtifactStager {
     public static final String STAGE_IO_FAILURE = "STAGE_IO_FAILURE";
     /** The live path exists but is not a directory. */
     public static final String STAGE_LIVE_NOT_DIRECTORY = "STAGE_LIVE_NOT_DIRECTORY";
+    /** A lowering request whose invocation carries LEGACY_SAFE_INT (never lowered, F1). */
+    public static final String STAGE_LEGACY_PROFILE_REJECTED = "STAGE_LEGACY_PROFILE_REJECTED";
 
     /** The pinned IR version carried by every stager-failure detail. */
     public static final String IR_VERSION = "deal.semantic-ir/1";
@@ -305,6 +308,19 @@ public final class ProjectArtifactStager {
         Objects.requireNonNull(emissionResults, "emissionResults must not be null");
         Objects.requireNonNull(abiEdges, "abiEdges must not be null");
         Objects.requireNonNull(interfaceIndex, "interfaceIndex must not be null");
+
+        // Lowering-request profile guard (F1 verification 1): lowering
+        // admits only DEAL_V1_2_INT32. A LEGACY_SAFE_INT invocation is a
+        // rejected lowering request — E6005 through the failure contract
+        // registry with the prescribed payload — before any staging,
+        // validation, or publication (the legacy profile is inspectable
+        // for routing/regression but never lowered).
+        if (invocation.semanticProfile() == SemanticProfile.LEGACY_SAFE_INT) {
+            return PublicationOutcome.failure(List.of(FailureContractRegistry.e6005(
+                new LoweringFailureDetail("", SemanticCapability.FOUNDATION_VALUES,
+                    STAGE_LEGACY_PROFILE_REJECTED, invocation.semanticProfile(),
+                    IR_VERSION, "ProjectArtifactStager"))));
+        }
 
         Path root = publicationRoot.toAbsolutePath().normalize();
         ReentrantLock lock = rootLock(root);
