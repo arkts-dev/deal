@@ -1,5 +1,7 @@
 package deal.test.conformance;
 
+import deal.ast.ImportDeclaration;
+import deal.ast.StatementNode;
 import deal.checker.CheckResult;
 import deal.checker.ModuleResolver;
 import deal.checker.ModuleResolver.ModuleNotFoundException;
@@ -18,21 +20,25 @@ import deal.semantic.ir.CanonicalJson;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Stream;
 
 /**
- * ISSUE-0349 (T2) corpus-sidecar validation: the complete sidecar
- * population authored for the corpus is schema-v1 valid and complete.
+ * ISSUE-0349 (T2) + ISSUE-0350 (T3) corpus-sidecar validation: the
+ * complete sidecar population authored for the corpus is schema-v1 valid
+ * and complete.
  *
- * <p>Pins, per the task's completeness obligation (the Zero-Skip
- * Classification Contract makes the sidecar set a single completeness
- * obligation, so the whole runtime-ok set lands in one change):</p>
+ * <p>Pins, per the tasks' completeness obligations (the Zero-Skip
+ * Classification Contract makes each sidecar set a single completeness
+ * obligation, so the whole runtime-ok set and the whole runtime-error set
+ * each land in one change):</p>
  * <ol>
  *   <li>Every {@code @expected: runtime-ok} fixture under
  *       {@code test/conformance/backend-runtime/} carries exactly one
@@ -46,13 +52,34 @@ import java.util.stream.Stream;
  *       {@code "hello\n"} (the {@code console.log("hello")} string
  *       literal plus the canonical trailing newline of all three
  *       backends).</li>
+ *   <li>Every {@code @expected: runtime-error CODE} fixture under
+ *       {@code test/conformance/backend-runtime/} carries exactly one
+ *       sibling sidecar that validates clean against schema version 1:
+ *       exactly the three backends, mode {@code runtime-error}, exit
+ *       code 1, empty stderr, and the exact G4.6 lane error framing on
+ *       stdout ({@code DEAL_ERROR_CODE: <code>} then
+ *       {@code DEAL_ERROR_SNAPSHOT: <canonical JSON>}). The Error
+ *       Expectation is the authoritative field set: mandatory
+ *       {@code code}/{@code message}/{@code sourceFile}/{@code line}/
+ *       {@code column} (the code equals the fixture's {@code @expected}
+ *       code; the sourceFile names the module that threw — the fixture
+ *       itself or a corpus module of its transitive import closure — in
+ *       canonical corpus-relative form), optional {@code expected}/
+ *       {@code actual} pinned as the {@code _err} pair where the spec
+ *       diagnostic carries them, and no {@code frames}/{@code cause}
+ *       pins (today's runtime error values carry no structured frames;
+ *       the cause chain is pinned nowhere). The snapshot JSON of the
+ *       framing must byte-equal the canonical snapshot serialization
+ *       recomputed from the error object: fixed key order
+ *       {@code code, message, sourceFile, line, column, expected,
+ *       actual, frames, cause}, minimal RFC 8259 §7 escaping, raw UTF-8,
+ *       canonical decimal integers, no whitespace between tokens.</li>
  *   <li>The two tracked {@code known-fail runtime-*} fixtures carry no
  *       sidecar (they receive sidecars only at the zero-skip flip); the
  *       known-fail population is exactly the two tracked fixtures.</li>
- *   <li>All other fixtures ({@code runtime-error} — owned by T3 —,
- *       {@code compile-ok}, {@code compile-error}, {@code companion},
- *       frontend fixtures) carry no sidecar except the Diagnostics-bullet
- *       fixtures.</li>
+ *   <li>All other fixtures ({@code compile-ok}, {@code compile-error},
+ *       {@code companion}, frontend fixtures) carry no sidecar except
+ *       the Diagnostics-bullet fixtures.</li>
  *   <li>The two Diagnostics-bullet fixtures
  *       ({@code frontend/diagnostics/assignment-mismatch.deal},
  *       {@code frontend/diagnostics/return-mismatch.deal}) carry a
@@ -85,6 +112,16 @@ public class SidecarCorpusValidationTest {
     private static final String CONSOLE_FIXTURE =
         "backend-runtime/stdlib/console/import-log.deal";
     private static final String CONSOLE_STDOUT = "hello\n";
+
+    /** The exact runtime-ok population (ISSUE-0349 completeness). */
+    private static final int RUNTIME_OK_COUNT = 192;
+
+    /** The exact runtime-error population (ISSUE-0350 completeness). */
+    private static final int RUNTIME_ERROR_COUNT = 63;
+
+    /** The G4.6 lane error framing prefixes. */
+    private static final String DEAL_ERROR_CODE_LINE = "DEAL_ERROR_CODE: ";
+    private static final String DEAL_ERROR_SNAPSHOT_LINE = "DEAL_ERROR_SNAPSHOT: ";
 
     // =========================================================================
     // Assertion helpers
@@ -157,14 +194,22 @@ public class SidecarCorpusValidationTest {
 
     private static Optional<SidecarSchemaValidator.ClassificationFailure>
             validateSidecar(Fixture fixture, String sidecarText,
+                            List<SidecarSchemaValidator.CompilationModule> compilationSet,
                             Set<String> corpusIndex) {
         SidecarSchemaValidator.ValidationContext context =
             new SidecarSchemaValidator.ValidationContext(
                 fixture.corpusPath(), fixture.expectedTag(),
-                List.of(new SidecarSchemaValidator.CompilationModule(
-                    fixture.corpusPath(), fixture.source())),
-                corpusIndex);
+                compilationSet, corpusIndex);
         return SidecarSchemaValidator.validate(context, sidecarText);
+    }
+
+    private static Optional<SidecarSchemaValidator.ClassificationFailure>
+            validateSidecar(Fixture fixture, String sidecarText,
+                            Set<String> corpusIndex) {
+        return validateSidecar(fixture, sidecarText,
+            List.of(new SidecarSchemaValidator.CompilationModule(
+                fixture.corpusPath(), fixture.source())),
+            corpusIndex);
     }
 
     /** No object key may be {@code error} or {@code sourceFile} anywhere. */
@@ -238,6 +283,188 @@ public class SidecarCorpusValidationTest {
             + ": stderr must be empty on runtime-ok, got " + describe(stderr));
     }
 
+    private static void validateRuntimeErrorFixture(Fixture fixture,
+            Path sidecarPath, Set<String> corpusIndex,
+            Map<String, Fixture> corpusByPath) throws Exception {
+        if (!Files.exists(sidecarPath)) {
+            fail(fixture.corpusPath() + ": runtime-error fixture is missing "
+                + "its Structured Expectation Sidecar "
+                + sidecarPath.getFileName());
+            return;
+        }
+        String sidecarText = Files.readString(sidecarPath);
+        List<SidecarSchemaValidator.CompilationModule> compilationSet =
+            compilationSetFor(fixture, corpusByPath);
+        Optional<SidecarSchemaValidator.ClassificationFailure> failure =
+            validateSidecar(fixture, sidecarText, compilationSet, corpusIndex);
+        if (failure.isPresent()) {
+            fail(failure.get().message());
+            return;
+        }
+        check(true, fixture.corpusPath()
+            + ": runtime-error sidecar validates clean (schema v1)");
+
+        CanonicalJson.Value root = CanonicalJson.parse(sidecarText);
+        CanonicalJson.Obj expected = (CanonicalJson.Obj)
+            ((CanonicalJson.Obj) root).entries().stream()
+                .filter(e -> e.key().equals("expected"))
+                .findFirst().orElseThrow().value();
+        CanonicalJson.Obj error = (CanonicalJson.Obj)
+            expected.entries().stream()
+                .filter(e -> e.key().equals("error"))
+                .findFirst().orElseThrow().value();
+
+        // Error Expectation field audits (sidecar-authoritative field set).
+        String code = stringField(error, "code");
+        String pinnedCode = fixture.expectedTag().startsWith("runtime-error ")
+            ? fixture.expectedTag().substring("runtime-error ".length()).trim()
+            : "";
+        check(!pinnedCode.isEmpty() && code.equals(pinnedCode),
+            fixture.corpusPath() + ": error.code must equal the fixture's "
+                + "@expected code " + describe(pinnedCode) + ", got "
+                + describe(code));
+        String message = stringField(error, "message");
+        check(!message.isEmpty(), fixture.corpusPath()
+            + ": error.message must be the exact canonical template "
+            + "instantiation, not an empty placeholder");
+        int line = intField(error, "line");
+        int column = intField(error, "column");
+        check(line >= 1, fixture.corpusPath()
+            + ": error.line must trace to the throwing site (a positive "
+            + "line), got " + line);
+        check(column >= 1, fixture.corpusPath()
+            + ": error.column must trace to the throwing site (a positive "
+            + "column), got " + column);
+        check(!hasErrorField(error, "frames"), fixture.corpusPath()
+            + ": no runtime-error sidecar pins frames — today's runtime "
+            + "error values carry no structured frames");
+        check(!hasErrorField(error, "cause"), fixture.corpusPath()
+            + ": no runtime-error sidecar pins cause — the cause chain is "
+            + "deterministic nowhere in the authored population");
+        boolean hasExpected = hasErrorField(error, "expected");
+        boolean hasActual = hasErrorField(error, "actual");
+        check(hasExpected == hasActual, fixture.corpusPath()
+            + ": error.expected/error.actual are pinned as the _err pair "
+            + "(the spec diagnostic carries both or neither), got expected="
+            + hasExpected + ", actual=" + hasActual);
+        if (hasExpected) {
+            check(!stringField(error, "expected").isEmpty(),
+                fixture.corpusPath() + ": error.expected must be the exact "
+                    + "spec type name, not an empty placeholder");
+            check(!stringField(error, "actual").isEmpty(),
+                fixture.corpusPath() + ": error.actual must be the exact "
+                    + "runtime kind, not an empty placeholder");
+        }
+
+        // Transcript framing audit (G4.6): stdout must be exactly the two
+        // framing lines — no runtime-error fixture console-writes before
+        // its error today (a future console-writing fixture updates this
+        // pin, the CONSOLE_FIXTURE pattern); stderr must be empty.
+        CanonicalJson.Obj transcript = (CanonicalJson.Obj)
+            expected.entries().stream()
+                .filter(e -> e.key().equals("transcript"))
+                .findFirst().orElseThrow().value();
+        String stdout = stringField(transcript, "stdout");
+        String stderr = stringField(transcript, "stderr");
+        check(stderr.isEmpty(), fixture.corpusPath()
+            + ": stderr must be empty on runtime-error, got " + describe(stderr));
+        String canonicalSnapshot = canonicalSnapshotOf(error, fixture.corpusPath());
+        String expectedStdout = DEAL_ERROR_CODE_LINE + code + "\n"
+            + DEAL_ERROR_SNAPSHOT_LINE + canonicalSnapshot + "\n";
+        check(stdout.equals(expectedStdout), fixture.corpusPath()
+            + ": stdout must be exactly the two G4.6 lane framing lines with "
+            + "the canonical snapshot serialization (fixed key order, minimal "
+            + "escaping, no whitespace between tokens), got "
+            + describe(stdout));
+    }
+
+    /**
+     * The canonical snapshot serialization of the error object (corpus
+     * C2): fixed key order {@code code, message, sourceFile, line, column,
+     * expected, actual, frames, cause}; only pinned fields emitted; no
+     * whitespace between tokens; strings with minimal RFC 8259 §7 escaping
+     * (only {@code "} → {@code \"}, {@code \\} → {@code \\\\}, and
+     * U+0000–U+001F as the named escapes or {@code \\u00XX} with uppercase
+     * hex; non-ASCII raw UTF-8, {@code /} never escaped); integers as
+     * canonical decimal.
+     */
+    private static String canonicalSnapshotOf(CanonicalJson.Obj error,
+                                              String fixturePath) {
+        String[] order = { "code", "message", "sourceFile", "line", "column",
+            "expected", "actual", "frames", "cause" };
+        Map<String, CanonicalJson.Value> fields = fieldsOf(error);
+        StringBuilder sb = new StringBuilder();
+        sb.append('{');
+        boolean first = true;
+        for (String key : order) {
+            CanonicalJson.Value value = fields.get(key);
+            if (value == null) {
+                continue;
+            }
+            if (!first) {
+                sb.append(',');
+            }
+            first = false;
+            sb.append(escapeString(key)).append(':');
+            if (value instanceof CanonicalJson.Str str) {
+                sb.append(escapeString(str.value()));
+            } else if (value instanceof CanonicalJson.Int integer) {
+                sb.append(integer.value());
+            } else {
+                fail(fixturePath + ": error field " + key
+                    + " must be a string or an integer for the canonical "
+                    + "snapshot serialization");
+                sb.append("null");
+            }
+        }
+        sb.append('}');
+        return sb.toString();
+    }
+
+    /** Minimal RFC 8259 §7 string escaping (C2 canonical snapshot rules). */
+    private static String escapeString(String value) {
+        StringBuilder sb = new StringBuilder(value.length() + 2);
+        sb.append('"');
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\b' -> sb.append("\\b");
+                case '\t' -> sb.append("\\t");
+                case '\n' -> sb.append("\\n");
+                case '\f' -> sb.append("\\f");
+                case '\r' -> sb.append("\\r");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04X", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        sb.append('"');
+        return sb.toString();
+    }
+
+    private static Map<String, CanonicalJson.Value> fieldsOf(CanonicalJson.Obj obj) {
+        Map<String, CanonicalJson.Value> fields = new HashMap<>();
+        for (CanonicalJson.Entry entry : obj.entries()) {
+            fields.put(entry.key(), entry.value());
+        }
+        return fields;
+    }
+
+    private static boolean hasErrorField(CanonicalJson.Obj error, String key) {
+        for (CanonicalJson.Entry entry : error.entries()) {
+            if (entry.key().equals(key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static String stringField(CanonicalJson.Obj obj, String key) {
         CanonicalJson.Value value = obj.entries().stream()
             .filter(e -> e.key().equals(key))
@@ -245,9 +472,106 @@ public class SidecarCorpusValidationTest {
         return ((CanonicalJson.Str) value).value();
     }
 
+    private static int intField(CanonicalJson.Obj obj, String key) {
+        CanonicalJson.Value value = obj.entries().stream()
+            .filter(e -> e.key().equals(key))
+            .findFirst().orElseThrow().value();
+        return ((CanonicalJson.Int) value).value();
+    }
+
     private static String describe(String s) {
         return "\"" + s.replace("\\", "\\\\").replace("\n", "\\n")
             .replace("\r", "\\r").replace("\t", "\\t") + "\"";
+    }
+
+    // =========================================================================
+    // Compilation-set resolution (transitive corpus import closure)
+    // =========================================================================
+
+    /**
+     * The fixture's compilation set for the sidecar {@code sourceFile}
+     * check: the fixture itself plus every transitively imported corpus
+     * module, each with its corpus-relative path and source text. Relative
+     * imports ({@code ./}, {@code ../}) resolve against the importing
+     * module's corpus directory with the {@code .deal}/{@code .d.deal}
+     * fallback; stdlib and host imports resolve outside the corpus and
+     * contribute no module (the validator's {@code sourceFile} rule never
+     * names them).
+     */
+    private static List<SidecarSchemaValidator.CompilationModule>
+            compilationSetFor(Fixture fixture, Map<String, Fixture> corpusByPath) {
+        List<SidecarSchemaValidator.CompilationModule> set = new ArrayList<>();
+        collectCompilationModules(fixture.corpusPath(), fixture.source(),
+            corpusByPath, set, new HashSet<>());
+        return set;
+    }
+
+    private static void collectCompilationModules(String corpusPath,
+            String source, Map<String, Fixture> corpusByPath,
+            List<SidecarSchemaValidator.CompilationModule> set,
+            Set<String> inProgress) {
+        if (!inProgress.add(corpusPath)) {
+            return; // cycle guard — the module is already emitted once
+        }
+        set.add(new SidecarSchemaValidator.CompilationModule(corpusPath, source));
+        for (String importPath : relativeImportPaths(source)) {
+            String resolved = resolveRelativeImport(corpusPath, importPath);
+            if (resolved == null) {
+                continue;
+            }
+            Fixture dependency = corpusByPath.get(resolved);
+            if (dependency != null) {
+                collectCompilationModules(dependency.corpusPath(),
+                    dependency.source(), corpusByPath, set, inProgress);
+            }
+        }
+    }
+
+    /** Every relative-import module path of the source, via the real parser. */
+    private static List<String> relativeImportPaths(String source) {
+        List<String> paths = new ArrayList<>();
+        LexResult lex = new Lexer(source, "<sidecar-compilation-set>").tokenize();
+        if (lex.hasErrors()) {
+            return paths;
+        }
+        ParseResult result = new Parser(lex.tokens(), "<sidecar-compilation-set>")
+            .parse();
+        if (result.hasErrors()) {
+            return paths;
+        }
+        for (StatementNode statement : result.program().statements()) {
+            if (statement instanceof ImportDeclaration decl) {
+                if (decl.modulePath().startsWith("./")
+                        || decl.modulePath().startsWith("../")) {
+                    paths.add(decl.modulePath());
+                }
+            }
+        }
+        return paths;
+    }
+
+    /**
+     * Resolves a relative import against the importing module's corpus
+     * directory, mirroring {@code ConformanceTest.resolveCompanionPath}:
+     * the raw path, then the {@code .deal} and {@code .d.deal} extensions.
+     * Returns the corpus-relative slash path, or {@code null} when the
+     * resolution leaves the corpus or no file exists.
+     */
+    private static String resolveRelativeImport(String importer, String importPath) {
+        Path parent = Path.of(importer).getParent();
+        Path base = parent == null ? CORPUS_ROOT : CORPUS_ROOT.resolve(parent);
+        for (Path candidate : new Path[] {
+                base.resolve(importPath).normalize(),
+                base.resolve(importPath + ".deal").normalize(),
+                base.resolve(importPath + ".d.deal").normalize() }) {
+            if (!candidate.startsWith(CORPUS_ROOT)) {
+                continue;
+            }
+            if (Files.exists(candidate)) {
+                return slash(CORPUS_ROOT.relativize(candidate));
+            }
+        }
+        return null;
     }
 
     private static void validateCompileSidecarFixture(Fixture fixture,
@@ -297,13 +621,6 @@ public class SidecarCorpusValidationTest {
             String.valueOf(pinColumn), String.valueOf(d.column()));
         compareDiagnosticField(fixture.corpusPath(), "message",
             pinMessage, d.message());
-    }
-
-    private static int intField(CanonicalJson.Obj obj, String key) {
-        CanonicalJson.Value value = obj.entries().stream()
-            .filter(e -> e.key().equals(key))
-            .findFirst().orElseThrow().value();
-        return ((CanonicalJson.Int) value).value();
     }
 
     private static void compareDiagnosticField(String fixture, String field,
@@ -391,24 +708,30 @@ public class SidecarCorpusValidationTest {
     // =========================================================================
 
     public static void main(String[] args) throws Exception {
-        System.out.println("=== Sidecar Corpus Validation Test (ISSUE-0349) ===\n");
+        System.out.println("=== Sidecar Corpus Validation Test "
+            + "(ISSUE-0349 + ISSUE-0350) ===\n");
 
         List<Fixture> fixtures = discover();
 
         // Corpus module index: every discovered corpus-relative module path
         // (the sourceFile check resolves against it).
         Set<String> corpusIndex = new LinkedHashSet<>();
+        Map<String, Fixture> corpusByPath = new HashMap<>();
         for (Fixture fixture : fixtures) {
             corpusIndex.add(fixture.corpusPath());
+            corpusByPath.put(fixture.corpusPath(), fixture);
         }
 
         // The exact sidecar paths the corpus may carry: one per runtime-ok
-        // fixture plus the two Diagnostics-bullet Compile Expectation
-        // Sidecars.
+        // fixture, one per runtime-error fixture, plus the two
+        // Diagnostics-bullet Compile Expectation Sidecars.
         Set<String> allowedSidecars = new HashSet<>();
         int runtimeOk = 0;
+        int runtimeError = 0;
         for (Fixture fixture : fixtures) {
             boolean isRuntimeOk = "runtime-ok".equals(fixture.expectedTag());
+            boolean isRuntimeError =
+                fixture.expectedTag().startsWith("runtime-error ");
             boolean isDiagnosticsPin = fixture.corpusPath().equals(DIAG_ASSIGNMENT)
                 || fixture.corpusPath().equals(DIAG_RETURN);
             Path sidecarPath = sidecarFor(fixture.corpusPath());
@@ -417,21 +740,33 @@ public class SidecarCorpusValidationTest {
                 runtimeOk++;
                 allowedSidecars.add(sidecarPath.toString());
                 validateRuntimeOkFixture(fixture, sidecarPath, corpusIndex);
+            } else if (isRuntimeError) {
+                runtimeError++;
+                allowedSidecars.add(sidecarPath.toString());
+                validateRuntimeErrorFixture(fixture, sidecarPath, corpusIndex,
+                    corpusByPath);
             } else if (isDiagnosticsPin) {
                 allowedSidecars.add(sidecarPath.toString());
                 validateCompileSidecarFixture(fixture, sidecarPath, corpusIndex);
             } else {
                 check(!Files.exists(sidecarPath), fixture.corpusPath()
                     + ": no sidecar is authored for this classification yet "
-                    + "(" + fixture.expectedTag() + " — sidecars land with "
-                    + "their owning task), found "
+                    + "(" + fixture.expectedTag() + " — known-fail sidecars "
+                    + "land at the zero-skip flip; compile/companion/frontend "
+                    + "fixtures carry none except the Diagnostics-bullet "
+                    + "fixtures), found "
                     + sidecarPath.getFileName());
             }
         }
 
-        // Completeness: the runtime-ok population is the task's whole set.
-        check(runtimeOk == 192, "the corpus must carry exactly 192 runtime-ok "
-            + "fixtures with sidecars, found " + runtimeOk);
+        // Completeness: the runtime-ok population and the runtime-error
+        // population are each their task's whole set.
+        check(runtimeOk == RUNTIME_OK_COUNT, "the corpus must carry exactly "
+            + RUNTIME_OK_COUNT + " runtime-ok fixtures with sidecars, found "
+            + runtimeOk);
+        check(runtimeError == RUNTIME_ERROR_COUNT, "the corpus must carry "
+            + "exactly " + RUNTIME_ERROR_COUNT + " runtime-error fixtures "
+            + "with sidecars, found " + runtimeError);
 
         // The tracked known-fail population is exactly the two fixtures that
         // receive sidecars only at the zero-skip flip.
@@ -458,7 +793,8 @@ public class SidecarCorpusValidationTest {
                 check(allowedSidecars.contains(sidecar.toString()),
                     "stray sidecar file " + CORPUS_ROOT.relativize(sidecar)
                         + " — a sidecar may exist only next to a runtime-ok "
-                        + "fixture or the Diagnostics-bullet fixtures");
+                        + "fixture, a runtime-error fixture, or the "
+                        + "Diagnostics-bullet fixtures");
             }
         }
 
