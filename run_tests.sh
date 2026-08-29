@@ -361,7 +361,6 @@ echo ""
 echo "=== Running Source Module Resolver Tests (ISSUE-0267 T6) ==="
 java -ea -cp build deal.module.SourceModuleResolverTest
 
-
 echo ""
 echo "=== Running Stdlib .d.deal Parse Tests ==="
 java -ea -cp build deal.test.StdlibDeclParseTest

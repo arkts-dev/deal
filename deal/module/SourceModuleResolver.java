@@ -472,7 +472,7 @@ public final class SourceModuleResolver {
      * classification computed here is the single classifier invocation
      * for the published location (or the per-import gate evaluation for a
      * memoized bare landing); it is passed through to
-     * {@link #publish(Path, Path, Span, ModuleClassification)} so a
+     * {@link #publish(Path, Path, Span, ModuleIdentityResolver.ModuleClassification)} so a
      * non-memoized landing never classifies twice.
      */
     private ResolveResult publishOrGate(Path lexicalCandidate, Path resolvedReal,
@@ -483,7 +483,7 @@ public final class SourceModuleResolver {
             return e2003("Module not found: '" + specifier + "'. Cannot derive"
                 + " the canonical file: URI of '" + resolvedReal + "'", importSpan);
         }
-        ModuleClassification classification =
+        ModuleIdentityResolver.ModuleClassification classification =
             ModuleIdentityResolver.classify(context, canonicalUri);
         if (bare && isUndeclaredNonStdlibDeclaration(classification.moduleIdentity(),
                 resolvedReal)) {
@@ -527,7 +527,7 @@ public final class SourceModuleResolver {
      */
     private ResolveResult publish(Path lexicalCandidate, Path resolvedReal,
                                   Span importSpan,
-                                  ModuleClassification classification) {
+                                  ModuleIdentityResolver.ModuleClassification classification) {
         String lexicalPath = lexicalCandidate.toAbsolutePath().normalize().toString();
         String canonicalUri = uriOf(resolvedReal);
         if (canonicalUri == null) {

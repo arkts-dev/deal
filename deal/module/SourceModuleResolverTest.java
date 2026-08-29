@@ -73,6 +73,14 @@ public final class SourceModuleResolverTest {
 
     private static int passed = 0;
     private static int failed = 0;
+    /**
+     * A qualified {@code Files} name immediately followed by a method
+     * invocation — the java.nio.file.Files API surface. Word-boundary
+     * matching excludes plain substrings such as a local variable named
+     * {@code pinnedFiles} (a name, not an access).
+     */
+    private static final Pattern FILES_API =
+        Pattern.compile("\\bFiles\\.[A-Za-z]+\\s*\\(");
     private static Path tmpDir;
     /** {@code tmpDir.toRealPath()} — the symlink-resolved expectation base. */
     private static Path realTmp;
@@ -292,13 +300,13 @@ public final class SourceModuleResolverTest {
         // The pinned six-file set mirrors ProjectLocator step 6: the
         // canonical (fully symlink-resolved) path of each spec-listed
         // file that exists as a regular file under the surface.
-        List<String> pinnedStdlibFiles = new ArrayList<>();
+        List<String> stdlibDeclarationFiles = new ArrayList<>();
         if (stdlibSurface != null) {
             for (String module : ProjectLocator.SPEC_STDLIB_MODULES) {
                 Path pinned = Path.of(stdlibSurface).resolve(module + ".d.deal");
                 if (Files.isRegularFile(pinned)) {
                     try {
-                        pinnedStdlibFiles.add(pinned.toRealPath().toString());
+                        stdlibDeclarationFiles.add(pinned.toRealPath().toString());
                     } catch (IOException ignored) {
                         // Not a fully resolvable regular file: cannot
                         // equal a resolved source.
@@ -320,7 +328,7 @@ public final class SourceModuleResolverTest {
             externals,
             "1.2",
             stdlibSurface,
-            pinnedStdlibFiles,
+            stdlibDeclarationFiles,
             deployment);
     }
 
@@ -1002,7 +1010,7 @@ public final class SourceModuleResolverTest {
      * that is itself a symlink must still classify as BuiltinModule for
      * every spelling. ProjectLocator derives the canonical six-file set
      * at locate (each existing file fully symlink-resolved) and
-     * publishes it on ProjectContext.pinnedStdlibFiles; the pure
+     * publishes it on ProjectContext.stdlibDeclarationFiles; the pure
      * classifier compares the canonical source URI against that set, so
      * the bare std/console import does not fall through to the file-keyed
      * E2009 gate and the relative spelling does not lose BuiltinModule.
@@ -1025,9 +1033,9 @@ public final class SourceModuleResolverTest {
         ProjectContext context = locateOrFail(dir, "entry.deal");
 
         String realPath = realFile.toRealPath().toString();
-        check(context.pinnedStdlibFiles().equals(List.of(realPath)),
+        check(context.stdlibDeclarationFiles().equals(List.of(realPath)),
             "locate publishes the fully symlink-resolved pinned file path ("
-                + context.pinnedStdlibFiles() + ")");
+                + context.stdlibDeclarationFiles() + ")");
 
         SourceModuleResolver resolver = new SourceModuleResolver(context);
         Path importer = dir.resolve("src/main.deal");
@@ -1251,22 +1259,25 @@ public final class SourceModuleResolverTest {
         Path dir = fixture("matrix").toRealPath();
 
         // Pinned stdlib file → BuiltinModule.
-        ModuleClassification stdlib = ModuleIdentityResolver.classify(context,
+        ModuleIdentityResolver.ModuleClassification stdlib =
+            ModuleIdentityResolver.classify(context,
             dir.resolve("std/console.d.deal").toUri().toString());
         check(stdlib.moduleIdentity() instanceof CanonicalModuleIdentity.BuiltinModule
                 && stdlib.projectIdentity() == null
-                && stdlib.issue() == ModuleClassification.Issue.NONE,
+                && stdlib.issue() == ModuleIdentityResolver.Issue.NONE,
             "pinned stdlib file → BuiltinModule");
 
         // Same-named .d.deal outside the pinned surface → not builtin.
-        ModuleClassification sameNamed = ModuleIdentityResolver.classify(context,
+        ModuleIdentityResolver.ModuleClassification sameNamed =
+            ModuleIdentityResolver.classify(context,
             dir.resolve("decl/console.d.deal").toUri().toString());
         check(sameNamed.moduleIdentity() == null
-                && sameNamed.issue() == ModuleClassification.Issue.NONE,
+                && sameNamed.issue() == ModuleIdentityResolver.Issue.NONE,
             "same-named .d.deal outside the pinned surface is not builtin");
 
         // Externals declaration → ExternalModule(that key).
-        ModuleClassification external = ModuleIdentityResolver.classify(context,
+        ModuleIdentityResolver.ModuleClassification external =
+            ModuleIdentityResolver.classify(context,
             dir.resolve("decl/host.d.deal").toUri().toString());
         check(external.moduleIdentity()
                     instanceof CanonicalModuleIdentity.ExternalModule module
@@ -1274,7 +1285,8 @@ public final class SourceModuleResolverTest {
             "externals declaration file → ExternalModule('host')");
 
         // Rooted .deal → ProjectModule with the exact derived identity.
-        ModuleClassification rooted = ModuleIdentityResolver.classify(context,
+        ModuleIdentityResolver.ModuleClassification rooted =
+            ModuleIdentityResolver.classify(context,
             dir.resolve("src/nested/deep.deal").toUri().toString());
         check(rooted.moduleIdentity()
                     instanceof CanonicalModuleIdentity.ProjectModule module
@@ -1289,7 +1301,8 @@ public final class SourceModuleResolverTest {
             "the classifier result carries the projectIdentity provenance");
 
         // Most-specific selection across nested roots.
-        ModuleClassification nestedRoot = ModuleIdentityResolver.classify(context,
+        ModuleIdentityResolver.ModuleClassification nestedRoot =
+            ModuleIdentityResolver.classify(context,
             dir.resolve("lib/utils/deep.deal").toUri().toString());
         check(nestedRoot.moduleIdentity()
                     instanceof CanonicalModuleIdentity.ProjectModule module
@@ -1297,27 +1310,31 @@ public final class SourceModuleResolverTest {
             "lib/utils/deep.deal selects the most-specific root lib/utils");
 
         // Rooted non-externals .d.deal → no public identity.
-        ModuleClassification rootedDecl = ModuleIdentityResolver.classify(context,
+        ModuleIdentityResolver.ModuleClassification rootedDecl =
+            ModuleIdentityResolver.classify(context,
             dir.resolve("decl/other.d.deal").toUri().toString());
         check(rootedDecl.moduleIdentity() == null
                 && rootedDecl.projectIdentity() == null,
             "rooted non-externals .d.deal → no public module identity");
 
         // Non-spec .d.deal inside the stdlib directory → no public identity.
-        ModuleClassification custom = ModuleIdentityResolver.classify(context,
+        ModuleIdentityResolver.ModuleClassification custom =
+            ModuleIdentityResolver.classify(context,
             dir.resolve("std/custom.d.deal").toUri().toString());
         check(custom.moduleIdentity() == null,
             "non-spec .d.deal inside the stdlib directory → no public identity");
 
         // Out-of-root .deal → no public identity.
-        ModuleClassification outOfRoot = ModuleIdentityResolver.classify(context,
+        ModuleIdentityResolver.ModuleClassification outOfRoot =
+            ModuleIdentityResolver.classify(context,
             tmpDir.toRealPath().resolve("sharedOuter.deal").toUri().toString());
         check(outOfRoot.moduleIdentity() == null
                 && outOfRoot.projectIdentity() == null,
             "out-of-root .deal → no public identity");
 
         // A symlink target outside its lexical root → no public identity.
-        ModuleClassification escaped = ModuleIdentityResolver.classify(context,
+        ModuleIdentityResolver.ModuleClassification escaped =
+            ModuleIdentityResolver.classify(context,
             tmpDir.toRealPath().resolve("realfiles/sym-shared.deal").toUri()
                 .toString());
         check(escaped.moduleIdentity() == null,
@@ -1328,7 +1345,8 @@ public final class SourceModuleResolverTest {
             List.of("src"), Map.of(), null);
         Path nosurfDir = fixture("classifier-nosurf");
         Files.createDirectories(nosurfDir);
-        ModuleClassification absent = ModuleIdentityResolver.classify(noSurface,
+        ModuleIdentityResolver.ModuleClassification absent =
+            ModuleIdentityResolver.classify(noSurface,
             nosurfDir.toRealPath()
                 .resolve("std/console.d.deal").toUri().toString());
         check(absent.moduleIdentity() == null,
@@ -1381,9 +1399,10 @@ public final class SourceModuleResolverTest {
             new ProjectDeploymentIdentity(
                 dir.resolve("deal.json").normalize().toUri().toString(),
                 "0".repeat(64)));
-        ModuleClassification tie = ModuleIdentityResolver.classify(tieContext,
+        ModuleIdentityResolver.ModuleClassification tie =
+            ModuleIdentityResolver.classify(tieContext,
             realDir.resolve("src/x.deal").toUri().toString());
-        check(tie.issue() == ModuleClassification.Issue.EQUAL_ROOT_TIE
+        check(tie.issue() == ModuleIdentityResolver.Issue.EQUAL_ROOT_TIE
                 && tie.moduleIdentity() == null && tie.projectIdentity() == null,
             "equal-root containment reports EQUAL_ROOT_TIE with no identity"
                 + " published");
@@ -1410,11 +1429,11 @@ public final class SourceModuleResolverTest {
             overlapContext.configuredModuleRoots(), overlapContext.outputPath(),
             overlapContext.backend(), overlapExternals,
             overlapContext.stdlibVersion(), overlapContext.stdlibSurfacePath(),
-            overlapContext.pinnedStdlibFiles(),
+            overlapContext.stdlibDeclarationFiles(),
             overlapContext.projectDeploymentIdentity());
-        ModuleClassification overlap = ModuleIdentityResolver.classify(
+        ModuleIdentityResolver.ModuleClassification overlap = ModuleIdentityResolver.classify(
             overlapContext, Path.of(pinnedPath).toUri().toString());
-        check(overlap.issue() == ModuleClassification.Issue.STDLIB_EXTERNAL_OVERLAP
+        check(overlap.issue() == ModuleIdentityResolver.Issue.STDLIB_EXTERNAL_OVERLAP
                 && overlap.moduleIdentity() == null,
             "the both-match state reports STDLIB_EXTERNAL_OVERLAP with no"
                 + " identity published");
@@ -1430,9 +1449,11 @@ public final class SourceModuleResolverTest {
         ProjectContext context = syntheticContext(dir, List.of("src"), Map.of(),
             realDir.resolve("std").toString());
         String fabricated = realDir.resolve("src/alpha/beta.deal").toUri().toString();
-        ModuleClassification first = ModuleIdentityResolver.classify(context,
+        ModuleIdentityResolver.ModuleClassification first =
+            ModuleIdentityResolver.classify(context,
             fabricated);
-        ModuleClassification second = ModuleIdentityResolver.classify(context,
+        ModuleIdentityResolver.ModuleClassification second =
+            ModuleIdentityResolver.classify(context,
             fabricated);
         check(first.equals(second),
             "equal inputs produce equal classification results");
@@ -1443,10 +1464,15 @@ public final class SourceModuleResolverTest {
                             .equals(List.of("alpha")),
             "fabricated URIs classify without any filesystem existence");
 
-        // Structural purity: the classifier source performs no Files.* call.
+        // Structural purity: the classifier source performs no
+        // java.nio.file.Files call. The scan targets the Files.* API
+        // surface (a qualified name followed by an invocation), never
+        // plain substrings — a local variable named "pinnedFiles" is
+        // not an access.
         String source = Files.readString(Path.of(
             "deal/module/ModuleIdentityResolver.java"), StandardCharsets.UTF_8);
-        check(!source.contains("Files."),
+        check(!source.contains("import java.nio.file.Files")
+                && !FILES_API.matcher(source).find(),
             "the classifier production source performs no filesystem access");
     }
 
