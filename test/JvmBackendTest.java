@@ -7461,27 +7461,22 @@ public class JvmBackendTest {
         List<EdgePin> pins = List.of(
             new EdgePin("add-overflow", "return 2147483647 + 1;",
                 "E8004 int out of safe range"),
-            new EdgePin("sub-underflow",
-                "let x: int = int(-2147483648.0);\n"
-                + "      return x - 1;",
+            new EdgePin("min-literal-in-range",
+                "let x: int = -2147483648;\n      return x;",
+                "-2147483648"),
+            new EdgePin("sub-underflow", "return -2147483648 - 1;",
                 "E8004 int out of safe range"),
             new EdgePin("mul-overflow", "return 50000 * 50000;",
                 "E8004 int out of safe range"),
-            new EdgePin("div-min-by-minus-one",
-                "let x: int = int(-2147483648.0);\n"
-                + "      return x / -1;",
+            new EdgePin("div-min-by-minus-one", "return -2147483648 / -1;",
                 "E8004 int out of safe range"),
-            new EdgePin("mod-min-by-minus-one",
-                "let x: int = int(-2147483648.0);\n"
-                + "      return x % -1;",
+            new EdgePin("mod-min-by-minus-one", "return -2147483648 % -1;",
                 "E8004 int out of safe range"),
             new EdgePin("div-by-zero", "return 1 / 0;",
                 "E8005 integer division by zero"),
             new EdgePin("mod-by-zero", "return 1 % 0;",
                 "E8005 integer division by zero"),
-            new EdgePin("neg-min",
-                "let x: int = int(-2147483648.0);\n"
-                + "      return -(x);",
+            new EdgePin("neg-min", "return -(-2147483648);",
                 "E8004 int out of safe range"),
             new EdgePin("neg-zero", "return -(0);", "0"),
             new EdgePin("pow-negative-exponent", "return 2 ** -1;",
@@ -7527,6 +7522,40 @@ public class JvmBackendTest {
                         + pin.expected() + ": " + r.output());
             }
         }
+
+        // Artifact pins for the int32 minimum literal spelling
+        // (ISSUE-0375 review): NEG(IntLiteral 2147483648) folds into the
+        // Java int literal -2147483648 — never intNeg(checkInt(2147483648L)),
+        // whose checkInt gate would raise the spurious E8004 before the
+        // negation. The pinned -2147483648 - 1 edge runs with its literal
+        // spelling and the inclusive gate range admits the minimum.
+        String minSource = "export function main(): null { return null; }\n"
+            + "export function test(): int {\n      let x: int = -2147483648;\n"
+            + "      return x;\n    }\n";
+        String minJava = int32Artifact(minSource, "min_literal_artifact");
+        check(minJava.contains("int x = -2147483648;"),
+            "min literal folds to the Java int literal -2147483648 at the "
+                + "declaration initializer: "
+                + minJava.lines().filter(l -> l.contains("2147483648")
+                    && !l.contains("checkInt") && !l.contains("intPow")
+                    && !l.contains("intFromNumber") && !l.contains("//"))
+                .findFirst().orElse("<missing>"));
+        check(!minJava.contains("intNeg(checkInt(2147483648L))")
+                && !minJava.contains("checkInt(2147483648L)"),
+            "no checkInt(2147483648L) gate for the min literal spelling "
+                + "(no spurious E8004)");
+        String subSource = "export function main(): null { return null; }\n"
+            + "export function test(): int {\n      return -2147483648 - 1;\n"
+            + "    }\n";
+        String subJava = int32Artifact(subSource, "min_literal_sub_artifact");
+        check(subJava.contains("return intSub(-2147483648, 1);"),
+            "the pinned -2147483648 - 1 edge emits with its literal "
+                + "spelling through intSub: "
+                + subJava.lines().filter(l -> l.contains("intSub"))
+                .findFirst().orElse("<missing>"));
+        check(!subJava.contains("checkInt(2147483648L)"),
+            "the -2147483648 - 1 literal operand never crosses the "
+                + "out-of-range checkInt gate");
 
         // The integration proof over the plumbed profile (T1): the same
         // add-overflow program under the untouched DEFAULT invocation
@@ -7591,6 +7620,28 @@ public class JvmBackendTest {
         check(inRange.output().contains("2147483648"),
             "legacy ±(2^53-1) safe-int value unchanged: "
                 + inRange.output());
+
+        // The min-literal spelling under LEGACY_SAFE_INT keeps its
+        // pre-tree emission shape intNeg(2147483648L) (the fold is
+        // int32-only) and still stores -2147483648 correctly — the
+        // regression guard for the int32 fold.
+        String minLegacyJava = legacyArtifact("""
+            export function test(): int { return -2147483648; }
+            """, "legacy_min_literal_artifact");
+        check(minLegacyJava.contains("return intNeg(2147483648L);"),
+            "legacy min literal keeps the base emission shape "
+                + "intNeg(2147483648L): "
+                + minLegacyJava.lines().filter(l -> l.contains("intNeg"))
+                .findFirst().orElse("<missing>"));
+        check(!minLegacyJava.contains("return -2147483648;"),
+            "no int32 fold leaks into the legacy artifact");
+        ExecResult legacyMin = compileAndRunJvm("""
+            export function test(): int { return -2147483648; }
+            """, "legacy-min-literal");
+        check(legacyMin.exitCode() == 0,
+            "legacy min-literal run exits 0: " + legacyMin.output());
+        check(legacyMin.output().contains("-2147483648"),
+            "legacy stores -2147483648 correctly: " + legacyMin.output());
 
         ExecResult over = compileAndRunJvm("""
             export function test(): int { return 9007199254740991 + 1; }

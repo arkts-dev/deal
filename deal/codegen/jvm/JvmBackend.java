@@ -10271,9 +10271,31 @@ public final class JvmBackend {
             }
             case NEG -> {
                 Type t = typeOf(u.expr());
-                if (t instanceof Type.Int) yield "intNeg("
-                    + adaptIntBoundary(u.expr(), emitExpression(u.expr()),
-                        Type.Int.INSTANCE) + ")";
+                if (t instanceof Type.Int) {
+                    // ISSUE-0375: under DEAL_V1_2_INT32 the valid int32
+                    // minimum literal spelling `-2147483648` parses as
+                    // NEG(IntLiteral 2147483648) — the operand alone is
+                    // out of the signed32 gate range, but the negation is
+                    // the in-range minimum the inclusive gate admits
+                    // (the pinned frontend contract:
+                    // int32-literal-min-via-unary-minus.deal is
+                    // compile-ok). Fold exactly this shape into the Java
+                    // int literal -2147483648 (JLS 3.10.1 admits
+                    // 2147483648 only as the unary-minus operand), so the
+                    // gate never sees the out-of-range half. Literals
+                    // outside this foldable shape keep the checkInt
+                    // fail-safe (E8004 at the point of use), and the
+                    // legacy profile keeps its byte-identical
+                    // intNeg(2147483648L) emission untouched.
+                    if (int32Mode && u.expr() instanceof LiteralExpr lit
+                            && lit.value() instanceof LiteralValue.IntLiteral i
+                            && i.value() == 2147483648L) {
+                        yield "-2147483648";
+                    }
+                    yield "intNeg("
+                        + adaptIntBoundary(u.expr(), emitExpression(u.expr()),
+                            Type.Int.INSTANCE) + ")";
+                }
                 if (t instanceof Type.Number) yield "(-" + emitExpression(u.expr()) + ")";
                 unsupported("unary - on " + typeName(t), u.span());
                 yield "0L";
