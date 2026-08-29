@@ -411,9 +411,11 @@ int dealpg4_outer_core(const OuterLimits *limits,
  * scripted nonzero return forces the named failure path with the
  * scripted value as errno; 0 runs the real syscall. The entry sites
  * (FI_OUTER_SUBREAPER / FI_OUTER_TIMERFD / FI_OUTER_SIGNALFD /
- * FI_OUTER_NONCE) land with the entry child; FI_OUTER_PIPE and
+ * FI_OUTER_ENTRY_NONCE) land with the entry child; FI_OUTER_PIPE and
  * FI_COORD_READY_MISMATCH land with this child (the coordinator pipe
- * owner). The remaining D6 fail sites (FI_OUTER_BIND,
+ * owner). The pinned D6 catalog binds FI_OUTER_NONCE to the
+ * registration-time nonce site (the nested-fork machinery, D3). The
+ * remaining D6 fail sites (FI_OUTER_BIND,
  * FI_OUTER_SOCKETPAIR, FI_OUTER_FORK, FI_OUTER_DEATH) and the
  * congestion catalog land with the children that own the broker
  * socket and the nested fork machinery. */
@@ -424,8 +426,14 @@ enum dealpg4_outer_fi_fail_site {
                              * TIMER_FAILED, exit 4 */
     FI_OUTER_SIGNALFD = 3,  /* entry signalfd(SIGCHLD) fails ->
                              * CAPABILITY_MISSING, exit 4 */
-    FI_OUTER_NONCE = 4,     /* entry getrandom(2) outerNonce fails ->
-                             * NONCE_FAILED, exit 1 */
+    FI_OUTER_NONCE = 4,     /* registration-time nonce generation
+                             * fails (unrecoverable getrandom(2)) ->
+                             * REJECT <id> <tag> NONCE_FAILED +
+                             * terminal FAILED <id> NONCE_FAILED
+                             * record, no fork, no channels (D3); the
+                             * production nonce path
+                             * (dealpg4_nonce_hex) is unchanged when
+                             * the site is unscripted */
     FI_OUTER_PIPE = 5,      /* the coordinator pre-exec pipe or a
                              * coordinator stream drain pipe fails
                              * before the coordinator fork -> no fork,
@@ -457,15 +465,13 @@ enum dealpg4_outer_fi_fail_site {
                                     * path (the record was already
                                     * inserted — register-before-fork;
                                     * D3) */
-    FI_OUTER_INVOKE_NONCE = 10    /* registration-time nonce
-                                    * generation fails (unrecoverable
-                                    * getrandom(2)) -> REJECT <id>
-                                    * <tag> NONCE_FAILED + terminal
-                                    * FAILED <id> NONCE_FAILED record,
-                                    * no fork, no channels (D3); the
-                                    * production nonce path
-                                    * (dealpg4_nonce_hex) is unchanged
-                                    * when the site is unscripted */
+    FI_OUTER_ENTRY_NONCE = 10    /* entry getrandom(2) outerNonce
+                                    * fails -> NONCE_FAILED on stderr,
+                                    * exit 1, no fork, no socket, no
+                                    * records (D1). Distinct from
+                                    * FI_OUTER_NONCE: the pinned D6
+                                    * catalog binds FI_OUTER_NONCE to
+                                    * the registration-time site */
 };
 
 /* Named congest target/mode tags (int tags through

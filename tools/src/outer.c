@@ -25,7 +25,7 @@
  *    final report, and the exit-status mapping;
  *  - the entry-level and coordinator-level fault-injection sites
  *    (FI_OUTER_SUBREAPER / FI_OUTER_TIMERFD / FI_OUTER_SIGNALFD /
- *    FI_OUTER_NONCE / FI_OUTER_PIPE / FI_COORD_READY_MISMATCH plus
+ *    FI_OUTER_ENTRY_NONCE / FI_OUTER_PIPE / FI_COORD_READY_MISMATCH plus
  *    the outer-pre-coord-fork / coord-post-fork /
  *    coord-pre-ready-write delay sites) land with this file.
  *
@@ -1690,11 +1690,11 @@ static void dealpg4_outer_broker_invoke(dealpg4_outer_state *st,
     /* Registration-time nonce generation (artifact D6): the record's
      * invocation nonce, generated at registration via getrandom(2)
      * through dealpg4_nonce_hex. An unrecoverable failure (scripted
-     * via FI_OUTER_INVOKE_NONCE or real) inserts the record directly
-     * terminal FAILED NONCE_FAILED and answers REJECT <id> <tag>
-     * NONCE_FAILED — no pid, no channels, no fork (D3). The
+     * via the pinned FI_OUTER_NONCE tag or real) inserts the record
+     * directly terminal FAILED NONCE_FAILED and answers REJECT <id>
+     * <tag> NONCE_FAILED — no pid, no channels, no fork (D3). The
      * production nonce path is unchanged when the site is unscripted. */
-    if (dealpg4_fi_hooks.fail(FI_OUTER_INVOKE_NONCE) != 0
+    if (dealpg4_fi_hooks.fail(FI_OUTER_NONCE) != 0
         || dealpg4_nonce_hex(nonce) != 0) {
         dealpg4_outer_reject_pre_fork(st, id, tag_f, "NONCE_FAILED");
         return;
@@ -2117,8 +2117,10 @@ static int dealpg4_outer_preamble(dealpg4_outer_state *st)
      * nonce helper, used only as the broker socket path suffix. An
      * unrecoverable failure is NONCE_FAILED (gate-fatal, exit 1): no
      * fork, no socket, no records; the nonce is never silently zeroed
-     * or derived. The FI_OUTER_NONCE seam forces the failure path. */
-    if (dealpg4_fi_hooks.fail(FI_OUTER_NONCE) != 0
+     * or derived. The FI_OUTER_ENTRY_NONCE seam forces the failure
+     * path (distinct from the pinned FI_OUTER_NONCE registration-time
+     * site, D6). */
+    if (dealpg4_fi_hooks.fail(FI_OUTER_ENTRY_NONCE) != 0
         || dealpg4_nonce_hex(st->outer_nonce) != 0) {
         fprintf(stderr, "NONCE_FAILED\n");
         return DEALPG4_OUTER_EXIT_GATE_FAILURE;

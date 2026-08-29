@@ -34,8 +34,8 @@
  *     spawn-seam composition whose fork_nested returns -1, via a
  *     scripted socketpair failure (FI_OUTER_SOCKETPAIR), and via the
  *     production fork_nested with FI_OUTER_FORK armed; NONCE_FAILED
- *     via FI_OUTER_INVOKE_NONCE (the production nonce path stays
- *     unchanged when the site is unscripted).
+ *     via the pinned FI_OUTER_NONCE tag (the production nonce path
+ *     stays unchanged when the site is unscripted).
  *  3. Register-before-fork: a checker composition runs inside
  *     fork_nested and proves the record exists (inserted) with the
  *     exact fork parameters (nonce, budget_t == deadline_ms within
@@ -1545,7 +1545,7 @@ static const int registry_fail_sites[] = {
     FI_OUTER_SUBREAPER, FI_OUTER_TIMERFD, FI_OUTER_SIGNALFD,
     FI_OUTER_NONCE, FI_OUTER_PIPE, FI_COORD_READY_MISMATCH,
     FI_OUTER_BIND, FI_OUTER_SOCKETPAIR, FI_OUTER_FORK,
-    FI_OUTER_INVOKE_NONCE
+    FI_OUTER_ENTRY_NONCE
 };
 static const dealpg4_fi_catalog registry_catalog = {
     NULL, 0, registry_fail_sites, 10, NULL, 0, NULL, 0
@@ -1613,7 +1613,7 @@ static int nonce_failed_case_fn(void)
 {
     int rc;
 
-    rc = injected_reject_case(FI_OUTER_INVOKE_NONCE, "NONCE_FAILED",
+    rc = injected_reject_case(FI_OUTER_NONCE, "NONCE_FAILED",
                               0 /* no fork call */);
     /* The record of the injected run carries no nonce. */
     {
