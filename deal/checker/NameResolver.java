@@ -83,6 +83,19 @@ public final class NameResolver {
         return scopeMap;
     }
 
+    /**
+     * Positions the resolver's scope pointer for Pass-2 type
+     * resolution: the type checker walks statement scopes during
+     * checking and keeps this pointer in sync with its own
+     * {@code currentScope}, so {@link #resolveTypeNode} resolves
+     * nested class names against the scope that lexically contains the
+     * resolved annotation (a class declared inside a function body
+     * resolves there, never against the stale module root).
+     */
+    void setCurrentScope(SymbolTable scope) {
+        this.currentScope = scope;
+    }
+
     /** Returns diagnostics accumulated during resolution. */
     public List<CompilerDiagnostic> diagnostics() {
         return diagnostics;
