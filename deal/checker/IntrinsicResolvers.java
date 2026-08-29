@@ -70,6 +70,32 @@ final class IntrinsicResolvers {
     };
 
     /**
+     * {@code bytes(n)} — allocation of a zero-filled byte buffer
+     * (DEAL v1.2, js-v12-int32-bytes D3/D4).
+     *
+     * <p>Exactly one argument of static type {@code int} (the signed
+     * allocation length); the result is {@code bytes}. The runtime
+     * validates the length value (E8001/E8004/E8012) and returns the
+     * fresh carrier — the checker pins the shape only.</p>
+     */
+    static final IntrinsicResolver BYTES = (call, argTypes, ctx) -> {
+        if (argTypes.size() != 1) {
+            ctx.error(DiagnosticCode.E5001,
+                "bytes() expects exactly 1 argument, got " + argTypes.size(),
+                call.span());
+            return Type.Error.INSTANCE;
+        }
+        Type arg = argTypes.get(0);
+        if (isInt(arg)) {
+            return Type.Bytes.INSTANCE;
+        }
+        ctx.error(DiagnosticCode.E5001,
+            "bytes() argument must be int, got " + typeName(arg),
+            call.span());
+        return Type.Error.INSTANCE;
+    };
+
+    /**
      * {@code has(obj.field)} — field presence test.
      *
      * <p>This resolver is a fallback path; normally {@code has()} is

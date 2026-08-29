@@ -118,6 +118,15 @@ public final class NameResolver {
         root.define("number", new Symbol.IntrinsicSymbol("number",
             numFuncType, IntrinsicResolvers.NUMBER));
 
+        // bytes intrinsic (DEAL v1.2, js-v12-int32-bytes D3/D4):
+        // bytes(int) => bytes — the zero-filled buffer allocation site.
+        // The intrinsic resolver enforces exactly one int argument
+        // (IntrinsicResolvers.BYTES); the backend lowers the call site.
+        Type.Func bytesFuncType = new Type.Func(
+            List.of(Type.Int.INSTANCE), Type.Bytes.INSTANCE);
+        root.define("bytes", new Symbol.IntrinsicSymbol("bytes",
+            bytesFuncType, IntrinsicResolvers.BYTES));
+
         // F7: The `has` intrinsic is handled by HasExpr in the type checker,
         // not via call-intrinsic path.  Store it with a boolean type for
         // symbol-table correctness; the intrinsic resolver is dead code
@@ -734,6 +743,19 @@ public final class NameResolver {
             case "string"    -> Type.String.INSTANCE;
             case "table"     -> Type.Table.INSTANCE;
             case "Error"     -> Types.classType("Error", "");
+            // DEAL v1.2: `bytes` is the canonical bytes primitive
+            // (Type.Bytes.INSTANCE). bytes is not a DEAL keyword, so a
+            // checker-accepted user class named `bytes` resolves to its
+            // ClassSymbol and wins over the primitive — the same
+            // class-symbol-first guard the retired JS-backend defensive
+            // arm used.
+            case "bytes" -> {
+                Symbol sym = currentScope.resolve(name);
+                if (sym instanceof Symbol.ClassSymbol cs) {
+                    yield Types.classType(cs.name(), cs.modulePath());
+                }
+                yield Type.Bytes.INSTANCE;
+            }
             default -> {
                 Symbol sym = currentScope.resolve(name);
                 if (sym instanceof Symbol.ClassSymbol cs) {

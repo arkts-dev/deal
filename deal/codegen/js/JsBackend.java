@@ -68,10 +68,8 @@ import deal.types.Types;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.function.Function;
@@ -208,15 +206,17 @@ import java.util.Set;
  * {@code @jsonable} on an exported class emits the two exported
  * wrappers plus the hidden {@code C$fields} descriptor export
  * (js-v12-jsonable-completion D1-D2); and
- * the defensive {@code bytes} arm (js-backend-architecture A1 — the
- * frontend cannot produce a bytes program today) keys on the AST
- * spelling: a {@link NamedType} spelled {@code bytes} or a
- * {@link CallExpr} whose callee is the identifier {@code bytes}
- * reports E6000 at the use site, once per site. Every rejection makes
- * {@code hasErrors()} hold, so the orchestrator's two-pass
- * {@code codegenAllJs()} writes no artifact for the rejected module —
- * a clean sibling's artifact is unaffected — and the compilation
- * fails with the standard diagnostic report.
+ * the retired defensive {@code bytes} E6000 arms
+ * (js-backend-architecture A1) are gone: the v1.2 bytes lane
+ * (js-v12-int32-bytes D3/D4) lowers {@code bytes(n)} to
+ * {@code $rt.bytes}, {@code b.length} to {@code $rt.bytesLength},
+ * {@code b[i]} to {@code $rt.bytesGet}, {@code b[i] = v} to
+ * {@code $rt.bytesSet}, and every bytes-typed boundary to
+ * {@code $rt.checkBytes} — no E6000 is reported for any bytes
+ * program. Every rejection makes {@code hasErrors()} hold, so the
+ * orchestrator's two-pass {@code codegenAllJs()} writes no artifact
+ * for the rejected module — a clean sibling's artifact is unaffected —
+ * and the compilation fails with the standard diagnostic report.
  *
  * <p>ISSUE-0318 nested-class slice: the former D6 nested-class E6000
  * arm (below-module-level {@link ClassDeclaration}) is retired — a
@@ -415,18 +415,6 @@ public final class JsBackend {
      */
     private boolean atModuleLevel = true;
 
-    /**
-     * Identity-deduplicated defensive {@code bytes} rejection sites
-     * (the js-backend-architecture A1 arm keys on the AST spelling — a
-     * {@link NamedType} spelled {@code bytes} or a {@link CallExpr}
-     * whose callee is the identifier {@code bytes}). One type node is
-     * resolved several times (entry scan, declaration walk, descriptor
-     * building), and each distinct site must report exactly one E6000.
-     */
-    private final Set<NamedType> reportedBytesTypes =
-        Collections.newSetFromMap(new IdentityHashMap<>());
-    private final Set<CallExpr> reportedBytesCalls =
-        Collections.newSetFromMap(new IdentityHashMap<>());
 
     /**
      * Stack of user-declared local names visible at the current walk
@@ -811,17 +799,26 @@ public final class JsBackend {
             out.append("$rt.setInt32Mode(true);\n");
         }
         out.append("\n");
-        // 4. Intrinsic header seeds: int/number are first-class function
-        // values with the seeded static signatures, plus the module-private
-        // builtin-Error defaults/constructor pair (neither is exported).
+        // 4. Intrinsic header seeds: int/number/bytes are first-class
+        // function values with the seeded static signatures, plus the
+        // module-private builtin-Error defaults/constructor pair
+        // (neither is exported).
         out.append("// Intrinsic header wrappers: int/number are first-class function\n");
         out.append("// values with the seeded static signatures (number)->int and\n");
-        out.append("// (int)->number; the builtin-Error defaults/constructor/META\n");
-        out.append("// artifacts stay private (never reach the export surface).\n");
+        out.append("// (int)->number; bytes seeds (int)->bytes (direct calls\n");
+        out.append("// lower to $rt.bytes; first-class bytes values use the wrapper);\n");
+        out.append("// the builtin-Error defaults/constructor/META artifacts stay\n");
+        out.append("// private (never reach the export surface).\n");
         out.append("const int = $rt.function(\"(number)->int\", "
             + "(v, $file, $line, $column) => $rt.intConvert(v, $file, $line, $column));\n");
         out.append("const number = $rt.function(\"(int)->number\", "
             + "(v, $file, $line, $column) => $rt.numberConvert(v, $file, $line, $column));\n");
+        // The bytes intrinsic seed (js-v12-int32-bytes D3): the wrapper's
+        // $f routes to the same allocation member direct calls use, so a
+        // function-typed bytes value calls bytes(n) through the identical
+        // runtime boundary.
+        out.append("const bytes = $rt.function(\"(int)->bytes\", "
+            + "(v, $file, $line, $column) => $rt.bytes(v, $file, $line, $column));\n");
         out.append("const $ErrorDefaults = () => ({ [\"code\"]: \"\", "
             + "[\"message\"]: \"\" });\n");
         // The builtin Error identity is the canonical @$builtin/Error
@@ -1135,28 +1132,20 @@ public final class JsBackend {
                 case "string" -> Type.String.INSTANCE;
                 case "table" -> Type.Table.INSTANCE;
                 case "Error" -> Types.classType("Error", "");
-                default -> {
-                    // ISSUE-0252 rejection pass (js-backend-architecture
-                    // A1): the defensive bytes arm keys on the AST
-                    // spelling — the frontend cannot produce a bytes
-                    // program today (no bytes grammar/resolver produces
-                    // Type.Bytes yet), so a bytes-spelled named type is
-                    // reported exactly once at its use site instead of
-                    // being silently treated as an error type. The
-                    // unknown-symbol guard
-                    // keeps the arm defensive-only: a checker-accepted
-                    // user class named bytes resolves to its ClassSymbol
-                    // and is never rejected (bytes is not a DEAL keyword
-                    // today).
-                    if (nt.name().equals("bytes")
-                            && symbols.resolve(nt.name()) == null
-                            && reportedBytesTypes.add(nt)) {
-                        diagnostics.add(CompilerDiagnostic.error(
-                            DiagnosticCode.E6000,
-                            "JavaScript backend: bytes is not supported "
-                                + "(ISSUE-0169 skeleton)",
-                            nt.span()));
+                // v1.2 bytes (js-v12-int32-bytes D3): a bytes-spelled
+                // named type resolves to the canonical Type.Bytes
+                // primitive. bytes is not a DEAL keyword, so a
+                // checker-accepted user class named bytes resolves to
+                // its ClassSymbol and wins over the primitive — the
+                // retired defensive rejection arm used the same guard.
+                case "bytes" -> {
+                    Symbol sym = symbols.resolve(nt.name());
+                    if (sym instanceof Symbol.ClassSymbol cs) {
+                        yield Types.classType(nt.name(), cs.modulePath());
                     }
+                    yield Type.Bytes.INSTANCE;
+                }
+                default -> {
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol cs) {
                         yield Types.classType(nt.name(), cs.modulePath());
@@ -2720,26 +2709,6 @@ public final class JsBackend {
      * arguments (js-backend-emitter D6).
      */
     private String emitCall(CallExpr call) {
-        // ISSUE-0252 rejection pass: the defensive bytes(n) intrinsic
-        // arm keys on the AST spelling — a call whose callee is the
-        // identifier bytes is reported exactly once at the use site
-        // (the frontend has no bytes intrinsic today,
-        // js-backend-architecture A1). The guards keep the arm
-        // defensive-only: a checker-accepted user function named bytes
-        // (module-level symbol) or a shadowing local bytes binding
-        // never fires it — bytes is not a DEAL keyword today. The call
-        // itself then emits through the checker-error path; the module
-        // carries an error diagnostic, so no artifact is written.
-        if (call.callee() instanceof IdentifierExpr id
-                && id.name().equals("bytes")
-                && !isLocalName(id.name())
-                && symbols.resolve(id.name()) == null
-                && reportedBytesCalls.add(call)) {
-            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6000,
-                "JavaScript backend: bytes is not supported "
-                    + "(ISSUE-0169 skeleton)",
-                call.span()));
-        }
         Type calleeType = typeOf(call.callee());
         StringBuilder args = new StringBuilder();
         for (int i = 0; i < call.args().size(); i++) {
@@ -2756,6 +2725,19 @@ public final class JsBackend {
             callArgs.append(", ");
         }
         callArgs.append(spanArgs(call.span()));
+        // v1.2 bytes intrinsic (js-v12-int32-bytes D3): bytes(n) lowers
+        // to $rt.bytes(n, <file>, <line>, <column>) directly — not
+        // through the header wrapper's .$f entry (the task pins the
+        // $rt.bytes call form; the header seed only serves first-class
+        // bytes values). The guard mirrors the retired rejection's:
+        // a checker-accepted shadowing local named bytes never routes
+        // here.
+        if (call.callee() instanceof IdentifierExpr id
+                && id.name().equals("bytes")
+                && !isLocalName(id.name())
+                && symbols.resolve(id.name()) instanceof Symbol.IntrinsicSymbol) {
+            return "$rt.bytes(" + callArgs + ")";
+        }
         if (call.callee() instanceof IdentifierExpr id) {
             Symbol sym = symbols.resolve(id.name());
             if (sym instanceof Symbol.IntrinsicSymbol) {
@@ -2789,6 +2771,14 @@ public final class JsBackend {
         String field = mae.field();
         if (field.equals("length") && objType instanceof Type.Array) {
             return obj + ".length";
+        }
+        // v1.2 bytes length (js-v12-int32-bytes D3/D4): b.length lowers
+        // to $rt.bytesLength(b) of static type int — compiler-resolved,
+        // never a member lookup, never dispatchable (the checker's E3017
+        // rejects .length assignment/deletion on bytes before any
+        // backend).
+        if (field.equals("length") && objType instanceof Type.Bytes) {
+            return "$rt.bytesLength(" + obj + ")";
         }
         // Module members: the alias identifier types as Table
         // (getDeclaredType of a ModuleSymbol) but its members are plain
@@ -2896,6 +2886,16 @@ public final class JsBackend {
         }
         if (containerType instanceof Type.Table) {
             return arr + ".get(" + index + ")";
+        }
+        // v1.2 bytes read (js-v12-int32-bytes D4): b[i] lowers to
+        // $rt.bytesGet(b, i, <file>, <line>, <column>) — JS evaluates
+        // the receiver and the index (with their side effects) left to
+        // right before the helper's internal checkBytes/checkInt/E8012
+        // validation runs; the returned unsigned byte (int 0..255)
+        // crosses the contextual target check like every read.
+        if (containerType instanceof Type.Bytes) {
+            return "$rt.bytesGet(" + arr + ", " + index + ", "
+                + spanArgs(span) + ")";
         }
         return arr + "[" + index + "]";
     }
@@ -3130,6 +3130,23 @@ public final class JsBackend {
                     + "return $arr[$idx] = "
                     + emitCheckExpr(value, arrT.element(), span)
                     + "; })())";
+            }
+            if (containerType instanceof Type.Bytes) {
+                // v1.2 bytes write (js-v12-int32-bytes D4): b[i] = v
+                // lowers to $rt.bytesSet(b, i, v, <file>, <line>,
+                // <column>). JS argument evaluation realizes the pinned
+                // order exactly: the receiver and the index (with their
+                // side effects) evaluate before the RHS, and the RHS
+                // (with its side effects) evaluates before any write
+                // validation — the helper's internal checkBytes/
+                // checkInt(i)/E8012/checkInt(v)/E8013 gates run only
+                // after all three operands completed. The call returns
+                // the written unsigned value, so the assignment keeps
+                // its expression value.
+                return "$rt.bytesSet(" + emitExpression(idx.array())
+                    + ", " + emitExpression(idx.index()) + ", "
+                    + emitExpression(assign.value()) + ", "
+                    + spanArgs(idx.span()) + ")";
             }
             if (containerType instanceof Type.Table) {
                 // Module-alias index write (checker F5 accepts any
@@ -3648,12 +3665,8 @@ public final class JsBackend {
                 "$rt.checkString(" + valueExpr + ", " + spanParam + ")";
             case Type.Table ignored ->
                 "$rt.checkTable(" + valueExpr + ", " + spanParam + ")";
-            // Mechanical arm: the JS runtime has no bytes checker yet
-            // (ISSUE-0169 skeleton); a bytes-spelled annotation is
-            // rejected with E6000 in resolveTypeNode and resolves to the
-            // Error sentinel, so this arm is unreachable in real flows
-            // and mirrors the sentinel pass-through.
-            case Type.Bytes ignored -> valueExpr;
+            case Type.Bytes ignored ->
+                "$rt.checkBytes(" + valueExpr + ", " + spanParam + ")";
             case Type.Error ignored -> valueExpr;
             case Type.Array arr ->
                 "$rt.checkArray(\"" + descriptors.encode(type) + "\", "

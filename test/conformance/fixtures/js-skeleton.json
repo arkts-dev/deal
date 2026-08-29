@@ -477,6 +477,15 @@
       "expectedOutput": "1"
     },
     {
+      "name": "js-bytes-buffer-ops",
+      "description": "js-bytes-buffer-ops",
+      "source": "export function test(): int {\n  let b: bytes = bytes(4);\n  if (b.length !== 4) { return 0; }\n  if (b[0] !== 0) { return 0; }\n  b[0] = 255;\n  b[1] = 128;\n  let hi: int = b[0];\n  let lo: int = b[1];\n  let alias: bytes = b;\n  alias[2] = 7;\n  if (hi !== 255 || lo !== 128) { return 0; }\n  if (b[2] !== 7) { return 0; }\n  return 1;\n}",
+      "backends": [
+        "js"
+      ],
+      "expectedOutput": "1"
+    },
+    {
       "name": "js-jsonable-fromjson-gates",
       "description": "js-jsonable-fromjson-gates",
       "source": "// @jsonable\nexport class U {\n  name: string = \"\";\n  age: int = 0;\n}\nexport function test(): int {\n  let a: U | null = U$fromJson(\"42\");\n  let b: U | null = U$fromJson(\"null\");\n  let c: U | null = U$fromJson(\"[1,2]\");\n  let d: U | null = U$fromJson(\"{\\\"name\\\":\\\"Ada\\\",\\\"extra\\\":1}\");\n  let e: U | null = U$fromJson(\"{\\\"age\\\":\\\"x\\\"}\");\n  let f: U | null = U$fromJson(\"{}\");\n  let g: U | null = U$fromJson(\"[]\");\n  if (a === null && b === null && c === null && d === null && e === null) {\n    if (f !== null) {\n      if (g !== null) {\n        if (U$toJson(f) === U$toJson(g)\n            && U$toJson(f) === \"{\\\"name\\\":\\\"\\\",\\\"age\\\":0}\") { return 1; }\n      }\n    }\n  }\n  return 0;\n}",
@@ -511,6 +520,55 @@
         "js"
       ],
       "expectedError": "E8001",
+      "expectedExitCode": 1
+    },
+    {
+      "name": "js-bytes-bounds-read-e8012",
+      "description": "js-bytes-bounds-read-e8012",
+      "source": "export function test(): int {\n  let b: bytes = bytes(2);\n  return b[2];\n}",
+      "backends": [
+        "js"
+      ],
+      "expectedError": "E8012",
+      "expectedExitCode": 1
+    },
+    {
+      "name": "js-bytes-bounds-write-e8012",
+      "description": "js-bytes-bounds-write-e8012",
+      "source": "export function test(): int {\n  let b: bytes = bytes(2);\n  b[2] = 7;\n  return 0;\n}",
+      "backends": [
+        "js"
+      ],
+      "expectedError": "E8012",
+      "expectedExitCode": 1
+    },
+    {
+      "name": "js-bytes-value-range-e8013",
+      "description": "js-bytes-value-range-e8013",
+      "source": "export function test(): int {\n  let b: bytes = bytes(2);\n  b[0] = 256;\n  return 0;\n}",
+      "backends": [
+        "js"
+      ],
+      "expectedError": "E8013",
+      "expectedExitCode": 1
+    },
+    {
+      "name": "js-bytes-empty-buffer",
+      "description": "js-bytes-empty-buffer",
+      "source": "export function test(): int {\n  let b: bytes = bytes(0);\n  if (b.length !== 0) { return 0; }\n  return 1;\n}",
+      "backends": [
+        "js"
+      ],
+      "expectedOutput": "1"
+    },
+    {
+      "name": "js-bytes-length-above-int32-e8012",
+      "description": "js-bytes-length-above-int32-e8012",
+      "source": "export function test(): int {\n  let b: bytes = bytes(2147483648);\n  return 0;\n}",
+      "backends": [
+        "js"
+      ],
+      "expectedError": "E8012",
       "expectedExitCode": 1
     }
   ]
