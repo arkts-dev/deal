@@ -126,6 +126,14 @@ int main(int argc, char **argv)
         return DEALPG4_EXIT_USAGE;
     }
 
+    /* Capture the process argv[0] for the outer's serve surface
+     * (engine D3): the serve argv[0] is the outer's own argv[0] -- the
+     * exact string the shell used -- noted here at the single process
+     * entry so every mode (including the selftest battery's forked
+     * scenario processes) delivers it to the outer core. Dispatch
+     * itself creates no process/session/channel and performs no wait. */
+    dealpg4_outer_note_process_argv0(argv[0]);
+
     mode = dealpg4_recognize_mode(argv[1]);
     if (mode == DEALPG4_MODE_UNKNOWN) {
         dealpg4_print_usage(stderr);

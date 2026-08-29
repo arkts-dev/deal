@@ -30,7 +30,8 @@
  *  4. entry refusals via the fault-injection catalog (installed
  *     through the selftest-child installer): FI_OUTER_SUBREAPER /
  *     FI_OUTER_SIGNALFD -> exit 4 with CAPABILITY_MISSING,
- *     FI_OUTER_TIMERFD -> exit 4 with TIMER_FAILED, FI_OUTER_NONCE ->
+ *     FI_OUTER_TIMERFD -> exit 4 with TIMER_FAILED,
+ *     FI_OUTER_ENTRY_NONCE ->
  *     exit 1 with NONCE_FAILED; each forks nothing and creates no
  *     socket; restoring the defaults restores the real path and an
  *     unknown site installs nothing.
@@ -430,7 +431,8 @@ static int preamble_observation_fn(void)
 /* === Group 4: entry refusals via the fault-injection catalog =========== */
 
 static const int outer_fail_sites[] = {
-    FI_OUTER_SUBREAPER, FI_OUTER_TIMERFD, FI_OUTER_SIGNALFD, FI_OUTER_NONCE
+    FI_OUTER_SUBREAPER, FI_OUTER_TIMERFD, FI_OUTER_SIGNALFD,
+    FI_OUTER_ENTRY_NONCE
 };
 
 static const dealpg4_fi_catalog outer_catalog = {
@@ -526,8 +528,8 @@ static int entry_refusals_fn(void)
                        "TIMER_FAILED");
     entry_refusal_case(FI_OUTER_SIGNALFD, DEALPG4_EXIT_CAPABILITY_MISSING,
                        "CAPABILITY_MISSING");
-    entry_refusal_case(FI_OUTER_NONCE, DEALPG4_OUTER_EXIT_GATE_FAILURE,
-                       "NONCE_FAILED");
+    entry_refusal_case(FI_OUTER_ENTRY_NONCE,
+                       DEALPG4_OUTER_EXIT_GATE_FAILURE, "NONCE_FAILED");
 
     /* An unknown site installs nothing: the installer refuses the
      * script and the hook table stays at the production defaults. */
@@ -549,7 +551,7 @@ static int entry_refusals_fn(void)
         CHECK(dealpg4_fi_hooks.fail(FI_OUTER_SUBREAPER) == 0);
         CHECK(dealpg4_fi_hooks.fail(FI_OUTER_TIMERFD) == 0);
         CHECK(dealpg4_fi_hooks.fail(FI_OUTER_SIGNALFD) == 0);
-        CHECK(dealpg4_fi_hooks.fail(FI_OUTER_NONCE) == 0);
+        CHECK(dealpg4_fi_hooks.fail(FI_OUTER_ENTRY_NONCE) == 0);
     }
     return 0;
 }

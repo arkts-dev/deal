@@ -39,7 +39,8 @@
  *     nonzero; a wrong HELLO nonce -> AUTH_FAILED;
  *  4. handshake channel state: a non-HELLO record in AWAIT_HELLO,
  *     FEATURE_READY before HELLO_OK, a FEATURE_READY nonce mismatch,
- *     and a record in BROKER_LIVE each -> PROTOCOL_ERROR close;
+ *     and BYE in BROKER_LIVE -> PROTOCOL_ERROR close (the live-phase
+ *     INVOKE/ACK/CANCEL rows landed with the registry child);
  *  5. uniform framing-level split: bad hex, odd-length hex,
  *     field-count violations, CR, unknown record types, a bad prefix,
  *     an oversize HELLO line, and a >131072-byte unterminated stream
@@ -527,8 +528,7 @@ static int broker_peer_main(const char *scenario, const char *arg)
         fflush(stdout);
         return 0;
     }
-    if (strcmp(scenario, "live-record") == 0
-        || strcmp(scenario, "live-invoke") == 0) {
+    if (strcmp(scenario, "live-record") == 0) {
         fd = peer_connect(path);
         if (fd < 0) {
             fprintf(stderr, "PEER FAIL connect\n");
@@ -538,18 +538,13 @@ static int broker_peer_main(const char *scenario, const char *arg)
             fprintf(stderr, "PEER FAIL handshake\n");
             return 1;
         }
-        /* BROKER_LIVE: a well-formed record is state-unexpected at
-         * this stage and closes per the D5 PROTOCOL_ERROR rule. */
-        {
-            const char *rec = strcmp(scenario, "live-record") == 0
-                                  ? "DEALPG4 BYE\n"
-                                  : "DEALPG4 INVOKE t 00 1 00\n";
-
-            if (peer_write_all(fd, rec, strlen(rec)) != 0
-                || peer_read_line(fd, line, sizeof line, 3000) != -1) {
-                fprintf(stderr, "PEER FAIL no-eof\n");
-                return 1;
-            }
+        /* BROKER_LIVE expects INVOKE / ACK / CANCEL: BYE is
+         * state-unexpected (the frame pins DONE -> BYE) and closes
+         * per the D5 PROTOCOL_ERROR rule. */
+        if (peer_write_all(fd, "DEALPG4 BYE\n", 12) != 0
+            || peer_read_line(fd, line, sizeof line, 3000) != -1) {
+            fprintf(stderr, "PEER FAIL no-eof\n");
+            return 1;
         }
         close(fd);
         printf("PEER eof\n");
@@ -1594,11 +1589,10 @@ static const protocol_case_desc channel_state_cases[] = {
     {"ready-first", NULL, 0, 0, "FEATURE_READY before HELLO_OK"},
     /* FEATURE_READY with a wrong nonce after HELLO_OK. */
     {"ready-bad-nonce", NULL, 1, 0, "FEATURE_READY nonce mismatch"},
-    /* BYE in BROKER_LIVE (state-unexpected at this stage). */
+    /* BYE in BROKER_LIVE (state-unexpected — the live phase expects
+     * INVOKE / ACK / CANCEL and the frame pins DONE -> BYE; the
+     * INVOKE live-phase rows landed with the registry child). */
     {"live-record", NULL, 1, 1, "BYE in BROKER_LIVE"},
-    /* A well-formed INVOKE in BROKER_LIVE (state-unexpected — the
-     * live-phase rows land with the registry child). */
-    {"live-invoke", NULL, 1, 1, "INVOKE in BROKER_LIVE"},
 };
 
 /* === Group 5: the uniform framing-level split ========================== */

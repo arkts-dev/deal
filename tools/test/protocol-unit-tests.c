@@ -325,6 +325,32 @@ static void group3_invoke_framing_defects_close_channel(void)
     line[pos] = '\0';
     CHECK(classify_line(line) == DEALPG4_CLASS_PROTOCOL_ERROR);
     CHECK(parse_line(line, &p) == DEALPG4_PARSE_ERR_OVERSIZE_LINE);
+    /* The INVOKE clientTag bound (the per-field size cap that keeps
+     * every INVOKED/REJECT echo inside the 8192-byte answer cap): a
+     * tag at the bound parses; one byte over classifies
+     * PROTOCOL_ERROR (framing size-cap split). */
+    pos = 0;
+    memcpy(line + pos, "DEALPG4 INVOKE ", 15);
+    pos += 15;
+    memset(line + pos, 'a', DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES);
+    pos += DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES;
+    memcpy(line + pos, " 2f 1 61\n", 9);
+    pos += 9;
+    line[pos] = '\0';
+    CHECK(classify_line(line) == DEALPG4_CLASS_OK);
+    CHECK(parse_line(line, &p) == DEALPG4_PARSE_OK);
+    CHECK(p.type == DEALPG4_REC_INVOKE);
+    CHECK(p.fields[0].len == DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES);
+    pos = 0;
+    memcpy(line + pos, "DEALPG4 INVOKE ", 15);
+    pos += 15;
+    memset(line + pos, 'a', DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES + 1);
+    pos += DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES + 1;
+    memcpy(line + pos, " 2f 1 61\n", 9);
+    pos += 9;
+    line[pos] = '\0';
+    CHECK(classify_line(line) == DEALPG4_CLASS_PROTOCOL_ERROR);
+    CHECK(parse_line(line, &p) == DEALPG4_PARSE_ERR_OVERSIZE_LINE);
 }
 
 /* === Group 4: ACK classification ====================================== */
@@ -702,6 +728,66 @@ static void group6_serialization(void)
         CHECK(dealpg4_serialize(DEALPG4_REC_REPORT, report_long, 19, buf,
                                 sizeof(buf), &written) == -1);
     }
+    /* The INVOKE clientTag / INVOKED / REJECT echo bound: a tag at
+     * the bound serializes inside the 8192-byte answer cap (the exact
+     * longest-echo line lengths are pinned); one byte over is refused
+     * with EINVAL by the bound itself (the over-long line would still
+     * fit the 8192-byte cap, so the refusal proves the tag bound). */
+    {
+        static char tag_max[DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES + 1];
+        static char tag_over[DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES + 2];
+        char out[DEALPG4_MAX_LINE_OTHER_BYTES + 1];
+        dealpg4_field_value invoked_max[2];
+        dealpg4_field_value reject_max[3];
+        dealpg4_field_value invoked_over[2];
+        dealpg4_field_value invoke_over[4];
+
+        memset(tag_max, 'a', DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES);
+        tag_max[DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES] = '\0';
+        memset(tag_over, 'a', DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES + 1);
+        tag_over[DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES + 1] = '\0';
+        invoked_max[0] = (dealpg4_field_value){
+            "9223372036854775807", 19
+        };
+        invoked_max[1] = (dealpg4_field_value){
+            tag_max, DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES
+        };
+        CHECK(dealpg4_serialize(DEALPG4_REC_INVOKED, invoked_max, 2,
+                                out, sizeof(out), &written) == 0);
+        CHECK(written <= DEALPG4_MAX_LINE_OTHER_BYTES);
+        CHECK(written == 8037); /* 15 + 20 + 8001 + 1 LF */
+        reject_max[0] = (dealpg4_field_value){
+            "9223372036854775807", 19
+        };
+        reject_max[1] = (dealpg4_field_value){
+            tag_max, DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES
+        };
+        reject_max[2] = (dealpg4_field_value){
+            "CANCEL_AUTH_FAILED", 18
+        };
+        CHECK(dealpg4_serialize(DEALPG4_REC_REJECT, reject_max, 3,
+                                out, sizeof(out), &written) == 0);
+        CHECK(written <= DEALPG4_MAX_LINE_OTHER_BYTES);
+        CHECK(written == 8055); /* 14 + 20 + 8001 + 19 + 1 LF */
+        invoked_over[0] = (dealpg4_field_value){ "1", 1 };
+        invoked_over[1] = (dealpg4_field_value){
+            tag_over, DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES + 1
+        };
+        errno = 0;
+        CHECK(dealpg4_serialize(DEALPG4_REC_INVOKED, invoked_over, 2,
+                                out, sizeof(out), &written) == -1);
+        CHECK(errno == EINVAL);
+        invoke_over[0] = (dealpg4_field_value){
+            tag_over, DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES + 1
+        };
+        invoke_over[1] = (dealpg4_field_value){ "2f", 2 };
+        invoke_over[2] = (dealpg4_field_value){ "1", 1 };
+        invoke_over[3] = (dealpg4_field_value){ "61", 2 };
+        errno = 0;
+        CHECK(dealpg4_serialize(DEALPG4_REC_INVOKE, invoke_over, 4,
+                                out, sizeof(out), &written) == -1);
+        CHECK(errno == EINVAL);
+    }
     /* INVOKE over the 131072-byte line cap. */
     {
         char argv[131056];
@@ -778,6 +864,7 @@ static void group7_nonce_and_catalog_closure(void)
     CHECK(DEALPG4_MAX_LINE_OTHER_BYTES == 8192);
     CHECK(DEALPG4_OUT_MAX_HEX_CHARS == 65536);
     CHECK(DEALPG4_INVOKE_MAX_ARGV_RAW_BYTES == 65536);
+    CHECK(DEALPG4_INVOKE_CLIENT_TAG_MAX_BYTES == 8000);
     CHECK(DEALPG4_NONCE_BYTES == 16);
     CHECK(DEALPG4_NONCE_HEX_CHARS == 32);
 

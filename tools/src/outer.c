@@ -25,7 +25,7 @@
  *    final report, and the exit-status mapping;
  *  - the entry-level and coordinator-level fault-injection sites
  *    (FI_OUTER_SUBREAPER / FI_OUTER_TIMERFD / FI_OUTER_SIGNALFD /
- *    FI_OUTER_NONCE / FI_OUTER_PIPE / FI_COORD_READY_MISMATCH plus
+ *    FI_OUTER_ENTRY_NONCE / FI_OUTER_PIPE / FI_COORD_READY_MISMATCH plus
  *    the outer-pre-coord-fork / coord-post-fork /
  *    coord-pre-ready-write delay sites) land with this file.
  *
@@ -128,6 +128,51 @@
 /* The pre-exec pipe line bound: one catalog-bounded record line
  * (COORD_READY / COORD_EXEC_FAILED, <= DEALPG4_MAX_LINE_OTHER_BYTES). */
 #define DEALPG4_OUTER_READY_BUF_BYTES (DEALPG4_MAX_LINE_OTHER_BYTES + 1)
+
+/* The internal registry record (parent D2 shape + the D6 first-ACK
+ * tracking field). The public view (outer.h) is the observability
+ * copy. */
+struct dealpg4_outer_record {
+    int64_t invocation_id;
+    char *client_tag;   /* heap, exact INVOKE tag bytes */
+    char nonce[DEALPG4_NONCE_HEX_CHARS + 1]; /* "" for pre-fork
+                                                rejection records */
+    pid_t supervisor_pid; /* -1 until attached */
+    int control_fd;       /* -1 until attached */
+    pid_t stub_pid;       /* -1 until retained */
+    pid_t target_pgid;    /* 0 until verified */
+    pid_t target_session_id; /* 0 until verified */
+    int state;            /* dealpg4_outer_record_state */
+    int64_t deadline_ms;  /* the delivered nested budget T (0 for
+                             pre-fork rejection records) */
+    int64_t deadline_abs_ms; /* registration time + T */
+    int ack_applied;      /* first-ACK tracking (D6) */
+    int cleanup_acknowledged;
+    int clean_final;      /* CLEAN records: 1 = success, 0 = cancelled */
+    char failure_token[DEALPG4_OUTER_TOKEN_VIEW_BYTES];
+    size_t history_count;
+    dealpg4_outer_history_entry history[DEALPG4_OUTER_HISTORY_MAX];
+};
+
+typedef struct dealpg4_outer_record dealpg4_outer_record;
+
+/* Registry total bound (an implementation bound, distinct from the
+ * pinned 128-live cap): live and forked records are bounded at
+ * DEALPG4_OUTER_REGISTRY_TOTAL_CAP so the run's memory and the
+ * bounded final report stay deterministic. Terminal-at-insertion
+ * pre-fork rejection records are exempt from the bound: the
+ * unconditional post-cutoff REJECT <id> <tag> BUDGET_EXHAUSTED answer
+ * and every pre-cutoff semantic rejection keep their immediate
+ * terminal FAILED record at every registry size (the array grows
+ * separately for them — D4/D5 review rule). At the bound a
+ * further live/forked insert is answered REJECT <id> <tag>
+ * REGISTRY_FULL with the immediate terminal FAILED record (the
+ * rejection record itself is exempt). The component suite scales the
+ * bound through -DDEALPG4_OUTER_REGISTRY_TOTAL_CAP to exercise the
+ * exact boundary; production keeps 4096. */
+#ifndef DEALPG4_OUTER_REGISTRY_TOTAL_CAP
+#define DEALPG4_OUTER_REGISTRY_TOTAL_CAP 4096
+#endif
 
 /* === Core state ========================================================= */
 
@@ -304,15 +349,66 @@ typedef struct dealpg4_outer_state {
     /* Shell loss (parent D1). */
     int shell_lost;
 
-    /* Registry facts (empty at this stage; the record machinery lands
-     * with the registry child). */
-    int records_live;
+    /* Registry (engine D2/D3/D4 — the registry child). */
+    dealpg4_outer_record *records; /* dynamically grown; retained until
+                                      the final report */
+    size_t nrecords;
+    size_t records_cap;
+    int64_t next_invocation_id; /* outer-assigned, monotonic, unique
+                                   (counter from 1) */
+    int records_live;           /* pre-terminal (live) records */
+    int records_failed;         /* terminal FAILED records */
+    int records_clean;          /* terminal CLEAN records */
+    char self_argv0[PATH_MAX + 1]; /* the outer's own argv[0] (the
+                                      exact string the shell used) —
+                                      the serve argv[0] of the D3 fork
+                                      surface, captured at core entry
+                                      from the process argv[0] the
+                                      dispatch noted at startup */
+    int self_argv0_ok;
+
+    /* DONE trigger + cutoff (engine D5/D9). */
+    int done_queued;    /* the trigger fired exactly once */
+    int done_clean;     /* the verdict computed at the queueing moment */
+    int64_t done_ms;    /* t0o-relative queueing time */
+    int cutoff_cancelled; /* the cutoff expiry marked live records
+                             CANCELLING */
+    int64_t cutoff_mark_ms; /* t0o-relative */
+    int caller_loss_marked; /* a broker close/EOF marked live records
+                               CANCELLING (the caller-loss mark) */
 } dealpg4_outer_state;
 
 /* In-process observability (outer.h contract). */
 static dealpg4_outer_result dealpg4_outer_last_result_view;
 static dealpg4_drain_ctx dealpg4_outer_last_drain_stdout;
 static dealpg4_drain_ctx dealpg4_outer_last_drain_stderr;
+
+/* Registry observability: the live core state during a core call (the
+ * spawn-seam compositions read it to prove register-before-fork), and
+ * the most recent call's heap snapshot afterwards (valid until the
+ * next core call). The core is single-threaded: the composition's
+ * fork_nested runs on the same thread, so the live access is safe. */
+static dealpg4_outer_state *dealpg4_outer_live_state;
+static dealpg4_outer_record_view *dealpg4_outer_registry_snapshot;
+static size_t dealpg4_outer_registry_snapshot_count;
+
+/* The process argv[0] the dispatch noted at startup (the exact string
+ * the shell used to start the launcher) — the serve argv[0] of
+ * the D3 fork surface. Noted by launcher-main (the single process
+ * entry, so every mode — including the selftest battery's
+ * forked scenario processes — delivers it) and by the outer
+ * mode entry; the core captures it at core entry. Never a /proc
+ * resolution: argv[0] is the pinned structural surface. */
+static const char *dealpg4_outer_process_argv0;
+
+void dealpg4_outer_note_process_argv0(const char *argv0)
+{
+    /* Idempotent: the first non-NULL non-empty note wins (argv[0] is
+     * immutable for the process lifetime). */
+    if (dealpg4_outer_process_argv0 == NULL && argv0 != NULL
+        && argv0[0] != '\0')
+        dealpg4_outer_process_argv0 = argv0;
+}
 
 void dealpg4_outer_last_result(dealpg4_outer_result *out)
 {
@@ -590,6 +686,18 @@ int dealpg4_outer_writeq_flush(dealpg4_outer_writeq *q)
     return 0;
 }
 
+/* === Registry helpers (defined after the broker machine) =============== */
+
+static void dealpg4_outer_mark_live_cancelling(dealpg4_outer_state *st,
+                                               int caller_loss);
+static void dealpg4_outer_eval_done_trigger(dealpg4_outer_state *st);
+static void dealpg4_outer_broker_invoke(dealpg4_outer_state *st,
+                                        const dealpg4_parsed *parsed);
+static void dealpg4_outer_broker_ack(dealpg4_outer_state *st,
+                                     const dealpg4_parsed *parsed);
+static void dealpg4_outer_broker_cancel(dealpg4_outer_state *st,
+                                        const dealpg4_parsed *parsed);
+
 /* === Broker socket mechanics + authentication (engine D1/D5) =========== */
 
 /* The real socket-setup surface (outer.h contract): one code path
@@ -771,6 +879,11 @@ static void dealpg4_outer_broker_close(dealpg4_outer_state *st)
     st->stall_armed = 0;
     st->broker_q_eagain = 0;
     dealpg4_outer_writeq_clear(&st->broker_q);
+    /* The caller-loss mark (D3/D7): every broker close — EOF, HUP,
+     * PROTOCOL_ERROR, AUTH_FAILED, BROKER_STALLED — marks every live
+     * record CANCELLING (the cancellation execution lands with the
+     * fallback child). Vacuous before the first INVOKE. */
+    dealpg4_outer_mark_live_cancelling(st, 1 /* caller loss */);
 }
 
 /* PROTOCOL_ERROR aftermath (the parent's recorded pin): close the
@@ -829,6 +942,9 @@ static void dealpg4_outer_broker_queue_line(dealpg4_outer_state *st,
     char line[DEALPG4_MAX_LINE_OTHER_BYTES + 1];
     size_t written = 0;
 
+    if (st->broker_closed)
+        return; /* a write to a closed broker is never attempted (the
+                   DONE suppression and every late answer path) */
     if (dealpg4_serialize(type, fields, nfields, line, sizeof line,
                           &written) != 0)
         return; /* caller defect: a malformed line is never emitted */
@@ -935,16 +1051,50 @@ static void dealpg4_outer_broker_record(dealpg4_outer_state *st,
         }
         dealpg4_outer_broker_queue_ready_ack(st);
         /* The transition to BROKER_LIVE occurs exactly after the
-         * READY_ACK write is queued (D5). */
+         * READY_ACK write is queued (D5); the live phase expects
+         * INVOKE / ACK / CANCEL — BYE and every other record are
+         * state-unexpected -> PROTOCOL_ERROR (the frame pins
+         * DONE -> BYE). */
         st->broker_ready_acked = 1;
         if (!st->broker_closed) {
             st->broker_state = DEALPG4_OUTER_BROKER_LIVE;
             dealpg4_expectation_set_init(&st->broker_expected);
+            dealpg4_expectation_set_add(&st->broker_expected,
+                                        DEALPG4_REC_INVOKE);
+            dealpg4_expectation_set_add(&st->broker_expected,
+                                        DEALPG4_REC_ACK);
+            dealpg4_expectation_set_add(&st->broker_expected,
+                                        DEALPG4_REC_CANCEL);
+        }
+        break;
+    case DEALPG4_OUTER_BROKER_LIVE:
+    case DEALPG4_OUTER_BROKER_POST_DONE:
+        /* The live-phase and post-DONE rows (D5): the expectation set
+         * already rejected every state-unexpected record (BYE in
+         * BROKER_LIVE included). */
+        switch (parsed.type) {
+        case DEALPG4_REC_INVOKE:
+            dealpg4_outer_broker_invoke(st, &parsed);
+            break;
+        case DEALPG4_REC_ACK:
+            dealpg4_outer_broker_ack(st, &parsed);
+            break;
+        case DEALPG4_REC_CANCEL:
+            dealpg4_outer_broker_cancel(st, &parsed);
+            break;
+        case DEALPG4_REC_BYE:
+            /* BROKER_POST_DONE only (the expectation set rejected it
+             * in BROKER_LIVE): BYE is accepted and the outer then
+             * closes its end of the broker connection (D5). */
+            dealpg4_outer_broker_close(st);
+            break;
+        default:
+            /* Unreachable: the expectation set rejected it above. */
+            dealpg4_outer_broker_protocol_error(st);
+            break;
         }
         break;
     default:
-        /* BROKER_LIVE: the empty expectation set already rejected
-         * every record above. */
         dealpg4_outer_broker_protocol_error(st);
         break;
     }
@@ -1117,7 +1267,804 @@ static int dealpg4_outer_broker_start(dealpg4_outer_state *st)
     return 0;
 }
 
+/* === Registry (engine D2/D3/D4; outer-coordinator-and-broker D2-D4) ==== */
+
+/* Stable state names for the record surface. */
+static const char *dealpg4_outer_record_state_name(int state)
+{
+    static const char *const names[] = {
+        "FORKING", "STUB_BLOCKED", "TARGET_PUBLISHED", "RELEASED",
+        "CANCELLING", "CLEAN", "FAILED"
+    };
+
+    if (state < DEALPG4_OUTER_REC_FORKING
+        || state > DEALPG4_OUTER_REC_FAILED)
+        return "?";
+    return names[state];
+}
+
+/* The live (pre-terminal) states (parent D2): FORKING / STUB_BLOCKED /
+ * TARGET_PUBLISHED / RELEASED / CANCELLING. */
+static int dealpg4_outer_record_live_state(int state)
+{
+    return state == DEALPG4_OUTER_REC_FORKING
+           || state == DEALPG4_OUTER_REC_STUB_BLOCKED
+           || state == DEALPG4_OUTER_REC_TARGET_PUBLISHED
+           || state == DEALPG4_OUTER_REC_RELEASED
+           || state == DEALPG4_OUTER_REC_CANCELLING;
+}
+
+/* Registry lookup by invocation id. */
+static dealpg4_outer_record *dealpg4_outer_find_record(
+    dealpg4_outer_state *st, int64_t invocation_id)
+{
+    size_t i;
+
+    for (i = 0; i < st->nrecords; i++) {
+        if (st->records[i].invocation_id == invocation_id)
+            return &st->records[i];
+    }
+    return NULL;
+}
+
+/* One state transition: the ordered history appends the new state with
+ * the monotonic timestamp, the live/terminal counters adjust exactly
+ * on live -> terminal edges, and the state changes. */
+static void dealpg4_outer_record_transition(dealpg4_outer_state *st,
+                                            dealpg4_outer_record *r,
+                                            int new_state, int64_t now)
+{
+    int was_live = dealpg4_outer_record_live_state(r->state);
+    int is_live = dealpg4_outer_record_live_state(new_state);
+
+    if (r->history_count < DEALPG4_OUTER_HISTORY_MAX) {
+        r->history[r->history_count].state = new_state;
+        r->history[r->history_count].at_ms = now;
+        r->history_count++;
+    }
+    r->state = new_state;
+    if (was_live && !is_live) {
+        st->records_live--;
+        if (new_state == DEALPG4_OUTER_REC_FAILED)
+            st->records_failed++;
+        if (new_state == DEALPG4_OUTER_REC_CLEAN)
+            st->records_clean++;
+    }
+}
+
+/* Insert one registry record (never deleted before the final report).
+ * The tag bytes are copied to the heap (exact — INVOKED/REJECT echo
+ * them verbatim); the array grows up to the total bound. The bound
+ * covers live and forked records only: terminal-at-insertion pre-fork
+ * rejection records (initial_state FAILED) are exempt and grow the
+ * array past the bound, so the unconditional post-cutoff answer and
+ * every pre-fork semantic rejection keep their immediate terminal
+ * FAILED record at every registry size. Returns NULL at the
+ * live/forked total bound or on an allocation failure. */
+static dealpg4_outer_record *dealpg4_outer_insert_record(
+    dealpg4_outer_state *st, int64_t invocation_id,
+    const char *tag_bytes, size_t tag_len, const char nonce[33],
+    int initial_state, int64_t deadline_ms, int64_t deadline_abs_ms,
+    const char *failure_token, int64_t now)
+{
+    dealpg4_outer_record *r;
+    char *tag;
+
+    if (st->nrecords >= DEALPG4_OUTER_REGISTRY_TOTAL_CAP
+        && initial_state != DEALPG4_OUTER_REC_FAILED)
+        return NULL;
+    if (st->nrecords == st->records_cap) {
+        size_t new_cap = st->records_cap == 0 ? 16 : st->records_cap * 2;
+        dealpg4_outer_record *grown;
+
+        if (initial_state != DEALPG4_OUTER_REC_FAILED
+            && new_cap > DEALPG4_OUTER_REGISTRY_TOTAL_CAP)
+            new_cap = DEALPG4_OUTER_REGISTRY_TOTAL_CAP;
+        grown = realloc(st->records, new_cap * sizeof *grown);
+        if (grown == NULL)
+            return NULL;
+        st->records = grown;
+        st->records_cap = new_cap;
+    }
+    tag = malloc(tag_len + 1);
+    if (tag == NULL)
+        return NULL;
+    memcpy(tag, tag_bytes, tag_len);
+    tag[tag_len] = '\0';
+
+    r = &st->records[st->nrecords];
+    memset(r, 0, sizeof *r);
+    r->invocation_id = invocation_id;
+    r->client_tag = tag;
+    memcpy(r->nonce, nonce, DEALPG4_NONCE_HEX_CHARS);
+    r->nonce[DEALPG4_NONCE_HEX_CHARS] = '\0';
+    r->supervisor_pid = -1;
+    r->control_fd = -1;
+    r->stub_pid = -1;
+    r->state = initial_state;
+    r->deadline_ms = deadline_ms;
+    r->deadline_abs_ms = deadline_abs_ms;
+    if (failure_token != NULL)
+        snprintf(r->failure_token, sizeof r->failure_token, "%s",
+                 failure_token);
+    r->history[r->history_count].state = initial_state;
+    r->history[r->history_count].at_ms = now;
+    r->history_count = 1;
+    st->nrecords++;
+    if (dealpg4_outer_record_live_state(initial_state))
+        st->records_live++;
+    if (initial_state == DEALPG4_OUTER_REC_FAILED)
+        st->records_failed++;
+    if (initial_state == DEALPG4_OUTER_REC_CLEAN)
+        st->records_clean++;
+    return r;
+}
+
+/* The caller-loss / cutoff mark: every live record becomes CANCELLING
+ * (one-shot per cause; the cancellation execution lands with the
+ * fallback child). */
+static void dealpg4_outer_mark_live_cancelling(dealpg4_outer_state *st,
+                                               int caller_loss)
+{
+    size_t i;
+    int64_t now = (int64_t)dealpg4_now_ms();
+
+    if (caller_loss) {
+        if (st->caller_loss_marked)
+            return;
+        st->caller_loss_marked = 1;
+    }
+    for (i = 0; i < st->nrecords; i++) {
+        dealpg4_outer_record *r = &st->records[i];
+
+        if (dealpg4_outer_record_live_state(r->state)
+            && r->state != DEALPG4_OUTER_REC_CANCELLING)
+            dealpg4_outer_record_transition(st, r,
+                                            DEALPG4_OUTER_REC_CANCELLING,
+                                            now);
+    }
+}
+
+/* The cutoff-anchored DONE emission trigger (engine D5): evaluated on
+ * the cutoff expiry and on every record's terminal transition. DONE is
+ * queued exactly once, and only when (a) the INVOKE acceptance cutoff
+ * T0o + nestedStopMs has passed and (b) the registry is non-empty and
+ * every record is terminal — never before the cutoff (not on a
+ * fully-terminal registry, not at READY_ACK, not between sequential
+ * terminal states), never on an empty registry. Every registry
+ * record's terminal answer precedes DONE in the broker write order:
+ * the record whose terminality completes the registry has its answer
+ * (the pre-fork REJECT, the nested-origin CLEAN/FAILED relay, or the
+ * outer-synthesized terminal record) queued before the trigger is
+ * evaluated, so DONE lands behind it in the queue. The verdict is
+ * computed over the registry at the queueing moment: clean iff every
+ * record is CLEAN success or clean cancelled, failed otherwise — a
+ * post-DONE INVOKE's FAILED record does not re-emit DONE and the
+ * verdict stands as queued. DONE goes through the non-blocking
+ * POLLOUT path and is suppressed when the broker is already closed
+ * (COORDINATOR_LOST / PROTOCOL_ERROR paths); the emission decision is
+ * still recorded once. */
+static void dealpg4_outer_eval_done_trigger(dealpg4_outer_state *st)
+{
+    int64_t now = (int64_t)dealpg4_now_ms();
+    size_t i;
+    int clean = 1;
+    dealpg4_field_value fields[1];
+    const char *verdict;
+
+    if (st->done_queued)
+        return;
+    if (now < st->dl.invokeCutoff)
+        return;
+    if (st->nrecords == 0)
+        return;
+    for (i = 0; i < st->nrecords; i++) {
+        const dealpg4_outer_record *r = &st->records[i];
+
+        if (r->state != DEALPG4_OUTER_REC_CLEAN
+            && r->state != DEALPG4_OUTER_REC_FAILED)
+            return; /* a live record: DONE waits for its terminality */
+        if (r->state == DEALPG4_OUTER_REC_FAILED)
+            clean = 0;
+    }
+    st->done_queued = 1;
+    st->done_clean = clean;
+    st->done_ms = now - st->t0o;
+    if (st->broker_closed)
+        return; /* suppressed: the broker is already closed */
+    verdict = clean ? "clean" : "failed";
+    fields[0].data = verdict;
+    fields[0].len = strlen(verdict);
+    dealpg4_outer_broker_queue_line(st, DEALPG4_REC_DONE, fields, 1);
+    if (!st->broker_closed) {
+        st->broker_state = DEALPG4_OUTER_BROKER_POST_DONE;
+        dealpg4_expectation_set_init(&st->broker_expected);
+        dealpg4_expectation_set_add(&st->broker_expected,
+                                    DEALPG4_REC_BYE);
+        dealpg4_expectation_set_add(&st->broker_expected,
+                                    DEALPG4_REC_INVOKE);
+        dealpg4_expectation_set_add(&st->broker_expected,
+                                    DEALPG4_REC_ACK);
+        dealpg4_expectation_set_add(&st->broker_expected,
+                                    DEALPG4_REC_CANCEL);
+    }
+}
+
+/* One REJECT answer over the broker (record-level; the broker stays
+ * open). */
+static void dealpg4_outer_reject_answer(dealpg4_outer_state *st,
+                                        int64_t id, const char *tag,
+                                        const char *token)
+{
+    char idbuf[24];
+    dealpg4_field_value fields[3];
+    int n;
+
+    n = snprintf(idbuf, sizeof idbuf, "%lld", (long long)id);
+    if (n <= 0 || (size_t)n >= sizeof idbuf)
+        return;
+    fields[0].data = idbuf;
+    fields[0].len = (size_t)n;
+    fields[1].data = tag;
+    fields[1].len = strlen(tag);
+    fields[2].data = token;
+    fields[2].len = strlen(token);
+    dealpg4_outer_broker_queue_line(st, DEALPG4_REC_REJECT, fields, 3);
+}
+
+/* Duplicate the INVOKE tag slice (heap, exact bytes); NULL on
+ * allocation failure. */
+static char *dealpg4_outer_dup_tag(const dealpg4_field_slice *tag)
+{
+    char *buf;
+
+    if (tag == NULL)
+        return NULL;
+    buf = malloc(tag->len + 1);
+    if (buf == NULL)
+        return NULL;
+    memcpy(buf, tag->p, tag->len);
+    buf[tag->len] = '\0';
+    return buf;
+}
+
+/* One pre-fork rejection (engine D3/D4): an immediate terminal FAILED
+ * record with the failureToken — no supervisorPid, no control channel,
+ * no stub, no fork, no fallback work — answered REJECT <id> <tag>
+ * <token> over the open broker. The DONE trigger is then evaluated
+ * (the terminal answer is queued first, so it precedes DONE). */
+static void dealpg4_outer_reject_pre_fork(dealpg4_outer_state *st,
+                                          int64_t id,
+                                          const dealpg4_field_slice *tag,
+                                          const char *token)
+{
+    static const char empty_nonce[DEALPG4_NONCE_HEX_CHARS + 1];
+    dealpg4_outer_record *r;
+    int64_t now = (int64_t)dealpg4_now_ms();
+
+    r = dealpg4_outer_insert_record(st, id, tag->p, tag->len,
+                                    empty_nonce,
+                                    DEALPG4_OUTER_REC_FAILED, 0, 0,
+                                    token, now);
+    if (r == NULL) {
+        /* Only an allocation failure can refuse a terminal rejection
+         * record (they are exempt from the registry total bound): the
+         * answer still carries the pinned token — never a
+         * substitute — and the pinned token is recorded on the
+         * gate. */
+        char *tagbuf = dealpg4_outer_dup_tag(tag);
+
+        dealpg4_outer_gate_token(st, token);
+        dealpg4_outer_reject_answer(st, id,
+                                    tagbuf != NULL ? tagbuf : "-",
+                                    token);
+        free(tagbuf);
+        return;
+    }
+    dealpg4_outer_reject_answer(st, id, r->client_tag, token);
+    dealpg4_outer_eval_done_trigger(st);
+}
+
+
+/* The serve argv of the D3 fork surface: [self, "serve", <decodedCwd>,
+ * "--", <target-argv...>] with self = the outer's own argv[0] (the
+ * exact string the shell used to start the launcher — the same
+ * committed binary; captured at core entry, never a /proc
+ * resolution), argv[2] the INVOKE cwd field decoded, and the tail
+ * the decoded INVOKE argv.
+ * The returned argv array and data block are heap-owned; the caller
+ * frees them after fork_nested returns (the child side uses them
+ * before its exec / _exit — copy-on-write safe because the child
+ * never returns into the parent's free). Returns NULL on any decode
+ * or allocation failure (the caller's FORK_FAILED path — no fork). */
+static char **dealpg4_outer_build_serve_argv(const dealpg4_outer_state *st,
+                                             const dealpg4_parsed *parsed,
+                                             const unsigned char *cwd_bytes,
+                                             size_t cwd_len,
+                                             unsigned char **data_out)
+{
+    size_t argc = parsed->argv_count;
+    size_t raw_total = 0;
+    size_t self_len;
+    char **av;
+    unsigned char *data;
+    size_t data_cap;
+    size_t off;
+    size_t i;
+
+    if (!st->self_argv0_ok)
+        return NULL;
+    if (dealpg4_parsed_argv_raw_total(parsed, &raw_total) != 0)
+        return NULL;
+    self_len = strlen(st->self_argv0);
+    /* argv slots: self, "serve", cwd, "--", argc elements, NULL. */
+    av = malloc((argc + 5) * sizeof(char *));
+    if (av == NULL)
+        return NULL;
+    /* The data block holds self (heap copy — the serve argv strings
+     * are never mutated by the child side), cwd, and the decoded
+     * target argv. */
+    data_cap = self_len + 1 + cwd_len + 1 + raw_total + argc;
+    data = malloc(data_cap);
+    if (data == NULL) {
+        free(av);
+        return NULL;
+    }
+    off = 0;
+    memcpy(data + off, st->self_argv0, self_len);
+    data[off + self_len] = '\0';
+    av[0] = (char *)data + off;
+    off += self_len + 1;
+    av[1] = (char *)"serve";
+    memcpy(data + off, cwd_bytes, cwd_len);
+    data[off + cwd_len] = '\0';
+    av[2] = (char *)data + off;
+    off += cwd_len + 1;
+    av[3] = (char *)"--";
+    for (i = 0; i < argc; i++) {
+        dealpg4_field_slice elem;
+        size_t written = 0;
+
+        if (dealpg4_parsed_argv_element(parsed, i, &elem) != 0
+            || dealpg4_hex_decode(&elem, data + off, data_cap - off,
+                                  &written) != 0) {
+            free(av);
+            free(data);
+            return NULL;
+        }
+        data[off + written] = '\0';
+        av[4 + i] = (char *)data + off;
+        off += written + 1;
+    }
+    av[4 + argc] = NULL;
+    *data_out = data;
+    return av;
+}
+
+/* One INVOKE from the coordinator (BROKER_LIVE / BROKER_POST_DONE).
+ * The framing level was enforced by dealpg4_parse (a framing defect is
+ * PROTOCOL_ERROR — the canonical split). Well-formed, pre-cutoff:
+ * semantic defects -> REJECT <id> <tag> MALFORMED_INVOKE + immediate
+ * terminal FAILED record; REGISTRY_FULL at 128 live records -> the
+ * record-level REJECT + terminal record; a budget floor T < 15000 ->
+ * REJECT <id> <tag> BUDGET_EXHAUSTED + terminal record; valid ->
+ * register, fork the nested serve supervisor through the spawn seam,
+ * INVOKED <id> <tag>. Well-formed, post-cutoff — before or after
+ * DONE — the objective's unconditional answer: REJECT <id> <tag>
+ * BUDGET_EXHAUSTED + immediate terminal FAILED record (no channels,
+ * no pid, no fork) over the open broker — never PROTOCOL_ERROR, never
+ * a broker close. Registration-time failures (nonce source, the
+ * control socketpair, the nested fork) terminate the already-inserted
+ * record with the FORK_FAILED / NONCE_FAILED pre-fork terminal
+ * records (D3 — register-before-fork held: the insertion preceded the
+ * failing syscall). */
+static void dealpg4_outer_broker_invoke(dealpg4_outer_state *st,
+                                        const dealpg4_parsed *parsed)
+{
+    static unsigned char cwd_buf[DEALPG4_INVOKE_MAX_ARGV_RAW_BYTES + 1];
+    const dealpg4_field_slice *tag_f = dealpg4_parsed_field(parsed, 0);
+    const dealpg4_field_slice *cwd_f = dealpg4_parsed_field(parsed, 1);
+    const dealpg4_field_slice *argc_f = dealpg4_parsed_field(parsed, 2);
+    int64_t argc_v = 0;
+    int64_t now;
+    int64_t budget_t;
+    size_t cwd_len = 0;
+    int cwd_ok;
+    int64_t id;
+    dealpg4_outer_record *r;
+    char nonce[DEALPG4_NONCE_HEX_CHARS + 1];
+    int sv[2];
+    char **serve_argv = NULL;
+    unsigned char *serve_data = NULL;
+    int child_control_fd = -1;
+    pid_t nested_pid = -1;
+
+    now = (int64_t)dealpg4_now_ms();
+    if (dealpg4_field_decimal(argc_f, &argc_v) == 0)
+        return; /* unreachable: parse enforced the decimal class */
+    id = st->next_invocation_id++;
+
+    /* The unconditional post-cutoff rule (D5/D9): every well-formed
+     * INVOKE arriving at/after T0o + nestedStopMs — before or after
+     * DONE — is answered REJECT <id> <tag> BUDGET_EXHAUSTED with an
+     * immediate terminal FAILED record over the open broker. The
+     * semantic split applies only to the pre-cutoff live phase. */
+    if (now >= st->dl.invokeCutoff) {
+        dealpg4_outer_reject_pre_fork(st, id, tag_f, "BUDGET_EXHAUSTED");
+        return;
+    }
+
+    /* Semantic validation (the record-level split): argc 0, argc !=
+     * the argv field count, an empty argv, or a cwd whose hex bytes
+     * fail UTF-8 decoding or decode to an empty/NUL-containing path. */
+    cwd_ok = dealpg4_hex_decode(cwd_f, cwd_buf, sizeof cwd_buf,
+                                &cwd_len) == 0;
+    if (dealpg4_invoke_semantic_check(
+            argc_v, parsed->argv_count,
+            cwd_ok ? cwd_buf : (const unsigned char *)"", cwd_ok ? cwd_len : 0)
+        != DEALPG4_CLASS_OK) {
+        dealpg4_outer_reject_pre_fork(st, id, tag_f,
+                                      "MALFORMED_INVOKE");
+        return;
+    }
+
+    /* REGISTRY_FULL at 128 concurrent live records (parent D2). */
+    if (st->records_live >= DEALPG4_OUTER_MAX_LIVE_RECORDS) {
+        dealpg4_outer_reject_pre_fork(st, id, tag_f, "REGISTRY_FULL");
+        return;
+    }
+
+    /* The delivered nested budget (parent D4):
+     * T = min(invocationLimits.overallTimeoutMs, nestedStopMs - nowMs)
+     * with nowMs = the t0o-relative registration time (now - T0o) —
+     * the time remaining until the INVOKE cutoff. T < 15000 ->
+     * REJECT <id> <tag> BUDGET_EXHAUSTED, no fork, no retry. */
+    budget_t = dealpg4_embedded_launcher_limits.overallTimeoutMs;
+    if (st->limits->nestedStopMs - (now - st->t0o) < budget_t)
+        budget_t = st->limits->nestedStopMs - (now - st->t0o);
+    if (budget_t < DEALPG4_PROBE_SELFTEST_LIMIT_MS_FLOOR) {
+        dealpg4_outer_reject_pre_fork(st, id, tag_f, "BUDGET_EXHAUSTED");
+        return;
+    }
+
+    /* Registration-time nonce generation (artifact D6): the record's
+     * invocation nonce, generated at registration via getrandom(2)
+     * through dealpg4_nonce_hex. An unrecoverable failure (scripted
+     * via the pinned FI_OUTER_NONCE tag or real) inserts the record
+     * directly terminal FAILED NONCE_FAILED and answers REJECT <id>
+     * <tag> NONCE_FAILED — no pid, no channels, no fork (D3). The
+     * production nonce path is unchanged when the site is unscripted. */
+    if (dealpg4_fi_hooks.fail(FI_OUTER_NONCE) != 0
+        || dealpg4_nonce_hex(nonce) != 0) {
+        dealpg4_outer_reject_pre_fork(st, id, tag_f, "NONCE_FAILED");
+        return;
+    }
+
+    /* Register-before-fork (D3): the record is inserted (state
+     * FORKING, nonce and deadline computed) before any failing
+     * syscall that could follow — the control socketpair, the nested
+     * fork — so the FORK_FAILED terminal record always exists for a
+     * socketpair/fork failure. INVOKED is answered only after
+     * insertion; a broker EOF arriving mid-INVOKE still registers +
+     * forks, then the caller-loss mark applies — never the reverse. */
+    r = dealpg4_outer_insert_record(st, id, tag_f->p, tag_f->len, nonce,
+                                    DEALPG4_OUTER_REC_FORKING, budget_t,
+                                    now + budget_t, NULL, now);
+    if (r == NULL) {
+        /* The registry total bound for live/forked records: the
+         * rejection keeps the pinned pre-fork shape — REJECT <id>
+         * <tag> REGISTRY_FULL + the immediate terminal FAILED record
+         * (the rejection record itself is exempt from the bound) +
+         * the DONE trigger evaluation. */
+        dealpg4_outer_reject_pre_fork(st, id, tag_f, "REGISTRY_FULL");
+        return;
+    }
+
+    /* The per-invocation control channel (D3): one socketpair(AF_UNIX,
+     * SOCK_STREAM); the outer end is the registry controlFd with
+     * O_NONBLOCK|FD_CLOEXEC; the child end is dup2'd onto fd 0 in the
+     * serve child and survives the exec (the serve entry sets
+     * O_NONBLOCK|FD_CLOEXEC at entry itself). A failure (scripted via
+     * FI_OUTER_SOCKETPAIR or real) terminates the already-inserted
+     * record as FAILED <id> FORK_FAILED. */
+    {
+        int injected = dealpg4_fi_hooks.fail(FI_OUTER_SOCKETPAIR);
+
+        if (injected != 0) {
+            errno = injected;
+            sv[0] = sv[1] = -1;
+        } else if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+            sv[0] = sv[1] = -1;
+        }
+    }
+    if (sv[0] >= 0) {
+        int fl = fcntl(sv[0], F_GETFL);
+
+        if (fl == -1 || fcntl(sv[0], F_SETFL, fl | O_NONBLOCK) == -1
+            || fcntl(sv[0], F_SETFD, FD_CLOEXEC) == -1) {
+            close(sv[0]);
+            close(sv[1]);
+            sv[0] = sv[1] = -1;
+        }
+    }
+    if (sv[0] < 0) {
+        dealpg4_outer_record_transition(st, r, DEALPG4_OUTER_REC_FAILED,
+                                        now);
+        snprintf(r->failure_token, sizeof r->failure_token,
+                 "FORK_FAILED");
+        dealpg4_outer_reject_answer(st, id, r->client_tag, "FORK_FAILED");
+        dealpg4_outer_eval_done_trigger(st);
+        return;
+    }
+    child_control_fd = sv[1];
+
+    /* The D3 serve surface: serve argv [self, serve, <decodedCwd>, --,
+     * <target-argv...>] with self = the outer's own argv[0] (the same
+     * committed binary). */
+    serve_argv = dealpg4_outer_build_serve_argv(st, parsed, cwd_buf,
+                                                cwd_len, &serve_data);
+    if (serve_argv == NULL) {
+        close(sv[0]);
+        close(sv[1]);
+        dealpg4_outer_record_transition(st, r, DEALPG4_OUTER_REC_FAILED,
+                                        now);
+        snprintf(r->failure_token, sizeof r->failure_token,
+                 "FORK_FAILED");
+        dealpg4_outer_reject_answer(st, id, r->client_tag, "FORK_FAILED");
+        dealpg4_outer_eval_done_trigger(st);
+        return;
+    }
+
+    /* The nested fork through the spawn seam (D2): the production
+     * fork_nested forks, dup2s the child end onto fd 0, dup2s
+     * /dev/null onto fds 1/2, sets the DEALPG4_NONCE /
+     * DEALPG4_BUDGET_MS / DEALPG4_INVOCATION_ID env pins child-side,
+     * and execvps the serve argv; the battery substitutes the
+     * in-process composition. A fork failure (scripted via
+     * FI_OUTER_FORK in the production fork_nested, or a composition
+     * returning -1) terminates the already-inserted record as
+     * FAILED <id> FORK_FAILED — register-before-fork held. */
+    {
+        const dealpg4_outer_spawn *sp = st->spawn;
+
+        if (sp != NULL && sp->fork_nested != NULL)
+            nested_pid = sp->fork_nested(sp, serve_argv, nonce,
+                                         budget_t, id, child_control_fd);
+        else
+            nested_pid = dealpg4_outer_fork_nested(NULL, serve_argv,
+                                                   nonce, budget_t, id,
+                                                   child_control_fd);
+    }
+    if (nested_pid < 0) {
+        close(sv[0]);
+        close(sv[1]);
+        free(serve_argv);
+        free(serve_data);
+        dealpg4_outer_record_transition(st, r, DEALPG4_OUTER_REC_FAILED,
+                                        now);
+        snprintf(r->failure_token, sizeof r->failure_token,
+                 "FORK_FAILED");
+        dealpg4_outer_reject_answer(st, id, r->client_tag, "FORK_FAILED");
+        dealpg4_outer_eval_done_trigger(st);
+        return;
+    }
+
+    /* The fork succeeded: supervisorPid attached immediately after
+     * fork returns; the parent closes the child end; the outer end is
+     * the registry controlFd. */
+    r->supervisor_pid = nested_pid;
+    r->control_fd = sv[0];
+    close(sv[1]);
+    free(serve_argv);
+    free(serve_data);
+
+    /* INVOKED <id> <tag> — answered only after insertion (D3). */
+    {
+        char idbuf[24];
+        dealpg4_field_value fields[2];
+        int n;
+
+        n = snprintf(idbuf, sizeof idbuf, "%lld", (long long)id);
+        if (n > 0 && (size_t)n < sizeof idbuf) {
+            fields[0].data = idbuf;
+            fields[0].len = (size_t)n;
+            fields[1].data = r->client_tag;
+            fields[1].len = strlen(r->client_tag);
+            dealpg4_outer_broker_queue_line(st, DEALPG4_REC_INVOKED,
+                                            fields, 2);
+        }
+    }
+}
+
+/* One ACK from the coordinator (BROKER_LIVE / BROKER_POST_DONE).
+ * Framing defects were classified PROTOCOL_ERROR by the parse. The
+ * record-level rule is the full parent-D6 condition of D5: the ACK
+ * applies only when the invocationId names a live record in
+ * TARGET_PUBLISHED, the nonce equals that record's invocation nonce,
+ * and no ACK was previously applied to that record. Everything else
+ * — an unknown invocationId, a terminal record, a nonce mismatch, a
+ * second ACK, and a live record in any state other than
+ * TARGET_PUBLISHED (FORKING / STUB_BLOCKED / CANCELLING / RELEASED) —
+ * is answered REJECT <invocationId> <clientTag> AUTH_FAILED with the
+ * broker open, the record untouched, and no relay. The outer enforces
+ * the state == TARGET_PUBLISHED check itself:
+ * dealpg4_ack_classify's outer facts cover only id-known, record live,
+ * nonce match, and first-ACK, so the classifier alone would return OK
+ * for the CANCELLING race (a validated CANCEL dropped the
+ * queued-but-unwritten ACK, then a matching-nonce ACK arrives with no
+ * applied ACK on the record). On a validated ACK the first-ACK field
+ * is set at acceptance — the queueing point of the relay, before any
+ * write completes (the relay into the nested control channel and
+ * RELEASED-at-write-completion are the channel-machine child's; the
+ * field is cleared only by a validated CANCEL application or the
+ * terminal queued-write discard, likewise the channel-machine
+ * child's). */
+static void dealpg4_outer_broker_ack(dealpg4_outer_state *st,
+                                     const dealpg4_parsed *parsed)
+{
+    const dealpg4_field_slice *id_f = dealpg4_parsed_field(parsed, 0);
+    const dealpg4_field_slice *nonce_f = dealpg4_parsed_field(parsed, 1);
+    int64_t id = 0;
+    dealpg4_outer_record *r;
+    dealpg4_ack_facts facts;
+    dealpg4_classification cls;
+
+    if (dealpg4_field_decimal(id_f, &id) == 0)
+        return; /* unreachable: parse enforced the decimal class */
+    r = dealpg4_outer_find_record(st, id);
+    if (r == NULL) {
+        /* Unknown invocationId: no record, so no tag — the REJECT
+         * carries "-" (the catalog's DASH_OR_TOKEN class). */
+        dealpg4_outer_reject_answer(st, id, "-", "AUTH_FAILED");
+        return;
+    }
+    memset(&facts, 0, sizeof facts);
+    facts.invocation_id_known = 1;
+    facts.record_in_apply_phase = dealpg4_outer_record_live_state(
+        r->state);
+    facts.nonce_matches = (nonce_f->len == DEALPG4_NONCE_HEX_CHARS
+                           && memcmp(nonce_f->p, r->nonce,
+                                     DEALPG4_NONCE_HEX_CHARS) == 0);
+    facts.first_ack = !r->ack_applied;
+    cls = dealpg4_ack_classify(&facts);
+    if (cls == DEALPG4_CLASS_OK
+        && r->state == DEALPG4_OUTER_REC_TARGET_PUBLISHED) {
+        /* Validated and accepted for relay (the outer-side state
+         * check held): the first-ACK field is set at queueing, before
+         * any write completes; the relay itself is the
+         * channel-machine child's. No broker answer, no state change
+         * (RELEASED is entered exactly when the ACK write completes
+         * into the nested control channel). */
+        r->ack_applied = 1;
+        return;
+    }
+    /* Record-level rejection: the broker stays open, the record is
+     * untouched, and no ACK is forwarded — a TARGET_PUBLISHED record
+     * then fails under its own nested T1 (FAILED STARTUP_TIMEOUT via
+     * the control-channel machine); a CANCELLING record continues its
+     * cancel path unchanged. */
+    dealpg4_outer_reject_answer(st, id, r->client_tag, "AUTH_FAILED");
+}
+
+/* One CANCEL from the coordinator (BROKER_LIVE / BROKER_POST_DONE).
+ * Framing defects were classified PROTOCOL_ERROR by the parse. The
+ * record-level rule (parent D7): a CANCEL applies only to a live
+ * record with the exact invocation nonce. An unknown invocationId, a
+ * terminal record, or a nonce mismatch is answered REJECT
+ * <invocationId> <clientTag> CANCEL_AUTH_FAILED — the broker stays
+ * open, the record is untouched, and every other live record is
+ * unaffected. A validated CANCEL is applied by the channel-machine
+ * child (marking the record CANCELLING, dropping any
+ * queued-but-unwritten ACK for it, and relaying the CANCEL with the
+ * exact registry nonce into the nested control channel); the
+ * cancellation execution lands with the fallback child. */
+static void dealpg4_outer_broker_cancel(dealpg4_outer_state *st,
+                                        const dealpg4_parsed *parsed)
+{
+    const dealpg4_field_slice *id_f = dealpg4_parsed_field(parsed, 0);
+    const dealpg4_field_slice *nonce_f = dealpg4_parsed_field(parsed, 1);
+    int64_t id = 0;
+    dealpg4_outer_record *r;
+    dealpg4_cancel_facts facts;
+    dealpg4_classification cls;
+
+    if (dealpg4_field_decimal(id_f, &id) == 0)
+        return; /* unreachable: parse enforced the decimal class */
+    r = dealpg4_outer_find_record(st, id);
+    if (r == NULL) {
+        dealpg4_outer_reject_answer(st, id, "-", "CANCEL_AUTH_FAILED");
+        return;
+    }
+    memset(&facts, 0, sizeof facts);
+    facts.invocation_id_known = 1;
+    facts.record_live = dealpg4_outer_record_live_state(r->state);
+    facts.nonce_matches = (nonce_f->len == DEALPG4_NONCE_HEX_CHARS
+                           && memcmp(nonce_f->p, r->nonce,
+                                     DEALPG4_NONCE_HEX_CHARS) == 0);
+    cls = dealpg4_cancel_classify(&facts);
+    if (cls == DEALPG4_CLASS_OK)
+        return; /* validated: the application is the channel-machine
+                   child's (T5) — the record is untouched here */
+    dealpg4_outer_reject_answer(st, id, r->client_tag,
+                                "CANCEL_AUTH_FAILED");
+}
+
+/* === Registry observability (outer.h contract) ========================== */
+
+/* Copy one internal record into the public view. */
+static void dealpg4_outer_fill_record_view(const dealpg4_outer_record *r,
+                                           dealpg4_outer_record_view *out)
+{
+    memset(out, 0, sizeof *out);
+    out->invocation_id = r->invocation_id;
+    snprintf(out->client_tag, sizeof out->client_tag, "%s",
+             r->client_tag != NULL ? r->client_tag : "");
+    memcpy(out->nonce, r->nonce, sizeof out->nonce);
+    out->supervisor_pid = r->supervisor_pid;
+    out->control_fd = r->control_fd;
+    out->stub_pid = r->stub_pid;
+    out->target_pgid = r->target_pgid;
+    out->target_session_id = r->target_session_id;
+    out->state = r->state;
+    out->deadline_ms = r->deadline_ms;
+    out->deadline_abs_ms = r->deadline_abs_ms;
+    out->ack_applied = r->ack_applied;
+    out->cleanup_acknowledged = r->cleanup_acknowledged;
+    out->clean_final = r->clean_final;
+    memcpy(out->failure_token, r->failure_token,
+           sizeof out->failure_token);
+    out->history_count = r->history_count;
+    memcpy(out->history, r->history, sizeof out->history);
+}
+
+/* Fill the heap snapshot of the most recent core call (freed at the
+ * next core call). */
+static void dealpg4_outer_fill_registry_snapshot(dealpg4_outer_state *st)
+{
+    dealpg4_outer_record_view *snap;
+    size_t i;
+
+    free(dealpg4_outer_registry_snapshot);
+    dealpg4_outer_registry_snapshot = NULL;
+    dealpg4_outer_registry_snapshot_count = 0;
+    if (st->nrecords == 0)
+        return;
+    snap = malloc(st->nrecords * sizeof *snap);
+    if (snap == NULL)
+        return;
+    for (i = 0; i < st->nrecords; i++)
+        dealpg4_outer_fill_record_view(&st->records[i], &snap[i]);
+    dealpg4_outer_registry_snapshot = snap;
+    dealpg4_outer_registry_snapshot_count = st->nrecords;
+}
+
+size_t dealpg4_outer_registry_count(void)
+{
+    if (dealpg4_outer_live_state != NULL)
+        return dealpg4_outer_live_state->nrecords;
+    return dealpg4_outer_registry_snapshot_count;
+}
+
+int dealpg4_outer_registry_record(size_t idx,
+                                  dealpg4_outer_record_view *out)
+{
+    if (out == NULL)
+        return -1;
+    if (dealpg4_outer_live_state != NULL) {
+        if (idx >= dealpg4_outer_live_state->nrecords)
+            return -1;
+        dealpg4_outer_fill_record_view(
+            &dealpg4_outer_live_state->records[idx], out);
+        return 0;
+    }
+    if (idx >= dealpg4_outer_registry_snapshot_count)
+        return -1;
+    *out = dealpg4_outer_registry_snapshot[idx];
+    return 0;
+}
+
 /* === Entry preamble (D1) ================================================ */
+
 
 /* Run the D1 entry preamble. Returns 0 on success, or the pinned
  * refusal status; the caller closes the timer/signalfd fds and
@@ -1208,8 +2155,10 @@ static int dealpg4_outer_preamble(dealpg4_outer_state *st)
      * nonce helper, used only as the broker socket path suffix. An
      * unrecoverable failure is NONCE_FAILED (gate-fatal, exit 1): no
      * fork, no socket, no records; the nonce is never silently zeroed
-     * or derived. The FI_OUTER_NONCE seam forces the failure path. */
-    if (dealpg4_fi_hooks.fail(FI_OUTER_NONCE) != 0
+     * or derived. The FI_OUTER_ENTRY_NONCE seam forces the failure
+     * path (distinct from the pinned FI_OUTER_NONCE registration-time
+     * site, D6). */
+    if (dealpg4_fi_hooks.fail(FI_OUTER_ENTRY_NONCE) != 0
         || dealpg4_nonce_hex(st->outer_nonce) != 0) {
         fprintf(stderr, "NONCE_FAILED\n");
         return DEALPG4_OUTER_EXIT_GATE_FAILURE;
@@ -2031,7 +2980,12 @@ static void dealpg4_outer_proof_pass(dealpg4_outer_state *st)
     } else {
         st->proof_first_pass = 0;
     }
-    st->proof_next_pass_ms = now + 5;
+    /* A failing pass retries on a coarser cadence (the success
+     * two-pass confirm interval stays ~5 ms): a live-record run whose
+     * cancellation execution has not landed yet (the fallback child's
+     * scope) holds the proof failing until the total deadline — the
+     * coarser retry keeps the /proc scans bounded. */
+    st->proof_next_pass_ms = now + (clean ? 5 : 50);
 }
 
 /* === Deadline evaluation and the ppoll loop ============================= */
@@ -2114,8 +3068,22 @@ static void dealpg4_outer_evaluate(dealpg4_outer_state *st)
         dealpg4_outer_scan_proc(st, now);
         return;
     }
-    if (now >= st->dl.invokeCutoff)
-        st->cutoff_fired = 1;
+    if (now >= st->dl.invokeCutoff) {
+        if (!st->cutoff_fired) {
+            /* The INVOKE acceptance cutoff (D9): INVOKEs are accepted
+             * only until T0o + nestedStopMs. At the expiry every live
+             * record is marked CANCELLING (the cancellation execution
+             * lands with the fallback child) and the cutoff-anchored
+             * DONE trigger is evaluated — DONE fires here exactly
+             * when the registry is non-empty and already fully
+             * terminal (the rejection-record case). */
+            st->cutoff_fired = 1;
+            st->cutoff_cancelled = 1;
+            st->cutoff_mark_ms = now - st->t0o;
+            dealpg4_outer_mark_live_cancelling(st, 0 /* cutoff */);
+            dealpg4_outer_eval_done_trigger(st);
+        }
+    }
     if (now >= st->dl.readinessDeadline)
         st->readiness_fired = 1;
 
@@ -2185,10 +3153,16 @@ static void dealpg4_outer_evaluate(dealpg4_outer_state *st)
      * at totalDeadline - killAndProofReserveMs and only when the
      * coordinator has not exited by then — a healthy coordinator that
      * exits 0 after readiness is never signaled (the clean-exit reap
-     * precedes the deadline). */
+     * precedes the deadline). The escalation never runs before the D8
+     * precondition holds (every registry record terminal, parent D8);
+     * if the escalation deadline has passed while the total-cancel
+     * path is still completing records, the escalation starts the
+     * moment the precondition holds, bounded by the total deadline
+     * (the records_live == 0 gate — the registry child's completion
+     * of the T2 machinery). */
     if (!st->coordinator_reaped && !st->escalation_active
         && st->ready_resolved && !st->startup_failed
-        && now >= st->escalation_deadline) {
+        && st->records_live == 0 && now >= st->escalation_deadline) {
         dealpg4_outer_gate_token(st, "COORDINATOR_HANG");
         dealpg4_outer_begin_escalation(st, 1 /* verified group */);
     }
@@ -2550,6 +3524,38 @@ static void dealpg4_outer_report(dealpg4_outer_state *st,
         if (dealpg4_outer_writeq_queue(&q, line, (size_t)n, 1, 0) != 0)
             return;
     }
+    /* One line per registry record (retained until the final report,
+     * parent D2): id, terminal/live state, tag, and the terminal
+     * classification (success/cancelled/failure token/-). The lines
+     * flush in batches: the writeq item bound is per flush window, so
+     * batching keeps every record listed even past the per-queue item
+     * bound (the arena caps the report — best-effort). */
+    for (i = 0; i < st->nrecords; i++) {
+        const dealpg4_outer_record *r = &st->records[i];
+        const char *token = "-";
+
+        if (r->state == DEALPG4_OUTER_REC_FAILED)
+            token = r->failure_token;
+        else if (r->state == DEALPG4_OUTER_REC_CLEAN)
+            token = r->clean_final ? "success" : "cancelled";
+        n = snprintf(line, sizeof line, "OUTER record %lld %s %s %s\n",
+                     (long long)r->invocation_id,
+                     dealpg4_outer_record_state_name(r->state),
+                     r->client_tag != NULL ? r->client_tag : "-",
+                     token);
+        if (n <= 0 || (size_t)n >= sizeof line)
+            continue;
+        if (dealpg4_outer_writeq_queue(&q, line, (size_t)n, 1, 0) != 0)
+            return; /* the bounded arena caps the report (best-effort) */
+        if ((i % 64) == 63 || i + 1 == st->nrecords) {
+            if (dealpg4_outer_report_flush(st, &q) < 0) {
+                st->shell_lost = 1;
+                dealpg4_outer_gate_token(st, "SHELL_LOST");
+                return;
+            }
+            dealpg4_outer_writeq_clear(&q);
+        }
+    }
     if (dealpg4_outer_report_flush(st, &q) < 0) {
         /* The shell connection died on the report write: the
          * total-cancel trigger fires even though the run already
@@ -2642,9 +3648,25 @@ static void dealpg4_outer_copy_view(dealpg4_outer_state *st, int status)
     v.reap_count = st->reap_count;
     v.adopt_count = st->adopt_count;
 
+    v.records_total = (int)st->nrecords;
+    v.records_live = st->records_live;
+    v.records_failed = st->records_failed;
+    v.records_clean = st->records_clean;
+    v.next_invocation_id = st->next_invocation_id;
+    v.cutoff_cancelled = st->cutoff_cancelled;
+    v.cutoff_mark_ms = st->cutoff_mark_ms;
+    v.caller_loss_marked = st->caller_loss_marked;
+    v.done_queued = st->done_queued;
+    v.done_clean = st->done_clean;
+    v.done_ms = st->done_ms;
+
     dealpg4_outer_last_result_view = v;
     dealpg4_outer_last_drain_stdout = st->drain_out;
     dealpg4_outer_last_drain_stderr = st->drain_err;
+    /* The registry observability hands over from the live state to
+     * the retained snapshot of this call. */
+    dealpg4_outer_fill_registry_snapshot(st);
+    dealpg4_outer_live_state = NULL;
 }
 
 /* Restore the captured report-fd flag set (D1). Returns 1 when the
@@ -2664,6 +3686,14 @@ static int dealpg4_outer_restore_report_flags(dealpg4_outer_state *st)
  * (idempotent; shared by every exit path). */
 static void dealpg4_outer_close_fds(dealpg4_outer_state *st)
 {
+    size_t i;
+
+    for (i = 0; i < st->nrecords; i++) {
+        if (st->records[i].control_fd >= 0) {
+            close(st->records[i].control_fd);
+            st->records[i].control_fd = -1;
+        }
+    }
     if (st->ready_pipe_rd >= 0) {
         close(st->ready_pipe_rd);
         st->ready_pipe_rd = -1;
@@ -2695,6 +3725,20 @@ static void dealpg4_outer_close_fds(dealpg4_outer_state *st)
     (void)sigprocmask(SIG_SETMASK, &st->entry_mask, NULL);
 }
 
+/* Free the registry (records + tags); the retained observability
+ * snapshot stays until the next core call. */
+static void dealpg4_outer_registry_release(dealpg4_outer_state *st)
+{
+    size_t i;
+
+    for (i = 0; i < st->nrecords; i++)
+        free(st->records[i].client_tag);
+    free(st->records);
+    st->records = NULL;
+    st->nrecords = 0;
+    st->records_cap = 0;
+}
+
 /* === Core entry (D2) ==================================================== */
 
 int dealpg4_outer_core(const OuterLimits *limits,
@@ -2709,11 +3753,16 @@ int dealpg4_outer_core(const OuterLimits *limits,
 
     /* Observability reset, before any side effect or refusal path
      * (outer.h result contract): a core call refused before the
-     * preamble leaves a zeroed view, never the previous call's. */
+     * preamble leaves a zeroed view and an empty registry snapshot,
+     * never the previous call's. */
     memset(&dealpg4_outer_last_result_view, 0,
            sizeof dealpg4_outer_last_result_view);
     dealpg4_drain_init(&dealpg4_outer_last_drain_stdout);
     dealpg4_drain_init(&dealpg4_outer_last_drain_stderr);
+    dealpg4_outer_live_state = NULL;
+    free(dealpg4_outer_registry_snapshot);
+    dealpg4_outer_registry_snapshot = NULL;
+    dealpg4_outer_registry_snapshot_count = 0;
     memset(&st, 0, sizeof st);
     st.timer.fd = -1;
     st.sig_fd = -1;
@@ -2740,6 +3789,9 @@ int dealpg4_outer_core(const OuterLimits *limits,
     if (socket_dir == NULL || socket_dir[0] == '\0')
         return DEALPG4_EXIT_CONFIG_INVALID;
 
+    st.next_invocation_id = 1; /* outer-assigned, monotonic, unique —
+                                   the counter starts at 1 (the serve
+                                   surface requires ids >= 1) */
     st.limits = limits;
     memcpy(st.coordinator_nonce, coordinator_nonce,
            DEALPG4_NONCE_HEX_CHARS);
@@ -2747,6 +3799,30 @@ int dealpg4_outer_core(const OuterLimits *limits,
     st.coordinator_argv = coordinator_argv;
     st.socket_dir = socket_dir;
     st.spawn = spawn;
+
+    /* The serve argv[0] of the D3 fork surface: the outer's own
+     * argv[0] (the exact string the shell used to start the
+     * launcher), captured at core entry from the process argv[0] the
+     * dispatch noted at startup — never a /proc resolution. A
+     * missing capture fail-closes later INVOKEs that would fork (the
+     * FORK_FAILED path — no fork happens without a serve
+     * surface). */
+    {
+        const char *argv0 = dealpg4_outer_process_argv0;
+
+        if (argv0 != NULL && argv0[0] != '\0') {
+            size_t alen = strlen(argv0);
+
+            if (alen < sizeof st.self_argv0) {
+                memcpy(st.self_argv0, argv0, alen + 1);
+                st.self_argv0_ok = 1;
+            }
+        }
+    }
+
+    /* Registry observability: the live state is visible to the spawn
+     * seam compositions for the register-before-fork proof. */
+    dealpg4_outer_live_state = &st;
 
     /* Exec-hygiene entry-mask capture (D1/D8), before SIGCHLD is ever
      * blocked. With a NULL set the call only queries the current mask
@@ -2823,10 +3899,10 @@ int dealpg4_outer_core(const OuterLimits *limits,
     outcome.coordinator_exited_0 = st.coordinator_reaped
                                    && st.coordinator_si_code == CLD_EXITED
                                    && st.coordinator_si_status == 0;
-    outcome.records_total = 0; /* the registry is empty at this stage */
+    outcome.records_total = (int)st.nrecords;
     outcome.records_live = st.records_live;
-    outcome.records_failed = 0;
-    outcome.records_clean = 0;
+    outcome.records_failed = st.records_failed;
+    outcome.records_clean = st.records_clean;
     outcome.proof_passed = st.proof_done;
     outcome.gate_failure = st.gate_failure;
 
@@ -2848,6 +3924,7 @@ int dealpg4_outer_core(const OuterLimits *limits,
     st.report_flags_restored = dealpg4_outer_restore_report_flags(&st);
     dealpg4_outer_close_fds(&st);
     dealpg4_outer_copy_view(&st, status);
+    dealpg4_outer_registry_release(&st);
     return status;
 }
 
@@ -2863,6 +3940,12 @@ int dealpg4_outer_entry(int argc, char **argv)
      * inherits the ignored disposition (the core preamble repeats the
      * ignore). */
     (void)signal(SIGPIPE, SIG_IGN);
+
+    /* Capture the process argv[0] for the D3 serve surface: the
+     * serve argv[0] is the outer's own argv[0] (the exact string the
+     * shell used). The dispatch notes it at startup too; the entry
+     * note makes the entry self-sufficient for any caller. */
+    dealpg4_outer_note_process_argv0(argv[0]);
 
     /* argv shape (D1): "launcher outer <coordinatorNonce> --
      * <coordinator-argv...>". argv[0] = program path, argv[1] =
@@ -2997,6 +4080,17 @@ int dealpg4_outer_fork_nested(const dealpg4_outer_spawn *self,
     }
     outer_pid = getpid(); /* recorded before the fork for the child's
                              parent recheck */
+    /* FI_OUTER_FORK: a scripted nonzero value forces the fork failure
+     * with the scripted value as errno (0 = the real fork) — the
+     * caller's FORK_FAILED pre-fork terminal-record path (D3/D6). */
+    {
+        int injected = dealpg4_fi_hooks.fail(FI_OUTER_FORK);
+
+        if (injected != 0) {
+            errno = injected;
+            return -1;
+        }
+    }
     child = fork();
     if (child < 0)
         return -1;
