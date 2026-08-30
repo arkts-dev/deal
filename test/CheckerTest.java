@@ -192,6 +192,11 @@ public class CheckerTest {
         testUnaryOperators();
         testOperatorTypeErrors();
 
+        // -- Bytes comparison gate (E3019, binary-comparison-selectors B-D7) --
+        testBytesComparisonGateE3019();
+        testBytesComparisonNonAdmittedUnchanged();
+        testBytesComparisonGateNegatives();
+
         // -- Type Checking: Assignments --
         testAssignment_exact();
         testAssignment_nullableWrapping();
@@ -654,6 +659,238 @@ public class CheckerTest {
 
         out = checkProgram("let a: boolean = 1 === true;");
         assertError(out, "E3006", "int === bool error");
+    }
+
+    // =========================================================================
+    // Bytes comparison gate (E3019 — binary-comparison-selectors B-D7)
+    // =========================================================================
+
+    /**
+     * Retypes a resolved parameter symbol before type checking. The v1.2
+     * frontend cannot produce a bytes-typed expression today (bytes value
+     * semantics are ISSUE-0111/ISSUE-0158's, so the {@code bytes} type
+     * name and the {@code bytes(n)} intrinsic are unresolved), which makes
+     * the E3019 gate's admission path unreachable from source in this
+     * revision. The gate lives in {@code checkBinary} and fires on the
+     * checked operand types; this helper drives that exact code path by
+     * replacing a resolved parameter's declared type with a synthetic
+     * bytes-involving type before type checking runs.
+     */
+    private static CheckerOutput checkProgramWithParamRetyped(String source,
+            String functionName, String paramName, Type replacementType) {
+        LexResult lex = new Lexer(source, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+
+        if (parse.hasErrors()) {
+            StubModuleResolver resolver = new StubModuleResolver();
+            NameResolver nr = new NameResolver("test.deal", resolver);
+            nr.resolve(parse.program());
+            List<CompilerDiagnostic> diags = new ArrayList<>(parse.diagnostics());
+            diags.addAll(nr.diagnostics());
+            return new CheckerOutput(
+                new CheckResult(Map.of(), new SymbolTable(), diags),
+                parse.program()
+            );
+        }
+
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+
+        boolean retyped = false;
+        for (StatementNode stmt : parse.program().statements()) {
+            if (stmt instanceof FunctionDeclaration fd && fd.name().equals(functionName)) {
+                SymbolTable scope = nr.scopeMap().get(fd);
+                if (scope == null) continue;
+                Symbol sym = scope.resolveLocal(paramName);
+                if (sym instanceof Symbol.VariableSymbol vs) {
+                    scope.remove(paramName);
+                    scope.define(paramName,
+                        new Symbol.VariableSymbol(paramName, replacementType, vs.isParameter()));
+                    retyped = true;
+                }
+            }
+        }
+        check(retyped, "parameter '" + paramName + "' of function '" + functionName
+            + "' was retyped to " + replacementType);
+
+        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
+        if (!hasErrors(diags)) {
+            CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+            diags.addAll(result.diagnostics());
+            return new CheckerOutput(
+                new CheckResult(result.typeMap(), symTable, diags),
+                parse.program()
+            );
+        }
+        return new CheckerOutput(
+            new CheckResult(Map.of(), symTable, diags),
+            parse.program()
+        );
+    }
+
+    /** Finds the first {@link BinaryExpr} anywhere in the program (test fixture). */
+    private static BinaryExpr firstBinaryExpr(ProgramNode program) {
+        for (StatementNode stmt : program.statements()) {
+            if (stmt instanceof FunctionDeclaration fd) {
+                for (StatementNode bodyStmt : fd.body().statements()) {
+                    if (bodyStmt instanceof VariableDeclaration vd
+                            && vd.initializer() instanceof BinaryExpr bin) {
+                        return bin;
+                    }
+                }
+            }
+        }
+        fail("no binary expression found in the fixture program");
+        return null;
+    }
+
+    static void testBytesComparisonGateE3019() {
+        System.out.println("-- Bytes Comparison Gate (E3019) --");
+
+        String[] sources = {
+            // bytes === bytes / !==
+            "function f(b: int): null {\n"
+                + "  let c: boolean = b === b;\n"
+                + "  return null;\n"
+                + "}",
+            "function f(b: int): null {\n"
+                + "  let c: boolean = b !== b;\n"
+                + "  return null;\n"
+                + "}",
+        };
+        for (String source : sources) {
+            CheckerOutput out = checkProgramWithParamRetyped(source, "f", "b",
+                Type.Bytes.INSTANCE);
+            assertError(out, "E3019", "bytes ===/!== bytes");
+            BinaryExpr bin = firstBinaryExpr(out.program());
+            boolean atComparison = out.result.diagnostics().stream()
+                .filter(d -> d.code().equals("E3019"))
+                .anyMatch(d -> d.line() == bin.span().startLine()
+                    && d.column() == bin.span().startColumn());
+            check(atComparison, "E3019 must be reported at the comparison expression's span");
+        }
+
+        // bytes[] === bytes[]
+        CheckerOutput out = checkProgramWithParamRetyped(
+            "function f(b: int): null {\n"
+            + "  let c: boolean = b === b;\n"
+            + "  return null;\n"
+            + "}", "f", "b", Types.array(Type.Bytes.INSTANCE));
+        assertError(out, "E3019", "bytes[] === bytes[]");
+
+        // bytes|null === bytes|null
+        out = checkProgramWithParamRetyped(
+            "function f(b: int): null {\n"
+            + "  let c: boolean = b === b;\n"
+            + "  return null;\n"
+            + "}", "f", "b", Types.nullable(Type.Bytes.INSTANCE));
+        assertError(out, "E3019", "bytes|null === bytes|null");
+
+        // bytes|null === null (left nullable)
+        out = checkProgramWithParamRetyped(
+            "function f(b: int): null {\n"
+            + "  let c: boolean = b === null;\n"
+            + "  return null;\n"
+            + "}", "f", "b", Types.nullable(Type.Bytes.INSTANCE));
+        assertError(out, "E3019", "bytes|null === null");
+
+        // null === bytes|null (right nullable)
+        out = checkProgramWithParamRetyped(
+            "function f(b: int): null {\n"
+            + "  let c: boolean = null === b;\n"
+            + "  return null;\n"
+            + "}", "f", "b", Types.nullable(Type.Bytes.INSTANCE));
+        assertError(out, "E3019", "null === bytes|null");
+    }
+
+    static void testBytesComparisonNonAdmittedUnchanged() {
+        System.out.println("-- Bytes comparisons: non-admitted pairs keep E3006/E3007 --");
+
+        // bytes === number — not admitted by the equality rules → E3006,
+        // never E3019.
+        CheckerOutput out = checkProgramWithParamRetyped(
+            "function f(b: int): null {\n"
+            + "  let c: boolean = b === 1;\n"
+            + "  return null;\n"
+            + "}", "f", "b", Type.Bytes.INSTANCE);
+        assertError(out, "E3006", "bytes === number keeps E3006");
+        check(out.result.diagnostics().stream()
+                .noneMatch(d -> d.code().equals("E3019")),
+            "bytes === number must not report E3019");
+
+        // bytes relational — relationals stay E3007 (spec pins relationals
+        // to int/number/string), never E3019.
+        out = checkProgramWithParamRetyped(
+            "function f(b: int): null {\n"
+            + "  let c: boolean = b < b;\n"
+            + "  return null;\n"
+            + "}", "f", "b", Type.Bytes.INSTANCE);
+        assertError(out, "E3007", "bytes relational keeps E3007");
+        check(out.result.diagnostics().stream()
+                .noneMatch(d -> d.code().equals("E3019")),
+            "bytes relational must not report E3019");
+    }
+
+    static void testBytesComparisonGateNegatives() {
+        System.out.println("-- Bytes Comparison Gate: non-bytes pairs are unaffected --");
+
+        // null === null, nullable-vs-null, equal nullable pairs, array and
+        // function reference identity — every non-bytes admitted pair
+        // stays admitted without E3019.
+        CheckerOutput out = checkProgram(
+            "function f(): null {\n"
+            + "  let a: boolean = null === null;\n"
+            + "  let b: boolean = null !== null;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoErrors(out, "null ===/!== null unaffected");
+
+        out = checkProgram(
+            "function f(n: int | null): null {\n"
+            + "  let a: boolean = n === null;\n"
+            + "  let b: boolean = null === n;\n"
+            + "  let c: boolean = n !== null;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoErrors(out, "nullable-vs-null unaffected");
+
+        out = checkProgram(
+            "function f(n: int | null): null {\n"
+            + "  let a: boolean = n === n;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoErrors(out, "equal nullable pair unaffected");
+
+        out = checkProgram(
+            "function f(): null {\n"
+            + "  let xs: int[] = [1, 2];\n"
+            + "  let a: boolean = xs === xs;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoErrors(out, "array reference identity unaffected");
+
+        out = checkProgram(
+            "function f(): null {\n"
+            + "  function g(): null { return null; }\n"
+            + "  let a: boolean = g === g;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoErrors(out, "function reference identity unaffected");
+
+        out = checkProgram(
+            "function f(): null {\n"
+            + "  let t: table = {};\n"
+            + "  let a: boolean = t === t;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoErrors(out, "table reference identity unaffected");
     }
 
     // =========================================================================

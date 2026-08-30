@@ -294,6 +294,9 @@ public class DiagnosticClassificationTest {
         coverage.put("E3017", "CheckerTest (array length read-only)");
         coverage.put("E3018",
             "CheckerTest (table index write/delete key static string gate)");
+        coverage.put("E3019",
+            "CheckerTest (bytes comparison gate, synthetic bytes-typed admission path) / "
+            + "ComparisonSelectorLoweringTest (E6005 COMPARISON_SELECTOR producer guard)");
 
         coverage.put("E4001", "CheckerTest (missing required field)");
         coverage.put("E4002", "CheckerTest (extra field)");

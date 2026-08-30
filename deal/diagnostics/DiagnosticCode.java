@@ -223,6 +223,15 @@ public enum DiagnosticCode {
     E3017(Phase.FRONTEND, "Array length is read-only"),
     /** Table index write/delete key must have static type string. */
     E3018(Phase.FRONTEND, "Table index key must have static type string"),
+    /** Bytes comparison is not supported (binary-comparison-selectors
+     *  B-D7: the closed BinarySelector set has no bytes selector and
+     *  RuntimeDescriptor has no bytes member; bytes equality is
+     *  spec-pinned as reference identity and its value semantics belong
+     *  to ISSUE-0111/ISSUE-0158, which own lifting this gate).
+     *  E3018 (the table-index-key checker gate of the assignment/delete
+     *  address-chain slice) sits directly before this code, so the gate
+     *  is registered immediately after E3018. */
+    E3019(Phase.FRONTEND, "Bytes comparison is not supported"),
 
     // =========================================================================
     // E4xxx — class shape validation (FRONTEND)

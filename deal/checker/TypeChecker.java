@@ -16,7 +16,7 @@ import deal.diagnostics.DiagnosticCode;
  * null narrowing, contextual typing for table reads, and class construction
  * checking.
  *
- * <p>Errors produced: E3001–E3018, E4001–E4008, E5001–E5004.</p>
+ * <p>Errors produced: E3001–E3019, E4001–E4008, E5001–E5004.</p>
  */
 public final class TypeChecker {
 
@@ -901,9 +901,31 @@ public final class TypeChecker {
         BinaryOp op = bin.op();
 
         if (op == BinaryOp.EQ || op == BinaryOp.NEQ) {
-            if (Types.equals(leftType, rightType)) return Type.Boolean.INSTANCE;
-            if (isNullableOf(leftType, rightType) || isNullableOf(rightType, leftType))
+            boolean equalTypes = Types.equals(leftType, rightType);
+            boolean nullableVsNull = isNullableOf(leftType, rightType)
+                || isNullableOf(rightType, leftType);
+            if (equalTypes || nullableVsNull) {
+                // E3019 bytes-comparison gate (binary-comparison-selectors
+                // B-D7): every equality pair admitted by the equality
+                // rules whose checked operand type contains bytes — at any
+                // depth — is rejected at the comparison site in phase 3,
+                // before lowering, on every route purpose. The closed
+                // BinarySelector set has no bytes selector and
+                // RuntimeDescriptor has no bytes member; bytes equality is
+                // spec-pinned as reference identity and its value
+                // semantics belong to ISSUE-0111/ISSUE-0158, which own
+                // lifting this gate. The gate fires before the equality
+                // admission returns and covers equal bytes-containing
+                // types (bytes, bytes[], bytes|null, functions/classes
+                // containing bytes) and nullable-bytes vs null in both
+                // directions.
+                if (Types.containsBytes(leftType) || Types.containsBytes(rightType)) {
+                    error(DiagnosticCode.E3019, "Bytes comparison is not supported",
+                        bin.span());
+                    return Type.Error.INSTANCE;
+                }
                 return Type.Boolean.INSTANCE;
+            }
             error(DiagnosticCode.E3006,
                 "Cannot compare " + typeName(leftType) + " with " + typeName(rightType),
                 bin.span());
