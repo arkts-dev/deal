@@ -1,0 +1,39 @@
+// @spec: Async/Await — direct await completion values
+// @description: Direct awaits yield async operations and the await-site completion check fires on every resumed completion value; conforming int, string, and nullable completions pass and the awaited values are usable downstream.
+// @expected: runtime-ok
+// @features: async-await, runtime
+
+async function intValue(): int {
+  return 21;
+}
+
+async function textValue(): string {
+  return "hello";
+}
+
+async function maybeValue(): string | null {
+  return null;
+}
+
+export async function test_direct_await_completion_values(): int {
+  let a: int = await intValue();
+  let b: int = await intValue();
+  let sum: int = a + b;
+  if (sum !== 42) {
+    throw { code: "TEST_FAIL", message: "direct await int completion mismatch" };
+  }
+  let s: string = await textValue();
+  if (s !== "hello") {
+    throw { code: "TEST_FAIL", message: "direct await string completion mismatch" };
+  }
+  let m: string | null = await maybeValue();
+  if (m !== null) {
+    throw { code: "TEST_FAIL", message: "direct await nullable completion mismatch" };
+  }
+  await textValue();
+  return sum;
+}
+
+export function main(): null {
+  return null;
+}

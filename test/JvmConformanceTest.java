@@ -267,6 +267,9 @@ public class JvmConformanceTest {
         skip("backend-runtime/async-await/imported-async-function-value.deal",
             "E6000: module aliases used as values (imported async "
                 + "function as a function value).", "JVM-GAP-XMOD-FNVALUE");
+        skip("backend-runtime/host-abi/host-async-shape-value.deal",
+            "E6000: module aliases used as values (host async export "
+                + "as a function value).", "JVM-GAP-XMOD-FNVALUE");
 
         // ---- JVM-GAP-XMOD-ARRAY: imported async array return ----
         skip("backend-runtime/async-await/await-returning-array-indexed.deal",

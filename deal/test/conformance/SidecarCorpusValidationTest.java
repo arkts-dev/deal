@@ -118,8 +118,10 @@ public class SidecarCorpusValidationTest {
 
     /** The exact runtime-ok population (ISSUE-0349 completeness, plus
      * the stdlib/math int-minmax-extremes fixture ISSUE-0337 added with
-     * its sidecar in the same change). */
-    private static final int RUNTIME_OK_COUNT = 193;
+     * its sidecar in the same change; plus the two async fixtures
+     * ISSUE-0335 added with their sidecars in the same change:
+     * direct-await-completion-values and async-cross-module-chain). */
+    private static final int RUNTIME_OK_COUNT = 195;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -129,9 +131,10 @@ public class SidecarCorpusValidationTest {
      * source-location/int32-overflow-source fixtures each land their
      * sidecar in the same change as their expectation; plus the
      * stdlib/math int-abs-min-overflow E8004 fixture ISSUE-0337 added
-     * with its sidecar in the same change).
+     * with its sidecar in the same change; plus the host-async-shape-value
+     * E8010 fixture ISSUE-0335 added with its sidecar in the same change).
      */
-    private static final int RUNTIME_ERROR_COUNT = 69;
+    private static final int RUNTIME_ERROR_COUNT = 70;
 
     /** The G4.6 lane error framing prefixes. */
     private static final String DEAL_ERROR_CODE_LINE = "DEAL_ERROR_CODE: ";

@@ -1,0 +1,22 @@
+// @spec: Async/Await — cross-module async chains through imported wrappers
+// @description: A two-hop cross-module async chain: the entry awaits an imported mid-module wrapper whose await of the deep module completes with a value checked at each await site; both int and string completion values are verified downstream.
+// @expected: runtime-ok
+// @features: async-await, modules, runtime
+
+import * as mid from "./async_chain_mid_lib"
+
+export async function test_cross_module_async_chain(): int {
+  let x: int = await mid.midAnswer();
+  if (x !== 42) {
+    throw { code: "TEST_FAIL", message: "cross-module chain int mismatch" };
+  }
+  let s: string = await mid.midText();
+  if (s !== "mid-deep") {
+    throw { code: "TEST_FAIL", message: "cross-module chain string mismatch" };
+  }
+  return x;
+}
+
+export function main(): null {
+  return null;
+}

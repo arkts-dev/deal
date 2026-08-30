@@ -2546,6 +2546,278 @@ test("canonical checker and legacy boundary path coexist", function()
   assert_parse_rejected("string|null")
   assert_parse_rejected("Error")
 end)
+-- ==================== invoke_async_export tests ====================
+-- Driver for the production async-export host ABI runtime half (runtime
+-- page D5): hand-built exports tables with wrapper entries whose sigs
+-- are canonical async()-><R> descriptors, executed under real LuaJIT.
+
+local function assert_host_invocation_failure(fn, needle)
+  local ok, err = pcall(fn)
+  if ok then
+    error("expected the host-invocation failure signal but no error was raised")
+  end
+  if type(err) ~= "table" or err.__hostInvocationFailure ~= true then
+    error("expected the host-invocation failure signal table, got "
+        .. tostring(err))
+  end
+  if err.code ~= nil then
+    error("the host-invocation failure signal must not carry a DEAL error code")
+  end
+  if needle ~= nil
+      and tostring(err.message):find(needle, 1, true) == nil then
+    error("expected failure message containing '" .. needle
+        .. "', got " .. tostring(err.message))
+  end
+  return err
+end
+
+test("invoke_async_export success returns the matcher-validated completion value", function()
+  local invocations = 0
+  local exports = {
+    oracle = __rt.function_("async()->int", function()
+      invocations = invocations + 1
+      return __rt.async_start(function()
+        return 42
+      end)
+    end),
+  }
+  local result = __rt.invoke_async_export(exports, "oracle", "int")
+  assert(result == 42)
+  assert(invocations == 1, "exactly one operation is invoked per call")
+end)
+
+test("invoke_async_export drives nested awaits to completion through the preserved machinery", function()
+  -- Mirrors generated await sites: coroutine.yield(...) plus the
+  -- await-site completion check on the resumed value.
+  local exports = {
+    oracle = __rt.function_("async()->int", function()
+      return __rt.async_start(function()
+        local a = __rt.check_int(coroutine.yield(__rt.async_start(function()
+          return 21
+        end)), "generated.deal", 3, 9)
+        local b = __rt.check_int(coroutine.yield(__rt.async_start(function()
+          return a + 21
+        end)), "generated.deal", 4, 9)
+        return b
+      end)
+    end),
+  }
+  assert(__rt.invoke_async_export(exports, "oracle", "int") == 42)
+end)
+
+test("invoke_async_export propagates operation DEAL errors unchanged", function()
+  local raised = __rt._err("E8005", "integer division by zero",
+      "oracle.deal", 7, 19)
+  local exports = {
+    oracle = __rt.function_("async()->int", function()
+      return __rt.async_start(function()
+        error(raised)
+      end)
+    end),
+  }
+  local ok, err = pcall(__rt.invoke_async_export, exports, "oracle", "int")
+  assert(not ok)
+  assert(type(err) == "table" and err.code == "E8005")
+  assert(err == raised, "the exact DEAL Error table propagates unchanged")
+  assert(err.message == "integer division by zero")
+  assert(err.file == "oracle.deal" and err.line == 7 and err.column == 19)
+end)
+
+test("invoke_async_export propagates awaited DEAL errors unchanged", function()
+  local raised = __rt._err("E8004", "int out of range", "deep.deal", 11, 33)
+  local exports = {
+    oracle = __rt.function_("async()->int", function()
+      return __rt.async_start(function()
+        return coroutine.yield(__rt.async_start(function()
+          error(raised)
+        end))
+      end)
+    end),
+  }
+  local ok, err = pcall(__rt.invoke_async_export, exports, "oracle", "int")
+  assert(not ok)
+  assert(type(err) == "table" and err.code == "E8004")
+  assert(err == raised, "the awaited DEAL Error table propagates unchanged")
+end)
+
+test("invoke_async_export completion validation uses the canonical matcher", function()
+  -- "bytes" is a canonical-only primitive: a broken or legacy-only
+  -- matcher cannot accept this completion.
+  local b = __rt.bytes_new(2)
+  local exportsBytes = {
+    oracle = __rt.function_("async()->bytes", function()
+      return __rt.async_start(function() return b end)
+    end),
+  }
+  assert(__rt.invoke_async_export(exportsBytes, "oracle", "bytes") == b)
+
+  local exportsArr = {
+    oracle = __rt.function_("async()->[int]", function()
+      return __rt.async_start(function() return { 1, 2, 3 } end)
+    end),
+  }
+  local arr = __rt.invoke_async_export(exportsArr, "oracle", "[int]")
+  assert(arr[1] == 1 and arr[2] == 2 and arr[3] == 3)
+
+  local exportsNull = {
+    oracle = __rt.function_("async()->?int", function()
+      return __rt.async_start(function() return __rt.__NULL end)
+    end),
+  }
+  assert(__rt.invoke_async_export(exportsNull, "oracle", "?int")
+      == __rt.__NULL)
+
+  local inst = { __kind = "class", __classname = "@mod/Thing" }
+  local exportsClass = {
+    oracle = __rt.function_("async()->@mod/Thing", function()
+      return __rt.async_start(function() return inst end)
+    end),
+  }
+  assert(__rt.invoke_async_export(exportsClass, "oracle", "@mod/Thing")
+      == inst)
+end)
+
+test("invoke_async_export completion mismatch is a DEAL error, never a host failure", function()
+  local exports = {
+    oracle = __rt.function_("async()->int", function()
+      return __rt.async_start(function() return "not an int" end)
+    end),
+  }
+  local ok, err = pcall(__rt.invoke_async_export, exports, "oracle", "int")
+  assert(not ok)
+  assert(type(err) == "table" and err.code == "E8001")
+  assert(err.__hostInvocationFailure == nil,
+      "completion mismatch must be a DEAL error, not the host signal")
+  local badArr = {
+    oracle = __rt.function_("async()->[int]", function()
+      return __rt.async_start(function() return { 1, "x" } end)
+    end),
+  }
+  ok, err = pcall(__rt.invoke_async_export, badArr, "oracle", "[int]")
+  assert(not ok and type(err) == "table" and err.code == "E8003")
+  assert(err.__hostInvocationFailure == nil)
+end)
+
+test("invoke_async_export missing export raises the host-invocation failure signal", function()
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export({}, "oracle", "int")
+  end, "missing export 'oracle'")
+end)
+
+test("invoke_async_export sync export raises the host-invocation failure signal", function()
+  local exports = {
+    oracle = __rt.function_("()->int", function() return 1 end),
+  }
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export(exports, "oracle", "int")
+  end, "is sync: expected 'async()->int', got '()->int'")
+end)
+
+test("invoke_async_export parameterized export raises the host-invocation failure signal", function()
+  local exports = {
+    oracle = __rt.function_("async(int)->int", function(x)
+      return __rt.async_start(function() return x end)
+    end),
+  }
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export(exports, "oracle", "int")
+  end, "is parameterized: expected 'async()->int', got 'async(int)->int'")
+end)
+
+test("invoke_async_export duplicate export raises the host-invocation failure signal", function()
+  local w = __rt.function_("async()->int", function()
+    return __rt.async_start(function() return 1 end)
+  end)
+  local exports = { oracle = w, alias = w }
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export(exports, "oracle", "int")
+  end, "duplicate export 'oracle'")
+end)
+
+test("invoke_async_export descriptor-mismatched export raises the host-invocation failure signal", function()
+  local exports = {
+    oracle = __rt.function_("async()->string", function()
+      return __rt.async_start(function() return "x" end)
+    end),
+  }
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export(exports, "oracle", "int")
+  end, "signature mismatch: expected 'async()->int', got 'async()->string'")
+  -- A legacy-dialect carried sig is a non-canonical signature: the
+  -- exact-name + exact-signature selection rejects it.
+  local legacy = {
+    oracle = __rt.function_("async()->string|null", function()
+      return __rt.async_start(function() return __rt.__NULL end)
+    end),
+  }
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export(legacy, "oracle", "string")
+  end, "signature mismatch")
+end)
+
+test("invoke_async_export non-wrapper export raises the host-invocation failure signal", function()
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export({ oracle = 42 }, "oracle", "int")
+  end, "not a function wrapper")
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export({ oracle = function() end }, "oracle", "int")
+  end, "not a function wrapper")
+end)
+
+test("invoke_async_export non-operation result raises the host-invocation failure signal", function()
+  -- The carried sig promises the exact async()->R; a wrapper whose .f
+  -- returns a raw value is a non-production export.
+  local exports = {
+    oracle = __rt.function_("async()->int", function() return 42 end),
+  }
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export(exports, "oracle", "int")
+  end, "did not produce an async operation")
+end)
+
+test("invoke_async_export malformed protocol inputs raise the host-invocation failure signal", function()
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export(nil, "oracle", "int")
+  end, "exports must be a table")
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export({}, 42, "int")
+  end, "exportName must be a string")
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export({}, "oracle", "int[]")
+  end, "not a canonical descriptor")
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export({}, "oracle", "Error")
+  end, "not a canonical descriptor")
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export({}, "oracle", nil)
+  end, "not a canonical descriptor")
+end)
+
+test("invoke_async_export invokes exactly one operation per call and never invokes a rejected export", function()
+  local invocations = 0
+  local exports = {
+    oracle = __rt.function_("async()->int", function()
+      invocations = invocations + 1
+      return __rt.async_start(function() return invocations end)
+    end),
+  }
+  assert(__rt.invoke_async_export(exports, "oracle", "int") == 1)
+  assert(invocations == 1)
+  assert(__rt.invoke_async_export(exports, "oracle", "int") == 2)
+  assert(invocations == 2)
+
+  local rejectedCalls = 0
+  local rejected = {
+    oracle = __rt.function_("()->int", function()
+      rejectedCalls = rejectedCalls + 1
+      return 1
+    end),
+  }
+  assert_host_invocation_failure(function()
+    __rt.invoke_async_export(rejected, "oracle", "int")
+  end, "is sync")
+  assert(rejectedCalls == 0, "a rejected export must never be invoked")
+end)
 -- ==================== Summary ====================
 
 print("")

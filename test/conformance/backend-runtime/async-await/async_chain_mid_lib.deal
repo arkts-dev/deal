@@ -1,0 +1,16 @@
+// @expected: companion
+// @description: Classified support module — compiled by the companion
+// catalog when a parent conformance fixture imports it. The v1.2 gate
+// (ISSUE-0107) removes unclassified skips: every .deal file carries an
+// explicit classification, and companions must keep compiling standalone.
+import * as deep from "./async_chain_deep_lib"
+
+export async function midAnswer(): int {
+  let x: int = await deep.deepAnswer();
+  return x + 2;
+}
+
+export async function midText(): string {
+  let s: string = await deep.deepText();
+  return "mid-" + s;
+}

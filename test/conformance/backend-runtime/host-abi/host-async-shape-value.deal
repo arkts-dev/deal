@@ -1,0 +1,16 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: An async host export used as a first-class function value still enforces the async-operation shape check at the call site: a non-operation return is rejected with E8010 before the await machinery ever sees a value.
+// @expected: runtime-error E8010
+// @features: modules, host-abi, async-await, function-values, runtime-errors
+
+import * as host from "host/async_shape_bad"
+
+export async function test_host_async_shape_value(): string {
+  let op: async () => string = host.fetchValue;
+  let fetched: string = await op();
+  return fetched;
+}
+
+export function main(): null {
+  return null;
+}

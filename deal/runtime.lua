@@ -1313,6 +1313,140 @@ function __rt.async_chain(inner, outer)
   end
 end
 
+-- ===== Async export invocation (production host ABI, runtime half) =====
+--
+-- Runtime page D5 / parent D9: the production host half
+-- (LuaJitAsyncExportInvoker, owned by the emitter epic) executes the
+-- compiled entry artifact under real LuaJIT, runs module initialization
+-- and main() exactly once in the same runtime instance, and then calls
+-- this entry with the published exports table, the requested export
+-- name, and the byte-exact canonical return descriptor. This entry is
+-- production, never source-visible and never test-only: generated code
+-- never calls it and no artifact exports it.
+--
+-- Selection: exports must be a table containing exactly one wrapper for
+-- exportName whose carried sig is byte-equal to
+-- "async()->" .. returnDescriptor (canonical grammar, exact async
+-- marker). A missing, sync, parameterized, duplicate,
+-- descriptor-mismatched, or non-production export — and any malformed
+-- protocol input (non-table exports, non-string export name,
+-- non-canonical return descriptor) — raises the host-invocation failure
+-- signal below, never a DEAL error code and never a silent wrong result.
+-- The host half maps exactly this signal to HostInvocationFailure.
+--
+-- Invocation: the selected wrapper is called exactly once; the returned
+-- async handle is driven through the preserved async_step machinery to
+-- completion; the completion value is validated through the canonical
+-- matcher (check_canonical_type) against returnDescriptor and returned.
+-- A DEAL Error raised by the operation propagates unchanged (code and
+-- location intact). Exactly one operation is invoked and completed per
+-- call; no retry; the runtime instance is otherwise unchanged.
+
+--- Build the host-invocation failure signal (runtime page D5).
+-- Raised for every selection/protocol failure of invoke_async_export.
+-- The signal is a table carrying no `code` field and identified by the
+-- __hostInvocationFailure marker, so the host half can never confuse it
+-- with a DEAL error (which always carries `code`) or with a raw Lua
+-- error. The message is a pinned reason string.
+function __rt._host_invocation_failure(reason)
+  return { __hostInvocationFailure = true, message = reason }
+end
+
+--- Invoke one exact async export (production host ABI, runtime half).
+-- Contract: "Async export invocation" on the runtime value-model page.
+function __rt.invoke_async_export(exports, exportName, returnDescriptor)
+  -- Protocol validation: every input is translated to the
+  -- host-invocation failure signal; no raw Lua error escapes.
+  if type(exports) ~= "table" then
+    error(__rt._host_invocation_failure(
+        "exports must be a table, got " .. type(exports)))
+  end
+  if type(exportName) ~= "string" then
+    error(__rt._host_invocation_failure(
+        "exportName must be a string, got " .. type(exportName)))
+  end
+  if type(returnDescriptor) ~= "string"
+      or parse_canonical_descriptor(returnDescriptor) == nil then
+    error(__rt._host_invocation_failure(
+        "return descriptor is not a canonical descriptor: "
+        .. tostring(returnDescriptor)))
+  end
+  local expected_sig = "async()->" .. returnDescriptor
+
+  -- The raw published entry only: the exports surface is the module's
+  -- own table, so no metatable __index participates in selection.
+  local entry = rawget(exports, exportName)
+  if entry == nil then
+    error(__rt._host_invocation_failure(
+        "missing export '" .. exportName .. "'"))
+  end
+  if type(entry) ~= "table" or entry.__kind ~= "function" then
+    error(__rt._host_invocation_failure(
+        "export '" .. exportName .. "' is not a function wrapper"))
+  end
+
+  -- Duplicate: the table must contain the selected wrapper exactly once
+  -- (the entry under exportName). The same wrapper published under any
+  -- second key is a duplicated export surface and is refused. Generated
+  -- modules give every export key its own wrapper table, so this can
+  -- never fire for a legitimate compiled artifact.
+  local occurrences = 0
+  for _, v in pairs(exports) do
+    if v == entry then
+      occurrences = occurrences + 1
+    end
+  end
+  if occurrences ~= 1 then
+    error(__rt._host_invocation_failure(
+        "duplicate export '" .. exportName
+        .. "': the same wrapper appears under multiple export keys"))
+  end
+
+  -- Exact signature selection: sync, parameterized, and
+  -- descriptor-mismatched wrappers are each a distinct pinned reason.
+  if entry.sig ~= expected_sig then
+    local got = tostring(entry.sig or "nil")
+    local parsed = parse_canonical_descriptor(entry.sig)
+    if parsed ~= nil and parsed.kind == "function" and not parsed.isAsync then
+      error(__rt._host_invocation_failure(
+          "export '" .. exportName .. "' is sync: expected '"
+          .. expected_sig .. "', got '" .. got .. "'"))
+    elseif parsed ~= nil and parsed.kind == "function"
+        and #parsed.params > 0 then
+      error(__rt._host_invocation_failure(
+          "export '" .. exportName .. "' is parameterized: expected '"
+          .. expected_sig .. "', got '" .. got .. "'"))
+    else
+      error(__rt._host_invocation_failure(
+          "export '" .. exportName .. "' signature mismatch: expected '"
+          .. expected_sig .. "', got '" .. got .. "'"))
+    end
+  end
+
+  -- Call the wrapper exactly once. The sig above promised the exact
+  -- async()->R; a non-operation result is a non-production wrapper.
+  local handle = entry.f()
+  if type(handle) ~= "table" or handle.__kind ~= "async" then
+    error(__rt._host_invocation_failure(
+        "export '" .. exportName .. "' did not produce an async operation"))
+  end
+
+  -- Drive the preserved async machinery to completion. DEAL errors
+  -- raised inside the operation propagate from async_step unchanged
+  -- (code and location intact).
+  __rt.async_step(handle)
+  if handle.__done ~= true then
+    error(__rt._host_invocation_failure(
+        "export '" .. exportName
+        .. "' async operation did not complete"))
+  end
+
+  -- Matcher-validated completion (runtime page D3). A mismatched
+  -- completion raises a DEAL error through the canonical checker with
+  -- no source span (the host boundary carries no location).
+  return __rt.check_canonical_type(returnDescriptor, handle.__result)
+end
+
 -- ===== Class infrastructure =====
 
 --- Construct a class instance.
