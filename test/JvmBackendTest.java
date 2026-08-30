@@ -26,6 +26,9 @@ import deal.parser.Parser;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ModuleRoute;
+import deal.semantic.RoutePlanResult;
+import deal.semantic.ir.InvocationPurpose;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticProfile;
 import deal.source.ScalarSourceCursor;
@@ -422,6 +425,9 @@ public class JvmBackendTest {
             new TestCase("testInt32TimeBoundary", () -> testInt32TimeBoundary()),
             new TestCase("testInt32BoundarySeamSites", () -> testInt32BoundarySeamSites()),
             new TestCase("testInt32EdgeMatrix", () -> testInt32EdgeMatrix()),
+            new TestCase("testInt32NumberPowBand", () -> testInt32NumberPowBand()),
+            new TestCase("testInt32ArrayAndFieldBoundaries", () -> testInt32ArrayAndFieldBoundaries()),
+            new TestCase("testCommonShadowInvocationPipeline", () -> testCommonShadowInvocationPipeline()),
             new TestCase("testLegacyByteCompat", () -> testLegacyByteCompat()),
             new TestCase("testOrchestratorJvmBackend", () -> testOrchestratorJvmBackend()),
             new TestCase("testOrchestratorDefaultStaysLua", () -> testOrchestratorDefaultStaysLua()),
@@ -7650,7 +7656,12 @@ public class JvmBackendTest {
      * {@code DEAL_V1_2_INT32} invocation, each asserting the exact code
      * (E8004/E8005/E8006/E8001) and message, with in-range cases
      * asserting the correct stored value. Every raise is observed from
-     * the executed artifact — never from reading helper source. */
+     * the executed artifact — never from reading helper source.
+     * ISSUE-0394 pins the two epic pow bands ({@code 2 ** 62} → E8004,
+     * {@code 2 ** 1024} → E8001 infinity) and corrects the truncated
+     * remainder pin {@code -2147483648 % -1} → {@code 0} (the
+     * spec-v1.2 remainder rule; only the division raises on
+     * {@code MIN_VALUE / -1}). */
     private static void testInt32EdgeMatrix() throws Exception {
         System.out.println("-- Int32 signed32 helper edge matrix (full pipeline) --");
 
@@ -7658,17 +7669,23 @@ public class JvmBackendTest {
         List<EdgePin> pins = List.of(
             new EdgePin("add-overflow", "return 2147483647 + 1;",
                 "E8004 int out of safe range"),
+            new EdgePin("add-underflow", "return -2147483648 + (-1);",
+                "E8004 int out of safe range"),
             new EdgePin("min-literal-in-range",
                 "let x: int = -2147483648;\n      return x;",
                 "-2147483648"),
             new EdgePin("sub-underflow", "return -2147483648 - 1;",
                 "E8004 int out of safe range"),
+            new EdgePin("sub-overflow", "return 2147483647 - (-1);",
+                "E8004 int out of safe range"),
             new EdgePin("mul-overflow", "return 50000 * 50000;",
+                "E8004 int out of safe range"),
+            new EdgePin("mul-underflow", "return -50000 * 50000;",
                 "E8004 int out of safe range"),
             new EdgePin("div-min-by-minus-one", "return -2147483648 / -1;",
                 "E8004 int out of safe range"),
             new EdgePin("mod-min-by-minus-one", "return -2147483648 % -1;",
-                "E8004 int out of safe range"),
+                "0"),
             new EdgePin("div-by-zero", "return 1 / 0;",
                 "E8005 integer division by zero"),
             new EdgePin("mod-by-zero", "return 1 % 0;",
@@ -7680,6 +7697,10 @@ public class JvmBackendTest {
                 "E8006 integer exponent must be non-negative"),
             new EdgePin("pow-out-of-range", "return 2 ** 31;",
                 "E8004 int out of safe range"),
+            new EdgePin("pow-band-62", "return 2 ** 62;",
+                "E8004 int out of safe range"),
+            new EdgePin("pow-band-1024", "return 2 ** 1024;",
+                "E8001 expected int, got infinity"),
             new EdgePin("pow-nonfinite", "return 10 ** 400;",
                 "E8001 expected int, got infinity"),
             new EdgePin("pow-in-range", "return 2 ** 30;", "1073741824"),
@@ -7753,6 +7774,34 @@ public class JvmBackendTest {
         check(!subJava.contains("checkInt(2147483648L)"),
             "the -2147483648 - 1 literal operand never crosses the "
                 + "out-of-range checkInt gate");
+
+        // ISSUE-0394 direct literal emission: under the profile-aware
+        // parser's E1036 guarantee the int32 branch emits plain Java int
+        // literals with no point-of-use literal check (the legacy
+        // point-of-use checkInt literal gate exists only in the legacy
+        // branch).
+        String maxSource = "export function main(): null { return null; }\n"
+            + "export function test(): int {\n      let x: int = 2147483647;\n"
+            + "      return x;\n    }\n";
+        String maxJava = int32Artifact(maxSource, "max_literal_artifact");
+        check(maxJava.contains("int x = 2147483647;"),
+            "the int32 branch emits the max literal directly (in range by "
+                + "E1036, no point-of-use literal check): "
+                + maxJava.lines().filter(l -> l.contains("2147483647"))
+                .findFirst().orElse("<missing>"));
+        check(!maxJava.contains("checkInt(2147483647L)"),
+            "no point-of-use literal check exists in the int32 branch");
+        String legacyMaxJava = legacyArtifact("""
+            export function test(): int {
+              let x: int = 9223372036854775807;
+              return x;
+            }
+            """, "legacy_max_literal_artifact");
+        check(legacyMaxJava.contains("long x = checkInt(9223372036854775807L);"),
+            "the legacy point-of-use literal check stays in the legacy "
+                + "branch only: "
+                + legacyMaxJava.lines().filter(l -> l.contains("checkInt"))
+                .findFirst().orElse("<missing>"));
 
         // The integration proof over the plumbed profile (T1): the same
         // add-overflow program under the untouched DEFAULT invocation
@@ -7847,6 +7896,332 @@ public class JvmBackendTest {
                 && over.output().contains(
                     "DEAL_ERROR_CODE: E8004 int out of safe range"),
             "legacy safe-range overflow gate unchanged: " + over.output());
+    }
+
+    /** The v1.2 IEEE number-pow wrapper (ISSUE-0394): under
+     * {@code DEAL_V1_2_INT32} the emitted number {@code **} call is
+     * {@code numPow(...)} — the pinned IEEE-754 wrapper correcting the
+     * two Java-vs-IEEE deviations ({@code pow(1.0, NaN)} and
+     * {@code pow(±1.0, ±Infinity)}) — while the
+     * {@code LEGACY_SAFE_INT} emission stays the byte-identical raw
+     * {@code java.lang.Math.pow} call (whose Java contract yields NaN on
+     * exactly those two cases — the legacy negative controls prove the
+     * wrapper is profile-gated). Every band case compiles and runs
+     * through the full pipeline under the explicit
+     * {@code DEAL_V1_2_INT32} invocation. */
+    private static void testInt32NumberPowBand() throws Exception {
+        System.out.println("-- Int32 IEEE number-pow band (numPow wrapper, full pipeline) --");
+
+        // Emission pins: legacy keeps the raw Math.pow call
+        // byte-identical; int32 emits the numPow wrapper with the pinned
+        // corrections.
+        String src = """
+            export function main(): null { return null; }
+            export function test(): number { return 2.0 ** 3.0; }
+            """;
+        String legacy = legacyArtifact(src, "numpow_legacy");
+        check(legacy.contains("java.lang.Math.pow(2.0, 3.0)"),
+            "legacy number pow keeps the raw Math.pow call: "
+                + legacy.lines().filter(l -> l.contains("Math.pow"))
+                .findFirst().orElse("<missing>"));
+        check(!legacy.contains("numPow"),
+            "no numPow wrapper leaks into the legacy artifact");
+        String i32 = int32Artifact(src, "numpow_i32");
+        check(i32.contains("numPow(2.0, 3.0)"),
+            "int32 number pow emits the numPow wrapper call: "
+                + i32.lines().filter(l -> l.contains("numPow"))
+                .findFirst().orElse("<missing>"));
+        check(i32.contains("static double numPow(double a, double b) { if (a == 1.0 && java.lang.Double.isNaN(b)) return 1.0; if (java.lang.Math.abs(a) == 1.0 && java.lang.Double.isInfinite(b)) return 1.0; return java.lang.Math.pow(a, b); }"),
+            "int32 artifact carries the pinned IEEE numPow helper (the "
+                + "two Java-vs-IEEE corrections)");
+        check(!i32.contains("java.lang.Math.pow(2.0, 3.0)"),
+            "no raw Math.pow call at the user number-pow site under v1.2");
+
+        // Full-pipeline band: one real compiled+executed program per
+        // pinned IEEE case under the explicit DEAL_V1_2_INT32
+        // invocation.
+        record PowPin(String name, String body, String expected) {}
+        List<PowPin> pins = List.of(
+            new PowPin("one-pow-nan", "return 1.0 ** (0.0 / 0.0);", "1.0"),
+            new PowPin("neg-one-pow-infinity", "return (-1.0) ** (1.0 / 0.0);", "1.0"),
+            new PowPin("zero-pow-zero", "return 0.0 ** 0.0;", "1.0"),
+            new PowPin("zero-pow-neg-one", "return 0.0 ** -1.0;", "Infinity"),
+            new PowPin("neg-two-pow-half", "return (-2.0) ** 0.5;", "NaN"),
+            new PowPin("two-pow-1024", "return 2.0 ** 1024.0;", "Infinity"),
+            new PowPin("two-pow-neg-1075", "return 2.0 ** -1075.0;", "0.0"),
+            new PowPin("nan-pow-zero", "return (0.0 / 0.0) ** 0.0;", "1.0"),
+            new PowPin("two-pow-ten", "return 2.0 ** 10.0;", "1024.0"),
+            new PowPin("neg-two-pow-three", "return (-2.0) ** 3.0;", "-8.0"));
+        for (PowPin pin : pins) {
+            String source = "export function main(): null { return null; }\n"
+                + "export function test(): number {\n      " + pin.body() + "\n"
+                + "    }\n";
+            ExecResult r = runInt32Project(source, "numpow_" + pin.name());
+            check(r.exitCode() == 0,
+                pin.name() + " run exits 0: " + r.output());
+            check(r.output().contains(pin.expected()),
+                pin.name() + " yields exactly " + pin.expected() + ": "
+                    + r.output());
+        }
+
+        // Legacy negative controls: under LEGACY_SAFE_INT the raw Java
+        // Math.pow contract stays byte-identical, so the two deviation
+        // cases yield NaN (proving the IEEE corrections are
+        // profile-gated).
+        ExecResult legacyOne = runLegacyProject("""
+            export function main(): null { return null; }
+            export function test(): number { return 1.0 ** (0.0 / 0.0); }
+            """, "numpow_one_nan");
+        check(legacyOne.exitCode() == 0
+                && legacyOne.output().contains("NaN"),
+            "legacy 1.0 ** NaN keeps the raw Java Math.pow NaN result: "
+                + legacyOne.output());
+        ExecResult legacyNegOne = runLegacyProject("""
+            export function main(): null { return null; }
+            export function test(): number { return (-1.0) ** (1.0 / 0.0); }
+            """, "numpow_neg_one_inf");
+        check(legacyNegOne.exitCode() == 0
+                && legacyNegOne.output().contains("NaN"),
+            "legacy (-1.0) ** Infinity keeps the raw Java Math.pow NaN "
+                + "result: " + legacyNegOne.output());
+    }
+
+    /** The int32 declared-boundary E8004 pins for the array-element and
+     * class-field sites (ISSUE-0394 verification): under
+     * {@code DEAL_V1_2_INT32} a wider value (the retained time
+     * expression) crossing an {@code int[]} element-write boundary or a
+     * class int-field construction boundary raises exactly E8004
+     * {@code int out of safe range} once at the boundary, the emitted
+     * artifact wraps the retained expression in the signed32
+     * {@code checkInt}, and the untouched default invocation keeps the
+     * legacy shape and does not raise. */
+    private static void testInt32ArrayAndFieldBoundaries() throws Exception {
+        System.out.println("-- Int32 array-element and class-field boundary E8004 --");
+
+        String arraySource = """
+            import * as time from "std/time"
+            export function main(): null { return null; }
+            export function test(): int {
+              let xs: int[] = [0];
+              xs[0] = time.nowMillis();
+              return xs[0];
+            }
+            """;
+        ExecResult arr = runInt32Project(arraySource, "array_element_boundary");
+        check(arr.exitCode() == 1, "int32 array element write run exits 1: "
+            + arr.output());
+        check(countOccurrences(arr.output(),
+                "DEAL_ERROR_CODE: E8004 int out of safe range") == 1,
+            "array element write raises exactly E8004 once at the "
+                + "boundary: " + arr.output());
+        String arrJava = int32Artifact(arraySource, "array_element_artifact");
+        check(arrJava.contains("__intArrayWrite(xs, 0, checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L))"),
+            "the int[] element write routes through the signed32 "
+                + "checkInt: "
+                + arrJava.lines().filter(l -> l.contains("__intArrayWrite"))
+                .findFirst().orElse("<missing>"));
+
+        String fieldSource = """
+            import * as time from "std/time"
+            export class C {
+              f: int;
+            }
+            export function main(): null { return null; }
+            export function test(): int {
+              let c: C = {f: time.nowMillis()};
+              return c.f;
+            }
+            """;
+        ExecResult field = runInt32Project(fieldSource, "class_field_boundary");
+        check(field.exitCode() == 1, "int32 class field boundary run exits 1: "
+            + field.output());
+        check(countOccurrences(field.output(),
+                "DEAL_ERROR_CODE: E8004 int out of safe range") == 1,
+            "class int-field construction boundary raises exactly E8004 "
+                + "once: " + field.output());
+        String fieldJava = int32Artifact(fieldSource, "class_field_artifact");
+        check(fieldJava.contains("long __t0 = (java.lang.System.currentTimeMillis() / 1000L) * 1000L;"),
+            "the class construction materializes the retained time "
+                + "expression in its byte-identical long temp: "
+                + fieldJava.lines().filter(l -> l.contains("__t0"))
+                .findFirst().orElse("<missing>"));
+        check(fieldJava.contains("new $C_C(checkInt(__t0))"),
+            "the class int-field boundary routes through the signed32 "
+                + "checkInt: "
+                + fieldJava.lines().filter(l -> l.contains("new $C_C"))
+                .findFirst().orElse("<missing>"));
+        check(!fieldJava.contains("new $C_C((java.lang.System.currentTimeMillis() / 1000L)"),
+            "no bare long pass-through at the class int-field boundary");
+
+        // Legacy controls: the default invocation keeps the
+        // byte-identical unwrapped retained expression and the programs
+        // run green.
+        ExecResult legacyArr = runLegacyProject(arraySource,
+            "array_element_boundary_legacy");
+        check(legacyArr.exitCode() == 0,
+            "legacy array element write runs green (no int32 gate): "
+                + legacyArr.output());
+        ExecResult legacyField = runLegacyProject(fieldSource,
+            "class_field_boundary_legacy");
+        check(legacyField.exitCode() == 0,
+            "legacy class field boundary runs green (no int32 gate): "
+                + legacyField.output());
+    }
+
+    /** Compiles and runs one real program through the full pipeline
+     * under the supplied invocation (any closed purpose×profile
+     * combination), asserting the recorded int32 mode and the all-LEGACY
+     * route plan for the {@code COMMON_SHADOW + DEAL_V1_2_INT32 +
+     * PRE_ACTIVATION} matrix before executing the artifact. */
+    private static ExecResult runInvocationProject(String source, String name,
+                                                   CompilerInvocation invocation)
+            throws Exception {
+        writeFile("src/inv_" + name + ".deal", source);
+        Path entryFile = tmpDir.get().resolve("src/inv_" + name + ".deal")
+            .toAbsolutePath().normalize();
+        Path outputRoot = tmpDir.get().resolve("build/inv_" + name);
+        List<Path> roots = List.of(
+            tmpDir.get().resolve("src").toAbsolutePath());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputRoot, false, false, false, false,
+            Backend.JVM, null, roots,
+            Path.of(".").toAbsolutePath().normalize(), null, invocation);
+        boolean ok = orchestrator.compile();
+        check(ok, "invocation orchestrator compile succeeds for " + name
+            + ": " + orchestrator.diagnostics());
+        if (!ok) return new ExecResult("", 1);
+        JvmBackend.JvmCodegenResult res =
+            orchestrator.jvmGeneratedResults().get(entryFile.toString());
+        check(res != null && res.int32Mode(),
+            "the v1.2 invocation plumbs the real stored int32 mode for "
+                + name);
+        RoutePlanResult routePlan = orchestrator.routePlan();
+        check(routePlan != null && routePlan.plan() != null
+                && routePlan.plan().entries().values().stream()
+                    .allMatch(r -> r == ModuleRoute.LEGACY)
+                && routePlan.plan().shadowModules().isEmpty(),
+            "the invocation routes every implementation module LEGACY "
+                + "with no shadow entries for " + name);
+        if (res == null || !res.int32Mode()) return new ExecResult("", 1);
+        Frontend f = compileFrontend(source, "inv_" + name + ".deal");
+        Files.writeString(outputRoot.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(f.program(),
+                res.className()));
+        List<String> javaFiles = new ArrayList<>();
+        try (var stream = Files.list(outputRoot)) {
+            stream.filter(p -> p.toString().endsWith(".java"))
+                  .sorted()
+                  .forEach(p -> javaFiles.add(p.getFileName().toString()));
+        }
+        StringBuilder javacErr = new StringBuilder();
+        boolean javacOk = BackendConformanceTest.compileWithJavac(outputRoot,
+            javaFiles, javacErr);
+        if (!javacOk) {
+            throw new RuntimeException("javac failed for " + name + ": "
+                + javacErr);
+        }
+        ProcessBuilder java = new ProcessBuilder("java", "-cp",
+            outputRoot.toString(), "JvmConformanceRunner");
+        java.redirectErrorStream(true);
+        Process p2 = java.start();
+        String out = new String(p2.getInputStream().readAllBytes()).trim();
+        int exit = p2.waitFor();
+        return new ExecResult(out, exit);
+    }
+
+    /** The combined T1+T3 verification (ISSUE-0394): the profile flows
+     * from a {@code COMMON_SHADOW + DEAL_V1_2_INT32 + PRE_ACTIVATION}
+     * invocation (the closed invocation matrix) through phase-0 parsing
+     * (the profile-aware E1036 gate: in-range literals admitted,
+     * {@code 2147483648} rejected) into the JVM emitter (the recorded
+     * real int32 mode) — and the compiled artifact executes the pinned
+     * edges correctly. A faulted invocation matrix, parser gate, or
+     * emitter profile seam fails here. */
+    private static void testCommonShadowInvocationPipeline() throws Exception {
+        System.out.println("-- COMMON_SHADOW + DEAL_V1_2_INT32 + PRE_ACTIVATION: parser gate → JVM emitter pipeline --");
+
+        CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+            CapabilityRegistry.releaseRegistry());
+        check(invocation.purpose() == InvocationPurpose.COMMON_SHADOW
+                && invocation.semanticProfile()
+                    == SemanticProfile.DEAL_V1_2_INT32
+                && invocation.releaseState() == ReleaseState.PRE_ACTIVATION,
+            "the invocation matrix admits COMMON_SHADOW + DEAL_V1_2_INT32 "
+                + "under PRE_ACTIVATION");
+
+        // In-range literal boundaries through phase-0 parsing plus the
+        // pinned int32 remainder edge: -2147483648 % -1 runs to the
+        // in-range truncated remainder 0.
+        ExecResult mod = runInvocationProject("""
+            export function main(): null { return null; }
+            export function test(): int {
+              let a: int = 2147483647;
+              let b: int = -2147483648;
+              return a + b + (-2147483648 % -1);
+            }
+            """, "inv_mod_min", invocation);
+        check(mod.exitCode() == 0, "invocation mod run exits 0: "
+            + mod.output());
+        check(mod.output().contains("-1"),
+            "2147483647 + (-2147483648) + (MIN % -1 = 0) stores -1 "
+                + "(in-range literals admitted by the parser gate): "
+                + mod.output());
+
+        // The pinned pow band through the same invocation.
+        ExecResult pow62 = runInvocationProject("""
+            export function main(): null { return null; }
+            export function test(): int { return 2 ** 62; }
+            """, "inv_pow_62", invocation);
+        check(pow62.exitCode() == 1
+                && pow62.output().contains(
+                    "DEAL_ERROR_CODE: E8004 int out of safe range"),
+            "2 ** 62 raises exactly E8004 through the COMMON_SHADOW "
+                + "pipeline: " + pow62.output());
+        ExecResult pow1024 = runInvocationProject("""
+            export function main(): null { return null; }
+            export function test(): int { return 2 ** 1024; }
+            """, "inv_pow_1024", invocation);
+        check(pow1024.exitCode() == 1
+                && pow1024.output().contains(
+                    "DEAL_ERROR_CODE: E8001 expected int, got infinity"),
+            "2 ** 1024 raises exactly E8001 infinity through the "
+                + "COMMON_SHADOW pipeline: " + pow1024.output());
+
+        // The v1.2 IEEE number-pow wrapper through the same invocation.
+        ExecResult numPow = runInvocationProject("""
+            export function main(): null { return null; }
+            export function test(): number { return 1.0 ** (0.0 / 0.0); }
+            """, "inv_numpow_one_nan", invocation);
+        check(numPow.exitCode() == 0
+                && numPow.output().contains("1.0"),
+            "1.0 ** NaN yields exactly 1.0 through the COMMON_SHADOW "
+                + "pipeline (the v1.2 numPow wrapper): " + numPow.output());
+
+        // The parser-gate negative through the same invocation: the bare
+        // 2147483648 literal reaches phase 0 and raises E1036 before any
+        // backend emission.
+        writeFile("src/inv_e1036.deal", """
+            export function main(): null { return null; }
+            export function test(): int { return 2147483648; }
+            """);
+        Path entryFile = tmpDir.get().resolve("src/inv_e1036.deal")
+            .toAbsolutePath().normalize();
+        Path outputRoot = tmpDir.get().resolve("build/inv_e1036");
+        List<Path> roots = List.of(
+            tmpDir.get().resolve("src").toAbsolutePath());
+        CompilationOrchestrator e1036 = new CompilationOrchestrator(
+            entryFile, outputRoot, false, false, false, false,
+            Backend.JVM, null, roots,
+            Path.of(".").toAbsolutePath().normalize(), null, invocation);
+        boolean e1036Ok = e1036.compile();
+        check(!e1036Ok,
+            "the bare 2147483648 literal fails the compile under the "
+                + "COMMON_SHADOW v1.2 invocation");
+        check(e1036.diagnostics().stream()
+                .anyMatch(d -> "E1036".equals(d.code())),
+            "the parser gate raises exactly E1036 for 2147483648 under "
+                + "the v1.2 profile: " + e1036.diagnostics());
     }
 
     private static void testOrchestratorJvmBackend() throws Exception {

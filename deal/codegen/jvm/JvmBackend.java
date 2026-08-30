@@ -3512,14 +3512,23 @@ public final class JvmBackend {
             emitLine("static int intAdd(int a, int b) { try { return java.lang.Math.addExact(a, b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
             emitLine("static int intSub(int a, int b) { try { return java.lang.Math.subtractExact(a, b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
             emitLine("static int intMul(int a, int b) { try { return java.lang.Math.multiplyExact(a, b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            // Truncating division/remainder: -2147483648 / -1 overflows the
+            // signed32 range (E8004 via the pre-check); the truncated
+            // remainder -2147483648 % -1 is the in-range 0 — the
+            // spec-v1.2 remainder rule, identical to the retained LuaJIT
+            // math.modf reference shape (ISSUE-0394).
             emitLine("static int intDiv(int a, int b) { if (b == 0) throw new DealError(\"E8005\", \"integer division by zero\"); if (a == java.lang.Integer.MIN_VALUE && b == -1) throw new DealError(\"E8004\", \"int out of safe range\"); return a / b; }");
-            emitLine("static int intMod(int a, int b) { if (b == 0) throw new DealError(\"E8005\", \"integer division by zero\"); if (a == java.lang.Integer.MIN_VALUE && b == -1) throw new DealError(\"E8004\", \"int out of safe range\"); return a % b; }");
+            emitLine("static int intMod(int a, int b) { if (b == 0) throw new DealError(\"E8005\", \"integer division by zero\"); return a % b; }");
             // NaN/Infinity first (deal/runtime.lua check_int parity); only
             // finite values outside the signed32 range report E8004.
             emitLine("static int intPow(int a, int b) { if (b < 0) throw new DealError(\"E8006\", \"integer exponent must be non-negative\"); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (p > 2147483647.0 || p < -2147483648.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (int) p; }");
             emitLine("static int intNeg(int a) { try { return java.lang.Math.negateExact(a); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
             emitLine("// number %: Lua-style floored modulo (a - floor(a/b)*b), unlike Java's truncated %.");
             emitLine("static double numMod(double a, double b) { return a - java.lang.Math.floor(a / b) * b; }");
+            emitLine("// number **: IEEE-754 pow with the pinned v1.2 special-case table");
+            emitLine("// (SharedValueSemantics.numberPow): pow(1.0, NaN) = 1.0 and");
+            emitLine("// pow(±1.0, ±Infinity) = 1.0 — the two Java-vs-IEEE deviations — corrected before Math.pow.");
+            emitLine("static double numPow(double a, double b) { if (a == 1.0 && java.lang.Double.isNaN(b)) return 1.0; if (java.lang.Math.abs(a) == 1.0 && java.lang.Double.isInfinite(b)) return 1.0; return java.lang.Math.pow(a, b); }");
             emitLine("// int(v) / number(v) conversion intrinsics (E8001 bad value, E8004 out of range).");
             emitLine("static int intFromNumber(double v) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v > 2147483647.0 || v < -2147483648.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (int) v; }");
             emitLine("static double numberFromInt(int v) { return (double) v; }");
@@ -8275,16 +8284,12 @@ public final class JvmBackend {
             case LiteralValue.IntLiteral i -> {
                 long v = i.value();
                 if (int32Mode) {
-                    // ISSUE-0375: under DEAL_V1_2_INT32 an in-range
-                    // literal renders as a plain Java int literal; an
-                    // out-of-signed32 literal routes through the
-                    // signed32 checkInt (E8004 at the point of use) —
-                    // never a silent narrowing, and the frontend-owned
-                    // E1036 gate is not landed yet, so the backend must
-                    // stay fail-safe for such literals.
-                    if (v > 2147483647L || v < -2147483648L) {
-                        yield "checkInt(" + v + "L)";
-                    }
+                    // ISSUE-0394 (retained JVM route, I5): int literal
+                    // emission under DEAL_V1_2_INT32 is direct — the
+                    // profile-aware parser's E1036 gate (ISSUE-0392)
+                    // guarantees every literal reaching the backend is
+                    // inside [-2147483648, 2147483647], so the int32
+                    // branch has no point-of-use literal check.
                     yield String.valueOf(v);
                 }
                 if (v > 9007199254740991L || v < -9007199254740991L) {
@@ -9099,7 +9104,9 @@ public final class JvmBackend {
                 case MUL -> "(" + left + " * " + right + ")";
                 case DIV -> "(" + left + " / " + right + ")";
                 case MOD -> "numMod(" + left + ", " + right + ")";
-                case POW -> "java.lang.Math.pow(" + left + ", " + right + ")";
+                case POW -> int32Mode
+                    ? "numPow(" + left + ", " + right + ")"
+                    : "java.lang.Math.pow(" + left + ", " + right + ")";
                 case EQ -> "(" + left + " == " + right + ")";
                 case NEQ -> "(" + left + " != " + right + ")";
                 case LT -> "(" + left + " < " + right + ")";
@@ -10290,21 +10297,19 @@ public final class JvmBackend {
             case NEG -> {
                 Type t = typeOf(u.expr());
                 if (t instanceof Type.Int) {
-                    // ISSUE-0375: under DEAL_V1_2_INT32 the valid int32
-                    // minimum literal spelling `-2147483648` parses as
-                    // NEG(IntLiteral 2147483648) — the operand alone is
-                    // out of the signed32 gate range, but the negation is
-                    // the in-range minimum the inclusive gate admits
-                    // (the pinned frontend contract:
-                    // int32-literal-min-via-unary-minus.deal is
-                    // compile-ok). Fold exactly this shape into the Java
-                    // int literal -2147483648 (JLS 3.10.1 admits
-                    // 2147483648 only as the unary-minus operand), so the
-                    // gate never sees the out-of-range half. Literals
-                    // outside this foldable shape keep the checkInt
-                    // fail-safe (E8004 at the point of use), and the
-                    // legacy profile keeps its byte-identical
-                    // intNeg(2147483648L) emission untouched.
+                    // ISSUE-0375 fold, re-anchored for ISSUE-0392: the
+                    // profile-aware parser folds the immediate-minus
+                    // spelling into the combined literal
+                    // IntLiteral(-2147483648), so the full v1.2 pipeline
+                    // never reaches this arm with the out-of-range half.
+                    // Legacy-parsed ASTs entering the int32 backend
+                    // directly still carry NEG(IntLiteral 2147483648) —
+                    // fold exactly this shape into the Java int literal
+                    // -2147483648 (JLS 3.10.1 admits 2147483648 only as
+                    // the unary-minus operand), so the gate never sees
+                    // the out-of-range half. The legacy profile keeps
+                    // its byte-identical intNeg(2147483648L) emission
+                    // untouched.
                     if (int32Mode && u.expr() instanceof LiteralExpr lit
                             && lit.value() instanceof LiteralValue.IntLiteral i
                             && i.value() == 2147483648L) {
