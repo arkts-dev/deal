@@ -570,6 +570,52 @@
       ],
       "expectedError": "E8012",
       "expectedExitCode": 1
+    },
+    {
+      "name": "js-host-function-boundary-ok",
+      "description": "js-host-function-boundary-ok",
+      "source": "import * as host from \"host/greet\"\nexport function test(): string {\n  let s: string = host.greet(\"deal\");\n  return s;\n}",
+      "backends": [
+        "js"
+      ],
+      "hosts": {
+        "host/greet": {
+          "declaration": "export function greet(name: string): string;",
+          "js": "\"use strict\";\nmodule.exports = { greet: function (name) { return \"hello \" + name; } };\n"
+        }
+      },
+      "expectedOutput": "hello deal"
+    },
+    {
+      "name": "js-host-class-construction-ok",
+      "description": "js-host-class-construction-ok",
+      "source": "import * as cfg from \"host/cfg\"\nexport function test(): string {\n  let s: cfg.ServerConfig = {\n    port: 9090,\n    endpoint: { path: \"/api\" },\n    tags: [\"dev\"],\n    note: null,\n  };\n  if (s.port !== 9090) {\n    throw { code: \"TEST_FAIL\", message: \"port\" };\n  }\n  let described: string = cfg.describe(s);\n  return described;\n}",
+      "backends": [
+        "js"
+      ],
+      "hosts": {
+        "host/cfg": {
+          "declaration": "export class Endpoint {\n  path: string;\n}\nexport class ServerConfig {\n  port: int;\n  endpoint: Endpoint;\n  tags?: string[];\n  note?: string | null;\n}\nexport function describe(s: ServerConfig): string;",
+          "js": "\"use strict\";\nmodule.exports = {\n  Endpoint: { $kind: \"class\", $classname: \"@$external/host/cfg/Endpoint\" },\n  Endpoint_defaults: { path: \"/\" },\n  ServerConfig: { $kind: \"class\", $classname: \"@$external/host/cfg/ServerConfig\" },\n  ServerConfig_defaults: { port: 8080 },\n  describe: function (s) { return s.endpoint.path + \":\" + s.port; },\n};\n"
+        }
+      },
+      "expectedOutput": "/api:9090"
+    },
+    {
+      "name": "js-host-missing-export-e8011",
+      "description": "js-host-missing-export-e8011",
+      "source": "import * as host from \"host/missing\"\nexport function test(): string {\n  return host.ping();\n}",
+      "backends": [
+        "js"
+      ],
+      "hosts": {
+        "host/missing": {
+          "declaration": "export function ping(): string;\nexport function missing(): int;",
+          "js": "\"use strict\";\nmodule.exports = { ping: function () { return \"pong\"; } };\n"
+        }
+      },
+      "expectedError": "E8011",
+      "expectedExitCode": 1
     }
   ]
 }

@@ -2,14 +2,14 @@
 
 // Host fixture implementation for the host-class-export conformance
 // test (host-module-abi D6 + runtime-class-identity D1-D2). Each
-// declared class export carries its module-qualified identity META and
+// declared class export carries its canonical externals identity META and
 // a <C>_defaults table (construction depends on both). Absent optional
 // fields are marked MISSING by the loader from the declared field
 // metadata, so the defaults tables carry only the defaulted values.
 module.exports = {
   Endpoint: {
     $kind: "class",
-    $classname: "@host.cfg/Endpoint",
+    $classname: "@$external/host/cfg/Endpoint",
   },
 
   Endpoint_defaults: {
@@ -18,7 +18,7 @@ module.exports = {
 
   ServerConfig: {
     $kind: "class",
-    $classname: "@host.cfg/ServerConfig",
+    $classname: "@$external/host/cfg/ServerConfig",
   },
 
   ServerConfig_defaults: {

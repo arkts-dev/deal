@@ -1,12 +1,17 @@
 package deal.test;
 
+import deal.ast.ClassDeclaration;
+import deal.ast.ClassField;
+import deal.ast.ExportDeclaration;
 import deal.ast.ProgramNode;
+import deal.ast.StatementNode;
 import deal.checker.CheckResult;
 import deal.checker.ModuleResolver;
 import deal.checker.NameResolver;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.codegen.Backend;
+import deal.codegen.js.HostModuleDeclarations;
 import deal.codegen.js.JsBackend;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
@@ -18,6 +23,7 @@ import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.module.CompilationOrchestrator;
 import deal.module.DealConfig;
+import deal.module.ExportExtractor;
 import deal.module.DealConfig.DealConfigParseResult;
 import deal.module.ModuleIdentityResolver;
 import deal.module.ModuleShapeValidator;
@@ -107,6 +113,8 @@ public class JsBackendTest {
             testArrayElementDeleteEmission();
             testHostGlobalHygiene();
             testUnsupportedConstructsRejected();
+            testHostAbiEmissionPins();
+            testHostAbiOrchestratorNode();
             testSourceMapSidecarsEmitted();
             testIntArithmeticEdgeCodes();
             testInt32ProfileSelectorEmission();
@@ -336,7 +344,7 @@ public class JsBackendTest {
     private static JsBackend.JsCodegenResult generate(String source, String name,
                                                       String modulePath,
                                                       Map<String, String> importResolutions,
-                                                      Map<String, Map<String, Type>> hostModules,
+                                                      Map<String, HostModuleDeclarations> hostModules,
                                                       boolean isEntry) {
         Frontend f = compileFrontend(source, "jstest-" + name + ".deal");
         if (f.program() == null) {
@@ -1773,22 +1781,11 @@ public class JsBackendTest {
         // arm retired with ISSUE-0318: the passing emission pins live
         // in testNestedClassEmissionPins().
 
-        // Host ABI (non-stdlib declaration-file import): E6000 at the
-        // import statement.
-        JsBackend.JsCodegenResult host = generate("""
-            import * as h from "./hostmod"
-            export function test(): int { return 1; }
-            """, "rej-host", "Main", Map.of(),
-            Map.of("./hostmod", Map.<String, Type>of()), false);
-        check(host != null && host.hasErrors(), "host-module import rejected");
-        if (host != null) {
-            check(host.diagnostics().stream().anyMatch(d ->
-                    "E6000".equals(d.code())
-                        && d.message().contains("host-module imports")
-                        && d.range().startLine() == 1),
-                "host-ABI rejection is E6000 at the import statement: "
-                    + host.diagnostics());
-        }
+        // The host-ABI E6000 arm retired with ISSUE-0328
+        // (js-v12-host-abi-completion D1): a host-module import emits
+        // the $rt.loadHost binding with the declared map — the passing
+        // emission and runtime pins live in
+        // testHostAbiEmissionPins/testHostAbiOrchestratorNode.
 
         // @extern-c import: E6003 with the EXACT current detail text
         // (the JSON-slice-corpus rejection-detail pin migrated here,
@@ -1807,7 +1804,8 @@ public class JsBackendTest {
             import * as ffi from "myffi"
             export function test(): int { return 1; }
             """, "rej-extern", "Main", Map.of(),
-            Map.of("myffi", Map.<String, Type>of()), false);
+            Map.of("myffi", new HostModuleDeclarations(Map.of(), Map.of())),
+            false);
         check(extern != null && extern.hasErrors(), "@extern-c import rejected");
         if (extern != null) {
             check(extern.diagnostics().stream().anyMatch(d ->
@@ -1835,6 +1833,395 @@ public class JsBackendTest {
         check(bytesClean != null && !bytesClean.hasErrors(),
             "the retired defensive bytes rejection never fires: "
                 + (bytesClean == null ? "<null>" : bytesClean.diagnostics()));
+    }
+
+
+    /**
+     * The ISSUE-0328 host-ABI emission pins
+     * (js-v12-host-abi-completion D1/D4): the retired E6000 arm's
+     * successor — the loadHost import binding, the emitter-rendered
+     * declared map (canonical function descriptors; canonical externals
+     * class identities plus the declared field-descriptor array), and
+     * the D4 read-site deferral (a host-call argument emits the raw
+     * expression — the boundary wrapper raises E8010, never a read-site
+     * E8001).
+     */
+    private static void testHostAbiEmissionPins() throws Exception {
+        System.out.println("-- Host ABI: loadHost binding, declared map, boundary deferral (ISSUE-0328) --");
+        String q = "\"";
+        HostModuleDeclarations fnDecl = new HostModuleDeclarations(
+            Map.of("hostFn", new Type.Func(List.of(Type.Int.INSTANCE),
+                Type.Int.INSTANCE)),
+            Map.of());
+
+        // (1) The host import binding: the raw specifier verbatim with
+        // the project-import relative rule, the declared map rendered
+        // per export, and the member call through the wrapper $f.
+        Frontend fnFrontend = compileFrontend("""
+            import * as h from "./hostmod"
+            export function test(): int { return h.hostFn(1); }
+            """, "jstest-host-abi-fn.deal",
+            new FixedModuleResolver(Map.of("./hostmod",
+                Map.of("hostFn", new Type.Func(
+                    List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)))));
+        if (fnFrontend.program() == null) {
+            fail("host-abi fn frontend failed: " + fnFrontend.errors());
+            return;
+        }
+        check(fnFrontend.errors().isEmpty(),
+            "the host import type-checks through the resolver: "
+                + fnFrontend.errors());
+        JsBackend.JsCodegenResult fn = JsBackend.generate(
+            fnFrontend.program(), fnFrontend.checkResult(),
+            "jstest-host-abi-fn.deal", "Main", Map.of(),
+            Map.of("./hostmod", fnDecl), false);
+        check(fn != null && !fn.hasErrors(),
+            "the host function import generates with no diagnostics: "
+                + (fn == null ? "<null>" : fn.diagnostics()));
+        if (fn != null && !fn.hasErrors()) {
+            String js = fn.source();
+            check(js.contains("$rt.loadHost($require(" + q + "./hostmod"
+                    + q + "), {" + q + "hostFn" + q + ": { $k: " + q
+                    + "function" + q + ", $d: " + q + "(int)->int" + q
+                    + " }})"),
+                "the host binding renders the loadHost call with the raw "
+                    + "specifier and the canonical function declared map: "
+                    + js);
+            check(js.contains("h.hostFn.$f(1, "),
+                "host member calls route through the wrapper $f");
+        }
+
+        // (1b) The nested-module relative rule: a nested emitting module
+        // requires the bare host specifier with the ../ prefix — the
+        // same project-import relative rule, applied to the raw
+        // specifier verbatim.
+        Frontend nestedFrontend = compileFrontend("""
+            import * as h from "host/mod"
+            export function test(): int { return h.hostFn(1); }
+            """, "jstest-host-abi-nested.deal",
+            new FixedModuleResolver(Map.of("host/mod",
+                Map.of("hostFn", new Type.Func(
+                    List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)))));
+        if (nestedFrontend.program() == null) {
+            fail("host-abi nested frontend failed: "
+                + nestedFrontend.errors());
+            return;
+        }
+        check(nestedFrontend.errors().isEmpty(),
+            "the bare host import type-checks through the resolver: "
+                + nestedFrontend.errors());
+        JsBackend.JsCodegenResult nested = JsBackend.generate(
+            nestedFrontend.program(), nestedFrontend.checkResult(),
+            "jstest-host-abi-nested.deal", "app.main", Map.of(),
+            Map.of("host/mod", fnDecl), false);
+        check(nested != null && !nested.hasErrors(),
+            "the nested host import generates with no diagnostics: "
+                + (nested == null ? "<null>" : nested.diagnostics()));
+        if (nested != null && !nested.hasErrors()) {
+            check(nested.source().contains(
+                    "$rt.loadHost($require(" + q + "../host/mod" + q + "), {"),
+                "the nested emitting module requires ../host/mod — the "
+                    + "same relative rule every project import uses: "
+                    + nested.source());
+        }
+
+        // (2) D4 read-site deferral: a typed table read materializing a
+        // host-call argument emits the raw expression — no E8001
+        // read-site check — and the runtime boundary wrapper raises the
+        // pinned E8010 parameter mismatch under node.
+        Frontend deferFrontend = compileFrontend("""
+            import * as h from "./hostmod"
+            export function test(): int {
+              let holder: table = { item: "x" };
+              return h.hostFn(holder.item);
+            }
+            """, "jstest-host-abi-defer.deal",
+            new FixedModuleResolver(Map.of("./hostmod",
+                Map.of("hostFn", new Type.Func(
+                    List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)))));
+        if (deferFrontend.program() == null) {
+            fail("host-abi defer frontend failed: "
+                + deferFrontend.errors());
+            return;
+        }
+        check(deferFrontend.errors().isEmpty(),
+            "the deferred host-argument case type-checks: "
+                + deferFrontend.errors());
+        JsBackend.JsCodegenResult defer = JsBackend.generate(
+            deferFrontend.program(), deferFrontend.checkResult(),
+            "jstest-host-abi-defer.deal", "Main", Map.of(),
+            Map.of("./hostmod", fnDecl), false);
+        check(defer != null && !defer.hasErrors(),
+            "the deferred host-argument case generates with no "
+                + "diagnostics: " + (defer == null ? "<null>"
+                    : defer.diagnostics()));
+        if (defer != null && !defer.hasErrors()) {
+            String js = defer.source();
+            check(js.contains("h.hostFn.$f(holder.get(" + q + "item" + q
+                    + "), "),
+                "the host-call argument is the raw table read (D4 "
+                    + "read-site deferral, no pre-check): " + js);
+            check(!js.contains("checkType(" + q + "int" + q
+                    + ", holder"),
+                "no read-site checkType wraps the host-call argument");
+            if (nodeAvailable) {
+                try {
+                    Path dir = deployArtifacts(defer, "Main.js");
+                    Files.writeString(dir.resolve("hostmod.js"),
+                        "\"use strict\";\n"
+                        + "module.exports = { hostFn: function (x) {\n"
+                        + "  return x + 1;\n"
+                        + "} };\n");
+                    Files.writeString(dir.resolve("JsConformanceRunner.js"),
+                        BackendConformanceTest.buildJsRunner(
+                            compileFrontend("""
+                            import * as h from "./hostmod"
+                            export function test(): int {
+                              let holder: table = { item: "x" };
+                              return h.hostFn(holder.item);
+                            }
+                            """, "jstest-host-abi-defer-run.deal",
+                            new FixedModuleResolver(Map.of("./hostmod",
+                                Map.of("hostFn",
+                                    new Type.Func(List.of(Type.Int.INSTANCE),
+                                        Type.Int.INSTANCE)))))
+                            .program()));
+                    NodeResult run = runNodeScript(dir,
+                        "JsConformanceRunner.js");
+                    check(run.exitCode() == 1
+                            && run.output().contains("DEAL_ERROR_CODE: E8010")
+                            && run.output().contains(
+                                "parameter 1 type mismatch"),
+                        "the boundary wrapper raises E8010 for the "
+                            + "wrong-kind host argument, never a read-site "
+                            + "E8001: exit " + run.exitCode()
+                            + ", output '" + run.output() + "'");
+                    deleteDir(dir);
+                } catch (Exception e) {
+                    fail("host-abi deferral node run: " + e.getMessage());
+                }
+            } else {
+                skipNode("host-abi deferral node run");
+            }
+        }
+
+        // (3) The class declared map: canonical externals identity plus
+        // the declared field-descriptor array — parsed and resolved
+        // through the same ExportExtractor surface the orchestrator
+        // gather uses, generated over the production seam with the host
+        // module's externals classification.
+        String declSource = """
+            export class Endpoint {
+              path: string;
+            }
+            export class ServerConfig {
+              port: int;
+              endpoint: Endpoint;
+              tags?: string[];
+              note?: string | null;
+            }
+            export function describe(s: ServerConfig): string;
+            """;
+        LexResult dlex = new Lexer(declSource, "hostmod.d.deal").tokenize();
+        check(dlex != null && !dlex.hasErrors(),
+            "the host declaration lexes clean");
+        if (dlex == null || dlex.hasErrors()) return;
+        ParseResult dparse = new Parser(dlex.tokens(), "hostmod.d.deal")
+            .parse();
+        check(dparse != null && !dparse.hasErrors(),
+            "the host declaration parses clean");
+        if (dparse == null || dparse.hasErrors()) return;
+        ExportExtractor extractor = new ExportExtractor("hostmod", true);
+        Map<String, Type> declExports = extractor.extract(dparse.program());
+        Map<String, List<HostModuleDeclarations.HostField>> declFields =
+            new LinkedHashMap<>();
+        for (StatementNode stmt : dparse.program().statements()) {
+            ClassDeclaration cd = null;
+            if (stmt instanceof ClassDeclaration c) {
+                cd = c;
+            } else if (stmt instanceof ExportDeclaration ed
+                    && ed.declaration() instanceof ClassDeclaration c) {
+                cd = c;
+            }
+            if (cd == null) continue;
+            List<HostModuleDeclarations.HostField> fields =
+                new ArrayList<>();
+            for (ClassField cf : cd.fields()) {
+                fields.add(new HostModuleDeclarations.HostField(cf,
+                    extractor.resolveFieldType(cf.type())));
+            }
+            declFields.putIfAbsent(cd.name(), fields);
+        }
+
+        Map<String, CanonicalModuleIdentity> byPath =
+            new LinkedHashMap<>();
+        byPath.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        byPath.put("Main", new CanonicalModuleIdentity.ProjectModule(
+            new ProjectModuleIdentity("Main", "Main", List.of())));
+        byPath.put("hostmod",
+            new CanonicalModuleIdentity.ExternalModule("hostmod"));
+        ModuleIdentityResolver.IdentityIndex index =
+            ModuleIdentityResolver.buildIndex(byPath);
+
+        Frontend cf = compileFrontend("""
+            import * as cfg from "./hostmod"
+            export function test(): null { return null; }
+            """, "jstest-host-abi-class.deal",
+            new FixedModuleResolver(Map.of("./hostmod", declExports)));
+        if (cf.program() == null) {
+            fail("host-abi class frontend failed: " + cf.errors());
+            return;
+        }
+        JsBackend.JsCodegenResult cls = JsBackend.generate(cf.program(),
+            cf.checkResult(), "jstest-host-abi-class.deal", "Main",
+            Map.of(), Map.of("./hostmod",
+                new HostModuleDeclarations(declExports, declFields)),
+            false, index, index.moduleIdentityLookup(), null,
+            SemanticProfile.LEGACY_SAFE_INT);
+        check(cls != null && !cls.hasErrors(),
+            "the host class declared map generates clean: "
+                + (cls == null ? "<null>" : cls.diagnostics()));
+        if (cls != null && !cls.hasErrors()) {
+            String js = cls.source();
+            check(js.contains("$k: " + q + "class" + q + ", $d: " + q
+                    + "@$external/hostmod/ServerConfig" + q),
+                "the class entry carries the canonical externals "
+                    + "identity: " + js);
+            check(js.contains("{ name: " + q + "endpoint" + q + ", $d: "
+                    + q + "@$external/hostmod/Endpoint" + q
+                    + ", optional: false, nullable: false, "
+                    + "hasDefault: false }"),
+                "the same-module class field descriptor resolves to the "
+                    + "declaring module's canonical identity: " + js);
+            check(js.contains("{ name: " + q + "tags" + q + ", $d: " + q
+                    + "[string]" + q + ", optional: true, nullable: false,"
+                    + " hasDefault: false }"),
+                "the optional array field renders the canonical [D] "
+                    + "descriptor and the optional flag: " + js);
+            check(js.contains("{ name: " + q + "note" + q + ", $d: " + q
+                    + "?string" + q + ", optional: true, nullable: true,"
+                    + " hasDefault: false }"),
+                "the nullable optional field renders the canonical ?D "
+                    + "descriptor and both flags: " + js);
+            check(js.contains(q + "describe" + q + ": { $k: " + q
+                    + "function" + q + ", $d: " + q
+                    + "(@$external/hostmod/ServerConfig)->string" + q
+                    + " }"),
+                "the class-typed parameter descriptor projects the "
+                    + "canonical identity inside the function entry: "
+                    + js);
+        }
+    }
+
+    /**
+     * The orchestrator-level host-ABI chain (ISSUE-0328): a real
+     * deal.json externals wiring, the declaration-file gather with
+     * class-field records, frontend host-class symbol synthesis, the
+     * emitted loadHost artifact, and a node execution through a
+     * deployed host implementation — the E6000 successor pin.
+     */
+    private static void testHostAbiOrchestratorNode() throws Exception {
+        System.out.println("-- Orchestrator: host ABI end-to-end under node (ISSUE-0328) --");
+
+        writeFile("hostjs_proj/deal.json",
+            "{\"languageVersion\": \"1.2\", \"backend\": \"js\",\n"
+            + " \"externals\": {\"host/cfg\": {\"declaration\": "
+            + "\"bindings/cfg.d.deal\"}}}\n");
+        writeFile("hostjs_proj/bindings/cfg.d.deal", """
+            export class Endpoint {
+              path: string;
+            }
+            export class ServerConfig {
+              port: int;
+              endpoint: Endpoint;
+              tags?: string[];
+              note?: string | null;
+            }
+            export function describe(s: ServerConfig): string;
+            """);
+        writeFile("hostjs_proj/src/hostjs_main.deal", """
+            import * as cfg from "host/cfg"
+            export function main(): null {
+              let s: cfg.ServerConfig = {
+                port: 9090,
+                endpoint: { path: "/api" },
+                tags: ["dev"],
+                note: null,
+              };
+              let described: string = cfg.describe(s);
+              if (described !== "/api:9090") {
+                throw { code: "TEST_FAIL", message: "described" };
+              }
+              return null;
+            }
+            """);
+
+        Path entryFile = tmpDir.resolve(
+            "hostjs_proj/src/hostjs_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("hostjs_proj/build/js");
+        List<Path> roots = List.of(tmpDir.resolve(
+            "hostjs_proj/src").toAbsolutePath());
+        DealConfig config = DealConfig.load(tmpDir.resolve(
+            "hostjs_proj")).config();
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JS, config,
+            roots, Path.of(".").toAbsolutePath().normalize());
+        boolean success = orchestrator.compile();
+        check(success, "the host-ABI project compiles (the E6000 arm "
+            + "retired): " + orchestrator.diagnostics());
+        if (!success) return;
+        check(orchestrator.diagnostics().stream()
+                .noneMatch(d -> "E6000".equals(d.code())),
+            "no E6000 is reported for the host-ABI project: "
+                + orchestrator.diagnostics());
+        Path entryArtifact = outputDir.resolve("hostjs_main.js");
+        check(Files.exists(entryArtifact),
+            "the entry artifact is written for the host-ABI project");
+        if (Files.exists(entryArtifact)) {
+            String js = Files.readString(entryArtifact);
+            check(js.contains("$rt.loadHost($require(" + q()
+                    + "./host/cfg" + q() + "), {"),
+                "the emitted binding loads the raw host specifier "
+                    + "verbatim with the project-import relative rule: "
+                    + js);
+            check(js.contains(q() + "@$external/host/cfg/ServerConfig"
+                    + q()),
+                "the declared class map carries the canonical externals "
+                    + "identity: " + js);
+        }
+
+        if (nodeAvailable) {
+            writeFile("hostjs_proj/build/js/host/cfg.js", """
+                "use strict";
+                module.exports = {
+                  Endpoint: { $kind: "class", $classname: "@$external/host/cfg/Endpoint" },
+                  Endpoint_defaults: { path: "/" },
+                  ServerConfig: { $kind: "class", $classname: "@$external/host/cfg/ServerConfig" },
+                  ServerConfig_defaults: { port: 8080 },
+                  describe: function (s) { return s.endpoint.path + ":" + s.port; },
+                };
+                """);
+            ProcessBuilder node = new ProcessBuilder("node",
+                "hostjs_main.js");
+            node.directory(outputDir.toFile());
+            node.redirectErrorStream(true);
+            Process np = node.start();
+            String nout = new String(np.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8).trim();
+            int nrc = np.waitFor();
+            check(nrc == 0 && nout.isEmpty(),
+                "node hostjs_main.js constructs the declared host class, "
+                    + "crosses the boundary, and reads the described "
+                    + "value: exit " + nrc + ", output '" + nout + "'");
+        } else {
+            skipNode("orchestrator host-ABI node run");
+        }
+    }
+
+    /** The quote character as a string (emission-pin assertions). */
+    private static String q() {
+        return "\"";
     }
 
     private static void testSourceMapSidecarsEmitted() throws Exception {
@@ -4431,20 +4818,23 @@ public class JsBackendTest {
         System.out.println("-- Orchestrator: no-partial-artifact on rejection --");
 
         // The retired @jsonable rejection (js-v12-jsonable-completion
-        // D1) and the retired nested-class rejection (ISSUE-0318) no
-        // longer drive this two-pass pin; the still-live host-ABI
-        // E6000 arm keeps the no-partial-artifact rejection model
-        // covered — the rejected lib writes no artifact while the
-        // clean sibling entry still writes its own (the single-module
-        // host-ABI model lives in testNoPartialArtifactOnRejection).
+        // D1), the retired nested-class rejection (ISSUE-0318), and the
+        // retired host-ABI E6000 (ISSUE-0328 — the passing model lives
+        // in testHostAbiOrchestratorNode) no longer drive this two-pass
+        // pin; the still-live @extern-c E6003 arm keeps the
+        // no-partial-artifact rejection model covered — the rejected
+        // lib writes no artifact while the clean sibling entry still
+        // writes its own (the single-module model lives in
+        // testNoPartialArtifactOnRejection).
         writeFile("rej_proj/deal.json",
             "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}");
-        writeFile("rej_proj/src/host.d.deal", """
-            export function hostFn(x: int): int;
+        writeFile("rej_proj/src/ffi.d.deal", """
+            export function cFn(x: int): int;
             """);
         writeFile("rej_proj/src/lib.deal", """
-            import * as host from "./host"
-            export function use(): int { return host.hostFn(1); }
+            // @extern-c
+            import * as ffi from "./ffi"
+            export function use(): int { return ffi.cFn(1); }
             """);
         writeFile("rej_proj/src/rej_main.deal", """
             import * as lib from "./lib"
@@ -4461,10 +4851,10 @@ public class JsBackendTest {
             entryFile, outputDir, false, false, false, Backend.JS, config, roots,
             Path.of(".").toAbsolutePath().normalize());
         boolean success = orchestrator.compile();
-        check(!success, "the host-ABI project fails the compilation");
+        check(!success, "the @extern-c project fails the compilation");
         check(orchestrator.diagnostics().stream().anyMatch(d ->
-                "E6000".equals(d.code())),
-            "the orchestrator reports E6000: " + orchestrator.diagnostics());
+                "E6003".equals(d.code())),
+            "the orchestrator reports E6003: " + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("lib.js")),
             "the rejected module writes no artifact");
         check(Files.exists(outputDir.resolve("rej_main.js")),
@@ -4654,9 +5044,11 @@ public class JsBackendTest {
     }
 
     /**
-     * No-partial-artifact: a host-ABI import (a non-stdlib declaration
-     * file) is rejected with E6000 and the rejected module writes no
-     * artifact.
+     * No-partial-artifact: an {@code @extern-c} import (the retained
+     * E6003 rejection) fails the compilation and the rejected module
+     * writes no artifact — the rejection model the retired host-ABI
+     * E6000 arm used to cover (ISSUE-0328 retired that arm; the
+     * host-ABI passing model lives in testHostAbiOrchestratorNode).
      */
     private static void testNoPartialArtifactOnRejection() throws Exception {
         Path projectDir = null;
@@ -4665,13 +5057,14 @@ public class JsBackendTest {
             Files.writeString(projectDir.resolve("deal.json"),
                 "{\n  \"languageVersion\": \"1.2\",\n  \"backend\": \"js\"\n}\n",
                 StandardCharsets.UTF_8);
-            Files.writeString(projectDir.resolve("host.d.deal"),
-                "export function hostFn(x: int): int;\n",
+            Files.writeString(projectDir.resolve("ffi.d.deal"),
+                "export function cFn(x: int): int;\n",
                 StandardCharsets.UTF_8);
             Files.writeString(projectDir.resolve("main.deal"),
-                "import * as host from \"./host\";\n\n"
+                "// @extern-c\n"
+                    + "import * as ffi from \"./ffi\";\n\n"
                     + "export function main(): null {\n"
-                    + "  let v: int = host.hostFn(1);\n"
+                    + "  let v: int = ffi.cFn(1);\n"
                     + "  return null;\n"
                     + "}\n",
                 StandardCharsets.UTF_8);
@@ -4684,17 +5077,13 @@ public class JsBackendTest {
                     configResult.config(), List.of(projectDir),
                     Path.of("").toAbsolutePath().normalize());
             boolean ok = orchestrator.compile();
-            check(!ok, "a host-ABI import fails the JS compilation");
+            check(!ok, "an @extern-c import fails the JS compilation");
             check(orchestrator.diagnostics().stream()
-                    .anyMatch(d -> "E6000".equals(d.code())),
-                "the rejection is E6000: " + orchestrator.diagnostics());
-            check(orchestrator.diagnostics().stream()
-                    .noneMatch(d -> "E6003".equals(d.code())),
-                "the host-ABI rejection is E6000, not E6003: "
-                    + orchestrator.diagnostics());
+                    .anyMatch(d -> "E6003".equals(d.code())),
+                "the rejection is E6003: " + orchestrator.diagnostics());
             check(!Files.exists(outputRoot.resolve("main.js")),
                 "no entry artifact is written for the rejected module");
-            check(!Files.exists(outputRoot.resolve("host.js")),
+            check(!Files.exists(outputRoot.resolve("ffi.js")),
                 "no artifact is written for the declaration file");
         } finally {
             deleteDir(projectDir);
