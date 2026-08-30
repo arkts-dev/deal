@@ -63,6 +63,7 @@ javac --release 25 -proc:none -d build \
   test/DescriptorServiceTest.java \
   test/ContainerPayloadDescriptorsTest.java \
   test/BoundaryExecutorTest.java \
+  test/ComparisonExecutorTest.java \
   test/UnicodeScalarsTest.java \
   test/FailureContractRegistryTest.java \
   test/CanonicalJsonTest.java \
@@ -273,6 +274,10 @@ java -ea -cp build deal.test.ContainerPayloadDescriptorsTest
 echo ""
 echo "=== Running Boundary Executor Tests (ISSUE-0364 D3) ==="
 java -ea -cp build deal.test.BoundaryExecutorTest
+
+echo ""
+echo "=== Running Comparison Operand View and Executor Tests (ISSUE-0406, ISSUE-0234 B-D1/B-D2/B-D4) ==="
+java -ea -cp build deal.test.ComparisonExecutorTest
 
 echo "=== Running Unicode Scalars Tests (ISSUE-0382, ISSUE-0232 D5) ==="
 java -ea -cp build deal.test.UnicodeScalarsTest
