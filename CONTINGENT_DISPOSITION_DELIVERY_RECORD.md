@@ -9,9 +9,17 @@ non-applied form, and capture the verification evidence the task pins
 Verification 1–10; `luajit-v1.2-stdlib-contracts` D6;
 `luajit-v1.2-conformance-retirement-and-gate` D3).
 
-Canonical revision: `b8d4fe0a39873794698ed78ced3cccbd9fa7ec63` (the
+Canonical revision: `3886b534122159dc4b981aed8c40fcbb1788f67f` (the
 engine-imported canonical HEAD; the mandated rebase replays this
-record's commit onto it).
+record's commits onto it). The prior anchor was
+`b8d4fe0a39873794698ed78ced3cccbd9fa7ec63`; the landings in between are
+ISSUE-0339's LuaJIT bytes/int-unary-negation emitter slice with the
+`bytes-buffer-ops` promotion, ISSUE-0342's std/json int32 number mapping
+and stringify shape rejection, ISSUE-0328/0329's JS host-ABI emitter and
+production async-export invoker, and ISSUE-0417's
+LuaJitAsyncExportInvoker component and tests — none of them touches a
+disposition surface (section 2), and every locator below is re-verified
+against the new anchor (section 6).
 
 Verdict: every authoritative repository record names the resolution as
 **not yet landed** — the pending state is intact at the canonical HEAD.
@@ -37,7 +45,7 @@ canonical HEAD; **none names a landed disposition pair**:
 | Runner staged-registry doc | `test/ConformanceTest.java:144-161` | "the shared corpus fixture keeps its `runtime-ok` expectation and `std/time.lua` stays frozen until the delegated time-selector child (ISSUE-0237) lands its disposition pair" |
 | Conformance status doc | `docs/v1.2-conformance-status.md:24-28` | "Until the ISSUE-0237 resolution lands its disposition pair, the LuaJIT backend-runtime gate additionally records one tracked staged failure (`stdlib-edge/time-now-millis-positive.deal`, locked E8004 artifact)" |
 | Shared fixture header | `test/conformance/backend-runtime/stdlib-edge/time-now-millis-positive.deal:3` | `// @expected: runtime-ok` (no `runtime-error` text; exactly one `@expected` line) |
-| Direct stdlib suite | `test_stdlib.lua:1070-1076` | the two `nowMillis` cases assert the locked E8004 artifact through `assert_error_code` |
+| Direct stdlib suite | `test_stdlib.lua:1111-1117` | the two `nowMillis` cases assert the locked E8004 artifact through `assert_error_code` |
 
 Determination: the resolution landing record does not name exactly one
 landed disposition pair — the resolution is pending. **No delivery is
@@ -91,13 +99,21 @@ pinned pre-unit staged state (`PRE_UNIT_STAGED_STATE_PIN.md`):
   canonical HEAD: ISSUE-0333 (`ddeed8e`) split the header comment into
   two lines (+1) and the ISSUE-0336 canonical descriptor cutover
   (`c0b708d`, merged `7aff920d`, MR-0270) reworked the file head (+4).
-- Direct suite: the two E8004 cases sit at `test_stdlib.lua:1070-1076`
-  and stay exactly as landed.
+  The landings between the prior anchor and this one change
+  `deal/runtime.lua` only below the gate: ISSUE-0342 (`3c70d788`, merged
+  `3886b534`) narrowed `_json_is_int` to the signed-int32 range
+  (`:1430-1447`, int32 branch `:1443`) and expanded its doc comment —
+  the gate stays `:83-84`.
+- Direct suite: the two E8004 cases sit at `test_stdlib.lua:1111-1117`
+  (ISSUE-0342 inserted the four std/json int32 cases above them, +41
+  lines) and stay exactly as landed.
 - Pin test `test/StdlibTimePreActivationPinTest.java`:
   `testRetainedLuaImplementation` `:95-109` (pins `std/time.lua:9-10`
   byte-exactly), `testRuntimeSeam` `:125-150` (pins the profile-gated JS
   seam: `setInt32Mode`, module-private `$int32`, the single `checkInt`
-  range arm whose ±(2^53−1) legacy branch sits at `deal/runtime.js:1235`),
+  range arm whose ±(2^53−1) legacy branch sits at `deal/runtime.js:1236`
+  — ISSUE-0329's header expansion moved it +1 from the prior anchor's
+  `:1235`; the profile-gated condition spans `:1234-1236`),
   `testFixtureHeader` `:156-180` (pins the pre-activation `runtime-ok`
   header, no `runtime-error` text, exactly one `@expected` line);
   lifecycle note `:33-45` (the fixture-header assertions are the
@@ -203,7 +219,7 @@ profile-gated seam and are permanent per the lifecycle note; the task's
 "retired by the JS activation owner" language is the pre-landing
 formulation, already executed by ISSUE-0369 — see the T1 record §2.5);
 `std/time.lua` (byte-identical — branch 1 changes no implementation);
-`deal/runtime.lua`; `deal/runtime.js`; `test_stdlib.lua:1070-1076`; and
+`deal/runtime.lua`; `deal/runtime.js`; `test_stdlib.lua:1111-1117`; and
 the lock files (`StdlibFunctionId.java`, `SemanticCapability.java`,
 `MigrationPlanner.java`, `LoweringSupport.java`).
 
@@ -276,7 +292,7 @@ exercise (section 5.2), and the repository-clean check. Captured output:
   [runner registry doc] pending: '... stays frozen until the delegated time-selector child (ISSUE-0237) lands its disposition pair' (test/ConformanceTest.java:144-161)
   [conformance status doc] pending: 'Until the ISSUE-0237 resolution lands its disposition pair, the LuaJIT backend-runtime gate additionally records one tracked staged failure' (docs/v1.2-conformance-status.md:24-28)
   [fixture header] pending: '// @expected: runtime-ok' at :3, no runtime-error text, exactly one @expected line
-  [direct suite] pending: the two nowMillis cases assert the locked E8004 artifact (test_stdlib.lua:1070-1076)
+  [direct suite] pending: the two nowMillis cases assert the locked E8004 artifact (test_stdlib.lua:1111-1117)
   determination: no authoritative record names a landed disposition pair — the resolution is pending; no delivery, no edit, no landing
 ```
 
@@ -309,11 +325,22 @@ changed; every scratch tree deleted (`git status --porcelain
 `=== All Tests Passed ===`. LuaJIT conformance summary:
 
 ```text
-Total: 390, Passed: 390, Failed: 0, Skipped: 0, KnownFailures (tracked): 4, StagedFailures (tracked): 1
+Total: 405, Passed: 405, Failed: 0, Skipped: 0, KnownFailures (tracked): 3, StagedFailures (tracked): 1
 Companions (classified support modules): 32
   Frontend conformance (v1.2 grammar and semantics): 115/118 passed, 0 failed, 0 skipped, 3 known-fail (tracked), 0 staged-fail (tracked)
-  LuaJIT backend-runtime conformance (v1.2): 275/277 passed, 0 failed, 0 skipped, 1 known-fail (tracked), 1 staged-fail (tracked)
+  LuaJIT backend-runtime conformance (v1.2): 290/291 passed, 0 failed, 0 skipped, 0 known-fail (tracked), 1 staged-fail (tracked)
 ```
+
+Count note: the LuaJIT lane grew 390 → 405 across the re-anchor —
+ISSUE-0339 (`8d6a78f4`) added 11 backend-runtime fixtures (the bytes
+emitter family with the E8012/E8013 and source-location pins, plus
+`arithmetic/int-neg-min` and its source-location pin) and promoted
+`bytes-buffer-ops.deal` from known-fail to `runtime-ok` in the same slice
+(LuaJIT known-fails 4 → 3; the backend-runtime known-fail 1 → 0), and
+ISSUE-0342 added the three `stdlib/json` fixtures
+(`int32-boundary-parse`, `json-stringify-bytes-error`,
+`json-stringify-roundtrip`). The pins that matter — 0 failed, 0 skipped,
+exactly one staged entry naming this fixture and ISSUE-0237 — all hold.
 
 The ISSUE-0420 gate-closure strict gate is dormant under the exact
 sanctioned pre-unit registry pair — no assertion, no extra output
@@ -325,12 +352,15 @@ The single staged entry is exactly the locked time fixture:
   [backend-runtime/stdlib-edge/time-now-millis-positive.deal] STAGED-FAIL (E8004 locked artifact; tracked by ISSUE-0237: the retained std/time.nowMillis ()->int route raises E8004 for contemporary epoch milliseconds under the signed-int32 gate (locked TIME_NOW_MILLIS artifact); the fixture's runtime-ok expectation and std/time.lua are frozen until the delegated time-selector child lands its disposition pair)
 ```
 
-Pin test: `Passed: 36, Failed: 0`; direct LuaJIT stdlib suite
+Pin test: `Passed: 36, Failed: 0`; the direct LuaJIT stdlib suite reports
+`Stdlib Results: 154 passed, 0 failed` (ISSUE-0342's four std/json int32
+mapping cases run in it) and the stdlib contract tests report
 `Passed: 60, Failed: 0, Skipped: 0`; the async-export
 driver suite (landed `e220da0`, ISSUE-0416) reports `All 20 async export
-driver tests passed`; lock-running suites green (`LoweringSupportTest`,
-`MigrationPlannerTest` with `testTimeConflictNeverShared`, and all
-remaining suites in the same run).
+driver tests passed`; the LuaJIT async-export invoker suite (ISSUE-0417,
+landed `49fca619`/`cb27bb18`) reports `OK (35 tests)`; lock-running
+suites green (`LoweringSupportTest`, `MigrationPlannerTest` with
+`testTimeConflictNeverShared`, and all remaining suites in the same run).
 
 ### 5.4 History discipline (task's Discipline verification)
 
@@ -361,7 +391,11 @@ this record and its script; the committed diff contains
 script), plus a two-line locator-comment correction in the T2 script
 `verify_both_branches_scratch.sh` (its stale-promotion citations
 re-anchored to the canonical HEAD after the ISSUE-0420 +160-line
-insertion: `:461-466` → `:621-626`, `:626-629` → `:786-789`).
+insertion: `:461-466` → `:621-626`, `:626-629` → `:786-789`). This
+re-anchor commit updates the record's sections 1/2/5/6 against
+`3886b534` and the gate script's direct-suite echo site
+(`test_stdlib.lua:1070-1076` → `:1111-1117`); the diff surface stays the
+same (the two new files plus the T2 script's comment correction).
 
 ## 6. Locator register (task citations vs the canonical HEAD)
 
@@ -375,13 +409,13 @@ insertion: `:461-466` → `:621-626`, `:626-629` → `:786-789`).
 | Pin-test `testRuntimeSeam` | `:123-149` | `:125-150` | same |
 | Pin-test `testFixtureHeader` | `:150-179` | `:156-180` | same |
 | Pin-test lifecycle note | `:33-43` | `:33-45` | same |
-| `deal/runtime.lua` int32 gate | `:78-79` | `:83-84` (range check `:83`, raise `:84`) | cumulative +5: ISSUE-0333 (`ddeed8e`) header-comment split (+1); ISSUE-0336 canonical descriptor cutover (`c0b708d`, MR-0270) reworked the file head (+4) |
-| `deal/runtime.js` ±(2^53−1) arm | `:427-428` | `:1235` (legacy branch of the profile-gated condition `:1233-1235`) | ISSUE-0321 landed the profile-gated seam |
-| `test_stdlib.lua` nowMillis cases | `:1034-1042` | `:1070-1076` | `bc93e41` re-pinned both cases to `assert_error_code` |
+| `deal/runtime.lua` int32 gate | `:78-79` | `:83-84` (range check `:83`, raise `:84`) | cumulative +5: ISSUE-0333 (`ddeed8e`) header-comment split (+1); ISSUE-0336 canonical descriptor cutover (`c0b708d`, MR-0270) reworked the file head (+4); ISSUE-0342 changed only the JSON section below the gate (`_json_is_int` `:1430-1447`, int32 branch `:1443`) — the gate stays `:83-84` |
+| `deal/runtime.js` ±(2^53−1) arm | `:427-428` | `:1236` (legacy branch of the profile-gated condition `:1234-1236`) | ISSUE-0321 landed the profile-gated seam; ISSUE-0329 (`bfbd528c`) expanded the file header (+1) and appended the invokeAsyncExport surface at the tail |
+| `test_stdlib.lua` nowMillis cases | `:1034-1042` | `:1111-1117` | `bc93e41` re-pinned both cases to `assert_error_code`; ISSUE-0342 (`3c70d788`) inserted the four std/json int32 cases above (+41) |
 | `StdlibFunctionId.java` reservation | `:50-52`, `:51` | exact | — |
 | `MigrationPlanner.java` rule 2 | `:287-288` | `:287-288` | — |
 | `LoweringSupport.java` Arms A–D | — | `:74-122` | — |
-| Pin-test launch in `run_tests.sh` | `:436` | `:513` | later suites added launch blocks above; the rebase-added async-export driver suite (`e220da0`, ISSUE-0416) inserted seven lines above it |
+| Pin-test launch in `run_tests.sh` | `:436` | echo `:517`, java `:518` | later suites added launch blocks above; the rebase-added async-export driver suite (`e220da0`, ISSUE-0416) inserted seven lines above it; ISSUE-0417 added the LuaJitAsyncExportInvokerTest launch block above it (+5: one compile-list line, four launch lines) |
 
 ## 7. Conclusion
 
@@ -391,8 +425,11 @@ intact, no disposition edit exists in the working tree or the history,
 the recorded change sets are delivered only inside the disposition-
 application unit after the landing, the combined-behavior verification
 reproduces the branch-1 matching pass and both branches' pair results by
-their specified mechanisms, and `./run_tests.sh` exits 0. This record's
-own lifecycle is the pre-unit audit state: when the resolution lands, the
-unit delivers the recorded branch change set and this pending-state pin
-(and the T1/T2 artifacts it consumes) is superseded by the unit's
-post-activation state.
+their specified mechanisms, and `./run_tests.sh` exits 0. The record was
+re-anchored at the canonical HEAD `3886b534` after the mandated rebase;
+every locator in sections 1, 2, 5, and 6 was re-read against it, the
+deltas registered in section 6, and the verification evidence in
+section 5 re-captured from fresh runs. This record's own lifecycle is the
+pre-unit audit state: when the resolution lands, the unit delivers the
+recorded branch change set and this pending-state pin (and the T1/T2
+artifacts it consumes) is superseded by the unit's post-activation state.

@@ -155,7 +155,7 @@ scan_landing_records() {
     || die "landing record changed: test_stdlib.lua nowMillis E8004 case missing"
   grep -Fq 'test("time.nowMillis ratio case raises E8004 under the signed-int32 gate", function()' "$PIN_STDLIB_SUITE" \
     || die "landing record changed: test_stdlib.lua nowMillis ratio E8004 case missing"
-  echo "  [direct suite] pending: the two nowMillis cases assert the locked E8004 artifact (test_stdlib.lua:1070-1076)"
+  echo "  [direct suite] pending: the two nowMillis cases assert the locked E8004 artifact (test_stdlib.lua:1111-1117)"
 
   echo "  determination: no authoritative record names a landed disposition pair — the resolution is pending; no delivery, no edit, no landing"
 }
