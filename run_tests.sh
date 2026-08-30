@@ -69,6 +69,7 @@ javac --release 25 -proc:none -d build \
   test/FailureContractRegistryTest.java \
   test/CanonicalJsonTest.java \
   test/SemanticIrValidatorTest.java \
+  test/BoundaryTableCorpusTest.java \
   test/ControlFlowValidatorTest.java \
   test/SemanticIrDumperTest.java \
   test/SemanticTableTest.java \
@@ -300,6 +301,10 @@ java -ea -cp build deal.test.CanonicalJsonTest
 echo ""
 echo "=== Running Semantic IR Validator Tests (ISSUE-0286) ==="
 java -ea -cp build deal.test.SemanticIrValidatorTest
+
+echo ""
+echo "=== Running Boundary Table Corpus Tests (ISSUE-0366, wiki Verification 4) ==="
+java -ea -cp build deal.test.BoundaryTableCorpusTest
 
 echo ""
 echo "=== Running Control Flow Validator Tests (ISSUE-0408) ==="
