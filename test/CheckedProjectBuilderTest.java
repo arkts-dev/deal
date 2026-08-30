@@ -437,6 +437,9 @@ public class CheckedProjectBuilderTest {
             "NamedType string renders as string");
         check("table".equals(CanonicalTypeText.render(nt("table"), context)),
             "NamedType table renders as table");
+        check("bytes".equals(CanonicalTypeText.render(nt("bytes"), context)),
+            "NamedType bytes renders as bytes (the v1.2 primitive joins "
+                + "the declared-variant grammar)");
 
         // Builtin Error and module classes.
         check("@/Error".equals(CanonicalTypeText.render(nt("Error"), context)),
@@ -526,6 +529,24 @@ public class CheckedProjectBuilderTest {
         check("int[] | null".equals(CanonicalTypeText.render(
                 Types.nullable(Types.array(Type.Int.INSTANCE)))),
             "checked int[] | null parity");
+        check("bytes".equals(CanonicalTypeText.render(Type.Bytes.INSTANCE)),
+            "checked bytes renders as bytes (parity with the TypeNode arm)");
+        check("bytes[]".equals(CanonicalTypeText.render(
+                Types.array(Type.Bytes.INSTANCE))),
+            "checked bytes[] renders unwrapped (primitive element)");
+        check("bytes[] | null".equals(CanonicalTypeText.render(
+                Types.nullable(Types.array(Type.Bytes.INSTANCE)))),
+            "checked bytes[] | null renders the array unwrapped");
+        check("(bytes) => bytes".equals(CanonicalTypeText.render(
+                Types.func(List.of(Type.Bytes.INSTANCE), Type.Bytes.INSTANCE))),
+            "checked sync bytes function form parity");
+        check("async (bytes) => bytes".equals(CanonicalTypeText.render(
+                new Type.Func(List.of(Type.Bytes.INSTANCE),
+                    Type.Bytes.INSTANCE, true))),
+            "checked async bytes function form parity");
+        check("(bytes) => null".equals(CanonicalTypeText.render(
+                new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Null.INSTANCE))),
+            "bytes at function-parameter depth renders recursively");
         check("((int) => int) | null".equals(CanonicalTypeText.render(
                 Types.nullable(new Type.Func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)))),
             "checked ((int) => int) | null parity");
@@ -550,13 +571,6 @@ public class CheckedProjectBuilderTest {
 
         expectDefect(() -> CanonicalTypeText.render(Type.Error.INSTANCE),
             "Type.Error has no rendering (defect)");
-        expectDefect(() -> CanonicalTypeText.render(Type.Bytes.INSTANCE),
-            "Type.Bytes has no rendering in the closed eleven-form index (defect)");
-        expectDefect(() -> CanonicalTypeText.render(
-                new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Null.INSTANCE)),
-            "Type.Bytes at depth (a function parameter) is a defect too");
-        expectDefect(() -> CanonicalTypeText.render(nt("bytes"), context),
-            "a bytes NamedType is outside the pinned TypeNode grammar (defect)");
         expectDefect(() -> CanonicalTypeText.render(qual("Unknown", "Vec"), context),
             "an unresolvable qualified alias is a defect");
         expectDefect(() -> CanonicalTypeText.render(nul(nul(nt("int"))), context),
@@ -596,17 +610,31 @@ public class CheckedProjectBuilderTest {
             new SymbolTable(), emptyChecks());
         assertE6005(typeErrorFact, new ModuleId("main"), "Type.Error in a declared-type position");
 
-        // (a2) The same defensive guard for Type.Bytes: the v1.2 bytes
-        // primitive is not one of the eleven declared-variant forms of
-        // deal.semantic-interface/1, so a declared-type position carrying
-        // it raises E6005 with INDEX_INTERNAL_ERROR_SENTINEL (never an
-        // invented rendering, never a crash).
+        // (a2) The bytes primitive — the v1.2 type and value semantics
+        // landed with the bytes epic (Type.Bytes + the backend carriers),
+        // so the structural-descriptors reservation ("until the type and
+        // value semantics exist") lifts: a declared-type position carrying
+        // bytes renders the primitive name in the index, never an E6005.
         Map<String, Type> bytesExports = new LinkedHashMap<>();
         bytesExports.put("main", Types.func(List.of(), Type.Null.INSTANCE));
         bytesExports.put("bad", Type.Bytes.INSTANCE);
         ModuleFact bytesFact = implFact("main", programOf(), bytesExports,
             new SymbolTable(), emptyChecks());
-        assertE6005(bytesFact, new ModuleId("main"), "Type.Bytes in a declared-type position");
+        CheckedProjectBuildResult bytesBuild = CheckedProjectBuilder.build(
+            invocation(), new ModuleId("main"), List.of(bytesFact));
+        check(!bytesBuild.hasErrors() && bytesBuild.index() != null,
+            "a bytes-bearing export map builds the index cleanly: "
+                + bytesBuild.diagnostics());
+        if (bytesBuild.index() != null) {
+            ExternalModuleInterface bytesEntry =
+                bytesBuild.index().modules().get(new ModuleId("main"));
+            check(bytesEntry != null && bytesEntry.exports().equals(List.of(
+                    new ExportInterface("main", "() => null"),
+                    new ExportInterface("bad", "bytes"))),
+                "the implementation entry renders the bytes export as the "
+                    + "primitive name; got "
+                    + (bytesEntry == null ? "<null>" : bytesEntry.exports()));
+        }
 
         // (b) An unresolvable qualified-type alias in a declaration entry.
         ProgramNode aliasProgram = programOf(new ExportDeclaration(span(),
