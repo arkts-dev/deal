@@ -51,8 +51,9 @@ prints the fixture path and the non-fatal record in the same run:
 STAGED-FAIL (E8004 locked artifact; tracked by ISSUE-0237: the retained std/time.nowMillis ()->int route raises E8004 for contemporary epoch milliseconds under the signed-int32 gate (locked TIME_NOW_MILLIS artifact); the fixture's runtime-ok expectation and std/time.lua are frozen until the delegated time-selector child lands its disposition pair)
 ```
 
-(The two lines are interleaved in the captured log with concurrent
-background suites; both are verbatim from the same run.)
+(In the captured log the path prefix and the STAGED-FAIL record share
+one line inside the interleaved background-suite output; the text is
+verbatim from the same run.)
 
 Count note: the task text cites `Total: 379` "verified at HEAD". At the
 canonical HEAD the total is 381: ISSUE-0337 (commit `a6033b5`) added the
