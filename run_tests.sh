@@ -69,6 +69,7 @@ javac --release 25 -proc:none -d build \
   test/FailureContractRegistryTest.java \
   test/CanonicalJsonTest.java \
   test/SemanticIrValidatorTest.java \
+  test/ControlFlowValidatorTest.java \
   test/SemanticIrDumperTest.java \
   test/SemanticTableTest.java \
   test/ContainerOpsExecutorTest.java \
@@ -299,6 +300,10 @@ java -ea -cp build deal.test.CanonicalJsonTest
 echo ""
 echo "=== Running Semantic IR Validator Tests (ISSUE-0286) ==="
 java -ea -cp build deal.test.SemanticIrValidatorTest
+
+echo ""
+echo "=== Running Control Flow Validator Tests (ISSUE-0408) ==="
+java -ea -cp build deal.test.ControlFlowValidatorTest
 
 echo ""
 echo "=== Running Semantic IR Dumper / ID Allocator Tests (ISSUE-0287) ==="
