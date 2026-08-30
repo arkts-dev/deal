@@ -9,6 +9,7 @@ import deal.codegen.lua.LuaBackend;
 import deal.source.ScalarSourceCursor;
 import deal.lexer.*;
 import deal.parser.*;
+import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -83,6 +84,40 @@ public class LuaBackendTest {
 
         String lua = LuaBackend.generate(parse.program(), result, filename);
         return new CompileOutput(lua, result, parse.program());
+    }
+
+    /**
+     * Compile DEAL source under an explicit semantic profile
+     * (signed-int32 foundation I4): the v1.2 parser constructor and the
+     * profile-carrying {@code generateToFile} seam, so the emitter's
+     * int32 gate/negation selection is observable in unit tests.
+     */
+    private static CompileOutput compileWithProfile(String source, String filename,
+            SemanticProfile profile) throws IOException {
+        LexResult lex = new Lexer(source, filename).tokenize();
+        ParseResult parse = new Parser(lex.tokens(), filename, profile).parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver(filename, resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        List<CompilerDiagnostic> diags = new ArrayList<>(parse.diagnostics());
+        diags.addAll(nr.diagnostics());
+        CheckResult result;
+        if (diags.stream().noneMatch(d -> "error".equals(d.severity()))) {
+            result = TypeChecker.check(filename, symTable, nr, parse.program());
+            diags.addAll(result.diagnostics());
+            if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
+                return new CompileOutput(null, result, parse.program());
+            }
+        } else {
+            return new CompileOutput(null,
+                new CheckResult(Map.of(), symTable, diags), parse.program());
+        }
+        Path outDir = Files.createTempDirectory("deal_lua_v12_ut_");
+        Path luaFile = outDir.resolve("mod.lua");
+        LuaBackend.GenerationResult gen = LuaBackend.generateToFile(
+            parse.program(), result, filename, filename, outDir, luaFile,
+            false, Map.of(), Map.of(), false, profile);
+        return new CompileOutput(gen.lua(), result, parse.program());
     }
 
     /**
@@ -260,7 +295,7 @@ public class LuaBackendTest {
     // Main
     // =========================================================================
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         System.out.println("=== Running Lua Backend Tests ===");
 
         testHeader();
@@ -874,18 +909,29 @@ public class LuaBackendTest {
     // Test: v1.2 unary int negation codegen
     // =========================================================================
 
-    static void testUnaryIntNeg() {
+    static void testUnaryIntNeg() throws IOException {
         System.out.println("-- Unary int negation --");
-        CompileOutput out = compile(
+        String intSrc =
             "export function test_neg(): int {\n"
             + "  let x: int = 5;\n"
             + "  return -x;\n"
-            + "}"
-        );
+            + "}";
+        // Legacy default (LEGACY_SAFE_INT): int negation stays the raw
+        // (-expr) emission — the int_neg gate is profile-selected only
+        // (signed-int32 foundation I4 legacy byte-identity pin).
+        CompileOutput out = compile(intSrc);
         assertNoErrors(out, "unary int negation compiles");
-        assertContains(out.lua,
+        assertNotContains(out.lua, "int_neg",
+            "legacy int negation stays the raw emission");
+        assertContains(out.lua, "(-x)", "legacy int negation emits raw (-x)");
+        // Under DEAL_V1_2_INT32 the same shape routes through
+        // __rt.int_neg with span args.
+        CompileOutput v12 = compileWithProfile(intSrc, "test.deal",
+            SemanticProfile.DEAL_V1_2_INT32);
+        assertNoErrors(v12, "v1.2 unary int negation compiles");
+        assertContains(v12.lua,
             "__rt.int_neg(x, \"test.deal\", 3, 10)",
-            "unary minus on int emits __rt.int_neg(x, span)");
+            "v1.2 unary minus on int emits __rt.int_neg(x, span)");
         CompileOutput num = compile(
             "export function test_num(): number {\n"
             + "  let x: number = 5.0;\n"
@@ -896,7 +942,18 @@ public class LuaBackendTest {
         assertNotContains(num.lua, "int_neg",
             "number negation never routes through int_neg");
         assertContains(num.lua, "(-x)", "number negation stays native IEEE");
+        CompileOutput v12num = compileWithProfile(
+            "export function test_num(): number {\n"
+            + "  let x: number = 5.0;\n"
+            + "  return -x;\n"
+            + "}", "test.deal", SemanticProfile.DEAL_V1_2_INT32);
+        assertNoErrors(v12num, "v1.2 unary number negation compiles");
+        assertNotContains(v12num.lua, "int_neg",
+            "v1.2 number negation never routes through int_neg");
+        assertContains(v12num.lua, "(-x)",
+            "v1.2 number negation stays native IEEE");
         check(isValidLua(out.lua), "unary int negation generates valid Lua");
+        check(isValidLua(v12.lua), "v1.2 unary int negation generates valid Lua");
     }
 
     // =========================================================================

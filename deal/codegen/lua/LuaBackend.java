@@ -2244,24 +2244,18 @@ public final class LuaBackend implements Visitor<Void> {
 
     private String emitUnary(UnaryExpr un) {
         String expr = emitExpression(un.expr());
-        if (un.op() == UnaryOp.NEG && int32Mode
-                && typeOf(un.expr()) instanceof Type.Int) {
-            // signed-int32 foundation I4: under DEAL_V1_2_INT32 int
-            // negation routes through the runtime gate so
-            // -(-2147483648) raises E8004 and -0 normalizes to 0; number
-            // negation stays raw and the legacy profile keeps the raw
-            // (-expr) emission byte-identical.
-            return "__rt.int_neg(" + expr + ", " + spanArgs(un.span()) + ")";
-        }
         return switch (un.op()) {
             case NOT -> "(not (" + expr + "))";
             case NEG -> {
-                // v1.2 signed-int32 (emitter page D2): unary minus on an
-                // int-typed operand routes through the checked negation
-                // gate so -(-2147483648) raises E8004 at the negating
-                // expression's own location; number negation stays native
-                // IEEE.
-                if (typeOf(un.expr()) instanceof Type.Int) {
+                // Signed-int32 foundation I4 (refines emitter page D2):
+                // under DEAL_V1_2_INT32 unary minus on an int-typed
+                // operand routes through the checked negation gate so
+                // -(-2147483648) raises E8004 at the negating
+                // expression's own location and -0 normalizes to 0;
+                // number negation stays native IEEE, and the legacy
+                // profile keeps the raw (-expr) emission byte-identical
+                // (the int32 gate/negation is profile-selected only).
+                if (int32Mode && typeOf(un.expr()) instanceof Type.Int) {
                     yield "__rt.int_neg(" + expr + ", "
                         + spanArgs(un.span()) + ")";
                 }
