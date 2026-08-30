@@ -56,11 +56,11 @@ import deal.types.Type;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * The container/string construct stage of the common lowerer (ISSUE-0232
@@ -194,11 +194,18 @@ import java.util.Optional;
  * twice through fresh allocators produces byte-identical validated units
  * and dumps.</p>
  *
- * <p><b>Claiming (D9 item 4, E3 window).</b> Units built by this stage
- * claim the empty capability set: every produced op's home row is
- * inactive during E3's tail and the recorded staged hand-offs are the
- * claiming seam's (C5) surface, not these arms'. The manifest's plan-time
- * claims are routing facts and stay untouched.</p>
+ * <p><b>Claiming (D9 items 2–4, E3 window).</b> Units built by this
+ * stage derive their claim set through {@link ContainerClaimingSeam} (the
+ * unit-producer claiming seam, ISSUE-0387): the full-evidence claim
+ * derivation over the produced ops and the then-active rows, checked with
+ * the derived set as the unit's claims (the derivation-invariant guard —
+ * the E6005 {@code OPERATION_OUTSIDE_CLAIMED_CAPABILITY} firing condition
+ * can never trigger inside the producer because the unit claims exactly
+ * its derived set). During E3's tail every produced op's home row is
+ * inactive ({@link ContainerClaimingSeam#E3_WINDOW_ACTIVATION}), so the
+ * tail units claim the empty capability set and every op is a recorded
+ * staged hand-off. The manifest's plan-time claims are routing facts and
+ * stay untouched.</p>
  */
 public final class SemanticLowerer {
 
@@ -400,7 +407,7 @@ public final class SemanticLowerer {
      * {@code DESCRIPTOR_UNREPRESENTABLE}, and the produced unit must pass
      * the closed validator (the first rejection is the returned
      * diagnostic). In E3's window the unit claims the empty capability
-     * set (D9 item 4).
+     * set derived through the claiming seam (D9 items 2/4).
      *
      * @param module                the checked implementation module; non-null
      * @param constructCoverage     the manifest's reachable-construct rows
@@ -638,10 +645,12 @@ public final class SemanticLowerer {
          * Builds the immutable unit over the session's produced
          * operations: the manifest's construct-coverage rows recorded at
          * lowering start (each row must carry the closed construct→op
-         * detector table verbatim, S4), the empty capability claim set
-         * (D9 item 4 — E3's tail units claim ∅), the module-init plan
-         * over the session's init block, and the produced operations in
-         * source order.
+         * detector table verbatim, S4), the capability claim set derived
+         * through the claiming seam's full-evidence derivation
+         * ({@link ContainerClaimingSeam}) — the empty set during E3's
+         * tail, where every produced op's home row is inactive (D9 items
+         * 2/4) — the module-init plan over the session's init block, and
+         * the produced operations in source order.
          *
          * @param constructCoverage      the manifest's reachable-construct
          *                               rows; non-null
@@ -678,6 +687,17 @@ public final class SemanticLowerer {
                 }
                 coverage.put(entry.getKey(), List.copyOf(entry.getValue()));
             }
+            List<SemanticOp> produced = List.copyOf(ops);
+            Set<SemanticCapability> claims = ContainerClaimingSeam.deriveClaims(produced,
+                ContainerClaimingSeam.E3_WINDOW_ACTIVATION);
+            ContainerClaimingSeam.SeamResult seam = ContainerClaimingSeam.check(produced,
+                ContainerClaimingSeam.E3_WINDOW_ACTIVATION, claims, module);
+            if (seam.failure() != null) {
+                throw new IllegalStateException(
+                    "the claiming seam's derivation-invariant guard fired inside the unit "
+                        + "producer while the unit claims exactly its derived claim set — a "
+                        + "producer defect: " + seam.failure().origin());
+            }
             return new LoweredModuleUnit(
                 LoweredModuleUnit.FORMAT_VERSION,
                 SemanticProfile.DEAL_V1_2_INT32,
@@ -685,7 +705,7 @@ public final class SemanticLowerer {
                 interfaceHash,
                 LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32,
                     capabilityRegistryHash),
-                EnumSet.noneOf(SemanticCapability.class),
+                claims,
                 coverage,
                 Map.of(),
                 Map.of(),
