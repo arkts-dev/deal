@@ -995,6 +995,33 @@ function $jsonToValue($entry, $value, $path, $file, $line, $column) {
   }
 }
 
+// ===== Host ABI (js-v12-host-abi-completion D1-D5) =====
+
+// $asyncReturnDescriptor: the declared return text of an async function
+// descriptor — the slice after the outer "->" arrow, located as the
+// first arrow at parameter-paren depth 0 (a nested function descriptor
+// inside the parameter list carries its arrow at depth >= 1; the
+// canonical grammar forbids a contiguous "->" inside class-atom
+// components, and $parse validated the full descriptor first). Returns
+// the declared R text; any other input yields null (defensive — only
+// emitter-rendered declared maps reach the callers, which raise
+// E8010/E8011 on the parse/kind arms before this helper matters).
+function $asyncReturnDescriptor($descriptor) {
+  let $depth = 0;
+  for (let $i = 0; $i < $descriptor.length; $i++) {
+    const $c = $descriptor.charCodeAt($i);
+    if ($c === 0x28) { // '('
+      $depth++;
+    } else if ($c === 0x29) { // ')'
+      $depth--;
+    } else if ($c === 0x2D && $i + 1 < $descriptor.length
+        && $descriptor.charCodeAt($i + 1) === 0x3E && $depth === 0) {
+      return $descriptor.slice($i + 2);
+    }
+  }
+  return null;
+}
+
 const $rt = {
   MISSING: $MISSING,
   NULL: null,
@@ -1716,6 +1743,315 @@ const $rt = {
   // (deal/runtime.lua:516-519).
   function: function $function(sig, f) {
     return { $kind: "function", $sig: sig, $f: f };
+  },
+  // ===== Host ABI (js-v12-host-abi-completion D1-D5) =====
+
+  // hostFunction: the checked wrapper for one declared sync host
+  // function export (D2) — the JS mirror of from_lua_function's
+  // call-time enforcement (deal/runtime.lua:819-949). The returned
+  // surface is a passive DEAL wrapper { $kind: "function", $sig:
+  // descriptor, $f } whose $f realizes the host-call boundary
+  // (common-semantic-lowering-layer D13: the host-call boundary owns
+  // the parameter and return checks):
+  //
+  // 1. The trailing (file, line, column) span triple the emitted call
+  //    shape appends is split off; a direct call without it is
+  //    defensive misuse and runs the checks with an absent span.
+  // 2. Exact arity — v1.2 has no rest parameters: E8010 "expected at
+  //    least N arguments, got M" / "expected N arguments, got M" (the
+  //    reference's arms).
+  // 3. Each parameter checks against the declared parameter descriptor
+  //    through the canonical matcher rows (checkType); every failure —
+  //    wrong kind, array carrier/element mismatches, function $sig
+  //    deltas, class nominal identity, E8004 int range, unpaired
+  //    string surrogates — re-raises E8010 "parameter {i} type
+  //    mismatch: {inner}" with the declared descriptor as expected and
+  //    $kindOf(arg) as actual (the reference's pcall composition).
+  // 4. f is invoked exactly once with the user arguments; a
+  //    function-typed argument is the checked DEAL wrapper delivered
+  //    unchanged (DEAL→host adaptation, D2 — the host invokes through
+  //    .$f).
+  // 5. The single result checks against the declared return
+  //    descriptor: a zero-result return (undefined) raises E8010
+  //    "return value 1 type mismatch: expected {D}, got nothing" for
+  //    every non-null declared return and
+  //    "… expected null, got nothing" for ()->null; every other
+  //    failure re-raises E8010 "return value 1 type mismatch:
+  //    {inner}" (junk/zero-result returns on the discard path
+  //    included). The DEAL null passes nullable returns; a raw JS
+  //    function never satisfies a function-typed return (assumption c
+  //    — function-typed returns are never wrapped), only a byte-equal
+  //    DEAL wrapper passes.
+  hostFunction: function $hostFunction(descriptor, f) {
+    if (typeof f !== "function") {
+      $rt.fail("E8001", "expected function, got " + $kindOf(f), $undefined, $undefined, $undefined, "function", $kindOf(f));
+    }
+    const $parsed = $parse(descriptor);
+    if ($parsed === null || $parsed.$t !== "function" || $parsed.$async) {
+      $rt.fail("E8010", "invalid function signature: " + String(descriptor));
+    }
+    const $paramDescs = $parsed.$params;
+    const $retDesc = $parsed.$ret;
+    const $isNullRet = $retDesc === "null";
+    return {
+      $kind: "function",
+      $sig: descriptor,
+      $f: function(...args) {
+        const $n = args.length;
+        const $file = $n >= 3 ? args[$n - 3] : $undefined;
+        const $line = $n >= 3 ? args[$n - 2] : $undefined;
+        const $column = $n >= 3 ? args[$n - 1] : $undefined;
+        const $nargs = $n >= 3 ? $n - 3 : $n;
+        if ($nargs < $paramDescs.length) {
+          $rt.fail("E8010", "expected at least " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
+        }
+        if ($nargs > $paramDescs.length) {
+          $rt.fail("E8010", "expected " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
+        }
+        for (let $i = 0; $i < $paramDescs.length; $i++) {
+          try {
+            $rt.checkType($paramDescs[$i], args[$i], $file, $line, $column);
+          } catch ($e) {
+            if (!($e instanceof $DEALError)) {
+              throw $e;
+            }
+            $rt.fail("E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $kindOf(args[$i]));
+          }
+        }
+        const $r = f(...args.slice(0, $nargs));
+        if ($isNullRet) {
+          if ($r === $undefined) {
+            $rt.fail("E8010", "return value 1 type mismatch: expected null, got nothing", $file, $line, $column, "null", "nothing");
+          }
+          try {
+            return $rt.checkNull($r, $file, $line, $column);
+          } catch ($e) {
+            if (!($e instanceof $DEALError)) {
+              throw $e;
+            }
+            $rt.fail("E8010", "return value 1 type mismatch: " + $e.message, $file, $line, $column, "null", $kindOf($r));
+          }
+        }
+        if ($r === $undefined) {
+          $rt.fail("E8010", "return value 1 type mismatch: expected " + $retDesc + ", got nothing", $file, $line, $column, $retDesc, "nothing");
+        }
+        try {
+          return $rt.checkType($retDesc, $r, $file, $line, $column);
+        } catch ($e) {
+          if (!($e instanceof $DEALError)) {
+            throw $e;
+          }
+          $rt.fail("E8010", "return value 1 type mismatch: " + $e.message, $file, $line, $column, $retDesc, $kindOf($r));
+        }
+      },
+    };
+  },
+
+  // hostAsyncFunction: the checked wrapper for one declared async host
+  // function export ("async (...) -> R", D2). The $f is an async
+  // function: identical arity and parameter checks as hostFunction,
+  // then the single host invocation — the operation must be a thenable
+  // (the backend async operation the JS await lowering accepts), else
+  // E8010 "host async function must return an async operation, got
+  // {kind}" — then `await $op` and the completion check against the
+  // declared R (E8001 on mismatch — the await-site completion
+  // contract, host-async-bad; a valid completion delivers the checked
+  // value, host-async-ok). A rejected operation propagates natively at
+  // the await site. Source code can only observe the operation through
+  // await (spec-v1.2:1765-1767).
+  hostAsyncFunction: function $hostAsyncFunction(descriptor, f) {
+    if (typeof f !== "function") {
+      $rt.fail("E8001", "expected function, got " + $kindOf(f), $undefined, $undefined, $undefined, "function", $kindOf(f));
+    }
+    const $parsed = $parse(descriptor);
+    if ($parsed === null || $parsed.$t !== "function" || !$parsed.$async) {
+      $rt.fail("E8010", "invalid function signature: " + String(descriptor));
+    }
+    const $paramDescs = $parsed.$params;
+    const $retDesc = $asyncReturnDescriptor(descriptor);
+    return {
+      $kind: "function",
+      $sig: descriptor,
+      $f: async function(...args) {
+        const $n = args.length;
+        const $file = $n >= 3 ? args[$n - 3] : $undefined;
+        const $line = $n >= 3 ? args[$n - 2] : $undefined;
+        const $column = $n >= 3 ? args[$n - 1] : $undefined;
+        const $nargs = $n >= 3 ? $n - 3 : $n;
+        if ($nargs < $paramDescs.length) {
+          $rt.fail("E8010", "expected at least " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
+        }
+        if ($nargs > $paramDescs.length) {
+          $rt.fail("E8010", "expected " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
+        }
+        for (let $i = 0; $i < $paramDescs.length; $i++) {
+          try {
+            $rt.checkType($paramDescs[$i], args[$i], $file, $line, $column);
+          } catch ($e) {
+            if (!($e instanceof $DEALError)) {
+              throw $e;
+            }
+            $rt.fail("E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $kindOf(args[$i]));
+          }
+        }
+        const $op = f(...args.slice(0, $nargs));
+        if (!($op && typeof $op.then === "function")) {
+          const $got = $op === $undefined ? "nothing" : $kindOf($op);
+          $rt.fail("E8010", "host async function must return an async operation, got " + $got, $file, $line, $column, "async operation", $got);
+        }
+        const $v = await $op;
+        return $rt.checkType($retDesc, $v, $file, $line, $column);
+      },
+    };
+  },
+
+  // loadHost: the single runtime host-loader entry (D1) — validates
+  // and wraps one host module's raw exports against the declared map
+  // and returns a fresh surface object. The declared map is the
+  // emitter-rendered D1 shape:
+  //
+  //   "<name>": { $k: "function", $d: "<canonical declared descriptor>" }
+  //           | { $k: "class", $d: "<canonical identity>",
+  //               $fields: [ { name, $d, optional, nullable, hasDefault }, ... ] }
+  //
+  // Function entries: a raw JS function wraps through hostFunction;
+  // a pre-wrapped { $kind: "function", $sig, $f } requires
+  // $sig === the declared descriptor (E8011 when $sig is missing or
+  // mismatched — the declared contract is the only trusted metadata,
+  // D5) and a function $f (E8011 otherwise), then re-wraps $f — the
+  // host's own wrapper object is discarded and enforcement is
+  // identical to the raw path; anything else → E8011. Async declared
+  // descriptors route to hostAsyncFunction.
+  //
+  // Class entries: the host META must be
+  // { $kind: "class", $classname: <declared identity> } (byte-equal to
+  // the declared $d, else E8011); the host-supplied defaults — a
+  // plain object or a zero-arg function returning one, found at
+  // "<C>$defaults" or the cross-backend "<C>_defaults" key — must be
+  // present (else E8011, construction depends on it). The loader
+  // synthesizes "<C>$new" (construction through $rt.makeClass in the
+  // parent D5 phase order, with the per-construction defaults thunk
+  // augmenting the host defaults with $MISSING for every declared
+  // field the defaults omit) and "<C>$fields" (the declared map's
+  // field metadata). The validated META stays under the declared name.
+  //
+  // Extra host exports are structurally dropped (the surface carries
+  // only declared names plus the synthesized keys); the raw exports
+  // object is never mutated. The loader never validates stdlib
+  // modules (assumption a — stdlib imports keep their trusted raw
+  // require path) and never invents a JS sig-table mechanism (D5).
+  loadHost: function $loadHost(rawExports, declaredMap) {
+    if (declaredMap === null || typeof declaredMap !== "object") {
+      $rt.fail("E8011", "host module declarations must be a table", $undefined, $undefined, $undefined, "table", $kindOf(declaredMap));
+    }
+    if (rawExports === null || typeof rawExports !== "object") {
+      $rt.fail("E8011", "host module did not return a module object", $undefined, $undefined, $undefined, "table", $kindOf(rawExports));
+    }
+    const $surface = {};
+    const $names = Object.keys(declaredMap);
+    for (let $i = 0; $i < $names.length; $i++) {
+      const $name = $names[$i];
+      const $entry = declaredMap[$name];
+      const $v = rawExports[$name];
+      if ($v === $undefined) {
+        $rt.fail("E8011", "missing host export '" + $name + "'");
+      }
+      if ($entry === null || typeof $entry !== "object"
+          || typeof $entry.$d !== "string") {
+        $rt.fail("E8011", "host export '" + $name + "' has an unsupported declared descriptor: " + String($entry === null ? null : $entry.$d));
+      }
+      const $desc = $entry.$d;
+      const $parsed = $parse($desc);
+      if ($entry.$k === "function") {
+        if ($parsed === null || $parsed.$t !== "function") {
+          $rt.fail("E8011", "host export '" + $name + "' has an unsupported declared descriptor: " + $desc);
+        }
+        let $f;
+        if (typeof $v === "function") {
+          $f = $v;
+        } else if ($v !== null && typeof $v === "object"
+            && $v.$kind === "function") {
+          if ($v.$sig !== $desc) {
+            $rt.fail("E8011", "host export '" + $name + "' has signature mismatch: expected " + $desc + ", got " + String($v.$sig), $undefined, $undefined, $undefined, $desc, $v.$sig);
+          }
+          if (typeof $v.$f !== "function") {
+            $rt.fail("E8011", "host export '" + $name + "' has non-function $f", $undefined, $undefined, $undefined, "function", $kindOf($v.$f));
+          }
+          $f = $v.$f;
+        } else {
+          $rt.fail("E8011", "host export '" + $name + "' is not a function", $undefined, $undefined, $undefined, "function", $kindOf($v));
+        }
+        $surface[$name] = $parsed.$async
+            ? $rt.hostAsyncFunction($desc, $f)
+            : $rt.hostFunction($desc, $f);
+      } else if ($entry.$k === "class") {
+        if ($parsed === null || $parsed.$t !== "class") {
+          $rt.fail("E8011", "host export '" + $name + "' has an unsupported declared descriptor: " + $desc);
+        }
+        if ($v === null || typeof $v !== "object" || $v.$kind !== "class") {
+          $rt.fail("E8011", "host export '" + $name + "' is not a class meta", $undefined, $undefined, $undefined, "class", $kindOf($v));
+        }
+        if ($v.$classname !== $desc) {
+          $rt.fail("E8011", "host class export '" + $name + "' has identity mismatch: expected " + $desc + ", got " + String($v.$classname), $undefined, $undefined, $undefined, $desc, $v.$classname);
+        }
+        const $fields = $entry.$fields;
+        if (!$Array.isArray($fields)) {
+          $rt.fail("E8011", "host class '" + $name + "' has malformed field metadata");
+        }
+        const $declaredNames = [];
+        for (let $j = 0; $j < $fields.length; $j++) {
+          const $field = $fields[$j];
+          if ($field === null || typeof $field !== "object"
+              || typeof $field.name !== "string") {
+            $rt.fail("E8011", "host class '" + $name + "' has malformed field metadata");
+          }
+          $declaredNames.push($field.name);
+        }
+        let $hostDefaults = rawExports[$name + "$defaults"];
+        if ($hostDefaults === $undefined) {
+          $hostDefaults = rawExports[$name + "_defaults"];
+        }
+        if ($hostDefaults === $undefined
+            || !(typeof $hostDefaults === "function"
+                || $isPlainObject($hostDefaults))) {
+          $rt.fail("E8011", "host class '" + $name + "' is missing its defaults", $undefined, $undefined, $undefined, "table", $kindOf($hostDefaults));
+        }
+        // The per-construction defaults thunk (D3): the host defaults —
+        // the plain object, or the zero-arg function re-evaluated on
+        // every construction — augmented with $MISSING for every
+        // declared field the host defaults omit, so absent optional
+        // fields read the three-state MISSING and provided overlays
+        // pass makeClass's extra-key gate. A non-plain-object host
+        // defaults result fails inside makeClass with the pinned
+        // E8001 "class defaults must be a table" (construction-time,
+        // never load-time).
+        const $defaultsThunk = function() {
+          const $base = typeof $hostDefaults === "function"
+              ? $hostDefaults()
+              : $hostDefaults;
+          if (!$isPlainObject($base)) {
+            $rt.fail("E8001", "class defaults must be a table");
+          }
+          const $merged = {};
+          for (let $j = 0; $j < $declaredNames.length; $j++) {
+            const $field = $declaredNames[$j];
+            $rt.setProp($merged, $field,
+                Object.prototype.hasOwnProperty.call($base, $field)
+                    ? $base[$field]
+                    : $MISSING);
+          }
+          return $merged;
+        };
+        $surface[$name] = $v;
+        $surface[$name + "$new"] = function(provided, $file, $line, $column) {
+          return $rt.makeClass($name, $desc, $defaultsThunk, provided, $file, $line, $column);
+        };
+        $surface[$name + "$fields"] = $fields.slice();
+      } else {
+        $rt.fail("E8011", "host export '" + $name + "' has an unsupported declared descriptor: " + $desc);
+      }
+    }
+    return $surface;
   },
 
   // intConvert: the int(x) conversion intrinsic (deal/runtime.lua:917-926).
