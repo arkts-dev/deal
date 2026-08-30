@@ -335,6 +335,11 @@ public class LuaBackendTest {
         testIntrinsicIntCall();
         testIntrinsicNumberCall();
         testIntrinsicIndirectUse();
+        testBytesIntrinsicCall();
+        testBytesLengthAndRead();
+        testBytesWriteSingleEvaluation();
+        testUnaryIntNeg();
+        testBytesBoundaryCheck();
 
         // ISSUE-0018: Template literal codegen tests
         testTemplateLiteralPlain();
@@ -770,6 +775,156 @@ public class LuaBackendTest {
         assertNoErrors(out, "intrinsic indirect use compiles");
         assertContains(out.lua, "fn.f(", "indirect call uses .f() pattern");
         check(isValidLua(out.lua), "intrinsic indirect use generates valid Lua");
+    }
+
+    // =========================================================================
+    // Test: v1.2 bytes intrinsic call codegen — bytes(n)
+    // =========================================================================
+
+    static void testBytesIntrinsicCall() {
+        System.out.println("-- Bytes Intrinsic bytes() Call --");
+        CompileOutput out = compile(
+            "export function test_b(): null {\n"
+            + "  let b: bytes = bytes(3);\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoErrors(out, "bytes intrinsic call compiles");
+        assertContains(out.lua,
+            "__rt.bytes_new(__rt.check_int(3, \"test.deal\", 2, 18), \"test.deal\", 2, 18)",
+            "bytes(n) lowers to __rt.bytes_new(__rt.check_int(<n>, span), span)");
+        assertNotContains(out.lua, "bytes.f(", "bytes call never routes through a wrapper");
+        check(isValidLua(out.lua), "bytes intrinsic call generates valid Lua");
+    }
+
+    // =========================================================================
+    // Test: v1.2 bytes length and read codegen
+    // =========================================================================
+
+    static void testBytesLengthAndRead() {
+        System.out.println("-- Bytes length and read --");
+        CompileOutput out = compile(
+            "export function test_r(): int {\n"
+            + "  let b: bytes = bytes(2);\n"
+            + "  let l: int = b.length;\n"
+            + "  let v: int = b[0];\n"
+            + "  return l + v;\n"
+            + "}"
+        );
+        assertNoErrors(out, "bytes length/read compiles");
+        assertContains(out.lua,
+            "__rt.bytes_length(b, \"test.deal\", 3, 16)",
+            "b.length lowers to __rt.bytes_length(<b>, span)");
+        assertContains(out.lua,
+            "__rt.bytes_get(b, __rt.check_int(0, \"test.deal\", 4, 16), \"test.deal\", 4, 16)",
+            "b[i] lowers to __rt.bytes_get(<b>, __rt.check_int(<i>, span), span)");
+        check(isValidLua(out.lua), "bytes length/read generates valid Lua");
+    }
+
+    // =========================================================================
+    // Test: v1.2 bytes write single-evaluation sequence
+    // =========================================================================
+
+    static void testBytesWriteSingleEvaluation() {
+        System.out.println("-- Bytes write single-evaluation sequence --");
+        CompileOutput out = compile(
+            "class Log { seq: int[] = []; }\n"
+            + "function record(l: Log, tag: int): int {\n"
+            + "  l.seq[l.seq.length] = tag;\n"
+            + "  return tag;\n"
+            + "}\n"
+            + "function pick(l: Log, tag: int): bytes {\n"
+            + "  record(l, tag);\n"
+            + "  return bytes(4);\n"
+            + "}\n"
+            + "export function test_w(): null {\n"
+            + "  let l: Log = { seq: [] };\n"
+            + "  pick(l, 1)[record(l, 2)] = record(l, 3);\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoErrors(out, "bytes write compiles");
+        assertContains(out.lua, "local __b = pick.f(l, 1)",
+            "receiver evaluated into __b exactly once");
+        assertContains(out.lua,
+            "local __i = __rt.check_int(record.f(l, 2), \"test.deal\", 12, 3)",
+            "index checked into __i exactly once");
+        assertContains(out.lua, "local __v = record.f(l, 3)",
+            "RHS evaluated into __v exactly once");
+        assertContains(out.lua,
+            "__rt.bytes_set(__b, __i, __v, \"test.deal\", 12, 3)",
+            "bytes_set carries the write span");
+        check(countOccurrences(out.lua, "pick.f(l, 1)") == 1,
+            "receiver expression text emitted exactly once");
+        check(countOccurrences(out.lua, "record.f(l, 2)") == 1,
+            "index expression text emitted exactly once");
+        check(countOccurrences(out.lua, "record.f(l, 3)") == 1,
+            "RHS expression text emitted exactly once");
+        int bIdx = out.lua.indexOf("local __b = pick.f(l, 1)");
+        int iIdx = out.lua.indexOf("local __i = __rt.check_int(record.f(l, 2)");
+        int vIdx = out.lua.indexOf("local __v = record.f(l, 3)");
+        int sIdx = out.lua.indexOf("__rt.bytes_set(__b, __i, __v");
+        check(bIdx >= 0 && iIdx >= 0 && vIdx >= 0 && sIdx >= 0
+                && bIdx < iIdx && iIdx < vIdx && vIdx < sIdx,
+            "write sequence order: receiver -> index -> RHS -> bytes_set");
+        check(isValidLua(out.lua), "bytes write generates valid Lua");
+    }
+
+    // =========================================================================
+    // Test: v1.2 unary int negation codegen
+    // =========================================================================
+
+    static void testUnaryIntNeg() {
+        System.out.println("-- Unary int negation --");
+        CompileOutput out = compile(
+            "export function test_neg(): int {\n"
+            + "  let x: int = 5;\n"
+            + "  return -x;\n"
+            + "}"
+        );
+        assertNoErrors(out, "unary int negation compiles");
+        assertContains(out.lua,
+            "__rt.int_neg(x, \"test.deal\", 3, 10)",
+            "unary minus on int emits __rt.int_neg(x, span)");
+        CompileOutput num = compile(
+            "export function test_num(): number {\n"
+            + "  let x: number = 5.0;\n"
+            + "  return -x;\n"
+            + "}"
+        );
+        assertNoErrors(num, "unary number negation compiles");
+        assertNotContains(num.lua, "int_neg",
+            "number negation never routes through int_neg");
+        assertContains(num.lua, "(-x)", "number negation stays native IEEE");
+        check(isValidLua(out.lua), "unary int negation generates valid Lua");
+    }
+
+    // =========================================================================
+    // Test: v1.2 bytes typed-boundary checks
+    // =========================================================================
+
+    static void testBytesBoundaryCheck() {
+        System.out.println("-- Bytes typed-boundary checks --");
+        CompileOutput out = compile(
+            "function f(b: bytes): bytes {\n"
+            + "  return b;\n"
+            + "}\n"
+            + "export function test_b(): null {\n"
+            + "  let x: bytes = bytes(1);\n"
+            + "  let y: bytes = f(x);\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoErrors(out, "bytes boundary checks compile");
+        assertContains(out.lua, "__rt.function_(\"(bytes)->bytes\", function(b)",
+            "bytes function wrapper carries the canonical descriptor");
+        assertContains(out.lua,
+            "__rt.check_type(\"bytes\", b, \"test.deal\", 1, 15)",
+            "bytes parameter routes through the canonical matcher");
+        assertContains(out.lua,
+            "__rt.check_type(\"bytes\", __rt.bytes_new(__rt.check_int(1, \"test.deal\", 5, 18), \"test.deal\", 5, 18), \"test.deal\", 5, 10)",
+            "bytes declaration routes through the canonical matcher");
+        check(isValidLua(out.lua), "bytes boundary checks generate valid Lua");
     }
 
     // Test: delete (optional field)

@@ -1,0 +1,14 @@
+// @spec: Bytes — Byte indexing and buffer semantics
+// @description: Byte writes with a value outside 0..255 raise E8013 after the receiver, index, and value evaluate (v1.2)
+// @expected: runtime-error E8013
+// @features: bytes, runtime, v1.2
+
+export function test_bytes_write_range(): null {
+  let b: bytes = bytes(1);
+  b[0] = 256;
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

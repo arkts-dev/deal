@@ -343,9 +343,12 @@ public class DiagnosticClassificationTest {
             + "(missing host export) / JvmBackendTest (host ABI)");
         coverage.put("E8012", "test_runtime.lua (bytes_new negative length; "
             + "bytes_get/bytes_set index bounds) / JsBackendTest (bytes E8012 "
-            + "runtime pins)");
+            + "runtime pins) / ConformanceTest backend-runtime/bytes/"
+            + "bytes-index-bounds + source-location/bytes-index-bounds-source");
         coverage.put("E8013", "test_runtime.lua (bytes_set value outside 0..255) / "
-            + "JsBackendTest (bytes E8013 runtime pins)");
+            + "JsBackendTest (bytes E8013 runtime pins) / ConformanceTest "
+            + "backend-runtime/bytes/bytes-write-range + "
+            + "source-location/bytes-write-range-source");
 
         int total = DiagnosticCode.values().length;
         int covered = 0;

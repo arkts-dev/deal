@@ -1,0 +1,29 @@
+// @spec: Bytes — Byte indexing and buffer semantics
+// @description: b.length reads the immutable logical allocation length as int; bytes(0) allocates a zero-length buffer; the length survives aliasing (v1.2)
+// @expected: runtime-ok
+// @features: bytes, runtime, v1.2
+
+export function test_bytes_length(): null {
+  let n: int = 3;
+  let b: bytes = bytes(n);
+  if (b.length !== 3) {
+    throw { code: "TEST_FAIL", message: "bytes: length mismatch" };
+  }
+  let zero: bytes = bytes(0);
+  if (zero.length !== 0) {
+    throw { code: "TEST_FAIL", message: "bytes: zero length mismatch" };
+  }
+  let l: int = b.length;
+  if (l !== 3) {
+    throw { code: "TEST_FAIL", message: "bytes: length read type mismatch" };
+  }
+  let alias: bytes = b;
+  if (alias.length !== 3) {
+    throw { code: "TEST_FAIL", message: "bytes: alias length mismatch" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

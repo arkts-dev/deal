@@ -1057,23 +1057,14 @@ public final class LuaBackend implements Visitor<Void> {
                 "__rt.check_string(" + valueExpr + ", " + spanParam + ")";
             case Type.Table ignored ->
                 "__rt.check_table(" + valueExpr + ", " + spanParam + ")";
-            case Type.Bytes ignored -> {
-                // ISSUE-0158 (E6) boundary: no checked program can produce
-                // a bytes value before the bytes checker/runtime lands.
-                // Fail explicitly through the backend's unsupported-shape
-                // handling (E6000) instead of silently passing the value
-                // through or emitting a wrong descriptor.
-                String message = "bytes is not supported by the Lua backend "
-                    + "slice (ISSUE-0158 boundary)";
-                if (span != null) {
-                    addDiagnostic(DiagnosticCode.E6000, message, span);
-                } else {
-                    diagnostics.add(CompilerDiagnostic.syntheticError(
-                        DiagnosticCode.E6000, message, sourceFilePath,
-                        "missing anchor: bytes runtime check span"));
-                }
-                yield valueExpr;
-            }
+            case Type.Bytes ignored ->
+                // v1.2 bytes boundary (emitter page D3): the canonical
+                // matcher's "bytes" primitive row validates the FFI-backed
+                // carrier (__kind == "bytes") and raises E8001 with the
+                // forwarded span otherwise. The bytes runtime landed in the
+                // value-model step, so no checked program fails this arm.
+                "__rt.check_type(\"bytes\", " + valueExpr + ", "
+                    + spanParam + ")";
             case Type.Array arr ->
                 "__rt.check_array(" + quotedTypeDescriptor(type) + ", "
                     + valueExpr + ", " + spanParam + ")";
@@ -1099,9 +1090,9 @@ public final class LuaBackend implements Visitor<Void> {
             case Type.Number ignored -> "__rt.check_number";
             case Type.String ignored -> "__rt.check_string";
             case Type.Table ignored -> "__rt.check_table";
-            // bytes has no direct primitive check helper (E6 owns the
-            // bytes checker surface); null routes the site through
-            // emitCheckExpr, whose Bytes arm fails explicitly (E6000).
+            // bytes has no dedicated named check helper; null routes the
+            // site through emitCheckExpr, whose Bytes arm emits the
+            // canonical matcher check __rt.check_type("bytes", ...).
             case Type.Bytes ignored -> null;
             default -> null;
         };
@@ -2160,7 +2151,18 @@ public final class LuaBackend implements Visitor<Void> {
         String expr = emitExpression(un.expr());
         return switch (un.op()) {
             case NOT -> "(not (" + expr + "))";
-            case NEG -> "(-" + expr + ")";
+            case NEG -> {
+                // v1.2 signed-int32 (emitter page D2): unary minus on an
+                // int-typed operand routes through the checked negation
+                // gate so -(-2147483648) raises E8004 at the negating
+                // expression's own location; number negation stays native
+                // IEEE.
+                if (typeOf(un.expr()) instanceof Type.Int) {
+                    yield "__rt.int_neg(" + expr + ", "
+                        + spanArgs(un.span()) + ")";
+                }
+                yield "(-" + expr + ")";
+            }
         };
     }
 
@@ -2174,6 +2176,28 @@ public final class LuaBackend implements Visitor<Void> {
         for (int i = 0; i < call.args().size(); i++) {
             if (i > 0) args.append(", ");
             args.append(emitExpression(call.args().get(i)));
+        }
+        // v1.2 bytes intrinsic (emitter page D3): bytes(n) lowers to
+        // __rt.bytes_new(__rt.check_int(<n>, span), span) directly — the
+        // length argument is checked at the call site and the allocation
+        // entry receives the call-site span. The guard mirrors the
+        // checker's resolution: only the root bytes intrinsic routes here
+        // (a checker-accepted module-level declaration named bytes removed
+        // the intrinsic binding, so symbols.resolve returns the user
+        // symbol and the generic branches below handle the call).
+        if (call.callee() instanceof IdentifierExpr id
+                && id.name().equals("bytes")
+                && symbols.resolve(id.name()) instanceof Symbol.IntrinsicSymbol) {
+            if (call.args().size() == 1) {
+                return "__rt.bytes_new(__rt.check_int(" + args.toString()
+                    + ", " + spanArgs(call.span()) + "), "
+                    + spanArgs(call.span()) + ")";
+            }
+            // Checker-error programs with a wrong arity never execute; keep
+            // the call structurally complete instead of emitting invalid
+            // Lua.
+            return "__rt.bytes_new(" + args.toString() + ", "
+                + spanArgs(call.span()) + ")";
         }
         // Intrinsic calls (int, number) route through the wrapper's .f entry
         // so the call-site span is forwarded on direct calls; indirect calls
@@ -2203,6 +2227,15 @@ public final class LuaBackend implements Visitor<Void> {
         if (field.equals("length") && objType instanceof Type.Array) {
             return "#" + obj;
         }
+        // v1.2 bytes length (emitter page D3): b.length lowers to
+        // __rt.bytes_length(<b>, span) — the compiler-resolved immutable
+        // logical allocation length, never a member lookup, never
+        // dispatchable (assignment/deletion of .length never reaches
+        // codegen — frontend E3017).
+        if (field.equals("length") && objType instanceof Type.Bytes) {
+            return "__rt.bytes_length(" + obj + ", "
+                + spanArgs(mae.span()) + ")";
+        }
         return LuaAbi.memberAccess(obj, field);
     }
 
@@ -2226,6 +2259,14 @@ public final class LuaBackend implements Visitor<Void> {
                 + spanArgs(span) + "); if __idx < 0 then error(__rt._err(\"E8002\", "
                 + "\"negative array index\", " + spanArgs(span) + ")) end; "
                 + "return " + arr + "[__idx + 1] end)()";
+        }
+        // v1.2 bytes read (emitter page D3): b[i] lowers to
+        // __rt.bytes_get(<b>, __rt.check_int(<i>, span), span) — the index
+        // is checked at the read site and the bytes entry carries the
+        // index expression's span for E8012.
+        if (arrayType instanceof Type.Bytes) {
+            return "__rt.bytes_get(" + arr + ", __rt.check_int(" + index
+                + ", " + spanArgs(span) + "), " + spanArgs(span) + ")";
         }
         return arr + "[" + index + "]";
     }
@@ -2494,6 +2535,28 @@ public final class LuaBackend implements Visitor<Void> {
                     + "\"array index out of bounds\", " + spanArgs(idx.span()) + ")) end\n"
                     + myIndent + "  __arr[__idx + 1] = "
                     + emitCheckExpr(valueLua, arrT.element(), span) + "\n"
+                    + myIndent + "end";
+            }
+            // v1.2 bytes write (emitter page D3): b[i] = v emits exactly
+            // one single-evaluation sequence — the receiver and the checked
+            // index evaluate before the RHS, the RHS evaluates before any
+            // write validation (E8012 index, E8013 range, E8001 non-int
+            // value, all raised inside __rt.bytes_set), and no operand text
+            // is ever re-emitted. This replaces the duplicated, order-
+            // sensitive emitAssignment target re-emission for bytes writes;
+            // array write emission stays unchanged (common layer owns
+            // semantic tables).
+            if (arrType instanceof Type.Bytes) {
+                String arr = emitExpression(idx.array());
+                String index = emitExpression(idx.index());
+                String myIndent = "  ".repeat(indent);
+                return "do\n"
+                    + myIndent + "  local __b = " + arr + "\n"
+                    + myIndent + "  local __i = __rt.check_int(" + index
+                    + ", " + spanArgs(idx.span()) + ")\n"
+                    + myIndent + "  local __v = " + valueLua + "\n"
+                    + myIndent + "  __rt.bytes_set(__b, __i, __v, "
+                    + spanArgs(idx.span()) + ")\n"
                     + myIndent + "end";
             }
         }
@@ -3062,6 +3125,24 @@ public final class LuaBackend implements Visitor<Void> {
                 case "string" -> Type.String.INSTANCE;
                 case "table" -> Type.Table.INSTANCE;
                 case "Error" -> Types.classType("Error", "");
+                // v1.2 bytes (emitter page D3): a bytes-spelled named
+                // type resolves to the canonical Type.Bytes primitive.
+                // bytes is not a DEAL keyword, so a checker-accepted
+                // user class named bytes resolves to its ClassSymbol and
+                // wins over the primitive (the JS sibling uses the same
+                // class-symbol-first guard, js-v12-int32-bytes D3); the
+                // visible nested-class scope frames carry the same
+                // decision here.
+                case "bytes" -> {
+                    Symbol sym = symbols.resolve(nt.name());
+                    if (sym instanceof Symbol.ClassSymbol cs) {
+                        yield Types.classType(nt.name(), cs.modulePath());
+                    }
+                    if (hasVisibleNestedClassDeclaration(nt.name())) {
+                        yield Types.classType(nt.name(), modulePath);
+                    }
+                    yield Type.Bytes.INSTANCE;
+                }
                 default -> {
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol cs) {

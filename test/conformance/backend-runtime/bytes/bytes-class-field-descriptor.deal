@@ -1,0 +1,33 @@
+// @spec: Runtime execution model — Runtime type descriptor format
+// @description: Class atoms with bytes-typed fields cross the canonical boundary: construction tags instances with the module-qualified atom, bytes fields read and write as real buffers, and provided per-instance values stay isolated (v1.2)
+// @expected: runtime-ok
+// @features: descriptors, bytes, classes
+
+class Payload {
+  data: bytes = bytes(2);
+  tag: string = "";
+}
+
+function describe(p: Payload): int {
+  return p.data.length;
+}
+
+export function test_bytes_class_field_descriptor(): string {
+  let p: Payload = { data: bytes(3), tag: "a" };
+  if (describe(p) !== 3) {
+    throw { code: "TEST_FAIL", message: "bytes class field boundary mismatch" };
+  }
+  p.data[1] = 200;
+  let q: Payload = { data: bytes(1), tag: "b" };
+  if (q.data.length !== 1) {
+    throw { code: "TEST_FAIL", message: "second instance length mismatch" };
+  }
+  if (p.data[1] !== 200) {
+    throw { code: "TEST_FAIL", message: "instances must not share bytes storage" };
+  }
+  return "canonical bytes class field descriptor ok";
+}
+
+export function main(): null {
+  return null;
+}
