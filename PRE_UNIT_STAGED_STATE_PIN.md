@@ -7,7 +7,7 @@ pending (design refs: `luajit-time-selector-disposition` D1/D2, Contracts
 post-state, Verification 7–9; `luajit-v1.2-stdlib-contracts` D6;
 `luajit-v1.2-conformance-retirement-and-gate` D3).
 
-Canonical revision pinned by this record: `55cee3f4be88ff5f5bcc5600c0939dc91a476051`.
+Canonical revision pinned by this record: `fbe1aafc1f67ec989b5b1e58f99bc0dbc87af980`.
 
 Method: read every named line range at the canonical HEAD; execute
 `./run_tests.sh` and capture the exit code and the LuaJIT conformance
@@ -24,12 +24,13 @@ ISSUE-0237).
 Note on locators. The design-page citations in the task were verified
 against checkout `9c2ab38`. The canonical HEAD contains later landed
 children (MR-0244's ISSUE-0332 narrowing is already an ancestor;
-ISSUE-0333, ISSUE-0321, ISSUE-0337, ISSUE-0369 also landed), so a few
-cited line numbers shifted while their content is byte-identical. Each
-item below records the canonical-HEAD site exactly; section 4 registers
-every locator delta with its cause. No pin content failed: every
-substantive claim the task makes about the staged state holds at the
-canonical HEAD.
+ISSUE-0333, ISSUE-0321, ISSUE-0337, ISSUE-0369, and MR-0267's
+ISSUE-0384 container-ops executor / E3018 checker gate / ISSUE-0406
+comparison semantics also landed), so a few cited line numbers shifted
+while their content is byte-identical. Each item below records the
+canonical-HEAD site exactly; section 4 registers every locator delta
+with its cause. No pin content failed: every substantive claim the task
+makes about the staged state holds at the canonical HEAD.
 
 ## 1. Gate execution evidence (captured)
 
@@ -60,7 +61,7 @@ that matter — 0 failed, 0 skipped, exactly one `StagedFailures (tracked)`
 entry naming this fixture and ISSUE-0237, 5 tracked known-failures — all
 hold.
 
-Pin test (launched at `run_tests.sh:457-458`):
+Pin test (launched at `run_tests.sh:467-468`):
 
 ```text
 === std/time.nowMillis Pre-Activation Pin (ISSUE-0369) ===
@@ -89,6 +90,21 @@ Passed: 230, Failed: 0
 ```
 
 Direct LuaJIT stdlib suite (same run): `Passed: 60, Failed: 0, Skipped: 0`.
+
+New canonical-HEAD suites (MR-0267, same run, both green):
+
+```text
+=== Running Comparison Operand View and Executor Tests (ISSUE-0406, ISSUE-0234 B-D1/B-D2/B-D4) ===
+-- ComparisonOperandView: closed shape --
+-- INT32_EQ/NE/LT/LE/GT/GE --
+...
+Passed: 458, Failed: 0
+=== Running Container Ops Executor Tests (ISSUE-0384 C3) ===
+-- the closed value view renders the canonical actual kinds --
+-- TABLE_NEW: source-order stores, duplicate keys, resolution order --
+...
+Passed: 130, Failed: 0
+```
 
 ## 2. Precondition pins verified at the canonical HEAD
 
@@ -188,11 +204,11 @@ Non-fatal classification: `private enum State { PASS, FAIL, SKIP, KNOWN_FAIL, CO
 ### 2.5 Pin test green (`test/StdlibTimePreActivationPinTest.java`)
 
 The pin test passes at the canonical HEAD: 36/36 (section 1). It is
-launched at `run_tests.sh:457-458`:
+launched at `run_tests.sh:467-468`:
 
 ```sh
-457  echo "=== std/time.nowMillis Pre-Activation Pin (ISSUE-0369) ==="
-458  java -ea -cp build deal.test.StdlibTimePreActivationPinTest
+467  echo "=== std/time.nowMillis Pre-Activation Pin (ISSUE-0369) ==="
+468  java -ea -cp build deal.test.StdlibTimePreActivationPinTest
 ```
 
 Pinned assertions (canonical-HEAD method sites; the task-cited ranges
@@ -278,7 +294,7 @@ gate (see Classification contract).
   closed 14-rule list at `:148-151`; `checkReservedName` (`:2341-2353`)
   dispatches a `StdlibFunctionId` selector or call function named
   `TIME_NOW_MILLIS` to `R_RESERVED_NAME` (`:2344-2346`, `:2350-2352`).
-- E8004 registered: `deal/diagnostics/DiagnosticCode.java:300` —
+- E8004 registered: `deal/diagnostics/DiagnosticCode.java:302` —
   `E8004(Phase.RUNTIME, "Integer out of safe range")`.
 - `STDLIB_TIME_CONFLICT` unpromotable: `deal/semantic/ir/SemanticCapability.java:47-48`
   — "Routing marker: the module references std/time.nowMillis (never
@@ -298,7 +314,7 @@ gate (see Classification contract).
   `deal.semantic.MigrationPlannerTest.testTimeConflictNeverShared`
   (`test/MigrationPlannerTest.java:440-475`) pins LEGACY in every purpose,
   empty `shadowModules`, zero diagnostics, and passed as part of 230/0
-  (both suites launched by `run_tests.sh:242` and `:246`).
+  (both suites launched by `run_tests.sh:244` and `:248`).
 
 ### 2.8 Gate green pre-unit
 
@@ -337,7 +353,8 @@ gate stays green through the staged registry, never through the fixture.
 | `deal/runtime.lua` `check_int` | `:64-82`, range gate `:78`, E8004 `:79` | `:65-83`, gate `:79`, E8004 `:80` | ISSUE-0333 (`ddeed8e`) split the header comment into two lines; body byte-identical |
 | `deal/runtime.js` ±(2^53−1) arm | `:427-428`, unparameterized pre-activation arm | `:1190`, legacy branch of the profile-gated arm (`:1188-1191`) | ISSUE-0321 (`28e1d94`) landed the profile-gated seam; pin test updated by ISSUE-0369 (`f00f132`) |
 | `test_stdlib.lua` nowMillis cases | `:1028-1042`, incl. canonical-message case + unsatisfied record | `:1070-1076`, two code-only E8004 cases; record lives in `ConformanceTest.java:130-146` + `docs/v1.2-conformance-status.md:24-28` | `bc93e41` re-pinned both cases to `assert_error_code`; ISSUE-0337 added cases above |
-| `run_tests.sh` pin-test launch | `:436` | `:457-458` | intervening suite lines landed |
+| `run_tests.sh` pin-test launch | `:436` (task) / `:457-458` (design checkout) | `:467-468` | MR-0267 added the ComparisonExecutor (`a11fc02`) and ContainerOpsExecutor (`88cdb45`) launch blocks above it |
+| `DiagnosticCode.java` E8004 | `:300` (task) | `:302` | E3018 gate (`ea561a8`) inserted the new code at `:224-225`, shifting E8004 down two lines; registration content unchanged |
 | Pin-test method ranges | `:93-107` / `:123-149` / `:150-179` | `:95-109` / `:125-150` / `:156-180` | ISSUE-0321 seam-pin edits |
 | `ConformanceTest.java` registration | `:150-159` (task) / `:148-161` (wiki) | call `:151-160`, block `:148-161` | task window starts one line above the call |
 | LuaJIT conformance total | 379 | 381 | ISSUE-0337 (`a6033b5`) added two `stdlib-edge` fixtures |
@@ -345,8 +362,9 @@ gate stays green through the staged registry, never through the fixture.
 Exact matches (no delta): `std/time.lua:9-10`; the fixture `:1-4` and
 body; `ConformanceTest.java:130-146` doc; `StdlibFunctionId.java:50-52`;
 `MigrationPlanner.java:287-288`; `MigrationPlannerTest.java:440-475`;
-`DiagnosticCode.java:300`; `SemanticCapability.java` member and class doc;
-`LoweringSupport.java:74-122` Arms A–D.
+`SemanticCapability.java` member and class doc; `LoweringSupport.java:74-122`
+Arms A–D; `SemanticIrValidator.java` `R_RESERVED_NAME` and the closed
+14-rule list (MR-0267 did not touch the validator).
 
 ## 5. Conclusion
 
