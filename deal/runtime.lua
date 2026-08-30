@@ -13,6 +13,19 @@ local __rt = {}
 __rt.__NULL = {}
 __rt.__MISSING = {}
 
+-- ===== Process-wide int32 gate (signed-int32 foundation I4) =====
+-- Legacy default: with the flag absent/false every int boundary keeps the
+-- byte-identical landed runtime behavior (ISSUE-0332 signed32 narrowing,
+-- E8004 "int out of range", int_mod gates the truncating quotient first).
+-- Under DEAL_V1_2_INT32 the Lua emitter writes __rt.__INT32 = true in the
+-- module preamble (idempotent; the profile is project-wide, so every
+-- module of one invocation agrees): check_int gates [-2147483648,
+-- 2147483647] with the pinned retained template E8004
+-- "int out of safe range", and int_mod gates the truncated remainder only
+-- (-2147483648 % -1 => 0). _json_is_int narrows to signed32
+-- unconditionally (canonical ISSUE-0342, luajit-v1.2-stdlib-contracts D5).
+__rt.__INT32 = false
+
 -- ===== Error formatting =====
 
 --- Create an error table in DEALRuntimeError format.
@@ -80,8 +93,18 @@ function __rt.check_int(v, file, line, column)
   if v % 1 ~= 0 then
     error(__rt._err("E8001", "expected int, got non-integer number", file, line, column, "int", "number"))
   end
-  if v < -2147483648 or v > 2147483647 then
-    error(__rt._err("E8004", "int out of range", file, line, column, nil, nil))
+  if __rt.__INT32 then
+    -- int32 branch: the same signed32 gate with the pinned retained
+    -- template (signed-int32 foundation I4; the LegacyErrorNormalization
+    -- E8004 row pins "int out of safe range" for both retained targets).
+    if v < -2147483648 or v > 2147483647 then
+      error(__rt._err("E8004", "int out of safe range", file, line, column, nil, nil))
+    end
+  else
+    -- legacy branch (byte-identical landed ISSUE-0332 behavior).
+    if v < -2147483648 or v > 2147483647 then
+      error(__rt._err("E8004", "int out of range", file, line, column, nil, nil))
+    end
   end
   return v
 end
@@ -279,9 +302,18 @@ function __rt.int_mod(a, b, file, line, column)
   if b == 0 then
     error(__rt._err("E8005", "integer division by zero", file, line, column, nil, nil))
   end
-  -- Gate the truncating quotient first: MIN_VALUE % -1 raises E8004 because
-  -- the truncated quotient (2147483648) leaves the int32 range, even though
-  -- the mathematical remainder (0) is representable (runtime page D1).
+  if __rt.__INT32 then
+    -- int32 branch: gate the truncated remainder only (spec v1.2:87-98
+    -- truncated remainder), so -2147483648 % -1 => 0 (signed-int32
+    -- foundation I4; SharedValueSemantics.int32Mod agrees).
+    local q = math.modf(a / b)
+    return __rt.check_int(a - q * b, file, line, column)
+  end
+  -- Legacy branch (byte-identical landed ISSUE-0332 behavior): gate the
+  -- truncating quotient first: MIN_VALUE % -1 raises E8004 because
+  -- the truncated quotient (2147483648) leaves the int32 range, even
+  -- though the mathematical remainder (0) is representable (runtime
+  -- page D1).
   local q = math.modf(a / b)
   __rt.check_int(q, file, line, column)
   return __rt.check_int(a - q * b, file, line, column)

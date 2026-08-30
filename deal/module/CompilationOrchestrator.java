@@ -1657,7 +1657,7 @@ public final class CompilationOrchestrator {
         LuaBackend.GenerationResult gen = LuaBackend.generateToFile(
             info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
             outputRoot, outputPath, sourceMap, importResolutions, hostModules,
-            isEntry, descriptors);
+            isEntry, descriptors, invocation.semanticProfile());
         // Native ranged backend list (T12): the backend emits
         // CompilerDiagnostic entries directly, so the orchestrator merge
         // needs no boundary conversion — real spans keep their exact

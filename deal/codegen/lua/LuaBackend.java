@@ -14,6 +14,7 @@ import deal.identity.CanonicalClassIdentityIndex;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
 import deal.module.ModuleIdentityResolver;
+import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -36,6 +37,13 @@ public final class LuaBackend implements Visitor<Void> {
 
     private final Map<ExpressionNode, Type> typeMap;
     private final SymbolTable symbols;
+
+    // Process-wide profile gate (signed-int32 foundation I4): under
+    // DEAL_V1_2_INT32 the emitted module preamble writes
+    // __rt.__INT32 = true (idempotent; the profile is project-wide) and
+    // unary int negation routes through __rt.int_neg with span args. The
+    // legacy default keeps the pre-change emission byte-identical.
+    private final boolean int32Mode;
 
     // The per-compilation canonical descriptor service (emitter page D1):
     // every descriptor this backend writes into a v1.2 artifact comes from
@@ -305,7 +313,8 @@ public final class LuaBackend implements Visitor<Void> {
                                               boolean entryModule,
                                               CanonicalRuntimeTypeDescriptor descriptors) {
         return generateResult(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, entryModule, null, descriptors).lua();
+            importResolutions, hostModules, entryModule, null, descriptors,
+            SemanticProfile.LEGACY_SAFE_INT).lua();
     }
 
     /**
@@ -365,8 +374,10 @@ public final class LuaBackend implements Visitor<Void> {
             Map<String, String> importResolutions,
             Map<String, Map<String, Type>> hostModules, boolean entryModule,
             SourceMapGenerator smg,
-            CanonicalRuntimeTypeDescriptor descriptors) {
-        LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable());
+            CanonicalRuntimeTypeDescriptor descriptors,
+            SemanticProfile semanticProfile) {
+        LuaBackend backend = new LuaBackend(result.typeMap(),
+            result.symbolTable(), semanticProfile);
         backend.descriptors = descriptors;
         backend.sourceFilePath = sourcePath;
         backend.modulePath = modulePath;
@@ -448,7 +459,8 @@ public final class LuaBackend implements Visitor<Void> {
                                                 boolean entryModule) {
         return generateResult(program, result, sourcePath, modulePath,
             importResolutions, hostModules, entryModule, smg,
-            standaloneDescriptors(modulePath, hostModules)).lua();
+            standaloneDescriptors(modulePath, hostModules),
+            SemanticProfile.LEGACY_SAFE_INT).lua();
     }
 
     /**
@@ -527,6 +539,25 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     /**
+     * Profile-carrying convenience variant (signed-int32 foundation I4):
+     * mirrors the 7-argument overload with the module path defaulting to
+     * the source path and the entry contract off; the runtime library is
+     * copied to {@code outputRoot/deal/runtime.lua} exactly like the
+     * legacy overloads.
+     */
+    public static void generateToFile(ProgramNode program, CheckResult result,
+                                       String sourcePath, Path outputRoot,
+                                       Path outputPath, boolean emitSourceMap,
+                                       Map<String, String> importResolutions,
+                                       Map<String, Map<String, Type>> hostModules,
+                                       SemanticProfile semanticProfile)
+                                       throws IOException {
+        generateToFile(program, result, sourcePath, sourcePath, outputRoot,
+            outputPath, emitSourceMap, importResolutions, hostModules, false,
+            semanticProfile);
+    }
+
+    /**
      * File-writing variant with an explicit module path, host module
      * declarations, and import resolution mapping.
      *
@@ -568,7 +599,29 @@ public final class LuaBackend implements Visitor<Void> {
         return generateToFile(program, result, sourcePath, modulePath,
             outputRoot, outputPath, emitSourceMap, importResolutions,
             hostModules, entryModule,
-            standaloneDescriptors(modulePath, hostModules));
+            standaloneDescriptors(modulePath, hostModules),
+            SemanticProfile.LEGACY_SAFE_INT);
+    }
+
+    /**
+     * Profile-carrying entry variant (signed-int32 foundation I4): same
+     * contract as the overload above with the invocation's semantic
+     * profile selecting the int32 gate emission.
+     */
+    public static GenerationResult generateToFile(ProgramNode program,
+                                       CheckResult result,
+                                       String sourcePath, String modulePath,
+                                       Path outputRoot, Path outputPath,
+                                       boolean emitSourceMap,
+                                       Map<String, String> importResolutions,
+                                       Map<String, Map<String, Type>> hostModules,
+                                       boolean entryModule,
+                                       SemanticProfile semanticProfile)
+                                       throws IOException {
+        return generateToFile(program, result, sourcePath, modulePath,
+            outputRoot, outputPath, emitSourceMap, importResolutions,
+            hostModules, entryModule,
+            standaloneDescriptors(modulePath, hostModules), semanticProfile);
     }
 
     /**
@@ -588,10 +641,35 @@ public final class LuaBackend implements Visitor<Void> {
                                        boolean entryModule,
                                        CanonicalRuntimeTypeDescriptor descriptors)
                                        throws IOException {
+        return generateToFile(program, result, sourcePath, modulePath,
+            outputRoot, outputPath, emitSourceMap, importResolutions,
+            hostModules, entryModule, descriptors,
+            SemanticProfile.LEGACY_SAFE_INT);
+    }
+
+    /**
+     * Profile-carrying production seam (signed-int32 foundation I4): the
+     * orchestrator passes {@code invocation.semanticProfile()} here; under
+     * {@code DEAL_V1_2_INT32} the emitted module preamble writes
+     * {@code __rt.__INT32 = true} and unary int negation routes through
+     * {@code __rt.int_neg}. The overload above keeps the legacy default so
+     * direct-test call sites are untouched.
+     */
+    public static GenerationResult generateToFile(ProgramNode program,
+                                       CheckResult result,
+                                       String sourcePath, String modulePath,
+                                       Path outputRoot, Path outputPath,
+                                       boolean emitSourceMap,
+                                       Map<String, String> importResolutions,
+                                       Map<String, Map<String, Type>> hostModules,
+                                       boolean entryModule,
+                                       CanonicalRuntimeTypeDescriptor descriptors,
+                                       SemanticProfile semanticProfile)
+                                       throws IOException {
         SourceMapGenerator smg = emitSourceMap ? new SourceMapGenerator() : null;
         GenerationResult gen = generateResult(program, result, sourcePath,
             modulePath, importResolutions, hostModules, entryModule, smg,
-            descriptors);
+            descriptors, semanticProfile);
         String luaSource = gen.lua();
         boolean hasErrors = gen.diagnostics().stream()
             .anyMatch(d -> "error".equals(d.severity()));
@@ -663,9 +741,11 @@ public final class LuaBackend implements Visitor<Void> {
     // Constructor
     // =========================================================================
 
-    private LuaBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols) {
+    private LuaBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
+                       SemanticProfile semanticProfile) {
         this.typeMap = new HashMap<>(typeMap);
         this.symbols = symbols;
+        this.int32Mode = semanticProfile == SemanticProfile.DEAL_V1_2_INT32;
     }
 
     /**
@@ -679,8 +759,7 @@ public final class LuaBackend implements Visitor<Void> {
      * identity for identifier-shaped module paths.
      */
     public LuaBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols, String sourcePath) {
-        this.typeMap = new HashMap<>(typeMap);
-        this.symbols = symbols;
+        this(typeMap, symbols, SemanticProfile.LEGACY_SAFE_INT);
         this.sourceFilePath = sourcePath;
         this.modulePath = sourcePath;
         this.descriptors = standaloneDescriptors(sourcePath, Map.of());
@@ -696,8 +775,21 @@ public final class LuaBackend implements Visitor<Void> {
     public LuaBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
                       String sourcePath, String modulePath,
                       CanonicalRuntimeTypeDescriptor descriptors) {
-        this.typeMap = new HashMap<>(typeMap);
-        this.symbols = symbols;
+        this(typeMap, symbols, sourcePath, modulePath, descriptors,
+            SemanticProfile.LEGACY_SAFE_INT);
+    }
+
+    /**
+     * Instance constructor with an explicit semantic profile
+     * (signed-int32 foundation I4): {@link #generateFromInstance} derives
+     * the int32 gate/negation emission from it. The overload above keeps
+     * the legacy default so direct-test call sites are untouched.
+     */
+    public LuaBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
+                      String sourcePath, String modulePath,
+                      CanonicalRuntimeTypeDescriptor descriptors,
+                      SemanticProfile semanticProfile) {
+        this(typeMap, symbols, semanticProfile);
         this.sourceFilePath = sourcePath;
         this.modulePath = modulePath;
         this.descriptors = descriptors;
@@ -775,6 +867,9 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("-- Source: " + sourceFilePath);
         emitLine("");
         emitLine("local __rt = require(\"deal.runtime\")");
+        if (int32Mode) {
+            emitLine("__rt.__INT32 = true");
+        }
         emitLine("");
         emitLine("local __NULL = __rt.__NULL");
         emitLine("local __MISSING = __rt.__MISSING");
@@ -2149,6 +2244,15 @@ public final class LuaBackend implements Visitor<Void> {
 
     private String emitUnary(UnaryExpr un) {
         String expr = emitExpression(un.expr());
+        if (un.op() == UnaryOp.NEG && int32Mode
+                && typeOf(un.expr()) instanceof Type.Int) {
+            // signed-int32 foundation I4: under DEAL_V1_2_INT32 int
+            // negation routes through the runtime gate so
+            // -(-2147483648) raises E8004 and -0 normalizes to 0; number
+            // negation stays raw and the legacy profile keeps the raw
+            // (-expr) emission byte-identical.
+            return "__rt.int_neg(" + expr + ", " + spanArgs(un.span()) + ")";
+        }
         return switch (un.op()) {
             case NOT -> "(not (" + expr + "))";
             case NEG -> {

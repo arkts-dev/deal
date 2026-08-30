@@ -2,10 +2,18 @@ package deal.test;
 
 import deal.ast.*;
 import deal.checker.*;
-import deal.diagnostics.CompilerDiagnostic;
+import deal.codegen.Backend;
 import deal.codegen.lua.LuaBackend;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.lexer.*;
+import deal.module.CompilationOrchestrator;
 import deal.parser.*;
+import deal.semantic.CapabilityRegistry;
+import deal.semantic.CompilerInvocation;
+import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ir.ReleaseState;
+import deal.semantic.ir.SemanticProfile;
+import deal.types.Type;
 
 import java.io.*;
 import java.nio.file.*;
@@ -146,6 +154,15 @@ public class LuaBackendIntegrationTest {
         testNumberConvertNull();
         testIntConvertIntLiteral();
         testIntrinsicFunctionValues();
+
+        // ISSUE-0393 (I4): retained signed-int32 route — process-wide gate,
+        // __rt.int_neg, profile-aware emitter (gate-run emission tests)
+        testInt32GateMatrix();
+        testInt32ConversionAndBoundary();
+        testInt32NumberPowBand();
+        testInt32StdMathAbsMin();
+        testInt32LegacyEmissionUnchanged();
+        testInt32ProfileFlowsThroughInvocation();
 
         // ISSUE-0018: Template literal and for-of integration tests
         testTemplateLiteralRuntime();
@@ -3448,6 +3465,408 @@ public class LuaBackendIntegrationTest {
             check(r.runtimeOutput.contains("localhost"), "default host applied, got: " + r.runtimeOutput);
             check(r.runtimeOutput.contains("8080"), "default port applied, got: " + r.runtimeOutput);
         }
+    }
+
+
+    // =========================================================================
+    // ISSUE-0393 (I4): retained LuaJIT signed-int32 route — process-wide
+    // __rt.__INT32 gate, __rt.int_neg, profile-aware emitter
+    // =========================================================================
+
+    private record V12Module(String lua, Path outDir) {}
+
+    /**
+     * Compiles one module under {@code DEAL_V1_2_INT32} (the v1.2 parser
+     * constructor — phase-0 in-range literal guarantee) and emits it
+     * through the profile-carrying {@code generateToFile} seam into a
+     * fresh temp output root (the runtime library is copied alongside).
+     */
+    private static V12Module emitV12Module(String dealSource, String filename,
+            Map<String, Map<String, Type>> stdlibExports) throws Exception {
+        LexResult lex = new Lexer(dealSource, filename).tokenize();
+        ParseResult parse = new Parser(lex.tokens(), filename,
+            SemanticProfile.DEAL_V1_2_INT32).parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        if (stdlibExports != null) {
+            for (Map.Entry<String, Map<String, Type>> e : stdlibExports.entrySet()) {
+                resolver.register(e.getKey(), e.getValue());
+            }
+        }
+        NameResolver nr = new NameResolver(filename, resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        List<CompilerDiagnostic> diags = new ArrayList<>(parse.diagnostics());
+        diags.addAll(nr.diagnostics());
+        CheckResult result = TypeChecker.check(filename, symTable, nr, parse.program());
+        diags.addAll(result.diagnostics());
+        List<CompilerDiagnostic> errors = diags.stream()
+            .filter(d -> "error".equals(d.severity())).toList();
+        check(errors.isEmpty(),
+            "v1.2 frontend clean for " + filename + ": " + errors);
+        if (!errors.isEmpty()) throw new RuntimeException("v1.2 frontend errors");
+        Path outDir = Files.createTempDirectory("deal_v12_");
+        Path luaFile = outDir.resolve("test_main.lua");
+        LuaBackend.GenerationResult gen = LuaBackend.generateToFile(
+            parse.program(), result, filename, filename, outDir, luaFile,
+            false, Map.of(), Map.of(), false, SemanticProfile.DEAL_V1_2_INT32);
+        return new V12Module(gen.lua(), outDir);
+    }
+
+    /**
+     * Runs the per-case script under real luajit from the repository root
+     * (so {@code ./?.lua} resolves deal/runtime.lua and std/?.lua resolves
+     * the stdlib modules) and cleans up the temp output root.
+     */
+    private static String runV12Cases(V12Module mod, String caseScript) throws Exception {
+        Path runnerFile = mod.outDir().resolve("runner.lua");
+        String runner = "package.path = '" + mod.outDir().toRealPath()
+            + "/?.lua;./?.lua;./std/?.lua;' .. package.path\n"
+            + "local mod = require('test_main')\n"
+            + caseScript + "\n";
+        Files.writeString(runnerFile, runner);
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(Path.of(".").toAbsolutePath().normalize().toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes());
+        int exit = p.waitFor();
+        try {
+            Files.walk(mod.outDir()).sorted(Comparator.reverseOrder())
+                .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+        return "EXIT " + exit + "\n" + output;
+    }
+
+    /** The per-case dispatch script shared by the matrix modules. */
+    private static String caseDispatchScript(String entries) {
+        return "local cases = {\n" + entries + "}\n"
+            + "for name, fn in pairs(cases) do\n"
+            + "  local ok, res = xpcall(fn, function(e) return e end)\n"
+            + "  if ok then\n"
+            + "    print('CASE ' .. name .. ' RESULT ' .. tostring(res))\n"
+            + "  else\n"
+            + "    print('CASE ' .. name .. ' ERROR ' .. tostring(res and res.code) .. '|' .. tostring(res and res.message) .. '|' .. tostring(res and res.line) .. '|' .. tostring(res and res.column))\n"
+            + "  end\n"
+            + "end\n";
+    }
+
+    private static String[] caseError(String output, String name) {
+        for (String line : output.split("\n")) {
+            if (line.startsWith("CASE " + name + " ERROR ")) {
+                return line.substring(("CASE " + name + " ERROR ").length())
+                    .split("\\|", -1);
+            }
+        }
+        return null;
+    }
+
+    private static String caseResult(String output, String name) {
+        for (String line : output.split("\n")) {
+            if (line.startsWith("CASE " + name + " RESULT ")) {
+                return line.substring(("CASE " + name + " RESULT ").length());
+            }
+        }
+        return null;
+    }
+
+    /** 1-based line/column of a needle inside the DEAL source. */
+    private static int[] lineColOf(String source, String needle) {
+        int idx = source.indexOf(needle);
+        int line = 1;
+        int lastNl = -1;
+        for (int i = 0; i < idx; i++) {
+            if (source.charAt(i) == '\n') { line++; lastNl = i; }
+        }
+        return new int[] {line, idx - lastNl};
+    }
+
+    private static void assertError(String output, String name, String code,
+            String message) {
+        String[] err = caseError(output, name);
+        check(err != null && code.equals(err[0]),
+            name + " raises " + code + ": " + output);
+        if (err != null && code.equals(err[0]) && message != null) {
+            check(message.equals(err[1]),
+                name + " message is '" + message + "', got: " + err[1]);
+        }
+    }
+
+    private static void assertResult(String output, String name, String result) {
+        String res = caseResult(output, name);
+        check(result.equals(res),
+            name + " returns " + result + ", got: " + res + "\n" + output);
+    }
+
+    private static void assertErrorAt(String output, String name, String source,
+            String needle) {
+        String[] err = caseError(output, name);
+        int[] pos = lineColOf(source, needle);
+        check(err != null && String.valueOf(pos[0]).equals(err[2])
+                && String.valueOf(pos[1]).equals(err[3]),
+            name + " E8004 origin is the operation site " + pos[0] + ":"
+                + pos[1] + ", got line/column "
+                + (err == null ? null : err[2] + "/" + err[3]));
+    }
+
+    /**
+     * The signed32 matrix under the emitted gate: arithmetic overflow
+     * (both signs), MIN negation/division, the MIN % -1 == 0 remainder
+     * pin, E8005/E8006, and the pow band — all with the pinned retained
+     * template {@code int out of safe range} at the operation site span.
+     */
+    static void testInt32GateMatrix() throws Exception {
+        System.out.println("-- Signed-int32 gate matrix (DEAL_V1_2_INT32) --");
+        String src =
+            "export function addOver(): int { return 2147483647 + 1; }\n"
+            + "export function addOverNeg(): int { return -2147483648 + -1; }\n"
+            + "export function subOver(): int { return -2147483648 - 1; }\n"
+            + "export function subOverPos(): int { return 2147483647 - -1; }\n"
+            + "export function mulOver(): int { return 2147483647 * 2; }\n"
+            + "export function mulOverNeg(): int { return -2147483648 * 2; }\n"
+            + "export function negMin(): int { return -(-2147483648); }\n"
+            + "export function divMinNegOne(): int { return -2147483648 / -1; }\n"
+            + "export function modMinNegOne(): boolean { return -2147483648 % -1 === 0; }\n"
+            + "export function divZero(): int { return 1 / 0; }\n"
+            + "export function powNegExp(): int { return 2 ** -1; }\n"
+            + "export function powBandE8004(): int { return 2 ** 62; }\n"
+            + "export function powBandInfinity(): int { return 2 ** 1024; }\n";
+        V12Module mod = emitV12Module(src, "int32-matrix.deal", null);
+        check(mod.lua().contains("__rt.__INT32 = true"),
+            "v1.2 preamble writes the process-wide gate flag");
+        String entries =
+            "  addOver = function() return mod.addOver.f() end,\n"
+            + "  addOverNeg = function() return mod.addOverNeg.f() end,\n"
+            + "  subOver = function() return mod.subOver.f() end,\n"
+            + "  subOverPos = function() return mod.subOverPos.f() end,\n"
+            + "  mulOver = function() return mod.mulOver.f() end,\n"
+            + "  mulOverNeg = function() return mod.mulOverNeg.f() end,\n"
+            + "  negMin = function() return mod.negMin.f() end,\n"
+            + "  divMinNegOne = function() return mod.divMinNegOne.f() end,\n"
+            + "  modMinNegOne = function() return mod.modMinNegOne.f() end,\n"
+            + "  divZero = function() return mod.divZero.f() end,\n"
+            + "  powNegExp = function() return mod.powNegExp.f() end,\n"
+            + "  powBandE8004 = function() return mod.powBandE8004.f() end,\n"
+            + "  powBandInfinity = function() return mod.powBandInfinity.f() end\n";
+        String out = runV12Cases(mod, caseDispatchScript(entries));
+
+        assertError(out, "addOver", "E8004", "int out of safe range");
+        assertErrorAt(out, "addOver", src, "2147483647 + 1");
+        assertError(out, "addOverNeg", "E8004", "int out of safe range");
+        assertError(out, "subOver", "E8004", "int out of safe range");
+        assertError(out, "subOverPos", "E8004", "int out of safe range");
+        assertError(out, "mulOver", "E8004", "int out of safe range");
+        assertError(out, "mulOverNeg", "E8004", "int out of safe range");
+        assertError(out, "negMin", "E8004", "int out of safe range");
+        assertError(out, "divMinNegOne", "E8004", "int out of safe range");
+        assertResult(out, "modMinNegOne", "true");
+        assertError(out, "divZero", "E8005", "integer division by zero");
+        assertError(out, "powNegExp", "E8006", "integer exponent must be non-negative");
+        assertError(out, "powBandE8004", "E8004", "int out of safe range");
+        assertError(out, "powBandInfinity", "E8001", "expected int, got infinity");
+    }
+
+    /**
+     * Conversion intrinsics (NaN/infinity/fractional/range) and the two
+     * boundary shapes receiving {@code 2147483648.0}: an int[] element
+     * write and a table read in an int contextual target.
+     */
+    static void testInt32ConversionAndBoundary() throws Exception {
+        System.out.println("-- Signed-int32 conversion and boundary (DEAL_V1_2_INT32) --");
+        String src =
+            "export function convRange(): int { return int(2147483648.0); }\n"
+            + "export function convNaN(): int { return int(0.0 / 0.0); }\n"
+            + "export function convInfinity(): int { return int(1.0 / 0.0); }\n"
+            + "export function convFraction(): int { return int(1.5); }\n"
+            + "export function arrayElementBoundary(a: int[]): null {\n"
+            + "  let t = {x: 2147483648.0};\n"
+            + "  a[0] = t.x;\n"
+            + "  return null;\n"
+            + "}\n"
+            + "export function tableReadBoundary(): int {\n"
+            + "  let t = {x: 2147483648.0};\n"
+            + "  return t.x;\n"
+            + "}\n";
+        V12Module mod = emitV12Module(src, "int32-boundary.deal", null);
+        String entries =
+            "  convRange = function() return mod.convRange.f() end,\n"
+            + "  convNaN = function() return mod.convNaN.f() end,\n"
+            + "  convInfinity = function() return mod.convInfinity.f() end,\n"
+            + "  convFraction = function() return mod.convFraction.f() end,\n"
+            + "  arrayElementBoundary = function() return mod.arrayElementBoundary.f({1}) end,\n"
+            + "  tableReadBoundary = function() return mod.tableReadBoundary.f() end\n";
+        String out = runV12Cases(mod, caseDispatchScript(entries));
+
+        assertError(out, "convRange", "E8004", "int out of safe range");
+        assertError(out, "convNaN", "E8001", "expected int, got NaN");
+        assertError(out, "convInfinity", "E8001", "expected int, got infinity");
+        assertError(out, "convFraction", "E8001", "expected int, got non-integer number");
+        assertError(out, "arrayElementBoundary", "E8004", "int out of safe range");
+        assertError(out, "tableReadBoundary", "E8004", "int out of safe range");
+    }
+
+    /**
+     * The number-pow IEEE agreement band: number pow stays raw {@code a ^ b}
+     * (C pow) in both branches; the pinned IEEE special cases hold.
+     */
+    static void testInt32NumberPowBand() throws Exception {
+        System.out.println("-- Number pow IEEE band (DEAL_V1_2_INT32) --");
+        String src =
+            "export function powOneNaN(): boolean { return 1.0 ** (0.0 / 0.0) === 1.0; }\n"
+            + "export function powNaNZero(): boolean { return (0.0 / 0.0) ** 0.0 === 1.0; }\n"
+            + "export function powNegOneInf(): boolean { return (-1.0) ** (1.0 / 0.0) === 1.0; }\n"
+            + "export function powOverflow(): boolean { return 2.0 ** 1024.0 === (1.0 / 0.0); }\n"
+            + "export function powUnderflow(): boolean { return 2.0 ** -1075.0 === 0.0; }\n";
+        V12Module mod = emitV12Module(src, "int32-numpow.deal", null);
+        check(!mod.lua().contains("__rt.int_pow"),
+            "number pow stays the raw a ^ b emission (no runtime helper)");
+        String entries =
+            "  powOneNaN = function() return mod.powOneNaN.f() end,\n"
+            + "  powNaNZero = function() return mod.powNaNZero.f() end,\n"
+            + "  powNegOneInf = function() return mod.powNegOneInf.f() end,\n"
+            + "  powOverflow = function() return mod.powOverflow.f() end,\n"
+            + "  powUnderflow = function() return mod.powUnderflow.f() end\n";
+        String out = runV12Cases(mod, caseDispatchScript(entries));
+
+        assertResult(out, "powOneNaN", "true");
+        assertResult(out, "powNaNZero", "true");
+        assertResult(out, "powNegOneInf", "true");
+        assertResult(out, "powOverflow", "true");
+        assertResult(out, "powUnderflow", "true");
+    }
+
+    /**
+     * The stdlib seam routes through the same process-wide gate:
+     * {@code std/math.absInt(-2147483648)} raises E8004 with the pinned
+     * retained template.
+     */
+    static void testInt32StdMathAbsMin() throws Exception {
+        System.out.println("-- std/math.absInt MIN under the gate (DEAL_V1_2_INT32) --");
+        String src =
+            "import * as math from \"std/math\"\n"
+            + "export function absMin(): int { return math.absInt(-2147483648); }\n";
+        Map<String, Map<String, Type>> stdlib = Map.of("std/math",
+            Map.of("absInt", new Type.Func(List.of(Type.Int.INSTANCE),
+                Type.Int.INSTANCE)));
+        V12Module mod = emitV12Module(src, "int32-absmin.deal", stdlib);
+        String entries = "  absMin = function() return mod.absMin.f() end\n";
+        String out = runV12Cases(mod, caseDispatchScript(entries));
+        assertError(out, "absMin", "E8004", "int out of safe range");
+    }
+
+    /**
+     * Legacy byte-identity: the default overloads keep the pre-change
+     * emission (no gate flag, raw {@code (-expr)} int negation), while the
+     * same source under {@code DEAL_V1_2_INT32} flips both sites.
+     */
+    static void testInt32LegacyEmissionUnchanged() throws Exception {
+        System.out.println("-- Legacy emission stays byte-identical --");
+        String src =
+            "export function neg(x: int): int { return -x; }\n"
+            + "export function main(): null { return null; }\n";
+        LexResult lex = new Lexer(src, "legacy.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "legacy.deal").parse();
+        StubModuleResolver resolver = new StubModuleResolver();
+        NameResolver nr = new NameResolver("legacy.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("legacy.deal", symTable, nr,
+            parse.program());
+        String legacyLua = LuaBackend.generate(parse.program(), result,
+            "legacy.deal");
+        check(!legacyLua.contains("__rt.__INT32"),
+            "legacy preamble carries no gate flag line");
+        check(!legacyLua.contains("__rt.int_neg"),
+            "legacy int negation stays the raw emission");
+        check(legacyLua.contains("(-x)"),
+            "legacy int negation emits raw (-x): " + legacyLua);
+
+        V12Module v12 = emitV12Module(src, "legacy.deal", null);
+        check(v12.lua().contains("__rt.__INT32 = true"),
+            "v1.2 preamble writes the gate flag");
+        check(v12.lua().contains("__rt.int_neg(x, \"legacy.deal\""),
+            "v1.2 int negation routes through __rt.int_neg with span args: "
+                + v12.lua());
+    }
+
+    /**
+     * Combined T1 + T3 verification: the profile flows from a
+     * {@code COMMON_SHADOW + DEAL_V1_2_INT32 + PRE_ACTIVATION} invocation
+     * through phase-0 parsing (in-range literal guarantee — the bare
+     * {@code 2147483648} E1036 negative control fails the invocation)
+     * into the Lua emitter, and the emitted artifact executes under real
+     * luajit with the gate active.
+     */
+    static void testInt32ProfileFlowsThroughInvocation() throws Exception {
+        System.out.println("-- Profile flows: COMMON_SHADOW + DEAL_V1_2_INT32 + PRE_ACTIVATION -> Lua emitter -> luajit --");
+        Path tmp = Files.createTempDirectory("deal_v12_inv_");
+        Path srcDir = tmp.resolve("src");
+        Files.createDirectories(srcDir);
+        Path mainFile = srcDir.resolve("main.deal");
+        String mainSrc =
+            "export function test(): int { return 2147483647 + 1; }\n"
+            + "export function main(): null { return null; }\n";
+        Files.writeString(mainFile, mainSrc);
+        Path outDir = tmp.resolve("build");
+        CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+            CapabilityRegistry.releaseRegistry());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            mainFile.toAbsolutePath(), outDir, false, false, false, false,
+            Backend.LUAJIT, null, List.of(srcDir.toAbsolutePath()), null, null,
+            invocation);
+        boolean compiled = orchestrator.compile();
+        check(compiled, "v1.2 invocation compiles: " + orchestrator.diagnostics());
+        Path emitted = outDir.resolve("main.lua");
+        check(Files.exists(emitted), "emitted main.lua exists");
+        String luaText = Files.exists(emitted) ? Files.readString(emitted) : "";
+        check(luaText.contains("__rt.__INT32 = true"),
+            "orchestrator-plumbed profile writes the gate flag");
+
+        // The phase-0 E1036 gate through the same invocation: a bare
+        // out-of-range literal (outside the unary-minus position) fails
+        // the invocation before any backend.
+        Path badFile = srcDir.resolve("bad.deal");
+        Files.writeString(badFile,
+            "export function test(): int { return 2147483648; }\n"
+            + "export function main(): null { return null; }\n");
+        Path badOut = tmp.resolve("build_bad");
+        CompilationOrchestrator badOrchestrator = new CompilationOrchestrator(
+            badFile.toAbsolutePath(), badOut, false, false, false, false,
+            Backend.LUAJIT, null, List.of(srcDir.toAbsolutePath()), null, null,
+            invocation);
+        boolean badCompiled = badOrchestrator.compile();
+        check(!badCompiled
+                && badOrchestrator.diagnostics().stream()
+                    .anyMatch(d -> "E1036".equals(d.code())),
+            "bare 2147483648 raises E1036 through the v1.2 invocation: "
+                + badOrchestrator.diagnostics());
+
+        if (!compiled) {
+            try {
+                Files.walk(tmp).sorted(Comparator.reverseOrder())
+                    .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+            } catch (IOException ignored) {}
+            return;
+        }
+
+        String runner = "package.path = '" + outDir.toRealPath()
+            + "/?.lua;./?.lua;./std/?.lua;' .. package.path\n"
+            + "local mod = require('main')\n"
+            + "local ok, err = xpcall(function() return mod.test.f() end, function(e) return e end)\n"
+            + "if ok then print('NO_ERROR ' .. tostring(err)) else print('ERROR ' .. tostring(err and err.code) .. '|' .. tostring(err and err.message)) end\n";
+        Path runnerFile = tmp.resolve("runner.lua");
+        Files.writeString(runnerFile, runner);
+        ProcessBuilder pb = new ProcessBuilder("luajit", runnerFile.toString());
+        pb.directory(Path.of(".").toAbsolutePath().normalize().toFile());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String output = new String(p.getInputStream().readAllBytes());
+        p.waitFor();
+        check(output.contains("ERROR E8004|int out of safe range"),
+            "emitted v1.2 artifact executes under luajit with the int32 gate: "
+                + output);
+        try {
+            Files.walk(tmp).sorted(Comparator.reverseOrder())
+                .forEach(f -> { try { Files.deleteIfExists(f); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
     }
 
 }
