@@ -3383,7 +3383,14 @@ static void dealpg4_outer_startup_failed(dealpg4_outer_state *st);
  * Pid scope (COORDINATOR_STARTUP_FAILED — the group was never
  * verified): TERM/KILL by pid, steps 1-2 of the group escalation
  * skipped. When the TERM step finds nothing alive both steps run as
- * no-ops (no grace wait — nothing was signaled). */
+ * no-ops (no grace wait — nothing was signaled). One exception: a
+ * coordinator that published COORD_EXEC_FAILED announced its own
+ * _exit(127) immediately after the publication — the by-pid TERM is
+ * deferred by the grace window (escalation_term_abs_ms = now +
+ * termGraceMs, KILL at now + 2*termGraceMs) so the child's own exit
+ * is deterministically observed (CLD_EXITED 127) and never raced by
+ * the signal; a defective child that hangs after the publication is
+ * still TERMed (re-verified) and KILLed, bounded. */
 static void dealpg4_outer_begin_escalation(dealpg4_outer_state *st,
                                            int group_scope);
 
@@ -3412,6 +3419,21 @@ static void dealpg4_outer_begin_escalation(dealpg4_outer_state *st,
     } else {
         pid_t pid = st->coordinator_pid;
 
+        if (st->coord_exec_failed) {
+            /* The child published COORD_EXEC_FAILED immediately
+             * before its own _exit(127): the by-pid TERM is deferred
+             * by the grace window so the child's own exit is
+             * deterministically observed (CLD_EXITED 127) and never
+             * raced by the signal; a defective child that hangs
+             * after the publication is TERMed at the deferred moment
+             * (re-verified) and KILLed after the standard grace. */
+            st->escalation_term_abs_ms =
+                now + DEALPG4_LAUNCHER_TERM_GRACE_MS;
+            st->escalation_kill_ms =
+                st->escalation_term_abs_ms
+                + DEALPG4_LAUNCHER_TERM_GRACE_MS;
+            return;
+        }
         if (pid > 0 && kill(pid, 0) == 0) {
             st->escalation_term_sent = 1;
             (void)kill(pid, SIGTERM);
@@ -3973,6 +3995,10 @@ static int64_t dealpg4_outer_next_deadline(dealpg4_outer_state *st)
 
     if (!st->ready_resolved && st->dl.readinessDeadline < d)
         d = st->dl.readinessDeadline;
+    if (st->escalation_active && !st->escalation_term_sent
+        && !st->escalation_kill_issued
+        && st->escalation_term_abs_ms < d)
+        d = st->escalation_term_abs_ms;
     if (st->escalation_active && !st->escalation_kill_issued
         && st->escalation_kill_ms < d)
         d = st->escalation_kill_ms;
@@ -4016,6 +4042,25 @@ static void dealpg4_outer_evaluate(dealpg4_outer_state *st)
 
     if (st->done)
         return;
+
+    /* Deferred pid-scope TERM dispatch (the exec-failed
+     * coordinator's own _exit(127) publication is never raced):
+     * dispatch at the deferred moment, re-verified, only when the
+     * coordinator is still alive — a well-behaved exec-failed child
+     * is reaped CLD_EXITED 127 before this moment and is never
+     * signaled; a defective child that hangs after COORD_EXEC_FAILED
+     * is TERMed here and KILLed at the grace expiry. */
+    if (st->escalation_active && !st->escalation_term_sent
+        && !st->escalation_kill_issued
+        && now >= st->escalation_term_abs_ms) {
+        pid_t pid = st->coordinator_pid;
+
+        if (pid > 0 && kill(pid, 0) == 0) {
+            st->escalation_term_sent = 1;
+            st->escalation_term_ms = now - st->t0o;
+            (void)kill(pid, SIGTERM);
+        }
+    }
 
     /* Recipe deadline observations (D9). */
     if (now >= st->dl.totalDeadline) {
