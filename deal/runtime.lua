@@ -1166,7 +1166,7 @@ function __rt.invoke_async_export(exports, exportName, returnDescriptor)
         "exportName must be a string, got " .. type(exportName)))
   end
   if type(returnDescriptor) ~= "string"
-      or parse_canonical_descriptor(returnDescriptor) == nil then
+      or parse_descriptor(returnDescriptor) == nil then
     error(__rt._host_invocation_failure(
         "return descriptor is not a canonical descriptor: "
         .. tostring(returnDescriptor)))
@@ -1206,7 +1206,7 @@ function __rt.invoke_async_export(exports, exportName, returnDescriptor)
   -- descriptor-mismatched wrappers are each a distinct pinned reason.
   if entry.sig ~= expected_sig then
     local got = tostring(entry.sig or "nil")
-    local parsed = parse_canonical_descriptor(entry.sig)
+    local parsed = parse_descriptor(entry.sig)
     if parsed ~= nil and parsed.kind == "function" and not parsed.isAsync then
       error(__rt._host_invocation_failure(
           "export '" .. exportName .. "' is sync: expected '"
