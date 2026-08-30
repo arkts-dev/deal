@@ -16,7 +16,7 @@ import deal.diagnostics.DiagnosticCode;
  * null narrowing, contextual typing for table reads, and class construction
  * checking.
  *
- * <p>Errors produced: E3001–E3017, E4001–E4008, E5001–E5004.</p>
+ * <p>Errors produced: E3001–E3018, E4001–E4008, E5001–E5004.</p>
  */
 public final class TypeChecker {
 
@@ -744,7 +744,10 @@ public final class TypeChecker {
             }
             // Table delete: any field is allowed (no further check needed)
         }
-        // Index delete on table: any key is allowed
+        // A-D10 (assignment-delete-address-chains): table index delete
+        // keys must have static type string — the write-context
+        // checkIndex gate enforces E3018 for IndexExpr delete targets
+        // before lowering; no further check is needed here.
     }
 
     // =======================================================================
@@ -1203,10 +1206,20 @@ public final class TypeChecker {
         if (arrayType == Type.Error.INSTANCE || indexType == Type.Error.INSTANCE)
             return Type.Error.INSTANCE;
 
-        // F5: Table index — in write context (assignment target or delete),
-        // allow any index type and skip further checks
+        // A-D10 (assignment-delete-address-chains): table index
+        // write/delete keys must have static type string (spec v1.2
+        // table writes). The F5 "allow any index type and skip further
+        // checks" skip is superseded by the static string-key gate; the
+        // read side (no write context) is E2's read-mechanics domain and
+        // is untouched here.
         if (arrayType instanceof Type.Table && assignmentTargetMode) {
-            return Type.Table.INSTANCE;
+            if (indexType instanceof Type.String) {
+                return Type.Table.INSTANCE;
+            }
+            error(DiagnosticCode.E3018,
+                "Table index key must have static type string, got "
+                + typeName(indexType), idx.index().span());
+            return Type.Error.INSTANCE;
         }
 
         // For arrays and reads, the index must be int

@@ -221,6 +221,8 @@ public enum DiagnosticCode {
     E3016(Phase.FRONTEND, "Template literal interpolation type mismatch"),
     /** Array length is read-only (assignment/delete to array .length). */
     E3017(Phase.FRONTEND, "Array length is read-only"),
+    /** Table index write/delete key must have static type string. */
+    E3018(Phase.FRONTEND, "Table index key must have static type string"),
 
     // =========================================================================
     // E4xxx — class shape validation (FRONTEND)

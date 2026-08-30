@@ -907,8 +907,13 @@ public class LuaBackendTest {
 
     static void testForLoopClosureBinding() {
         System.out.println("-- For Loop Closure Binding (ISSUE-0009) --");
+        // A-D10 (assignment-delete-address-chains): table index write
+        // keys must have static type string (E3018), so the per-iteration
+        // container is a function-typed array — int-indexed writes stay
+        // legal there (E3007 requirement) and the closure-binding shapes
+        // under test are unchanged.
         CompileOutput out = compile(
-            "let fs: table = {};\n" +
+            "let fs: (() => int)[] = [];\n" +
             "for (let i: int = 0; i < 3; i = i + 1) {\n" +
             "  fs[i] = function(): int { return i; };\n" +
             "}"

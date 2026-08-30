@@ -149,6 +149,8 @@ public class DiagnosticClassificationTest {
         triggers.put("E2002", inMain.replace("%s", "let x = 1; let x = 2; "));
         triggers.put("E3001", inMain.replace("%s", "let x: int = 3.14; "));
         triggers.put("E3002", inMain.replace("%s", "let x = []; "));
+        triggers.put("E3018", inMain.replace("%s",
+            "let t: table = {}; t[0] = 1; "));
         triggers.put("E3008", inMain.replace("%s", "let x = 1; x(); "));
         triggers.put("E3009", inMain.replace("%s",
             "function f(x: int): null { return null; } f(1, 2); "));
@@ -290,6 +292,8 @@ public class DiagnosticClassificationTest {
         coverage.put("E3015", "CheckerTest (for-of iterable type)");
         coverage.put("E3016", "CheckerTest (template literal interpolation)");
         coverage.put("E3017", "CheckerTest (array length read-only)");
+        coverage.put("E3018",
+            "CheckerTest (table index write/delete key static string gate)");
 
         coverage.put("E4001", "CheckerTest (missing required field)");
         coverage.put("E4002", "CheckerTest (extra field)");

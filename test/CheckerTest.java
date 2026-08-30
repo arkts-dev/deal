@@ -273,6 +273,14 @@ public class CheckerTest {
         testTableWrite();
         // F5: Table index writes (no E3007)
         testTableIndexWrite();
+        // A-D10 (assignment-delete-address-chains): table index
+        // write/delete keys must have static type string (E3018)
+        testTableIndexWriteStringKeyAccepted();
+        testTableIndexWriteNonStringKeyRejected();
+        testTableIndexDeleteStringKeyAccepted();
+        testTableIndexDeleteNonStringKeyRejected();
+        testTableIndexReadUnaffected();
+        testArrayIndexIntRequirementUnchanged();
 
         // F6: if/while/for conditions with contextual typing
         testIfConditionContextualTyping();
@@ -723,6 +731,114 @@ public class CheckerTest {
             "t[\"key\"] = 42;"
         );
         assertNoErrors(out, "table index write allowed without E3007");
+    }
+
+    // =========================================================================
+    // A-D10: table index write/delete keys must have static type string
+    // (E3018 — emitted before lowering, identical on every backend)
+    // =========================================================================
+
+    static void testTableIndexWriteStringKeyAccepted() {
+        System.out.println("-- Table Index Write String Key Accepted --");
+        CheckerOutput lit = checkProgram(
+            "let t: table = { data: 1 };\n" +
+            "t[\"key\"] = 42;"
+        );
+        assertNoErrors(lit, "string literal table index write");
+        CheckerOutput var = checkProgram(
+            "let t: table = { data: 1 };\n" +
+            "let k: string = \"key\";\n" +
+            "t[k] = 42;"
+        );
+        assertNoErrors(var, "string-typed table index write");
+    }
+
+    static void testTableIndexWriteNonStringKeyRejected() {
+        System.out.println("-- Table Index Write Non-String Key Rejected (E3018) --");
+        // int literal key: E3018 at the index expression's span (line 2,
+        // column 3 — the `0` inside `t[0]`), never at the target/value.
+        CheckerOutput lit = checkProgram(
+            "let t: table = { data: 1 };\n" +
+            "t[0] = 42;"
+        );
+        assertError(lit, "E3018", "int literal table index write");
+        boolean litAtIndex = lit.result.diagnostics().stream()
+            .filter(d -> d.code().equals("E3018"))
+            .anyMatch(d -> d.line() == 2 && d.column() == 3);
+        check(litAtIndex, "E3018 (write) must be reported at the index span");
+
+        // int-typed variable key
+        CheckerOutput var = checkProgram(
+            "let t: table = { data: 1 };\n" +
+            "let k: int = 0;\n" +
+            "t[k] = 42;"
+        );
+        assertError(var, "E3018", "int-typed table index write key");
+        boolean varAtIndex = var.result.diagnostics().stream()
+            .filter(d -> d.code().equals("E3018"))
+            .anyMatch(d -> d.line() == 3 && d.column() == 3);
+        check(varAtIndex, "E3018 (int var write) must be reported at the index span");
+    }
+
+    static void testTableIndexDeleteStringKeyAccepted() {
+        System.out.println("-- Table Index Delete String Key Accepted --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { x: 1 };\n" +
+            "let k: string = \"x\";\n" +
+            "delete t[k];"
+        );
+        assertNoErrors(out, "delete table index with a string-typed key");
+    }
+
+    static void testTableIndexDeleteNonStringKeyRejected() {
+        System.out.println("-- Table Index Delete Non-String Key Rejected (E3018) --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { x: 1 };\n" +
+            "delete t[0];"
+        );
+        assertError(out, "E3018", "int literal table index delete");
+        // E3018 at the index expression's span (line 2, column 10 — the
+        // `0` inside `delete t[0]`), not the statement span.
+        boolean atIndex = out.result.diagnostics().stream()
+            .filter(d -> d.code().equals("E3018"))
+            .anyMatch(d -> d.line() == 2 && d.column() == 10);
+        check(atIndex, "E3018 (delete) must be reported at the index span");
+    }
+
+    // Read-side table index key handling stays E2's read-mechanics
+    // domain: the existing E3007 rejection is untouched and E3018 never
+    // fires on reads.
+    static void testTableIndexReadUnaffected() {
+        System.out.println("-- Table Index Read Unaffected by E3018 --");
+        CheckerOutput out = checkProgram(
+            "let t: table = { data: 1 };\n" +
+            "let v: int = t[0];"
+        );
+        assertError(out, "E3007", "table index read keeps E3007");
+        boolean e3018 = out.result.diagnostics().stream()
+            .anyMatch(d -> d.code().equals("E3018"));
+        check(!e3018, "no E3018 on a table index read");
+    }
+
+    // Array index rules are untouched: reads and writes keep the int
+    // requirement (E3007) and never see E3018.
+    static void testArrayIndexIntRequirementUnchanged() {
+        System.out.println("-- Array Index Int Requirement Unchanged (E3007, no E3018) --");
+        CheckerOutput read = checkProgram(
+            "let xs: int[] = [1, 2];\n" +
+            "let v: int = xs[\"k\"];"
+        );
+        assertError(read, "E3007", "array index read keeps the int requirement");
+        CheckerOutput write = checkProgram(
+            "let xs: int[] = [1, 2];\n" +
+            "xs[\"k\"] = 1;"
+        );
+        assertError(write, "E3007", "array index write keeps the int requirement");
+        boolean readE3018 = read.result.diagnostics().stream()
+            .anyMatch(d -> d.code().equals("E3018"));
+        boolean writeE3018 = write.result.diagnostics().stream()
+            .anyMatch(d -> d.code().equals("E3018"));
+        check(!readE3018 && !writeE3018, "no E3018 on array index reads/writes");
     }
 
     // =========================================================================
