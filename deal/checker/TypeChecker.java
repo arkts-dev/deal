@@ -721,6 +721,17 @@ public final class TypeChecker {
 
         if (targetType instanceof Type.Error) return;
 
+        if (ds.target() instanceof IndexExpr idx
+                && typeOf(idx.array()) instanceof Type.Bytes) {
+            // v1.2 bytes element delete: byte slots are write-only through
+            // bytes_set and never deletable — the write value contract
+            // (int 0..255) has no delete counterpart, so the delete target
+            // rejects before any backend.
+            error(DiagnosticCode.E3007,
+                "Cannot delete element of type bytes", ds.target().span());
+            return;
+        }
+
         if (ds.target() instanceof MemberAccessExpr mae) {
             Type objType = typeOf(mae.object());
             // D3 (typed-boundary-enforcement): array .length is read-only.
@@ -728,6 +739,13 @@ public final class TypeChecker {
             // `#xs = nil` Lua for a program the checker had accepted.
             if (objType instanceof Type.Array && mae.field().equals("length")) {
                 error(DiagnosticCode.E3017, "Array length is read-only",
+                    ds.target().span());
+                return;
+            }
+            // v1.2 bytes .length is read-only exactly like array .length
+            // (deal-v1.2-int32-and-bytes-architecture D4).
+            if (objType instanceof Type.Bytes && mae.field().equals("length")) {
+                error(DiagnosticCode.E3017, "Bytes length is read-only",
                     ds.target().span());
                 return;
             }
@@ -1139,6 +1157,15 @@ public final class TypeChecker {
             return Type.Int.INSTANCE;
         }
 
+        // v1.2 bytes length intrinsic (js-v12-int32-bytes D3/D4):
+        // b.length is compiler-resolved to the immutable logical
+        // allocation length of static type int — not a member lookup,
+        // not dispatchable. Every other bytes member falls through to
+        // the E3003 cannot-access arm below.
+        if (objType instanceof Type.Bytes && field.equals("length")) {
+            return Type.Int.INSTANCE;
+        }
+
         // Module symbol via identifier (must be checked before Table)
         if (mae.object() instanceof IdentifierExpr id) {
             Symbol sym = currentScope.resolve(id.name());
@@ -1252,6 +1279,14 @@ public final class TypeChecker {
         }
         if (arrayType instanceof Type.Array arr) {
             return arr.element();
+        }
+
+        // v1.2 bytes indexing (js-v12-int32-bytes D4): b[i] reads and
+        // writes unsigned byte values (static type int; the runtime
+        // bounds/value gates raise E8012/E8013). The index must be int
+        // like every array read.
+        if (arrayType instanceof Type.Bytes) {
+            return Type.Int.INSTANCE;
         }
 
         error(DiagnosticCode.E3007, "Cannot index type " + typeName(arrayType), idx.array().span());
@@ -1517,6 +1552,18 @@ public final class TypeChecker {
                 && mae.field().equals("length")
                 && typeOf(mae.object()) instanceof Type.Array) {
             error(DiagnosticCode.E3017, "Array length is read-only",
+                assign.target().span());
+            readOnlyArrayLength = true;
+        }
+
+        // v1.2 bytes .length is read-only exactly like array .length
+        // (deal-v1.2-int32-and-bytes-architecture D4: assignment to
+        // `.length` on arrays or bytes is E3017 at the member target
+        // before any backend).
+        if (assign.target() instanceof MemberAccessExpr mae
+                && mae.field().equals("length")
+                && typeOf(mae.object()) instanceof Type.Bytes) {
+            error(DiagnosticCode.E3017, "Bytes length is read-only",
                 assign.target().span());
             readOnlyArrayLength = true;
         }

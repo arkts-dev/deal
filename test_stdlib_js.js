@@ -466,6 +466,19 @@ test("json.stringify rejects a standalone MISSING with the unsupported-type E800
     "unsupported type for JSON encoding");
 });
 
+test("json.stringify rejects a bytes value with the explicit bytes E8001 arm", function() {
+  const b = rt.bytes(2, "f.js", 1, 1);
+  assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ data: b }), "f.js", 1, 1); }, "E8001",
+    "unsupported type for JSON encoding: bytes");
+  // The arm is the pinned message through every reachable nesting
+  // depth (table field, array element, nested table).
+  const nested = rt.makeTable({ inner: rt.makeTable({ deep: b }) });
+  assertErrorMessage(function() { json.stringify.$f(nested, "f.js", 1, 1); }, "E8001",
+    "unsupported type for JSON encoding: bytes");
+  assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ arr: [b] }), "f.js", 1, 1); }, "E8001",
+    "unsupported type for JSON encoding: bytes");
+});
+
 test("json.stringify rejects unpaired-surrogate string values with E8001", function() {
   assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ v: "\uD800" }), "f.js", 1, 1); }, "E8001",
     "cannot encode invalid UTF-8 as JSON");

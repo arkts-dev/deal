@@ -371,6 +371,7 @@ public class CheckerTest {
         testForOfTypeCheck_nonIterable();
         testV12StringTypeFacingChecks();
         testV12FunctionTypeRestRejected();
+        testV12BytesClassSymbolFirstResolution();
         testForOfTypeCheck_tableIterable();
         testForOfTypeCheck_arrayWrongVarType();
         testForOfTypeCheck_stringWrongVarType();
@@ -2006,6 +2007,90 @@ public class CheckerTest {
     // =========================================================================
 
     /** A function TYPE annotation using the removed rest arm is E1047. */
+    // =========================================================================
+    // DEAL v1.2: bytes class-symbol-first resolution (ISSUE-0322)
+    // =========================================================================
+
+    /**
+     * The bytes intrinsic sits at the bottom of the spec's name
+     * resolution order (spec-v1.2.md §Name resolution: module-level
+     * declarations resolve at step 3, compiler intrinsics only at
+     * step 5). A user class/function/let named `bytes` is legal and
+     * shadows the intrinsic; the `bytes` TYPE annotation keeps its
+     * class-symbol-first guard — a checker-accepted user class named
+     * `bytes` resolves to its ClassSymbol type and wins over the
+     * primitive at any nesting depth.
+     */
+    static void testV12BytesClassSymbolFirstResolution() {
+        System.out.println("-- v1.2 bytes: user declarations named bytes shadow the intrinsic --");
+
+        // The intrinsic stays available when unshadowed.
+        CheckerOutput out = checkProgram(
+            "let b: bytes = bytes(4); let n: int = b.length;");
+        assertNoErrors(out, "unshadowed bytes(4)/b.length resolves to the intrinsic");
+
+        // A module-level user CLASS named bytes is legal (no E2002) and
+        // wins over the primitive in type annotations.
+        out = checkProgram(
+            "class bytes { x: int }\n" +
+            "let b: bytes = { x: 2 };\n" +
+            "let n: int = b.x;");
+        assertNoErrors(out, "module-level user class named bytes shadows the intrinsic");
+
+        // In expression position the class wins too: a class is not
+        // callable, so bytes(3) is E3008 — never the intrinsic call.
+        out = checkProgram(
+            "class bytes { x: int }\n" +
+            "let y: int = bytes(3);");
+        assertError(out, "E3008",
+            "user class named bytes is not callable (class wins over the intrinsic)");
+
+        // A module-level user FUNCTION named bytes is legal (no E2002)
+        // and calls resolve to the user function.
+        out = checkProgram(
+            "function bytes(x: int): int { return x + 1; }\n" +
+            "let y: int = bytes(3);");
+        assertNoErrors(out, "module-level user function named bytes shadows the intrinsic");
+
+        // A module-level LET named bytes is legal and shadows the
+        // intrinsic value; the bytes TYPE keeps its primitive meaning
+        // (only a ClassSymbol shadows the type).
+        out = checkProgram(
+            "let bytes: int = 5;\n" +
+            "let y: int = bytes;");
+        assertNoErrors(out, "module-level let named bytes shadows the intrinsic value");
+        out = checkProgram(
+            "let bytes: int = 5;\n" +
+            "let b: bytes = bytes(2);");
+        assertError(out, "E3008",
+            "the shadowing let is not callable while the bytes type stays the primitive");
+
+        // A nested user class named bytes wins over the primitive in
+        // Pass-2 annotation resolution at any nesting depth (the
+        // Pass-1 VariableSymbol and the Pass-2 target must agree).
+        out = checkProgram(
+            "function f(): number {\n" +
+            "  class bytes { x: int }\n" +
+            "  let b: bytes = { x: 2 };\n" +
+            "  let n: int = b.x;\n" +
+            "  return 1.5;\n" +
+            "}\n");
+        assertNoErrors(out, "nested user class named bytes wins over the primitive in annotations");
+
+        // Two module-level user declarations named bytes still redeclare.
+        out = checkProgram(
+            "class bytes { x: int }\n" +
+            "function bytes(x: int): int { return x; }");
+        assertError(out, "E2002", "two user declarations named bytes still redeclare");
+
+        // The first-class bytes value keeps its seeded signature when
+        // unshadowed.
+        out = checkProgram(
+            "let f: (x: int) => bytes = bytes;\n" +
+            "let b: bytes = f(2);");
+        assertNoErrors(out, "first-class bytes value keeps its (int)->bytes signature");
+    }
+
     static void testV12FunctionTypeRestRejected() {
         System.out.println("-- v1.2 function type rest arm rejected (E1047) --");
 

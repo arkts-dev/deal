@@ -112,6 +112,9 @@ public class JsBackendTest {
             testInt32ProfileSelectorEmission();
             testInt32OrchestratorPlumb();
             testInt32MatrixNode();
+            testBytesEmissionPins();
+            testBytesNodeSemantics();
+            testBytesUserNameShadowing();
             testNumModFloored();
             testScalarStringOps();
             testOptionalThreeState();
@@ -1670,37 +1673,22 @@ public class JsBackendTest {
                     + "text at the import statement: " + extern.diagnostics());
         }
 
-        // The defensive bytes arms (the frontend rejects the program; the
-        // backend still reports exactly one E6000 per site).
-        JsBackend.JsCodegenResult bytesType = generate("""
+        // The defensive bytes E6000 arms retired with the v1.2 bytes lane
+        // (js-v12-int32-bytes D3/D4): a bytes-spelled type and a bytes(n)
+        // call now compile clean and lower to the $rt.bytes* members — the
+        // passing pins live in testBytesEmissionPins/testBytesNodeSemantics.
+        JsBackend.JsCodegenResult bytesClean = generate("""
             export function test(): null {
-              let b: bytes = 0;
+              let b: bytes = bytes(3);
+              if (b.length !== 3) {
+                throw { code: "TEST_FAIL", message: "length" };
+              }
               return null;
             }
-            """, "rej-bytes");
-        check(bytesType != null, "bytes-type module generated");
-        if (bytesType != null) {
-            check(bytesType.hasErrors(), "hasErrors() holds for bytes type");
-            check(bytesType.diagnostics().stream().filter(d ->
-                    "E6000".equals(d.code())
-                        && d.message().contains("bytes is not supported"))
-                    .count() == 1,
-                "exactly one E6000 at the bytes type use site: "
-                    + bytesType.diagnostics());
-        }
-        JsBackend.JsCodegenResult bytesCall = generate("""
-            export function test(): int { return bytes(3); }
-            """, "rej-bytescall");
-        check(bytesCall != null, "bytes-call module generated");
-        if (bytesCall != null) {
-            check(bytesCall.hasErrors(), "hasErrors() holds for bytes(n)");
-            check(bytesCall.diagnostics().stream().filter(d ->
-                    "E6000".equals(d.code())
-                        && d.message().contains("bytes is not supported"))
-                    .count() == 1,
-                "exactly one E6000 at the bytes(n) call site: "
-                    + bytesCall.diagnostics());
-        }
+            """, "rej-bytes-retired");
+        check(bytesClean != null && !bytesClean.hasErrors(),
+            "the retired defensive bytes rejection never fires: "
+                + (bytesClean == null ? "<null>" : bytesClean.diagnostics()));
     }
 
     private static void testSourceMapSidecarsEmitted() throws Exception {
@@ -2163,6 +2151,426 @@ public class JsBackendTest {
                 && legacyMax.output().equals("9007199254740991"),
             "the ±(2^53-1) safe-range boundary passes under "
                 + "LEGACY_SAFE_INT: " + legacyMax.output());
+    }
+
+    private static void testBytesEmissionPins() {
+        System.out.println("-- Bytes emission pins: $rt.bytes* sites and canonical bytes descriptors --");
+
+        JsBackend.JsCodegenResult res = generate("""
+            function id(b: bytes): bytes { return b; }
+            export function test(): int {
+              let b: bytes = bytes(4);
+              let n: int = b.length;
+              let v: int = b[0];
+              b[0] = 255;
+              let t: table = {};
+              let x: bytes = t.b;
+              let m: bytes | null = t.m;
+              let ys: bytes[] = t.arr;
+              let g: (b: bytes) => bytes = t.g;
+              let f: (x: int) => bytes = bytes;
+              let z: int = f(2)[0];
+              let c: bytes = id(b);
+              return n + v + z;
+            }
+            """, "bytesemit");
+        check(res != null && !res.hasErrors(), "bytes emission clean: "
+            + (res == null ? "<null>" : res.diagnostics()));
+        if (res == null || res.hasErrors()) return;
+
+        String js = res.source();
+        check(js.contains("$rt.bytes(4, \"jstest-bytesemit.deal\""),
+            "bytes(4) lowers to $rt.bytes(4, <file>, <line>, <column>)");
+        check(js.contains("$rt.bytesLength(b)"),
+            "b.length lowers to $rt.bytesLength(b) (compiler-resolved, "
+                + "not a member lookup)");
+        check(js.contains("$rt.bytesGet(b, 0, \"jstest-bytesemit.deal\""),
+            "b[0] read lowers to $rt.bytesGet(b, 0, <span>)");
+        check(js.contains("$rt.bytesSet(b, 0, 255, \"jstest-bytesemit.deal\""),
+            "b[0] = 255 lowers to $rt.bytesSet(b, 0, 255, <span>) with "
+                + "the receiver, index, and RHS in argument order (the "
+                + "pinned evaluation order: receiver/index side effects "
+                + "before the RHS, RHS before validation)");
+        check(js.contains("$rt.checkBytes("),
+            "bytes-typed declaration boundaries emit $rt.checkBytes");
+        check(js.contains("$rt.checkNullable(\"bytes\", t.get(\"m\")"),
+            "nullable bytes table read checks with the canonical bytes "
+                + "inner descriptor (T1's service)");
+        check(js.contains("$rt.checkArray(\"[bytes]\", t.get(\"arr\")"),
+            "bytes[] table read routes through checkArray with the "
+                + "canonical [bytes] descriptor (T1's service)");
+        check(js.contains("$rt.checkType(\"(bytes)->bytes\", t.get(\"g\")"),
+            "function-typed table read checks with the canonical "
+                + "(bytes)->bytes descriptor (T1's service)");
+        check(js.contains("const bytes = $rt.function(\"(int)->bytes\""),
+            "the header seeds the first-class bytes wrapper with the "
+                + "canonical (int)->bytes signature");
+        check(js.contains("$rt.checkType(\"(int)->bytes\", bytes, "),
+            "a first-class bytes reference crosses the canonical "
+                + "(int)->bytes boundary check");
+        check(!js.contains("bytes is not supported"),
+            "no defensive bytes E6000 text remains in the artifact");
+    }
+
+    private static void testBytesNodeSemantics() throws Exception {
+        System.out.println("-- Node: bytes semantics over the real pipeline --");
+        if (!nodeAvailable) { skipNode("bytes semantics"); return; }
+
+        // The exact bytes-buffer-ops.deal program body (zero-fill,
+        // unsigned 0..255 roundtrip, immutable length, reference-copy
+        // aliasing) through frontend → JsBackend → node.
+        NodeResult ops = runDealNode("""
+            export function main(): null {
+              let b: bytes = bytes(4);
+              if (b.length !== 4) {
+                throw { code: "TEST_FAIL", message: "bytes: initial length mismatch" };
+              }
+              if (b[0] !== 0) {
+                throw { code: "TEST_FAIL", message: "bytes: zero-fill mismatch" };
+              }
+              b[0] = 255;
+              b[1] = 128;
+              let hi: int = b[0];
+              let lo: int = b[1];
+              if (hi !== 255 || lo !== 128) {
+                throw { code: "TEST_FAIL", message: "bytes: byte value roundtrip mismatch" };
+              }
+              let alias: bytes = b;
+              alias[2] = 7;
+              if (b[2] !== 7) {
+                throw { code: "TEST_FAIL", message: "bytes: reference copy mismatch" };
+              }
+              return null;
+            }
+            """, "bytes-buffer-ops");
+        check(ops.exitCode() == 0,
+            "bytes-buffer-ops body runs under node (real $Uint8Array "
+                + "storage, zero-fill, 0..255 roundtrip, length, aliasing), "
+                + "exit 0: " + ops.output());
+
+        // Empty buffer: bytes(0) has length 0 and its first read is E8012.
+        NodeResult empty = runDealNode(
+            "export function test(): int { let b: bytes = bytes(0); "
+                + "if (b.length !== 0) { return 0; } "
+                + "let v: int = b[0]; return v; }",
+            "bytes-empty-oob");
+        check(empty.exitCode() == 1
+                && empty.output().contains("DEAL_ERROR_CODE: E8012")
+                && empty.output().contains("bytes index out of bounds"),
+            "bytes(0) has length 0 and b[0] reads raise E8012 "
+                + "'bytes index out of bounds': " + empty.output());
+
+        // Bounds: negative index and index === length on reads and
+        // writes (bytes never append).
+        NodeResult negRead = runDealNode(
+            "export function test(): int { let b: bytes = bytes(2); "
+                + "return b[-1]; }",
+            "bytes-neg-read");
+        check(negRead.exitCode() == 1
+                && negRead.output().contains("DEAL_ERROR_CODE: E8012"),
+            "negative byte read raises E8012: " + negRead.output());
+
+        NodeResult endRead = runDealNode(
+            "export function test(): int { let b: bytes = bytes(2); "
+                + "return b[2]; }",
+            "bytes-end-read");
+        check(endRead.exitCode() == 1
+                && endRead.output().contains("DEAL_ERROR_CODE: E8012"),
+            "read at index === length raises E8012 (bytes never "
+                + "append): " + endRead.output());
+
+        NodeResult negWrite = runDealNode(
+            "export function test(): int { let b: bytes = bytes(2); "
+                + "b[-1] = 1; return 0; }",
+            "bytes-neg-write");
+        check(negWrite.exitCode() == 1
+                && negWrite.output().contains("DEAL_ERROR_CODE: E8012"),
+            "negative byte write raises E8012: " + negWrite.output());
+
+        NodeResult endWrite = runDealNode(
+            "export function test(): int { let b: bytes = bytes(2); "
+                + "b[2] = 7; return 0; }",
+            "bytes-end-write");
+        check(endWrite.exitCode() == 1
+                && endWrite.output().contains("DEAL_ERROR_CODE: E8012"),
+            "write at index === length raises E8012 (bytes never "
+                + "append): " + endWrite.output());
+
+        // Value range: writes outside 0..255 raise E8013 and change no
+        // storage — the RHS (with its side effect) completes before the
+        // write validation, pinned through the try/catch log.
+        NodeResult val256 = runDealNode(
+            "export function test(): int { let b: bytes = bytes(2); "
+                + "b[1] = 256; return 0; }",
+            "bytes-e8013");
+        check(val256.exitCode() == 1
+                && val256.output().contains("DEAL_ERROR_CODE: E8013")
+                && val256.output().contains("bytes value out of range"),
+            "writing 256 raises E8013 'bytes value out of range': "
+                + val256.output());
+
+        // The pinned write-side order, observed through a caught E8013:
+        // the RHS (with its side effect) completes before write
+        // validation, and a failed write changes no storage.
+        NodeResult val256Caught = runDealNode("""
+            function tooBig(t: table): int {
+              let log: string = t.log;
+              log = log + "v";
+              t.log = log;
+              return 256;
+            }
+            export function test(): int {
+              let t: table = {};
+              t.log = "";
+              let b: bytes = bytes(2);
+              try {
+                b[1] = tooBig(t);
+              } catch (e) {
+                let log: string = t.log;
+                if (log !== "v") {
+                  throw { code: "TEST_FAIL", message: "RHS side effect missing: " + log };
+                }
+                if (b[1] !== 0) {
+                  throw { code: "TEST_FAIL", message: "failed write changed storage" };
+                }
+                return 1;
+              }
+              return 0;
+            }
+            """, "bytes-e8013-caught");
+        check(val256Caught.exitCode() == 0
+                && val256Caught.output().equals("1"),
+            "a caught E8013 write proves the RHS side effect ran before "
+                + "write validation and the failed write changed no "
+                + "storage (returns 1): " + val256Caught.output());
+
+        NodeResult valNeg = runDealNode(
+            "export function test(): int { let b: bytes = bytes(2); "
+                + "b[0] = -1; return 0; }",
+            "bytes-neg-value");
+        check(valNeg.exitCode() == 1
+                && valNeg.output().contains("DEAL_ERROR_CODE: E8013"),
+            "writing -1 raises E8013: " + valNeg.output());
+
+        // Evaluation order: the receiver, the index, and the RHS side
+        // effects complete in order before validation — a valid write
+        // logs "riv".
+        NodeResult order = runDealNode("""
+            function record(t: table, tag: string): int {
+              let log: string = t.log;
+              log = log + tag;
+              t.log = log;
+              return 1;
+            }
+            function getb(t: table): bytes {
+              let log: string = t.log;
+              log = log + "r";
+              t.log = log;
+              return bytes(3);
+            }
+            export function test(): null {
+              let t: table = {};
+              t.log = "";
+              getb(t)[record(t, "i")] = record(t, "v");
+              let order: string = t.log;
+              if (order !== "riv") {
+                throw { code: "TEST_FAIL", message: "evaluation order: " + order };
+              }
+              return null;
+            }
+            """, "bytes-eval-order");
+        check(order.exitCode() == 0,
+            "byte write evaluates receiver, index, then RHS in order "
+                + "(log 'riv'), exit 0: " + order.output());
+
+        // Allocation length above the signed-int32 logical-length bound
+        // raises E8012 (under LEGACY_SAFE_INT the value itself is
+        // representable, so the length gate is the failing arm).
+        NodeResult tooLong = runDealNode(
+            "export function test(): int { let b: bytes = bytes(2147483648); "
+                + "return 0; }",
+            "bytes-too-long");
+        check(tooLong.exitCode() == 1
+                && tooLong.output().contains("DEAL_ERROR_CODE: E8012")
+                && tooLong.output().contains("bytes length out of bounds"),
+            "bytes(2147483648) raises E8012 (the signed-int32 "
+                + "logical-length bound): " + tooLong.output());
+
+        NodeResult negLen = runDealNode(
+            "export function test(): int { let b: bytes = bytes(-1); "
+                + "return 0; }",
+            "bytes-neg-length");
+        check(negLen.exitCode() == 1
+                && negLen.output().contains("DEAL_ERROR_CODE: E8012")
+                && negLen.output().contains("bytes length must be non-negative"),
+            "bytes(-1) raises E8012 'bytes length must be non-negative': "
+                + negLen.output());
+
+        // checkType("bytes") acceptance and rejection through the table
+        // boundary (the matcher table's bytes row).
+        NodeResult accept = runDealNode(
+            "export function test(): int { let t: table = {}; "
+                + "t.b = bytes(1); let x: bytes = t.b; return 1; }",
+            "bytes-checktype-ok");
+        check(accept.exitCode() == 0 && accept.output().equals("1"),
+            "checkType(\"bytes\") accepts the $Uint8Array carrier: "
+                + accept.output());
+
+        NodeResult reject = runDealNode(
+            "export function test(): int { let t: table = {}; "
+                + "t.bad = 42; let x: bytes = t.bad; return 0; }",
+            "bytes-checktype-reject");
+        check(reject.exitCode() == 1
+                && reject.output().contains("DEAL_ERROR_CODE: E8001")
+                && reject.output().contains("expected bytes"),
+            "checkType(\"bytes\") rejects a non-bytes value with E8001 "
+                + "'expected bytes': " + reject.output());
+
+        // Reference identity across function boundaries (sync and async)
+        // and bytes values inside arrays (the recursive closure smoke).
+        NodeResult identity = runDealNode("""
+            function id(b: bytes): bytes { return b; }
+            async function dup(b: bytes): bytes { return b; }
+            export async function test(): int {
+              let b: bytes = bytes(2);
+              let sync: bytes = id(b);
+              sync[0] = 9;
+              if (b[0] !== 9) { return 0; }
+              let c: bytes = await dup(b);
+              c[1] = 8;
+              if (b[1] !== 8) { return 0; }
+              let xs: bytes[] = [bytes(1), bytes(2)];
+              xs[0][0] = 7;
+              if (xs[0][0] !== 7 || xs[1][0] !== 0) { return 0; }
+              return 1;
+            }
+            """, "bytes-identity-closure");
+        check(identity.exitCode() == 0 && identity.output().equals("1"),
+            "reference identity across sync/async boundaries and "
+                + "mutation through [bytes] arrays: " + identity.output());
+
+        // JSON rejection: a bytes value reaching std/json.stringify via
+        // a table raises the pinned unsupported-type E8001.
+        NodeResult jsonReject = runDealNode("""
+            import * as json from "std/json"
+            export function test(): string {
+              let t: table = { b: bytes(2) };
+              return json.stringify(t);
+            }
+            """, "bytes-json-reject");
+        check(jsonReject.exitCode() == 1
+                && jsonReject.output().contains("DEAL_ERROR_CODE: E8001")
+                && jsonReject.output().contains(
+                    "unsupported type for JSON encoding: bytes"),
+            "a bytes value through std/json.stringify raises E8001 "
+                + "'unsupported type for JSON encoding: bytes': "
+                + jsonReject.output());
+    }
+
+    /**
+     * The class-symbol-first bytes guard (js-v12-int32-bytes D3/D4,
+     * spec-v1.2.md §Name resolution): `bytes` is not a DEAL keyword and
+     * module-level declarations resolve at step 3 (imports at step 4)
+     * before the compiler intrinsics at step 5, so a module-level user
+     * class/function named `bytes` must stay legal and shadow the
+     * intrinsic — with no redeclaration diagnostic (E2002), no header
+     * `const bytes` seed collision, and working artifacts under node.
+     */
+    private static void testBytesUserNameShadowing() throws Exception {
+        System.out.println("-- Bytes: user class/function named bytes shadows the intrinsic --");
+
+        // (a) A module-level user CLASS named bytes: checker-accepted,
+        // no E2002, the annotation resolves to the user ClassSymbol, and
+        // the artifact omits the intrinsic header seed (the class binds
+        // only bytes$new/bytes$meta).
+        JsBackend.JsCodegenResult clsRes = generate("""
+            class bytes { x: int }
+            export function test(): int {
+              let b: bytes = { x: 2 };
+              return b.x;
+            }
+            """, "bytes-user-class");
+        check(clsRes != null && !clsRes.hasErrors(),
+            "module-level user class named bytes compiles clean: "
+                + (clsRes == null ? "<null>" : clsRes.diagnostics()));
+        if (clsRes != null && !clsRes.hasErrors()) {
+            String js = clsRes.source();
+            check(!js.contains("const bytes = $rt.function(\"(int)->bytes\""),
+                "no intrinsic header bytes seed when a user class named "
+                    + "bytes occupies the module binding");
+            check(js.contains("let bytes$new; let bytes$meta;")
+                    && js.contains("bytes$new = (provided, $file, $line, $column) =>"),
+                "the user class named bytes emits its bytes$new/bytes$meta "
+                    + "artifact pair");
+            check(js.contains("$rt.makeClass(\"bytes\""),
+                "class construction routes through $rt.makeClass with "
+                    + "the user class identity");
+        }
+
+        // (b) A module-level user FUNCTION named bytes: checker-accepted,
+        // no E2002, calls resolve to the user function, and the
+        // artifact's predeclared `let bytes;` assignment replaces the
+        // skipped intrinsic header seed.
+        JsBackend.JsCodegenResult fnRes = generate("""
+            function bytes(x: int): int { return x + 1; }
+            export function test(): int { return bytes(3); }
+            """, "bytes-user-function");
+        check(fnRes != null && !fnRes.hasErrors(),
+            "module-level user function named bytes compiles clean: "
+                + (fnRes == null ? "<null>" : fnRes.diagnostics()));
+        if (fnRes != null && !fnRes.hasErrors()) {
+            String js = fnRes.source();
+            check(!js.contains("const bytes = $rt.function(\"(int)->bytes\""),
+                "no intrinsic header bytes seed when a user function "
+                    + "named bytes occupies the module binding");
+            check(js.contains("let bytes;") && js.contains("bytes = $rt.function("),
+                "the user function named bytes keeps its predeclare-then-"
+                    + "assign binding");
+            check(!js.contains("$rt.bytes(3"),
+                "bytes(3) calls the user function (the $rt.bytes call "
+                    + "form never fires for the shadowed binding)");
+        }
+
+        if (!nodeAvailable) { skipNode("bytes user-name shadowing"); return; }
+
+        NodeResult clsRun = runDealNode("""
+            class bytes { x: int }
+            export function test(): int {
+              let b: bytes = { x: 2 };
+              return b.x;
+            }
+            """, "bytes-user-class-run");
+        check(clsRun.exitCode() == 0 && clsRun.output().equals("2"),
+            "module-level user class named bytes runs under node (b.x "
+                + "=== 2): " + clsRun.output());
+
+        NodeResult fnRun = runDealNode("""
+            function bytes(x: int): int { return x + 1; }
+            export function test(): int { return bytes(3); }
+            """, "bytes-user-function-run");
+        check(fnRun.exitCode() == 0 && fnRun.output().equals("4"),
+            "module-level user function named bytes runs under node "
+                + "(bytes(3) === 4): " + fnRun.output());
+
+        // (c) The review's finding (b) repro end-to-end: a NESTED user
+        // class named bytes. The annotation resolves to the nested
+        // ClassSymbol (no E3001), the canonical scope-local
+        // bytes$new/bytes$meta pair constructs it with its defaults,
+        // and the artifact runs under node.
+        NodeResult nestedRun = runDealNode("""
+            export function test(): int {
+              let out: int = 0;
+              {
+                class bytes { x: int = 0; }
+                let b: bytes = { x: 2 };
+                out = b.x;
+              }
+              return out;
+            }
+            """, "bytes-user-class-nested-run");
+        check(nestedRun.exitCode() == 0 && nestedRun.output().equals("2"),
+            "nested user class named bytes runs under node (b.x === 2): "
+                + nestedRun.output());
     }
 
     private static void testNumModFloored() throws Exception {
