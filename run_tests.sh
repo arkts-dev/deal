@@ -70,6 +70,7 @@ javac --release 25 -proc:none -d build \
   test/CanonicalJsonTest.java \
   test/SemanticIrValidatorTest.java \
   test/BoundaryTableCorpusTest.java \
+  test/BoundaryIntegrationTest.java \
   test/ControlFlowValidatorTest.java \
   test/SemanticIrDumperTest.java \
   test/SemanticTableTest.java \
@@ -305,6 +306,10 @@ java -ea -cp build deal.test.SemanticIrValidatorTest
 echo ""
 echo "=== Running Boundary Table Corpus Tests (ISSUE-0366, wiki Verification 4) ==="
 java -ea -cp build deal.test.BoundaryTableCorpusTest
+
+echo ""
+echo "=== Running Boundary Integration Tests (ISSUE-0367, decomposition tail) ==="
+java -ea -cp build deal.test.BoundaryIntegrationTest
 
 echo ""
 echo "=== Running Control Flow Validator Tests (ISSUE-0408) ==="
