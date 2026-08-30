@@ -65,6 +65,7 @@ javac --release 25 -proc:none -d build \
   test/BoundaryExecutorTest.java \
   test/ComparisonExecutorTest.java \
   test/UnicodeScalarsTest.java \
+  test/BoundaryRealizationReportTest.java \
   test/FailureContractRegistryTest.java \
   test/CanonicalJsonTest.java \
   test/SemanticIrValidatorTest.java \
@@ -281,6 +282,10 @@ java -ea -cp build deal.test.ComparisonExecutorTest
 
 echo "=== Running Unicode Scalars Tests (ISSUE-0382, ISSUE-0232 D5) ==="
 java -ea -cp build deal.test.UnicodeScalarsTest
+
+echo ""
+echo "=== Running Boundary Realization Report Tests (ISSUE-0365 D4) ==="
+java -ea -cp build deal.test.BoundaryRealizationReportTest
 
 echo ""
 echo "=== Running Failure Contract Registry Tests (ISSUE-0285) ==="
