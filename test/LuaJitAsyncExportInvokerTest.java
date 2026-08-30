@@ -31,6 +31,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -132,6 +133,38 @@ public class LuaJitAsyncExportInvokerTest {
             }
         }
         return dirs;
+    }
+
+    /**
+     * Asserts the per-invocation temp directory was deleted after the
+     * luajit child exited (the design's cleanup post-state). Other test
+     * JVMs on this shared machine materialize their own invoker dirs
+     * under the same {@code /tmp} prefix at any moment, so a stranger
+     * dir is a leak only when it persists beyond the grace window;
+     * concurrent invokes in other JVMs disappear within it while a real
+     * cleanup defect (the invoker deletes the dir in a finally block)
+     * persists forever and still fails this assertion.
+     */
+    private static void assertNoTempDirLeaks(Set<String> before)
+            throws IOException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (true) {
+            Set<String> after = invokerTempDirs();
+            if (after.equals(before)) {
+                return;
+            }
+            Set<String> strangers = new TreeSet<>(after);
+            strangers.removeAll(before);
+            if (System.nanoTime() >= deadline) {
+                fail("per-invocation temp directories leaked: " + strangers);
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                fail("interrupted while verifying temp-dir cleanup");
+            }
+        }
     }
 
     private static void deleteRecursively(Path dir) {
@@ -1038,8 +1071,7 @@ public class LuaJitAsyncExportInvokerTest {
         assertEquals("one module load, one chunk-end main call, one oracle"
             + " invocation in one runtime instance",
             "load\nmain\noracle\n", Files.readString(probe));
-        assertEquals("the per-invocation temp directory is deleted after"
-            + " the process exits", before, invokerTempDirs());
+        assertNoTempDirLeaks(before);
 
         assertEquals(new Result.Value("int", "42"),
             invoke(entry, "oracle", "int"));
@@ -1047,8 +1079,7 @@ public class LuaJitAsyncExportInvokerTest {
             + " own exactly-once sequence",
             "load\nmain\noracle\nload\nmain\noracle\n",
             Files.readString(probe));
-        assertEquals("no temp directory leaks across invokes", before,
-            invokerTempDirs());
+        assertNoTempDirLeaks(before);
     }
 
     // =========================================================================
@@ -1125,13 +1156,11 @@ public class LuaJitAsyncExportInvokerTest {
         // and one oracle invocation inside it (load/main/oracle = 1).
         Result first = invoke(entryArtifact, "oracle", "table");
         assertExactlyOneSnapshot(first);
-        assertEquals("the per-invocation temp directory is deleted after"
-            + " the process exits", before, invokerTempDirs());
+        assertNoTempDirLeaks(before);
 
         Result second = invoke(entryArtifact, "oracle", "table");
         assertExactlyOneSnapshot(second);
-        assertEquals("no temp directory leaks across invokes", before,
-            invokerTempDirs());
+        assertNoTempDirLeaks(before);
     }
 
     @Test
