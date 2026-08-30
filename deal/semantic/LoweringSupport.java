@@ -27,6 +27,7 @@ import deal.ast.IfStatement;
 import deal.ast.ImportDeclaration;
 import deal.ast.IndexExpr;
 import deal.ast.LiteralExpr;
+import deal.ast.LiteralValue;
 import deal.ast.MemberAccessExpr;
 import deal.ast.ObjectLiteralExpr;
 import deal.ast.Property;
@@ -36,6 +37,7 @@ import deal.ast.TemplateLiteralExpr;
 import deal.ast.ThrowStatement;
 import deal.ast.TryStatement;
 import deal.ast.UnaryExpr;
+import deal.ast.UnaryOp;
 import deal.ast.VariableDeclaration;
 import deal.ast.WhileStatement;
 import deal.checker.CheckResult;
@@ -77,7 +79,32 @@ import java.util.Objects;
  * superset of "the module obtains or invokes {@code std/time.nowMillis}
  * through the checked DEAL module graph" (parent D8: a claiming module is
  * never common-lowerable in any purpose; over-claims only force LEGACY,
- * the safe direction):</p>
+ * the safe direction). The I3 derivation rows (signed-int32 foundation,
+ * ISSUE-0395) add exactly one further claim — {@code SIGNED_INT32} —
+ * selected by the construct kind, never the magnitude:</p>
+ *
+ * <ul>
+ *   <li>an {@code IntLiteral} of any magnitude → {@code CONST(Int)} → claims
+ *       {@code SIGNED_INT32} — a small literal ({@code 1}) claims exactly
+ *       like {@code 2147483647}, small literals waive nothing;</li>
+ *   <li>a unary negation over an int-typed operand → {@code UNARY(INT32_NEG)}
+ *       → claims {@code SIGNED_INT32};</li>
+ *   <li>an arithmetic or comparison binary over int-typed operands →
+ *       {@code BINARY(INT32_*)} → claims {@code SIGNED_INT32};</li>
+ *   <li>an {@code int(...)} intrinsic call → {@code INTRINSIC_CALL(INT_CONVERT)}
+ *       → claims {@code SIGNED_INT32}; an {@code number(...)} intrinsic
+ *       call → {@code INTRINSIC_CALL(NUMBER_CONVERT)} → claims
+ *       {@code FOUNDATION_VALUES} (the module-level row every manifest
+ *       carries by construction — {@code NUMBER_CONVERT} never claims
+ *       {@code SIGNED_INT32}).</li>
+ * </ul>
+ *
+ * <p>Post-activation this makes every int-using module require target
+ * capability {@code SIGNED_INT32} at plan time (F4 rule 4). The closed
+ * {@code ConstructKind} set and the S4 capability catalog are untouched —
+ * only the construct→capability derivation rows extend.</p>
+ *
+ * <p><b>The remainder of the closed claims.</b></p>
  * <ul>
  *   <li><b>Arm A — direct module-object access:</b> a
  *       {@code MemberAccessExpr{object: IdentifierExpr, field:
@@ -327,6 +354,14 @@ public final class LoweringSupport {
                 EnumSet.of(SemanticCapability.FOUNDATION_VALUES);
             if (claimsTimeConflict) {
                 capabilities.add(SemanticCapability.STDLIB_TIME_CONFLICT);
+            }
+            // I3 derivation row: int constructs claim SIGNED_INT32 at
+            // the construct kind, never the magnitude (a small literal
+            // claims exactly like 2147483647) — post-activation F4 rule 4
+            // requires SIGNED_INT32 at plan time for every int-using
+            // module.
+            if (scans.get(module.moduleId()).signedInt32) {
+                capabilities.add(SemanticCapability.SIGNED_INT32);
             }
             SemanticRequirementManifest manifest = new SemanticRequirementManifest(
                 module.moduleId(), capabilities, scans.get(module.moduleId()).coverage);
@@ -606,6 +641,12 @@ public final class LoweringSupport {
     private static final class ModuleScan {
         boolean armA;
         boolean tableNowMillisAccess;
+
+        /** The I3 {@code SIGNED_INT32} trigger: any int construct —
+         * {@code CONST(Int)} (an int literal of any magnitude),
+         * {@code UNARY(INT32_NEG)}, {@code BINARY(INT32_*)}, or
+         * {@code INTRINSIC_CALL(INT_CONVERT)}. */
+        boolean signedInt32;
         final Map<ConstructKind, List<SemanticOpKind>> coverage =
             new EnumMap<>(ConstructKind.class);
 
@@ -736,7 +777,15 @@ public final class LoweringSupport {
     private static void walkExpression(ExpressionNode expression, CheckedModuleInput module,
                                        ModuleScan scan) throws FactDefect {
         switch (expression) {
-            case LiteralExpr ignored -> scan.cover(ConstructKind.SCALAR_LITERAL);
+            case LiteralExpr literalExpr -> {
+                scan.cover(ConstructKind.SCALAR_LITERAL);
+                // I3: CONST(Int) claims SIGNED_INT32 at the construct
+                // kind, never the magnitude — a small literal claims
+                // exactly like 2147483647.
+                if (literalExpr.value() instanceof LiteralValue.IntLiteral) {
+                    scan.signedInt32 = true;
+                }
+            }
             case IdentifierExpr ignored -> scan.cover(ConstructKind.IDENTIFIER);
             case BinaryExpr binaryExpr -> {
                 Type type = checkedType(module, binaryExpr);
@@ -748,12 +797,27 @@ public final class LoweringSupport {
                     scan.cover(ConstructKind.STRING_CONCAT_TEMPLATE);
                 } else {
                     scan.cover(ConstructKind.UNARY_ARITHMETIC_COMPARISON);
+                    // I3: BINARY(INT32_*) claims SIGNED_INT32 — every
+                    // arithmetic and comparison selector over int-typed
+                    // operands (number/string/boolean/null/nullable/
+                    // reference selectors do not).
+                    if (checkedType(module, binaryExpr.left())
+                            == Type.Int.INSTANCE) {
+                        scan.signedInt32 = true;
+                    }
                 }
                 walkExpression(binaryExpr.left(), module, scan);
                 walkExpression(binaryExpr.right(), module, scan);
             }
             case UnaryExpr unaryExpr -> {
                 scan.cover(ConstructKind.UNARY_ARITHMETIC_COMPARISON);
+                // I3: UNARY(INT32_NEG) claims SIGNED_INT32 — a negation
+                // over an int-typed operand; BOOL_NOT and NUMBER_NEG do not.
+                if (unaryExpr.op() == UnaryOp.NEG
+                        && checkedType(module, unaryExpr.expr())
+                            == Type.Int.INSTANCE) {
+                    scan.signedInt32 = true;
+                }
                 walkExpression(unaryExpr.expr(), module, scan);
             }
             case CallExpr callExpr -> {
@@ -764,6 +828,18 @@ public final class LoweringSupport {
                 scan.cover(crossModule
                     ? ConstructKind.CROSS_MODULE_CALL
                     : ConstructKind.CALL);
+                // I3: INTRINSIC_CALL(INT_CONVERT) claims SIGNED_INT32;
+                // NUMBER_CONVERT claims FOUNDATION_VALUES (the module-level
+                // row every manifest carries by construction) and never
+                // SIGNED_INT32.
+                if (callExpr.callee() instanceof IdentifierExpr identifier) {
+                    Symbol symbol = module.checks().symbolTable()
+                        .resolve(identifier.name());
+                    if (symbol instanceof Symbol.IntrinsicSymbol intrinsic
+                            && "int".equals(intrinsic.name())) {
+                        scan.signedInt32 = true;
+                    }
+                }
                 walkExpression(callExpr.callee(), module, scan);
                 for (ExpressionNode argument : callExpr.args()) {
                     walkExpression(argument, module, scan);
