@@ -76,6 +76,7 @@ javac --release 25 -proc:none -d build \
   test/SemanticTableTest.java \
   test/ContainerOpsExecutorTest.java \
   test/ComparisonSelectorLoweringTest.java \
+  test/ContainerLoweringArmsTest.java \
   test/AstAndTypesTest.java \
   test/TypesBytesTest.java \
   test/LexerTest.java \
@@ -330,6 +331,10 @@ java -ea -cp build deal.test.ContainerOpsExecutorTest
 echo ""
 echo "=== Running Comparison Selector Lowering Tests (ISSUE-0407) ==="
 java -ea -cp build deal.test.ComparisonSelectorLoweringTest
+
+echo ""
+echo "=== Running Container Lowering Arms Tests (ISSUE-0386) ==="
+java -ea -cp build deal.test.ContainerLoweringArmsTest
 
 echo ""
 echo "=== Running Protected Path Ops Tests (ISSUE-0262) ==="
