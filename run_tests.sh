@@ -104,6 +104,7 @@ javac --release 25 -proc:none -d build \
   test/JsConformanceTest.java \
   test/LuaAbiTest.java \
   test/LuaAbiBackendTest.java \
+  test/LuaJitAsyncExportInvokerTest.java \
   test/CrossModuleTypingTest.java \
   test/ProtectedPathOpsTest.java \
   test/CanonicalIdentityTest.java \
@@ -430,6 +431,10 @@ java -ea -cp build deal.test.ModuleSystemTest
 echo ""
 echo "=== Running Source Module Resolver Tests (ISSUE-0267 T6) ==="
 java -ea -cp build deal.module.SourceModuleResolverTest
+
+echo ""
+echo "=== Running LuaJIT Async Export Invoker Tests (ISSUE-0417) ==="
+java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.LuaJitAsyncExportInvokerTest
 
 echo ""
 echo "=== Running Stdlib .d.deal Parse Tests ==="
