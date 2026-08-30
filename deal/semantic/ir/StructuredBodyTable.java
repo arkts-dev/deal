@@ -29,7 +29,13 @@ import java.util.Objects;
  * inert membership carrier the lowerer produces with the unit, so the
  * maps are copied defensively and cross-map consistency (an op listed in
  * two blocks, a conflicting inverse entry, an unreferenced block) is
- * admitted here and rejected by the validator.</p>
+ * admitted here and rejected by the validator. In the unit-to-table
+ * direction the validator requires every produced op of the unit whose
+ * kind is not one of the five module-level kinds ({@code MODULE_INIT},
+ * {@code EXTERNAL_ENTRY}, {@code CLASS_FACTORY},
+ * {@code CALLBACK_INVOKE}, {@code ENTRY_INVOKE}) to be a member of
+ * exactly one block; those five kinds are not ops of a lowered function
+ * and may be absent from the table.</p>
  *
  * <p><b>Ownership.</b> This is construct-epic production data — no
  * schema-owned record changes and the foundation validator's closed

@@ -58,7 +58,10 @@ import java.util.Set;
  * epics (E6/E7/E9). Module-level ops ({@code MODULE_INIT},
  * {@code EXTERNAL_ENTRY}, {@code CLASS_FACTORY}, {@code CALLBACK_INVOKE},
  * {@code ENTRY_INVOKE}) are not ops of a lowered function and may be
- * absent from the table.</p>
+ * absent from the table. Every other produced op of the unit is a pinned
+ * member of exactly one block (C-D1 — "every op of a lowered function
+ * belongs to exactly one block"); the completeness check below enforces
+ * that unit-to-table direction.</p>
  *
  * <p><b>Pinned checks (first-failure order).</b></p>
  * <ol>
@@ -81,9 +84,17 @@ import java.util.Set;
  *       <li>tree shape — every structure op that references a child block
  *           is itself a member of a block; no control position references
  *           a root block; every non-root block is referenced by at most
- *           one control position; no orphan block (a table block that is
- *           not a root and is referenced by no payload position of any
- *           kind); and the parent chain is acyclic.</li>
+ *           one control position;</li>
+ *       <li>completeness — every produced op of the unit whose kind is
+ *           not one of the five module-level kinds ({@code MODULE_INIT},
+ *           {@code EXTERNAL_ENTRY}, {@code CLASS_FACTORY},
+ *           {@code CALLBACK_INVOKE}, {@code ENTRY_INVOKE}) is a member
+ *           of exactly one block (present in the block lists and in the
+ *           inverse map); absence from the table is admitted only for
+ *           those five kinds;</li>
+ *       <li>orphan blocks and acyclicity — no table block is a non-root
+ *           block referenced by no payload position of any kind, and the
+ *           parent chain is acyclic.</li>
  *     </ol></li>
  *   <li>Dominance ({@link #CONTROL_BLOCK_TREE}): within each block's
  *       ordered op list, no op appears after a terminator
@@ -119,6 +130,18 @@ public final class ControlFlowValidator {
 
     /** The exit rule (C-D2 c). */
     public static final String CONTROL_EXIT = "CONTROL_EXIT";
+
+    /**
+     * The five module-level kinds that are not ops of a lowered function
+     * and may therefore be absent from the block-membership table (the
+     * C-D1/C-D2 completeness exemption).
+     */
+    private static final Set<SemanticOpKind> MODULE_LEVEL_KINDS = Set.of(
+        SemanticOpKind.MODULE_INIT,
+        SemanticOpKind.EXTERNAL_ENTRY,
+        SemanticOpKind.CLASS_FACTORY,
+        SemanticOpKind.CALLBACK_INVOKE,
+        SemanticOpKind.ENTRY_INVOKE);
 
     private ControlFlowValidator() {
         // Static surface; no instances.
@@ -498,6 +521,23 @@ public final class ControlFlowValidator {
                 }
                 ctx.referenceCount.put(child, 1);
                 ctx.referencing.put(child, op);
+            }
+        }
+
+        // Completeness (C-D1, unit-to-table direction): every produced op of
+        // the unit whose kind is not one of the five module-level kinds is a
+        // member of exactly one block. The single-membership and
+        // inverse-consistency checks above have already proven the at-most-one
+        // and cross-map directions for every listed op, so absence from the
+        // inverse map means absence from every block list.
+        for (SemanticOp op : ctx.unit.ops()) {
+            if (!MODULE_LEVEL_KINDS.contains(op.kind())
+                    && !ctx.table.opBlocks().containsKey(op.opId())) {
+                return fail(ctx, CONTROL_BLOCK_TREE, "op " + op.opId()
+                    + " is a member of no block (every op of a lowered function must"
+                    + " belong to exactly one block; only the module-level kinds"
+                    + " MODULE_INIT|EXTERNAL_ENTRY|CLASS_FACTORY|CALLBACK_INVOKE|ENTRY_INVOKE"
+                    + " may be absent from the table)");
             }
         }
 

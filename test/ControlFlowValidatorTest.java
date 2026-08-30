@@ -4,8 +4,10 @@ import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 import deal.semantic.ControlFlowValidator;
 import deal.semantic.ir.AnchorId;
+import deal.semantic.ir.AssignTargetKind;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
+import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClosedSelector;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
 import deal.semantic.ir.ControlSelector;
@@ -63,9 +65,13 @@ import java.util.Set;
  *       blocks, the test-less FOR shape ({@code CONST true} in
  *       {@code initBlock}, update ops only in {@code updateBlock}),
  *       {@code FOR_EACH(ARRAY_VALUES)} with a body block,
- *       {@code TRY_CATCH} with try/catch blocks, nested structures, and
+ *       {@code TRY_CATCH} with try/catch blocks, nested structures,
  *       break/continue/return targets including transfer across a
- *       try boundary — each validates.</li>
+ *       try boundary, and the five module-level kinds
+ *       ({@code MODULE_INIT}/{@code EXTERNAL_ENTRY}/
+ *       {@code CLASS_FACTORY}/{@code CALLBACK_INVOKE}/
+ *       {@code ENTRY_INVOKE}) absent from the table — each
+ *       validates.</li>
  *   <li>Negative corpus, each producing exactly one E6005 with the
  *       correct rule and {@link deal.semantic.ir.LoweringFailureDetail}
  *       fields: orphan block, double-referenced block, cyclic nesting, an
@@ -73,11 +79,15 @@ import java.util.Set;
  *       {@code BlockId} in a payload, an op after
  *       {@code RETURN}/{@code BREAK}/{@code CONTINUE}/{@code THROW} in a
  *       block, a root block referenced by a control position, a structure
- *       op outside every block, an op listed for a block that is not a
- *       unit op, a missing function body/module-init block — all
- *       {@code CONTROL_BLOCK_TREE}; {@code BREAK} targeting a non-loop
- *       op, an unknown op, or a non-enclosing loop, and {@code RETURN}
- *       naming a different or unknown function — all
+ *       op outside every block, an op of a lowered function that is a
+ *       member of no block (the unit-to-table completeness direction —
+ *       a {@code CONST} plus an {@code ASSIGN} in neither map), an op
+ *       listed for a block that is not a unit op, a missing function
+ *       body/module-init block — all {@code CONTROL_BLOCK_TREE} (the
+ *       {@code BREAK} member-of-no-block fixture now stops at this
+ *       earlier membership rejection too); {@code BREAK} targeting a
+ *       non-loop op, an unknown op, or a non-enclosing loop, and
+ *       {@code RETURN} naming a different or unknown function — all
  *       {@code CONTROL_EXIT}.</li>
  *   <li>Determinism and purity: identical inputs produce identical
  *       outcomes and the unit and table are never mutated.</li>
@@ -550,6 +560,34 @@ public class ControlFlowValidatorTest {
             assertPass(ControlFlowValidator.validate(unit, table),
                 "each function's RETURN names its own containing function");
         }
+
+        // The five module-level kinds may be absent from the table: they are
+        // not ops of a lowered function (the completeness exemption).
+        {
+            SemanticOp moduleInit = op(SemanticOpKind.MODULE_INIT,
+                new KindPayload.ModuleInitPayload(MOD, List.of(), INIT),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+            SemanticOp externalEntry = op(SemanticOpKind.EXTERNAL_ENTRY,
+                new KindPayload.ExternalEntryPayload("export", MAIN, SIG, false, nextOpId(), null),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+            SemanticOp classFactory = op(SemanticOpKind.CLASS_FACTORY,
+                new KindPayload.ClassFactoryPayload(new ClassId("mod.flow", "Box"), List.of(),
+                    nextOpId()),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+            SemanticOp callbackInvoke = op(SemanticOpKind.CALLBACK_INVOKE,
+                new KindPayload.CallbackInvokePayload(nextValue(), SIG, List.of(), nextOpId()),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+            SemanticOp entryInvoke = op(SemanticOpKind.ENTRY_INVOKE,
+                new KindPayload.EntryInvokePayload(MOD, MAIN),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
+                List.of(moduleInit, externalEntry, classFactory, callbackInvoke, entryInvoke));
+            StructuredBodyTable table = tableOf(Map.ofEntries(
+                Map.entry(INIT, List.<SemanticOp>of()),
+                Map.entry(B0, List.<SemanticOp>of())));
+            assertPass(ControlFlowValidator.validate(unit, table),
+                "the five module-level kinds may be absent from the block table");
+        }
     }
 
     // =========================================================================
@@ -819,7 +857,26 @@ public class ControlFlowValidatorTest {
                 ControlFlowValidator.CONTROL_EXIT, "does not enclose its block");
         }
 
-        // BREAK as a member of no block.
+        // Ops of a lowered function that are members of no block: a CONST
+        // and an ASSIGN op in neither the block lists nor the inverse map
+        // (the C-D1 unit-to-table completeness direction).
+        {
+            SemanticOp c = constInt();
+            SemanticOp assign = op(SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.VARIABLE, List.of()),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+            LoweredModuleUnit unit = unit(Map.of(MAIN, function(MAIN, B0)),
+                List.of(c, assign));
+            StructuredBodyTable table = tableOf(Map.ofEntries(
+                Map.entry(INIT, List.<SemanticOp>of()),
+                Map.entry(B0, List.<SemanticOp>of())));
+            assertE6005(ControlFlowValidator.validate(unit, table),
+                ControlFlowValidator.CONTROL_BLOCK_TREE, "is a member of no block");
+        }
+
+        // BREAK as a member of no block: the completeness check stops the
+        // unit before any exit analysis, so the pinned rule is the earlier
+        // CONTROL_BLOCK_TREE rejection, never CONTROL_EXIT.
         {
             SemanticOp loop = loopOp(ControlSelector.FOR, null, b(1), null);
             SemanticOp brk = breakOp(loop.opId());
@@ -831,7 +888,7 @@ public class ControlFlowValidatorTest {
                 Map.entry(B0, List.of(loop)),
                 Map.entry(b(1), List.of(c1))));
             assertE6005(ControlFlowValidator.validate(unit, table),
-                ControlFlowValidator.CONTROL_EXIT, "the op is a member of no block");
+                ControlFlowValidator.CONTROL_BLOCK_TREE, "is a member of no block");
         }
 
         // RETURN naming a different function.
