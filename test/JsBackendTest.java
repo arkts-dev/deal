@@ -142,6 +142,7 @@ public class JsBackendTest {
             testJsonableRuntimeWalkers();
             testIntrinsicFunctionValues();
             testAsyncCompletionAndErrors();
+            testAsyncExportInvokerNode();
             testOrchestratorJsBackend();
             testOrchestratorJsNestedModule();
             testOrchestratorJsRejectsUnsupported();
@@ -459,6 +460,145 @@ public class JsBackendTest {
         deleteDir(dir);
         return result;
     }
+
+    /**
+     * The full JS chain under node with a production-invoker runner
+     * (js-v12-async-export-invocation D5): frontend → codegen →
+     * deployment → a runner that requires the emitted entry artifact
+     * and calls the production host ABI
+     * {@code $rt.invokeAsyncExport} with the pinned export name and
+     * return descriptor, printing the distinct result signal.
+     */
+    private static NodeResult runInvokerNode(String source, String name,
+            String exportName, String returnDescriptor) throws Exception {
+        Frontend f = compileFrontend(source, "jstest-" + name + ".deal");
+        if (!f.errors().isEmpty()) {
+            throw new RuntimeException("frontend errors: " + f.errors());
+        }
+        JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
+            f.checkResult(), "jstest-" + name + ".deal", "Main",
+            Map.of(), Map.of(), false, SemanticProfile.LEGACY_SAFE_INT);
+        if (res.hasErrors()) {
+            throw new RuntimeException("codegen errors: " + res.diagnostics());
+        }
+        return runInvokerArtifact(res, exportName, returnDescriptor);
+    }
+
+    /**
+     * The E6004 no-main variant: drives {@link JsBackend#generate} with
+     * {@code isEntry = true} on a module without {@code main} — the
+     * backstop emits the E6004 diagnostic but still produces the
+     * artifact (without the entry shim and without any {@code main}
+     * export), which the invoker must reject with the pinned
+     * {@code missing main} host failure.
+     */
+    private static NodeResult runInvokerNodeNoMain(String source, String name,
+            String exportName, String returnDescriptor) throws Exception {
+        Frontend f = compileFrontend(source, "jstest-" + name + ".deal");
+        if (!f.errors().isEmpty()) {
+            throw new RuntimeException("frontend errors: " + f.errors());
+        }
+        JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
+            f.checkResult(), "jstest-" + name + ".deal", "Main",
+            Map.of(), Map.of(), true, SemanticProfile.LEGACY_SAFE_INT);
+        boolean e6004 = res.diagnostics().stream()
+            .anyMatch(d -> "E6004".equals(d.code()));
+        if (!e6004) {
+            throw new RuntimeException("expected the E6004 backstop, got: "
+                + res.diagnostics());
+        }
+        return runInvokerArtifact(res, exportName, returnDescriptor);
+    }
+
+    /** Deploys a generated entry artifact and runs the invoker runner. */
+    private static NodeResult runInvokerArtifact(
+            JsBackend.JsCodegenResult res, String exportName,
+            String returnDescriptor) throws Exception {
+        Path dir = deployArtifacts(res, "Main.js");
+        String runner = INVOKER_RUNNER_SOURCE
+            .replace("EXPORT_NAME", exportName)
+            .replace("RETURN_DESCRIPTOR", returnDescriptor);
+        Files.writeString(dir.resolve("invoker_runner.js"), runner);
+        NodeResult result = runNodeScript(dir, "invoker_runner.js");
+        deleteDir(dir);
+        return result;
+    }
+
+    /**
+     * The invoker runner: requires the emitted entry artifact and the
+     * deployed runtime, calls {@code $rt.invokeAsyncExport(entry,
+     * exportName, returnDescriptor)}, and prints the pinned result
+     * signal — {@code INVOKE_OK}, {@code INVOKE_FAILURE}, or
+     * {@code INVOKE_ERROR} with the reified fields. An unexpected throw
+     * from the invoker itself fails hard.
+     */
+    private static final String INVOKER_RUNNER_SOURCE = String.join("\n",
+        "\"use strict\";",
+        "const $rt = require(\"./deal/runtime\");",
+        "const $entry = require(\"./Main\");",
+        "$rt.invokeAsyncExport($entry, \"EXPORT_NAME\", \"RETURN_DESCRIPTOR\").then((r) => {",
+        "  if (r.$ok === true) {",
+        "    process.stdout.write(\"INVOKE_OK: \" + r.$value + \"\\n\");",
+        "  } else if (typeof r.$failure === \"string\") {",
+        "    process.stdout.write(\"INVOKE_FAILURE: \" + r.$failure + \"\\n\");",
+        "  } else {",
+        "    const e = r.$error;",
+        "    process.stdout.write(\"INVOKE_ERROR: \" + e.code + \" \" + e.message",
+        "      + (e.file !== $rt.undefined ? \" at \" + e.file + \":\" + e.line + \":\" + e.column : \"\") + \"\\n\");",
+        "  }",
+        "}, (err) => {",
+        "  process.stderr.write(\"INVOKER_THREW: \" + err + \"\\n\");",
+        "  process.exit(1);",
+        "});",
+        "");
+
+    /**
+     * The full JS chain with an exactly-once counter runner: the runner
+     * wraps the entry's main and oracle {@code $f} with invocation
+     * counters, then performs one production invocation and asserts one
+     * main call and one export call.
+     */
+    private static NodeResult runCounterNode(String source, String name)
+            throws Exception {
+        Frontend f = compileFrontend(source, "jstest-" + name + ".deal");
+        if (!f.errors().isEmpty()) {
+            throw new RuntimeException("frontend errors: " + f.errors());
+        }
+        JsBackend.JsCodegenResult res = JsBackend.generate(f.program(),
+            f.checkResult(), "jstest-" + name + ".deal", "Main",
+            Map.of(), Map.of(), false, SemanticProfile.LEGACY_SAFE_INT);
+        if (res.hasErrors()) {
+            throw new RuntimeException("codegen errors: " + res.diagnostics());
+        }
+        Path dir = deployArtifacts(res, "Main.js");
+        Files.writeString(dir.resolve("counter_runner.js"),
+            COUNTER_RUNNER_SOURCE);
+        NodeResult result = runNodeScript(dir, "counter_runner.js");
+        deleteDir(dir);
+        return result;
+    }
+
+    private static final String COUNTER_RUNNER_SOURCE = String.join("\n",
+        "\"use strict\";",
+        "const $rt = require(\"./deal/runtime\");",
+        "const $entry = require(\"./Main\");",
+        "let $mainCalls = 0;",
+        "let $oracleCalls = 0;",
+        "const $mainF = $entry.main.$f;",
+        "$entry.main.$f = function() { $mainCalls++; return $mainF(); };",
+        "const $oracleF = $entry.oracle.$f;",
+        "$entry.oracle.$f = function() { $oracleCalls++; return $oracleF(); };",
+        "$rt.invokeAsyncExport($entry, \"oracle\", \"null\").then((r) => {",
+        "  process.stdout.write(\"INVOKE_ONCE_OK: main=\" + $mainCalls",
+        "    + \" oracle=\" + $oracleCalls + \" value=\" + r.$value + \"\\n\");",
+        "  if (r.$ok !== true || $mainCalls !== 1 || $oracleCalls !== 1) {",
+        "    process.exit(1);",
+        "  }",
+        "}, (err) => {",
+        "  process.stderr.write(\"INVOKER_THREW: \" + err + \"\\n\");",
+        "  process.exit(1);",
+        "});",
+        "");
 
     /** A fixed-export module resolver for backend-level module probes. */
     private static final class FixedModuleResolver implements ModuleResolver {
@@ -3972,6 +4112,170 @@ public class JsBackendTest {
         check(bad.exitCode() == 1 && bad.output().contains("DEAL_ERROR_CODE: E8005"),
             "an awaited error propagates natively at the await site, exit 1: "
                 + bad.output());
+    }
+
+    private static void testAsyncExportInvokerNode() throws Exception {
+        System.out.println("-- Node: $rt.invokeAsyncExport — production async-export invocation --");
+        if (!nodeAvailable) { skipNode("async-export invoker"); return; }
+
+        // Positive: the production oracle scenario (parent D9
+        // Verification 11) — init via the host's require, main once, the
+        // exact async()->null selection, one native await, the byte-exact
+        // completion check, and the bytes closure exercised end to end
+        // inside the oracle (js-v12-int32-bytes D5).
+        NodeResult ok = runInvokerNode("""
+            class Holder { f: async (b: bytes) => bytes; }
+            async function bump(b: bytes): bytes {
+              b[0] = b[0] + 1;
+              return b;
+            }
+            export function main(): null { return null; }
+            export async function oracle(): null {
+              let b: bytes = bytes(2);
+              b[0] = 1;
+              b[1] = 41;
+              let f: async (b: bytes) => bytes = bump;
+              let h: Holder = { f: f };
+              let out: bytes = await h.f(b);
+              if (out[0] !== 2 || b[0] !== 2 || b[1] !== 41) {
+                throw { code: "ORACLE_FAIL", message: "bytes closure content" };
+              }
+              out[0] = 9;
+              if (b[0] !== 9) {
+                throw { code: "ORACLE_FAIL", message: "bytes closure identity" };
+              }
+              return null;
+            }
+            """, "invoker-ok", "oracle", "null");
+        check(ok.exitCode() == 0 && ok.output().equals("INVOKE_OK: null"),
+            "invokeAsyncExport(entry, \"oracle\", \"null\") over the "
+                + "production oracle yields { $ok: true, $value: null } "
+                + "with the bytes closure content/identity assertions "
+                + "green inside the oracle: " + ok.output());
+
+        // Negative host-failure signals: a wrong export name, a sync
+        // export, a parameterized export, a descriptor-mismatched
+        // returnDescriptor, and a non-wrapper export value each yield
+        // { $ok: false, $failure } with the pinned reason — never a DEAL
+        // error, never a false runtime-error pass.
+        String negatives = """
+            export class Payload { v: int; }
+            export function main(): null { return null; }
+            export async function oracle(): null { return null; }
+            export async function takes(i: int): int { return i; }
+            """;
+        NodeResult wrongName = runInvokerNode(negatives, "invoker-wrong-name",
+            "nope", "null");
+        check(wrongName.exitCode() == 0 && wrongName.output().equals(
+                "INVOKE_FAILURE: export not found: nope"),
+            "a wrong export name yields the pinned missing-export host "
+                + "failure: " + wrongName.output());
+        NodeResult syncExport = runInvokerNode(negatives, "invoker-sync",
+            "main", "null");
+        check(syncExport.exitCode() == 0 && syncExport.output().equals(
+                "INVOKE_FAILURE: sync export: expected async()->null, got ()->null"),
+            "a sync export yields the pinned sync host failure: "
+                + syncExport.output());
+        NodeResult paramExport = runInvokerNode(negatives, "invoker-param",
+            "takes", "int");
+        check(paramExport.exitCode() == 0 && paramExport.output().equals(
+                "INVOKE_FAILURE: parameterized export: expected async()->int, got async(int)->int"),
+            "a parameterized export yields the pinned parameterized host "
+                + "failure: " + paramExport.output());
+        NodeResult mismatch = runInvokerNode(negatives, "invoker-mismatch",
+            "oracle", "int");
+        check(mismatch.exitCode() == 0 && mismatch.output().equals(
+                "INVOKE_FAILURE: descriptor mismatch: expected async()->int, got async()->null"),
+            "a descriptor-mismatched returnDescriptor yields the pinned "
+                + "descriptor-mismatch host failure: " + mismatch.output());
+        NodeResult nonWrapper = runInvokerNode(negatives, "invoker-non-wrapper",
+            "Payload", "null");
+        check(nonWrapper.exitCode() == 0 && nonWrapper.output().equals(
+                "INVOKE_FAILURE: export is not a function: expected async()->null"),
+            "a non-wrapper export value (an exported class) yields the "
+                + "pinned non-function host failure: " + nonWrapper.output());
+        NodeResult noMain = runInvokerNodeNoMain("""
+            export async function oracle(): null { return null; }
+            """, "invoker-no-main", "oracle", "null");
+        check(noMain.exitCode() == 0 && noMain.output().equals(
+                "INVOKE_FAILURE: missing main"),
+            "a main-less entry artifact (the E6004 backstop shape) yields "
+                + "the pinned missing-main host failure: " + noMain.output());
+
+        // DEAL-error signal with the exact source location: a rejected
+        // operation propagates the reified E8005 code/message and the
+        // pinned file/line/column of the failing operator.
+        NodeResult rejected = runInvokerNode("""
+            async function bomb(): int {
+              return 1 / 0;
+            }
+            export function main(): null { return null; }
+            export async function oracle(): null {
+              await bomb();
+              return null;
+            }
+            """, "invoker-reject", "oracle", "null");
+        check(rejected.exitCode() == 0 && rejected.output().equals(
+                "INVOKE_ERROR: E8005 integer division by zero at jstest-invoker-reject.deal:2:10"),
+            "a rejected oracle yields { $ok: false, $error } with the "
+                + "reified E8005 code and the exact source location: "
+                + rejected.output());
+
+        // The defensive arms no checker-accepted DEAL source reaches: the
+        // completion-mismatch arm reifies E8001 "expected null"; a DEAL
+        // error from main reifies with its exact code/message and
+        // file/line/column; an invalid entry or return descriptor is a
+        // host failure — never a DEAL error, never a throw.
+        NodeResult probe = runRuntimeProbe("async-export-invoker", """
+            "use strict";
+            const $rt = require("./deal/runtime");
+            (async () => {
+              let $fail = "";
+              const $entry = {
+                main: $rt.function("()->null", function() { return null; }),
+                oracle: { $kind: "function", $sig: "async()->null",
+                  $f: async function() { return 42; } },
+              };
+              const $r = await $rt.invokeAsyncExport($entry, "oracle", "null");
+              if ($r.$ok !== false) $fail = "ok-signal";
+              if ($r.$failure !== undefined) $fail = "failure-signal";
+              if ($r.$error === null || typeof $r.$error !== "object") $fail = "error-shape";
+              if ($r.$error.$kind !== "class" || $r.$error.$classname !== "@$builtin/Error") $fail = "error-tags";
+              if ($r.$error.code !== "E8001" || $r.$error.message !== "expected null") $fail = "error-fields";
+              const $rm = { main: { $kind: "function", $sig: "()->null",
+                $f: function() { $rt.fail("E8001", "main boom", "probe.js", 7, 3); } },
+                oracle: $rt.function("async()->null", async function() { return null; }) };
+              const $r2 = await $rt.invokeAsyncExport($rm, "oracle", "null");
+              if ($r2.$ok !== false || $r2.$failure !== undefined) $fail = "main-error-signal";
+              if ($r2.$error.code !== "E8001" || $r2.$error.message !== "main boom"
+                  || $r2.$error.file !== "probe.js" || $r2.$error.line !== 7
+                  || $r2.$error.column !== 3) $fail = "main-error-fields";
+              const $r3 = await $rt.invokeAsyncExport(null, "oracle", "null");
+              if ($r3.$failure !== "entry exports is not a module object") $fail = "entry-guard";
+              const $r4 = await $rt.invokeAsyncExport($entry, "oracle", 42);
+              if ($r4.$failure !== "invalid return descriptor") $fail = "descriptor-guard";
+              console.log($fail === "" ? "INVOKER-PROBE-OK" : "INVOKER-PROBE-FAIL: " + $fail);
+            })();
+            """);
+        check(probe.exitCode() == 0
+                && probe.output().equals("INVOKER-PROBE-OK"),
+            "the defensive completion-mismatch arm reifies E8001 'expected "
+                + "null', a DEAL error from main reifies with its exact "
+                + "fields, and invalid entry/descriptor inputs yield host "
+                + "failures: " + probe.output());
+
+        // Exactly-once: a runner-instrumented production entry — main
+        // and the oracle wrapped with invocation counters — asserts
+        // exactly one main call and one export call across one
+        // main-then-invoke run.
+        NodeResult counted = runCounterNode("""
+            export function main(): null { return null; }
+            export async function oracle(): null { return null; }
+            """, "invoker-once");
+        check(counted.exitCode() == 0 && counted.output().equals(
+                "INVOKE_ONCE_OK: main=1 oracle=1 value=null"),
+            "one main-then-invoke run invokes main exactly once and the "
+                + "export exactly once: " + counted.output());
     }
 
     // =========================================================================

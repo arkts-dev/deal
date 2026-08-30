@@ -45,9 +45,11 @@ import java.util.stream.Stream;
  *       runtime-error sample asserts {@code DEAL_ERROR_CODE: E8001} on
  *       stderr and exit 1);</li>
  *   <li>for the async sample, additionally requires the emitted module
- *       from a runner script and awaits {@code demo_async.$f()},
- *       asserting the completion value (a missing or mis-shaped export
- *       is a hard failure, never a skip);</li>
+ *       from a runner script and invokes the production host ABI
+ *       {@code $rt.invokeAsyncExport(entry, "oracle", "null")},
+ *       asserting the {@code { $ok: true, $value: null }} completion
+ *       signal (a host-failure or DEAL-error signal is a hard failure,
+ *       never a skip);</li>
  *   <li>deletes the temp project afterwards.</li>
  * </ol>
  *
@@ -121,7 +123,7 @@ public final class JsE2eTest {
             List.of("about to fail"), 1, "DEAL_ERROR_CODE: E8001"),
         new Sample("async-await",
             List.of("async sample main ran"), 0, null,
-            "demo_async", "async completion: 44"),
+            "oracle", "oracle completion: null"),
         new Sample("modules",
             List.of("modules ok: main invoked"), 0, null),
         new Sample("stdlib",
@@ -320,9 +322,13 @@ public final class JsE2eTest {
                 return;
             }
 
-            // Step 5: the async sample's exported completion value is
-            // asserted through a runner-side await of demo_async.$f()
-            // (a wrong export name/signature is a hard failure).
+            // Step 5: the async sample's completion is asserted through
+            // the production invoker $rt.invokeAsyncExport — the runner
+            // requires the emitted entry and asserts the
+            // { $ok: true, $value: null } signal (a host-failure or
+            // DEAL-error signal is a hard failure). The invoker's main
+            // invocation must also print the pinned main line exactly
+            // once in the runner process (the D2 exactly-once contract).
             if (sample.asyncExport() != null) {
                 Path runner = projectDir.resolve("async_export_runner.js");
                 Files.writeString(runner, ASYNC_RUNNER_SOURCE,
@@ -342,6 +348,14 @@ public final class JsE2eTest {
                         + "':\n" + asyncRun.stdout);
                     return;
                 }
+                int mainRuns = countOccurrences(asyncRun.stdout,
+                    "async sample main ran");
+                if (mainRuns != 1) {
+                    fail(sample, "the production invoker must run main "
+                        + "exactly once in the runner process, got "
+                        + mainRuns + ":\n" + asyncRun.stdout);
+                    return;
+                }
             }
 
             passed++;
@@ -354,22 +368,33 @@ public final class JsE2eTest {
         }
     }
 
-    /** The runner-side async-export invocation (D3, test-level await). */
+    /**
+     * The runner-side production async-export invocation (D5): the
+     * runner requires the emitted entry artifact and the deployed
+     * runtime and calls the production host ABI
+     * {@code $rt.invokeAsyncExport(entry, "oracle", "null")}, asserting
+     * the {@code { $ok: true, $value: null }} completion signal. Any
+     * other signal — a host failure, a reified DEAL error, or an
+     * unexpected throw from the invoker itself — is a hard failure.
+     */
     private static final String ASYNC_RUNNER_SOURCE = String.join("\n",
         "\"use strict\";",
+        "const path = require(\"path\");",
+        "const $rt = require(path.join(path.dirname(process.argv[2]),",
+        "  \"deal\", \"runtime\"));",
         "const m = require(process.argv[2]);",
         "const exportName = process.argv[3];",
-        "const owned = Object.prototype.hasOwnProperty.call(m, exportName);",
-        "const w = owned ? m[exportName] : null;",
-        "if (w === null || typeof w !== \"object\" || typeof w.$f !== \"function\") {",
-        "  process.stderr.write(\"ASYNC_EXPORT_MISMATCH: \" + exportName + \"\\n\");",
-        "  process.exit(1);",
-        "}",
-        "w.$f().then(",
-        "  (v) => { process.stdout.write(\"async completion: \" + v + \"\\n\"); },",
+        "$rt.invokeAsyncExport(m, exportName, \"null\").then(",
+        "  (r) => {",
+        "    if (r.$ok !== true || r.$value !== null) {",
+        "      process.stderr.write(\"ASYNC_EXPORT_MISMATCH: \" + JSON.stringify(r) + \"\\n\");",
+        "      process.exit(1);",
+        "    }",
+        "    process.stdout.write(\"oracle completion: \" + r.$value + \"\\n\");",
+        "  },",
         "  (err) => {",
-        "    process.stderr.write(\"DEAL_ERROR_CODE: \" + ((err && err.code) ? err.code : \"E0000\") + \"\\n\");",
-        "    process.exitCode = 1;",
+        "    process.stderr.write(\"INVOKER_THREW: \" + err + \"\\n\");",
+        "    process.exit(1);",
         "  }",
         ");",
         "");
@@ -395,6 +420,18 @@ public final class JsE2eTest {
         String stdout = readAll(process.getInputStream());
         String stderr = readAll(process.getErrorStream());
         return new SubprocessResult(process.exitValue(), stdout, stderr);
+    }
+
+    /** Counts non-overlapping occurrences of {@code needle} in
+     * {@code haystack}. */
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        int idx = 0;
+        while ((idx = haystack.indexOf(needle, idx)) >= 0) {
+            count++;
+            idx += needle.length();
+        }
+        return count;
     }
 
     private static String readAll(InputStream stream) throws IOException {

@@ -1,19 +1,29 @@
 import * as c from "std/console";
 
-async function compute(x: int): int {
-  let v: int = x * 2;
-  return v;
+class Holder {
+  f: async (b: bytes) => bytes;
 }
 
-async function maybe(x: int): int {
-  return x;
+async function bump(b: bytes): bytes {
+  b[0] = b[0] + 1;
+  return b;
 }
 
-export async function demo_async(): int {
-  let a: int = await compute(21);
-  let b: int = await compute(1);
-  let c2: int = await maybe(0);
-  return a + b + c2;
+export async function oracle(): null {
+  let b: bytes = bytes(2);
+  b[0] = 1;
+  b[1] = 41;
+  let f: async (b: bytes) => bytes = bump;
+  let h: Holder = { f: f };
+  let out: bytes = await h.f(b);
+  if (out[0] !== 2 || b[0] !== 2 || b[1] !== 41) {
+    throw { code: "ORACLE_FAIL", message: "bytes closure content" };
+  }
+  out[0] = 9;
+  if (b[0] !== 9) {
+    throw { code: "ORACLE_FAIL", message: "bytes closure identity" };
+  }
+  return null;
 }
 
 export function main(): null {
