@@ -4,7 +4,8 @@
 // The single hand-written CommonJS runtime module exporting $rt, the JS
 // analog of deal/runtime.lua (js-backend-runtime D1-D9, pinned by
 // js-backend-runtime-artifact), plus the shared D9 JSON conversion and
-// the @jsonable runtime walkers (js-v12-jsonable-completion D2-D5). It
+// the @jsonable runtime walkers (js-v12-jsonable-completion D2-D5), and
+// the production async-export invoker (js-v12-async-export-invocation D1-D4). It
 // loads standalone under node v24 from "./deal/runtime" and from any
 // "<relpath>/deal/runtime" require path —
 // no require call anywhere in the file (js-backend-runtime-artifact D1/D10).
@@ -2052,6 +2053,98 @@ const $rt = {
       }
     }
     return $surface;
+  },
+
+  // invokeAsyncExport: the JS production async-export invoker
+  // (js-v12-async-export-invocation D1-D4) — the single runtime
+  // realization of the parent D9 BackendAsyncExportInvoker with three
+  // result signals distinct by construction:
+  //
+  //   { $ok: true, $value }                          // checked completion
+  //   { $ok: false, $error: {code, message, ...} }   // reified DEAL error
+  //   { $ok: false, $failure: "<pinned reason>" }    // HostInvocationFailure
+  //
+  // A DEAL runtime error is never conflated with a host/selection/
+  // infrastructure failure, and the invoker never throws: every input
+  // resolves to exactly one of the three shapes. Order (D2-D4):
+  // (1) module initialization already happened exactly once through the
+  // host's require of the entry (Node's require cache — the invoker
+  // never re-requires); (2) main — the export must exist as a function
+  // wrapper with $sig === "()->null" (the E2010/E2011 selected-entry
+  // gate) and its $f is awaited exactly once in the same runtime
+  // instance; a missing or mis-shaped main is a HostInvocationFailure
+  // (defensive — a selected project always has one); (3) export
+  // selection — entryExports[exportName] must be a function wrapper
+  // whose $sig is byte-equal to "async()->" + returnDescriptor; a
+  // missing/sync/parameterized/descriptor-mismatched/non-wrapper export
+  // is a HostInvocationFailure with a pinned reason, never a DEAL
+  // error; (4) one $f() invocation, one native await, the completion
+  // validated byte-exact through $rt.checkType(returnDescriptor, v) — a
+  // rejected operation or a completion mismatch yields
+  // { $ok: false, $error } with the reified code/message/file/line/
+  // column; a valid completion yields { $ok: true, $value }. No retry,
+  // no second invocation, no mutation. The member is $rt-only: DEAL
+  // source can never name it (no identifier may contain $), no artifact
+  // exports it, and no generated invocation shim exists.
+  invokeAsyncExport: async function $invokeAsyncExport(entryExports, exportName, returnDescriptor) {
+    const $failure = function(reason) {
+      return { $ok: false, $failure: reason };
+    };
+    if (entryExports === $undefined || entryExports === null
+        || typeof entryExports !== "object") {
+      return $failure("entry exports is not a module object");
+    }
+    if (typeof returnDescriptor !== "string") {
+      return $failure("invalid return descriptor");
+    }
+    const $main = entryExports.main;
+    if ($main === $undefined) {
+      return $failure("missing main");
+    }
+    if ($main === null || typeof $main !== "object"
+        || $main.$kind !== "function" || $main.$sig !== "()->null"
+        || typeof $main.$f !== "function") {
+      return $failure("main is not a null-returning function");
+    }
+    try {
+      await $main.$f();
+    } catch ($e) {
+      return { $ok: false, $error: $rt.reifyError($e) };
+    }
+    const $expected = "async()->" + returnDescriptor;
+    const $w = entryExports[exportName];
+    if ($w === $undefined) {
+      return $failure("export not found: " + String(exportName));
+    }
+    if ($w === null || typeof $w !== "object" || $w.$kind !== "function"
+        || typeof $w.$f !== "function") {
+      return $failure("export is not a function: expected " + $expected);
+    }
+    const $sig = $w.$sig;
+    if ($sig !== $expected) {
+      const $parsed = typeof $sig === "string" ? $parse($sig) : null;
+      if ($parsed === null || $parsed.$t !== "function") {
+        return $failure("sync export: expected " + $expected + ", got " + String($sig));
+      }
+      if (!$parsed.$async) {
+        return $failure("sync export: expected " + $expected + ", got " + $sig);
+      }
+      if ($parsed.$params.length > 0) {
+        return $failure("parameterized export: expected " + $expected + ", got " + $sig);
+      }
+      return $failure("descriptor mismatch: expected " + $expected + ", got " + $sig);
+    }
+    let $v;
+    try {
+      $v = await $w.$f();
+    } catch ($e) {
+      return { $ok: false, $error: $rt.reifyError($e) };
+    }
+    try {
+      return { $ok: true, $value: $rt.checkType(returnDescriptor, $v) };
+    } catch ($e) {
+      return { $ok: false, $error: $rt.reifyError($e) };
+    }
   },
 
   // intConvert: the int(x) conversion intrinsic (deal/runtime.lua:917-926).
