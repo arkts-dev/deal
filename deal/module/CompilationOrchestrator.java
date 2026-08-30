@@ -556,7 +556,12 @@ public final class CompilationOrchestrator {
                 continue;
             }
 
-            Parser parser = new Parser(lex.tokens(), sourcePath);
+            // Phase-0 parsing is profile-aware (signed-int32 foundation
+            // I1): under DEAL_V1_2_INT32 the E1036 int32 gate and the
+            // -2147483648 immediate-token special case apply; the legacy
+            // parse contract is unchanged otherwise.
+            Parser parser = new Parser(lex.tokens(), sourcePath,
+                invocation.semanticProfile());
             ParseResult parseResult = parser.parse();
             diagnostics.addAll(parseResult.diagnostics());
             if (parseResult.hasErrors()) {

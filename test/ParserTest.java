@@ -7,6 +7,7 @@ import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
 import deal.lexer.*;
 import deal.parser.*;
+import deal.semantic.ir.SemanticProfile;
 import deal.source.ScalarSourceCursor;
 
 import java.util.List;
@@ -42,6 +43,20 @@ public class ParserTest {
     private static ParseResult parseFile(String source, String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
         return new Parser(lex.tokens(), filename).parse();
+    }
+
+    /** Parses under the v1.2 profile-aware constructor (I1). */
+    private static ParseResult parseV12(String source) {
+        LexResult lex = new Lexer(source, "test.deal").tokenize();
+        return new Parser(lex.tokens(), "test.deal",
+            SemanticProfile.DEAL_V1_2_INT32).parse();
+    }
+
+    /** Parses under the profile-aware constructor with the legacy profile. */
+    private static ParseResult parseLegacyProfile(String source) {
+        LexResult lex = new Lexer(source, "test.deal").tokenize();
+        return new Parser(lex.tokens(), "test.deal",
+            SemanticProfile.LEGACY_SAFE_INT).parse();
     }
 
     private static void assertNoParseErrors(ParseResult result, String context) {
@@ -117,6 +132,7 @@ public class ParserTest {
 
         // Expressions
         testLiteralExpressions();
+        testProfileAwareInt32Literals();
         testIdentifierExpression();
         testBinaryExpressions();
         testUnaryExpressions();
@@ -802,6 +818,190 @@ public class ParserTest {
         vd = (VariableDeclaration) r.program().statements().get(0);
         lit = (LiteralExpr) vd.initializer();
         check(((LiteralValue.StringLiteral) lit.value()).value().equals("hello"), "string lit");
+    }
+
+    // =========================================================================
+    // Profile-aware int32 literal parsing (signed-int32 foundation I1)
+    // =========================================================================
+
+    static void testProfileAwareInt32Literals() {
+        System.out.println("-- Profile-Aware Int32 Literals (I1) --");
+
+        // ---- v1.2 matrix ----
+
+        // 2147483647 (the signed32 maximum) parses unchanged.
+        ParseResult r = parseV12("let a: int = 2147483647;");
+        assertNoParseErrors(r, "v1.2 max literal");
+        VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
+        LiteralExpr lit = assertExprInstance(vd.initializer(), LiteralExpr.class,
+            "v1.2 max literal");
+        if (lit != null) {
+            check(((LiteralValue.IntLiteral) lit.value()).value() == 2147483647L,
+                "v1.2 max literal value");
+        }
+
+        // -2147483648: the combined-token in-range literal with the
+        // combined span and no diagnostic.
+        r = parseV12("let a: int = -2147483648;");
+        assertNoParseErrors(r, "v1.2 min literal via immediate minus");
+        vd = (VariableDeclaration) r.program().statements().get(0);
+        lit = assertExprInstance(vd.initializer(), LiteralExpr.class,
+            "v1.2 -2147483648 is a single literal, not a unary expr");
+        if (lit != null) {
+            check(((LiteralValue.IntLiteral) lit.value()).value() == -2147483648L,
+                "v1.2 -2147483648 value");
+            Span sp = lit.span();
+            check(sp.startColumn() == 14 && sp.endColumn() == 24,
+                "v1.2 -2147483648 combined span covers '-' (col 14) through "
+                    + "the literal end (col 24): got " + sp.startColumn() + ".."
+                    + sp.endColumn());
+            check(sp.hasScalarOffsets() && sp.startScalarOffset() == 13
+                    && sp.endScalarOffset() == 24,
+                "v1.2 -2147483648 combined span scalar offsets [13,24): got ["
+                    + sp.startScalarOffset() + "," + sp.endScalarOffset() + ")");
+        }
+
+        // 2147483648 alone -> exactly one E1036 at the token with the
+        // existing template; parsing recovers with value 0.
+        r = parseV12("let a: int = 2147483648;");
+        List<CompilerDiagnostic> diags = r.diagnostics();
+        check(diags.size() == 1 && "E1036".equals(diags.get(0).code())
+                && "error".equals(diags.get(0).severity())
+                && "Integer literal out of range: 2147483648".equals(diags.get(0).message()),
+            "v1.2 bare 2147483648 raises exactly one E1036 at the token: " + diags);
+        vd = (VariableDeclaration) r.program().statements().get(0);
+        lit = assertExprInstance(vd.initializer(), LiteralExpr.class,
+            "v1.2 bare 2147483648 recovers");
+        if (lit != null) {
+            check(((LiteralValue.IntLiteral) lit.value()).value() == 0,
+                "v1.2 bare 2147483648 recovers with value 0");
+        }
+
+        // -(2147483648): the parenthesized literal reaches parsePrimary
+        // outside the immediate position -> E1036.
+        r = parseV12("let a: int = -(2147483648);");
+        assertParseError(r, "E1036", "v1.2 parenthesized 2147483648");
+
+        // -2147483649 -> E1036.
+        r = parseV12("let a: int = -2147483649;");
+        assertParseError(r, "E1036", "v1.2 -2147483649");
+
+        // 2147483648 + 0 -> E1036.
+        r = parseV12("let a: int = 2147483648 + 0;");
+        assertParseError(r, "E1036", "v1.2 2147483648 + 0");
+
+        // Binary-position 2147483648 is never the immediate-minus special
+        // case: the binary '-' is consumed as the operator and the
+        // literal reaches parsePrimary -> E1036.
+        r = parseV12("let a: int = 1 - 2147483648;");
+        assertParseError(r, "E1036", "v1.2 binary-position 2147483648");
+
+        // --2147483648 parses as UnaryExpr(NEG, IntLiteral(-2147483648)):
+        // the inner '-' is the immediate token, and the outer negation's
+        // E8004 is a runtime concern, not a parse error.
+        r = parseV12("let a: int = --2147483648;");
+        assertNoParseErrors(r, "v1.2 --2147483648 parses");
+        vd = (VariableDeclaration) r.program().statements().get(0);
+        UnaryExpr un = assertExprInstance(vd.initializer(), UnaryExpr.class,
+            "v1.2 --2147483648 outer unary");
+        if (un != null) {
+            check(un.op() == UnaryOp.NEG, "v1.2 --2147483648 outer op is NEG");
+            LiteralExpr inner = assertExprInstance(un.expr(), LiteralExpr.class,
+                "v1.2 --2147483648 inner literal");
+            if (inner != null) {
+                check(((LiteralValue.IntLiteral) inner.value()).value() == -2147483648L,
+                    "v1.2 --2147483648 inner value");
+            }
+        }
+
+        // The v1.2 contract also applies inside template interpolations:
+        // the template sub-parser carries the same profile (I1).
+        r = parseV12("let a: string = `x ${2147483648} y`;");
+        assertParseError(r, "E1036", "v1.2 template interpolation 2147483648");
+        r = parseV12("let a: string = `x ${-2147483648} y`;");
+        assertNoParseErrors(r, "v1.2 template interpolation -2147483648");
+        vd = (VariableDeclaration) r.program().statements().get(0);
+        TemplateLiteralExpr tl = assertExprInstance(vd.initializer(),
+            TemplateLiteralExpr.class, "v1.2 template");
+        if (tl != null && tl.parts().size() == 3) {
+            LiteralExpr part = assertExprInstance(tl.parts().get(1),
+                LiteralExpr.class,
+                "v1.2 template interpolation part is the combined literal");
+            if (part != null) {
+                check(((LiteralValue.IntLiteral) part.value()).value()
+                        == -2147483648L,
+                    "v1.2 template interpolation -2147483648 value");
+            }
+        }
+
+        // ---- legacy matrix ----
+
+        // Legacy values beyond the int32 range parse under both
+        // constructors exactly as today.
+        for (String legacyValue : new String[] {"9007199254740991",
+                                                 "9223372036854775807"}) {
+            String srcText = "let a: int = " + legacyValue + ";";
+            ParseResult legacyDefault = parse(srcText);
+            ParseResult legacyProfile = parseLegacyProfile(srcText);
+            assertNoParseErrors(legacyDefault,
+                "legacy constructor accepts " + legacyValue);
+            assertNoParseErrors(legacyProfile,
+                "profile-aware LEGACY_SAFE_INT accepts " + legacyValue);
+            check(legacyDefault.diagnostics().equals(legacyProfile.diagnostics()),
+                "legacy diagnostics identical across constructors for " + legacyValue);
+        }
+
+        // The legacy-default constructor's diagnostics and recovery are
+        // byte-identical under the profile-aware LEGACY_SAFE_INT
+        // constructor: values beyond Long.parseLong raise the same single
+        // diagnostic.
+        String huge = "let a: int = 9999999999999999999999;";
+        ParseResult legacyDefault = parse(huge);
+        ParseResult legacyProfile = parseLegacyProfile(huge);
+        check(legacyDefault.diagnostics().equals(legacyProfile.diagnostics()),
+            "out-of-long diagnostics identical across constructors: "
+                + legacyDefault.diagnostics() + " vs " + legacyProfile.diagnostics());
+        assertParseError(legacyProfile, "E1036", "profile-aware legacy out-of-long");
+
+        // Under LEGACY_SAFE_INT the immediate-minus special case does not
+        // apply: -2147483648 keeps the historical UnaryExpr(NEG,
+        // IntLiteral(2147483648)) shape.
+        r = parseLegacyProfile("let a: int = -2147483648;");
+        assertNoParseErrors(r, "legacy -2147483648 parses");
+        vd = (VariableDeclaration) r.program().statements().get(0);
+        un = assertExprInstance(vd.initializer(), UnaryExpr.class,
+            "legacy -2147483648 stays a unary expr");
+        if (un != null) {
+            check(un.op() == UnaryOp.NEG, "legacy -2147483648 unary op is NEG");
+            LiteralExpr inner = assertExprInstance(un.expr(), LiteralExpr.class,
+                "legacy -2147483648 operand literal");
+            if (inner != null) {
+                check(((LiteralValue.IntLiteral) inner.value()).value() == 2147483648L,
+                    "legacy -2147483648 operand keeps value 2147483648");
+            }
+        }
+
+        // 2147483648 parses cleanly under the legacy profile (no gate).
+        r = parseLegacyProfile("let a: int = 2147483648;");
+        assertNoParseErrors(r, "legacy profile accepts 2147483648");
+
+        // Template interpolations keep the historical legacy contract too.
+        r = parseLegacyProfile("let a: string = `x ${2147483648} y`;");
+        assertNoParseErrors(r, "legacy template interpolation 2147483648");
+        r = parseLegacyProfile("let a: string = `x ${-2147483648} y`;");
+        assertNoParseErrors(r, "legacy template interpolation -2147483648");
+        vd = (VariableDeclaration) r.program().statements().get(0);
+        TemplateLiteralExpr legacyTl = assertExprInstance(vd.initializer(),
+            TemplateLiteralExpr.class, "legacy template");
+        if (legacyTl != null && legacyTl.parts().size() == 3) {
+            UnaryExpr legacyUn = assertExprInstance(legacyTl.parts().get(1),
+                UnaryExpr.class,
+                "legacy template interpolation -2147483648 stays a unary expr");
+            if (legacyUn != null) {
+                check(legacyUn.op() == UnaryOp.NEG,
+                    "legacy template interpolation -2147483648 unary op is NEG");
+            }
+        }
     }
 
     static void testIdentifierExpression() {
