@@ -23,6 +23,21 @@
  *    cross-check + continuous stream drains + the D8 escalation +
  *    the final proof), the ppoll loop, the write-side discipline, the
  *    final report, and the exit-status mapping;
+ *
+ * This child (ISSUE-0297, epic Sequencing step 5) adds the
+ * per-record nested control-channel state machine (engine D4):
+ * one invocation per channel with expectation sets configured
+ * per record state, the parent-D6 STUB_READY double
+ * verification before forwarding, the ACK relay with
+ * RELEASED-at-write-completion, the validated-CANCEL
+ * application, the relay rules (verbatim nested-origin relays,
+ * the 1 MiB payload cap with truncation), the
+ * single-terminal-answer rule with the drain-only switch and
+ * the outer-synthesized CLEAN/FAILED terminal records, the
+ * post-terminal drop rule, the queued-write discard on
+ * terminality, the nested-channel PROTOCOL_ERROR rule, and the
+ * outer-side fallback-termination surface the fallback child
+ * drives.
  *  - the entry-level and coordinator-level fault-injection sites
  *    (FI_OUTER_SUBREAPER / FI_OUTER_TIMERFD / FI_OUTER_SIGNALFD /
  *    FI_OUTER_ENTRY_NONCE / FI_OUTER_PIPE / FI_COORD_READY_MISMATCH plus
@@ -146,12 +161,52 @@ struct dealpg4_outer_record {
     int64_t deadline_ms;  /* the delivered nested budget T (0 for
                              pre-fork rejection records) */
     int64_t deadline_abs_ms; /* registration time + T */
-    int ack_applied;      /* first-ACK tracking (D6) */
+    int ack_applied;      /* first-ACK tracking (D6): set when the
+                             outer validates and accepts the ACK for
+                             relay (at queueing, before any write
+                             completes); cleared only when a
+                             validated CANCEL or terminality
+                             discards that queued-but-unwritten
+                             ACK */
     int cleanup_acknowledged;
     int clean_final;      /* CLEAN records: 1 = success, 0 = cancelled */
     char failure_token[DEALPG4_OUTER_TOKEN_VIEW_BYTES];
     size_t history_count;
     dealpg4_outer_history_entry history[DEALPG4_OUTER_HISTORY_MAX];
+    /* Nested control-channel machine (engine D4 — this child). */
+    dealpg4_expectation_set ctrl_expect; /* configured per record
+                                            state */
+    int channel_drain_only; /* an outer-side termination began, or
+                              the record is terminal: nested-origin
+                              records are consumed-not-relayed /
+                              dropped until EOF, then the channel
+                              closes */
+    int fallback_initiated; /* this state's death fallback was
+                              initiated (the fallback execution is
+                              the fallback child's) */
+    int fallback_state;   /* the state whose death fallback applies
+                             (the pre-cancel state when the record
+                             was CANCELLING) */
+    int pre_cancel_state; /* the state the record was in when the
+                             cancel landed (recovered from the
+                             ordered history) */
+    int supervisor_dead; /* the nested supervisor's death was
+                            observed (the reap match): the
+                            death-fallback initiation defers
+                            until the channel's buffered
+                            nested-origin records are consumed,
+                            so a supervisor's own last
+                            publications are never discarded */
+    int queued_ack;       /* an ACK relay write is queued-but-
+                             unwritten into the nested channel */
+    int queued_cancel;    /* a CANCEL relay write is queued-but-
+                             unwritten into the nested channel */
+    dealpg4_outer_writeq ctrl_q; /* the ACK/CANCEL relay queue */
+    unsigned char *ctrl_q_arena; /* heap arena (bounded: at most one
+                                    catalog control line) */
+    unsigned char *ctrl_rbuf; /* heap read buffer (the largest
+                                nested-origin line + slack) */
+    size_t ctrl_rbuf_len;
 };
 
 typedef struct dealpg4_outer_record dealpg4_outer_record;
@@ -376,6 +431,17 @@ typedef struct dealpg4_outer_state {
     int64_t cutoff_mark_ms; /* t0o-relative */
     int caller_loss_marked; /* a broker close/EOF marked live records
                                CANCELLING (the caller-loss mark) */
+
+    /* Nested control-channel machine (engine D4 — this child). */
+    int nested_protocol_errors;
+    int nested_terminal_relays;
+    int synthesized_terminals;
+    int ack_write_completions;
+    int queued_write_discards;
+    int nested_deaths_observed;
+    int stub_ready_forwarded;
+    int stub_verify_failures;
+    int nested_rejects;
 } dealpg4_outer_state;
 
 /* In-process observability (outer.h contract). */
@@ -691,6 +757,13 @@ int dealpg4_outer_writeq_flush(dealpg4_outer_writeq *q)
 static void dealpg4_outer_mark_live_cancelling(dealpg4_outer_state *st,
                                                int caller_loss);
 static void dealpg4_outer_eval_done_trigger(dealpg4_outer_state *st);
+/* Channel-machine forward declarations (defined in the nested
+ * control-channel section below): the record-transition machinery
+ * reconfigures the per-state expectation set, and the STUB_READY
+ * re-verification reads the /proc identity helper defined later. */
+static void dealpg4_outer_channel_configure(dealpg4_outer_record *r);
+static int dealpg4_proc_stat_identity(pid_t pid, pid_t *ppid,
+                                      pid_t *pgrp, pid_t *session);
 static void dealpg4_outer_broker_invoke(dealpg4_outer_state *st,
                                         const dealpg4_parsed *parsed);
 static void dealpg4_outer_broker_ack(dealpg4_outer_state *st,
@@ -953,6 +1026,27 @@ static void dealpg4_outer_broker_queue_line(dealpg4_outer_state *st,
         return;
     if (dealpg4_outer_broker_flush(st) < 0)
         dealpg4_outer_broker_close(st); /* write-hop loss */
+}
+
+/* Queue one raw serialized record line (a verbatim nested-origin
+ * relay) through the non-blocking POLLOUT path: kind 0 payload
+ * (an OUT chunk — the 1 MiB per-stream relay cap with the
+ * truncation consequence) or kind 1 catalog-bounded control
+ * (never dropped by queue pressure). A write to a closed broker
+ * is never attempted; the flush attempt runs immediately and a
+ * write-hop loss (EPIPE/error) closes the broker. */
+static void dealpg4_outer_broker_queue_raw(dealpg4_outer_state *st,
+                                           const char *line, size_t len,
+                                           int kind, int stream)
+{
+    if (st->broker_closed)
+        return;
+    if (dealpg4_outer_writeq_queue(&st->broker_q, line, len, kind,
+                                   stream) != 0)
+        return; /* a payload overflow carries the truncation
+                   consequence on the queue */
+    if (dealpg4_outer_broker_flush(st) < 0)
+        dealpg4_outer_broker_close(st);
 }
 
 /* HELLO_OK 4 <caps> (caps = the stage bitmask 31, selftest.h). */
@@ -1317,12 +1411,23 @@ static void dealpg4_outer_record_transition(dealpg4_outer_state *st,
     int was_live = dealpg4_outer_record_live_state(r->state);
     int is_live = dealpg4_outer_record_live_state(new_state);
 
+    /* The pre-cancel state (engine D4): the state the record was
+     * in when the cancel landed, recovered from the ordered
+     * history — the CANCELLING-state expectation set and the
+     * pre-cancel-state death fallback consume it. */
+    if (new_state == DEALPG4_OUTER_REC_CANCELLING
+        && r->state != DEALPG4_OUTER_REC_CANCELLING)
+        r->pre_cancel_state = r->state;
     if (r->history_count < DEALPG4_OUTER_HISTORY_MAX) {
         r->history[r->history_count].state = new_state;
         r->history[r->history_count].at_ms = now;
         r->history_count++;
     }
     r->state = new_state;
+    /* The per-state expectation set reconfigures on every
+     * transition (the channel machine consumes it on the next
+     * nested-origin record). */
+    dealpg4_outer_channel_configure(r);
     if (was_live && !is_live) {
         st->records_live--;
         if (new_state == DEALPG4_OUTER_REC_FAILED)
@@ -1641,6 +1746,783 @@ static char **dealpg4_outer_build_serve_argv(const dealpg4_outer_state *st,
     return av;
 }
 
+/* === Nested control-channel state machine (engine D4 — this child) ===== */
+
+/* The per-record read buffer bound: the largest nested-origin record
+ * line is an OUT chunk (DEALPG4_MAX_LINE_OUT_BYTES); a buffered stream
+ * that reaches the bound without LF is an oversize framing defect
+ * (PROTOCOL_ERROR while the record is live and no outer-side
+ * termination is in progress; consumed-and-discarded in drain-only
+ * mode). */
+#define DEALPG4_OUTER_CTRL_RBUF_BYTES (DEALPG4_MAX_LINE_OUT_BYTES + 2)
+
+/* The per-record relay-queue arena: one catalog-bounded control record
+ * (ACK/CANCEL <= DEALPG4_MAX_LINE_OTHER_BYTES) is the only content — a
+ * validated CANCEL drops the queued ACK first, so at most one item is
+ * ever queued. */
+#define DEALPG4_OUTER_CTRLQ_ARENA_BYTES \
+    (2 * DEALPG4_MAX_LINE_OTHER_BYTES + 64)
+
+/* Configure the expectation set for the record's current state (the
+ * D4 channel-machine table). Terminal states carry an empty set — the
+ * drain-only switch owns the channel for them. */
+static void dealpg4_outer_channel_configure(dealpg4_outer_record *r)
+{
+    dealpg4_expectation_set_init(&r->ctrl_expect);
+    switch (r->state) {
+    case DEALPG4_OUTER_REC_FORKING:
+        /* Expects exactly STUB_FORKED (the fork precedes the
+         * supervisor's first loop iteration). */
+        dealpg4_expectation_set_add(&r->ctrl_expect,
+                                    DEALPG4_REC_STUB_FORKED);
+        break;
+    case DEALPG4_OUTER_REC_STUB_BLOCKED:
+        /* The no-STARTED schedule: STUB_FORKED -> [STUB_READY] ->
+         * REPORT -> FAILED/CLEAN (supervisor-engine D5(d)). */
+        dealpg4_expectation_set_add(&r->ctrl_expect,
+                                    DEALPG4_REC_STUB_READY);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_REPORT);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_CLEAN);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_FAILED);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_REJECT);
+        break;
+    case DEALPG4_OUTER_REC_TARGET_PUBLISHED:
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_REPORT);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_CLEAN);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_FAILED);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_REJECT);
+        break;
+    case DEALPG4_OUTER_REC_RELEASED:
+        /* The supervisor-engine D5(d) post-release schedule. */
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_STARTED);
+        dealpg4_expectation_set_add(&r->ctrl_expect,
+                                    DEALPG4_REC_EXEC_FAILED);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_OUT);
+        dealpg4_expectation_set_add(&r->ctrl_expect,
+                                    DEALPG4_REC_OUT_END);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_REPORT);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_CLEAN);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_FAILED);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_REJECT);
+        break;
+    case DEALPG4_OUTER_REC_CANCELLING:
+        /* The supervisor-engine D5(c)/(d) cancel-path schedule —
+         * REPORT/CLEAN/FAILED/REJECT — plus, for CANCELLING-from-
+         * RELEASED, the post-release relays; STUB_FORKED /
+         * STUB_READY may still arrive and are accepted
+         * outer-internal only. */
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_REPORT);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_CLEAN);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_FAILED);
+        dealpg4_expectation_set_add(&r->ctrl_expect, DEALPG4_REC_REJECT);
+        dealpg4_expectation_set_add(&r->ctrl_expect,
+                                    DEALPG4_REC_STUB_FORKED);
+        dealpg4_expectation_set_add(&r->ctrl_expect,
+                                    DEALPG4_REC_STUB_READY);
+        if (r->pre_cancel_state == DEALPG4_OUTER_REC_RELEASED) {
+            dealpg4_expectation_set_add(&r->ctrl_expect,
+                                        DEALPG4_REC_STARTED);
+            dealpg4_expectation_set_add(&r->ctrl_expect,
+                                        DEALPG4_REC_EXEC_FAILED);
+            dealpg4_expectation_set_add(&r->ctrl_expect,
+                                        DEALPG4_REC_OUT);
+            dealpg4_expectation_set_add(&r->ctrl_expect,
+                                        DEALPG4_REC_OUT_END);
+        }
+        break;
+    default:
+        /* CLEAN / FAILED: the post-terminal drop rule owns the
+         * channel (drain-only — no expectation application). */
+        break;
+    }
+}
+
+/* Close the record's control channel: the fd closes, the relay queue
+ * is cleared, the pending-write flags reset, and the heap buffers
+ * free. The overflow consequence of the queue (irrelevant for the
+ * control-only ACK/CANCEL content) survives in the queue context. */
+static void dealpg4_outer_channel_close(dealpg4_outer_state *st,
+                                        dealpg4_outer_record *r)
+{
+    (void)st;
+    if (r->control_fd >= 0) {
+        close(r->control_fd);
+        r->control_fd = -1;
+    }
+    dealpg4_outer_writeq_clear(&r->ctrl_q);
+    r->ctrl_q.fd = -1;
+    r->queued_ack = 0;
+    r->queued_cancel = 0;
+    free(r->ctrl_rbuf);
+    r->ctrl_rbuf = NULL;
+    r->ctrl_rbuf_len = 0;
+    free(r->ctrl_q_arena);
+    r->ctrl_q_arena = NULL;
+    r->ctrl_q.arena = NULL;
+    r->ctrl_q.arena_bytes = 0;
+}
+
+/* The queued-write discard on terminality (engine D4): every outer
+ * write queued-but-unwritten for the record — the ACK relay and the
+ * CANCEL fan-out — is discarded without completing it. RELEASED is
+ * never entered on a terminal record, no fallback work runs for a
+ * terminal record, and the wedge rule never applies to a terminal
+ * record. The first-ACK flag is cleared only by this discard of a
+ * queued-but-unwritten ACK (a validated CANCEL application) or the
+ * terminality discard — never by an ACK whose write completed. */
+static void dealpg4_outer_channel_discard_writes(dealpg4_outer_state *st,
+                                                 dealpg4_outer_record *r)
+{
+    if (!dealpg4_outer_writeq_empty(&r->ctrl_q))
+        st->queued_write_discards++;
+    dealpg4_outer_writeq_clear(&r->ctrl_q);
+    if (r->queued_ack) {
+        r->queued_ack = 0;
+        r->ack_applied = 0;
+    }
+    if (r->queued_cancel)
+        r->queued_cancel = 0;
+}
+
+/* The single-terminal-answer switch: once an outer-side termination of
+ * the record begins, nested-origin records for that record are
+ * consumed but never relayed, never classified, never applied — the
+ * channel is drain-only until EOF, then it closes. Idempotent. */
+static void dealpg4_outer_channel_begin_termination(
+    dealpg4_outer_state *st, dealpg4_outer_record *r)
+{
+    if (r->channel_drain_only)
+        return;
+    r->channel_drain_only = 1;
+    r->ctrl_rbuf_len = 0; /* buffered lines are consumed-not-relayed
+                             from now on */
+    dealpg4_outer_channel_discard_writes(st, r);
+}
+
+/* Initiate that state's death fallback (the initiation and the
+ * drain-only switch are this child's; the fallback execution lands
+ * with the fallback child). A nested-supervisor death while
+ * CANCELLING applies the pre-cancel state's death fallback, recovered
+ * from the record's ordered history (the pre_cancel_state retained at
+ * the CANCELLING entry). Idempotent. */
+static void dealpg4_outer_channel_initiate_fallback(
+    dealpg4_outer_state *st, dealpg4_outer_record *r)
+{
+    (void)st;
+    if (r->fallback_initiated)
+        return;
+    r->fallback_initiated = 1;
+    r->fallback_state = r->state == DEALPG4_OUTER_REC_CANCELLING
+                            ? r->pre_cancel_state
+                            : r->state;
+}
+
+/* The deferred death-fallback switch (engine D4): the nested
+ * supervisor's death was observed (the reap match set
+ * supervisor_dead); the outer-side termination begins the moment the
+ * channel's buffered nested-origin records have been consumed — a
+ * supervisor that publishes its own terminal record and then dies
+ * keeps that record as its single terminal answer (the relay happens
+ * while the record is still live), while every record arriving after
+ * the channel drained once is consumed but never relayed (the
+ * single-terminal-answer rule holds for the whole fallback window).
+ * The death fallback's state is the state the record holds when the
+ * switch applies (the pre-cancel state for a CANCELLING record). */
+static void dealpg4_outer_channel_death_apply(dealpg4_outer_state *st,
+                                              dealpg4_outer_record *r)
+{
+    if (!r->supervisor_dead || !dealpg4_outer_record_live_state(r->state)
+        || r->channel_drain_only)
+        return;
+    dealpg4_outer_channel_begin_termination(st, r);
+    dealpg4_outer_channel_initiate_fallback(st, r);
+}
+
+/* The nested-channel PROTOCOL_ERROR aftermath (engine D4): framing
+ * defects, unknown types, oversize records, and records unexpected in
+ * the record state — while the record is live and no outer-side
+ * termination of it is in progress — close the record's control
+ * channel and initiate that state's death fallback (parent D7; the
+ * fallback execution lands with the fallback child). The named token
+ * is recorded on the gate (the D1 exit-status mapping lists
+ * PROTOCOL_ERROR). */
+static void dealpg4_outer_channel_protocol_error(
+    dealpg4_outer_state *st, dealpg4_outer_record *r)
+{
+    st->nested_protocol_errors++;
+    dealpg4_outer_gate_token(st, "PROTOCOL_ERROR");
+    dealpg4_outer_channel_begin_termination(st, r);
+    dealpg4_outer_channel_initiate_fallback(st, r);
+    dealpg4_outer_channel_close(st, r);
+}
+
+/* The nested channel's hop loss (EOF/HUP/read error/write EPIPE). On a
+ * live record this is the nested supervisor's death observation: the
+ * outer-side termination begins (the single-terminal-answer switch)
+ * and that state's death fallback is initiated; the channel closes.
+ * On a terminal/drain-only record the channel just closes (the
+ * post-terminal drop rule — drain to EOF, close). */
+static void dealpg4_outer_channel_loss(dealpg4_outer_state *st,
+                                       dealpg4_outer_record *r)
+{
+    if (dealpg4_outer_record_live_state(r->state)
+        && !r->channel_drain_only) {
+        if (!r->supervisor_dead)
+            st->nested_deaths_observed++; /* one observation per
+                                             record: the channel-loss
+                                             observation and the reap
+                                             observation share the
+                                             supervisor_dead flag */
+        r->supervisor_dead = 1;
+        dealpg4_outer_channel_begin_termination(st, r);
+        dealpg4_outer_channel_initiate_fallback(st, r);
+    }
+    dealpg4_outer_channel_close(st, r);
+}
+
+/* The parent-D6 STUB_READY double verification: the outer re-verifies
+ * the stub identity before the coordinator sees it — getpgid(stubPid)
+ * == pgid, getsid(stubPid) == sid, kill(stubPid, 0) == 0, the
+ * /proc/<stubPid>/stat ppid/pgrp/session fields, nonce equality with
+ * the record's invocation nonce and uniqueness across the registry,
+ * and stubPid not colliding with any known supervisor/coordinator PID
+ * (or the outer itself). The report is the source, the kernel facts
+ * are the cross-check. Returns 1 when every check holds. */
+static int dealpg4_outer_stub_ready_verify(dealpg4_outer_state *st,
+                                           dealpg4_outer_record *r,
+                                           const dealpg4_parsed *parsed)
+{
+    const dealpg4_field_slice *id_f = dealpg4_parsed_field(parsed, 0);
+    const dealpg4_field_slice *pid_f = dealpg4_parsed_field(parsed, 1);
+    const dealpg4_field_slice *pgid_f = dealpg4_parsed_field(parsed, 2);
+    const dealpg4_field_slice *sid_f = dealpg4_parsed_field(parsed, 3);
+    const dealpg4_field_slice *nonce_f = dealpg4_parsed_field(parsed, 4);
+    int64_t id = 0;
+    int64_t pid = 0;
+    int64_t pgid = 0;
+    int64_t sid = 0;
+    pid_t ppid = 0;
+    pid_t pgrp = 0;
+    pid_t session = 0;
+    size_t i;
+
+    if (id_f == NULL || pid_f == NULL || pgid_f == NULL || sid_f == NULL
+        || nonce_f == NULL)
+        return 0;
+    if (dealpg4_field_decimal(id_f, &id) == 0
+        || dealpg4_field_decimal(pid_f, &pid) == 0
+        || dealpg4_field_decimal(pgid_f, &pgid) == 0
+        || dealpg4_field_decimal(sid_f, &sid) == 0)
+        return 0;
+    if (id != r->invocation_id || pid <= 0 || pgid <= 0 || sid <= 0)
+        return 0;
+    if ((pid_t)pid == r->supervisor_pid
+        || (pid_t)pid == st->coordinator_pid || (pid_t)pid == getpid())
+        return 0;
+    for (i = 0; i < st->nrecords; i++) {
+        const dealpg4_outer_record *o = &st->records[i];
+
+        if ((pid_t)pid == o->supervisor_pid)
+            return 0; /* collides with a known supervisor pid */
+        if (o != r && o->stub_pid > 0 && (pid_t)pid == o->stub_pid)
+            return 0; /* collides with a retained stub pid */
+        if (o != r && o->nonce[0] != '\0'
+            && memcmp(o->nonce, nonce_f->p, DEALPG4_NONCE_HEX_CHARS) == 0)
+            return 0; /* the nonce is not unique across the registry */
+    }
+    if (nonce_f->len != DEALPG4_NONCE_HEX_CHARS
+        || memcmp(nonce_f->p, r->nonce, DEALPG4_NONCE_HEX_CHARS) != 0)
+        return 0;
+    if (kill((pid_t)pid, 0) != 0)
+        return 0;
+    if (getpgid((pid_t)pid) != (pid_t)pgid
+        || getsid((pid_t)pid) != (pid_t)sid)
+        return 0;
+    if (dealpg4_proc_stat_identity((pid_t)pid, &ppid, &pgrp, &session)
+        != 0)
+        return 0;
+    if (ppid != r->supervisor_pid || pgrp != (pid_t)pgid
+        || session != (pid_t)sid)
+        return 0;
+    return 1;
+}
+
+/* Relay one nested-origin record verbatim to the broker (the relay
+ * rules' single canonical mapping): OUT chunks are kind-0 payload on
+ * the chunk's stream (the 1 MiB per-stream relay cap with the
+ * truncation consequence); every other record is catalog-bounded
+ * control (never dropped by queue pressure). */
+static void dealpg4_outer_channel_relay(dealpg4_outer_state *st,
+                                        const dealpg4_parsed *parsed,
+                                        const char *line, size_t len)
+{
+    int kind = 1;
+    int stream = 0;
+
+    if (parsed->type == DEALPG4_REC_OUT) {
+        const dealpg4_field_slice *f = dealpg4_parsed_field(parsed, 1);
+
+        kind = 0;
+        stream = (f != NULL && f->len == 3 && memcmp(f->p, "out", 3) == 0)
+                     ? 0
+                     : 1;
+    }
+    dealpg4_outer_broker_queue_raw(st, line, len, kind, stream);
+}
+
+/* A nested-origin terminal record (CLEAN/FAILED) was relayed verbatim
+ * as the record's single terminal answer: the queued-but-unwritten
+ * ACK/CANCEL writes are discarded without completing them (no RELEASED
+ * on a terminal record, no never-started fallback work, no wedge), the
+ * record transitions terminal, the channel switches to drain-only
+ * (post-terminal drop rule), and the cutoff-anchored DONE trigger is
+ * evaluated (the terminal answer was queued first, so it precedes
+ * DONE). */
+static void dealpg4_outer_channel_terminal(dealpg4_outer_state *st,
+                                           dealpg4_outer_record *r,
+                                           int clean, int clean_final,
+                                           const char *token, int64_t now)
+{
+    st->nested_terminal_relays++;
+    dealpg4_outer_channel_discard_writes(st, r);
+    if (clean) {
+        dealpg4_outer_record_transition(st, r, DEALPG4_OUTER_REC_CLEAN,
+                                        now);
+        r->clean_final = clean_final;
+    } else {
+        dealpg4_outer_record_transition(st, r, DEALPG4_OUTER_REC_FAILED,
+                                        now);
+        snprintf(r->failure_token, sizeof r->failure_token, "%s",
+                 token != NULL ? token : "-");
+    }
+    r->channel_drain_only = 1;
+    dealpg4_outer_eval_done_trigger(st);
+}
+
+/* The outer-synthesized terminal record (engine D4): the record's
+ * single terminal answer when the outer itself terminated it (a
+ * state's death fallback or the wedge force-termination). CLEAN
+ * <id> cancelled when the fallback's proof is clean, otherwise
+ * FAILED <id> <token> (the named survivor finding of that proof).
+ * The synthesis is unconditional once the termination began; it is
+ * queued through the non-blocking POLLOUT path ahead of DONE,
+ * catalog-bounded and never dropped by relay-queue pressure while
+ * the broker is open, suppressed only when the broker is already
+ * closed. The outer never synthesizes a REPORT. */
+static void dealpg4_outer_channel_synthesize(dealpg4_outer_state *st,
+                                             dealpg4_outer_record *r,
+                                             int clean, const char *token)
+{
+    int64_t now = (int64_t)dealpg4_now_ms();
+    char idbuf[24];
+    dealpg4_field_value fields[2];
+    int n;
+
+    if (!dealpg4_outer_record_live_state(r->state))
+        return; /* the record already terminated exactly once */
+    if (!r->channel_drain_only)
+        dealpg4_outer_channel_begin_termination(st, r);
+    st->synthesized_terminals++;
+    n = snprintf(idbuf, sizeof idbuf, "%lld",
+                 (long long)r->invocation_id);
+    if (n <= 0 || (size_t)n >= sizeof idbuf)
+        return;
+    fields[0].data = idbuf;
+    fields[0].len = (size_t)n;
+    if (clean) {
+        static const char cancelled_text[] = "cancelled";
+
+        fields[1].data = cancelled_text;
+        fields[1].len = sizeof cancelled_text - 1;
+        dealpg4_outer_broker_queue_line(st, DEALPG4_REC_CLEAN, fields, 2);
+        dealpg4_outer_record_transition(st, r, DEALPG4_OUTER_REC_CLEAN,
+                                        now);
+        r->clean_final = 0; /* a synthesized CLEAN is always cancelled */
+    } else {
+        fields[1].data = token != NULL ? token : "-";
+        fields[1].len = strlen(fields[1].data);
+        dealpg4_outer_broker_queue_line(st, DEALPG4_REC_FAILED, fields, 2);
+        dealpg4_outer_record_transition(st, r, DEALPG4_OUTER_REC_FAILED,
+                                        now);
+        snprintf(r->failure_token, sizeof r->failure_token, "%s",
+                 fields[1].data);
+    }
+    r->channel_drain_only = 1;
+    dealpg4_outer_eval_done_trigger(st);
+}
+
+/* One nested-channel flush attempt: the FI_CONGEST_NESTED_CTRL seam
+ * (mode NESTED_WRITE_STALL) reports POLLOUT never ready without
+ * attempting the syscall — the queued ACK/CANCEL write stays
+ * queued-but-unwritten (the record stays TARGET_PUBLISHED with the
+ * never-started fallback invariant); otherwise the real non-blocking
+ * flush. When the queue drains the write completed: a queued ACK's
+ * completion enters RELEASED exactly at that moment (parent D2/D6);
+ * a queued CANCEL's completion needs nothing further (the
+ * application happened at queueing). A write-hop loss (EPIPE/error)
+ * is the channel loss. */
+static void dealpg4_outer_channel_flush(dealpg4_outer_state *st,
+                                        dealpg4_outer_record *r)
+{
+    int rc;
+
+    if (r->control_fd < 0)
+        return;
+    if (dealpg4_fi_hooks.congest(FI_CONGEST_NESTED_CTRL,
+                                 NESTED_WRITE_STALL, NULL) != 0)
+        return; /* POLLOUT never ready: the write stays queued */
+    rc = dealpg4_outer_writeq_flush(&r->ctrl_q);
+    if (rc == 0) {
+        if (r->queued_ack) {
+            r->queued_ack = 0;
+            if (r->state == DEALPG4_OUTER_REC_TARGET_PUBLISHED
+                && !r->channel_drain_only) {
+                st->ack_write_completions++;
+                dealpg4_outer_record_transition(
+                    st, r, DEALPG4_OUTER_REC_RELEASED,
+                    (int64_t)dealpg4_now_ms());
+            }
+        }
+        if (r->queued_cancel)
+            r->queued_cancel = 0;
+        return;
+    }
+    if (rc < 0)
+        dealpg4_outer_channel_loss(st, r);
+}
+
+/* Queue the ACK relay into the nested control channel (the exact
+ * registry nonce) and attempt the flush. The ACK was validated (the
+ * full parent-D6 condition with the outer-side state check) and the
+ * first-ACK flag set at queueing before this write; RELEASED is
+ * entered exactly when this write completes. A closed channel (a
+ * fallback already in progress) never queues the write — the record's
+ * fallback owns its termination. */
+static void dealpg4_outer_channel_ack_write(dealpg4_outer_state *st,
+                                            dealpg4_outer_record *r)
+{
+    char line[DEALPG4_MAX_LINE_OTHER_BYTES + 1];
+    char idbuf[24];
+    dealpg4_field_value fields[2];
+    size_t written = 0;
+    int n;
+
+    if (r->control_fd < 0)
+        return;
+    n = snprintf(idbuf, sizeof idbuf, "%lld",
+                 (long long)r->invocation_id);
+    if (n <= 0 || (size_t)n >= sizeof idbuf)
+        return;
+    fields[0].data = idbuf;
+    fields[0].len = (size_t)n;
+    fields[1].data = r->nonce;
+    fields[1].len = DEALPG4_NONCE_HEX_CHARS;
+    if (dealpg4_serialize(DEALPG4_REC_ACK, fields, 2, line, sizeof line,
+                          &written) != 0)
+        return; /* caller defect: a malformed line is never emitted */
+    if (dealpg4_outer_writeq_queue(&r->ctrl_q, line, written, 1, 0) != 0)
+        return;
+    r->queued_ack = 1;
+    dealpg4_outer_channel_flush(st, r);
+}
+
+/* Apply a validated coordinator CANCEL (parent D7 + the D4 relay
+ * rules): any queued-but-unwritten ACK for the record is dropped (the
+ * nested side never receives it; the first-ACK flag is cleared — it
+ * survives only an actually-applied ACK), the record is marked
+ * CANCELLING (the pre-cancel state is recovered from the ordered
+ * history), and the CANCEL is relayed into the nested control channel
+ * with the exact registry nonce. The nested side then applies its
+ * pre-release/post-release cancel semantics (supervisor-engine D5).
+ * The outer never releases directly. */
+static void dealpg4_outer_channel_cancel_write(dealpg4_outer_state *st,
+                                               dealpg4_outer_record *r)
+{
+    char line[DEALPG4_MAX_LINE_OTHER_BYTES + 1];
+    char idbuf[24];
+    dealpg4_field_value fields[2];
+    size_t written = 0;
+    int n;
+
+    dealpg4_outer_channel_discard_writes(st, r);
+    if (r->state != DEALPG4_OUTER_REC_CANCELLING)
+        dealpg4_outer_record_transition(st, r,
+                                        DEALPG4_OUTER_REC_CANCELLING,
+                                        (int64_t)dealpg4_now_ms());
+    if (r->control_fd < 0)
+        return; /* the channel is already closed: the relay has no
+                   destination — the record's fallback owns its
+                   termination */
+    n = snprintf(idbuf, sizeof idbuf, "%lld",
+                 (long long)r->invocation_id);
+    if (n <= 0 || (size_t)n >= sizeof idbuf)
+        return;
+    fields[0].data = idbuf;
+    fields[0].len = (size_t)n;
+    fields[1].data = r->nonce;
+    fields[1].len = DEALPG4_NONCE_HEX_CHARS;
+    if (dealpg4_serialize(DEALPG4_REC_CANCEL, fields, 2, line,
+                          sizeof line, &written) != 0)
+        return;
+    if (dealpg4_outer_writeq_queue(&r->ctrl_q, line, written, 1, 0) != 0)
+        return;
+    r->queued_cancel = 1;
+    dealpg4_outer_channel_flush(st, r);
+}
+
+/* One complete nested-origin record line (the segment includes the
+ * LF). While the record is live and no outer-side termination of it
+ * is in progress, every framing defect, unknown type, oversize
+ * record, or record unexpected in the record state is
+ * PROTOCOL_ERROR: the channel closes and that state's death fallback
+ * is initiated. After an outer-side termination began, or after the
+ * record is terminal, the single-terminal-answer and post-terminal
+ * drop rules own the channel instead (drain-only consumption, no
+ * classification). */
+static void dealpg4_outer_channel_record(dealpg4_outer_state *st,
+                                         dealpg4_outer_record *r,
+                                         const char *line, size_t len)
+{
+    static char linebuf[DEALPG4_MAX_LINE_OUT_BYTES + 1];
+    dealpg4_parsed parsed;
+    dealpg4_parse_status ps;
+    dealpg4_classification cls;
+
+    if (len == 0 || len > sizeof linebuf - 1) {
+        dealpg4_outer_channel_protocol_error(st, r);
+        return;
+    }
+    memcpy(linebuf, line, len);
+    linebuf[len] = '\0';
+    ps = dealpg4_parse(linebuf, len, &parsed);
+    if (ps != DEALPG4_PARSE_OK) {
+        dealpg4_outer_channel_protocol_error(st, r);
+        return;
+    }
+    cls = dealpg4_expectation_check(&r->ctrl_expect, &parsed);
+    if (cls != DEALPG4_CLASS_OK) {
+        dealpg4_outer_channel_protocol_error(st, r);
+        return;
+    }
+    switch (parsed.type) {
+    case DEALPG4_REC_STUB_FORKED: {
+        /* STUB_FORKED <invocationId> <stubPid>: outer-internal —
+         * never forwarded (the relay rules' single canonical
+         * mapping). FORKING: retains stubPid and enters STUB_BLOCKED
+         * (parent D2); CANCELLING: accepted outer-internal —
+         * stubPid retained for the fallback, no state change. */
+        const dealpg4_field_slice *id_f = dealpg4_parsed_field(&parsed, 0);
+        const dealpg4_field_slice *pid_f = dealpg4_parsed_field(&parsed, 1);
+        int64_t id = 0;
+        int64_t stub = 0;
+
+        if (id_f == NULL || pid_f == NULL
+            || dealpg4_field_decimal(id_f, &id) == 0
+            || dealpg4_field_decimal(pid_f, &stub) == 0
+            || id != r->invocation_id || stub <= 0) {
+            dealpg4_outer_channel_protocol_error(st, r);
+            return;
+        }
+        if (r->stub_pid < 0)
+            r->stub_pid = (pid_t)stub;
+        if (r->state == DEALPG4_OUTER_REC_FORKING)
+            dealpg4_outer_record_transition(
+                st, r, DEALPG4_OUTER_REC_STUB_BLOCKED,
+                (int64_t)dealpg4_now_ms());
+        break;
+    }
+    case DEALPG4_REC_STUB_READY: {
+        if (r->state == DEALPG4_OUTER_REC_CANCELLING) {
+            /* Accepted outer-internal only — never forwarded, never
+             * re-verified, no state change (a CANCELLING record
+             * never enters TARGET_PUBLISHED). */
+            break;
+        }
+        /* STUB_BLOCKED (the expectation set admits nothing else):
+         * the parent-D6 double verification gates the forward. */
+        if (dealpg4_outer_stub_ready_verify(st, r, &parsed)) {
+            const dealpg4_field_slice *pgid_f =
+                dealpg4_parsed_field(&parsed, 2);
+            const dealpg4_field_slice *sid_f =
+                dealpg4_parsed_field(&parsed, 3);
+            int64_t pgid = 0;
+            int64_t sid = 0;
+
+            (void)dealpg4_field_decimal(pgid_f, &pgid);
+            (void)dealpg4_field_decimal(sid_f, &sid);
+            r->target_pgid = (pid_t)pgid;
+            r->target_session_id = (pid_t)sid;
+            /* Only then is STUB_READY forwarded (verbatim) and the
+             * record enters TARGET_PUBLISHED. */
+            st->stub_ready_forwarded++;
+            dealpg4_outer_channel_relay(st, &parsed, line, len);
+            dealpg4_outer_record_transition(
+                st, r, DEALPG4_OUTER_REC_TARGET_PUBLISHED,
+                (int64_t)dealpg4_now_ms());
+        } else {
+            /* A failed re-verification forwards nothing and answers
+             * nothing over the broker; the record stays STUB_BLOCKED
+             * and the nested supervisor fails the record under its
+             * own T1 (FAILED STARTUP_TIMEOUT — relayed verbatim when
+             * it arrives); the outer holds the record to its
+             * per-record deadline as belt-and-braces (the fallback
+             * child's wedge rule). */
+            st->stub_verify_failures++;
+        }
+        break;
+    }
+    case DEALPG4_REC_REJECT:
+        /* A nested REJECT (the CANCEL_AUTH_FAILED answer) indicates
+         * supervisor defect — the record is held to its per-record
+         * deadline (parent D7). Never forwarded, no state change. */
+        st->nested_rejects++;
+        break;
+    case DEALPG4_REC_STARTED:
+        /* STARTED is a relayed observation and does not change state
+         * (parent D2). */
+        dealpg4_outer_channel_relay(st, &parsed, line, len);
+        break;
+    case DEALPG4_REC_EXEC_FAILED:
+    case DEALPG4_REC_OUT_END:
+    case DEALPG4_REC_REPORT:
+        dealpg4_outer_channel_relay(st, &parsed, line, len);
+        break;
+    case DEALPG4_REC_OUT:
+        /* OUT chunk caps are enforced by the protocol parse on read;
+         * the relay queue caps the payload at the 1 MiB drain budget
+         * with the truncation flag (the queue path's overflow
+         * consequence). */
+        dealpg4_outer_channel_relay(st, &parsed, line, len);
+        break;
+    case DEALPG4_REC_CLEAN: {
+        /* CLEAN <id> success|cancelled: relayed verbatim as the
+         * record's single terminal answer (queued ahead of DONE),
+         * then the queued-write discard, the terminal transition,
+         * and the drain-only switch. */
+        const dealpg4_field_slice *f = dealpg4_parsed_field(&parsed, 1);
+        int clean_final = (f != NULL && f->len == 7
+                           && memcmp(f->p, "success", 7) == 0);
+
+        dealpg4_outer_channel_relay(st, &parsed, line, len);
+        dealpg4_outer_channel_terminal(st, r, 1, clean_final, NULL,
+                                       (int64_t)dealpg4_now_ms());
+        break;
+    }
+    case DEALPG4_REC_FAILED: {
+        /* FAILED <id> <failureToken>: relayed verbatim as the
+         * record's single terminal answer, then the queued-write
+         * discard, the terminal transition, and the drain-only
+         * switch. */
+        const dealpg4_field_slice *f = dealpg4_parsed_field(&parsed, 1);
+        char token[DEALPG4_OUTER_TOKEN_VIEW_BYTES];
+
+        if (f != NULL) {
+            size_t tl = f->len;
+
+            if (tl >= sizeof token)
+                tl = sizeof token - 1;
+            memcpy(token, f->p, tl);
+            token[tl] = '\0';
+        } else {
+            snprintf(token, sizeof token, "-");
+        }
+        dealpg4_outer_channel_relay(st, &parsed, line, len);
+        dealpg4_outer_channel_terminal(st, r, 0, 0, token,
+                                       (int64_t)dealpg4_now_ms());
+        break;
+    }
+    default:
+        /* Unreachable: the expectation set admitted only the handled
+         * types. */
+        dealpg4_outer_channel_protocol_error(st, r);
+        break;
+    }
+}
+
+/* Non-blocking nested-channel reads (one invocation per channel).
+ * Complete record lines are consumed as they arrive; the expectation
+ * set configured for the record state classifies each line. In
+ * drain-only mode (an outer-side termination began, or the record is
+ * terminal) every byte is consumed but never classified, applied, or
+ * relayed — until EOF, then the channel closes. EOF/HUP/error on a
+ * live record is the nested supervisor's loss: the outer-side
+ * termination begins (the drain-only switch and the queued-write
+ * discard) and that state's death fallback is initiated. */
+static void dealpg4_outer_channel_read(dealpg4_outer_state *st,
+                                       dealpg4_outer_record *r)
+{
+    static unsigned char discard[4096];
+
+    if (r->control_fd < 0)
+        return;
+    for (;;) {
+        ssize_t rr;
+
+        if (r->channel_drain_only) {
+            /* Consume-not-relay / post-terminal drop: drain and
+             * discard until EOF, then close. */
+            rr = read(r->control_fd, discard, sizeof discard);
+            if (rr > 0)
+                continue;
+            if (rr < 0 && errno == EINTR)
+                continue;
+            if (rr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+                return;
+            dealpg4_outer_channel_close(st, r);
+            return;
+        }
+        if (r->ctrl_rbuf_len >= DEALPG4_OUTER_CTRL_RBUF_BYTES - 1) {
+            /* A buffered stream reached the largest nested-origin
+             * record cap without LF: an oversize framing defect. */
+            dealpg4_outer_channel_protocol_error(st, r);
+            return;
+        }
+        rr = read(r->control_fd, r->ctrl_rbuf + r->ctrl_rbuf_len,
+                  DEALPG4_OUTER_CTRL_RBUF_BYTES - 1 - r->ctrl_rbuf_len);
+        if (rr > 0) {
+            unsigned char *nl;
+
+            r->ctrl_rbuf_len += (size_t)rr;
+            while ((nl = memchr(r->ctrl_rbuf, '\n', r->ctrl_rbuf_len))
+                   != NULL) {
+                size_t line_len = (size_t)(nl - r->ctrl_rbuf) + 1;
+                size_t rest = r->ctrl_rbuf_len - line_len;
+
+                if (r->channel_drain_only) {
+                    /* The record reached terminality (or an
+                     * outer-side termination began) while this
+                     * buffer was being filled: every buffered byte
+                     * from now on is consumed-not-relayed. */
+                    r->ctrl_rbuf_len = 0;
+                    break;
+                }
+                dealpg4_outer_channel_record(st, r,
+                                             (const char *)r->ctrl_rbuf,
+                                             line_len);
+                if (r->control_fd < 0)
+                    return; /* the channel closed mid-buffer */
+                memmove(r->ctrl_rbuf, r->ctrl_rbuf + line_len, rest);
+                r->ctrl_rbuf_len = rest;
+            }
+            continue;
+        }
+        if (rr < 0 && errno == EINTR)
+            continue;
+        if (rr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            /* The channel drained: a reaped supervisor's death
+             * fallback begins now — every nested-origin record
+             * published before this drain was processed normally
+             * (a supervisor's own terminal record is its single
+             * terminal answer); every later record is consumed but
+             * never relayed. */
+            dealpg4_outer_channel_death_apply(st, r);
+            return;
+        }
+        dealpg4_outer_channel_loss(st, r);
+        return;
+    }
+}
+
 /* One INVOKE from the coordinator (BROKER_LIVE / BROKER_POST_DONE).
  * The framing level was enforced by dealpg4_parse (a framing defect is
  * PROTOCOL_ERROR — the canonical split). Well-formed, pre-cutoff:
@@ -1858,6 +2740,40 @@ static void dealpg4_outer_broker_invoke(dealpg4_outer_state *st,
     free(serve_argv);
     free(serve_data);
 
+    /* The nested control-channel machinery attaches with the
+     * channel (engine D4): the heap read buffer (the largest
+     * nested-origin line + slack), the ACK/CANCEL relay queue,
+     * and the FORKING expectation set. An allocation failure
+     * fail-closes the already-inserted record (FORK_FAILED —
+     * no usable channel; the spawned child reaps through the
+     * event loop). */
+    {
+        size_t arena_bytes = DEALPG4_OUTER_CTRLQ_ARENA_BYTES;
+        unsigned char *arena = malloc(arena_bytes);
+        unsigned char *rbuf = malloc(DEALPG4_OUTER_CTRL_RBUF_BYTES);
+
+        if (arena == NULL || rbuf == NULL) {
+            free(arena);
+            free(rbuf);
+            close(sv[0]);
+            r->control_fd = -1;
+            dealpg4_outer_record_transition(st, r,
+                                            DEALPG4_OUTER_REC_FAILED,
+                                            now);
+            snprintf(r->failure_token, sizeof r->failure_token,
+                     "FORK_FAILED");
+            dealpg4_outer_reject_answer(st, id, r->client_tag,
+                                         "FORK_FAILED");
+            dealpg4_outer_eval_done_trigger(st);
+            return;
+        }
+        r->ctrl_q_arena = arena;
+        r->ctrl_rbuf = rbuf;
+        dealpg4_outer_writeq_init(&r->ctrl_q, sv[0], arena,
+                                  arena_bytes);
+        dealpg4_outer_channel_configure(r);
+    }
+
     /* INVOKED <id> <tag> — answered only after insertion (D3). */
     {
         char idbuf[24];
@@ -1931,11 +2847,13 @@ static void dealpg4_outer_broker_ack(dealpg4_outer_state *st,
         && r->state == DEALPG4_OUTER_REC_TARGET_PUBLISHED) {
         /* Validated and accepted for relay (the outer-side state
          * check held): the first-ACK field is set at queueing, before
-         * any write completes; the relay itself is the
-         * channel-machine child's. No broker answer, no state change
-         * (RELEASED is entered exactly when the ACK write completes
-         * into the nested control channel). */
+         * any write completes, and the ACK relay is queued into the
+         * nested control channel (the channel machine's). No broker
+         * answer, no state change here (RELEASED is entered exactly
+         * when the ACK write completes into the nested control
+         * channel). */
         r->ack_applied = 1;
+        dealpg4_outer_channel_ack_write(st, r);
         return;
     }
     /* Record-level rejection: the broker stays open, the record is
@@ -1982,9 +2900,15 @@ static void dealpg4_outer_broker_cancel(dealpg4_outer_state *st,
                            && memcmp(nonce_f->p, r->nonce,
                                      DEALPG4_NONCE_HEX_CHARS) == 0);
     cls = dealpg4_cancel_classify(&facts);
-    if (cls == DEALPG4_CLASS_OK)
-        return; /* validated: the application is the channel-machine
-                   child's (T5) — the record is untouched here */
+    if (cls == DEALPG4_CLASS_OK) {
+        /* Validated (parent D7): the channel machine applies it
+         * (D4 relay rules) — any queued-but-unwritten ACK for the
+         * record is dropped, the record is marked CANCELLING (the
+         * pre-cancel state recovered from the ordered history), and
+         * the CANCEL is relayed with the exact registry nonce. */
+        dealpg4_outer_channel_cancel_write(st, r);
+        return;
+    }
     dealpg4_outer_reject_answer(st, id, r->client_tag,
                                 "CANCEL_AUTH_FAILED");
 }
@@ -2011,6 +2935,13 @@ static void dealpg4_outer_fill_record_view(const dealpg4_outer_record *r,
     out->ack_applied = r->ack_applied;
     out->cleanup_acknowledged = r->cleanup_acknowledged;
     out->clean_final = r->clean_final;
+    out->channel_open = r->control_fd >= 0;
+    out->channel_drain_only = r->channel_drain_only;
+    out->fallback_initiated = r->fallback_initiated;
+    out->fallback_state = r->fallback_state;
+    out->pre_cancel_state = r->pre_cancel_state;
+    out->queued_ack = r->queued_ack;
+    out->queued_cancel = r->queued_cancel;
     memcpy(out->failure_token, r->failure_token,
            sizeof out->failure_token);
     out->history_count = r->history_count;
@@ -2783,6 +3714,46 @@ static int dealpg4_outer_reap_all(dealpg4_outer_state *st)
             st->coordinator_si_code = si.si_code;
             st->coordinator_si_status = si.si_status;
         }
+        /* Nested-supervisor death observation (engine D4): a
+         * reaped child matching a live record's supervisorPid
+         * begins that record's outer-side termination (the
+         * single-terminal-answer switch — nested-origin records
+         * are consumed but never relayed from this moment) and
+         * initiates that state's death fallback (the fallback
+         * execution is the fallback child's). The channel itself
+         * stays open until EOF (a surviving descendant may hold
+         * the write end); the drain-only consumption owns its
+         * records. */
+        {
+            size_t ri;
+
+            for (ri = 0; ri < st->nrecords; ri++) {
+                dealpg4_outer_record *r = &st->records[ri];
+
+                if (r->supervisor_pid <= 0
+                    || r->supervisor_pid != si.si_pid)
+                    continue;
+                if (dealpg4_outer_record_live_state(r->state)
+                    && !r->supervisor_dead) {
+                    /* The death observation (engine D4): every
+                     * nested-origin record the supervisor published
+                     * before dying is consumed first — the channel
+                     * drains here, processing each record against
+                     * the live state machine; the drain-only switch
+                     * and the death-fallback initiation then apply
+                     * the moment the channel is empty (the
+                     * death-apply switch in the read path), so a
+                     * supervisor's own terminal record is always its
+                     * single terminal answer while every record
+                     * arriving afterwards is consumed but never
+                     * relayed. */
+                    r->supervisor_dead = 1;
+                    st->nested_deaths_observed++;
+                    dealpg4_outer_channel_read(st, r);
+                }
+                break;
+            }
+        }
     }
 }
 
@@ -3256,6 +4227,7 @@ static void dealpg4_outer_loop(dealpg4_outer_state *st)
         struct pollfd pfds[DEALPG4_OUTER_POLLFD_MAX];
         nfds_t n = 0;
         nfds_t nfixed;
+        nfds_t ctrl_base;
         uint64_t remaining;
         struct timespec ts;
         struct timespec *tsp = NULL;
@@ -3303,8 +4275,28 @@ static void dealpg4_outer_loop(dealpg4_outer_state *st)
             pfds[n].revents = 0;
             n++;
         }
+        /* Nested control channels: one slot per open channel
+         * (POLLIN | POLLHUP | POLLERR always; POLLOUT combined
+         * when the ACK/CANCEL relay queue is non-empty).
+         * Drain-only channels keep their POLLIN slot (consume to
+         * EOF, then close). */
+        ctrl_base = n;
+        for (i = 0; i < st->nrecords && n < DEALPG4_OUTER_POLLFD_MAX;
+             i++) {
+            dealpg4_outer_record *r = &st->records[i];
+
+            if (r->control_fd < 0)
+                continue;
+            pfds[n].fd = r->control_fd;
+            pfds[n].events = POLLIN | POLLHUP | POLLERR;
+            if (!dealpg4_outer_writeq_empty(&r->ctrl_q))
+                pfds[n].events |= POLLOUT;
+            pfds[n].revents = 0;
+            n++;
+        }
         /* The first writeq POLLOUT slot index, captured before the
-         * slots are appended (the fixed fds precede them). */
+         * slots are appended (the fixed fds and the control
+         * channels precede them). */
         nfixed = n;
         /* POLLOUT sides while per-record queues are non-empty (D1);
          * the broker/nested-channel queues register with the later
@@ -3380,6 +4372,26 @@ static void dealpg4_outer_loop(dealpg4_outer_state *st)
             if (st->broker_conn_fd >= 0) {
                 if (pfds[k].revents & (POLLIN | POLLHUP | POLLERR))
                     dealpg4_outer_broker_read(st);
+                k++;
+            }
+        }
+        /* Nested control channels (the same record order as the
+         * polled slots): reads first (a terminal transition or a
+         * channel close may empty the relay queue), then the
+         * POLLOUT flush when the queue is still non-empty. */
+        {
+            nfds_t k = ctrl_base;
+            size_t ri;
+
+            for (ri = 0; ri < st->nrecords && k < n; ri++) {
+                dealpg4_outer_record *r = &st->records[ri];
+
+                if (r->control_fd < 0)
+                    continue;
+                if (pfds[k].revents & (POLLIN | POLLHUP | POLLERR))
+                    dealpg4_outer_channel_read(st, r);
+                if (r->control_fd >= 0 && pfds[k].revents & POLLOUT)
+                    dealpg4_outer_channel_flush(st, r);
                 k++;
             }
         }
@@ -3659,6 +4671,17 @@ static void dealpg4_outer_copy_view(dealpg4_outer_state *st, int status)
     v.done_queued = st->done_queued;
     v.done_clean = st->done_clean;
     v.done_ms = st->done_ms;
+    v.nested_protocol_errors = st->nested_protocol_errors;
+    v.nested_terminal_relays = st->nested_terminal_relays;
+    v.synthesized_terminals = st->synthesized_terminals;
+    v.ack_write_completions = st->ack_write_completions;
+    v.queued_write_discards = st->queued_write_discards;
+    v.nested_deaths_observed = st->nested_deaths_observed;
+    v.stub_ready_forwarded = st->stub_ready_forwarded;
+    v.stub_verify_failures = st->stub_verify_failures;
+    v.nested_rejects = st->nested_rejects;
+    v.broker_relay_overflow = st->broker_q.overflow;
+    v.broker_relay_dropped = st->broker_q.dropped_bytes;
 
     dealpg4_outer_last_result_view = v;
     dealpg4_outer_last_drain_stdout = st->drain_out;
@@ -3731,8 +4754,11 @@ static void dealpg4_outer_registry_release(dealpg4_outer_state *st)
 {
     size_t i;
 
-    for (i = 0; i < st->nrecords; i++)
+    for (i = 0; i < st->nrecords; i++) {
         free(st->records[i].client_tag);
+        free(st->records[i].ctrl_rbuf);
+        free(st->records[i].ctrl_q_arena);
+    }
     free(st->records);
     st->records = NULL;
     st->nrecords = 0;
@@ -4102,4 +5128,43 @@ int dealpg4_outer_fork_nested(const dealpg4_outer_spawn *self,
     dealpg4_outer_nested_child(serve_argv, nonce, budget_t,
                                invocation_id, child_control_fd,
                                outer_pid);
+}
+
+/* === Outer-side fallback-termination surface (engine D4) ============= */
+
+int dealpg4_outer_fallback_begin(int64_t invocation_id)
+{
+    dealpg4_outer_state *st = dealpg4_outer_live_state;
+    dealpg4_outer_record *r;
+
+    if (st == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    r = dealpg4_outer_find_record(st, invocation_id);
+    if (r == NULL || !dealpg4_outer_record_live_state(r->state)) {
+        errno = ENOENT;
+        return -1;
+    }
+    dealpg4_outer_channel_begin_termination(st, r);
+    return 0;
+}
+
+int dealpg4_outer_fallback_synthesize(int64_t invocation_id,
+                                      int clean, const char *token)
+{
+    dealpg4_outer_state *st = dealpg4_outer_live_state;
+    dealpg4_outer_record *r;
+
+    if (st == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    r = dealpg4_outer_find_record(st, invocation_id);
+    if (r == NULL || !dealpg4_outer_record_live_state(r->state)) {
+        errno = ENOENT;
+        return -1;
+    }
+    dealpg4_outer_channel_synthesize(st, r, clean ? 1 : 0, token);
+    return 0;
 }
