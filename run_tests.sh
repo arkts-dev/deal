@@ -450,6 +450,13 @@ if command -v luajit &> /dev/null; then
 else
   echo "WARNING: luajit not found, skipping runtime library tests"
 fi
+echo ""
+echo "=== Running Lua Async Export Driver Tests ==="
+if command -v luajit &> /dev/null; then
+  luajit test/lua_async_export_driver_test.lua
+else
+  echo "WARNING: luajit not found, skipping async export driver tests"
+fi
 
 echo ""
 echo "=== Running Jsonable Runtime Tests ==="
