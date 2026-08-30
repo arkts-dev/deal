@@ -4,6 +4,7 @@ import deal.ast.ArrayLiteralExpr;
 import deal.ast.BinaryExpr;
 import deal.ast.BinaryOp;
 import deal.ast.Block;
+import deal.ast.CallExpr;
 import deal.ast.ExpressionNode;
 import deal.ast.ForOfStatement;
 import deal.ast.IdentifierExpr;
@@ -15,10 +16,13 @@ import deal.ast.Property;
 import deal.ast.Span;
 import deal.ast.StatementNode;
 import deal.ast.TemplateLiteralExpr;
+import deal.ast.UnaryExpr;
+import deal.ast.UnaryOp;
 import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.semantic.ir.AnchorId;
+import deal.semantic.ir.BinarySelector;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
@@ -28,6 +32,7 @@ import deal.semantic.ir.ContractSnapshotCanonicalizer;
 import deal.semantic.ir.ExportPlan;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
+import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.IterationMode;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
@@ -51,6 +56,7 @@ import deal.semantic.ir.SemanticValue;
 import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.SourceSpan;
+import deal.semantic.ir.UnarySelector;
 import deal.semantic.ir.ValueId;
 import deal.types.Type;
 
@@ -63,10 +69,69 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * The container/string construct stage of the common lowerer (ISSUE-0232
- * D1/D7; ISSUE-0386): the per-construct shape map producing the six
- * container/string operations plus the operand-producer arms from checked
- * source, inside {@code deal.semantic}.
+ * The common lowerer's per-construct shape map inside {@code
+ * deal.semantic}: the container/string construct stage (ISSUE-0232
+ * D1/D7; ISSUE-0386) producing the six container/string operations, plus
+ * the value-operation slice (signed-int32 foundation I3; ISSUE-0395)
+ * producing {@code CONST}/{@code UNARY}/{@code BINARY}/
+ * {@code INTRINSIC_CALL} with the fixed selector→policy stamping.
+ *
+ * <p><b>The I3 value-operation slice (pinned).</b> Over checked facts,
+ * the slice produces exactly the closed value operations — each with the
+ * policy stamped from the single closed selector→policy tables of
+ * {@link SemanticIrValidator} ({@code unaryPolicy}/{@code binaryPolicy}/
+ * {@code intrinsicPolicy} — never a copy), a complete
+ * {@code OperationContractSnapshot} with the T3 digest, and the
+ * producing {@code SourceOrigin}:</p>
+ *
+ * <ul>
+ *   <li>scalar {@link LiteralExpr} → one {@code CONST} (all five scalar
+ *       kinds; an {@code IntLiteral} is signed32 by the I1 parser
+ *       invariant);</li>
+ *   <li>{@link UnaryExpr} → one {@code UNARY} with {@code BOOL_NOT} /
+ *       {@code INT32_NEG} / {@code NUMBER_NEG} selected by the operator
+ *       plus the operand's checked type (the checker's unary rules);
+ *       policy {@code INT32_RESULT} for {@code INT32_NEG},
+ *       {@code NO_DEAL_FAILURE} otherwise;</li>
+ *   <li>{@link BinaryExpr} → one {@code BINARY} with the int32/number
+ *       selector families selected by the operator plus the operand
+ *       checked types ({@code INT32_ADD/SUB/MUL} →
+ *       {@code INT32_RESULT}; {@code INT32_DIV_TRUNC/MOD_TRUNC} →
+ *       {@code INT32_DIVISOR_THEN_RESULT}; {@code INT32_POW} →
+ *       {@code INT32_EXPONENT_THEN_RESULT}; every {@code NUMBER_*}
+ *       arithmetic incl. {@code NUMBER_POW_IEEE} →
+ *       {@code NO_DEAL_FAILURE}). The other closed selector families
+ *       ({@code STRING_*}, {@code BOOLEAN_*}, {@code NULL_*},
+ *       {@code NULLABLE_*}, {@code REFERENCE_*} — the comparison
+ *       producer {@link ComparisonSelectorLowering} — and the logical
+ *       {@code BRANCH} operators) remain defined-but-not-produced by
+ *       this slice; string {@code +} lowers to {@code STRING_CONCAT},
+ *       never {@code BINARY};</li>
+ *   <li>{@code int(…)}/{@code number(…)} intrinsic calls
+ *       ({@code Symbol.IntrinsicSymbol}) → one {@code INTRINSIC_CALL}
+ *       with {@code INT_CONVERT}/{@code NUMBER_CONVERT}, zero
+ *       {@code BOUNDARY} children, and the conversion policy
+ *       ({@code INT_CONVERSION}/{@code NUMBER_CONVERSION}) as the
+ *       terminal check.</li>
+ * </ul>
+ *
+ * <p><b>I3 profile guard.</b> {@link #lowerModule} refuses any lowering
+ * request whose invocation profile is not
+ * {@code DEAL_V1_2_INT32} with E6005 {@link #LOWER_LEGACY_PROFILE_REJECTED}
+ * before any op is built — {@code LEGACY_SAFE_INT} is inspectable for
+ * routing/regression but never lowered; the validator's R-PROFILE is the
+ * backstop and {@link LoweredModuleUnit} admits only
+ * {@code DEAL_V1_2_INT32} by construction.</p>
+ *
+ * <p><b>I3 scalar descriptor rows.</b> The value arms admit exactly
+ * the pinned one-line scalar descriptor rows (int, number, boolean,
+ * null, string, and the nullable rows over int/number/boolean — see
+ * {@code ModuleLowerer#valueDescriptorOf}), realized through the single
+ * {@code DescriptorService} producer (the verbatim D2 scalar table); no
+ * structural descriptor service is built in this slice. The slice
+ * performs no evaluation: {@code CONST} carries parser-guaranteed
+ * scalars, {@code INTRINSIC_CALL} is a terminal check, and the
+ * selector→policy stamping reads the closed table data.</p>
  *
  * <p><b>The D1 shape map (pinned).</b> Every arm below produces exactly
  * the design's closed shape — op kind, payload fields, failure policy,
@@ -157,14 +222,26 @@ import java.util.Set;
  *       arm fails hard.</li>
  * </ul>
  *
+ * <p><b>Value-operation arms.</b> The I3 slice adds the value-operation
+ * arms to the shape map ({@code CONST} of every scalar kind,
+ * {@code UNARY}, {@code BINARY} of the int32/number arithmetic
+ * selectors, and {@code INTRINSIC_CALL} of the two conversion
+ * intrinsics); see the class-level I3 section. Operands complete
+ * left-to-right and appear as the produced op's {@code operands}/
+ * {@code operandTypes} in source order — the slice never evaluates,
+ * re-emits, or re-reads an operand.</p>
+ *
  * <p><b>Fail-closed arms (exactly one outcome each).</b> A construct
  * reaching an arm without a lowering arm raises {@link ConstructUnlowered}
  * — array for-of ({@code FOR_EACH(ARRAY_VALUES)} is E5's), class-typed
  * object literals ({@code CLASS_NEW} is E9's), class member access
  * ({@code FIELD_READ} is E9's), module member access ({@code EXPORT_READ}
- * is E10's), {@code .length} on bytes (ISSUE-0158), numeric selectors
- * (ISSUE-0231's {@code UNARY}/{@code BINARY} arms), and every other
- * foreign construct. An {@code IntLiteral} outside signed32 at the
+ * is E10's), {@code .length} on bytes (ISSUE-0158), comparison and
+ * logical binary operators (the comparison producer
+ * {@link ComparisonSelectorLowering}'s and the selector-bearing
+ * {@code BRANCH} of EVALUATION_ORDER), ordinary calls ({@code CALL} is
+ * E7's), and every other foreign construct. An {@code IntLiteral}
+ * outside signed32 at the
  * {@code CONST} arm raises {@link IntLiteralOutOfRange} — the same
  * fail-closed discipline for a scalar outside the closed scalar set
  * (the {@code CONST} contract's "a literal outside the closed scalar
@@ -221,6 +298,19 @@ public final class SemanticLowerer {
      * fails closed instead of truncating.
      */
     public static final String INT32_LITERAL_OUT_OF_RANGE = "INT32_LITERAL_OUT_OF_RANGE";
+
+    /**
+     * The fact-defect identifier of the E6005 profile guard (I3): a
+     * lowering request whose invocation profile is not
+     * {@code DEAL_V1_2_INT32} is rejected before any op is built —
+     * {@code LEGACY_SAFE_INT} is inspectable for routing/regression but
+     * never lowered (the validator's R-PROFILE and
+     * {@link LoweredModuleUnit}'s constructor guard are the backstops).
+     * The detail carries the offending profile, capability
+     * {@code FOUNDATION_VALUES}, and the {@code SemanticLowerer} origin.
+     */
+    public static final String LOWER_LEGACY_PROFILE_REJECTED =
+        "LOWER_LEGACY_PROFILE_REJECTED";
 
     /**
      * The pinned canonical realization id of every lowerer-created
@@ -409,7 +499,18 @@ public final class SemanticLowerer {
      * diagnostic). In E3's window the unit claims the empty capability
      * set derived through the claiming seam (D9 items 2/4).
      *
+     * <p><b>I3 profile guard.</b> The invocation profile is a required
+     * input: a lowering request whose profile is not
+     * {@code DEAL_V1_2_INT32} is rejected with E6005
+     * {@link #LOWER_LEGACY_PROFILE_REJECTED} before any op is built —
+     * {@code LEGACY_SAFE_INT} is inspectable for routing/regression but
+     * never lowered; the validator's R-PROFILE is the backstop.</p>
+     *
      * @param module                the checked implementation module; non-null
+     * @param profile               the invocation's semantic profile
+     *                              (I3 guard: only
+     *                              {@code DEAL_V1_2_INT32} is lowered);
+     *                              non-null
      * @param constructCoverage     the manifest's reachable-construct rows
      *                              recorded at lowering start (S1); non-null
      * @param interfaceHash         the interface index digest the unit is
@@ -421,16 +522,27 @@ public final class SemanticLowerer {
      * @return the validated unit, or the first E6005 on failure
      */
     public static LoweringResult lowerModule(CheckedModuleInput module,
+                                             SemanticProfile profile,
                                              Map<ConstructKind, List<SemanticOpKind>>
                                                  constructCoverage,
                                              String interfaceHash,
                                              String capabilityRegistryHash,
                                              SemanticIdAllocator allocator) {
         Objects.requireNonNull(module, "module must not be null");
+        Objects.requireNonNull(profile, "profile must not be null");
         Objects.requireNonNull(constructCoverage, "constructCoverage must not be null");
         Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
         Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
         Objects.requireNonNull(allocator, "allocator must not be null");
+        // I3 profile guard: the rejection runs before any op is built and
+        // before any id is allocated — a LEGACY_SAFE_INT lowering request
+        // produces no unit and no partial session state.
+        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
+            return new LoweringResult(null, List.of(FailureContractRegistry.e6005(
+                new LoweringFailureDetail(module.moduleId().path(),
+                    SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
+                    profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer"))));
+        }
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator);
         try {
@@ -590,6 +702,8 @@ public final class SemanticLowerer {
                 case MemberAccessExpr access -> lowerMemberAccess(access);
                 case BinaryExpr binary -> lowerBinary(binary);
                 case TemplateLiteralExpr template -> lowerTemplate(template);
+                case UnaryExpr unary -> lowerUnary(unary);
+                case CallExpr call -> lowerIntrinsicCall(call);
                 default -> throw new ConstructUnlowered(describeExpression(expr));
             };
         }
@@ -922,15 +1036,25 @@ public final class SemanticLowerer {
             return result;
         }
 
-        /** {@code STRING_CONCAT} — the string-{@code +} arm; never {@code BINARY}. */
+        /** {@code STRING_CONCAT}/{@code BINARY} — the binary dispatch (I3 arithmetic). */
         private ValueId lowerBinary(BinaryExpr binary) {
             Type type = checkedType(binary);
-            if (binary.op() != BinaryOp.ADD || !(type instanceof Type.String)) {
-                throw new ConstructUnlowered("binary selector " + binary.op()
-                    + " of checked type " + typeName(type)
-                    + " (numeric selectors are ISSUE-0231's UNARY/BINARY arms; string "
-                    + "+ lowers to STRING_CONCAT, never BINARY)");
+            if (binary.op() == BinaryOp.ADD && type instanceof Type.String) {
+                return lowerStringConcat(binary);
             }
+            if (isArithmeticOperator(binary.op())) {
+                return lowerArithmeticBinary(binary);
+            }
+            throw new ConstructUnlowered("binary selector " + binary.op()
+                + " of checked type " + typeName(type)
+                + " (comparison selectors are the comparison producer "
+                + "ComparisonSelectorLowering's; logical operators lower to "
+                + "selector-bearing BRANCH — EVALUATION_ORDER; string + lowers to "
+                + "STRING_CONCAT, never BINARY)");
+        }
+
+        /** {@code STRING_CONCAT} — the string-{@code +} arm; never {@code BINARY}. */
+        private ValueId lowerStringConcat(BinaryExpr binary) {
             ValueId left = lowerExpression(binary.left());
             ValueId right = lowerExpression(binary.right());
             return emitValueOp(SemanticOpKind.STRING_CONCAT,
@@ -938,6 +1062,201 @@ public final class SemanticLowerer {
                 binary.span(),
                 ContainerPayloadDescriptors.resultDescriptorOf(Type.String.INSTANCE),
                 FailurePolicyId.NO_DEAL_FAILURE);
+        }
+
+        /** True iff the operator is one of the six arithmetic operators (I3). */
+        private static boolean isArithmeticOperator(BinaryOp op) {
+            return switch (op) {
+                case ADD, SUB, MUL, DIV, MOD, POW -> true;
+                case EQ, NEQ, LT, LTE, GT, GTE, AND, OR -> false;
+            };
+        }
+
+        /**
+         * {@code BINARY} — the I3 int32/number arithmetic arm: exactly one
+         * closed selector from the operator plus the checked operand type
+         * ({@code INT32_ADD/SUB/MUL/DIV_TRUNC/MOD_TRUNC/POW} over int;
+         * {@code NUMBER_ADD/SUB/MUL/DIV_IEEE/MOD_FLOOR/POW_IEEE} over
+         * number), operands in source order (left then right), the policy
+         * stamped from the single closed {@code binaryPolicy} table (never
+         * a copy), and the result descriptor from the checked result type.
+         * Any operator/operand shape outside the map is a producer defect
+         * ({@link ConstructUnlowered}) — never a guessed selector.
+         */
+        private ValueId lowerArithmeticBinary(BinaryExpr binary) {
+            Type leftType = checkedType(binary.left());
+            BinarySelector selector;
+            if (leftType instanceof Type.Int) {
+                selector = switch (binary.op()) {
+                    case ADD -> BinarySelector.INT32_ADD;
+                    case SUB -> BinarySelector.INT32_SUB;
+                    case MUL -> BinarySelector.INT32_MUL;
+                    case DIV -> BinarySelector.INT32_DIV_TRUNC;
+                    case MOD -> BinarySelector.INT32_MOD_TRUNC;
+                    case POW -> BinarySelector.INT32_POW;
+                    default -> throw new ConstructUnlowered("arithmetic operator "
+                        + binary.op() + " outside the I3 int32 rows (producer defect)");
+                };
+            } else if (leftType instanceof Type.Number) {
+                selector = switch (binary.op()) {
+                    case ADD -> BinarySelector.NUMBER_ADD;
+                    case SUB -> BinarySelector.NUMBER_SUB;
+                    case MUL -> BinarySelector.NUMBER_MUL;
+                    case DIV -> BinarySelector.NUMBER_DIV_IEEE;
+                    case MOD -> BinarySelector.NUMBER_MOD_FLOOR;
+                    case POW -> BinarySelector.NUMBER_POW_IEEE;
+                    default -> throw new ConstructUnlowered("arithmetic operator "
+                        + binary.op() + " outside the I3 number rows (producer defect)");
+                };
+            } else {
+                throw new ConstructUnlowered("arithmetic binary " + binary.op()
+                    + " over non-int/number checked operand " + typeName(leftType)
+                    + " (a checked arithmetic expression must be int- or number-typed)");
+            }
+            ValueId left = lowerExpression(binary.left());
+            ValueId right = lowerExpression(binary.right());
+            return emitOperandOp(SemanticOpKind.BINARY,
+                new KindPayload.BinaryPayload(selector, null, null),
+                List.of(left, right),
+                List.of(valueDescriptorOf(leftType),
+                    valueDescriptorOf(checkedType(binary.right()))),
+                binary.span(), valueDescriptorOf(checkedType(binary)),
+                SemanticIrValidator.binaryPolicy(selector));
+        }
+
+        /**
+         * {@code UNARY} — the I3 arm: exactly one closed selector from
+         * the operator plus the operand's checked type ({@code BOOL_NOT}
+         * over boolean; {@code INT32_NEG} over int; {@code NUMBER_NEG}
+         * over number), the operand as one prior step (operands complete
+         * left-to-right before {@code UNARY} START), the policy stamped
+         * from the single closed {@code unaryPolicy} rule (never a copy),
+         * and the result descriptor from the checked result type.
+         */
+        private ValueId lowerUnary(UnaryExpr unary) {
+            Type operandType = checkedType(unary.expr());
+            UnarySelector selector;
+            switch (unary.op()) {
+                case NOT -> {
+                    if (!(operandType instanceof Type.Boolean)) {
+                        throw new ConstructUnlowered("unary '!' over non-boolean checked "
+                            + "operand " + typeName(operandType)
+                            + " (a missing checker fact is a producer defect)");
+                    }
+                    selector = UnarySelector.BOOL_NOT;
+                }
+                case NEG -> {
+                    if (operandType instanceof Type.Int) {
+                        selector = UnarySelector.INT32_NEG;
+                    } else if (operandType instanceof Type.Number) {
+                        selector = UnarySelector.NUMBER_NEG;
+                    } else {
+                        throw new ConstructUnlowered("unary '-' over non-int/number checked "
+                            + "operand " + typeName(operandType)
+                            + " (a missing checker fact is a producer defect)");
+                    }
+                }
+                default -> throw new ConstructUnlowered("unary operator " + unary.op()
+                    + " outside the closed UnarySelector rows (producer defect)");
+            }
+            ValueId operand = lowerExpression(unary.expr());
+            return emitOperandOp(SemanticOpKind.UNARY,
+                new KindPayload.UnaryPayload(selector),
+                List.of(operand), List.of(valueDescriptorOf(operandType)),
+                unary.span(), valueDescriptorOf(checkedType(unary)),
+                SemanticIrValidator.unaryPolicy(selector));
+        }
+
+        /**
+         * {@code INTRINSIC_CALL} — the I3 arm: a call of the {@code int}
+         * or {@code number} intrinsic ({@code Symbol.IntrinsicSymbol})
+         * lowers to one {@code INTRINSIC_CALL} with
+         * {@code INT_CONVERT}/{@code NUMBER_CONVERT}, zero {@code BOUNDARY}
+         * children, the single input as one prior step, and the conversion
+         * policy ({@code INT_CONVERSION}/{@code NUMBER_CONVERSION} — the
+         * single closed intrinsic rule) as the terminal check. Every other
+         * call is a foreign construct ({@code CALL} is E7's); {@code
+         * bytes(...)} is the bytes exclusion.
+         */
+        private ValueId lowerIntrinsicCall(CallExpr call) {
+            IntrinsicKind kind = intrinsicKindOf(call);
+            ExpressionNode argument = call.args().get(0);
+            Type argumentType = checkedType(argument);
+            ValueId input = lowerExpression(argument);
+            return emitOperandOp(SemanticOpKind.INTRINSIC_CALL,
+                new KindPayload.IntrinsicCallPayload(kind, input),
+                List.of(input), List.of(valueDescriptorOf(argumentType)),
+                call.span(), valueDescriptorOf(checkedType(call)),
+                SemanticIrValidator.intrinsicPolicy(kind));
+        }
+
+        /**
+         * The intrinsic-call classifier (I3): exactly {@code int(...)}
+         * and {@code number(...)} calls of the root
+         * {@code Symbol.IntrinsicSymbol} bindings lower; every other call
+         * shape — including {@code bytes(...)}, {@code has(...)} call
+         * fallbacks, and ordinary user calls — fails closed.
+         */
+        private IntrinsicKind intrinsicKindOf(CallExpr call) {
+            if (call.args().size() == 1
+                    && call.callee() instanceof IdentifierExpr identifier) {
+                Symbol symbol = checks.symbolTable().resolve(identifier.name());
+                if (symbol instanceof Symbol.IntrinsicSymbol intrinsic) {
+                    if ("int".equals(intrinsic.name())) {
+                        return IntrinsicKind.INT_CONVERT;
+                    }
+                    if ("number".equals(intrinsic.name())) {
+                        return IntrinsicKind.NUMBER_CONVERT;
+                    }
+                }
+            }
+            throw new ConstructUnlowered("call expression (only int()/number() intrinsic "
+                + "calls lower in this slice — INTRINSIC_CALL is the I3 terminal-check "
+                + "arm; the CALL machinery is E7's and bytes() is the bytes exclusion)");
+        }
+
+        /**
+         * The pinned one-line scalar descriptor rows of the value-operation
+         * slice (I3): the slice admits exactly these rows —
+         * null, boolean, signed32 int, number, string, and the nullable
+         * rows over int/number/boolean (the nullable descriptor over the
+         * same inner row) — for exactly
+         * the descriptor positions its arms introduce (the conversion
+         * intrinsics admit nullable int/number inputs). The rows realize
+         * through the single {@link DescriptorService} producer (the
+         * verbatim D2 scalar table — the slice builds no structural
+         * descriptor service, ISSUE-0233 is excluded here); every other
+         * checked type reaching a value-op descriptor position is a
+         * producer defect ({@link ConstructUnlowered}).
+         */
+        private static RuntimeDescriptor valueDescriptorOf(Type type) {
+            boolean admissible = switch (type) {
+                case Type.Null ignored -> true;
+                case Type.Boolean ignored -> true;
+                case Type.Int ignored -> true;
+                case Type.Number ignored -> true;
+                case Type.String ignored -> true;
+                case Type.Nullable nullable -> switch (nullable.inner()) {
+                    case Type.Boolean ignored -> true;
+                    case Type.Int ignored -> true;
+                    case Type.Number ignored -> true;
+                    default -> false;
+                };
+                default -> false;
+            };
+            if (!admissible) {
+                throw new ConstructUnlowered(
+                    "value-slice descriptor position over non-scalar checked type "
+                        + typeName(type) + " (the slice's pinned one-line scalar rows "
+                        + "only; the structural DescriptorService is ISSUE-0233's)");
+            }
+            try {
+                return DescriptorService.describe(type);
+            } catch (DescriptorService.Defect defect) {
+                throw new ConstructUnlowered(
+                    "value-slice descriptor position over unrepresentable checked type "
+                        + typeName(type) + " (" + defect.getMessage() + ")");
+            }
         }
 
         /** {@code STRING_CONCAT} — the template arm with fragment {@code CONST} steps. */
@@ -984,15 +1303,30 @@ public final class SemanticLowerer {
             return type;
         }
 
-        /** Emits one value-producing USER op and returns its value id. */
+        /** Emits one value-producing USER op without operands and returns its value id. */
         private ValueId emitValueOp(SemanticOpKind kind, KindPayload payload, Span span,
                                     RuntimeDescriptor resultType, FailurePolicyId policy) {
+            return emitOperandOp(kind, payload, List.of(), List.of(), span, resultType,
+                policy);
+        }
+
+        /**
+         * Emits one value-producing USER op carrying completed operand
+         * values/types in source order (I3: operands complete left-to-right
+         * before the op START; the slice never evaluates or re-reads an
+         * operand) and returns its value id.
+         */
+        private ValueId emitOperandOp(SemanticOpKind kind, KindPayload payload,
+                                      List<ValueId> operands,
+                                      List<RuntimeDescriptor> operandTypes, Span span,
+                                      RuntimeDescriptor resultType, FailurePolicyId policy) {
             ValueId value = ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
                 SourceOriginKind.USER, anchor, null);
-            ops.add(buildOp(opId, kind, payload, value, resultType, policy, origin));
+            ops.add(buildOp(opId, kind, payload, value, resultType, operands, operandTypes,
+                policy, origin));
             return value;
         }
 
@@ -1021,25 +1355,42 @@ public final class SemanticLowerer {
          * the single canonicalizer's SHA-256 over the snapshot's eight
          * pinned fields (T3), the selector is extracted from
          * selector-carrying payloads, and the behavior-referenced ids
-         * live inside the payload itself.
+         * live inside the payload itself. Operandless ops (the payload-
+         * referenced container shapes) delegate with empty operand lists.
          */
         private SemanticOp buildOp(OpId opId, SemanticOpKind kind, KindPayload payload,
                                    SemanticValue result, OpResultType resultType,
                                    FailurePolicyId policy, SourceOrigin origin) {
+            return buildOp(opId, kind, payload, result, resultType, List.of(), List.of(),
+                policy, origin);
+        }
+
+        /**
+         * Builds one op with completed operands and their descriptors in
+         * source order plus the wired contract snapshot (I3 value ops):
+         * the operand types are part of the digest — a behavior-selecting
+         * field, never omitted.
+         */
+        private SemanticOp buildOp(OpId opId, SemanticOpKind kind, KindPayload payload,
+                                   SemanticValue result, OpResultType resultType,
+                                   List<ValueId> operands,
+                                   List<RuntimeDescriptor> operandTypes,
+                                   FailurePolicyId policy, SourceOrigin origin) {
             OperationContractSnapshot placeholder = contractOf(kind, payload, resultType,
-                policy, "placeholder");
+                operandTypes, policy, "placeholder");
             String digest = ContractSnapshotCanonicalizer.digest(placeholder);
             OperationContractSnapshot contract = contractOf(kind, payload, resultType,
-                policy, digest);
-            return new SemanticOp(opId, kind, origin, result, resultType, List.of(),
-                List.of(), payload, policy, contract);
+                operandTypes, policy, digest);
+            return new SemanticOp(opId, kind, origin, result, resultType, operands,
+                operandTypes, payload, policy, contract);
         }
 
         private OperationContractSnapshot contractOf(SemanticOpKind kind, KindPayload payload,
                                                      OpResultType resultType,
+                                                     List<RuntimeDescriptor> operandTypes,
                                                      FailurePolicyId policy, String digest) {
             return new OperationContractSnapshot(OperationContractSnapshot.VERSION, kind,
-                resultType, List.of(),
+                resultType, operandTypes,
                 payload instanceof KindPayload.SelectorCarrying carrying
                     ? carrying.selector() : null,
                 payload, policy, List.of(), digest);
@@ -1052,7 +1403,7 @@ public final class SemanticLowerer {
                 span.endScalarOffset());
         }
 
-        private String typeName(Type type) {
+        private static String typeName(Type type) {
             return switch (type) {
                 case Type.Array array -> "[" + typeName(array.element()) + "]";
                 case Type.Nullable nullable -> "?" + typeName(nullable.inner());
@@ -1066,11 +1417,10 @@ public final class SemanticLowerer {
         /** The foreign-expression description of the E6005 origin. */
         private String describeExpression(ExpressionNode expr) {
             return switch (expr) {
-                case deal.ast.UnaryExpr ignored ->
-                    "unary selector expression (ISSUE-0231's UNARY arm owns numeric "
-                        + "selectors; this stage lowers operand positions only)";
                 case deal.ast.CallExpr ignored ->
-                    "call expression (the CALL machinery is E7's)";
+                    "call expression (only int()/number() intrinsic calls lower in this "
+                        + "slice — INTRINSIC_CALL is the I3 terminal-check arm; the CALL "
+                        + "machinery is E7's)";
                 case deal.ast.IndexExpr ignored ->
                     "index access expression (INDEX_NORMALIZE/INDEX_READ are E5's, "
                         + "ISSUE-0234)";

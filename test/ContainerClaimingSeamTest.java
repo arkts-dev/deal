@@ -1434,7 +1434,8 @@ public class ContainerClaimingSeamTest {
             ConstructKind.IF_WHILE_FOR_FOR_OF.mappedOpKinds());
 
         SemanticLowerer.LoweringResult first = SemanticLowerer.lowerModule(moduleOf(slice),
-            coverage, INTERFACE_HASH, REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
+            SemanticProfile.DEAL_V1_2_INT32, coverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticIdAllocator.over(List.of(MODULE)));
         check(first != null && !first.hasErrors() && first.unit() != null,
             "the fixed corpus lowers to a validated unit: "
                 + (first == null ? "null" : first.diagnostics()));
@@ -1442,7 +1443,8 @@ public class ContainerClaimingSeamTest {
             return;
         }
         SemanticLowerer.LoweringResult second = SemanticLowerer.lowerModule(moduleOf(slice),
-            coverage, INTERFACE_HASH, REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
+            SemanticProfile.DEAL_V1_2_INT32, coverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticIdAllocator.over(List.of(MODULE)));
         check(second != null && !second.hasErrors() && second.unit() != null,
             "the repeated lowering validates again: "
                 + (second == null ? "null" : second.diagnostics()));
@@ -1548,8 +1550,8 @@ public class ContainerClaimingSeamTest {
 
         // C5's arms + the seam: lower the corpus module to its validated unit.
         SemanticLowerer.LoweringResult result = SemanticLowerer.lowerModule(module,
-            manifest.constructCoverage(), INTERFACE_HASH, REGISTRY_HASH,
-            SemanticIdAllocator.over(List.of(MODULE)));
+            SemanticProfile.DEAL_V1_2_INT32, manifest.constructCoverage(), INTERFACE_HASH,
+            REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
         check(result != null && !result.hasErrors() && result.unit() != null,
             "the corpus lowers through C5's arms into a validated unit with no E6005: "
                 + (result == null ? "null" : result.diagnostics()));

@@ -1014,9 +1014,8 @@ public final class SemanticIrValidator {
                 if (intrinsic == null) {
                     yield Optional.empty();
                 }
-                FailurePolicyId expected = intrinsic == IntrinsicKind.INT_CONVERT
-                    ? FailurePolicyId.INT_CONVERSION : FailurePolicyId.NUMBER_CONVERSION;
-                yield requirePolicy(unit, facts, op, policy, expected, intrinsic.name());
+                yield requirePolicy(unit, facts, op, policy, intrinsicPolicy(intrinsic),
+                    intrinsic.name());
             }
             case THROW ->
                 requirePolicy(unit, facts, op, policy, FailurePolicyId.THROW_TRANSFER, "THROW");
@@ -1115,6 +1114,19 @@ public final class SemanticIrValidator {
                  NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE ->
                 FailurePolicyId.NO_DEAL_FAILURE;
         };
+    }
+
+    /**
+     * The closed intrinsic→policy rule for {@code INTRINSIC_CALL} (parent
+     * operation table): {@code INT_CONVERT} → {@code INT_CONVERSION};
+     * {@code NUMBER_CONVERT} → {@code NUMBER_CONVERSION}. This method is
+     * the single source of the assignment: the lowerer's policy stamping
+     * reads it (never a copy).
+     */
+    public static FailurePolicyId intrinsicPolicy(IntrinsicKind intrinsic) {
+        Objects.requireNonNull(intrinsic, "intrinsic must not be null");
+        return intrinsic == IntrinsicKind.INT_CONVERT
+            ? FailurePolicyId.INT_CONVERSION : FailurePolicyId.NUMBER_CONVERSION;
     }
 
     /** The closed stdlib algorithm→policy table (parent "Standard-library operation table"). */

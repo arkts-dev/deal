@@ -213,6 +213,13 @@ public class LoweringSupportTest {
             && manifest.capabilities().equals(EnumSet.of(SemanticCapability.FOUNDATION_VALUES));
     }
 
+    /** The I3 signed32 claim: exactly FOUNDATION_VALUES + SIGNED_INT32, nothing else. */
+    private static boolean claimsSignedInt32(SemanticRequirementManifest manifest) {
+        return manifest != null
+            && manifest.capabilities().equals(EnumSet.of(
+                SemanticCapability.FOUNDATION_VALUES, SemanticCapability.SIGNED_INT32));
+    }
+
     // =========================================================================
     // 1. Arm A: direct call and value-position access
     // =========================================================================
@@ -570,8 +577,11 @@ public class LoweringSupportTest {
                 "an identically-named alias bound to another module does not trigger: the "
                     + "join matches the resolved ModuleSymbol name against the module's "
                     + "ImportDeclaration records, and the resolved target is not std/time");
-            check(claimsOnlyFoundation(manifestOf(other, "other")),
-                "the other module exporting nowMillis claims nothing itself");
+            check(claimsSignedInt32(manifestOf(other, "other")),
+                "the other module exporting nowMillis claims only FOUNDATION_VALUES + "
+                    + "SIGNED_INT32 (its return 0 int literal is CONST(Int) — the I3 "
+                    + "derivation row claims at the construct kind, never the magnitude) "
+                    + "and never STDLIB_TIME_CONFLICT");
         } finally {
             deleteRecursively(tmp);
         }
@@ -676,6 +686,165 @@ public class LoweringSupportTest {
             check(claimsConflict(manifestOf(result, "main")),
                 "a module importing a claiming module claims even when it never invokes "
                     + "the wrapper (Arm D over-claim — same safe LEGACY direction)");
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    // =========================================================================
+    // 6b. I3 capability derivation rows: SIGNED_INT32 at the construct
+    //     kind, never the magnitude
+    // =========================================================================
+
+    static void testSignedInt32LiteralClaims() throws Exception {
+        System.out.println("-- I3 claims: int literals claim SIGNED_INT32, number literals do not --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-i3-literals");
+        try {
+            RequirementManifestResult small = compileAndCompute(tmp.resolve("small"),
+                Map.of("main.deal", """
+                    export function one(): int {
+                      return 1
+                    }
+
+                    export function main(): null { return null; }
+                    """), "main.deal");
+            RequirementManifestResult max = compileAndCompute(tmp.resolve("max"),
+                Map.of("main.deal", """
+                    export function maxInt(): int {
+                      return 2147483647
+                    }
+
+                    export function main(): null { return null; }
+                    """), "main.deal");
+            RequirementManifestResult numberLiteral = compileAndCompute(tmp.resolve("number"),
+                Map.of("main.deal", """
+                    export function half(): number {
+                      return 1.5
+                    }
+
+                    export function main(): null { return null; }
+                    """), "main.deal");
+            if (small == null || max == null || numberLiteral == null) {
+                return;
+            }
+            check(claimsSignedInt32(manifestOf(small, "main")),
+                "a module with the small literal 1 claims SIGNED_INT32 — the claim "
+                    + "attaches to CONST(Int), never the magnitude");
+            check(claimsSignedInt32(manifestOf(max, "main")),
+                "a module with the literal 2147483647 claims SIGNED_INT32 exactly "
+                    + "like the small literal — small literals waive nothing");
+            check(claimsOnlyFoundation(manifestOf(numberLiteral, "main")),
+                "a module with only a number literal claims exactly FOUNDATION_VALUES "
+                    + "(CONST(Number) never claims SIGNED_INT32)");
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    static void testSignedInt32UnaryBinaryClaims() throws Exception {
+        System.out.println("-- I3 claims: UNARY(INT32_NEG)/BINARY(INT32_*) claim; "
+            + "number/boolean rows do not --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-i3-unary-binary");
+        try {
+            RequirementManifestResult neg = compileAndCompute(tmp.resolve("neg"),
+                Map.of("main.deal", """
+                    export function neg(x: int): int {
+                      return -x
+                    }
+
+                    export function main(): null { return null; }
+                    """), "main.deal");
+            RequirementManifestResult not = compileAndCompute(tmp.resolve("not"),
+                Map.of("main.deal", """
+                    export function not(b: boolean): boolean {
+                      return !b
+                    }
+
+                    export function main(): null { return null; }
+                    """), "main.deal");
+            RequirementManifestResult add = compileAndCompute(tmp.resolve("add"),
+                Map.of("main.deal", """
+                    export function add(x: int, y: int): int {
+                      return x + y
+                    }
+
+                    export function main(): null { return null; }
+                    """), "main.deal");
+            RequirementManifestResult eq = compileAndCompute(tmp.resolve("eq"),
+                Map.of("main.deal", """
+                    export function eq(x: int, y: int): boolean {
+                      return x === y
+                    }
+
+                    export function main(): null { return null; }
+                    """), "main.deal");
+            RequirementManifestResult addNumber = compileAndCompute(tmp.resolve("add-number"),
+                Map.of("main.deal", """
+                    export function addN(x: number, y: number): number {
+                      return x + y
+                    }
+
+                    export function main(): null { return null; }
+                    """), "main.deal");
+            if (neg == null || not == null || add == null || eq == null
+                    || addNumber == null) {
+                return;
+            }
+            check(claimsSignedInt32(manifestOf(neg, "main")),
+                "unary negation over an int operand claims SIGNED_INT32 "
+                    + "(UNARY(INT32_NEG))");
+            check(claimsOnlyFoundation(manifestOf(not, "main")),
+                "boolean negation claims exactly FOUNDATION_VALUES (BOOL_NOT never "
+                    + "claims SIGNED_INT32)");
+            check(claimsSignedInt32(manifestOf(add, "main")),
+                "int addition claims SIGNED_INT32 (BINARY(INT32_ADD))");
+            check(claimsSignedInt32(manifestOf(eq, "main")),
+                "int comparison claims SIGNED_INT32 (BINARY(INT32_EQ) — the "
+                    + "BINARY(INT32_*) row covers comparison selectors too)");
+            check(claimsOnlyFoundation(manifestOf(addNumber, "main")),
+                "number addition claims exactly FOUNDATION_VALUES (NUMBER_ADD never "
+                    + "claims SIGNED_INT32)");
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    static void testIntrinsicConversionClaims() throws Exception {
+        System.out.println("-- I3 claims: int(...) claims SIGNED_INT32; number(...) "
+            + "claims FOUNDATION_VALUES only --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-i3-intrinsics");
+        try {
+            RequirementManifestResult toInt = compileAndCompute(tmp.resolve("to-int"),
+                Map.of("main.deal", """
+                    export function cvt(x: number): int {
+                      return int(x)
+                    }
+
+                    export function main(): null { return null; }
+                    """), "main.deal");
+            RequirementManifestResult toNumber = compileAndCompute(tmp.resolve("to-number"),
+                Map.of("main.deal", """
+                    export function cvtN(x: int): number {
+                      return number(x)
+                    }
+
+                    export function main(): null { return null; }
+                    """), "main.deal");
+            if (toInt == null || toNumber == null) {
+                return;
+            }
+            check(claimsSignedInt32(manifestOf(toInt, "main")),
+                "int(...) claims SIGNED_INT32 (INTRINSIC_CALL(INT_CONVERT))");
+            check(claimsOnlyFoundation(manifestOf(toNumber, "main")),
+                "number(...) claims exactly FOUNDATION_VALUES "
+                    + "(INTRINSIC_CALL(NUMBER_CONVERT)) and never SIGNED_INT32 — the "
+                    + "module carries no int construct");
+            check(manifestOf(toNumber, "main").capabilities()
+                    .contains(SemanticCapability.FOUNDATION_VALUES),
+                "NUMBER_CONVERT claims FOUNDATION_VALUES (the module-level row)");
         } finally {
             deleteRecursively(tmp);
         }
@@ -1156,6 +1325,9 @@ public class LoweringSupportTest {
         testOverClaimDirectImporterUnrelatedTable();
         testOverClaimClosureMemberUnrelatedTable();
         testOverClaimPropagatedNeverInvokes();
+        testSignedInt32LiteralClaims();
+        testSignedInt32UnaryBinaryClaims();
+        testIntrinsicConversionClaims();
         testConstructCoverageRows();
         testSyntheticUnitCopy();
         testE6005InconsistentFacts();

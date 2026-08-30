@@ -621,8 +621,13 @@ public class ContainerLoweringArmsTest {
 
         // (d) The min-int spelling stays untouched: -2147483648 parses as
         // NEG(IntLiteral 2147483648) (the pinned in-tree frontend
-        // contract) and the unary-selector arm fails closed before the
-        // CONST arm — no silent interaction between the arms.
+        // contract). With the I3 value-operation slice landed the unary
+        // negation routes through the UNARY(INT32_NEG) arm, and the
+        // operand's CONST arm then fails closed on the out-of-range
+        // literal — the defensive gate (E1036 rejects the literal under
+        // DEAL_V1_2_INT32 before lowering; the legacy parse contract
+        // still admits it) — so no ops are produced and the hard failure
+        // stays.
         CheckedSlice negated = checkSlice("""
             function f(): null {
               let n = -2147483648
@@ -643,18 +648,19 @@ public class ContainerLoweringArmsTest {
                 RuntimeException defect = null;
                 try {
                     lowerer.lowerExpression(negation);
-                } catch (SemanticLowerer.ConstructUnlowered raised) {
+                } catch (SemanticLowerer.IntLiteralOutOfRange raised) {
                     defect = raised;
                 }
                 check(defect != null,
-                    "the unary negation fails closed through the unary-selector arm "
-                        + "(ISSUE-0231 owns UNARY)");
+                    "the unary negation routes its operand through the I3 UNARY arm and "
+                        + "the CONST arm fails closed on the out-of-range operand "
+                        + "(IntLiteralOutOfRange — never a truncation)");
                 check(lowerer.ops().isEmpty(),
                     "the negation produced no ops (no CONST for its out-of-range operand)");
                 if (defect != null) {
-                    check(((SemanticLowerer.ConstructUnlowered) defect).construct()
-                            .contains("unary selector"),
-                        "the defect names the unary selector arm");
+                    check(((SemanticLowerer.IntLiteralOutOfRange) defect).value()
+                            == 2147483648L,
+                        "the defect carries the out-of-range literal value");
                 }
             }
         }
@@ -1445,7 +1451,8 @@ public class ContainerLoweringArmsTest {
             // The module-level seam: exactly the pinned LoweringFailureDetail,
             // no unit, never a reroute.
             SemanticLowerer.LoweringResult result = SemanticLowerer.lowerModule(
-                moduleOf(arrayForOf), Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+                moduleOf(arrayForOf), SemanticProfile.DEAL_V1_2_INT32, Map.of(),
+                INTERFACE_HASH, REGISTRY_HASH,
                 SemanticIdAllocator.over(List.of(MODULE)));
             check(result != null && result.hasErrors() && result.unit() == null,
                 "lowerModule fails hard with no unit (never a reroute)");
@@ -1836,7 +1843,7 @@ public class ContainerLoweringArmsTest {
             ConstructKind.IF_WHILE_FOR_FOR_OF, ConstructKind.IF_WHILE_FOR_FOR_OF.mappedOpKinds());
 
         SemanticLowerer.LoweringResult first = SemanticLowerer.lowerModule(moduleOf(slice),
-            coverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_2_INT32, coverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(first != null && !first.hasErrors() && first.unit() != null,
             "the positionable spine lowers to a validated unit: " + (first == null ? "null"
@@ -1880,7 +1887,7 @@ public class ContainerLoweringArmsTest {
 
         // Determinism: a fresh lowering produces byte-identical dumps.
         SemanticLowerer.LoweringResult second = SemanticLowerer.lowerModule(moduleOf(slice),
-            coverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_2_INT32, coverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(second != null && !second.hasErrors(),
             "the repeated lowering validates again");
@@ -1898,7 +1905,7 @@ public class ContainerLoweringArmsTest {
             new LinkedHashMap<>(coverage);
         overCoverage.put(ConstructKind.CALL, ConstructKind.CALL.mappedOpKinds());
         SemanticLowerer.LoweringResult uncovered = SemanticLowerer.lowerModule(moduleOf(slice),
-            overCoverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_2_INT32, overCoverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(uncovered != null && uncovered.hasErrors() && uncovered.unit() == null,
             "a recorded CALL row without a produced op fails hard with no unit");

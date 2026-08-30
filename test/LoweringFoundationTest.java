@@ -1,30 +1,105 @@
 package deal.test;
 
+import deal.ast.ArrayLiteralExpr;
+import deal.ast.AwaitExpression;
+import deal.ast.BinaryExpr;
+import deal.ast.BinaryOp;
+import deal.ast.Block;
+import deal.ast.CallExpr;
+import deal.ast.Either;
+import deal.ast.ExpressionNode;
+import deal.ast.ExportDeclaration;
+import deal.ast.ExpressionStatement;
+import deal.ast.ForInit;
+import deal.ast.ForOfStatement;
+import deal.ast.ForStatement;
+import deal.ast.FunctionDeclaration;
+import deal.ast.IdentifierExpr;
+import deal.ast.IfStatement;
+import deal.ast.IndexExpr;
+import deal.ast.LiteralExpr;
+import deal.ast.LiteralValue;
+import deal.ast.MemberAccessExpr;
+import deal.ast.ObjectLiteralExpr;
+import deal.ast.ProgramNode;
+import deal.ast.ReturnStatement;
+import deal.ast.StatementNode;
+import deal.ast.TemplateLiteralExpr;
+import deal.ast.ThrowStatement;
+import deal.ast.TryStatement;
+import deal.ast.UnaryExpr;
+import deal.ast.VariableDeclaration;
+import deal.ast.WhileStatement;
+import deal.checker.CheckResult;
+import deal.checker.NameResolver;
+import deal.checker.SymbolTable;
+import deal.checker.TypeChecker;
+import deal.codegen.Backend;
+import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.lexer.LexResult;
+import deal.lexer.Lexer;
+import deal.module.CompilationOrchestrator;
+import deal.parser.ParseResult;
+import deal.parser.Parser;
+import deal.semantic.CapabilityRegistry;
+import deal.semantic.CheckedModuleInput;
+import deal.semantic.CheckedModuleKind;
+import deal.semantic.CompilerInvocation;
+import deal.semantic.CompilerProfileProvider;
+import deal.semantic.SemanticLowerer;
 import deal.semantic.SharedValueSemantics;
 import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.BinarySelector;
+import deal.semantic.ir.BlockId;
+import deal.semantic.ir.ConstructKind;
+import deal.semantic.ir.ContractSnapshotCanonicalizer;
+import deal.semantic.ir.ExportPlan;
+import deal.semantic.ir.ExternalModuleInterface;
+import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.FailurePolicyId;
+import deal.semantic.ir.InitializationMode;
+import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.InvocationPurpose;
+import deal.semantic.ir.KindPayload;
+import deal.semantic.ir.LoweredModuleUnit;
+import deal.semantic.ir.LoweringContextHash;
 import deal.semantic.ir.LoweringFailureDetail;
+import deal.semantic.ir.ModuleId;
+import deal.semantic.ir.ModuleInitPlan;
+import deal.semantic.ir.OpId;
+import deal.semantic.ir.OperationContractSnapshot;
+import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.ReleaseState;
+import deal.semantic.ir.RuntimeDescriptor;
+import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticCapability;
+import deal.semantic.ir.SemanticIdAllocator;
+import deal.semantic.ir.SemanticIrDumper;
 import deal.semantic.ir.SemanticIrValidator;
+import deal.semantic.ir.SemanticOp;
+import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.UnarySelector;
+import deal.semantic.ir.ValueId;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.RecordComponent;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Verifies the ISSUE-0281 foundation surface: the E6005 registration in
@@ -50,6 +125,24 @@ import java.util.Map;
  * complete unary set ({@code INT32_NEG}, {@code NUMBER_NEG},
  * {@code BOOL_NOT}) agrees with the closed {@code unaryPolicy} rule —
  * a selector stamped with any other policy is a failure.</p>
+ *
+ * <p>Verifies the ISSUE-0395 value-operation slice (design I3): the
+ * {@link deal.semantic.SemanticLowerer} {@code CONST}/{@code UNARY}/
+ * {@code BINARY}/{@code INTRINSIC_CALL} arms with the fixed
+ * selector→policy stamping read from the closed validator tables
+ * ({@code unaryPolicy}/{@code binaryPolicy}/{@code intrinsicPolicy}),
+ * the pinned one-line scalar descriptor rows of the slice (realized
+ * through the single DescriptorService producer), validated units with a deliberately wrong selector→policy pair
+ * failing R-POLICY-KIND as the negative control, the
+ * {@code LEGACY_SAFE_INT} pre-lowering rejection (E6005
+ * {@code LOWER_LEGACY_PROFILE_REJECTED} before any op), out-of-scope
+ * constructs failing E6005 naming the construct, byte-identical repeated
+ * dumps, and the combined T1+T3 run — a fixture module using
+ * {@code -2147483648}, unary negation, int32 arithmetic selectors, and
+ * {@code int()}/{@code number()} conversions parsed under a
+ * {@code COMMON_SHADOW + DEAL_V1_2_INT32 + PRE_ACTIVATION} invocation,
+ * lowered by the slice, and validated (fails if the invocation path, the
+ * profile-aware parser, or the slice is broken).</p>
  *
  * <p>Tests:
  * <ol>
@@ -1062,11 +1155,1039 @@ public class LoweringFoundationTest {
     }
 
     // =========================================================================
+    // ISSUE-0395: the SemanticLowerer value-operation slice (I3) —
+    // CONST/UNARY/BINARY/INTRINSIC_CALL with the fixed selector->policy
+    // stamping, the LEGACY_SAFE_INT pre-lowering rejection, the pinned
+    // one-line scalar descriptor rows, and the combined T1+T3 invocation
+    // proof.
+    // =========================================================================
+
+    private static final ModuleId VALUE_MODULE = new ModuleId("valueops");
+    private static final String VALUE_SOURCE_ID = "valueops.deal";
+    private static final String VALUE_REGISTRY_HASH =
+        CapabilityRegistry.releaseRegistry().capabilityRegistryHash();
+    private static final String VALUE_INTERFACE_HASH = new ProjectInterfaceIndex(
+        ProjectInterfaceIndex.FORMAT_VERSION, Map.of(VALUE_MODULE,
+            new ExternalModuleInterface(VALUE_MODULE, ExternalModuleKind.IMPLEMENTATION,
+                List.of(), List.of(), List.of(),
+                InitializationMode.ONCE_AFTER_DEPENDENCIES)))
+        .interfaceIndexDigest();
+
+    /** The three coverage rows a value-operation corpus produces (S4 detector rows verbatim). */
+    private static Map<ConstructKind, List<SemanticOpKind>> valueCoverage() {
+        Map<ConstructKind, List<SemanticOpKind>> coverage =
+            new LinkedHashMap<>();
+        coverage.put(ConstructKind.SCALAR_LITERAL,
+            ConstructKind.SCALAR_LITERAL.mappedOpKinds());
+        coverage.put(ConstructKind.UNARY_ARITHMETIC_COMPARISON,
+            ConstructKind.UNARY_ARITHMETIC_COMPARISON.mappedOpKinds());
+        coverage.put(ConstructKind.CALL, ConstructKind.CALL.mappedOpKinds());
+        return coverage;
+    }
+
+    private record ValueSlice(ProgramNode program, CheckResult checks) {
+    }
+
+    /** Lexes, parses (profile-aware v1.2), resolves, and checks one slice. */
+    private static ValueSlice checkValueSlice(String source) {
+        LexResult lex = new Lexer(source, VALUE_SOURCE_ID).tokenize();
+        ParseResult parse = new Parser(lex.tokens(), VALUE_SOURCE_ID,
+            SemanticProfile.DEAL_V1_2_INT32).parse();
+        check(parse.diagnostics().isEmpty(), "the slice parses cleanly under "
+            + "DEAL_V1_2_INT32: " + parse.diagnostics());
+        if (!parse.diagnostics().isEmpty()) {
+            return null;
+        }
+        NameResolver nr = new NameResolver(VALUE_SOURCE_ID, null);
+        SymbolTable symTable = nr.resolve(parse.program());
+        check(nr.diagnostics().isEmpty(), "the slice resolves cleanly: " + nr.diagnostics());
+        if (!nr.diagnostics().isEmpty()) {
+            return null;
+        }
+        CheckResult result = TypeChecker.check(VALUE_SOURCE_ID, symTable, nr, parse.program());
+        check(result.diagnostics().isEmpty(), "the slice checks cleanly: "
+            + result.diagnostics());
+        if (result.hasErrors()) {
+            return null;
+        }
+        return new ValueSlice(parse.program(), result);
+    }
+
+    private static CheckedModuleInput moduleOf(ValueSlice slice) {
+        return new CheckedModuleInput(VALUE_MODULE, VALUE_SOURCE_ID,
+            Path.of(VALUE_SOURCE_ID), slice.program(), slice.checks(), List.of(), List.of(),
+            CheckedModuleKind.IMPLEMENTATION);
+    }
+
+    private static SemanticLowerer.ModuleLowerer valueLowerer(CheckResult checks) {
+        return new SemanticLowerer.ModuleLowerer(VALUE_MODULE, VALUE_SOURCE_ID, checks,
+            SemanticIdAllocator.over(List.of(VALUE_MODULE)));
+    }
+
+    /** Source-order statement walk collecting every statement and expression. */
+    private static void collectStatements(StatementNode node, List<StatementNode> outStatements,
+                                          List<ExpressionNode> outExpressions) {
+        if (node == null) {
+            return;
+        }
+        outStatements.add(node);
+        switch (node) {
+            case FunctionDeclaration fd -> collectStatements(fd.body(), outStatements,
+                outExpressions);
+            case VariableDeclaration vd ->
+                collectExpressions(vd.initializer(), outExpressions);
+            case ReturnStatement rs ->
+                rs.expr().ifPresent(e -> collectExpressions(e, outExpressions));
+            case IfStatement is -> {
+                collectExpressions(is.condition(), outExpressions);
+                collectStatements(is.thenBlock(), outStatements, outExpressions);
+                is.elseBranch().ifPresent(branch -> {
+                    if (branch instanceof Either.Left<IfStatement, Block> left) {
+                        collectStatements(left.value(), outStatements, outExpressions);
+                    } else if (branch instanceof Either.Right<IfStatement, Block> right) {
+                        collectStatements(right.value(), outStatements, outExpressions);
+                    }
+                });
+            }
+            case WhileStatement ws -> {
+                collectExpressions(ws.condition(), outExpressions);
+                collectStatements(ws.body(), outStatements, outExpressions);
+            }
+            case ForStatement fs -> {
+                if (fs.init().isPresent()) {
+                    ForInit init = fs.init().get();
+                    if (init instanceof ForInit.VarDecl varDecl) {
+                        collectStatements(varDecl.decl(), outStatements, outExpressions);
+                    } else if (init instanceof ForInit.AssignExpr assignExpr) {
+                        collectExpressions(assignExpr.expr(), outExpressions);
+                    }
+                }
+                if (fs.condition().isPresent()) {
+                    collectExpressions(fs.condition().get(), outExpressions);
+                }
+                if (fs.update().isPresent()) {
+                    collectExpressions(fs.update().get(), outExpressions);
+                }
+                collectStatements(fs.body(), outStatements, outExpressions);
+            }
+            case ForOfStatement fos -> {
+                collectExpressions(fos.iterable(), outExpressions);
+                collectStatements(fos.body(), outStatements, outExpressions);
+            }
+            case ExpressionStatement es -> collectExpressions(es.expr(), outExpressions);
+            case Block block -> block.statements().forEach(st ->
+                collectStatements(st, outStatements, outExpressions));
+            case TryStatement ts -> {
+                collectStatements(ts.tryBlock(), outStatements, outExpressions);
+                collectStatements(ts.catchBlock(), outStatements, outExpressions);
+            }
+            case ThrowStatement throwStatement ->
+                collectExpressions(throwStatement.expr(), outExpressions);
+            default -> { /* declarations without expression positions */ }
+        }
+    }
+
+    /** Source-order expression walk collecting every subexpression. */
+    private static void collectExpressions(ExpressionNode expr, List<ExpressionNode> out) {
+        if (expr == null) {
+            return;
+        }
+        out.add(expr);
+        switch (expr) {
+            case UnaryExpr u -> collectExpressions(u.expr(), out);
+            case BinaryExpr b -> {
+                collectExpressions(b.left(), out);
+                collectExpressions(b.right(), out);
+            }
+            case CallExpr c -> {
+                collectExpressions(c.callee(), out);
+                c.args().forEach(a -> collectExpressions(a, out));
+            }
+            case MemberAccessExpr m -> collectExpressions(m.object(), out);
+            case IndexExpr ix -> {
+                collectExpressions(ix.array(), out);
+                collectExpressions(ix.index(), out);
+            }
+            case ArrayLiteralExpr al -> al.elements().forEach(e -> collectExpressions(e, out));
+            case ObjectLiteralExpr ol -> ol.properties().forEach(p ->
+                collectExpressions(p.value(), out));
+            case TemplateLiteralExpr tl -> tl.parts().forEach(p -> collectExpressions(p, out));
+            case AwaitExpression aw -> collectExpressions(aw.callee(), out);
+            default -> { /* literal and identifier leaves */ }
+        }
+    }
+
+    /** The first AST node of the given class in source order, or null. */
+    @SuppressWarnings("unchecked")
+    private static <T> T first(ProgramNode program, Class<T> type) {
+        List<StatementNode> statements = new ArrayList<>();
+        List<ExpressionNode> expressions = new ArrayList<>();
+        for (StatementNode statement : program.statements()) {
+            collectStatements(statement, statements, expressions);
+        }
+        for (StatementNode statement : statements) {
+            if (type.isInstance(statement)) {
+                return (T) statement;
+            }
+        }
+        for (ExpressionNode expression : expressions) {
+            if (type.isInstance(expression)) {
+                return (T) expression;
+            }
+        }
+        return null;
+    }
+
+    private static void deleteRecursively(Path path) {
+        try {
+            if (path == null || !Files.exists(path)) {
+                return;
+            }
+            try (var walk = Files.walk(path)) {
+                walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                    try {
+                        Files.deleteIfExists(p);
+                    } catch (Exception ignored) {
+                        // Best-effort temp cleanup only; never part of a test result.
+                    }
+                });
+            }
+        } catch (Exception ignored) {
+            // Best-effort temp cleanup only; never part of a test result.
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // I3 arms: CONST / UNARY / BINARY / INTRINSIC_CALL
+    // -------------------------------------------------------------------------
+
+    static void testValueConstAndUnaryArms() {
+        System.out.println("-- I3 CONST/UNARY: selectors, policies, operand types, origins --");
+
+        // CONST over the immediate-minus literal (the I1 parser invariant:
+        // -2147483648 is the combined-token signed32 literal).
+        ValueSlice min = checkValueSlice("function f(): int { return -2147483648 }");
+        if (min != null) {
+            LiteralExpr literal = first(min.program(), LiteralExpr.class);
+            SemanticLowerer.ModuleLowerer lowerer = valueLowerer(min.checks());
+            ValueId result = lowerer.lowerExpression(literal);
+            check(lowerer.ops().size() == 1, "the literal produces exactly one op");
+            SemanticOp op = lowerer.ops().get(0);
+            check(op.kind() == SemanticOpKind.CONST
+                    && op.payload() instanceof KindPayload.ConstPayload constPayload
+                    && constPayload.value() instanceof ScalarValue.Int intValue
+                    && intValue.value() == -2147483648,
+                "CONST carries ScalarValue.Int(-2147483648) — the immediate-minus literal "
+                    + "is signed32 by the I1 parser invariant");
+            check(op.resultType() == RuntimeDescriptor.Int.INSTANCE,
+                "CONST result type is the signed32 int descriptor");
+            check(op.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
+                "CONST policy is NO_DEAL_FAILURE");
+            check(op.result() == result && result instanceof ValueId,
+                "CONST publishes a fresh ValueId result");
+        }
+
+        // UNARY INT32_NEG: -1 -> policy INT32_RESULT (validator-pinned unaryPolicy).
+        ValueSlice negInt = checkValueSlice("function f(): int { return -1 }");
+        if (negInt != null) {
+            UnaryExpr unary = first(negInt.program(), UnaryExpr.class);
+            SemanticLowerer.ModuleLowerer lowerer = valueLowerer(negInt.checks());
+            lowerer.lowerExpression(unary);
+            SemanticOp op = lowerer.ops().get(lowerer.ops().size() - 1);
+            check(op.kind() == SemanticOpKind.UNARY
+                    && op.payload() instanceof KindPayload.UnaryPayload unaryPayload
+                    && unaryPayload.selector() == UnarySelector.INT32_NEG,
+                "unary - over int produces UNARY INT32_NEG");
+            check(op.failurePolicy() == FailurePolicyId.INT32_RESULT,
+                "INT32_NEG is stamped INT32_RESULT from the closed unaryPolicy rule");
+            check(op.operandTypes().size() == 1
+                    && op.operandTypes().get(0) == RuntimeDescriptor.Int.INSTANCE,
+                "the operand type is the pinned one-line int row (identity)");
+            check(op.resultType() == RuntimeDescriptor.Int.INSTANCE,
+                "the result type is the signed32 int descriptor");
+        }
+
+        // UNARY NUMBER_NEG: -1.5 -> NO_DEAL_FAILURE.
+        ValueSlice negNumber = checkValueSlice("function f(): number { return -1.5 }");
+        if (negNumber != null) {
+            UnaryExpr unary = first(negNumber.program(), UnaryExpr.class);
+            SemanticLowerer.ModuleLowerer lowerer = valueLowerer(negNumber.checks());
+            lowerer.lowerExpression(unary);
+            SemanticOp op = lowerer.ops().get(lowerer.ops().size() - 1);
+            check(op.payload() instanceof KindPayload.UnaryPayload unaryPayload
+                    && unaryPayload.selector() == UnarySelector.NUMBER_NEG,
+                "unary - over number produces UNARY NUMBER_NEG");
+            check(op.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE
+                    && op.operandTypes().get(0) == RuntimeDescriptor.Number.INSTANCE
+                    && op.resultType() == RuntimeDescriptor.Number.INSTANCE,
+                "NUMBER_NEG is stamped NO_DEAL_FAILURE with the pinned one-line number "
+                    + "rows (identity)");
+        }
+
+        // UNARY BOOL_NOT: !true -> NO_DEAL_FAILURE.
+        ValueSlice not = checkValueSlice("function f(): boolean { return !true }");
+        if (not != null) {
+            UnaryExpr unary = first(not.program(), UnaryExpr.class);
+            SemanticLowerer.ModuleLowerer lowerer = valueLowerer(not.checks());
+            lowerer.lowerExpression(unary);
+            SemanticOp op = lowerer.ops().get(lowerer.ops().size() - 1);
+            check(op.payload() instanceof KindPayload.UnaryPayload unaryPayload
+                    && unaryPayload.selector() == UnarySelector.BOOL_NOT,
+                "unary ! over boolean produces UNARY BOOL_NOT");
+            check(op.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE
+                    && op.operandTypes().get(0) == RuntimeDescriptor.Boolean.INSTANCE
+                    && op.resultType() == RuntimeDescriptor.Boolean.INSTANCE,
+                "BOOL_NOT is stamped NO_DEAL_FAILURE with the pinned one-line boolean "
+                    + "rows (identity)");
+        }
+
+        // --2147483648: the outer negation over the immediate-minus literal.
+        ValueSlice doubleNeg = checkValueSlice("function f(): int { return --2147483648 }");
+        if (doubleNeg != null) {
+            UnaryExpr unary = first(doubleNeg.program(), UnaryExpr.class);
+            SemanticLowerer.ModuleLowerer lowerer = valueLowerer(doubleNeg.checks());
+            lowerer.lowerExpression(unary);
+            List<SemanticOp> ops = lowerer.ops();
+            check(ops.size() == 2
+                    && ops.get(0).kind() == SemanticOpKind.CONST
+                    && ops.get(1).kind() == SemanticOpKind.UNARY
+                    && ops.get(1).payload() instanceof KindPayload.UnaryPayload up
+                    && up.selector() == UnarySelector.INT32_NEG,
+                "--2147483648 lowers to CONST(-2147483648) then UNARY INT32_NEG "
+                    + "(the runtime E8004 belongs to execution, never to this slice)");
+        }
+    }
+
+    static void testValueBinaryArms() {
+        System.out.println("-- I3 BINARY: int32/number arithmetic selector rows and policies --");
+
+        record BinaryCase(String expr, String returnType, BinarySelector selector,
+                          FailurePolicyId policy) {
+        }
+        List<BinaryCase> cases = List.of(
+            new BinaryCase("1 + 2", "int", BinarySelector.INT32_ADD,
+                FailurePolicyId.INT32_RESULT),
+            new BinaryCase("1 - 2", "int", BinarySelector.INT32_SUB,
+                FailurePolicyId.INT32_RESULT),
+            new BinaryCase("2 * 3", "int", BinarySelector.INT32_MUL,
+                FailurePolicyId.INT32_RESULT),
+            new BinaryCase("6 / 2", "int", BinarySelector.INT32_DIV_TRUNC,
+                FailurePolicyId.INT32_DIVISOR_THEN_RESULT),
+            new BinaryCase("7 % 3", "int", BinarySelector.INT32_MOD_TRUNC,
+                FailurePolicyId.INT32_DIVISOR_THEN_RESULT),
+            new BinaryCase("2 ** 30", "int", BinarySelector.INT32_POW,
+                FailurePolicyId.INT32_EXPONENT_THEN_RESULT),
+            new BinaryCase("1.5 + 2.5", "number", BinarySelector.NUMBER_ADD,
+                FailurePolicyId.NO_DEAL_FAILURE),
+            new BinaryCase("1.5 - 2.5", "number", BinarySelector.NUMBER_SUB,
+                FailurePolicyId.NO_DEAL_FAILURE),
+            new BinaryCase("1.5 * 2.5", "number", BinarySelector.NUMBER_MUL,
+                FailurePolicyId.NO_DEAL_FAILURE),
+            new BinaryCase("6.0 / 2.0", "number", BinarySelector.NUMBER_DIV_IEEE,
+                FailurePolicyId.NO_DEAL_FAILURE),
+            new BinaryCase("7.0 % 3.0", "number", BinarySelector.NUMBER_MOD_FLOOR,
+                FailurePolicyId.NO_DEAL_FAILURE),
+            new BinaryCase("2.0 ** 10.0", "number", BinarySelector.NUMBER_POW_IEEE,
+                FailurePolicyId.NO_DEAL_FAILURE));
+        int covered = 0;
+        for (BinaryCase binaryCase : cases) {
+            ValueSlice slice = checkValueSlice("function f(): " + binaryCase.returnType()
+                + " { return " + binaryCase.expr() + " }");
+            if (slice == null) {
+                continue;
+            }
+            BinaryExpr binary = first(slice.program(), BinaryExpr.class);
+            SemanticLowerer.ModuleLowerer lowerer = valueLowerer(slice.checks());
+            ValueId result = lowerer.lowerExpression(binary);
+            SemanticOp op = lowerer.ops().get(lowerer.ops().size() - 1);
+            check(op.kind() == SemanticOpKind.BINARY
+                    && op.payload() instanceof KindPayload.BinaryPayload binaryPayload
+                    && binaryPayload.selector() == binaryCase.selector()
+                    && binaryPayload.innerDescriptor() == null
+                    && binaryPayload.side() == null,
+                binaryCase.expr() + " produces BINARY " + binaryCase.selector());
+            check(op.failurePolicy() == binaryCase.policy(),
+                binaryCase.selector() + " is stamped " + binaryCase.policy()
+                    + " from the closed binaryPolicy table");
+            check(op.operands().size() == 2 && op.operandTypes().size() == 2
+                    && op.operands().get(0) instanceof ValueId
+                    && op.operands().get(1) instanceof ValueId,
+                "operands appear in source order (left then right)");
+            boolean isInt = binaryCase.selector().name().startsWith("INT32");
+            check(op.operandTypes().get(0) == (isInt ? RuntimeDescriptor.Int.INSTANCE
+                        : RuntimeDescriptor.Number.INSTANCE)
+                    && op.operandTypes().get(1) == (isInt ? RuntimeDescriptor.Int.INSTANCE
+                        : RuntimeDescriptor.Number.INSTANCE)
+                    && op.resultType() == (isInt ? RuntimeDescriptor.Int.INSTANCE
+                        : RuntimeDescriptor.Number.INSTANCE),
+                "operand/result types carry the pinned one-line scalar rows (identity)");
+            check(op.result() == result, "BINARY publishes a fresh ValueId result");
+            String recomputed = ContractSnapshotCanonicalizer.digest(op.contract());
+            check(recomputed.equals(op.contract().canonicalDigest()),
+                "the contract digest recomputes equal (T3-valid op)");
+            check(op.contract().selector() == binaryCase.selector(),
+                "the snapshot carries the exact selector");
+            covered++;
+        }
+        check(covered == cases.size(), "all twelve int32/number arithmetic rows produced");
+    }
+
+    static void testValueIntrinsicArms() {
+        System.out.println("-- I3 INTRINSIC_CALL: INT_CONVERT/NUMBER_CONVERT, zero boundaries --");
+
+        ValueSlice toInt = checkValueSlice("function f(): int { return int(1.5) }");
+        if (toInt != null) {
+            CallExpr call = first(toInt.program(), CallExpr.class);
+            SemanticLowerer.ModuleLowerer lowerer = valueLowerer(toInt.checks());
+            ValueId result = lowerer.lowerExpression(call);
+            List<SemanticOp> ops = lowerer.ops();
+            check(ops.size() == 2
+                    && ops.get(0).kind() == SemanticOpKind.CONST
+                    && ops.get(1).kind() == SemanticOpKind.INTRINSIC_CALL,
+                "int(1.5) lowers to the argument CONST then one INTRINSIC_CALL");
+            SemanticOp op = ops.get(1);
+            check(op.payload() instanceof KindPayload.IntrinsicCallPayload intrinsic
+                    && intrinsic.kind() == IntrinsicKind.INT_CONVERT
+                    && intrinsic.input() == ops.get(0).result(),
+                "the INTRINSIC_CALL payload carries INT_CONVERT and the input ValueId");
+            check(op.failurePolicy() == FailurePolicyId.INT_CONVERSION,
+                "INT_CONVERT is stamped INT_CONVERSION (the closed intrinsic rule)");
+            check(op.operands().size() == 1
+                    && op.operandTypes().get(0) == RuntimeDescriptor.Number.INSTANCE
+                    && op.resultType() == RuntimeDescriptor.Int.INSTANCE,
+                "the input is the number operand row and the result is the signed32 "
+                    + "int descriptor");
+            check(op.result() == result, "INTRINSIC_CALL publishes a fresh ValueId result");
+            boolean hasBoundary = ops.stream()
+                .anyMatch(o -> o.kind() == SemanticOpKind.BOUNDARY);
+            check(!hasBoundary,
+                "INTRINSIC_CALL has zero BOUNDARY children — the conversion policy is the "
+                    + "terminal check");
+        }
+
+        ValueSlice toNumber = checkValueSlice("function f(): number { return number(2) }");
+        if (toNumber != null) {
+            CallExpr call = first(toNumber.program(), CallExpr.class);
+            SemanticLowerer.ModuleLowerer lowerer = valueLowerer(toNumber.checks());
+            lowerer.lowerExpression(call);
+            SemanticOp op = lowerer.ops().get(lowerer.ops().size() - 1);
+            check(op.payload() instanceof KindPayload.IntrinsicCallPayload intrinsic
+                    && intrinsic.kind() == IntrinsicKind.NUMBER_CONVERT,
+                "number(2) produces INTRINSIC_CALL NUMBER_CONVERT");
+            check(op.failurePolicy() == FailurePolicyId.NUMBER_CONVERSION,
+                "NUMBER_CONVERT is stamped NUMBER_CONVERSION (the closed intrinsic rule)");
+            check(op.operandTypes().get(0) == RuntimeDescriptor.Int.INSTANCE
+                    && op.resultType() == RuntimeDescriptor.Number.INSTANCE,
+                "the input is the int operand row and the result is the number descriptor");
+        }
+
+        // A non-intrinsic call is a foreign construct in this slice.
+        ValueSlice userCall = checkValueSlice("""
+            function g(x: number): number { return x }
+            function f(): number { return g(1.5) }
+            """);
+        if (userCall != null) {
+            CallExpr call = null;
+            List<StatementNode> statements = new ArrayList<>();
+            List<ExpressionNode> expressions = new ArrayList<>();
+            for (StatementNode statement : userCall.program().statements()) {
+                collectStatements(statement, statements, expressions);
+            }
+            for (ExpressionNode expression : expressions) {
+                if (expression instanceof CallExpr c
+                        && c.callee() instanceof IdentifierExpr id
+                        && !"int".equals(id.name()) && !"number".equals(id.name())) {
+                    call = c;
+                    break;
+                }
+            }
+            SemanticLowerer.ModuleLowerer lowerer = valueLowerer(userCall.checks());
+            RuntimeException defect = null;
+            try {
+                lowerer.lowerExpression(call);
+            } catch (SemanticLowerer.ConstructUnlowered unlowered) {
+                defect = unlowered;
+            }
+            check(defect != null, "a user call raises ConstructUnlowered (the CALL "
+                + "machinery is E7's)");
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Validated units, the R-POLICY-KIND negative, profile rejection, foreign
+    // constructs, determinism
+    // -------------------------------------------------------------------------
+
+    static void testValueValidatedUnitAndPolicyNegative() {
+        System.out.println("-- I3 validated unit + the R-POLICY-KIND negative control --");
+
+        ValueSlice slice = checkValueSlice("""
+            function f(): int {
+              return -(2 ** 30) + int(number(2)) * -(-2147483648) / 7 % 3
+            }
+            """);
+        if (slice == null) {
+            return;
+        }
+        ReturnStatement returnStatement = first(slice.program(), ReturnStatement.class);
+        ExpressionNode root = returnStatement.expr().orElse(null);
+        SemanticLowerer.ModuleLowerer lowerer = valueLowerer(slice.checks());
+        ValueId produced = lowerer.lowerExpression(root);
+        check(produced != null, "the mixed value-operation tree lowers");
+        LoweredModuleUnit unit = lowerer.buildUnit(valueCoverage(),
+            List.of(), VALUE_INTERFACE_HASH, VALUE_REGISTRY_HASH);
+        Optional<CompilerDiagnostic> failure = SemanticIrValidator.validate(unit,
+            new SemanticIrValidator.ComparisonFacts(VALUE_INTERFACE_HASH,
+                SemanticProfile.DEAL_V1_2_INT32, VALUE_REGISTRY_HASH));
+        check(failure.isEmpty(),
+            "the produced unit passes the closed validator (selector->policy stamping "
+                + "accepted against the closed tables): " + failure);
+        if (failure.isEmpty()) {
+            check(unit.requiredCapabilities().isEmpty(),
+                "the unit claims the empty capability set (the manifest's plan-time "
+                    + "claims are routing facts)");
+            for (SemanticOp op : unit.ops()) {
+                check(op.kind() == SemanticOpKind.CONST
+                        || op.kind() == SemanticOpKind.UNARY
+                        || op.kind() == SemanticOpKind.BINARY
+                        || op.kind() == SemanticOpKind.INTRINSIC_CALL,
+                    "every produced op is a value-operation kind; got " + op.kind());
+            }
+            boolean sawMinLiteral = unit.ops().stream().anyMatch(op ->
+                op.kind() == SemanticOpKind.CONST
+                    && op.payload() instanceof KindPayload.ConstPayload constPayload
+                    && constPayload.value() instanceof ScalarValue.Int intValue
+                    && intValue.value() == -2147483648);
+            check(sawMinLiteral,
+                "the immediate-minus literal -2147483648 lowers through the corpus");
+        }
+
+        // The R-POLICY-KIND negative: a deliberately wrong selector->policy
+        // pair — INT32_ADD stamped NUMBER_CONVERSION — fails the validator.
+        LoweredModuleUnit wrongUnit = tamperedPolicyUnit(
+            BinarySelector.INT32_ADD, FailurePolicyId.NUMBER_CONVERSION);
+        Optional<CompilerDiagnostic> wrongFailure = SemanticIrValidator.validate(wrongUnit,
+            new SemanticIrValidator.ComparisonFacts(VALUE_INTERFACE_HASH,
+                SemanticProfile.DEAL_V1_2_INT32, VALUE_REGISTRY_HASH));
+        check(wrongFailure.isPresent()
+                && wrongFailure.get().message().contains(SemanticIrValidator.R_POLICY_KIND),
+            "INT32_ADD stamped NUMBER_CONVERSION fails R-POLICY-KIND: " + wrongFailure);
+
+        // The same negative for the unary rule.
+        LoweredModuleUnit wrongUnary = tamperedUnaryPolicyUnit(
+            UnarySelector.INT32_NEG, FailurePolicyId.NO_DEAL_FAILURE);
+        Optional<CompilerDiagnostic> wrongUnaryFailure =
+            SemanticIrValidator.validate(wrongUnary,
+                new SemanticIrValidator.ComparisonFacts(VALUE_INTERFACE_HASH,
+                    SemanticProfile.DEAL_V1_2_INT32, VALUE_REGISTRY_HASH));
+        check(wrongUnaryFailure.isPresent()
+                && wrongUnaryFailure.get().message()
+                    .contains(SemanticIrValidator.R_POLICY_KIND),
+            "INT32_NEG stamped NO_DEAL_FAILURE fails R-POLICY-KIND: "
+                + wrongUnaryFailure);
+    }
+
+    /** Builds a synthetic one-op unit around a tampered BINARY policy pair. */
+    private static LoweredModuleUnit tamperedPolicyUnit(BinarySelector selector,
+                                                        FailurePolicyId policy) {
+        ValueId left = new ValueId(1);
+        ValueId right = new ValueId(2);
+        ValueId result = new ValueId(3);
+        OpId opId = new OpId(VALUE_MODULE, 1);
+        SourceOrigin origin = new SourceOrigin(VALUE_SOURCE_ID,
+            SourceSpan.synthetic(VALUE_SOURCE_ID), SourceOriginKind.SYNTHETIC,
+            new AnchorId(1), null);
+        KindPayload.BinaryPayload payload =
+            new KindPayload.BinaryPayload(selector, null, null);
+        OperationContractSnapshot placeholder = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, SemanticOpKind.BINARY,
+            RuntimeDescriptor.Int.INSTANCE,
+            List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
+            selector, payload, policy, List.of(), "placeholder");
+        String digest = ContractSnapshotCanonicalizer.digest(placeholder);
+        OperationContractSnapshot contract = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, SemanticOpKind.BINARY,
+            RuntimeDescriptor.Int.INSTANCE,
+            List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
+            selector, payload, policy, List.of(), digest);
+        SemanticOp op = new SemanticOp(opId, SemanticOpKind.BINARY, origin, result,
+            RuntimeDescriptor.Int.INSTANCE, List.of(left, right),
+            List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
+            payload, policy, contract);
+        return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
+            SemanticProfile.DEAL_V1_2_INT32, VALUE_MODULE, VALUE_INTERFACE_HASH,
+            LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32,
+                VALUE_REGISTRY_HASH),
+            EnumSet.noneOf(SemanticCapability.class), Map.of(), Map.of(), Map.of(),
+            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
+            List.of(op));
+    }
+
+    /** Builds a synthetic one-op unit around a tampered UNARY policy pair. */
+    private static LoweredModuleUnit tamperedUnaryPolicyUnit(UnarySelector selector,
+                                                             FailurePolicyId policy) {
+        ValueId operand = new ValueId(1);
+        ValueId result = new ValueId(2);
+        OpId opId = new OpId(VALUE_MODULE, 1);
+        SourceOrigin origin = new SourceOrigin(VALUE_SOURCE_ID,
+            SourceSpan.synthetic(VALUE_SOURCE_ID), SourceOriginKind.SYNTHETIC,
+            new AnchorId(1), null);
+        KindPayload.UnaryPayload payload = new KindPayload.UnaryPayload(selector);
+        OperationContractSnapshot placeholder = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, SemanticOpKind.UNARY,
+            RuntimeDescriptor.Int.INSTANCE, List.of(RuntimeDescriptor.Int.INSTANCE),
+            selector, payload, policy, List.of(), "placeholder");
+        String digest = ContractSnapshotCanonicalizer.digest(placeholder);
+        OperationContractSnapshot contract = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, SemanticOpKind.UNARY,
+            RuntimeDescriptor.Int.INSTANCE, List.of(RuntimeDescriptor.Int.INSTANCE),
+            selector, payload, policy, List.of(), digest);
+        SemanticOp op = new SemanticOp(opId, SemanticOpKind.UNARY, origin, result,
+            RuntimeDescriptor.Int.INSTANCE, List.of(operand),
+            List.of(RuntimeDescriptor.Int.INSTANCE), payload, policy, contract);
+        return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
+            SemanticProfile.DEAL_V1_2_INT32, VALUE_MODULE, VALUE_INTERFACE_HASH,
+            LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32,
+                VALUE_REGISTRY_HASH),
+            EnumSet.noneOf(SemanticCapability.class), Map.of(), Map.of(), Map.of(),
+            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
+            List.of(op));
+    }
+
+    static void testValueLegacyProfileRejected() {
+        System.out.println("-- I3 profile guard: LEGACY_SAFE_INT is rejected before any op --");
+
+        ValueSlice slice = checkValueSlice("for (let s: string of \"a\") {}");
+        if (slice == null) {
+            return;
+        }
+        Map<ConstructKind, List<SemanticOpKind>> coverage = Map.of(
+            ConstructKind.SCALAR_LITERAL, ConstructKind.SCALAR_LITERAL.mappedOpKinds(),
+            ConstructKind.IF_WHILE_FOR_FOR_OF,
+            ConstructKind.IF_WHILE_FOR_FOR_OF.mappedOpKinds());
+
+        // The control: the same module lowers fine under DEAL_V1_2_INT32.
+        SemanticLowerer.LoweringResult control = SemanticLowerer.lowerModule(
+            moduleOf(slice), SemanticProfile.DEAL_V1_2_INT32, coverage,
+            VALUE_INTERFACE_HASH, VALUE_REGISTRY_HASH,
+            SemanticIdAllocator.over(List.of(VALUE_MODULE)));
+        check(control != null && !control.hasErrors() && control.unit() != null,
+            "the control lowering succeeds under DEAL_V1_2_INT32");
+
+        // The guard: a LEGACY_SAFE_INT lowering request fails E6005 with no
+        // unit — the rejection runs before any op is built.
+        SemanticLowerer.LoweringResult rejected = SemanticLowerer.lowerModule(
+            moduleOf(slice), SemanticProfile.LEGACY_SAFE_INT, coverage,
+            VALUE_INTERFACE_HASH, VALUE_REGISTRY_HASH,
+            SemanticIdAllocator.over(List.of(VALUE_MODULE)));
+        check(rejected != null && rejected.hasErrors() && rejected.unit() == null,
+            "the LEGACY_SAFE_INT lowering request fails with no unit");
+        if (rejected != null && rejected.hasErrors()) {
+            check(rejected.diagnostics().size() == 1,
+                "exactly one E6005 diagnostic; got " + rejected.diagnostics().size());
+            CompilerDiagnostic diagnostic = rejected.diagnostics().get(0);
+            check("E6005".equals(diagnostic.code())
+                    && diagnostic.diagnosticCode() == DiagnosticCode.E6005
+                    && "error".equals(diagnostic.severity()),
+                "the rejection is error-severity E6005");
+            check(diagnostic.message()
+                    .contains(SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED),
+                "the diagnostic names the pinned profile-guard rule: "
+                    + diagnostic.message());
+            check(diagnostic.message().contains("semanticProfile LEGACY_SAFE_INT"),
+                "the diagnostic carries the offending profile");
+        }
+    }
+
+    static void testValueOutOfScopeConstruct() {
+        System.out.println("-- I3 foreign constructs: E6005 naming the construct --");
+
+        ValueSlice slice = checkValueSlice("""
+            if (true) {}
+            """);
+        if (slice == null) {
+            return;
+        }
+        SemanticLowerer.LoweringResult result = SemanticLowerer.lowerModule(
+            moduleOf(slice), SemanticProfile.DEAL_V1_2_INT32, valueCoverage(),
+            VALUE_INTERFACE_HASH, VALUE_REGISTRY_HASH,
+            SemanticIdAllocator.over(List.of(VALUE_MODULE)));
+        check(result != null && result.hasErrors() && result.unit() == null,
+            "a module with an if-statement fails hard with no unit (never a reroute)");
+        if (result != null && result.hasErrors()) {
+            check(result.diagnostics().size() == 1,
+                "exactly one E6005 diagnostic; got " + result.diagnostics().size());
+            CompilerDiagnostic diagnostic = result.diagnostics().get(0);
+            check("E6005".equals(diagnostic.code())
+                    && diagnostic.message()
+                        .contains(SemanticLowerer.CONSTRUCT_UNLOWERED),
+                "the E6005 names CONSTRUCT_UNLOWERED: " + diagnostic.message());
+            check(diagnostic.message().contains("if statement"),
+                "the E6005 names the construct (if statement): "
+                    + diagnostic.message());
+        }
+    }
+
+    static void testValueScalarDescriptorRowsSingleProducer() throws Exception {
+        System.out.println("-- I3 scalar descriptor rows: the pinned one-line rows through "
+            + "the single producer --");
+
+        // The slice admits exactly the pinned one-line scalar rows and
+        // realizes them through the single DescriptorService producer
+        // (ISSUE-0233's producer-singularity gate: no production file
+        // outside DescriptorService maps Type -> RuntimeDescriptor). The
+        // slice builds no structural descriptor service and constructs no
+        // descriptor directly.
+        String source = Files.readString(Path.of("deal/semantic/SemanticLowerer.java"));
+        check(source.contains("DescriptorService.describe(type)"),
+            "the slice's pinned scalar rows realize through the single "
+                + "DescriptorService producer");
+        check(!source.contains("new RuntimeDescriptor."),
+            "the slice constructs no RuntimeDescriptor directly (the structural "
+                + "descriptor service is ISSUE-0233's and is not built here)");
+    }
+
+    static void testValueDeterminism() {
+        System.out.println("-- I3 determinism: repeated lowering produces byte-identical dumps --");
+
+        ValueSlice slice = checkValueSlice("""
+            function f(): int {
+              return -(2147483647 + 1) + int(number(2)) * -(-2147483648) / 7 % 3
+            }
+            """);
+        if (slice == null) {
+            return;
+        }
+        ReturnStatement returnStatement = first(slice.program(), ReturnStatement.class);
+        ExpressionNode root = returnStatement.expr().orElse(null);
+
+        SemanticLowerer.ModuleLowerer firstLowerer = valueLowerer(slice.checks());
+        firstLowerer.lowerExpression(root);
+        LoweredModuleUnit first = firstLowerer.buildUnit(valueCoverage(), List.of(),
+            VALUE_INTERFACE_HASH, VALUE_REGISTRY_HASH);
+        Optional<CompilerDiagnostic> firstFailure = SemanticIrValidator.validate(first,
+            new SemanticIrValidator.ComparisonFacts(VALUE_INTERFACE_HASH,
+                SemanticProfile.DEAL_V1_2_INT32, VALUE_REGISTRY_HASH));
+        check(firstFailure.isEmpty(), "the first lowering validates: " + firstFailure);
+
+        SemanticLowerer.ModuleLowerer secondLowerer = valueLowerer(slice.checks());
+        secondLowerer.lowerExpression(root);
+        LoweredModuleUnit second = secondLowerer.buildUnit(valueCoverage(), List.of(),
+            VALUE_INTERFACE_HASH, VALUE_REGISTRY_HASH);
+        Optional<CompilerDiagnostic> secondFailure = SemanticIrValidator.validate(second,
+            new SemanticIrValidator.ComparisonFacts(VALUE_INTERFACE_HASH,
+                SemanticProfile.DEAL_V1_2_INT32, VALUE_REGISTRY_HASH));
+        check(secondFailure.isEmpty(), "the repeated lowering validates: "
+            + secondFailure);
+        if (firstFailure.isEmpty() && secondFailure.isEmpty()) {
+            check(Arrays.equals(SemanticIrDumper.dumpModule(first),
+                    SemanticIrDumper.dumpModule(second)),
+                "two fresh lowerings produce byte-identical unit dumps (D8/D10)");
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Combined verification (T1 + T3): the invocation path, the profile-aware
+    // parser, and one real lowering run through the orchestrator's checked facts.
+    // -------------------------------------------------------------------------
+
+    static void testCombinedInvocationParserAndLowering() throws Exception {
+        System.out.println("-- Combined T1+T3: COMMON_SHADOW + DEAL_V1_2_INT32 + "
+            + "PRE_ACTIVATION parse, lower, validate --");
+
+        Path tmp = Files.createTempDirectory("deal-foundation-i3-combined");
+        try {
+            Path src = tmp.resolve("src");
+            Files.createDirectories(src);
+            Files.writeString(src.resolve("main.deal"), """
+                export function test(): int {
+                  return -(2147483647 + 1) + int(number(2)) * -(-2147483648) / 7 % 3
+                }
+
+                export function main(): null { return null; }
+                """);
+
+            // T1 invocation path + T3 profile-aware parser through the real
+            // orchestrator.
+            CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry());
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                src.resolve("main.deal").toAbsolutePath(), tmp.resolve("build"), false,
+                false, false, false, Backend.LUAJIT, null, List.of(src.toAbsolutePath()),
+                Path.of("std").toAbsolutePath().normalize(), null, invocation);
+            boolean ok = orchestrator.compile();
+            check(ok, "the COMMON_SHADOW + DEAL_V1_2_INT32 + PRE_ACTIVATION compile "
+                + "succeeds (the -2147483648 immediate token parses): "
+                + orchestrator.diagnostics());
+            check(orchestrator.invocation().purpose() == InvocationPurpose.COMMON_SHADOW
+                    && orchestrator.invocation().semanticProfile()
+                        == SemanticProfile.DEAL_V1_2_INT32
+                    && orchestrator.invocation().releaseState()
+                        == ReleaseState.PRE_ACTIVATION,
+                "the invocation carries exactly one purpose/profile/release state");
+            if (!ok) {
+                return;
+            }
+            CheckedModuleInput module = null;
+            for (CheckedModuleInput candidate
+                    : orchestrator.checkedProject().input().modules()) {
+                if ("main".equals(candidate.moduleId().path())) {
+                    module = candidate;
+                }
+            }
+            check(module != null, "the checked project carries the entry module");
+
+            // The manifest claims: int constructs claim SIGNED_INT32 (the
+            // fixture's int literals/negation/arithmetic/int()).
+            boolean manifestClaimsSigned = orchestrator.requirementManifests() != null
+                && !orchestrator.requirementManifests().hasErrors()
+                && orchestrator.requirementManifests().manifests().stream()
+                    .filter(m -> m.moduleId().path().equals("main"))
+                    .allMatch(m -> m.capabilities()
+                        .contains(SemanticCapability.SIGNED_INT32));
+            check(manifestClaimsSigned,
+                "the combined fixture's manifest claims SIGNED_INT32 (int constructs)");
+
+            // One real lowering run over the invocation's checked facts: the
+            // value-operation roots in source order, then the validated unit.
+            SemanticLowerer.ModuleLowerer lowerer =
+                new SemanticLowerer.ModuleLowerer(module.moduleId(), module.sourceId(),
+                    module.checks(), SemanticIdAllocator.over(
+                        orchestrator.checkedProject().input().modules().stream()
+                            .map(CheckedModuleInput::moduleId).toList()));
+            List<ExpressionNode> roots = new ArrayList<>();
+            for (StatementNode statement : module.ast().statements()) {
+                collectValueRootsStatement(statement, roots);
+            }
+            check(!roots.isEmpty(), "the fixture yields value-operation roots");
+            for (ExpressionNode root : roots) {
+                lowerer.lowerExpression(root);
+            }
+            LoweredModuleUnit unit = lowerer.buildUnit(valueCoverage(),
+                module.imports().stream()
+                    .map(deal.semantic.ir.ResolvedImport::resolvedModuleId).toList(),
+                orchestrator.checkedProject().index().interfaceIndexDigest(),
+                invocation.capabilityRegistryHash());
+            Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+                new SemanticIrValidator.ComparisonFacts(
+                    orchestrator.checkedProject().index().interfaceIndexDigest(),
+                    SemanticProfile.DEAL_V1_2_INT32,
+                    invocation.capabilityRegistryHash()));
+            check(validation.isEmpty(),
+                "the lowered unit validates against the real index digest and the "
+                    + "invocation's lowering-context facts: " + validation);
+            if (validation.isPresent()) {
+                return;
+            }
+            List<SemanticOpKind> kinds = unit.ops().stream().map(SemanticOp::kind)
+                .distinct().toList();
+            check(kinds.contains(SemanticOpKind.CONST)
+                    && kinds.contains(SemanticOpKind.UNARY)
+                    && kinds.contains(SemanticOpKind.BINARY)
+                    && kinds.contains(SemanticOpKind.INTRINSIC_CALL),
+                "the one lowering run produces CONST/UNARY/BINARY/INTRINSIC_CALL: "
+                    + kinds);
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() == SemanticOpKind.UNARY
+                        && op.payload() instanceof KindPayload.UnaryPayload up) {
+                    check(op.failurePolicy()
+                            == SemanticIrValidator.unaryPolicy(up.selector()),
+                        "UNARY " + up.selector() + " is stamped "
+                            + SemanticIrValidator.unaryPolicy(up.selector()));
+                }
+                if (op.kind() == SemanticOpKind.BINARY
+                        && op.payload() instanceof KindPayload.BinaryPayload bp) {
+                    check(op.failurePolicy()
+                            == SemanticIrValidator.binaryPolicy(bp.selector()),
+                        "BINARY " + bp.selector() + " is stamped "
+                            + SemanticIrValidator.binaryPolicy(bp.selector()));
+                }
+                if (op.kind() == SemanticOpKind.INTRINSIC_CALL
+                        && op.payload() instanceof KindPayload.IntrinsicCallPayload ip) {
+                    check(op.failurePolicy()
+                            == SemanticIrValidator.intrinsicPolicy(ip.kind()),
+                        "INTRINSIC_CALL " + ip.kind() + " is stamped "
+                            + SemanticIrValidator.intrinsicPolicy(ip.kind()));
+                }
+            }
+            boolean sawMinLiteral = unit.ops().stream().anyMatch(op ->
+                op.kind() == SemanticOpKind.CONST
+                    && op.payload() instanceof KindPayload.ConstPayload constPayload
+                    && constPayload.value() instanceof ScalarValue.Int intValue
+                    && intValue.value() == -2147483648);
+            check(sawMinLiteral,
+                "the parser invariant lands in the unit: -2147483648 is the signed32 "
+                    + "combined-token literal");
+
+            // T3 negative through the same invocation path: a bare
+            // out-of-range literal is E1036 at the token.
+            Files.writeString(src.resolve("overflow.deal"), """
+                export function bad(): int {
+                  return 2147483648
+                }
+
+                export function main(): null { return null; }
+                """);
+            CompilationOrchestrator overflow = new CompilationOrchestrator(
+                src.resolve("overflow.deal").toAbsolutePath(),
+                tmp.resolve("build-overflow"), false, false, false, false,
+                Backend.LUAJIT, null, List.of(src.toAbsolutePath()),
+                Path.of("std").toAbsolutePath().normalize(), null, invocation);
+            boolean overflowOk = overflow.compile();
+            check(!overflowOk, "the v1.2 compile of '2147483648' fails through real "
+                + "phase-0 discovery/parsing");
+            List<CompilerDiagnostic> diags = overflow.diagnostics();
+            check(diags.size() == 1 && "E1036".equals(diags.get(0).code())
+                    && "Integer literal out of range: 2147483648"
+                        .equals(diags.get(0).message()),
+                "the phase-0 diagnostic is E1036 'Integer literal out of range: "
+                    + "2147483648': " + diags);
+
+            // The parenthesized form is not the immediate token: E1036 too.
+            Files.writeString(src.resolve("paren.deal"), """
+                export function bad(): int {
+                  return -(2147483648)
+                }
+
+                export function main(): null { return null; }
+                """);
+            CompilationOrchestrator paren = new CompilationOrchestrator(
+                src.resolve("paren.deal").toAbsolutePath(),
+                tmp.resolve("build-paren"), false, false, false, false,
+                Backend.LUAJIT, null, List.of(src.toAbsolutePath()),
+                Path.of("std").toAbsolutePath().normalize(), null, invocation);
+            boolean parenOk = paren.compile();
+            check(!parenOk && paren.diagnostics().stream()
+                    .anyMatch(d -> "E1036".equals(d.code())
+                        && d.message()
+                            .contains("Integer literal out of range: 2147483648")),
+                "-(2147483648) is E1036 (the parenthesized literal reaches the "
+                    + "general literal arm, never the immediate token): "
+                    + paren.diagnostics());
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    /** Collects the value-operation roots of one statement (non-value-op
+     * children recurse; a value-op construct is a root and is not descended). */
+    private static void collectValueRootsStatement(StatementNode statement,
+                                                   List<ExpressionNode> out) {
+        switch (statement) {
+            case ExportDeclaration ed -> collectValueRootsStatement(ed.declaration(), out);
+            case Block block -> block.statements()
+                .forEach(st -> collectValueRootsStatement(st, out));
+            case FunctionDeclaration fd -> collectValueRootsStatement(fd.body(), out);
+            case VariableDeclaration vd -> collectValueRootsExpression(vd.initializer(), out);
+            case ReturnStatement rs ->
+                rs.expr().ifPresent(e -> collectValueRootsExpression(e, out));
+            case IfStatement is -> {
+                collectValueRootsExpression(is.condition(), out);
+                collectValueRootsStatement(is.thenBlock(), out);
+                is.elseBranch().ifPresent(branch -> {
+                    if (branch instanceof Either.Left<IfStatement, Block> left) {
+                        collectValueRootsStatement(left.value(), out);
+                    } else if (branch instanceof Either.Right<IfStatement, Block> right) {
+                        collectValueRootsStatement(right.value(), out);
+                    }
+                });
+            }
+            case WhileStatement ws -> {
+                collectValueRootsExpression(ws.condition(), out);
+                collectValueRootsStatement(ws.body(), out);
+            }
+            case ForStatement fs -> {
+                if (fs.init().isPresent()) {
+                    ForInit init = fs.init().get();
+                    if (init instanceof ForInit.VarDecl varDecl) {
+                        collectValueRootsStatement(varDecl.decl(), out);
+                    } else if (init instanceof ForInit.AssignExpr assignExpr) {
+                        collectValueRootsExpression(assignExpr.expr(), out);
+                    }
+                }
+                if (fs.condition().isPresent()) {
+                    collectValueRootsExpression(fs.condition().get(), out);
+                }
+                if (fs.update().isPresent()) {
+                    collectValueRootsExpression(fs.update().get(), out);
+                }
+                collectValueRootsStatement(fs.body(), out);
+            }
+            case ForOfStatement fos -> {
+                collectValueRootsExpression(fos.iterable(), out);
+                collectValueRootsStatement(fos.body(), out);
+            }
+            case ExpressionStatement es -> collectValueRootsExpression(es.expr(), out);
+            case TryStatement ts -> {
+                collectValueRootsStatement(ts.tryBlock(), out);
+                collectValueRootsStatement(ts.catchBlock(), out);
+            }
+            case ThrowStatement throwStatement ->
+                collectValueRootsExpression(throwStatement.expr(), out);
+            default -> { /* declarations without expression positions */ }
+        }
+    }
+
+    /** True iff the expression is a value-operation construct of the I3 slice. */
+    private static boolean isValueConstruct(ExpressionNode expr) {
+        if (expr instanceof LiteralExpr || expr instanceof UnaryExpr) {
+            return true;
+        }
+        if (expr instanceof BinaryExpr binary) {
+            return switch (binary.op()) {
+                case ADD, SUB, MUL, DIV, MOD, POW -> true;
+                case EQ, NEQ, LT, LTE, GT, GTE, AND, OR -> false;
+            };
+        }
+        return expr instanceof CallExpr call
+            && call.callee() instanceof IdentifierExpr identifier
+            && ("int".equals(identifier.name()) || "number".equals(identifier.name()));
+    }
+
+    /** Walks one expression: a value-op construct is a root; otherwise recurse. */
+    private static void collectValueRootsExpression(ExpressionNode expr,
+                                                    List<ExpressionNode> out) {
+        if (expr == null) {
+            return;
+        }
+        if (isValueConstruct(expr)) {
+            out.add(expr);
+            return;
+        }
+        switch (expr) {
+            case BinaryExpr b -> {
+                collectValueRootsExpression(b.left(), out);
+                collectValueRootsExpression(b.right(), out);
+            }
+            case UnaryExpr u -> collectValueRootsExpression(u.expr(), out);
+            case CallExpr c -> {
+                collectValueRootsExpression(c.callee(), out);
+                c.args().forEach(a -> collectValueRootsExpression(a, out));
+            }
+            case MemberAccessExpr m -> collectValueRootsExpression(m.object(), out);
+            case IndexExpr ix -> {
+                collectValueRootsExpression(ix.array(), out);
+                collectValueRootsExpression(ix.index(), out);
+            }
+            case ArrayLiteralExpr al -> al.elements()
+                .forEach(e -> collectValueRootsExpression(e, out));
+            case ObjectLiteralExpr ol -> ol.properties()
+                .forEach(p -> collectValueRootsExpression(p.value(), out));
+            case TemplateLiteralExpr tl -> tl.parts()
+                .forEach(p -> collectValueRootsExpression(p, out));
+            case AwaitExpression aw -> collectValueRootsExpression(aw.callee(), out);
+            default -> { /* identifier leaves and other foreign constructs */ }
+        }
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
     public static void main(String[] args) {
-        System.out.println("=== Lowering Foundation Test (ISSUE-0281 + ISSUE-0390) ===\n");
+        System.out.println("=== Lowering Foundation Test (ISSUE-0281 + ISSUE-0390 + "
+            + "ISSUE-0395) ===\n");
 
         testE6005Registration();
 
@@ -1096,6 +2217,24 @@ public class LoweringFoundationTest {
         testSharedValueSemanticsComparisons();
         testSharedValueSemanticsOrigins();
         testSelectorPolicyCrossCheck();
+
+        testValueConstAndUnaryArms();
+        testValueBinaryArms();
+        testValueIntrinsicArms();
+        testValueValidatedUnitAndPolicyNegative();
+        testValueLegacyProfileRejected();
+        testValueOutOfScopeConstruct();
+        try {
+            testValueScalarDescriptorRowsSingleProducer();
+        } catch (Exception descriptorScanFailure) {
+            fail("the descriptor-row single-producer scan threw: " + descriptorScanFailure);
+        }
+        testValueDeterminism();
+        try {
+            testCombinedInvocationParserAndLowering();
+        } catch (Exception combinedFailure) {
+            fail("the combined T1+T3 invocation/lowering run threw: " + combinedFailure);
+        }
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
