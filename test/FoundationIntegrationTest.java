@@ -162,6 +162,7 @@ public class FoundationIntegrationTest {
             testReleaseConfigurationConsumers();
             testArmedStateAndRollbackOwnedHalves();
             testCommonShadowPreActivationWiringProof();
+            testProfileAwareParserWiringProof();
         } catch (Throwable t) {
             failed++;
             System.err.println("FAIL: unexpected " + t);
@@ -1376,6 +1377,88 @@ public class FoundationIntegrationTest {
                 check(plan.shadowModules().isEmpty() && plan.abiEdges().isEmpty(),
                     "the plan has empty shadowModules and no ABI records");
             }
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    // 9. Wiring proof: profile-aware phase-0 parsing (signed-int32
+    // foundation I1) through the real orchestrator under
+    // COMMON_SHADOW + DEAL_V1_2_INT32 + PRE_ACTIVATION
+    // =========================================================================
+
+    static void testProfileAwareParserWiringProof() throws Exception {
+        System.out.println("-- Wiring proof: profile-aware parser (I1) through real "
+            + "phase-0 discovery under COMMON_SHADOW + DEAL_V1_2_INT32 + "
+            + "PRE_ACTIVATION --");
+
+        Path tmp = Files.createTempDirectory("deal-foundation-parser-i1");
+        try {
+            Path src = tmp.resolve("src");
+            Files.createDirectories(src);
+
+            CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry());
+
+            // (a) The bare out-of-range literal raises E1036 at the token
+            // during real phase-0 discovery/parsing.
+            Files.writeString(src.resolve("overflow.deal"), """
+                export function bad(): int {
+                  return 2147483648
+                }
+
+                export function main(): null { return null; }
+                """);
+            CompilationOrchestrator overflow = new CompilationOrchestrator(
+                src.resolve("overflow.deal").toAbsolutePath(),
+                tmp.resolve("build-overflow"), false, false, false, false,
+                Backend.LUAJIT, null, List.of(src.toAbsolutePath()),
+                Path.of("std").toAbsolutePath().normalize(), null, invocation);
+            boolean ok = overflow.compile();
+            check(!ok, "the v1.2 compile of '2147483648' fails through real "
+                + "phase-0 discovery/parsing");
+            List<CompilerDiagnostic> diags = overflow.diagnostics();
+            check(diags.size() == 1,
+                "the v1.2 out-of-range compile reports exactly one diagnostic: "
+                    + diags);
+            if (!diags.isEmpty()) {
+                CompilerDiagnostic d = diags.get(0);
+                check("E1036".equals(d.code()) && "error".equals(d.severity())
+                        && "Integer literal out of range: 2147483648"
+                            .equals(d.message()),
+                    "the phase-0 diagnostic is E1036 'Integer literal out of "
+                        + "range: 2147483648' at error severity: " + d);
+                check(d.line() == 2 && d.column() == 10,
+                    "the E1036 diagnostic is anchored at the offending token "
+                        + "(line 2, column 10): got line " + d.line()
+                        + ", column " + d.column());
+                check(d.file() != null
+                        && d.file().replace(java.io.File.separatorChar, '/')
+                            .endsWith("overflow.deal"),
+                    "the E1036 diagnostic names the parsed module file: " + d.file());
+            }
+
+            // (b) The immediate-minus in-range literal parses through
+            // phase 0 and the compile proceeds to completion.
+            Files.writeString(src.resolve("min.deal"), """
+                export function int32_min(): int {
+                  return -2147483648
+                }
+
+                export function main(): null { return null; }
+                """);
+            CompilationOrchestrator min = new CompilationOrchestrator(
+                src.resolve("min.deal").toAbsolutePath(),
+                tmp.resolve("build-min"), false, false, false, false,
+                Backend.LUAJIT, null, List.of(src.toAbsolutePath()),
+                Path.of("std").toAbsolutePath().normalize(), null, invocation);
+            boolean minOk = min.compile();
+            check(minOk, "the v1.2 compile of '-2147483648' parses through "
+                + "phase 0 and proceeds to completion: " + min.diagnostics());
+            check(min.diagnostics().isEmpty(),
+                "the v1.2 '-2147483648' compile reports no diagnostics: "
+                    + min.diagnostics());
         } finally {
             deleteRecursively(tmp);
         }
