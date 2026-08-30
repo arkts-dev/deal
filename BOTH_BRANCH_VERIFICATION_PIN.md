@@ -8,9 +8,18 @@ verification contract, Verification 1–5 and 10;
 `luajit-v1.2-stdlib-contracts` D6 and Verification 5;
 `luajit-v1.2-conformance-retirement-and-gate` D3).
 
-Canonical revision: `ef152ada8f57894c1a96e8ed99e5f284ff00d5dc`
-(the canonical HEAD; the pre-unit staged state pinned by ISSUE-0399,
-`PRE_UNIT_STAGED_STATE_PIN.md`).
+Canonical revision: `673fea12558576886ce2c61a977ebabec67907db`
+(the canonical HEAD after the mandated rebase; the pre-unit staged state
+pinned by ISSUE-0399, `PRE_UNIT_STAGED_STATE_PIN.md`). This record was
+originally captured at `ef152ada8f57894c1a96e8ed99e5f284ff00d5dc`
+(MR-0274's merge); between the two revisions the canonical line landed
+MR-0272 (ISSUE-0408 `StructuredBodyTable` / `ControlFlowValidator`),
+ISSUE-0366 (boundary-table corpus), and ISSUE-0367 (boundary integration
+tail). None of those landings touches the runner, the stdlib, the
+fixture, or the conformance corpus — `test/ConformanceTest.java`, `std/`,
+`deal/runtime.lua`, and the shared fixture are byte-identical across the
+rebase — so every substantive pin below holds unchanged at the
+re-anchored HEAD (section 8 registers the re-anchor delta).
 
 Method: pin the pre-unit state T1 (fixture `// @expected: runtime-ok`
 at `:3`, retained `std/time.lua:9-10`, staged entry present at
@@ -143,7 +152,8 @@ sources and the scratch `test/ConformanceTest.java`) and ran
 `java -ea -cp build deal.test.ConformanceTest <scratch-root>/coroot`.
 The scratch roots are per-run temp directories (random suffixes).
 Captured output below is verbatim from the per-run logs produced by
-`verify_both_branches_scratch.sh`.
+`verify_both_branches_scratch.sh` in the final rebased-HEAD execution
+(evidence dir `/tmp/issue0400-evidence-rerun`).
 
 ### Run A — branch-1 matching pair (isolated mechanism)
 
@@ -154,7 +164,7 @@ untouched (diffed against the repository file).
 
 ```text
 === DEAL v1.2 Conformance Test Suite ===
-Root: /tmp/issue0400-runA.YsXZsN/coroot
+Root: /tmp/issue0400-runA.eFWfSO/coroot
 LuaJIT: available
 
 Discovered 1 conformance test(s)
@@ -268,10 +278,12 @@ is the specified mechanism that produces the behavioral pair results
 ### Branch-1 mismatched pair — the real pre-unit staged state
 
 The retained implementation plus `runtime-ok` is exercised by the real
-repository runner at HEAD: `./run_tests.sh` exits 0 and the LuaJIT
-conformance run records exactly one tracked staged failure naming this
-fixture and ISSUE-0237 (captured in this work, full-gate log
-`/tmp/issue0400-gate-run1.txt`):
+repository runner at the rebased canonical HEAD: `./run_tests.sh` exits
+0 and the LuaJIT conformance run records exactly one tracked staged
+failure naming this fixture and ISSUE-0237 (captured in this work,
+full-gate log `/tmp/issue0400-gate-rebased.txt`; the summary is
+identical to the `ef152ad` capture because the runner and the corpus are
+byte-identical across the rebase):
 
 ```text
   [backend-runtime/stdlib-edge/time-now-millis-positive.deal] STAGED-FAIL (E8004 locked artifact; tracked by ISSUE-0237: the retained std/time.nowMillis ()->int route raises E8004 for contemporary epoch milliseconds under the signed-int32 gate (locked TIME_NOW_MILLIS artifact); the fixture's runtime-ok expectation and std/time.lua are frozen until the delegated time-selector child lands its disposition pair)
@@ -287,23 +299,26 @@ Companions (classified support modules): 32
 ```
 
 `./run_tests.sh` exit code: 0; final banner `=== All Tests Passed ===`;
-pin test green (`Passed: 36, Failed: 0`). The fixture fails its own
-`runtime-ok` expectation (the E8004 artifact) and the registry tracks
-that mismatch non-fatally — the exact pre-unit demonstration the
-verification contract names for this pair.
+pin test green (`Passed: 36, Failed: 0`). The rebased gate additionally
+runs the three canonical suites landed between `ef152ad` and `673fea1`
+in the same execution — `Boundary Table Corpus Tests` (ISSUE-0366),
+`Boundary Integration Tests` (ISSUE-0367), and `Control Flow Validator
+Tests` (ISSUE-0408) — all green. The fixture fails its own `runtime-ok`
+expectation (the E8004 artifact) and the registry tracks that mismatch
+non-fatally — the exact pre-unit demonstration the verification contract
+names for this pair.
 
 ## 5. Repository untouched; scratch trees discarded
 
 After every scratch run the script captured
 `git status --porcelain --untracked-files=all` over the repository and
-deleted the scratch tree. Each capture (runs A–F) contained only the
-untracked exercise script (this record was not yet written at capture
-time and is itself an untracked addition, never an edit) — never
-`test/ConformanceTest.java`, `std/time.lua`, or the fixture:
-
-```text
-?? verify_both_branches_scratch.sh
-```
+deleted the scratch tree. In the original capture (before the exercise
+artifacts were committed) each capture showed only the untracked
+exercise script; at the rebased canonical HEAD both artifacts are
+committed, so every per-run capture of the two fresh full executions
+(evidence dirs `/tmp/issue0400-evidence-final` and
+`/tmp/issue0400-evidence-rerun`) is empty — never
+`test/ConformanceTest.java`, `std/time.lua`, or the fixture.
 
 `git diff HEAD -- test/ConformanceTest.java std/time.lua
 test/conformance/backend-runtime/stdlib-edge/time-now-millis-positive.deal`
@@ -327,8 +342,9 @@ No repository state is involved in this record.
 `verify_both_branches_scratch.sh` rebuilds every scratch tree from
 repository state and re-verifies the T1 pin before every run; a fresh
 execution must reproduce all six pinned results or the script exits 1.
-Captured execution (evidence dir `/tmp/issue0400-evidence-run1`) exited
-0 with all assertions satisfied:
+Two full executions at the rebased canonical HEAD (evidence dirs
+`/tmp/issue0400-evidence-final` and `/tmp/issue0400-evidence-rerun`) both
+exited 0 with all assertions satisfied:
 
 ```text
 ALL SIX PINNED RESULTS REPRODUCED BY THEIR SPECIFIED MECHANISMS
@@ -349,10 +365,22 @@ repository files never modified; every scratch tree deleted
 | Staged registration window | `:150-159` | call `:165-174`, block `:164-175` | task window starts one line above the call at the design checkout |
 | LuaJIT conformance totals | 384 passed, 5 known-fail (ISSUE-0399 pin's captured run) | 390 passed, 4 known-fail | MR-0270 (ISSUE-0336 canonical descriptor cutover, commit `c0b708d`) added the five `backend-runtime/descriptors/canonical-*.deal` fixtures (+5), and MR-0263 (ISSUE-0322, commit `892aa70`) promoted `frontend/types/bytes-type-reference.deal` from known-fail to OK (−1 known-fail) — both landed between the pin's captured revision `a2cdf27` and HEAD `ef152ad` |
 
-The substantive pins all hold at HEAD: 0 failed, 0 skipped, exactly one
-`StagedFailures (tracked)` entry naming this fixture and ISSUE-0237,
-fixture `runtime-ok` at `:3`, `std/time.lua:9-10` retained, staged
-registration present at `:165-174`, and `./run_tests.sh` exit 0.
+Re-anchor delta (`ef152ad` → `673fea1`): the mandated rebase replayed
+this record's two artifacts onto the canonical revision that carries
+MR-0272 (ISSUE-0408 `StructuredBodyTable` / `ControlFlowValidator`),
+ISSUE-0366, and ISSUE-0367. Zero locator movement on every surface this
+record pins — `test/ConformanceTest.java`, `std/`, `deal/runtime.lua`,
+and the shared fixture are byte-identical across the rebase. The only
+tree delta is `run_tests.sh` gaining the three new suite blocks (+15
+lines: javac entries `:72-74`, launches `:308`/`:312`/`:316`), which
+shifts the pin-test launch from `:477-478` to `:492-493`; the LuaJIT
+conformance summary is unchanged (390 passed, 4 known-fail, 1 staged).
+
+The substantive pins all hold at the re-anchored HEAD: 0 failed,
+0 skipped, exactly one `StagedFailures (tracked)` entry naming this
+fixture and ISSUE-0237, fixture `runtime-ok` at `:3`,
+`std/time.lua:9-10` retained, staged registration present at `:165-174`,
+and `./run_tests.sh` exit 0.
 
 ## 9. Conclusion
 
@@ -366,4 +394,6 @@ The branch-2 pairs are observable only through the empty-registry
 scratch runner configuration — the unmodified runner's hardcoded staged
 entry intercepts both clones before any expectation evaluation, which
 runs E and F demonstrate directly. The exercise is repeatable through
-the committed script and changes no repository state.
+the committed script (two fresh full executions at the rebased canonical
+HEAD `673fea1`, both exit 0), changes no repository state, and the
+engine gate `./run_tests.sh` exits 0 at the same HEAD.
