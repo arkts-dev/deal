@@ -1476,7 +1476,7 @@ public class LuaBackendTest {
             "let e: Error = { code: \"X\", message: \"fail\" };"
         );
         assertNoErrors(out, "error construction");
-        assertContains(out.lua, "__rt.class_(\"Error\"", "Error class_ call");
+        assertContains(out.lua, "__rt.class_(\"@$builtin/Error\"", "Error class_ call (canonical atom)");
         assertContains(out.lua, "Error_defaults", "references Error_defaults");
         assertContains(out.lua, "code = \"X\"", "code field");
         assertContains(out.lua, "message = \"fail\"", "message field");
@@ -2088,8 +2088,9 @@ public class LuaBackendTest {
         CompileOutput out = compile(
             "async function maybeUser(): string | null { return null; }");
         assertNoErrors(out, "async nullable return");
-        // Descriptor should have async prefix before the params
-        assertContains(out.lua, "\"async()->string|null\"", "async descriptor with nullable return");
+        // Canonical descriptor: async prefix plus the "?string" nullable
+        // return (emitter page D1 — never the legacy "|null" suffix).
+        assertContains(out.lua, "\"async()->?string\"", "async descriptor with canonical nullable return");
         check(isValidLua(out.lua), "valid Lua");
     }
 
@@ -2153,8 +2154,8 @@ public class LuaBackendTest {
             "async function f(): int[] { return await a(); }");
         assertNoErrors(arrayOut, "array-typed await completion check");
         assertContains(arrayOut.lua,
-            "__rt.check_array(\"int[]\", coroutine.yield(a.f())",
-            "array completion wrapped in check_array");
+            "__rt.check_array(\"[int]\", coroutine.yield(a.f())",
+            "array completion wrapped in check_array (canonical descriptor)");
         check(isValidLua(arrayOut.lua), "valid Lua");
     }
 
@@ -2188,7 +2189,7 @@ public class LuaBackendTest {
         // Check C$fromJson function
         assertContains(out.lua, "__deal[\"User$fromJson\"] = __rt.function_(",
             "C$fromJson wrapper");
-        assertContains(out.lua, "\"(string)->@test.deal/User|null\"", "fromJson signature");
+        assertContains(out.lua, "\"(string)->?@test.deal/User\"", "fromJson signature (canonical nullable)");
         assertContains(out.lua, "pcall(__json_parse, s)", "pcall wrapping json parse");
         assertContains(out.lua, "__rt.json_from_json(", "json_from_json call");
         assertContains(out.lua, "return __NULL", "return null on failure");

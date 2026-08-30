@@ -1,0 +1,42 @@
+// @spec: Runtime execution model — Runtime type descriptor format
+// @description: Canonical [T] array descriptors cross typed boundaries end to end: array parameters and returns, nested [[int]] arrays, and [(int)->int] function-element arrays all pass through the canonical boundary matcher byte-for-byte.
+// @expected: runtime-ok
+// @features: descriptors, arrays, functions
+
+function first(xs: int[]): int {
+  return xs[0];
+}
+
+function applyAll(fs: ((x: int) => int)[], x: int): int {
+  let acc: int = x;
+  for (let f: (x: int) => int of fs) {
+    acc = f(acc);
+  }
+  return acc;
+}
+
+function nested(): int[][] {
+  return [[1, 2], [3, 4]];
+}
+
+export function test_canonical_array_boundary(): string {
+  let xs: int[] = [7, 8, 9];
+  let f: int = first(xs);
+  let fs: ((x: int) => int)[] = [
+    function(x: int): int { return x + 1; },
+    function(x: int): int { return x * 2; }
+  ];
+  let total: int = applyAll(fs, f);
+  let grid: int[][] = nested();
+  if (total !== 16) {
+    throw { code: "TEST_FAIL", message: "array boundary value mismatch" };
+  }
+  if (grid[1][0] !== 3) {
+    throw { code: "TEST_FAIL", message: "nested array boundary value mismatch" };
+  }
+  return "canonical array boundary ok";
+}
+
+export function main(): null {
+  return null;
+}

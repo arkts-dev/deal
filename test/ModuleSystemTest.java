@@ -2148,11 +2148,11 @@ public class ModuleSystemTest {
             "Lua-keyword export name emits a bracket-string declared-map key");
         check(lua.contains("ping = \"()->int\""),
             "Safe export name emits a dot-form declared-map key");
-        check(lua.contains("User = \"@host.cfg/User\""),
-            "Class descriptor uses the dotted typing/class-identity module path");
-        check(lua.contains("[\"User$fromJson\"] = \"(string)->@host.cfg/User|null\""),
+        check(lua.contains("User = \"@$external/host/cfg/User\""),
+            "Class descriptor uses the canonical @$external projection (external raw key)");
+        check(lua.contains("[\"User$fromJson\"] = \"(string)->?@$external/host/cfg/User\""),
             "@jsonable synthetic export emits a bracket-string declared-map key");
-        check(lua.contains("[\"User$toJson\"] = \"(@host.cfg/User)->string\""),
+        check(lua.contains("[\"User$toJson\"] = \"(@$external/host/cfg/User)->string\""),
             "@jsonable synthetic toJson export emits a bracket-string key");
         boolean dollarOnlyInQuotedKeys = true;
         for (int i = lua.indexOf('$'); i >= 0; i = lua.indexOf('$', i + 1)) {
@@ -2337,13 +2337,14 @@ public class ModuleSystemTest {
     /**
      * Regression (C3 review): an externals key containing a backslash must
      * not leak unescaped into generated Lua.  The key reaches descriptor
-     * strings as the dotted typing/class-identity module path
-     * ("@host.x\y/User" — the externals key with "/" mapped to "."), and
-     * an unescaped backslash makes the generated chunk invalid Lua
-     * ("invalid escape sequence" at require time, with no compile-time
-     * diagnostic).  The generated module must load AND run under LuaJIT:
-     * the loader declared-map values, the loader path argument, and the
-     * wrapper signature descriptors all carry the escaped form.
+     * strings as the canonical identity projection
+     * ("@$external/host/x\y/User" — the externals raw key through the
+     * identity index), and an unescaped backslash makes the generated
+     * chunk invalid Lua ("invalid escape sequence" at require time, with
+     * no compile-time diagnostic).  The generated module must load AND run
+     * under LuaJIT: the loader declared-map values, the loader path
+     * argument, and the wrapper signature descriptors all carry the
+     * escaped form.
      */
     private static void testHostModuleBackslashExternalsKeyE2E() throws Exception {
         System.out.println("-- Host E2E: backslash externals key emits escaped descriptors --");
@@ -2397,11 +2398,11 @@ public class ModuleSystemTest {
         // here is one backslash in the generated text).
         check(lua.contains("__rt.load_host(\"host/x\\\\y\", {"),
             "Backslash key: loader path argument is Lua-escaped");
-        check(lua.contains("User = \"@host.x\\\\y/User\""),
+        check(lua.contains("User = \"@$external/host/x\\\\y/User\""),
             "Backslash key: loader class descriptor is Lua-escaped");
-        check(lua.contains("echo = __rt.function_(\"(@host.x\\\\y/User)->int\", function("),
+        check(lua.contains("echo = __rt.function_(\"(@$external/host/x\\\\y/User)->int\", function("),
             "Backslash key: wrapper signature descriptor is Lua-escaped");
-        check(!lua.contains("host.x\\y/User\""),
+        check(!lua.contains("$external/host/x\\y/User\""),
             "Backslash key: no raw (unescaped) descriptor text remains");
 
         // Host implementation: the raw require path is "host/x\y", so the
@@ -2412,7 +2413,7 @@ public class ModuleSystemTest {
         Files.writeString(hostImpl, """
             local M = {}
             function M.ping() return 9 end
-            M.User = { __kind = "class", __classname = "@host.x\\\\y/User" }
+            M.User = { __kind = "class", __classname = "@$external/host/x\\\\y/User" }
             M.User_defaults = { port = 0 }
             return M
             """);
@@ -2449,12 +2450,13 @@ public class ModuleSystemTest {
      * A DEAL @jsonable class holding a host-class field (typed from an
      * externals-listed declaration) emits the class identity descriptor as
      * the field's {@code className} value; the descriptor carries the
-     * externals-derived dotted module path ("@host.x\y/User" — the
-     * externals key with "/" mapped to "."), so a backslash in the
-     * externals key made the generated chunk invalid Lua ("invalid escape
-     * sequence" at require time, with no compile-time diagnostic).  The
+     * externals-derived identity projection
+     * ("@$external/host/x\y/User" — the externals raw key), so a
+     * backslash in the externals key made the generated chunk invalid Lua
+     * ("invalid escape sequence" at require time, with no compile-time
+     * diagnostic).  The
      * generated module must carry the escaped
-     * {@code className = "@host.x\\y/User"} text and load AND run under
+     * {@code className = "@$external/host/x\\y/User"} text and load AND run under
      * LuaJIT.
      */
     private static void testHostModuleBackslashExternalsKeyJsonableE2E() throws Exception {
@@ -2483,7 +2485,7 @@ public class ModuleSystemTest {
             """);
         // The @jsonable Wrapper holds a host-class field: the emitted
         // Wrapper_fields descriptor embeds the class identity
-        // "@host.x\y/User" as a quoted-string className value.  The null
+        // "@$external/host/x\y/User" as a quoted-string className value.  The null
         // default avoids constructing the host class from DEAL (host-class
         // literals stay latent in production — declaration files have no
         // symbol table), while the field descriptor itself is emitted at
@@ -2515,9 +2517,9 @@ public class ModuleSystemTest {
         // The @jsonable field descriptor's className value must carry the
         // Lua-escaped form (each "\\" here is one backslash in the
         // generated text).
-        check(lua.contains("className = \"@host.x\\\\y/User\""),
+        check(lua.contains("className = \"@$external/host/x\\\\y/User\""),
             "Jsonable backslash key: field-descriptor className is Lua-escaped");
-        check(!lua.contains("host.x\\y/User"),
+        check(!lua.contains("$external/host/x\\y/User"),
             "Jsonable backslash key: no raw (unescaped) descriptor text remains");
 
         // Host implementation on the raw require path outputDir/host/x\y.lua
@@ -2529,7 +2531,7 @@ public class ModuleSystemTest {
         Files.writeString(hostImpl, """
             local M = {}
             function M.ping() return 9 end
-            M.User = { __kind = "class", __classname = "@host.x\\\\y/User" }
+            M.User = { __kind = "class", __classname = "@$external/host/x\\\\y/User" }
             M.User_defaults = { port = 0 }
             M.User_fields = { { name = "port", jtype = "int", optional = false, nullable = false } }
             -- The @jsonable declaration adds User$fromJson/User$toJson

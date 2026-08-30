@@ -1,0 +1,22 @@
+// @spec: Runtime execution model — Runtime type descriptor format
+// @description: The wrapper signature carries the exact async marker: an async function value crosses a typed async-function boundary through an untyped table, the canonical matcher compares the async()->int signature byte-for-byte, and the awaited completion value passes the boundary check.
+// @expected: runtime-ok
+// @features: descriptors, async-await, functions
+
+async function makeValue(): int {
+  return 42;
+}
+
+export async function test_canonical_async_marker_boundary(): int {
+  let holder: table = { f: makeValue };
+  let f: async () => int = holder.f;
+  let result: int = await f();
+  if (result !== 42) {
+    throw { code: "TEST_FAIL", message: "async marker boundary value mismatch" };
+  }
+  return result;
+}
+
+export function main(): null {
+  return null;
+}

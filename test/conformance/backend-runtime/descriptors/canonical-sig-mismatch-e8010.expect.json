@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"function signature mismatch: expected (int)->int, got (int)->string\",\"sourceFile\":\"backend-runtime/descriptors/canonical-sig-mismatch-e8010.deal\",\"line\":12,\"column\":10,\"expected\":\"(int)->int\",\"actual\":\"(int)->string\"}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8010",
+      "message": "function signature mismatch: expected (int)->int, got (int)->string",
+      "sourceFile": "backend-runtime/descriptors/canonical-sig-mismatch-e8010.deal",
+      "line": 12,
+      "column": 10,
+      "expected": "(int)->int",
+      "actual": "(int)->string"
+    }
+  }
+}

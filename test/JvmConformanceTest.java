@@ -152,6 +152,20 @@ public class JvmConformanceTest {
         skip("backend-runtime/type-system/dynamic-array-element-e8003.deal",
             "json.parse of a mixed array.", "JVM-GAP-STDJSON");
 
+        // ---- JVM-GAP-DESCRIPTORS: the canonical descriptor cutover
+        // (ISSUE-0336, LuaJIT-owned) ----
+        // The canonical-boundary family pins the LuaJIT canonical matcher's
+        // function row: a signature mismatch raises E8010. The JVM backend's
+        // boundary path reports the same mismatch through its own E8001
+        // template (JVM descriptor completion is ISSUE-0277's); the four
+        // sibling runtime-ok canonical-boundary fixtures pass on JVM and
+        // stay applicable.
+        skip("backend-runtime/descriptors/canonical-sig-mismatch-e8010.deal",
+            "E8010 on a function signature mismatch requires the canonical "
+                + "descriptor matcher's function row; the JVM boundary path "
+                + "reports the mismatch as E8001 (ISSUE-0277).",
+            "JVM-GAP-DESCRIPTORS");
+
         // ---- JVM-GAP-INT32: the signed-int32 runtime gate (ISSUE-0277) ----
         // The v1.2 corpus pins int as [-2147483648, 2147483647] with E8004
         // on every out-of-range arithmetic result and conversion. The JVM
@@ -319,7 +333,11 @@ public class JvmConformanceTest {
         "JVM-GAP-INT32", "signed-int32 runtime gate — JvmBackend retains "
             + "the ±(2^53−1) safe range until JVM v1.2 completion "
             + "(ISSUE-0277); the int32-overflow E8004 expectations "
-            + "pass only on LuaJIT"
+            + "pass only on LuaJIT",
+        "JVM-GAP-DESCRIPTORS", "canonical descriptor cutover — the "
+            + "LuaJIT-owned canonical-boundary E8010 signature-mismatch "
+            + "expectation requires the canonical matcher's function row "
+            + "(ISSUE-0336); JVM descriptors are ISSUE-0277's"
     );
 
     // =========================================================================

@@ -1,0 +1,18 @@
+// @spec: Runtime execution model — Runtime type descriptor format
+// @description: A function wrapper whose carried signature differs byte-for-byte from the expected canonical descriptor raises E8010 at the typed boundary — the canonical matcher's function row compares the exact descriptor text.
+// @expected: runtime-error E8010
+// @features: descriptors, functions, runtime-errors
+
+function asString(x: int): string {
+  return "s";
+}
+
+export function test_canonical_sig_mismatch(): int {
+  let holder: table = { f: asString };
+  let f: (x: int) => int = holder.f;
+  return f(1);
+}
+
+export function main(): null {
+  return null;
+}
