@@ -128,8 +128,10 @@ public class SidecarCorpusValidationTest {
      * same change: the promoted bytes-buffer-ops and the new
      * bytes-length, bytes-descriptor-boundary,
      * bytes-class-field-descriptor, bytes-write-single-evaluation, and
-     * bytes-write-validation-order fixtures). */
-    private static final int RUNTIME_OK_COUNT = 205;
+     * bytes-write-validation-order fixtures; plus the two stdlib/json
+     * D5 fixtures ISSUE-0342 added with their sidecars in the same
+     * change: int32-boundary-parse and json-stringify-roundtrip). */
+    private static final int RUNTIME_OK_COUNT = 207;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -147,9 +149,11 @@ public class SidecarCorpusValidationTest {
      * in the same change: int-neg-min, bytes-index-bounds,
      * bytes-write-range, source-location/int-neg-min-source,
      * source-location/bytes-index-bounds-source, and
-     * source-location/bytes-write-range-source).
+     * source-location/bytes-write-range-source; plus the
+     * stdlib/json/json-stringify-bytes-error E8001 fixture ISSUE-0342
+     * added with its sidecar in the same change).
      */
-    private static final int RUNTIME_ERROR_COUNT = 77;
+    private static final int RUNTIME_ERROR_COUNT = 78;
 
     /** The G4.6 lane error framing prefixes. */
     private static final String DEAL_ERROR_CODE_LINE = "DEAL_ERROR_CODE: ";

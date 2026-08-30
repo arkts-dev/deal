@@ -1,0 +1,37 @@
+// @spec: Standard library declarations — std/json.d.deal
+// @description: json.parse maps a JSON number to int exactly inside [-2147483648, 2147483647] and to number outside; -0 normalizes to 0 (v1.2 D5)
+// @expected: runtime-ok
+// @features: stdlib, json, int, v1.2
+
+import * as json from "std/json";
+import * as str from "std/string";
+
+export function main(): null {
+  let t: table = json.parse("{\"a\":2147483647,\"b\":2147483648,\"c\":-2147483648,\"d\":-2147483649,\"z\":-0}");
+  let a: int = t.a;
+  let c: int = t.c;
+  let b: number = t.b;
+  let d: number = t.d;
+  let big: number = number(2147483647) + 1.0;
+  let negbig: number = number(-2147483648) - 1.0;
+  if (a !== 2147483647) {
+    throw { code: "TEST_FAIL", message: "2147483647 must map to int" };
+  }
+  if (c !== -2147483648) {
+    throw { code: "TEST_FAIL", message: "-2147483648 must map to int" };
+  }
+  if (b !== big) {
+    throw { code: "TEST_FAIL", message: "2147483648 must map to number" };
+  }
+  if (d !== negbig) {
+    throw { code: "TEST_FAIL", message: "-2147483649 must map to number" };
+  }
+  let s: string = json.stringify(t);
+  if (!str.contains(s, "\"z\":0")) {
+    throw { code: "TEST_FAIL", message: "-0 must normalize to 0" };
+  }
+  if (str.contains(s, "-0")) {
+    throw { code: "TEST_FAIL", message: "stringify output must not carry -0" };
+  }
+  return null;
+}

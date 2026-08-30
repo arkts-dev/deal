@@ -1423,7 +1423,10 @@ end
 
 --- Non-throwing twin of check_int (see check_int above): false for
 -- non-numbers, NaN, infinities, non-integers, and values outside the
--- int safe range; true otherwise.
+-- signed-int32 range; true otherwise. The v1.2 int32 narrowing
+-- (luajit-v1.2-stdlib-contracts D5): a JSON number maps to DEAL int
+-- exactly inside [-2147483648, 2147483647]; every other JSON number
+-- maps to number.
 function __rt._json_is_int(v)
   if type(v) ~= "number" then
     return false
@@ -1437,7 +1440,7 @@ function __rt._json_is_int(v)
   if v % 1 ~= 0 then
     return false
   end
-  if v < -9007199254740991 or v > 9007199254740991 then
+  if v < -2147483648 or v > 2147483647 then
     return false
   end
   return true

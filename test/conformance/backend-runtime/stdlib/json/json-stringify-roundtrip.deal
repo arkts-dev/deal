@@ -1,0 +1,39 @@
+// @spec: Standard library declarations — std/json.d.deal
+// @description: json.stringify serializes int and number values as JSON numbers and stringify/parse round-trips a mixed document (v1.2 D5)
+// @expected: runtime-ok
+// @features: stdlib, json, v1.2
+
+import * as json from "std/json";
+import * as str from "std/string";
+
+export function main(): null {
+  let doc: table = { count: 42, ratio: 2.5, flag: true, nothing: null, name: "Ada" };
+  let encoded: string = json.stringify(doc);
+  if (!str.contains(encoded, "\"count\":42")) {
+    throw { code: "TEST_FAIL", message: "int must serialize as a JSON number" };
+  }
+  if (!str.contains(encoded, "\"ratio\":2.5")) {
+    throw { code: "TEST_FAIL", message: "number must serialize as a JSON number" };
+  }
+  if (!str.contains(encoded, "\"nothing\":null")) {
+    throw { code: "TEST_FAIL", message: "null must serialize as JSON null" };
+  }
+  let back: table = json.parse(encoded);
+  let count: int = back.count;
+  let ratio: number = back.ratio;
+  let flag: boolean = back.flag;
+  let name: string = back.name;
+  if (count !== 42) {
+    throw { code: "TEST_FAIL", message: "int round-trip mismatch" };
+  }
+  if (ratio !== 2.5) {
+    throw { code: "TEST_FAIL", message: "number round-trip mismatch" };
+  }
+  if (!flag) {
+    throw { code: "TEST_FAIL", message: "boolean round-trip mismatch" };
+  }
+  if (name !== "Ada") {
+    throw { code: "TEST_FAIL", message: "string round-trip mismatch" };
+  }
+  return null;
+}

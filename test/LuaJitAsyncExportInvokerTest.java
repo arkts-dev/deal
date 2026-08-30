@@ -575,7 +575,7 @@ public class LuaJitAsyncExportInvokerTest {
         assertTrue("the captured envelope pins the encoder reason: " + output,
             output.contains("representation-failure")
                 && output.contains("unsupported type for JSON encoding:"
-                + " cdata"));
+                + " bytes"));
         assertFalse("an encoding failure is never an expected DEAL code",
             output.contains("deal-error"));
     }

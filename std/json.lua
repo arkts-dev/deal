@@ -6,6 +6,14 @@
 -- and decodes to UTF-8, surrogate pairs combine to one supplementary scalar,
 -- lone surrogates and raw control characters (U+0000-U+001F) are rejected,
 -- and stringify refuses to emit strings that are not scalar-valid UTF-8.
+--
+-- Int32 number mapping and stringify shape rejection (v1.2,
+-- luajit-v1.2-stdlib-contracts D5): parse maps a JSON number to DEAL int
+-- iff it is finite, integral, and inside [-2147483648, 2147483647]
+-- (-0 normalizes to 0); every other JSON number maps to number. stringify
+-- raises Error on non-JSON-shaped values, including bytes-kind objects
+-- (the same explicit bytes arm the JS runtime landed, js-v12-int32-bytes
+-- D3); object key order follows Lua iteration order.
 
 local __rt = require("deal.runtime")
 
@@ -82,6 +90,14 @@ local function encode_value(v)
   elseif t == 'boolean' then
     return v and 'true' or 'false'
   elseif t == 'table' then
+    -- v1.2 D5 shape rejection: a bytes-kind object is not jsonable —
+    -- stringify raises the same unsupported-type Error every other
+    -- non-JSON-shaped value raises (spec §JSON serialization "Otherwise,
+    -- it raises Error"; the explicit bytes arm mirrors the JS runtime's
+    -- landed arm, js-v12-int32-bytes D3, message byte-identical).
+    if v.__kind == "bytes" then
+      error(__rt._err("E8001", "unsupported type for JSON encoding: bytes", nil, nil, nil, "string, number, boolean, or table", "bytes"))
+    end
     -- Check if it's an array (sequential integer keys starting at 1)
     local isArray = true
     local maxIdx = 0
@@ -348,7 +364,17 @@ json.parse = __rt.function_("(string)->table", function(s)
     if #num_str == 0 then
       parse_error("invalid number: empty")
     end
-    return tonumber(num_str)
+    local n = tonumber(num_str)
+    -- v1.2 int32 number mapping (luajit-v1.2-stdlib-contracts D5): a JSON
+    -- number maps to DEAL int iff it is finite, integral, and inside
+    -- [-2147483648, 2147483647] (-0 normalizes to 0); every other JSON
+    -- number maps to number. Lua numbers carry both roles, so the int32
+    -- predicate is the mapping decision and the typed-boundary checks
+    -- enforce the range afterwards.
+    if __rt._json_is_int(n) then
+      return n + 0  -- normalize -0 to 0 (the int branch)
+    end
+    return n
   end
 
   function parse_object()

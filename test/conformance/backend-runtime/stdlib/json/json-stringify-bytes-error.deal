@@ -1,0 +1,17 @@
+// @spec: Standard library declarations — std/json.d.deal
+// @description: json.stringify raises Error on a non-JSON-shaped nested value: a bytes-kind object built through the emitter's bytes(n) site inside the table (v1.2 D5)
+// @expected: runtime-error E8001
+// @features: stdlib, json, bytes, runtime-errors, v1.2
+
+import * as json from "std/json";
+
+export function test_json_stringify_bytes_error(): string {
+  let b: bytes = bytes(2);
+  b[0] = 65;
+  let t: table = { payload: b };
+  return json.stringify(t);
+}
+
+export function main(): null {
+  return null;
+}

@@ -1002,15 +1002,20 @@ end)
 
 -- ==================== Direct helpers: _json_is_int / _json_is_number ====================
 
-test("_json_is_int: safe-range boundaries accepted, beyond rejected", function()
+test("_json_is_int: int32 boundaries accepted, beyond rejected (D5 narrowing)", function()
   assert(__rt._json_is_int(0) == true)
   assert(__rt._json_is_int(-0) == true)
   assert(__rt._json_is_int(42) == true)
   assert(__rt._json_is_int(-42) == true)
-  assert(__rt._json_is_int(9007199254740991) == true)
-  assert(__rt._json_is_int(-9007199254740991) == true)
-  assert(__rt._json_is_int(9007199254740992) == false)
-  assert(__rt._json_is_int(-9007199254740992) == false)
+  assert(__rt._json_is_int(2147483647) == true)
+  assert(__rt._json_is_int(-2147483648) == true)
+  assert(__rt._json_is_int(2147483648) == false)
+  assert(__rt._json_is_int(-2147483649) == false)
+  -- The former ±(2^53-1) safe-range boundary is outside int32: rejected.
+  assert(__rt._json_is_int(9007199254740991) == false)
+  assert(__rt._json_is_int(-9007199254740991) == false)
+  assert(__rt._json_is_int(1e300) == false)
+  assert(__rt._json_is_int(-1e300) == false)
 end)
 
 test("_json_is_int: NaN/Infinity/non-integer/non-number rejected", function()

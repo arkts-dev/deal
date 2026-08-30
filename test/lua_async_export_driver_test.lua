@@ -466,7 +466,7 @@ test("representation-failure: a bytes completion exits 1, never a DEAL code", fu
   end
   local parsed, _ = envelope_of(stdout)
   assert(parsed.status == "representation-failure")
-  assert(parsed.reason == "unsupported type for JSON encoding: cdata",
+  assert(parsed.reason == "unsupported type for JSON encoding: bytes",
       "reason mismatch: got " .. tostring(parsed.reason))
   assert(parsed.code == nil, "an encoding failure must never carry a DEAL code")
 end)

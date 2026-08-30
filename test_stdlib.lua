@@ -829,6 +829,47 @@ test("json.parse rejects raw invalid UTF-8 input with E8001 (entry gate)", funct
 end)
 
 -- ===========================================================================
+-- std/json int32 number mapping and stringify shape rejection (v1.2 D5)
+-- ===========================================================================
+
+test("json.parse maps JSON numbers to int exactly inside the int32 range", function()
+  local __rt = require("deal.runtime")
+  local result = json.parse.f('{"a":2147483647,"b":2147483648,"c":-2147483648,"d":-2147483649}')
+  assert(result.a == 2147483647, "2147483647 must parse")
+  assert(result.b == 2147483648, "2147483648 must parse as number")
+  assert(result.c == -2147483648, "-2147483648 must parse")
+  assert(result.d == -2147483649, "-2147483649 must parse as number")
+  assert(__rt._json_is_int(result.a) == true, "2147483647 maps to int")
+  assert(__rt._json_is_int(result.b) == false, "2147483648 maps to number")
+  assert(__rt._json_is_int(result.c) == true, "-2147483648 maps to int")
+  assert(__rt._json_is_int(result.d) == false, "-2147483649 maps to number")
+end)
+
+test("json.parse normalizes -0 to 0", function()
+  local result = json.parse.f('{"z":-0}')
+  local z = result.z
+  assert(1 / z > 0, "-0 must normalize to 0 (1/-0 is -Infinity)")
+  assert(1 / z == math.huge, "normalized zero divides to +Infinity")
+end)
+
+test("json.stringify rejects bytes-kind values with E8001", function()
+  local __rt = require("deal.runtime")
+  local b = __rt.bytes_new(2)
+  b.__data[0] = 65  -- exercise the bytes runtime write path first
+  local err = assert_error_code(function() json.stringify.f({ payload = b }) end, "E8001")
+  assert(string.find(err.message, "bytes", 1, true) ~= nil,
+    "error message should mention bytes, got: " .. tostring(err.message))
+end)
+
+test("json int/number document round-trip", function()
+  local doc = { count = 42, ratio = 2.5 }
+  local encoded = json.stringify.f(doc)
+  local back = json.parse.f(encoded)
+  assert(back.count == 42, "int round-trip mismatch")
+  assert(back.ratio == 2.5, "number round-trip mismatch")
+end)
+
+-- ===========================================================================
 -- std/math tests
 -- ===========================================================================
 

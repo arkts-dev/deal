@@ -72,7 +72,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <h2>The skip registry (ISSUE-0102)</h2>
  *
  * <ul>
- *   <li><b>JVM-GAP-STDJSON</b> (9 entries) — std/json JVM boundary:
+ *   <li><b>JVM-GAP-STDJSON</b> (12 entries) — std/json JVM boundary:
  *       {@code JvmBackend} E6000 at {@code import std/json}
  *       (json.parse/stringify require table values the JVM slice does
  *       not support).</li>
@@ -165,6 +165,16 @@ public class JvmConformanceTest {
             "json.parse builds the dynamic class value.", "JVM-GAP-STDJSON");
         skip("backend-runtime/type-system/dynamic-array-element-e8003.deal",
             "json.parse of a mixed array.", "JVM-GAP-STDJSON");
+        skip("backend-runtime/stdlib/json/int32-boundary-parse.deal",
+            "json.parse int32 number mapping (2147483647/2147483648/"
+                + "-2147483648/-2147483649/-0) and stringify output.",
+            "JVM-GAP-STDJSON");
+        skip("backend-runtime/stdlib/json/json-stringify-roundtrip.deal",
+            "json.parse/stringify int-number document round-trips.",
+            "JVM-GAP-STDJSON");
+        skip("backend-runtime/stdlib/json/json-stringify-bytes-error.deal",
+            "json.stringify of a bytes-holding table (E8001).",
+            "JVM-GAP-STDJSON");
 
         // ---- JVM-GAP-DESCRIPTORS: the canonical descriptor cutover
         // (ISSUE-0336, LuaJIT-owned) ----
