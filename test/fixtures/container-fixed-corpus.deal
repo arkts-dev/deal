@@ -1,0 +1,7 @@
+["s"];
+({k: "v"});
+"a" + "b";
+`p${"q"}r`;
+["x"].length;
+if ({flag: true}.flag) {}
+for (let s: string of "ab") {}
