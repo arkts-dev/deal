@@ -75,7 +75,7 @@ line numbers as read directly).
 | | | | directives D4 `:116` | `FfiFieldDescriptor(dealName, fieldOrdinal, type: FfiType)` |
 | | | | directives D4 `:119-120` | `FfiType(kind, canonicalDescriptor, canonicalClassIdentity?)` / `kind = INT | NUMBER | BOOLEAN | STRING | BYTES | NULL | C_STRUCT | C_POINTER` |
 | | | | adopted D4, landed `:129` | `All descriptors come from \`CanonicalRuntimeTypeDescriptor\`; checks use \`RuntimeTypeMatcher\`.` |
-| | | | adopted D2, landed `:102` | `All addresses resolve before casting to module-private function-pointer types.` |
+| | | | adopted D2, landed `:105` | `All addresses resolve before casting to module-private function-pointer types.` |
 | 4 | Plan records and default evaluator content | S5 | adopted D1, landed `:50-51` | `canonicalRuntimePlanContent,` / `semanticDefaultContents, evaluatorImplementationContents,` |
 | | | | directives D4 `:109-115` | `FfiModuleDescriptor(moduleKey, semanticModuleIdentity, canonicalExternalModuleIdentity, nativeLibrary, ... runtimeDefaultPlans, canonicalPlanContent, planDigest)` and `compilerDefaultPlan` inside `FfiClassDescriptor` |
 | | | | adopted D1, landed `:82` | `After registration, \`load_ffi\` opens the library, resolves all symbols, retains plans without invoking them, builds wrappers, binds cells, marks ready, and publishes atomically.` |
@@ -126,7 +126,7 @@ directives D4/D5/D7 records.
 | S4 `FfiType(kind, canonicalDescriptor, canonicalClassIdentity?)` | directives D4 `:119` |
 | S4 `kind = INT | NUMBER | BOOLEAN | STRING | BYTES | NULL | C_STRUCT | C_POINTER` | directives D4 `:120` |
 | S4 `CanonicalRuntimeTypeDescriptor` / `RuntimeTypeMatcher` | adopted D4 (landed `:129`) |
-| S4 private function-pointer casts after all addresses resolve | adopted D2 (landed `:102`) |
+| S4 private function-pointer casts after all addresses resolve | adopted D2 (landed `:105`) |
 | S5 `canonicalRuntimePlanContent` / `semanticDefaultContents` / `evaluatorImplementationContents` | adopted D1 (landed `:50-51`) |
 | S5 `runtimeDefaultPlans` / `canonicalPlanContent` / `planDigest` | directives D4 `:109-113` |
 | S5 `compilerDefaultPlan` | directives D4 `:115` |
@@ -176,7 +176,7 @@ the settlement contains no field that lacks a pin.
 | S1 | adopted D1; realization D4; emitter D6; `spanArgs` | D1 quotes byte-match landed `:47-52`, `:63` (T2 pair 1 covers 46–82 — covers `FfiModuleKey`, identity block, equality paragraph); realization D4 read at `luajit-ffi-runtime-realization.md:63-65` carries the five-position envelope, canonical-descriptors rule, and the never-parses-serializer/never-reads-manifests negatives verbatim; emitter D6 read at `luajit-v1.2-emitter-and-lowering.md:74-76` pins the identical `__rt.load_ffi(<moduleKey>, <cdefBundle>, <plans>, <bindings>, <span>)` shape; `spanArgs` verified at `deal/codegen/lua/LuaBackend.java:941-945` |
 | S2 | adopted D1–D2; directives D7 | D2 quotes byte-match landed `:88`, `:91-92`, `:95` (T2 pair 2 covers 88–95); `CdefModuleRecord` byte-match landed `:55-56` and cdef rules 2–3, 6 at `:76-77`, `:80` (T2 pair 1); `CdefBundle`/`CdefEntry` read directly at directives `:188-189` |
 | S3 | adopted D1/D3; directives D5 | `nativeLibraryKind, exactNormalizedLoaderText` byte-match landed `:49` (T2 pair 1); D3 defense sentence byte-match landed `:111` (T2 pair 4); `NativeLibraryRef` read directly at directives `:132-133`; compile-side classification read at directives `:153` |
-| S4 | adopted D1–D2/D4; directives D4 | `canonicalFfiDescriptorContent` byte-match landed `:50` (T2 pair 1); canonical-descriptor rule byte-match landed `:129` (T2 pair 5 covers 117–129); private-cast rule byte-match landed `:102` (T2 pair 3 covers 97–105); the descriptor family and eight kinds read directly at directives `:109-120` |
+| S4 | adopted D1–D2/D4; directives D4 | `canonicalFfiDescriptorContent` byte-match landed `:50` (T2 pair 1); canonical-descriptor rule byte-match landed `:129` (T2 pair 5 covers 117–129); private-cast rule byte-match landed `:105` (T2 pair 3 covers 97–105); the descriptor family and eight kinds read directly at directives `:109-120` |
 | S5 | adopted D1/D6; directives D4/D7 | identity fields byte-match landed `:50-51` (T2 pair 1); "retains plans without invoking them" byte-match landed `:82` (T2 pair 1); "retains but never invokes evaluators" byte-match landed `:148` (T2 pair 7); `runtimeDefaultPlans`/`canonicalPlanContent`/`planDigest`/`compilerDefaultPlan` read directly at directives `:109-115`; `__rt.class_plan_` verified at `deal/runtime.lua:744-745` |
 | S6 | adopted D1/D6; directives D7 | D6 sentences byte-match landed `:148`, `:150` (T2 pair 7); D1 transition 5 byte-match landed `:71` (T2 pair 1); `FfiForwardBindings`/`ForwardFunctionCell.get()` read directly at directives `:182-187`; "Failure marks cells FAILED with the cached error." read at directives `:192` |
 | S7 | adopted D4–D5 text; objective Boundary | D4 C_POINTER bullet byte-match landed `:127-128` (T2 pair 5); no literal ctype spelling and no token storage layout anywhere in landed `:117-142` (read directly; T2 pairs 5–6 cover the same ranges); spec opacity rule verified at `docs/spec-v1.2.md:1822-1831`; objective Boundary excludes FFIGEN/REGISTRY authoring |
