@@ -33,8 +33,14 @@ T1's landing evidence is `ISSUE-0426_D1_D7_LANDING_EVIDENCE_RECHECK.md`
 existence/stability, decision anchors, spec cross-checks). The per-row
 quotes below are drawn exclusively from T2's byte-identical comparison
 pairs (its section 2) or re-read directly from the landed page in this
-audit; the one quote outside T2's compared ranges (the landed page's
-"Failure and operations" body) is flagged as directly re-read. T2's record
+audit; the two quotes outside T2's compared ranges — the landed page's
+"Failure and operations" body (`:330`, row 1) and the D7 decision header
+(`:154`, row 4; T2 pair 8 byte-compares only landed line 156 and T2's
+coverage note explicitly excludes decision headers from the byte
+comparison) — are each flagged at their citing rows as outside T2's
+byte-verification coverage, with their provenance named (directly re-read
+here; the `:154` header additionally verified by T1's header-line read at
+landed `:154`). T2's record
 supports every anchor used below; had it been absent or wrong, this audit
 could not cite verbatim-verified anchors.
 
@@ -149,8 +155,12 @@ itself.
 
 **Row 4 — serialized synchronous non-yielding initialization.** Adopted
 sentences: D7 `:154` header "Calls are synchronous, single-attempt, and
-non-owning" plus `:156` "A wrapper performs exactly one native call. There
-is no language timeout, cancellation, retry, or errno." (T2 pair 8); D1
+non-owning" (outside T2's compared ranges — T2 pair 8 byte-compares only
+landed `:156`, and T2's coverage note excludes decision headers from the
+byte comparison; verified by T1's header-line read at landed `:154` and
+by direct re-read in this audit) plus `:156` "A wrapper performs exactly
+one native call. There is no language timeout, cancellation, retry, or
+errno." (T2 pair 8); D1
 `:82` "After registration, `load_ffi` opens the library, resolves all
 symbols, retains plans without invoking them, builds wrappers, binds cells,
 marks ready, and publishes atomically." (the single serialized pipeline;
@@ -233,7 +243,7 @@ single descriptor source and the single matcher, so no non-canonical
 descriptor path exists — the invariant is preserved.
 
 **Row 13 — no compiler or manifest dependency.** Adopted sentences: D1
-`:46-49,57` "`FfiInitializationIdentity(runtimeAbiVersion, moduleKey,
+`:48-52` "`FfiInitializationIdentity(runtimeAbiVersion, moduleKey,
 nativeLibraryKind, exactNormalizedLoaderText, canonicalFfiDescriptorContent,
 canonicalRuntimePlanContent, semanticDefaultContents,
 evaluatorImplementationContents, cdefBundleContent, identityDigest)`" —
@@ -248,7 +258,8 @@ uncontradicted — the invariant is preserved.
 
 Result of the per-row check: all 13 rows' cited text exists verbatim at the
 cited anchors (byte-identical inside T2's pairs, or directly re-read for
-`:330`), and each cited text actually preserves its invariant. The table's
+`:330` and the D7 `:154` header), and each cited text actually preserves
+its invariant. The table's
 two envelope-side references resolve as follows: row 2's "(D5)" is the
 realization page's D5 span-routing decision (`:72`, quoted in section 2);
 row 4's "(D4)" is the objective's recorded design constraint D4
@@ -318,7 +329,12 @@ The 13-row table in `luajit-ffi-d1-d7-adoption` is complete and correct as
 written: exactly 13 rows, all boundary-contract invariants covered, every
 cited adopted sentence verbatim and supportive, every conflict resolved to
 the landed D1–D7 as winner. Zero corrections were required, so the adoption
-page remains byte-identical and no correction re-run applies. Epic criterion
+page remains byte-identical and no correction re-run applies. This record
+itself was revised once on review to correct two citation defects in its
+own quoting (row 13's `FfiInitializationIdentity` anchor corrected to D1
+`:48-52`; the row-4 D7 `:154` header quote flagged outside T2's compared
+ranges, and the outside-pair count corrected from one to two); the
+preservation conclusions of rows 4 and 13 are unchanged. Epic criterion
 4 is satisfied by this audit: all boundary-contract invariants are preserved
 under the adopted D1–D7 semantics.
 
