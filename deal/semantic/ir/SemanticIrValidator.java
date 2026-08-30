@@ -988,9 +988,8 @@ public final class SemanticIrValidator {
                 if (selector == null) {
                     yield Optional.empty(); // R-ENUM owns the selector.
                 }
-                FailurePolicyId expected = selector == UnarySelector.INT32_NEG
-                    ? FailurePolicyId.INT32_RESULT : FailurePolicyId.NO_DEAL_FAILURE;
-                yield requirePolicy(unit, facts, op, policy, expected, selector.name());
+                yield requirePolicy(unit, facts, op, policy, unaryPolicy(selector),
+                    selector.name());
             }
             case BINARY -> {
                 BinarySelector selector = enumByName(BinarySelector.class, op.selector());
@@ -1075,8 +1074,35 @@ public final class SemanticIrValidator {
         return Optional.empty();
     }
 
-    /** The closed selector→policy table for {@code BINARY} (parent "selector→policy is fixed"). */
-    private static FailurePolicyId binaryPolicy(BinarySelector selector) {
+    /**
+     * The closed selector→policy rule for {@code UNARY} (parent
+     * "selector→policy is fixed"): {@code INT32_NEG} →
+     * {@code INT32_RESULT}; {@code NUMBER_NEG} and {@code BOOL_NOT} →
+     * {@code NO_DEAL_FAILURE}. This method is the single source of the
+     * assignment: the value-semantics primitive's row projection and the
+     * lowerer's policy stamping read this table (never a copy), and the
+     * gate cross-check asserts the primitive's rows agree with it for
+     * every unary selector.
+     */
+    public static FailurePolicyId unaryPolicy(UnarySelector selector) {
+        return selector == UnarySelector.INT32_NEG
+            ? FailurePolicyId.INT32_RESULT : FailurePolicyId.NO_DEAL_FAILURE;
+    }
+
+    /**
+     * The closed selector→policy table for {@code BINARY} (parent
+     * "selector→policy is fixed"): {@code INT32_ADD/SUB/MUL} →
+     * {@code INT32_RESULT}; {@code INT32_DIV_TRUNC/MOD_TRUNC} →
+     * {@code INT32_DIVISOR_THEN_RESULT}; {@code INT32_POW} →
+     * {@code INT32_EXPONENT_THEN_RESULT}; every {@code NUMBER_*} arithmetic
+     * incl. {@code NUMBER_POW_IEEE} and every {@code INT32_*}/{@code NUMBER_*}
+     * comparison → {@code NO_DEAL_FAILURE}. This method is the single
+     * source of the assignment: the value-semantics primitive's row
+     * projection and the lowerer's policy stamping read this table (never
+     * a copy), and the gate cross-check asserts the primitive's rows agree
+     * with it for every covered selector.
+     */
+    public static FailurePolicyId binaryPolicy(BinarySelector selector) {
         return switch (selector) {
             case INT32_ADD, INT32_SUB, INT32_MUL -> FailurePolicyId.INT32_RESULT;
             case INT32_DIV_TRUNC, INT32_MOD_TRUNC -> FailurePolicyId.INT32_DIVISOR_THEN_RESULT;
