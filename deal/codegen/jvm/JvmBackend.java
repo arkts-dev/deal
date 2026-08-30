@@ -1461,6 +1461,7 @@ public final class JvmBackend {
         Map.entry("intPow", List.of("int", "int")),
         Map.entry("intNeg", List.of("int")),
         Map.entry("numMod", List.of("double", "double")),
+        Map.entry("numPow", List.of("double", "double")),
         Map.entry("intFromNumber", List.of("double")),
         Map.entry("numberFromInt", List.of("int")),
         Map.entry("scalarCompare", List.of("java.lang.String", "java.lang.String")),

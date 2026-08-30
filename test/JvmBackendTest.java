@@ -426,6 +426,7 @@ public class JvmBackendTest {
             new TestCase("testInt32BoundarySeamSites", () -> testInt32BoundarySeamSites()),
             new TestCase("testInt32EdgeMatrix", () -> testInt32EdgeMatrix()),
             new TestCase("testInt32NumberPowBand", () -> testInt32NumberPowBand()),
+            new TestCase("testInt32NumPowHelperCollision", () -> testInt32NumPowHelperCollision()),
             new TestCase("testInt32ArrayAndFieldBoundaries", () -> testInt32ArrayAndFieldBoundaries()),
             new TestCase("testCommonShadowInvocationPipeline", () -> testCommonShadowInvocationPipeline()),
             new TestCase("testLegacyByteCompat", () -> testLegacyByteCompat()),
@@ -8066,6 +8067,121 @@ public class JvmBackendTest {
         check(legacyField.exitCode() == 0,
             "legacy class field boundary runs green (no int32 gate): "
                 + legacyField.output());
+    }
+
+    /** The {@code numPow} helper-collision guard (review-cycle-1
+     * defect): the v1.2-only emitted helper
+     * {@code static double numPow(double, double)} is registered in the
+     * int32 runtime-helper signature table, so a valid DEAL v1.2 module
+     * declaring its own {@code numPow(number, number): number} is
+     * rejected with E6000 at codegen — never a compiler-success report
+     * followed by a javac-rejected duplicate method. */
+    private static void testInt32NumPowHelperCollision() throws Exception {
+        System.out.println("-- Int32 numPow helper collision → E6000 --");
+
+        String collision = """
+            function numPow(a: number, b: number): number { return a; }
+            export function main(): null { return null; }
+            export function test(): number { return numPow(7.0, 1.0); }
+            """;
+
+        // Direct generate pin under DEAL_V1_2_INT32 (the review
+        // reproduction): the guard fires, the user body is skipped, and
+        // the artifact keeps exactly the one emitted IEEE helper.
+        Frontend f = compileFrontend(collision,
+            "jvmtest-numpow-collision.deal");
+        check(f.errors().isEmpty(), "numPow collision frontend clean: "
+            + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(), "jvmtest-numpow-collision.deal",
+                "main", Map.of(), Map.of(), Map.of(), true,
+                SemanticProfile.DEAL_V1_2_INT32);
+            check(res.hasErrors(),
+                "numPow collision is rejected under DEAL_V1_2_INT32: "
+                    + res.diagnostics());
+            check(res.diagnostics().stream().anyMatch(d ->
+                    "E6000".equals(d.code())
+                        && d.message().contains("collides with the emitted "
+                            + "runtime helper 'numPow'")),
+                "numPow collision E6000 names the emitted helper: "
+                    + res.diagnostics());
+            check(countOccurrences(res.source(), "static double numPow") == 1,
+                "the rejected artifact keeps exactly the one emitted "
+                    + "numPow helper (the user body is skipped, no "
+                    + "duplicate javac would reject)");
+        }
+
+        // Full-pipeline pin: the orchestrator under the real int32
+        // invocation rejects the module and records/writes no artifact —
+        // javac never sees the duplicate numPow(double, double).
+        writeFile("src/i32_numpow_collision.deal", collision);
+        Path entryFile = tmpDir.get()
+            .resolve("src/i32_numpow_collision.deal")
+            .toAbsolutePath().normalize();
+        Path outputRoot = tmpDir.get().resolve("build/i32_numpow_collision");
+        List<Path> roots = List.of(
+            tmpDir.get().resolve("src").toAbsolutePath());
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(
+            ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputRoot, false, false, false, false,
+            Backend.JVM, null, roots,
+            Path.of(".").toAbsolutePath().normalize(), null, invocation);
+        boolean ok = orchestrator.compile();
+        check(!ok, "int32 orchestrator rejects the numPow collision");
+        check(orchestrator.diagnostics().stream().anyMatch(d ->
+                "E6000".equals(d.code())
+                    && d.message().contains("collides with the emitted "
+                        + "runtime helper 'numPow'")),
+            "orchestrator reports the numPow helper collision: "
+                + orchestrator.diagnostics());
+        check(!orchestrator.jvmGeneratedResults()
+                .containsKey(entryFile.toString()),
+            "no generated result recorded for the rejected module");
+        try (var stream = Files.list(outputRoot)) {
+            check(stream.noneMatch(p -> p.getFileName().toString()
+                    .endsWith(".java")),
+                "the rejected module wrote no Java artifact (javac never "
+                    + "sees a duplicate numPow)");
+        }
+
+        // Parity control: the analogous numMod declaration hits the
+        // pre-existing guard — numPow is now registered identically.
+        Frontend fm = compileFrontend("""
+            function numMod(a: number, b: number): number { return a; }
+            export function main(): null { return null; }
+            export function test(): number { return numMod(7.0, 1.0); }
+            """, "jvmtest-nummod-collision.deal");
+        check(fm.errors().isEmpty(), "numMod collision frontend clean: "
+            + fm.errors());
+        if (fm.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                fm.program(), fm.checkResult(), "jvmtest-nummod-collision.deal",
+                "main", Map.of(), Map.of(), Map.of(), true,
+                SemanticProfile.DEAL_V1_2_INT32);
+            check(res.hasErrors() && res.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("collides with the emitted "
+                            + "runtime helper 'numMod'")),
+                "numMod collision keeps its E6000 guard: "
+                    + res.diagnostics());
+        }
+
+        // Legacy negative controls: under LEGACY_SAFE_INT no numPow
+        // helper is emitted, so the same declaration is not rejected —
+        // the guard is profile-gated and the legacy surface stays
+        // byte-identical.
+        String legacyJava = legacyArtifact(collision, "numpow_collision");
+        check(legacyJava.contains("static double numPow(double a, double b) {"),
+            "legacy artifact emits the user numPow body (no helper guard "
+                + "in legacy mode)");
+        check(!legacyJava.contains("isNaN(b)) return 1.0"),
+            "no IEEE numPow helper leaks into the legacy artifact");
+        ExecResult legacy = runLegacyProject(collision, "numpow_collision");
+        check(legacy.exitCode() == 0 && legacy.output().contains("7.0"),
+            "legacy numPow-named function compiles and runs (7.0): "
+                + legacy.output());
     }
 
     /** Compiles and runs one real program through the full pipeline
