@@ -242,12 +242,172 @@ public class ConformanceTest {
         // Print coverage report
         printCoverageReport();
 
+        // Gate-closure strict gate (luajit-gate-closure D2/D5): the
+        // post-unit zero-fail assertion, keyed on the staged-failure
+        // registry shape. Dormant under the exact sanctioned pre-unit
+        // ISSUE-0237 pair — no assertion, no extra output; strict under
+        // the empty registry; a hard failure for every other shape. Its
+        // strict-mode residual GATE FAILURE lines print before any exit,
+        // and the dormant mode leaves the failed > 0 exit below as the
+        // only exit mechanism.
+        runGateClosureCheck();
+
         if (failed > 0) {
             System.exit(1);
         }
     }
 
 
+
+    // =========================================================================
+    // Gate-closure strict gate (post-unit zero-fail assertion)
+    // =========================================================================
+
+    /**
+     * The gate-closure strict gate (luajit-gate-closure D2/D5): the
+     * post-unit zero-fail assertion evaluated in the summary/exit path.
+     * The activation key is the staged-failure registry shape, compared
+     * field-exact on the {@code StagedEntry} fields {@code path},
+     * {@code pinnedExpectation}, {@code artifactCode}, and {@code issue}
+     * (the {@code reason} string is documentation and is not compared):
+     *
+     * <ul>
+     *   <li>Dormant — the registry equals the exact sanctioned pre-unit
+     *       ISSUE-0237 pair (exactly one entry: path
+     *       {@code backend-runtime/stdlib-edge/time-now-millis-positive.deal},
+     *       pinned expectation {@code runtime-ok}, artifact code
+     *       {@code E8004}, issue {@code ISSUE-0237}): no assertion and no
+     *       extra output; the pre-unit tracked non-fatal semantics and the
+     *       preserved {@code failed > 0} exit are byte-for-byte unchanged
+     *       (the closure is pending and never asserted).</li>
+     *   <li>Strict — the registry is empty (the disposition-application
+     *       unit's landing artifact): the backend-runtime phase counters
+     *       ({@code phaseStats} {@code record()} {@code int[5]} indices
+     *       1-4 — failed, skipped, known-fail, staged) and the global
+     *       {@code knownFailures} counter must be zero. Residuals are
+     *       enumerated from the {@code specGroups} {@code TestResult}
+     *       records — a residual is any backend-runtime fixture whose
+     *       recorded state is FAIL, SKIP, KNOWN_FAIL, or STAGED_FAIL,
+     *       plus any known-fail fixture of either phase for the
+     *       summary-level assertion (D5). The {@code specGroups} records
+     *       correspond one-to-one with the phase counters and the global
+     *       {@code knownFailures} counter ({@code record()} increments
+     *       both), so strict mode asserts those counters zero exactly
+     *       when no residual enumerates; with the zeros no
+     *       {@code GATE FAILURE} line prints, the preserved
+     *       {@code failed > 0} check is false, and the process exits 0.</li>
+     *   <li>Shape failure — any other registry shape is itself a gate
+     *       failure regardless of the counters (a re-added entry, a new
+     *       entry for any fixture, or any field edit of the sanctioned
+     *       entry — even when the dispatch recorded a tracked
+     *       STAGED-FAIL first).</li>
+     * </ul>
+     */
+    private static void runGateClosureCheck() {
+        if (STAGED_FAILURES.isEmpty()) {
+            runStrictModeGate();
+            return;
+        }
+        if (isSanctionedPreUnitPair()) {
+            // Dormant mode: the closure is pending and never asserted.
+            return;
+        }
+        for (StagedEntry entry : STAGED_FAILURES.values()) {
+            System.out.println("GATE FAILURE: staged-failure registry is "
+                + "neither the sanctioned pre-unit ISSUE-0237 pair nor empty — "
+                + entry.path() + " (tracked by " + entry.issue() + ")");
+        }
+        System.out.println("promotion instruction: remove the registry entry "
+            + "(or entries)");
+        System.exit(1);
+    }
+
+    /**
+     * Strict mode (empty registry): enumerate the post-unit residuals from
+     * the {@code specGroups} {@code TestResult} records and print one
+     * pinned {@code GATE FAILURE} line per residual before
+     * {@code System.exit(1)} (the JVM precedent pattern,
+     * {@code test/JvmConformanceTest.java}).
+     */
+    private static void runStrictModeGate() {
+        List<TestResult> failedResiduals = new ArrayList<>();
+        List<TestResult> skippedResiduals = new ArrayList<>();
+        List<TestResult> knownFailResiduals = new ArrayList<>();
+        List<TestResult> stagedResiduals = new ArrayList<>();
+        for (List<TestResult> results : specGroups.values()) {
+            for (TestResult result : results) {
+                if (result.state() == State.KNOWN_FAIL) {
+                    // Summary-level known-fail assertion (D5): any
+                    // known-fail fixture of either phase.
+                    knownFailResiduals.add(result);
+                } else if ("backend-runtime".equals(
+                        result.test().phase())) {
+                    switch (result.state()) {
+                        case FAIL -> failedResiduals.add(result);
+                        case SKIP -> skippedResiduals.add(result);
+                        case STAGED_FAIL -> stagedResiduals.add(result);
+                        default -> { }
+                    }
+                }
+            }
+        }
+        if (failedResiduals.isEmpty() && skippedResiduals.isEmpty()
+                && knownFailResiduals.isEmpty()
+                && stagedResiduals.isEmpty()) {
+            return;
+        }
+        for (TestResult result : failedResiduals) {
+            System.out.println("GATE FAILURE: " + failedResiduals.size()
+                + " failed — " + result.test().relativePath() + " — "
+                + result.message());
+        }
+        for (TestResult result : skippedResiduals) {
+            System.out.println("GATE FAILURE: " + skippedResiduals.size()
+                + " skipped — " + result.test().relativePath()
+                + " — LuaJIT unavailable on the gate machine; the LuaJIT "
+                + "lane cannot be verified (environmental probe branch)");
+        }
+        for (TestResult result : knownFailResiduals) {
+            // <mode> resolves to the mode token(s) after the
+            // 'known-fail ' prefix in the residual's classified @expected
+            // value; <issue> resolves to the residual's retained @issue
+            // tag. Both are retained on the TestFile that record() stored
+            // in this TestResult — no re-execution, no fixture re-read,
+            // no parsing of the recorded detail (the detail is used only
+            // by the failed-residual line).
+            String mode = result.test().expected()
+                .substring("known-fail ".length()).trim();
+            System.out.println("GATE FAILURE: " + knownFailResiduals.size()
+                + " known-fail — " + result.test().relativePath()
+                + " — tracked by " + result.test().issue()
+                + "; promotion instruction: set '@expected: " + mode
+                + "' and drop the @issue tag");
+        }
+        for (TestResult result : stagedResiduals) {
+            // Unreachable in strict mode — an empty registry cannot record
+            // STAGED-FAIL; retained as defense in depth.
+            System.out.println("GATE FAILURE: " + stagedResiduals.size()
+                + " staged — " + result.test().relativePath()
+                + " — promotion instruction: remove the registry entry");
+        }
+        System.exit(1);
+    }
+
+    /**
+     * True when the staged-failure registry is field-exactly the
+     * sanctioned pre-unit ISSUE-0237 pair.
+     */
+    private static boolean isSanctionedPreUnitPair() {
+        if (STAGED_FAILURES.size() != 1) {
+            return false;
+        }
+        StagedEntry entry = STAGED_FAILURES.get(
+            "backend-runtime/stdlib-edge/time-now-millis-positive.deal");
+        return entry != null
+            && "runtime-ok".equals(entry.pinnedExpectation())
+            && "E8004".equals(entry.artifactCode())
+            && "ISSUE-0237".equals(entry.issue());
+    }
 
     // =========================================================================
     // Discovery and classification
