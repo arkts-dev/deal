@@ -294,45 +294,45 @@ end)
 
 test("check_array on homogeneous int array passes", function()
   local arr = {1, 2, 3}
-  local r = __rt.check_array("int[]", arr)
+  local r = __rt.check_array("[int]", arr)
   assert(r == arr)
 end)
 
 test("check_array on empty array passes", function()
   local arr = {}
-  local r = __rt.check_array("int[]", arr)
+  local r = __rt.check_array("[int]", arr)
   assert(r == arr)
 end)
 
 test("check_array on single element passes", function()
   local arr = {42}
-  local r = __rt.check_array("int[]", arr)
+  local r = __rt.check_array("[int]", arr)
   assert(r == arr)
 end)
 
 test("check_array on non-table errors with E8001", function()
-  assert_error(function() __rt.check_array("int[]", "notatable") end, "E8001")
+  assert_error(function() __rt.check_array("[int]", "notatable") end, "E8001")
 end)
 
 test("check_array on heterogeneous elements errors with E8003", function()
-  assert_error(function() __rt.check_array("int[]", {1, "x"}) end, "E8003")
+  assert_error(function() __rt.check_array("[int]", {1, "x"}) end, "E8003")
 end)
 
 test("check_array on string array passes", function()
   local arr = {"a", "b", "c"}
-  local r = __rt.check_array("string[]", arr)
+  local r = __rt.check_array("[string]", arr)
   assert(r == arr)
 end)
 
 test("check_array on boolean array passes", function()
   local arr = {true, false}
-  local r = __rt.check_array("boolean[]", arr)
+  local r = __rt.check_array("[boolean]", arr)
   assert(r == arr)
 end)
 
 test("check_array on nested int[][] passes", function()
   local arr = {{1, 2}, {3, 4}}
-  local r = __rt.check_array("int[][]", arr)
+  local r = __rt.check_array("[[int]]", arr)
   assert(r == arr)
 end)
 
@@ -344,32 +344,35 @@ end)
 
 test("check_array on nullable element array passes", function()
   local arr = {__rt.__NULL, "hello"}
-  local r = __rt.check_array("string|null[]", arr)
+  local r = __rt.check_array("[?string]", arr)
   assert(r == arr)
 end)
 
 test("check_array on invalid nullable element errors", function()
   assert_error(function()
-    __rt.check_array("string|null[]", {42})
+    __rt.check_array("[?string]", {42})
   end, "E8003")
 end)
 
--- ==================== array_element_descriptor tests ====================
+-- ==================== legacy dialect rejection at the boundary ====================
+-- The legacy element-descriptor helper is retired with the legacy parser:
+-- the canonical boundary rejects every legacy dialect spelling.
 
-test("array_element_descriptor('int[]') returns 'int'", function()
-  assert(__rt.array_element_descriptor("int[]") == "int")
+test("check_array rejects the legacy 'int[]' spelling", function()
+  local err = assert_error(function() __rt.check_array("int[]", {1}) end, "E8001")
+  assert(string.find(err.message, "cannot parse type descriptor", 1, true) ~= nil)
 end)
 
-test("array_element_descriptor('string[]') returns 'string'", function()
-  assert(__rt.array_element_descriptor("string[]") == "string")
+test("check_array rejects the legacy 'string[]' spelling", function()
+  assert_error(function() __rt.check_array("string[]", {"a"}) end, "E8001")
 end)
 
-test("array_element_descriptor('int[][]') returns 'int[]'", function()
-  assert(__rt.array_element_descriptor("int[][]") == "int[]")
+test("check_array rejects the legacy 'int[][]' spelling", function()
+  assert_error(function() __rt.check_array("int[][]", {{1}}) end, "E8001")
 end)
 
-test("array_element_descriptor('[int]') returns 'int'", function()
-  assert(__rt.array_element_descriptor("[int]") == "int")
+test("check_array rejects the legacy 'string|null[]' spelling", function()
+  assert_error(function() __rt.check_array("string|null[]", {"a"}) end, "E8001")
 end)
 
 -- ==================== check_type tests ====================
@@ -403,14 +406,14 @@ test("check_type('table', {}) passes", function()
   assert(__rt.check_type("table", t) == t)
 end)
 
-test("check_type('int[]', {1,2}) passes", function()
+test("check_type('[int]', {1,2}) passes", function()
   local arr = {1, 2}
-  assert(__rt.check_type("int[]", arr) == arr)
+  assert(__rt.check_type("[int]", arr) == arr)
 end)
 
-test("check_type('string|null', nil) returns __NULL", function()
-  -- check_type('string|null', nil) should go through nullable path
-  local r = __rt.check_type("string|null", nil)
+test("check_type('?string', nil) returns __NULL", function()
+  -- check_type('?string', nil) goes through the canonical nullable row
+  local r = __rt.check_type("?string", nil)
   assert(r == __rt.__NULL)
 end)
 
@@ -1038,18 +1041,26 @@ end)
 -- ==================== check_type with class descriptor tests ====================
 
 test("check_type class instance passes", function()
-  local u = __rt.class_("User", {name = ""}, {name = "Ada"})
-  local r = __rt.check_type("User", u)
+  local u = __rt.class_("@test/User", {name = ""}, {name = "Ada"})
+  local r = __rt.check_type("@test/User", u)
   assert(r == u)
 end)
 
 test("check_type class instance wrong class errors", function()
-  local u = __rt.class_("User", {name = ""}, {name = "Ada"})
-  assert_error(function() __rt.check_type("Admin", u) end, "E8001")
+  local u = __rt.class_("@test/User", {name = ""}, {name = "Ada"})
+  assert_error(function() __rt.check_type("@test/Admin", u) end, "E8001")
 end)
 
 test("check_type on non-class for class descriptor errors", function()
-  assert_error(function() __rt.check_type("User", 42) end, "E8001")
+  assert_error(function() __rt.check_type("@test/User", 42) end, "E8001")
+end)
+
+test("check_type rejects the bare class-name spelling", function()
+  -- Bare class names are a legacy dialect spelling: the canonical parser
+  -- rejects them before any value check runs.
+  local u = __rt.class_("User", {name = ""}, {name = "Ada"})
+  local err = assert_error(function() __rt.check_type("User", u) end, "E8001")
+  assert(string.find(err.message, "cannot parse type descriptor", 1, true) ~= nil)
 end)
 
 -- ==================== module-qualified class identity tests ====================
@@ -1070,7 +1081,9 @@ test("check_type qualified class rejects bare-tagged instance", function()
   assert_error(function() __rt.check_type("@mod/User", u) end, "E8001")
 end)
 
-test("check_type bare class rejects qualified-tagged instance", function()
+test("check_type bare class spelling rejects qualified-tagged instance", function()
+  -- The bare "User" spelling fails the canonical parser before the value
+  -- check runs, so a qualified-tagged instance is rejected with E8001.
   local u = __rt.class_("@mod/User", {name = ""}, {name = "Ada"})
   assert_error(function() __rt.check_type("User", u) end, "E8001")
 end)
@@ -1080,7 +1093,7 @@ end)
 test("error_value shape with span args", function()
   local e = __rt.error_value("E_LIMIT", "fail", "test.deal", 3, 7)
   assert(e.__kind == "class")
-  assert(e.__classname == "Error")
+  assert(e.__classname == "@$builtin/Error")
   assert(e.code == "E_LIMIT")
   assert(e.message == "fail")
   assert(e.file == "test.deal")
@@ -1091,7 +1104,7 @@ end)
 test("error_value shape without span args", function()
   local e = __rt.error_value("", "m")
   assert(e.__kind == "class")
-  assert(e.__classname == "Error")
+  assert(e.__classname == "@$builtin/Error")
   assert(e.code == "")
   assert(e.message == "m")
   assert(e.file == nil)
@@ -1101,15 +1114,24 @@ end)
 
 test("check_type Error passes against error_value outputs", function()
   local e = __rt.error_value("E_LIMIT", "fail")
-  local r = __rt.check_type("Error", e)
+  local r = __rt.check_type("@$builtin/Error", e)
   assert(r == e)
 end)
 
 test("check_type Error rejects non-Error class instances", function()
-  local u = __rt.class_("Error", {code = "", message = ""}, {code = "X"})
-  assert_error(function() __rt.check_type("Error", {__kind = "class", __classname = "User"}) end, "E8001")
+  local u = __rt.class_("@$builtin/Error", {code = "", message = ""}, {code = "X"})
+  assert_error(function() __rt.check_type("@$builtin/Error", {__kind = "class", __classname = "User"}) end, "E8001")
   -- sanity: a genuine Error instance still passes
-  assert(u.__kind == "class" and u.__classname == "Error")
+  assert(u.__kind == "class" and u.__classname == "@$builtin/Error")
+end)
+
+test("check_type rejects the bare Error spelling", function()
+  -- The bare "Error" atom is a legacy dialect spelling (runtime page
+  -- D3/D6): the canonical parser rejects it; the canonical projection
+  -- @$builtin/Error is the only Error atom.
+  local e = __rt.error_value("E8001", "boom")
+  local err = assert_error(function() __rt.check_type("Error", e) end, "E8001")
+  assert(string.find(err.message, "cannot parse type descriptor", 1, true) ~= nil)
 end)
 
 -- ==================== _deep_copy edge cases ====================
@@ -1137,7 +1159,7 @@ test("check_array on table with holes (sparse) still checks till #v", function()
   arr[5] = 4  -- makes it sparse, #arr may be 3 or 5 depending on LuaJIT
   -- Just test that what IS in the contiguous portion passes
   -- We'll use a normal contiguous array
-  local r = __rt.check_array("int[]", {1, 2, 3})
+  local r = __rt.check_array("[int]", {1, 2, 3})
   assert(r ~= nil)
 end)
 
@@ -1154,24 +1176,20 @@ end)
 -- longer special: arity is exact and the "..." entry fails type checks like
 -- any unknown descriptor.
 
-test("from_lua_function legacy rest descriptor enforces exact arity", function()
-  local raw = function(sep, ...)
-    local args = {...}
-    return sep .. table.concat(args, sep)
-  end
-  local w = __rt.from_lua_function("(string,...string[])->string", raw)
-  -- Extra arguments are rejected: no rest arm absorbs them (v1.2).
-  assert_error(function() w.f(",", "a", "b", "c") end, "E8010")
-  assert_error(function() w.f(",", "x", "y") end, "E8010")
-  -- The legacy "..." param descriptor itself matches no DEAL value, so even
-  -- a two-argument call fails the parameter check with E8010.
-  assert_error(function() w.f(",", "a") end, "E8010")
+test("from_lua_function legacy rest descriptor is rejected at wrap time", function()
+  -- The legacy "...T[]" rest spelling never parses under the canonical
+  -- grammar, so the wrapper itself is rejected with E8010.
+  local raw = function(sep, ...) return sep end
+  assert_error(function()
+    __rt.from_lua_function("(string,...string[])->string", raw)
+  end, "E8010")
 end)
 
-test("from_lua_function legacy rest descriptor wrong type errors with E8010", function()
+test("from_lua_function legacy rest-of-function descriptor is rejected at wrap time", function()
   local raw = function(sep, ...) return sep end
-  local w = __rt.from_lua_function("(string,...int[])->string", raw)
-  assert_error(function() w.f(",", 1, "x") end, "E8010")
+  assert_error(function()
+    __rt.from_lua_function("(string,...[(int)->int])->string", raw)
+  end, "E8010")
 end)
 
 -- ==================== from_lua_function return type tests ====================
@@ -1192,10 +1210,9 @@ end)
 -- ==================== check_type descriptor edge cases ====================
 
 test("check_type with nested nullable array works", function()
-  -- The emitted legacy spelling of Array(Nullable(string)) is "string|null[]";
-  -- under parse order P the hand-written "?string[]" reads Nullable(Array(string)).
+  -- Array(Nullable(string)) is spelled "[?string]" in the canonical grammar.
   local arr = {__rt.__NULL, "hello", __rt.__NULL}
-  local r = __rt.check_type("string|null[]", arr)
+  local r = __rt.check_type("[?string]", arr)
   assert(r == arr)
 end)
 
@@ -1206,10 +1223,9 @@ test("check_type with function descriptor validates wrapper", function()
 end)
 
 test("check_type with complex nullable descriptor works", function()
-  -- int|null[]  means  (int | null)[] — the emitted legacy spelling of
-  -- Array(Nullable(int)).
+  -- [?int] is the canonical spelling of Array(Nullable(int)).
   local arr = {1, __rt.__NULL, 3}
-  local r = __rt.check_type("int|null[]", arr)
+  local r = __rt.check_type("[?int]", arr)
   assert(r == arr)
 end)
 
@@ -1430,17 +1446,16 @@ test("parse_descriptor async direct: sync function descriptor works unchanged", 
 end)
 
 test("parse_descriptor async nullable: from_lua_function wraps nullable async descriptor", function()
-  -- Under parse order P the function branch reads the arrow before the "|null"
-  -- suffix, so "async(int)->@src/User|null" is an async function whose declared
-  -- nullable return is enforced at the await site.
-  local wrapper = __rt.from_lua_function("async(int)->@src/User|null", function(x)
+  -- "async(int)->?@src/User" is an async function whose declared nullable
+  -- return is enforced at the await site.
+  local wrapper = __rt.from_lua_function("async(int)->?@src/User", function(x)
     return __rt.async_start(function() return { __kind = "class", __classname = "User" } end)
   end)
-  assert(wrapper.sig == "async(int)->@src/User|null")
+  assert(wrapper.sig == "async(int)->?@src/User")
   local h = wrapper.f(1)
   assert(type(h) == "table" and h.__kind == "async")
   -- a non-operation return still fails the async-shape check
-  local wrapper2 = __rt.from_lua_function("async(int)->@src/User|null", function(x)
+  local wrapper2 = __rt.from_lua_function("async(int)->?@src/User", function(x)
     return { __kind = "class", __classname = "User" }
   end)
   assert_error(function() wrapper2.f(1) end, "E8010")
@@ -1454,17 +1469,16 @@ test("parse_descriptor async: wrapper sig preserves async prefix", function()
 end)
 
 test("parse_descriptor sync nullable: from_lua_function wraps nullable-return descriptor", function()
-  -- Under parse order P "(int)->string|null" parses as a function returning a
-  -- nullable string (the arrow is read before the "|null" suffix).
-  local wrapper = __rt.from_lua_function("(int)->string|null", function(x)
+  -- "(int)->?string" parses as a function returning a nullable string.
+  local wrapper = __rt.from_lua_function("(int)->?string", function(x)
     if x == 0 then return __rt.__NULL end
     return tostring(x)
   end)
-  assert(wrapper.sig == "(int)->string|null")
+  assert(wrapper.sig == "(int)->?string")
   assert(wrapper.f(0) == __rt.__NULL)
   assert(wrapper.f(1) == "1")
   -- wrong return type raises E8010
-  local wrapper2 = __rt.from_lua_function("(int)->string|null", function(x)
+  local wrapper2 = __rt.from_lua_function("(int)->?string", function(x)
     return x
   end)
   assert_error(function() wrapper2.f(1) end, "E8010")
@@ -1758,7 +1772,7 @@ end)
 test("async outer wrapper: from_lua_function does not validate return type for async", function()
   -- The outer wrapper returns an async handle, not the declared return type.
   -- from_lua_function with an async descriptor should skip return-type checking.
-  local wrapper = __rt.from_lua_function("async()->User", function()
+  local wrapper = __rt.from_lua_function("async()->@src/User", function()
     -- Returns an async handle (simulating what codegen produces)
     return __rt.async_start(function()
       return { __kind = "class", __classname = "User", name = "test" }
@@ -1844,13 +1858,15 @@ end)
 
 -- ==================== parse order P tests ====================
 
-test("parse order P: ?(int)->int reads nullable function, distinct from (int)->int|null", function()
+test("canonical: ?(int)->int reads nullable function, distinct from (int)->?int", function()
   local w = __rt.function_("(int)->int", function(x) return x + 1 end)
   -- ?(int)->int: nullable of function — __NULL and a matching-sig wrapper pass
   assert(__rt.check_type("?(int)->int", __rt.__NULL) == __rt.__NULL)
   assert(__rt.check_type("?(int)->int", w) == w)
-  -- (int)->int|null: function returning nullable — the same wrapper's sig does not match
-  assert_error(function() __rt.check_type("(int)->int|null", w) end, "E8010")
+  -- (int)->?int: function returning nullable — the same wrapper's sig does not match
+  assert_error(function() __rt.check_type("(int)->?int", w) end, "E8010")
+  -- the legacy "(int)->int|null" spelling fails the canonical parser
+  assert_error(function() __rt.check_type("(int)->int|null", w) end, "E8001")
   -- non-wrapper fails the inner function check
   assert_error(function() __rt.check_type("?(int)->int", 42) end, "E8001")
 end)
@@ -1860,16 +1876,16 @@ test("parse order P: wrong-sig wrapper on nullable function raises E8010", funct
   assert_error(function() __rt.check_type("?(int)->int", w) end, "E8010")
 end)
 
-test("parse order P: [(int)->int] reads array of functions, distinct from (int)->int[]", function()
+test("canonical: [(int)->int] reads array of functions, distinct from (int)->[int]", function()
   local w1 = __rt.function_("(int)->int", function(x) return x + 1 end)
   local w2 = __rt.function_("(int)->int", function(x) return x + 2 end)
   local arr = { w1, w2 }
   assert(__rt.check_type("[(int)->int]", arr) == arr)
-  -- (int)->int[] is a function returning an int array: w1's sig does not match
-  assert_error(function() __rt.check_type("(int)->int[]", w1) end, "E8010")
+  -- the legacy "(int)->int[]" spelling fails the canonical parser
+  assert_error(function() __rt.check_type("(int)->int[]", w1) end, "E8001")
   -- the matching function-returning-array wrapper passes
-  local w3 = __rt.function_("(int)->int[]", function(x) return { x } end)
-  assert(__rt.check_type("(int)->int[]", w3) == w3)
+  local w3 = __rt.function_("(int)->[int]", function(x) return { x } end)
+  assert(__rt.check_type("(int)->[int]", w3) == w3)
 end)
 
 test("parse order P: [?(int)->int] reads array of nullable functions", function()
@@ -1887,13 +1903,15 @@ test("parse order P: [?(int)->int] reads array of nullable functions", function(
   end, "E8003")
 end)
 
-test("parse order P: ?string[] reads Nullable(Array(string))", function()
-  assert(__rt.check_type("?string[]", __rt.__NULL) == __rt.__NULL)
-  assert(__rt.check_type("?string[]", { "a", "b" })[1] == "a")
+test("canonical: ?[string] reads Nullable(Array(string))", function()
+  assert(__rt.check_type("?[string]", __rt.__NULL) == __rt.__NULL)
+  assert(__rt.check_type("?[string]", { "a", "b" })[1] == "a")
   -- a non-array fails the inner array check
-  assert_error(function() __rt.check_type("?string[]", "hello") end, "E8001")
+  assert_error(function() __rt.check_type("?[string]", "hello") end, "E8001")
   -- a wrong element fails the inner array check
-  assert_error(function() __rt.check_type("?string[]", { "a", 42 }) end, "E8003")
+  assert_error(function() __rt.check_type("?[string]", { "a", 42 }) end, "E8003")
+  -- the legacy "?string[]" spelling fails the canonical parser
+  assert_error(function() __rt.check_type("?string[]", { "a" }) end, "E8001")
 end)
 
 -- ==================== from_lua_function three-way return dispatch ====================
@@ -1940,22 +1958,22 @@ test("from_lua_function non-null return: single nil raises E8010", function()
 end)
 
 test("from_lua_function nullable return: zero results raise E8010", function()
-  local wrapper = __rt.from_lua_function("()->string|null", function() end)
+  local wrapper = __rt.from_lua_function("()->?string", function() end)
   assert_error(function() wrapper.f() end, "E8010")
 end)
 
 test("from_lua_function nullable return: __NULL passes", function()
-  local wrapper = __rt.from_lua_function("()->string|null", function() return __rt.__NULL end)
+  local wrapper = __rt.from_lua_function("()->?string", function() return __rt.__NULL end)
   assert(wrapper.f() == __rt.__NULL)
 end)
 
 test("from_lua_function nullable return: wrong type raises E8010", function()
-  local wrapper = __rt.from_lua_function("(int)->string|null", function(x) return x end)
+  local wrapper = __rt.from_lua_function("(int)->?string", function(x) return x end)
   assert_error(function() wrapper.f(1) end, "E8010")
 end)
 
 test("from_lua_function array return: wrong type raises E8010", function()
-  local wrapper = __rt.from_lua_function("(int)->string[]", function(x) return x end)
+  local wrapper = __rt.from_lua_function("(int)->[string]", function(x) return x end)
   assert_error(function() wrapper.f(1) end, "E8010")
 end)
 
@@ -2033,21 +2051,16 @@ test("from_lua_function nullable-function param rejects raw function with E8010"
   assert_error(function() wrapper.f(function(x) return x end) end, "E8010")
 end)
 
-test("from_lua_function legacy rest-of-function descriptor is exact-arity and never adapts extra args", function()
+test("from_lua_function legacy rest-of-function descriptor is rejected at wrap time", function()
   local received = nil
-  local wrapper = __rt.from_lua_function("(string,...[(int)->int])->string", function(sep, ...)
-    received = { ... }
-    return sep
-  end)
-  local inner = function(x) return x + 1 end
-  -- Extra arguments raise E8010 (no rest arm); the raw function never runs.
-  assert_error(function()
-    wrapper.f(",", __rt.function_("(int)->int", inner))
+  local err = assert_error(function()
+    __rt.from_lua_function("(string,...[(int)->int])->string", function(sep, ...)
+      received = { ... }
+      return sep
+    end)
   end, "E8010")
+  assert(string.find(err.message, "invalid function signature", 1, true) ~= nil)
   assert(received == nil)
-  assert_error(function()
-    wrapper.f(",", function(x) return x end)
-  end, "E8010")
 end)
 
 -- ==================== load_host tests ====================
@@ -2147,18 +2160,18 @@ test("load_host sync null export: sentinel passes, junk raises E8010", function(
 end)
 
 test("load_host nullable return wraps at load and checks at call", function()
-  local host = __rt.load_host(HOST_FIXTURE, { find = "(boolean)->string|null" })
+  local host = __rt.load_host(HOST_FIXTURE, { find = "(boolean)->?string" })
   assert(host.find.f(true) == __rt.__NULL)
   assert(host.find.f(false) == "found")
-  local host2 = __rt.load_host(HOST_FIXTURE, { find_bad = "()->string|null" })
+  local host2 = __rt.load_host(HOST_FIXTURE, { find_bad = "()->?string" })
   assert_error(function() host2.find_bad.f() end, "E8010")
 end)
 
 test("load_host array return wraps at load and checks at call", function()
-  local host = __rt.load_host(HOST_FIXTURE, { split = "()->string[]" })
+  local host = __rt.load_host(HOST_FIXTURE, { split = "()->[string]" })
   local r = host.split.f()
   assert(type(r) == "table" and r[1] == "a" and r[2] == "b")
-  local host2 = __rt.load_host(HOST_FIXTURE, { split_bad = "()->string[]" })
+  local host2 = __rt.load_host(HOST_FIXTURE, { split_bad = "()->[string]" })
   assert_error(function() host2.split_bad.f() end, "E8010")
 end)
 
@@ -2171,21 +2184,18 @@ test("load_host async export: real handle passes, junk raises E8010", function()
   assert_error(function() host2.fetch_bad.f() end, "E8010")
 end)
 
-test("load_host legacy rest export enforces exact arity (v1.2: no rest arm)", function()
-  local host = __rt.load_host(HOST_FIXTURE, { join = "(string,...string[])->string" })
-  -- Extra arguments raise E8010 — nothing absorbs them (v1.2).
-  assert_error(function() host.join.f(",", "a", "b") end, "E8010")
-  -- The legacy "..." param descriptor matches no DEAL value, so the
-  -- two-argument call fails the parameter check with E8010.
-  assert_error(function() host.join.f(",", "a") end, "E8010")
+test("load_host legacy rest export is rejected at load (v1.2: no rest arm)", function()
+  -- The legacy "...T[]" spelling never parses under the canonical grammar,
+  -- so the declared descriptor is rejected at load with E8011.
+  assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { join = "(string,...string[])->string" })
+  end, "E8011")
 end)
 
-test("load_host legacy rest-of-function-elements export is exact-arity (v1.2)", function()
-  local host = __rt.load_host(HOST_FIXTURE, { apply_rest = "(string,...[(int)->int])->int" })
-  local w1 = __rt.function_("(int)->int", function(x) return x + 1 end)
-  local w2 = __rt.function_("(int)->int", function(x) return x + 2 end)
-  assert_error(function() host.apply_rest.f(",", w1, w2) end, "E8010")
-  assert_error(function() host.apply_rest.f(",", function(x) return x end) end, "E8010")
+test("load_host legacy rest-of-function-elements export is rejected at load (v1.2)", function()
+  assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { apply_rest = "(string,...[(int)->int])->int" })
+  end, "E8011")
 end)
 
 test("load_host nullable-function param export accepts null and matching-sig function", function()
@@ -2535,13 +2545,19 @@ test("check_canonical_type forwards span args on every failure path", function()
   assert(err.file == "canonical.deal" and err.line == 14 and err.column == 24)
 end)
 
-test("canonical checker and legacy boundary path coexist", function()
-  -- The legacy dialect keeps serving generated v1.1 artifacts unchanged.
-  assert(__rt.check_type("int[]", { 1, 2 }) ~= nil)
-  assert(__rt.check_type("string|null", __rt.__NULL) == __rt.__NULL)
+test("boundary flip: check_type IS the canonical matcher", function()
+  -- The boundary path now rejects every legacy dialect spelling.
+  assert_error(function() __rt.check_type("int[]", { 1, 2 }) end, "E8001")
+  assert_error(function() __rt.check_type("string|null", __rt.__NULL) end, "E8001")
+  assert_error(function() __rt.check_type("Error", __rt.error_value("E8001", "boom")) end, "E8001")
+  -- Canonical spellings pass through the same entry.
+  assert(__rt.check_type("[int]", { 1, 2 }) ~= nil)
+  assert(__rt.check_type("?string", __rt.__NULL) == __rt.__NULL)
   local ev = __rt.error_value("E8001", "boom")
-  assert(__rt.check_type("Error", ev) == ev)
-  -- The same spellings are rejected by the canonical surface.
+  assert(ev.__classname == "@$builtin/Error")
+  assert(__rt.check_type("@$builtin/Error", ev) == ev)
+  -- The canonical alias entries are the same matcher.
+  assert(__rt.check_canonical_type("[int]", { 1 }) ~= nil)
   assert_parse_rejected("int[]")
   assert_parse_rejected("string|null")
   assert_parse_rejected("Error")

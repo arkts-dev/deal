@@ -8,7 +8,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"return value 1 type mismatch: expected string\",\"sourceFile\":\"backend-runtime/host-abi/host-nullable-return-bad.deal\",\"line\":9,\"column\":10,\"expected\":\"string|null\",\"actual\":\"number\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"return value 1 type mismatch: expected string\",\"sourceFile\":\"backend-runtime/host-abi/host-nullable-return-bad.deal\",\"line\":9,\"column\":10,\"expected\":\"?string\",\"actual\":\"number\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -18,7 +18,7 @@
       "sourceFile": "backend-runtime/host-abi/host-nullable-return-bad.deal",
       "line": 9,
       "column": 10,
-      "expected": "string|null",
+      "expected": "?string",
       "actual": "number"
     }
   }

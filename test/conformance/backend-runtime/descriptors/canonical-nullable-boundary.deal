@@ -1,0 +1,55 @@
+// @spec: Runtime execution model — Runtime type descriptor format
+// @description: Canonical ?T nullable descriptors cross typed boundaries: ?int parameters, ?[string] nullable arrays, and ?((x: int) => int) nullable function values all pass through the canonical boundary matcher; explicit null passes and present values validate inside the narrowed branch.
+// @expected: runtime-ok
+// @features: descriptors, nullables, functions
+
+function label(x: int | null): string {
+  if (x !== null) {
+    if (x === 7) {
+      return "seven";
+    }
+    return "other";
+  }
+  return "null";
+}
+
+function firstOrNull(xs: string[] | null): string {
+  if (xs !== null) {
+    return xs[0];
+  }
+  return "null";
+}
+
+function maybeApply(f: ((x: int) => int) | null, x: int): int {
+  if (f !== null) {
+    return f(x);
+  }
+  return x;
+}
+
+export function test_canonical_nullable_boundary(): string {
+  let a: int | null = 7;
+  let b: int | null = null;
+  let la: string = label(a);
+  let lb: string = label(b);
+  let arr: string[] | null = ["ok"];
+  let fa: string = firstOrNull(arr);
+  let fn: string = firstOrNull(null);
+  let incr: ((x: int) => int) | null = function(x: int): int { return x + 1; };
+  let m1: int = maybeApply(incr, 1);
+  let m2: int = maybeApply(null, 1);
+  if (la !== "seven" || lb !== "null") {
+    throw { code: "TEST_FAIL", message: "nullable int boundary value mismatch" };
+  }
+  if (fa !== "ok" || fn !== "null") {
+    throw { code: "TEST_FAIL", message: "nullable array boundary value mismatch" };
+  }
+  if (m1 !== 2 || m2 !== 1) {
+    throw { code: "TEST_FAIL", message: "nullable function boundary value mismatch" };
+  }
+  return "canonical nullable boundary ok";
+}
+
+export function main(): null {
+  return null;
+}

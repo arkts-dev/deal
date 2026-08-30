@@ -29,15 +29,19 @@ function __rt._err(code, message, file, line, column, expected, actual)
   }
 end
 
---- Reify a thrown/caught error value as a tagged builtin-Error class instance.
--- The trailing file/line/column arguments are optional: omitted arguments
--- leave the corresponding fields absent (nil), matching _err's convention.
--- Output satisfies check_type("Error", v) via the class branch's exact
--- __classname compare.
+--- Reify a thrown/caught error value as a tagged builtin-Error class
+-- instance. The trailing file/line/column arguments are optional: omitted
+-- arguments leave the corresponding fields absent (nil), matching _err's
+-- convention.
+--
+-- The canonical identity (runtime page D3/D6): the instance carries the
+-- canonical class atom @$builtin/Error, and the canonical boundary matcher
+-- matches it byte-for-byte. The bare "Error" spelling is never emitted and
+-- fails the canonical parser.
 function __rt.error_value(code, message, file, line, column)
   return {
     __kind = "class",
-    __classname = "Error",
+    __classname = "@$builtin/Error",
     code = code,
     message = message,
     file = file,
@@ -222,11 +226,11 @@ function __rt.check_table(v, file, line, column)
   return v
 end
 
--- ===== Composite type checks =====
+-- ===== Composite type checks (canonical boundary) =====
 
 --- Check a nullable value.
 -- nil (missing optional field) and __NULL (explicit null) both return __NULL.
--- Otherwise delegates to check_type for the inner descriptor.
+-- Otherwise delegates to the canonical check_type for the inner descriptor.
 function __rt.check_nullable(inner_descriptor, v, file, line, column)
   if v == nil or v == __rt.__NULL then
     return __rt.__NULL
@@ -234,245 +238,21 @@ function __rt.check_nullable(inner_descriptor, v, file, line, column)
   return __rt.check_type(inner_descriptor, v, file, line, column)
 end
 
---- Extract the element descriptor from an array descriptor.
--- Supports "T[]" format (e.g., "int[]" → "int", "int[][]" → "int[]")
--- and "[T]" format (e.g., "[int]" → "int").
-function __rt.array_element_descriptor(array_descriptor, file, line, column)
-  if array_descriptor == nil then
-    error(__rt._err("E8001", "internal: nil array descriptor", file, line, column, nil, nil))
-  end
-  -- Format: "T[]" → element descriptor is "T"
-  local len = #array_descriptor
-  if len >= 2 and array_descriptor:sub(len - 1) == "[]" then
-    return array_descriptor:sub(1, len - 2)
-  end
-  -- Format: "[T]" → element descriptor is "T"
-  if len >= 2 and array_descriptor:sub(1, 1) == "[" and array_descriptor:sub(len, len) == "]" then
-    return array_descriptor:sub(2, len - 1)
-  end
-  error(__rt._err("E8001", "invalid array descriptor: " .. tostring(array_descriptor), file, line, column, nil, nil))
-end
-
---- Check that value is an array whose elements match the array descriptor.
+--- Check that value is an array whose elements match the canonical array
+-- descriptor ("[D]"). Delegates to the canonical check_type over the full
+-- descriptor text: elements are checked in 1-based contiguous order with
+-- the first failing index wrapped in E8003, and function signature
+-- mismatches raise E8010 (runtime page D3 matcher table). The legacy
+-- "T[]" dialect is rejected by the canonical parser.
 function __rt.check_array(array_descriptor, v, file, line, column)
-  if type(v) ~= "table" then
-    error(__rt._err("E8001", "expected array", file, line, column, "array", type(v)))
-  end
-  local element_descriptor = __rt.array_element_descriptor(array_descriptor, file, line, column)
-  for i = 1, #v do
-    local ok, err = pcall(__rt.check_type, element_descriptor, v[i], file, line, column)
-    if not ok then
-      error(__rt._err("E8003", "array element " .. i .. " type mismatch: " .. tostring(err), file, line, column, element_descriptor, type(v[i])))
-    end
-  end
-  return v
+  return __rt.check_type(array_descriptor, v, file, line, column)
 end
 
--- ===== Descriptor parser =====
-
---- Parse a type descriptor string and return a structured representation.
--- Returns a table: { kind = "primitive"|"array"|"nullable"|"function"|"class", ... }
--- For async functions, the returned function table has isAsync = true and ret = "null".
---
--- Parse order P (function-aware): (i) "?T" prefix → recurse; (ii) async strip +
--- function branch (leading "(", depth-aware top-level "->" scan with ")"
--- immediately before the arrow); (iii) "|null" end-anchored top-level suffix;
--- (iv) "[]" suffix; (v) "[T]" prefix; (vi) "@path/Name" class; (vii) primitives;
--- (viii) bare class name.
---
--- The function branch precedes every suffix rule, so "(int)->int|null" reads
--- Func(ret=Nullable) and "(int)->int[]" reads Func(ret=Array); the "?T" prefix
--- precedes the function branch, so "?(int)->int" reads Nullable(Func) and the
--- hand-written "?T[]" family reads Nullable(Array(T)). Every descriptor
--- typeDescriptor emits parses back to the type it denotes under this order.
-local function parse_descriptor(descriptor)
-  if descriptor == nil or type(descriptor) ~= "string" then
-    return nil
-  end
-
-  local d = descriptor
-
-  -- (i) Nullable: "?T" prefix (spec form). Must bind before the function
-  -- branch and before every suffix rule.
-  if d:sub(1, 1) == "?" then
-    return { kind = "nullable", inner = d:sub(2) }
-  end
-
-  -- (ii) Function: "(params)->ret" or "async(params)->ret".
-  -- The "async" prefix is recognized inside the function branch, after the
-  -- "?T" prefix but before any suffix stripping.
-  local is_async = false
-  local d_fn = d
-  if d_fn:sub(1, 5) == "async" then
-    is_async = true
-    d_fn = d_fn:sub(6)  -- strip "async" prefix, leaving "(params)->ret"
-  end
-
-  if d_fn:sub(1, 1) == "(" then
-    local arrow_pos = nil
-    local depth = 0
-    for i = 1, #d_fn do
-      local c = d_fn:sub(i, i)
-      if c == "(" or c == "[" then
-        depth = depth + 1
-      elseif c == ")" or c == "]" then
-        depth = depth - 1
-      elseif depth == 0 and i + 1 <= #d_fn and d_fn:sub(i, i + 1) == "->" then
-        arrow_pos = i
-        break
-      end
-    end
-    if arrow_pos then
-      local params_str = d_fn:sub(2, arrow_pos - 2)  -- content between ( and )
-      -- Check if the ')' before -> is at arrow_pos-1
-      if d_fn:sub(arrow_pos - 1, arrow_pos - 1) == ")" then
-        local ret_type = d_fn:sub(arrow_pos + 2)
-        -- Parse params: comma-separated, but need to respect nesting
-        local params = {}
-        if params_str ~= "" then
-          depth = 0
-          local start = 1
-          for i = 1, #params_str do
-            local c = params_str:sub(i, i)
-            if c == "(" or c == "[" then
-              depth = depth + 1
-            elseif c == ")" or c == "]" then
-              depth = depth - 1
-            elseif depth == 0 and c == "," then
-              params[#params + 1] = params_str:sub(start, i - 1)
-              start = i + 1
-            end
-          end
-          params[#params + 1] = params_str:sub(start)
-        end
-        -- Async functions report ret="null" so from_lua_function routes to the
-        -- async-operation shape check; the declared return type R is enforced
-        -- at the await site, not by the wrapper.
-        if is_async then
-          return { kind = "function", params = params, ret = "null", isAsync = true }
-        end
-        return { kind = "function", params = params, ret = ret_type }
-      end
-    end
-  end
-
-  -- (iii) Nullable: "T|null" legacy suffix (end-anchored, top-level only).
-  -- Reached only when the string is not a function descriptor, so a "|null"
-  -- inside "(...)->..." can never win over the arrow.
-  local null_pos = nil
-  local depth = 0
-  for i = 1, #d do
-    local c = d:sub(i, i)
-    if c == "(" or c == "[" then
-      depth = depth + 1
-    elseif c == ")" or c == "]" then
-      depth = depth - 1
-    elseif depth == 0 and i + 4 <= #d and d:sub(i, i + 4) == "|null" then
-      local rest = d:sub(i + 5)
-      if rest == "" then
-        null_pos = i
-        break
-      end
-    end
-  end
-  if null_pos then
-    return { kind = "nullable", inner = d:sub(1, null_pos - 1) }
-  end
-
-  -- (iv) Array: "T[]" legacy suffix.
-  if #d >= 2 and d:sub(#d - 1) == "[]" then
-    return { kind = "array", element = d:sub(1, #d - 2) }
-  end
-
-  -- (v) Array: "[T]" prefix (spec form).
-  if #d >= 2 and d:sub(1, 1) == "[" and d:sub(#d, #d) == "]" then
-    return { kind = "array", element = d:sub(2, #d - 1) }
-  end
-
-  -- (vi) Class: "@path/ClassName" format.
-  if d:sub(1, 1) == "@" then
-    return { kind = "class", name = d }
-  end
-
-  -- (vii) Primitive types.
-  local primitives = {
-    ["null"] = true,
-    ["boolean"] = true,
-    ["int"] = true,
-    ["number"] = true,
-    ["string"] = true,
-    ["table"] = true,
-  }
-  if primitives[d] then
-    return { kind = "primitive", name = d }
-  end
-
-  -- (viii) Assume it's a class name (simple identifier).
-  -- Could be "ClassName" without the "@" prefix for local classes.
-  return { kind = "class", name = d }
-end
-
--- ===== Type dispatch =====
-
---- Dispatch type check by descriptor string.
-function __rt.check_type(descriptor, v, file, line, column)
-  if descriptor == nil then
-    error(__rt._err("E8001", "internal: nil type descriptor", file, line, column, nil, nil))
-  end
-
-  local parsed = parse_descriptor(descriptor)
-  if parsed == nil then
-    error(__rt._err("E8001", "internal: cannot parse type descriptor: " .. tostring(descriptor), file, line, column, nil, nil))
-  end
-
-  if parsed.kind == "primitive" then
-    if parsed.name == "null" then
-      return __rt.check_null(v, file, line, column)
-    elseif parsed.name == "boolean" then
-      return __rt.check_boolean(v, file, line, column)
-    elseif parsed.name == "int" then
-      return __rt.check_int(v, file, line, column)
-    elseif parsed.name == "number" then
-      return __rt.check_number(v, file, line, column)
-    elseif parsed.name == "string" then
-      return __rt.check_string(v, file, line, column)
-    elseif parsed.name == "table" then
-      return __rt.check_table(v, file, line, column)
-    else
-      error(__rt._err("E8001", "unknown primitive type: " .. parsed.name, file, line, column, nil, nil))
-    end
-  elseif parsed.kind == "nullable" then
-    return __rt.check_nullable(parsed.inner, v, file, line, column)
-  elseif parsed.kind == "array" then
-    return __rt.check_array(descriptor, v, file, line, column)
-  elseif parsed.kind == "function" then
-    -- Check that v is a function wrapper with matching signature
-    if type(v) ~= "table" or v.__kind ~= "function" then
-      error(__rt._err("E8001", "expected function", file, line, column, "function", type(v)))
-    end
-    -- Signature comparison: the stored sig must match the expected descriptor
-    if v.sig ~= descriptor then
-      error(__rt._err("E8010", "function signature mismatch: expected " .. descriptor .. ", got " .. (v.sig or "nil"), file, line, column, descriptor, v.sig))
-    end
-    return v
-  elseif parsed.kind == "class" then
-    -- Check that v is a class instance with matching class name
-    if type(v) ~= "table" or v.__kind ~= "class" then
-      error(__rt._err("E8001", "expected class instance", file, line, column, "class", type(v)))
-    end
-    -- Module-qualified nominal identity: the runtime tag equals the
-    -- canonical class descriptor string, so identity is exact string
-    -- equality — "@mod/User" vs "@other/User" vs bare "User" are three
-    -- distinct identities (no module-path stripping).
-    local actual_class = v.__classname
-    if actual_class ~= parsed.name then
-      error(__rt._err("E8001", "expected instance of " .. parsed.name .. ", got " .. (actual_class or "unknown"), file, line, column, parsed.name, actual_class))
-    end
-    return v
-  else
-    error(__rt._err("E8001", "internal: unhandled descriptor kind: " .. parsed.kind, file, line, column, nil, nil))
-  end
-end
+-- The canonical descriptor parser and matcher (parse_descriptor /
+-- check_type) live in the "Canonical descriptor parser and matcher"
+-- section below; this merge retired the legacy dialect parser that used
+-- to live here (runtime page D3: one canonical grammar, one matcher
+-- table, legacy spellings rejected and never emitted).
 
 -- ===== Integer arithmetic =====
 
@@ -582,15 +362,14 @@ end
 
 -- ===== Canonical descriptor parser and matcher (v1.2) =====
 --
--- Staging boundary (runtime page D3): the legacy descriptor path above
--- (parse_descriptor/check_type/check_array/check_nullable) keeps serving
--- generated v1.1-dialect artifacts unchanged at this merge. The canonical
--- entries below are the descriptor authority for the v1.2 runtime entries:
--- class_plan_ phase-3 field validation (RCP) and invoke_async_export
--- completion validation (ASYNC_RT) call check_canonical_type with
--- canonical descriptors. The boundary flip, error_value tagging with
--- @$builtin/Error, and removal of the legacy parser are the cutover
--- child's obligation.
+-- The canonical cutover (runtime page D3): the legacy dialect parser and
+-- matcher are removed; parse_descriptor / check_type /
+-- check_array / check_nullable below ARE the canonical matcher. Every
+-- generated v1.2 artifact, stdlib signature, and host declared map
+-- carries canonical descriptors, and any legacy dialect spelling
+-- ("T[]", "T|null", bare class names, "...T[]") is rejected at the
+-- boundary. error_value tags reified Error instances with the canonical
+-- identity @$builtin/Error, matched byte-for-byte here.
 --
 -- Canonical grammar (canonical-type-system-and-runtime-descriptors D2):
 --
@@ -629,7 +408,11 @@ local CANONICAL_PRIMITIVES = {
 --   { kind="function", isAsync=bool, params={atom,...}, ret=atom, text=full }
 -- Every node carries its byte-exact descriptor text so the function row
 -- can compare wrapper sigs byte-for-byte at any nesting depth.
-local function parse_canonical_descriptor(text)
+--
+-- This is THE descriptor parser: the boundary path (check_type) and the
+-- wrapper/loader paths (from_lua_function, load_host) all parse through
+-- it, so the canonical grammar is the only accepted dialect.
+local function parse_descriptor(text)
   if type(text) ~= "string" then
     return nil
   end
@@ -943,37 +726,46 @@ end
 -- text the canonical grammar rejects — including every legacy dialect
 -- spelling ("T[]", "T|null", bare class names, "...T[]").
 function __rt.parse_canonical_descriptor(text)
-  return parse_canonical_descriptor(text)
+  return parse_descriptor(text)
 end
 
---- Canonical type checker (parent matcher table D4; runtime page D3):
--- one row per primitive (the bytes row is the RV bytes predicate — a
--- table with __kind == "bytes"), [D] arrays via 1-based contiguous
--- iteration with E8003 wrapping at the first failing index, ?D nullables,
--- function descriptors with byte-for-byte signature comparison (E8010 on
+--- The canonical type checker — the one runtime boundary matcher
+-- (parent matcher table D4; runtime page D3): one row per primitive
+-- (the bytes row is the RV bytes predicate — a table with
+-- __kind == "bytes"), [D] arrays via 1-based contiguous iteration with
+-- E8003 wrapping at the first failing index, ?D nullables, function
+-- descriptors with byte-for-byte signature comparison (E8010 on
 -- mismatch), and class atoms matched byte-for-byte as complete text
--- (including the canonical projection @$builtin/Error).
+-- (including the canonical projection @$builtin/Error, which
+-- error_value tags).
 --
--- This is the descriptor authority of the v1.2 runtime entries:
--- class_plan_ phase-3 field validation (RCP) and invoke_async_export
--- completion validation (ASYNC_RT) call it with canonical descriptors.
--- It accepts only the canonical grammar; the legacy boundary path
--- (check_type/check_array/check_nullable) is untouched at this stage.
+-- This is the boundary path every typed crossing uses: generated
+-- wrapper/param/return/await checks, host declared maps, stdlib
+-- signatures, and the v1.2 runtime entries (class_plan_ phase-3 field
+-- validation, invoke_async_export completion validation) all call this
+-- entry with canonical descriptors. It accepts only the canonical
+-- grammar; every legacy dialect spelling fails the parser.
 --
 -- @return the checked value, unchanged
 -- Errors: DEAL errors through _err with the forwarded (file, line,
 --         column) span — E8001 (kind/class/malformed mismatch, E8004
 --         int out of range via check_int), E8003 (array element
 --         mismatch), E8010 (function signature mismatch).
-function __rt.check_canonical_type(descriptor, v, file, line, column)
+function __rt.check_type(descriptor, v, file, line, column)
   if descriptor == nil then
     error(__rt._err("E8001", "internal: nil type descriptor", file, line, column, nil, nil))
   end
-  local parsed = parse_canonical_descriptor(descriptor)
+  local parsed = parse_descriptor(descriptor)
   if parsed == nil then
     error(__rt._err("E8001", "internal: cannot parse type descriptor: " .. tostring(descriptor), file, line, column, nil, nil))
   end
   return check_canonical_ast(parsed, v, file, line, column)
+end
+
+--- Alias of the canonical checker under the MATCHER delivery name; both
+-- entries are the same canonical matcher.
+function __rt.check_canonical_type(descriptor, v, file, line, column)
+  return __rt.check_type(descriptor, v, file, line, column)
 end
 
 -- ===== Function infrastructure =====
@@ -994,8 +786,9 @@ function __rt.as_lua_function(fn)
 end
 
 --- Returns true when the descriptor denotes a function type or a
--- nullable-of-function type (per parse order P). Used to decide which
--- arguments must be adapted with as_lua_function before a host call.
+-- nullable-of-function type. Used to decide which arguments must be
+-- adapted with as_lua_function before a host call. Parses through the
+-- canonical parser; parsed.inner is the canonical inner atom.
 local function is_function_type(descriptor)
   local parsed = parse_descriptor(descriptor)
   if parsed == nil then
@@ -1005,39 +798,38 @@ local function is_function_type(descriptor)
     return true
   end
   if parsed.kind == "nullable" then
-    local inner = parse_descriptor(parsed.inner)
-    return inner ~= nil and inner.kind == "function"
+    return parsed.inner.kind == "function"
   end
   return false
 end
 
 --- Wrap a plain Lua function with runtime parameter and return type checks.
--- Parses the signature descriptor (parse order P) to determine the expected
--- parameter types and return type.
+-- Parses the signature descriptor through the canonical parser (the only
+-- accepted dialect) to determine the expected parameter types and return
+-- type.
 --
 -- Three-way return dispatch:
 -- 1. Async descriptor (parsed.isAsync == true): the call must produce at
 --    least one result and every result must be an async operation table
 --    ({ __kind = "async" }); the declared return type R is enforced at the
 --    await site, not here.
--- 2. Non-null return (ret_descriptor ~= "null"): the call must produce at
---    least one result — zero results and a single explicit Lua nil both pack
---    to an empty list — and every result is checked against the declared
---    return descriptor, including T|null, T[], class, function, and the
---    ?F/[...] forms.
--- 3. Sync null return (ret_descriptor == "null" and not async): the call
---    must produce at least one result and every result must be the
---    __rt.__NULL sentinel (a plain Lua nil packs to an empty result list and
---    is rejected by the presence rule).
+-- 2. Non-null return (the return atom is not the "null" primitive): the
+--    call must produce at least one result — zero results and a single
+--    explicit Lua nil both pack to an empty list — and every result is
+--    checked against the declared return descriptor, including ?T, [T],
+--    class, and function forms.
+-- 3. Sync null return (the return atom is the "null" primitive and not
+--    async): the call must produce at least one result and every result
+--    must be the __rt.__NULL sentinel (a plain Lua nil packs to an empty
+--    result list and is rejected by the presence rule).
 --
 -- Function-typed parameters are adapted with __rt.as_lua_function before the
 -- raw call, so hosts receive plain Lua functions; __NULL (and nil) arguments
 -- on nullable-function parameters pass through unadapted.
 --
 -- DEAL v1.2 has no rest parameters: the parameter list is exact. A legacy
--- "...T" descriptor entry is not special — it parses as an unknown
--- (class-name fallback) descriptor and fails type checks like any unknown
--- descriptor.
+-- "...T" descriptor entry never parses under the canonical grammar, so a
+-- signature carrying one is rejected here at wrap time (E8010).
 function __rt.from_lua_function(sig, raw_f)
   if type(raw_f) ~= "function" then
     error(__rt._err("E8001", "expected function, got " .. type(raw_f), nil, nil, nil, "function", type(raw_f)))
@@ -1048,8 +840,15 @@ function __rt.from_lua_function(sig, raw_f)
     error(__rt._err("E8010", "invalid function signature: " .. tostring(sig), nil, nil, nil, nil, nil))
   end
 
-  local param_descriptors = parsed.params
-  local ret_descriptor = parsed.ret
+  -- Canonical atom shape: params and ret are atoms; the descriptor text of
+  -- each is its byte-exact .text field.
+  local param_descriptors = {}
+  for i = 1, #parsed.params do
+    param_descriptors[i] = parsed.params[i].text
+  end
+  local ret_atom = parsed.ret
+  local ret_descriptor = ret_atom.text
+  local is_null_ret = ret_atom.kind == "primitive" and ret_atom.name == "null"
   local is_async = parsed.isAsync == true
 
   return __rt.function_(sig, function(...)
@@ -1111,7 +910,7 @@ function __rt.from_lua_function(sig, raw_f)
           error(__rt._err("E8010", "host async function must return an async operation, got " .. type(r), nil, nil, nil, "async operation", type(r)))
         end
       end
-    elseif ret_descriptor ~= "null" then
+    elseif not is_null_ret then
       -- 2. Non-null declared return: require at least one result, then check
       -- every result against the declared descriptor.
       if nresults < 1 then
@@ -1155,10 +954,11 @@ end
 -- Errors: E8011 at load — require failure, non-table module result, missing
 -- declared export, invalid function/class export shape, pre-wrapped sig
 -- mismatch or non-function .f, class identity mismatch, missing/non-table
--- defaults, present-but-non-table <C>_fields. E8010 never fires at load for
--- legal declared maps (every emitted Type.Func descriptor parses as a
--- function under parse order P); call-time violations raise E8010 inside the
--- wrapped functions.
+-- defaults, present-but-non-table <C>_fields, and any declared descriptor
+-- the canonical parser rejects (including every legacy dialect spelling).
+-- E8010 never fires at load for legal declared maps (every emitted
+-- Type.Func descriptor is a canonical function atom); call-time violations
+-- raise E8010 inside the wrapped functions.
 function __rt.load_host(module_path, declared)
   if type(declared) ~= "table" then
     error(__rt._err("E8011", "host module declarations must be a table", nil, nil, nil, "table", type(declared)))
@@ -1366,7 +1166,7 @@ function __rt.invoke_async_export(exports, exportName, returnDescriptor)
         "exportName must be a string, got " .. type(exportName)))
   end
   if type(returnDescriptor) ~= "string"
-      or parse_canonical_descriptor(returnDescriptor) == nil then
+      or parse_descriptor(returnDescriptor) == nil then
     error(__rt._host_invocation_failure(
         "return descriptor is not a canonical descriptor: "
         .. tostring(returnDescriptor)))
@@ -1406,7 +1206,7 @@ function __rt.invoke_async_export(exports, exportName, returnDescriptor)
   -- descriptor-mismatched wrappers are each a distinct pinned reason.
   if entry.sig ~= expected_sig then
     local got = tostring(entry.sig or "nil")
-    local parsed = parse_canonical_descriptor(entry.sig)
+    local parsed = parse_descriptor(entry.sig)
     if parsed ~= nil and parsed.kind == "function" and not parsed.isAsync then
       error(__rt._host_invocation_failure(
           "export '" .. exportName .. "' is sync: expected '"

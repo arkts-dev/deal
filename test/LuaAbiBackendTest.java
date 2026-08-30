@@ -230,7 +230,7 @@ public class LuaAbiBackendTest {
             "}\n";
         CompileResult out = compile(source);
 
-        assertThat(out.lua(), containsString("__deal[\"User$fromJson\"] = __rt.function_(\"(string)->@test.deal/User|null\""));
+        assertThat(out.lua(), containsString("__deal[\"User$fromJson\"] = __rt.function_(\"(string)->?@test.deal/User\""));
         assertThat(out.lua(), containsString("__deal[\"User$toJson\"] = __rt.function_(\"(@test.deal/User)->string\""));
         assertThat(out.lua(), containsString("__deal[\"User$fromJson\"].f("));
         assertThat(out.lua(), containsString("exports[\"User$fromJson\"] = __deal[\"User$fromJson\"]"));
@@ -547,7 +547,7 @@ public class LuaAbiBackendTest {
         CompileResult out = compile(source);
 
         assertThat(out.lua(), containsString("local C_fields = {"));
-        assertThat(out.lua(), containsString("local C_fromJson = __rt.function_(\"(string)->@test.deal/C|null\", function(s)"));
+        assertThat(out.lua(), containsString("local C_fromJson = __rt.function_(\"(string)->?@test.deal/C\", function(s)"));
         assertThat(out.lua(), containsString("local C_toJson = __rt.function_(\"(@test.deal/C)->string\", function(v)"));
         assertThat(out.lua(), containsString("exports.C_fields = C_fields"));
         assertThat(out.lua(), containsString("exports[\"C$fromJson\"] = C_fromJson"));
@@ -879,7 +879,7 @@ public class LuaAbiBackendTest {
         assertThat(out.lua(), containsString(
             "__deal[\"Error_defaults\"] = { code = \"\", message = \"\" }"));
         assertThat(out.lua(), containsString(
-            "__rt.class_(\"Error\", __deal[\"Error_defaults\"], {code = \"X\"},"));
+            "__rt.class_(\"@$builtin/Error\", __deal[\"Error_defaults\"], {code = \"X\"},"));
         // No bare Error_defaults identifier anywhere (header local retired).
         assertThat(out.lua(), not(containsString("local Error_defaults")));
         java.util.regex.Matcher m = java.util.regex.Pattern.compile(
@@ -1034,7 +1034,7 @@ public class LuaAbiBackendTest {
         assertThat(lua, not(containsString("require(\"host/cfg\")")));
         assertThat(lua, containsString("[\"repeat\"] = \"()->int\""));
         assertThat(lua, containsString(
-            "[\"User$fromJson\"] = \"(string)->@host.cfg/User|null\""));
+            "[\"User$fromJson\"] = \"(string)->?@host.cfg/User\""));
         assertThat(lua, containsString(
             "[\"User$toJson\"] = \"(@host.cfg/User)->string\""));
         assertThat(lua, containsString("User = \"@host.cfg/User\""));
@@ -1042,11 +1042,13 @@ public class LuaAbiBackendTest {
     }
 
     /**
-     * Descriptor emission pins (host-module-abi Verification 3c): nullable-
-     * function parameters emit the "?F" form, and nullable class returns
-     * keep the legacy "T|null" spelling. DEAL v1.2 removed rest parameters,
-     * so the v1.1 rest arms ("...string[]", "...[(int)->int]") are gone:
-     * the backend emits fixed-parameter descriptors only.
+     * Descriptor emission pins (emitter page D1, host-module-abi
+     * Verification 3c): nullable-function parameters emit the "?F" form,
+     * nullable class returns emit the canonical "?T" prefix, and array
+     * parameters emit "[T]" — never the legacy "T|null"/"T[]" spellings.
+     * DEAL v1.2 removed rest parameters, so the v1.1 rest arms
+     * ("...string[]", "...[(int)->int]") are gone: the backend emits
+     * fixed-parameter canonical descriptors only.
      */
     @Test
     public void hostLoaderDescriptorEmissionPins() {
@@ -1101,11 +1103,11 @@ public class LuaAbiBackendTest {
             "test.deal", Map.of(), Map.of("host/cfg", hostExports));
 
         assertThat(lua, containsString("register = \"(?(int)->int)->null\""));
-        assertThat(lua, containsString("log = \"(string,string[])->null\""));
+        assertThat(lua, containsString("log = \"(string,[string])->null\""));
         assertThat(lua, containsString(
             "applyAll = \"(string,[(int)->int])->string\""));
         assertThat(lua, containsString(
-            "find = \"(string)->@host.cfg/User|null\""));
+            "find = \"(string)->?@host.cfg/User\""));
     }
 
     // =========================================================================
@@ -1219,7 +1221,7 @@ public class LuaAbiBackendTest {
         // before lowercase, so User < User$fromJson < ... < repeat.
         int repeatPos = reference.indexOf("[\"repeat\"] = \"()->int\"");
         int fromJsonPos = reference.indexOf(
-            "[\"User$fromJson\"] = \"(string)->@host.cfg/User|null\"");
+            "[\"User$fromJson\"] = \"(string)->?@host.cfg/User\"");
         int userPos = reference.indexOf("User = \"@host.cfg/User\"");
         assertTrue("User before User$fromJson (sorted prefix rule)",
             userPos >= 0 && fromJsonPos >= 0 && userPos < fromJsonPos);

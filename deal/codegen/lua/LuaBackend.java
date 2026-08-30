@@ -8,7 +8,12 @@ import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.codegen.SourceMapGenerator;
+import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.identity.CanonicalClassIdentityIndex;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
+import deal.module.ModuleIdentityResolver;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -31,6 +36,14 @@ public final class LuaBackend implements Visitor<Void> {
 
     private final Map<ExpressionNode, Type> typeMap;
     private final SymbolTable symbols;
+
+    // The per-compilation canonical descriptor service (emitter page D1):
+    // every descriptor this backend writes into a v1.2 artifact comes from
+    // CanonicalRuntimeTypeDescriptor.encode via the compilation's
+    // CanonicalClassIdentityIndex. Production callers supply the
+    // orchestrator-built service; the standalone entry points build the
+    // single-module adapter surface below.
+    private CanonicalRuntimeTypeDescriptor descriptors;
     private StringBuilder out = new StringBuilder();
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     private int indent = 0;
@@ -273,8 +286,63 @@ public final class LuaBackend implements Visitor<Void> {
                                               Map<String, String> importResolutions,
                                               Map<String, Map<String, Type>> hostModules,
                                               boolean entryModule) {
+        return generateWithImports(program, result, sourcePath, modulePath,
+            importResolutions, hostModules, entryModule,
+            standaloneDescriptors(modulePath, hostModules));
+    }
+
+    /**
+     * Production seam variant (emitter page D1): generation over the
+     * compilation's canonical descriptor service built from the
+     * compilation's {@link CanonicalClassIdentityIndex} and module-path
+     * classification. Every descriptor emission site consumes it; the
+     * standalone overloads above build the single-module adapter surface.
+     */
+    public static String generateWithImports(ProgramNode program, CheckResult result,
+                                              String sourcePath, String modulePath,
+                                              Map<String, String> importResolutions,
+                                              Map<String, Map<String, Type>> hostModules,
+                                              boolean entryModule,
+                                              CanonicalRuntimeTypeDescriptor descriptors) {
         return generateResult(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, entryModule, null).lua();
+            importResolutions, hostModules, entryModule, null, descriptors).lua();
+    }
+
+    /**
+     * The standalone descriptor service (emitter page D1; the JsBackend
+     * single-module adapter convention): the module path itself is the
+     * configured root text with no relative components (module path
+     * "test.deal" projects "@test.deal/<Name>") plus the intrinsic
+     * builtin Error classification. Host-declared modules keep their
+     * pinned dotted identity @<dottedPath>/<C>: each hostModules key's
+     * dotted form ("host/cfg" &rarr; "host.cfg", the mapping the
+     * orchestrator applies to externals keys) joins the classification as
+     * a project module whose root text is the dotted path itself
+     * (host-module-abi D1/D2). Production callers pass the
+     * orchestrator-built per-compilation surface instead.
+     */
+    private static CanonicalRuntimeTypeDescriptor standaloneDescriptors(
+            String modulePath, Map<String, Map<String, Type>> hostModules) {
+        Map<String, CanonicalModuleIdentity> byPath = new LinkedHashMap<>();
+        byPath.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        String effective = modulePath == null ? "" : modulePath;
+        if (!effective.isEmpty()) {
+            byPath.put(effective,
+                new CanonicalModuleIdentity.ProjectModule(
+                    new ProjectModuleIdentity(effective, effective, List.of())));
+        }
+        for (String raw : hostModules.keySet()) {
+            String dotted = raw.replace('/', '.');
+            if (!byPath.containsKey(dotted)) {
+                byPath.put(dotted,
+                    new CanonicalModuleIdentity.ProjectModule(
+                        new ProjectModuleIdentity(dotted, dotted, List.of())));
+            }
+        }
+        ModuleIdentityResolver.IdentityIndex index =
+            ModuleIdentityResolver.buildIndex(byPath);
+        return new CanonicalRuntimeTypeDescriptor(index,
+            index.moduleIdentityLookup());
     }
 
     /**
@@ -296,8 +364,10 @@ public final class LuaBackend implements Visitor<Void> {
             CheckResult result, String sourcePath, String modulePath,
             Map<String, String> importResolutions,
             Map<String, Map<String, Type>> hostModules, boolean entryModule,
-            SourceMapGenerator smg) {
+            SourceMapGenerator smg,
+            CanonicalRuntimeTypeDescriptor descriptors) {
         LuaBackend backend = new LuaBackend(result.typeMap(), result.symbolTable());
+        backend.descriptors = descriptors;
         backend.sourceFilePath = sourcePath;
         backend.modulePath = modulePath;
         backend.importResolutions = Map.copyOf(importResolutions);
@@ -377,7 +447,8 @@ public final class LuaBackend implements Visitor<Void> {
                                                 SourceMapGenerator smg,
                                                 boolean entryModule) {
         return generateResult(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, entryModule, smg).lua();
+            importResolutions, hostModules, entryModule, smg,
+            standaloneDescriptors(modulePath, hostModules)).lua();
     }
 
     /**
@@ -494,9 +565,33 @@ public final class LuaBackend implements Visitor<Void> {
                                        Map<String, Map<String, Type>> hostModules,
                                        boolean entryModule)
                                        throws IOException {
+        return generateToFile(program, result, sourcePath, modulePath,
+            outputRoot, outputPath, emitSourceMap, importResolutions,
+            hostModules, entryModule,
+            standaloneDescriptors(modulePath, hostModules));
+    }
+
+    /**
+     * Production seam variant (emitter page D1): file generation over the
+     * compilation's canonical descriptor service. The orchestrator builds
+     * the service from the compilation's identity index and module-path
+     * classification (the same surface the JS arm consumes) and passes it
+     * here; every descriptor emission site reads from it.
+     */
+    public static GenerationResult generateToFile(ProgramNode program,
+                                       CheckResult result,
+                                       String sourcePath, String modulePath,
+                                       Path outputRoot, Path outputPath,
+                                       boolean emitSourceMap,
+                                       Map<String, String> importResolutions,
+                                       Map<String, Map<String, Type>> hostModules,
+                                       boolean entryModule,
+                                       CanonicalRuntimeTypeDescriptor descriptors)
+                                       throws IOException {
         SourceMapGenerator smg = emitSourceMap ? new SourceMapGenerator() : null;
         GenerationResult gen = generateResult(program, result, sourcePath,
-            modulePath, importResolutions, hostModules, entryModule, smg);
+            modulePath, importResolutions, hostModules, entryModule, smg,
+            descriptors);
         String luaSource = gen.lua();
         boolean hasErrors = gen.diagnostics().stream()
             .anyMatch(d -> "error".equals(d.severity()));
@@ -578,13 +673,34 @@ public final class LuaBackend implements Visitor<Void> {
      * Seeds the module path from the source path so that
      * {@link #generateFromInstance} emits module-qualified class identity
      * strings byte-identical to the static entry points
-     * (runtime-class-identity D2(0)).
+     * (runtime-class-identity D2(0)), and builds the single-module adapter
+     * descriptor surface (emitter page D1): the module path projects
+     * "@<modulePath>/<Name>" byte-identical to the legacy qualified
+     * identity for identifier-shaped module paths.
      */
     public LuaBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols, String sourcePath) {
         this.typeMap = new HashMap<>(typeMap);
         this.symbols = symbols;
         this.sourceFilePath = sourcePath;
         this.modulePath = sourcePath;
+        this.descriptors = standaloneDescriptors(sourcePath, Map.of());
+    }
+
+    /**
+     * Instance constructor over an explicit canonical descriptor service
+     * (emitter page D1): callers with the compilation's identity surface
+     * (the conformance harness, the production orchestrator) pass the
+     * service; {@link #generateFromInstance} consumes it for every
+     * descriptor emission site.
+     */
+    public LuaBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
+                      String sourcePath, String modulePath,
+                      CanonicalRuntimeTypeDescriptor descriptors) {
+        this.typeMap = new HashMap<>(typeMap);
+        this.symbols = symbols;
+        this.sourceFilePath = sourcePath;
+        this.modulePath = modulePath;
+        this.descriptors = descriptors;
     }
 
     /**
@@ -868,79 +984,47 @@ public final class LuaBackend implements Visitor<Void> {
     // =========================================================================
 
     /**
-     * The module-qualified runtime class identity for a class declared in
-     * this module: bare name when the module path is empty, else
-     * {@code @<modulePath>/<name>} — exactly the {@link #typeDescriptor}
-     * class string (runtime-class-identity D1/D2). Used at emission sites
-     * that hold only the AST class name (META export, @jsonable helpers);
-     * construction sites tag with {@code typeDescriptor(cls)} directly.
+     * The canonical runtime class identity for a class declared in this
+     * module (emitter page D1): the canonical descriptor text of
+     * {@code Type.Class(name, modulePath)} resolved through the
+     * compilation's identity index — never a locally derived spelling.
+     * Used at emission sites that hold only the AST class name (META
+     * export, @jsonable helpers); construction sites tag with
+     * {@code typeDescriptor(cls)} directly. A class whose module has no
+     * canonical public identity fails closed here (the pinned internal
+     * invariant violation of the descriptor service).
      */
     private String qualifiedClassName(String name) {
         String mp = modulePath != null ? modulePath : sourceFilePath;
-        if (mp == null || mp.isEmpty()) {
-            return name;
-        }
-        return "@" + mp + "/" + name;
+        return descriptors.encode(Types.classType(name, mp));
     }
 
+    /**
+     * The one {@code Type}&rarr;text producer of the backend (emitter page
+     * D1): {@link CanonicalRuntimeTypeDescriptor#encode(Type)} over the
+     * compilation's canonical descriptor service. The local legacy
+     * dialect producer is retired: {@code [D]} arrays, {@code ?D}
+     * nullables, {@code bytes}, exact {@code async? (...) -> D} functions,
+     * and class atoms byte-for-byte from the identity index (the builtin
+     * {@code Error} atom is {@code @$builtin/Error}). No legacy spelling
+     * ({@code T[]}, {@code T|null}, bare class names) is ever emitted.
+     */
     private String typeDescriptor(Type t) {
         if (t == null) return "null";
-        return switch (t) {
-            case Type.Null ignored -> "null";
-            case Type.Boolean ignored -> "boolean";
-            case Type.Int ignored -> "int";
-            case Type.Number ignored -> "number";
-            case Type.String ignored -> "string";
-            case Type.Table ignored -> "table";
-            case Type.Bytes ignored -> "bytes";
-            case Type.Error ignored -> "Error";
-            case Type.Array arr -> {
-                String elem = typeDescriptor(arr.element());
-                // E-2: function-involving elements emit the spec bracket form,
-                // so "[(int)->int]" (array of functions) cannot be misread as
-                // "(int)->int[]" (function returning an int array).
-                yield elem.contains("->") ? "[" + elem + "]" : elem + "[]";
-            }
-            case Type.Nullable n -> {
-                // E-1: nullable function types emit the spec "?F" form, so
-                // "?(int)->int" (nullable function) cannot be misread as
-                // "(int)->int|null" (function returning a nullable int).
-                // Every other nullable keeps the legacy "T|null" spelling.
-                if (n.inner() instanceof Type.Func) {
-                    yield "?" + typeDescriptor(n.inner());
-                }
-                yield typeDescriptor(n.inner()) + "|null";
-            }
-            case Type.Class cls -> {
-                if (cls.modulePath() != null && !cls.modulePath().isEmpty()) {
-                    yield "@" + cls.modulePath() + "/" + cls.name();
-                } else {
-                    yield cls.name();
-                }
-            }
-            case Type.Func f -> {
-                StringBuilder sb = new StringBuilder();
-                if (f.isAsync()) sb.append("async");
-                sb.append("(");
-                for (int i = 0; i < f.paramTypes().size(); i++) {
-                    if (i > 0) sb.append(",");
-                    sb.append(typeDescriptor(f.paramTypes().get(i)));
-                }
-                sb.append(")->").append(typeDescriptor(f.returnType()));
-                yield sb.toString();
-            }
-        };
+        return descriptors.encode(t);
     }
 
     /**
      * The quoted-Lua-string form of a runtime type descriptor: the
-     * descriptor text wrapped in double quotes and Lua-escaped.  Every
-     * emission site that embeds a descriptor inside a quoted Lua string
-     * must go through this (or escapeLuaStringNoQuotes): descriptor text
-     * carries user-authored characters — in particular the externals
-     * import key embedded in class descriptors ("@<dotted key>/<Name>")
-     * — and an unescaped backslash would make the generated chunk
-     * invalid Lua ("invalid escape sequence" at require time, with no
+     * canonical descriptor text wrapped in double quotes and Lua-escaped
+     * (emitter page D1 — {@code quotedTypeDescriptor} keeps its
+     * Lua-escaping role and calls the canonical service).  Every emission
+     * site that embeds a descriptor inside a quoted Lua string must go
+     * through this (or escapeLuaStringNoQuotes): descriptor text carries
+     * user-authored characters — in particular the externals import key
+     * embedded in canonical class atoms ("@$external/<key>/<Name>") —
+     * and an unescaped backslash would make the generated chunk invalid
+     * Lua ("invalid escape sequence" at require time, with no
      * compile-time diagnostic).
      */
     private String quotedTypeDescriptor(Type t) {
@@ -2849,7 +2933,9 @@ public final class LuaBackend implements Visitor<Void> {
     private void emitFromJson(JsonableClassMeta meta) {
         String name = meta.className;
         String identity = qualifiedClassName(name);
-        String sig = "(string)->" + identity + "|null";
+        // Canonical nullable form (emitter page D1): "?<identity>", never
+        // the legacy "<identity>|null" suffix.
+        String sig = "(string)->?" + identity;
 
         // Non-module-level @jsonable classes keep the legacy $→_ scope-local
         // binding (local C_fromJson) and reference their scope-local

@@ -7,7 +7,9 @@ local tablelib = {}
 
 --- Returns an array of the table's string keys.
 -- Numeric and other key types are converted to strings via tostring().
-tablelib.keys = __rt.function_("(table)->string[]", function(t)
+-- The wrapper signature carries the canonical descriptor grammar
+-- (luajit-v1.2-stdlib-contracts D1): arrays are "[T]".
+tablelib.keys = __rt.function_("(table)->[string]", function(t)
   __rt.check_table(t)
   local result = {}
   for k, _ in pairs(t) do

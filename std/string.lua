@@ -118,11 +118,13 @@ stringlib.replace = __rt.function_("(string,string,string)->string", function(s,
   return __rt.check_string((s:gsub(escaped_pattern, escaped_to)))
 end)
 
---- split(s: string, sep: string): string[]
+--- split(s: string, sep: string): [string]
 -- Splits s by sep (plain-text) and returns an array of substrings.
 -- If sep is empty, splits into individual characters.
 -- If sep is not found, returns an array containing s as the single element.
-stringlib.split = __rt.function_("(string,string)->string[]", function(s, sep)
+-- The wrapper signature carries the canonical descriptor grammar
+-- (luajit-v1.2-stdlib-contracts D1): arrays are "[T]".
+stringlib.split = __rt.function_("(string,string)->[string]", function(s, sep)
   __rt.check_string(s)
   __rt.check_string(sep)
   local result = {}

@@ -35,8 +35,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.*;
+import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.DiagnosticCode;
+import java.util.*;
 
 /**
  * Orchestrates multi-module compilation: discovery, parsing, type checking,
@@ -1563,10 +1564,20 @@ public final class CompilationOrchestrator {
             // two-pass emitter plus the runtime/stdlib deployment copies.
             codegenAllJs();
         } else {
-            // Lua use site: the existing LuaJIT emitter, unchanged.
+            // Lua use site (emitter page D1): the LuaJIT emitter consumes
+            // the same per-compilation canonical identity surface the JS
+            // arm builds — one identity index over the module-path
+            // classification plus the intrinsic builtin Error module.
+            // Every descriptor the Lua emitter writes resolves through
+            // it; the local legacy dialect producer is retired.
+            ModuleIdentityResolver.IdentityIndex identityIndex =
+                buildCanonicalIdentitySurface();
+            CanonicalRuntimeTypeDescriptor descriptorService =
+                new CanonicalRuntimeTypeDescriptor(identityIndex,
+                    identityIndex.moduleIdentityLookup());
             for (ModuleInfo info : modules.values()) {
                 if (info.isDeclarationFile) continue;
-                codegenLuaModule(info);
+                codegenLuaModule(info, descriptorService);
             }
             copyRuntimeLibrary();
             copyStdlibModules();
@@ -1580,10 +1591,13 @@ public final class CompilationOrchestrator {
 
     /**
      * Lua use site: emits the module via {@link LuaBackend}, with the
-     * resolved import map and host-module declarations (unchanged behavior;
-     * ISSUE-0091 moved the pre-existing body here verbatim).
+     * resolved import map, host-module declarations, and the compilation's
+     * canonical descriptor service (emitter page D1 — the same surface
+     * codegenAllJs builds and consumes).
      */
-    private void codegenLuaModule(ModuleInfo info) throws IOException {
+    private void codegenLuaModule(ModuleInfo info,
+                                  CanonicalRuntimeTypeDescriptor descriptors)
+            throws IOException {
         long modStart = System.currentTimeMillis();
 
         Map<String, String> importResolutions = new HashMap<>();
@@ -1637,7 +1651,7 @@ public final class CompilationOrchestrator {
         LuaBackend.GenerationResult gen = LuaBackend.generateToFile(
             info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
             outputRoot, outputPath, sourceMap, importResolutions, hostModules,
-            isEntry);
+            isEntry, descriptors);
         // Native ranged backend list (T12): the backend emits
         // CompilerDiagnostic entries directly, so the orchestrator merge
         // needs no boundary conversion — real spans keep their exact
@@ -1799,6 +1813,30 @@ public final class CompilationOrchestrator {
     }
 
     /**
+     * The per-compilation canonical identity surface (emitter page D1;
+     * js-v12-completion-architecture D3): one identity index over the
+     * module-path classification, consumed by the Lua and JS emitters'
+     * descriptor services.  The intrinsic builtin Error classification
+     * (the checker's empty module path) and every known module join the
+     * map; a module the classification cannot give a public identity
+     * (an out-of-root relative source) stays absent — class-free code
+     * remains valid, and a class there fails closed at descriptor
+     * production (the pinned invariant violation).
+     */
+    private ModuleIdentityResolver.IdentityIndex buildCanonicalIdentitySurface() {
+        Map<String, CanonicalModuleIdentity> modulePathIdentities =
+            new HashMap<>();
+        modulePathIdentities.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        for (ModuleInfo info : modules.values()) {
+            CanonicalModuleIdentity identity = classifyModuleIdentity(info);
+            if (identity != null) {
+                modulePathIdentities.put(info.modulePath, identity);
+            }
+        }
+        return ModuleIdentityResolver.buildIndex(modulePathIdentities);
+    }
+
+    /**
      * JS use site (ISSUE-0247 core slice, js-backend-emitter D3): the JVM
      * two-pass model — pass 1 generates every module and merges
      * diagnostics, pass 2 writes one {@code <modulePath with '/' for
@@ -1821,25 +1859,9 @@ public final class CompilationOrchestrator {
      */
     private void codegenAllJs() throws IOException {
         // Canonical identity surface (js-v12-completion-architecture D3):
-        // one per-compilation identity index over the module-path
-        // classification, consumed by the JS emitter's descriptor
-        // service.  The intrinsic builtin Error classification (the
-        // checker's empty module path) and every known module join the
-        // map; a module the classification cannot give a public identity
-        // (an out-of-root relative source) stays absent — class-free
-        // code remains valid, and a class there fails closed at
-        // descriptor production (the pinned invariant violation).
-        Map<String, CanonicalModuleIdentity> modulePathIdentities =
-            new HashMap<>();
-        modulePathIdentities.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
-        for (ModuleInfo info : modules.values()) {
-            CanonicalModuleIdentity identity = classifyModuleIdentity(info);
-            if (identity != null) {
-                modulePathIdentities.put(info.modulePath, identity);
-            }
-        }
+        // the shared per-compilation surface both emitter arms consume.
         ModuleIdentityResolver.IdentityIndex identityIndex =
-            ModuleIdentityResolver.buildIndex(modulePathIdentities);
+            buildCanonicalIdentitySurface();
 
         // Pass 1: generate every module and merge diagnostics. Rejected
         // modules write no artifact.

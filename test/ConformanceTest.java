@@ -3,9 +3,13 @@ package deal.test;
 import deal.ast.*;
 import deal.checker.*;
 import deal.codegen.lua.LuaBackend;
+import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
 import deal.lexer.*;
 import deal.module.ExportExtractor;
+import deal.module.ModuleIdentityResolver;
 import deal.module.ModuleShapeValidator;
 import deal.module.StdlibModuleResolver;
 import deal.parser.*;
@@ -90,6 +94,16 @@ public class ConformanceTest {
      */
     private static Path hostFixturesRoot =
         Path.of("test/conformance/host-fixtures");
+
+    /**
+     * The conformance root the identity surface classifies compiled module
+     * paths against (emitter page D1): fixture/companion class atoms are
+     * machine-independent — {@code @conformance/<corpus-relative
+     * components>/<file stem>/<C>} — while host paths keep the pinned
+     * dotted projection. Set in {@code main} from the root argument.
+     */
+    private static Path conformanceRoot =
+        Path.of("test/conformance").toAbsolutePath().normalize();
 
     // =========================================================================
     // Data types
@@ -177,11 +191,13 @@ public class ConformanceTest {
     // =========================================================================
 
     public static void main(String[] args) throws Exception {
-        String conformanceRoot = "test/conformance/";
+        String conformanceRootArg = "test/conformance/";
         if (args.length > 0) {
-            conformanceRoot = args[0];
-            hostFixturesRoot = Path.of(conformanceRoot).resolve("host-fixtures");
+            conformanceRootArg = args[0];
+            hostFixturesRoot = Path.of(conformanceRootArg).resolve("host-fixtures");
         }
+        conformanceRoot = Path.of(conformanceRootArg)
+            .toAbsolutePath().normalize();
 
         try {
             new ProcessBuilder("luajit", "-v").start().waitFor();
@@ -191,13 +207,13 @@ public class ConformanceTest {
         }
 
         System.out.println("=== DEAL v1.2 Conformance Test Suite ===");
-        System.out.println("Root: " + conformanceRoot);
+        System.out.println("Root: " + conformanceRootArg);
         System.out.println("LuaJIT: " + (luajitAvailable ? "available" :
             "NOT available (runtime tests will be skipped)"));
         System.out.println();
 
         // Discover test files
-        List<TestFile> tests = discoverTests(Path.of(conformanceRoot));
+        List<TestFile> tests = discoverTests(conformanceRoot);
         System.out.println("Discovered " + tests.size() + " conformance test(s)");
         System.out.println();
 
@@ -1393,6 +1409,100 @@ public class ConformanceTest {
         private final HostRegistry hostRegistry = new HostRegistry();
 
         /**
+         * The harness-wide canonical identity surface (emitter page D1):
+         * one growing module-path classification keyed by dotted/absolute
+         * module paths. {@code ""} classifies the intrinsic builtin Error
+         * module; a host path classifies as a project module whose root
+         * text is the dotted host path itself (keeping the pinned
+         * @host.cfg/&lt;C&gt; identity byte-for-byte — the frozen cfg.lua
+         * seam); any other compiled module path (an absolute .deal file
+         * path) classifies as a project module under the fixed root text
+         * {@code conformance} with the path's directory components plus
+         * the file stem (two same-directory companion modules therefore
+         * get distinct atoms — the modid-class-identity cross-module
+         * mismatch fixture depends on it). Every compiled artifact
+         * registers its path before backend construction, so every
+         * Type.Class module path the emitter encodes is present
+         * (companions compile depth-first before their importers).
+         */
+        private final Map<String, CanonicalModuleIdentity> moduleIdentities =
+            new LinkedHashMap<>();
+        {
+            moduleIdentities.put("",
+                CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        }
+
+        /** The descriptor service built over the current classification. */
+        private CanonicalRuntimeTypeDescriptor descriptorService() {
+            ModuleIdentityResolver.IdentityIndex index =
+                ModuleIdentityResolver.buildIndex(moduleIdentities);
+            return new CanonicalRuntimeTypeDescriptor(index,
+                index.moduleIdentityLookup());
+        }
+
+        /** Classifies one module path for the harness identity surface. */
+        private CanonicalModuleIdentity classifyModulePath(String modulePath) {
+            if (modulePath == null || modulePath.isEmpty()) {
+                return CanonicalModuleIdentity.BuiltinModule.INSTANCE;
+            }
+            if (hostRegistry.isHostModule(modulePath)) {
+                String dotted = modulePath.replace('/', '.');
+                return new CanonicalModuleIdentity.ProjectModule(
+                    new ProjectModuleIdentity(dotted, dotted, List.of()));
+            }
+            Path p = Path.of(modulePath).toAbsolutePath().normalize();
+            // Classify corpus-relative when the path lives inside the
+            // conformance root: the atom text is then machine-independent
+            // (@conformance/backend-runtime/<dirs>/<file stem>/<C>),
+            // matching the sidecar-pinned identity text. Out-of-root paths
+            // keep their absolute components (still consistent within the
+            // run).
+            Path rel;
+            try {
+                rel = conformanceRoot.relativize(p);
+            } catch (IllegalArgumentException e) {
+                rel = p;
+            }
+            if (rel.startsWith("..")) {
+                rel = p;
+            }
+            List<String> components = new ArrayList<>();
+            Path parent = rel.getParent();
+            if (parent != null) {
+                for (Path part : parent) {
+                    String c = part.toString();
+                    if (!c.isEmpty() && !c.equals("/")) {
+                        components.add(c);
+                    }
+                }
+            }
+            Path fileName = rel.getFileName();
+            if (fileName != null && !fileName.toString().isEmpty()) {
+                components.add(fileName.toString());
+            }
+            String anchor = parent != null
+                ? parent.toAbsolutePath().normalize().toString()
+                : modulePath;
+            return new CanonicalModuleIdentity.ProjectModule(
+                new ProjectModuleIdentity("conformance", anchor, components));
+        }
+
+        /** Registers a module path (and its host paths) before backend use. */
+        private void registerModulePath(String modulePath,
+                Map<String, Map<String, Type>> hostModules) {
+            if (modulePath != null && !modulePath.isEmpty()
+                    && !moduleIdentities.containsKey(modulePath)) {
+                moduleIdentities.put(modulePath, classifyModulePath(modulePath));
+            }
+            for (String raw : hostModules.keySet()) {
+                String dotted = raw.replace('/', '.');
+                if (!moduleIdentities.containsKey(dotted)) {
+                    moduleIdentities.put(dotted, classifyModulePath(dotted));
+                }
+            }
+        }
+
+        /**
          * Returns the compiled artifact for a file, compiling it (and all
          * of its transitive companion dependencies) on first use.
          * Returns {@code null} when the file cannot be read, fails any
@@ -1501,8 +1611,15 @@ public class ConformanceTest {
                     filename, symTable, nr, parseResult.program());
                 if (result.hasErrors()) return null;
 
+                // Canonical descriptor surface (emitter page D1): register
+                // this module's path (and its host module paths) in the
+                // catalog classification, then construct the backend over
+                // the per-compilation descriptor service so every emitted
+                // descriptor resolves through the identity index.
+                registerModulePath(filename, hostModules);
                 LuaBackend backend = new LuaBackend(
-                    result.typeMap(), result.symbolTable(), filename);
+                    result.typeMap(), result.symbolTable(), filename,
+                    filename, descriptorService());
                 String luaSource = backend.generateFromInstance(
                     parseResult.program(), isEntry, importResolutions,
                     hostModules);
