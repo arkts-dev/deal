@@ -265,14 +265,14 @@ module.exports = {
 
 // Host fixture implementation for the host-class-export conformance
 // test (host-module-abi D6 + runtime-class-identity D1-D2). Each
-// declared class export carries its module-qualified identity META and
+// declared class export carries its canonical externals identity META and
 // a <C>_defaults table (construction depends on both). Absent optional
 // fields are marked MISSING by the loader from the declared field
 // metadata, so the defaults tables carry only the defaulted values.
 module.exports = {
   Endpoint: {
     $kind: "class",
-    $classname: "@host.cfg/Endpoint",
+    $classname: "@$external/host/cfg/Endpoint",
   },
 
   Endpoint_defaults: {
@@ -281,7 +281,7 @@ module.exports = {
 
   ServerConfig: {
     $kind: "class",
-    $classname: "@host.cfg/ServerConfig",
+    $classname: "@$external/host/cfg/ServerConfig",
   },
 
   ServerConfig_defaults: {
@@ -424,7 +424,7 @@ module.exports = {
 
 // Host fixture implementation for the host-export-presence conformance
 // test (host-module-abi D6). The declared class export carries the
-// module-qualified identity descriptor (@host.presence/Config) and a
+// canonical externals identity descriptor (@$external/host/presence/Config) and a
 // <C>_defaults table — runtime construction through the synthesized
 // class symbol depends on both. Absent optional fields are marked
 // MISSING by the loader from the declared field metadata.
@@ -435,7 +435,7 @@ module.exports = {
 
   Config: {
     $kind: "class",
-    $classname: "@host.presence/Config",
+    $classname: "@$external/host/presence/Config",
   },
 
   Config_defaults: {
@@ -1946,9 +1946,13 @@ module.exports = {
             sb.append("\"").append(zeroAry.get(i)).append("\"");
         }
         sb.append("];\n");
-        sb.append("const $entry = require(\"./").append(entryModule)
-            .append("\");\n");
+        // The entry require sits inside the async body so a load-time
+        // failure (a host loadHost E8011, a module-load error) routes
+        // through the shared catch — the DEAL_ERROR_CODE stderr + exit-1
+        // contract — never a raw uncaught stack trace.
         sb.append("(async () => {\n");
+        sb.append("  const $entry = require(\"./").append(entryModule)
+            .append("\");\n");
         sb.append("  for (const $k of Object.keys($entry)) {\n");
         sb.append("    if ($k.indexOf(\"$\") !== -1) { continue; }\n");
         sb.append("    const $v = $entry[$k];\n");

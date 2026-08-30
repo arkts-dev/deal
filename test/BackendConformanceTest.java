@@ -5,13 +5,20 @@ import deal.checker.*;
 import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.codegen.jvm.JvmBackend;
+import deal.codegen.js.HostModuleDeclarations;
 import deal.codegen.js.JsBackend;
 import deal.codegen.lua.LuaBackend;
+import deal.identity.CanonicalClassIdentityIndex;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
 import deal.module.CompilationOrchestrator;
+import deal.module.ExportExtractor;
+import deal.module.ModuleIdentityResolver;
 import deal.module.ModuleShapeValidator;
 import deal.module.DealConfig;
 import deal.module.StdlibModuleResolver;
 import deal.ir.IrDumper;
+import deal.semantic.ir.SemanticProfile;
 import deal.lexer.*;
 import deal.parser.*;
 import deal.types.Type;
@@ -25,6 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.function.Function;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
 import javax.tools.JavaFileObject;
@@ -703,16 +711,17 @@ public class BackendConformanceTest {
      */
     static String fixtureConfigViolation(Map<String, Object> test) {
         // ISSUE-0100: 'hosts' (host modules with deal.json externals) is
-        // a multi-module concept — the single-module adapter has no
-        // project root, no deal.json, and no orchestrator, so a
-        // single-module fixture declaring hosts would silently drop them.
+        // a multi-module concept for the JVM adapter — the single-module
+        // adapter has no project root, no deal.json, and no orchestrator.
+        // ISSUE-0328: the JS adapter supports single-module host
+        // fixtures (a bare import path per entry with an embedded
+        // declaration and a JS host implementation) — any other
+        // single-module hosts shape is a violation, never a silent drop.
         Object hosts = test.get("hosts");
         if (hosts != null && hosts != JSON_NULL) {
             Object source = test.get("source");
             if (source != null && source != JSON_NULL) {
-                return "'hosts' requires the multi-module 'modules' form; "
-                    + "a single-module ('source') fixture cannot declare "
-                    + "host modules";
+                return jsSingleModuleHostsViolation(test);
             }
         }
         Object expectedCompileError = test.get("expectedCompileError");
@@ -738,6 +747,54 @@ public class BackendConformanceTest {
                 + "before codegen and would silently drop them "
                 + "(conformance-test-architecture D6: invalid fixture "
                 + "configurations must fail)";
+        }
+        return null;
+    }
+
+    /**
+     * The single-module {@code 'hosts'} shape accepted by the JS
+     * adapter (ISSUE-0328): a non-empty object mapping bare externals
+     * import paths to {@code { declaration, js }} entries — the
+     * embedded declaration string (resolved by {@link JsHostResolver})
+     * and the non-empty CommonJS host implementation the adapter
+     * deploys at {@code <tmp>/<raw path>.js}. Only fixtures whose
+     * {@code backends} include {@code "js"} may declare the
+     * single-module hosts form; a malformed entry is a violation,
+     * never a silent drop.
+     */
+    private static String jsSingleModuleHostsViolation(
+            Map<String, Object> test) {
+        Object hosts = test.get("hosts");
+        if (!(hosts instanceof Map<?, ?> hostMap) || hostMap.isEmpty()) {
+            return "'hosts' must be a non-empty object mapping raw "
+                + "import paths to { declaration, js } host entries";
+        }
+        List<?> backends = (List<?>) test.getOrDefault(
+            "backends", List.of());
+        if (!backends.contains("js")) {
+            return "'hosts' on a single-module ('source') fixture is "
+                + "JS-only — 'backends' must include \"js\"";
+        }
+        for (Map.Entry<?, ?> he : hostMap.entrySet()) {
+            String importPath = String.valueOf(he.getKey());
+            if (importPath.startsWith("./")
+                    || importPath.startsWith("../")) {
+                return "'hosts' keys are bare externals import paths "
+                    + "(the spec manifest form); got relative path '"
+                    + importPath + "'";
+            }
+            if (!(he.getValue() instanceof Map<?, ?> hostEntry)) {
+                return "'hosts' entry '" + importPath + "' must be an "
+                    + "object with 'declaration' and 'js' strings";
+            }
+            Object declaration = hostEntry.get("declaration");
+            Object js = hostEntry.get("js");
+            if (!(declaration instanceof String decl)
+                    || !(js instanceof String jsSrc)
+                    || decl.isEmpty() || jsSrc.isEmpty()) {
+                return "'hosts' entry '" + importPath + "' must have "
+                    + "non-empty string 'declaration' and 'js' fields";
+            }
         }
         return null;
     }
@@ -991,10 +1048,16 @@ public class BackendConformanceTest {
         }
 
         try {
+            // The single-module hosts map (ISSUE-0328): null for every
+            // host-free fixture; a non-null map drives the JS adapter's
+            // JsHostResolver frontend resolution and host deployment.
+            Map<String, Object> hosts = jsHostsOf(test);
+
             // Compile with the real frontend (lexer → parser → name resolver
             // → type checker). Diagnostics are collected per phase, exactly
             // like ConformanceTest.compileAndGetDiagnostics.
-            FrontendCompile fc = compileFrontend(source, "fixture-" + name + ".deal");
+            FrontendCompile fc = compileFrontend(source, "fixture-" + name + ".deal",
+                "fixture-" + name + ".deal", hosts);
 
             // ---- Frontend compile-error gate (ISSUE-0091) ----
             // Rejected before any backend: this path returns before codegen,
@@ -1111,7 +1174,8 @@ public class BackendConformanceTest {
                     if (!runBackendTracked("js",
                             () -> runJsAssertions(name, source,
                                 expectedOutput, expectedNotOutput,
-                                expectedError, expectedExitCode))) {
+                                expectedError, expectedExitCode,
+                                hosts))) {
                         return; // failure already reported
                     }
                     ranAny = true;
@@ -1181,6 +1245,24 @@ public class BackendConformanceTest {
     @SuppressWarnings("deprecation")
     private static FrontendCompile compileFrontend(String source, String filename,
                                                    String modulePath) {
+        return compileFrontend(source, filename, modulePath, null);
+    }
+
+    /**
+     * Frontend compile with an optional host-fixture map (ISSUE-0328,
+     * js-v12-host-abi-completion D1/D3): a non-null map replaces the
+     * stub resolver with {@link JsHostResolver}, which resolves the
+     * bare {@code host/&lt;name&gt;} imports against the fixture's
+     * embedded declarations and synthesizes the declared host-class
+     * symbols — the same frontend surface the production orchestrator's
+     * externals resolution provides (the declared export map plus
+     * class-symbol synthesis from the declaration AST). A null map
+     * keeps the stub resolver (no host imports).
+     */
+    @SuppressWarnings("deprecation")
+    private static FrontendCompile compileFrontend(String source, String filename,
+                                                   String modulePath,
+                                                   Map<String, Object> hosts) {
         List<CompilerDiagnostic> errors = new ArrayList<>();
 
         LexResult lex = new Lexer(source, filename).tokenize();
@@ -1217,7 +1299,9 @@ public class BackendConformanceTest {
             return new FrontendCompile(null, null, null, errors);
         }
 
-        StubModuleResolver resolver = new StubModuleResolver();
+        ModuleResolver resolver = hosts == null || hosts.isEmpty()
+            ? (ModuleResolver) new StubModuleResolver()
+            : new JsHostResolver(hosts);
         NameResolver nr = new NameResolver(modulePath, resolver);
         SymbolTable symTable;
         try {
@@ -1242,6 +1326,121 @@ public class BackendConformanceTest {
         }
 
         return new FrontendCompile(parseResult.program(), result, symTable, errors);
+    }
+
+    /**
+     * The JS adapter's host-fixture resolver (ISSUE-0328,
+     * js-v12-host-abi-completion D1/D3): one embedded host declaration
+     * per bare {@code host/&lt;name&gt;} import path, mirroring the
+     * production externals surface — {@code resolveModule} returns the
+     * declaration's extracted export map,
+     * {@code resolveClassSymbol} synthesizes the declared host-class
+     * symbols from the declaration AST (the frontend's shared
+     * host-class symbol synthesis), and
+     * {@code resolveTypeNodeInModule} resolves host-class field type
+     * annotations against the declaring module's own context through
+     * {@link ExportExtractor}.
+     */
+    private static final class JsHostResolver implements ModuleResolver {
+        private static final class HostFixture {
+            final String rawPath;
+            final String dottedPath;
+            final Map<String, Type> exports;
+            final Map<String, Symbol.ClassSymbol> classes;
+            final ExportExtractor extractor;
+
+            HostFixture(String rawPath, String dottedPath,
+                        Map<String, Type> exports,
+                        Map<String, Symbol.ClassSymbol> classes,
+                        ExportExtractor extractor) {
+                this.rawPath = rawPath;
+                this.dottedPath = dottedPath;
+                this.exports = exports;
+                this.classes = classes;
+                this.extractor = extractor;
+            }
+        }
+
+        private final Map<String, HostFixture> byRaw =
+            new LinkedHashMap<>();
+        private final Map<String, HostFixture> byDotted =
+            new LinkedHashMap<>();
+
+        @SuppressWarnings("deprecation")
+        JsHostResolver(Map<String, Object> hosts) {
+            for (Map.Entry<String, Object> e : hosts.entrySet()) {
+                String raw = e.getKey();
+                Map<?, ?> entry = (Map<?, ?>) e.getValue();
+                String declaration = String.valueOf(
+                    entry.get("declaration"));
+                String dotted = raw.replace('/', '.');
+                LexResult lex = new Lexer(declaration,
+                    raw + ".d.deal").tokenize();
+                ParseResult parse = new Parser(lex.tokens(),
+                    raw + ".d.deal").parse();
+                ExportExtractor extractor = new ExportExtractor(dotted,
+                    true);
+                Map<String, Type> exports = extractor.extract(
+                    parse.program());
+                Map<String, Symbol.ClassSymbol> classes =
+                    new LinkedHashMap<>();
+                for (StatementNode stmt
+                        : parse.program().statements()) {
+                    ClassDeclaration cd = null;
+                    if (stmt instanceof ClassDeclaration c) {
+                        cd = c;
+                    } else if (stmt instanceof ExportDeclaration ed
+                            && ed.declaration()
+                                instanceof ClassDeclaration c) {
+                        cd = c;
+                    }
+                    if (cd != null) {
+                        classes.put(cd.name(),
+                            new Symbol.ClassSymbol(cd.name(),
+                                cd.fields(), dotted));
+                    }
+                }
+                HostFixture f = new HostFixture(raw, dotted, exports,
+                    classes, extractor);
+                byRaw.put(raw, f);
+                byDotted.put(dotted, f);
+            }
+        }
+
+        @Override
+        public Map<String, Type> resolveModule(String modulePath,
+                String importingModule, Set<String> modulesInProgress)
+                throws ModuleNotFoundException {
+            HostFixture f = byRaw.get(modulePath);
+            if (f != null) {
+                return f.exports;
+            }
+            throw new ModuleNotFoundException("Module not found: "
+                + modulePath);
+        }
+
+        @Override
+        public Symbol.ClassSymbol resolveClassSymbol(String className,
+                String modulePath, String importingModule)
+                throws ModuleNotFoundException {
+            HostFixture f = byDotted.get(modulePath);
+            if (f != null) {
+                return f.classes.get(className);
+            }
+            return null;
+        }
+
+        @Override
+        public Type resolveTypeNodeInModule(TypeNode typeNode,
+                String modulePath, String importingModule)
+                throws ModuleNotFoundException {
+            HostFixture f = byDotted.get(modulePath);
+            if (f != null) {
+                Type resolved = f.extractor.resolveFieldType(typeNode);
+                return resolved == Type.Error.INSTANCE ? null : resolved;
+            }
+            return null;
+        }
     }
 
     // =========================================================================
@@ -2174,17 +2373,80 @@ public class BackendConformanceTest {
      * {@code Main.js} artifact (asserted), and a bypassed node execution
      * produces no output.
      */
+    /**
+     * The host declared map for one fixture's single-module hosts
+     * (ISSUE-0328): per raw import path, the declaration's extracted
+     * export map plus, per class export name, the declared field
+     * records with their {@link ExportExtractor}-resolved types — the
+     * same gather shape the orchestrator's
+     * {@code codegenAllJs} builds for externals declarations.
+     */
+    @SuppressWarnings("deprecation")
+    private static Map<String, HostModuleDeclarations> jsHostModulesOf(
+            Map<String, Object> hosts) {
+        Map<String, HostModuleDeclarations> result = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : hosts.entrySet()) {
+            String raw = e.getKey();
+            Map<?, ?> entry = (Map<?, ?>) e.getValue();
+            String declaration = String.valueOf(entry.get("declaration"));
+            String dotted = raw.replace('/', '.');
+            LexResult lex = new Lexer(declaration,
+                raw + ".d.deal").tokenize();
+            ParseResult parse = new Parser(lex.tokens(),
+                raw + ".d.deal").parse();
+            ExportExtractor extractor = new ExportExtractor(dotted, true);
+            Map<String, Type> exports = extractor.extract(parse.program());
+            Map<String, List<HostModuleDeclarations.HostField>>
+                classFields = new LinkedHashMap<>();
+            for (StatementNode stmt : parse.program().statements()) {
+                ClassDeclaration cd = null;
+                if (stmt instanceof ClassDeclaration c) {
+                    cd = c;
+                } else if (stmt instanceof ExportDeclaration ed
+                        && ed.declaration()
+                            instanceof ClassDeclaration c) {
+                    cd = c;
+                }
+                if (cd == null) continue;
+                List<HostModuleDeclarations.HostField> fields =
+                    new ArrayList<>();
+                for (ClassField cf : cd.fields()) {
+                    fields.add(new HostModuleDeclarations.HostField(cf,
+                        extractor.resolveFieldType(cf.type())));
+                }
+                classFields.putIfAbsent(cd.name(), fields);
+            }
+            result.put(raw,
+                new HostModuleDeclarations(exports, classFields));
+        }
+        return result;
+    }
+
+    /** The single-module hosts map of one fixture, or null: the
+     * {@code hosts} object cast once (ISSUE-0328 — the
+     * fixtureConfigViolation gate already validated the shape). */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> jsHostsOf(Map<String, Object> test) {
+        Object hosts = test.get("hosts");
+        if (!(hosts instanceof Map<?, ?> m)) {
+            return null;
+        }
+        return (Map<String, Object>) m;
+    }
+
     private static boolean runJsAssertions(String name, String source,
                                            Object expectedOutput,
                                            List<String> expectedNotOutput,
                                            Object expectedError,
-                                           Object expectedExitCode) {
+                                           Object expectedExitCode,
+                                           Map<String, Object> hosts) {
         // The checker-module-path alignment re-runs the real frontend
         // pipeline (the same lexer → parser → resolver → checker stages)
         // with modulePath "Main"; it never re-checks backend decisions and
         // cannot act as a checker bypass (the shared fc already ran the
         // compile-error gate and the IR assertions).
-        FrontendCompile jsFc = compileFrontend(source, "fixture-" + name + ".deal", "Main");
+        FrontendCompile jsFc = compileFrontend(source, "fixture-" + name + ".deal",
+            "Main", hosts);
         if (jsFc.hasErrors()) {
             log("  [" + name + "] FAIL: JS frontend errors: " + jsFc.errors());
             failed.incrementAndGet();
@@ -2192,11 +2454,38 @@ public class BackendConformanceTest {
         }
 
         // 1. Codegen with the real JS backend (modulePath "Main", the
-        //    single-source adapter convention). Errors (E6000/E6003 for
-        //    out-of-skeleton constructs) fail the fixture.
-        JsBackend.JsCodegenResult res = JsBackend.generate(
-            jsFc.program(), jsFc.checkResult(), "fixture-" + name + ".deal",
-            "Main", Map.of(), Map.of(), false);
+        //    single-source adapter convention). Errors (E6003 for
+        //    out-of-skeleton constructs) fail the fixture. A host
+        //    fixture goes through the production seam with the
+        //    per-compilation identity surface (the host modules
+        //    classified as externals), so the declared map renders the
+        //    canonical @$external identities; the plain adapter path
+        //    stays on the standalone seam.
+        Map<String, HostModuleDeclarations> hostModules = new LinkedHashMap<>();
+        JsBackend.JsCodegenResult res;
+        if (hosts == null || hosts.isEmpty()) {
+            res = JsBackend.generate(
+                jsFc.program(), jsFc.checkResult(), "fixture-" + name + ".deal",
+                "Main", Map.of(), Map.of(), false);
+        } else {
+            hostModules = jsHostModulesOf(hosts);
+            Map<String, CanonicalModuleIdentity> byPath =
+                new LinkedHashMap<>();
+            byPath.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+            byPath.put("Main", new CanonicalModuleIdentity.ProjectModule(
+                new ProjectModuleIdentity("Main", "Main", List.of())));
+            for (String raw : hosts.keySet()) {
+                byPath.put(raw.replace('/', '.'),
+                    new CanonicalModuleIdentity.ExternalModule(raw));
+            }
+            ModuleIdentityResolver.IdentityIndex index =
+                ModuleIdentityResolver.buildIndex(byPath);
+            res = JsBackend.generate(
+                jsFc.program(), jsFc.checkResult(),
+                "fixture-" + name + ".deal", "Main", Map.of(),
+                hostModules, false, index, index.moduleIdentityLookup(),
+                null, SemanticProfile.LEGACY_SAFE_INT);
+        }
         if (res.hasErrors()) {
             log("  [" + name + "] FAIL: JS codegen diagnostics: "
                 + res.diagnostics());
@@ -2231,6 +2520,20 @@ public class BackendConformanceTest {
             //    same files the orchestrator's copyJsRuntimeLibrary/
             //    copyStdlibJsModules deploy).
             deployJsSupport(tmpDir);
+
+            // 2b. Host deployment (ISSUE-0328,
+            //     js-v12-host-abi-completion D6 analog): every host
+            //     implementation lands at <tmpDir>/<raw path>.js — the
+            //     file the emitted relative require resolves.
+            if (hosts != null) {
+                for (Map.Entry<String, Object> e : hosts.entrySet()) {
+                    Map<?, ?> entry = (Map<?, ?>) e.getValue();
+                    String jsSource = String.valueOf(entry.get("js"));
+                    Path hostFile = tmpDir.resolve(e.getKey() + ".js");
+                    Files.createDirectories(hostFile.getParent());
+                    Files.writeString(hostFile, jsSource);
+                }
+            }
 
             // 3. The runner: require the module, skip $-named exports,
             //    auto-invoke zero-arity exported wrappers in declaration

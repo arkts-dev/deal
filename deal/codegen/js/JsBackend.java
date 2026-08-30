@@ -76,6 +76,7 @@ import java.util.function.Function;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * JavaScript backend: the typed-AST-walking CommonJS emitter
@@ -200,9 +201,11 @@ import java.util.Set;
  * {@code FFI_UNSUPPORTED_BACKEND} at the import statement, keyed on
  * the parser-propagated {@code ImportDeclaration.directives()} marker
  * component ({@link #rejectUnsupportedImport}, live at this merge,
- * never a dead placeholder, and preceding the host-ABI arm when both
- * apply); a non-stdlib declaration-file import (a {@code hostModules}
- * entry) is E6000 (host ABI deferred) at the import statement;
+ * never a dead placeholder, and preceding any host handling);
+ * a non-stdlib declaration-file import (a {@code hostModules} entry)
+ * emits the {@code $rt.loadHost} binding with the emitter-rendered
+ * declared map (ISSUE-0328, js-v12-host-abi-completion D1 — the
+ * retired host-ABI E6000 arm);
  * {@code @jsonable} on an exported class emits the two exported
  * wrappers plus the hidden {@code C$fields} descriptor export
  * (js-v12-jsonable-completion D1-D2); and
@@ -217,6 +220,23 @@ import java.util.Set;
  * orchestrator's two-pass {@code codegenAllJs()} writes no artifact
  * for the rejected module — a clean sibling's artifact is unaffected —
  * and the compilation fails with the standard diagnostic report.
+ *
+ * <p>ISSUE-0328 host-ABI slice (js-v12-host-abi-completion D1/D4):
+ * the host-ABI E6000 arm retires — a non-stdlib declaration-file
+ * import emits {@code const &lt;alias&gt; = $rt.loadHost($require("<relpath>/<raw
+ * specifier>"), <declared map>);} with the raw specifier verbatim,
+ * prefixed by the same relative-path rule every project import uses
+ * (the host file lives at {@code <outputRoot>/<raw specifier>.js}),
+ * and the declared map is emitter-rendered from the orchestrator's
+ * host declaration records (canonical function descriptors; canonical
+ * {@code @$external/<specifier>/<ClassName>} identities plus the
+ * declared field-descriptor array for class exports). Host-call
+ * argument positions emit the raw expression value — a typed table
+ * read materializing a host-call argument never pre-raises its own
+ * E8001; the runtime host wrapper's boundary raises E8010 (D4
+ * read-site deferral). Let/assignment/return-boundary typed reads
+ * keep their pinned read-site checks. The E6003 {@code @extern-c} arm
+ * precedes any host handling.
  *
  * <p>ISSUE-0318 nested-class slice: the former D6 nested-class E6000
  * arm (below-module-level {@link ClassDeclaration}) is retired — a
@@ -347,7 +367,7 @@ public final class JsBackend {
     // declared export map): consumed by the import-binding and rejection
     // slices (T4/T6); retained here for the module shape.
     private final Map<String, String> importResolutions;
-    private final Map<String, Map<String, Type>> hostModules;
+    private final Map<String, HostModuleDeclarations> hostModules;
     private final boolean isEntry;
     /**
      * The backend-wide int mode derived from the invocation's
@@ -471,7 +491,7 @@ public final class JsBackend {
     private JsBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
                       String sourcePath, String modulePath,
                       Map<String, String> importResolutions,
-                      Map<String, Map<String, Type>> hostModules,
+                      Map<String, HostModuleDeclarations> hostModules,
                       boolean isEntry,
                       CanonicalRuntimeTypeDescriptor descriptors,
                       SourceMapGenerator sourceMapGenerator,
@@ -514,7 +534,7 @@ public final class JsBackend {
     public static JsCodegenResult generate(ProgramNode program, CheckResult result,
                                            String sourcePath, String modulePath,
                                            Map<String, String> importResolutions,
-                                           Map<String, Map<String, Type>> hostModules,
+                                           Map<String, HostModuleDeclarations> hostModules,
                                            boolean isEntry) {
         // Recorder-less convenience overload (js-v12-source-maps D2):
         // mapping recording is disabled and the profile defaults to
@@ -543,7 +563,7 @@ public final class JsBackend {
     public static JsCodegenResult generate(ProgramNode program, CheckResult result,
                                            String sourcePath, String modulePath,
                                            Map<String, String> importResolutions,
-                                           Map<String, Map<String, Type>> hostModules,
+                                           Map<String, HostModuleDeclarations> hostModules,
                                            boolean isEntry,
                                            SemanticProfile semanticProfile) {
         return generate(program, result, sourcePath, modulePath,
@@ -573,7 +593,7 @@ public final class JsBackend {
     public static JsCodegenResult generate(ProgramNode program, CheckResult result,
                                            String sourcePath, String modulePath,
                                            Map<String, String> importResolutions,
-                                           Map<String, Map<String, Type>> hostModules,
+                                           Map<String, HostModuleDeclarations> hostModules,
                                            boolean isEntry,
                                            SourceMapGenerator sourceMap) {
         return generate(program, result, sourcePath, modulePath,
@@ -594,7 +614,7 @@ public final class JsBackend {
     public static JsCodegenResult generate(ProgramNode program, CheckResult result,
                                            String sourcePath, String modulePath,
                                            Map<String, String> importResolutions,
-                                           Map<String, Map<String, Type>> hostModules,
+                                           Map<String, HostModuleDeclarations> hostModules,
                                            boolean isEntry,
                                            SourceMapGenerator sourceMap,
                                            SemanticProfile semanticProfile) {
@@ -648,7 +668,7 @@ public final class JsBackend {
     public static JsCodegenResult generate(ProgramNode program, CheckResult result,
                                            String sourcePath, String modulePath,
                                            Map<String, String> importResolutions,
-                                           Map<String, Map<String, Type>> hostModules,
+                                           Map<String, HostModuleDeclarations> hostModules,
                                            boolean isEntry,
                                            CanonicalClassIdentityIndex identityIndex,
                                            Function<String, CanonicalModuleIdentity> moduleIdentities,
@@ -717,15 +737,28 @@ public final class JsBackend {
 
         // Shape step 5: import bindings in import order — a
         // spec-stdlib raw path emits <relpath>/std/<name>, an
-        // importResolutions entry a project-module relative require.
-        // The rejection pass runs first: a @extern-c-marked import
-        // (E6003) or a non-stdlib declaration-file import (E6000 host
-        // ABI) emits its diagnostic and no binding — a rejected import
-        // never reaches the require path (js-backend-emitter D8).
+        // importResolutions entry a project-module relative require,
+        // and a hostModules entry the loadHost binding (D1 below). The
+        // rejection pass runs first: a @extern-c-marked import (E6003)
+        // emits its diagnostic and no binding — a rejected import never
+        // reaches the require path (js-backend-emitter D8). The E6003
+        // arm precedes any host handling, so an @extern-c-marked host
+        // path rejects before the loadHost binding is consulted.
         List<String> importBindings = new ArrayList<>();
         for (StatementNode stmt : program.statements()) {
             if (stmt instanceof ImportDeclaration imp) {
                 if (rejectUnsupportedImport(imp)) {
+                    continue;
+                }
+                HostModuleDeclarations hostDecls =
+                    hostModules.get(imp.modulePath());
+                if (hostDecls != null) {
+                    importBindings.add("const " + jsName(imp.alias())
+                        + " = $rt.loadHost($require("
+                        + jsStringLiteral(relativeSpecifier(
+                            imp.modulePath()))
+                        + "), "
+                        + renderHostDeclaredMap(hostDecls) + ");");
                     continue;
                 }
                 String specifier = importRequireSpecifier(imp);
@@ -921,6 +954,16 @@ public final class JsBackend {
      * {@code lib}).
      */
     private String relativeSpecifier(String dottedTargetPath) {
+        // An already-relative target — a host import whose raw
+        // specifier is written with a ./ or ../ prefix — is the
+        // relative require form verbatim (Node resolves it against the
+        // emitting module's artifact directory, exactly the rule's
+        // intent; js-v12-host-abi-completion D1 keeps the raw
+        // specifier byte-for-byte).
+        if (dottedTargetPath.startsWith("./")
+                || dottedTargetPath.startsWith("../")) {
+            return dottedTargetPath;
+        }
         String moduleArtifact = (modulePath == null ? "" : modulePath)
             .replace('.', '/');
         String targetArtifact = dottedTargetPath.replace('.', '/');
@@ -971,10 +1014,12 @@ public final class JsBackend {
      * nested {@code app.main} importing {@code sub.util} →
      * {@code ../sub/util}). A non-stdlib declaration file (a
      * {@code hostModules} entry — also present in
-     * {@code importResolutions}, so the host check precedes the
-     * project branch) or an unresolved path returns {@code null}: no
-     * binding is emitted. The host-ABI and {@code @extern-c} E6000/
-     * E6003 diagnostics themselves fire earlier in
+     * {@code importResolutions}) returns {@code null} here: the
+     * caller emits the {@code $rt.loadHost} binding with the declared
+     * map instead (the host branch precedes this method in the import
+     * loop), and no raw require of a declaration file can ever resolve.
+     * An unresolved path returns {@code null}: no binding is emitted.
+     * The {@code @extern-c} E6003 diagnostic fires earlier in
      * {@link #rejectUnsupportedImport}, before this method is
      * consulted; the host check here stays as the defensive guard for
      * classification-driven emission (a {@code @extern-c}-marked
@@ -998,6 +1043,94 @@ public final class JsBackend {
     }
 
     /**
+     * The emitter-rendered host declared map (ISSUE-0328,
+     * js-v12-host-abi-completion D1) — the second {@code $rt.loadHost}
+     * argument: one entry per declared export name in sorted order
+     * (deterministic emission independent of the caller-supplied map
+     * implementation, the LuaBackend TreeMap precedent):
+     *
+     * <pre>
+     * "&lt;name&gt;": { $k: "function", $d: "&lt;canonical declared descriptor&gt;" }
+     *           | { $k: "class", $d: "&lt;canonical identity&gt;",
+     *               $fields: [ { name, $d, optional, nullable, hasDefault }, ... ] }
+     * </pre>
+     *
+     * A declared function export renders its canonical function
+     * descriptor; a declared class export renders the canonical
+     * externals identity ({@code @$external/&lt;specifier&gt;/&lt;ClassName&gt;})
+     * plus the declared field-descriptor array. Every descriptor text
+     * comes from {@link #descriptors} — the single Type&rarr;text
+     * authority; no legacy spelling is emitted. Extra host exports are
+     * dropped structurally by the runtime loader; a missing declared
+     * export is the loader's load-time E8011.
+     */
+    private String renderHostDeclaredMap(HostModuleDeclarations decls) {
+        StringBuilder sb = new StringBuilder("{");
+        boolean first = true;
+        for (Map.Entry<String, Type> e
+                : new TreeMap<>(decls.exports()).entrySet()) {
+            if (!first) {
+                sb.append(", ");
+            }
+            first = false;
+            sb.append(jsStringLiteral(e.getKey())).append(": ");
+            Type t = e.getValue();
+            if (t instanceof Type.Func) {
+                sb.append("{ $k: ").append(jsStringLiteral("function")).append(", $d: ")
+                    .append(jsStringLiteral(descriptors.encode(t)))
+                    .append(" }");
+            } else if (t instanceof Type.Class cls) {
+                sb.append("{ $k: ").append(jsStringLiteral("class")).append(", $d: ")
+                    .append(jsStringLiteral(descriptors.encode(cls)))
+                    .append(", $fields: ")
+                    .append(renderHostClassFields(
+                        decls.classFields().getOrDefault(e.getKey(),
+                            List.of())))
+                    .append(" }");
+            } else {
+                // Unreachable for checker-accepted host declarations
+                // (declaration files export only functions and classes);
+                // the defensive function-form render makes the loader
+                // raise its pinned E8011 unsupported-descriptor at load.
+                sb.append("{ $k: ").append(jsStringLiteral("function")).append(", $d: ")
+                    .append(jsStringLiteral(descriptors.encode(t)))
+                    .append(" }");
+            }
+        }
+        return sb.append("}").toString();
+    }
+
+    /**
+     * The declared field-descriptor array of one host class export
+     * (js-v12-host-abi-completion D1): one entry per declared field in
+     * declaration order — the AST record's {@code name}/
+     * {@code optional}/{@code nullable}/{@code hasDefault} and the
+     * canonical {@code $d} descriptor of the orchestrator-resolved
+     * field type (a same-module class field type projects the
+     * declaring module's canonical identity).
+     */
+    private String renderHostClassFields(
+            List<HostModuleDeclarations.HostField> fields) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < fields.size(); i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            HostModuleDeclarations.HostField f = fields.get(i);
+            ClassField cf = f.declaration();
+            sb.append("{ name: ").append(jsStringLiteral(cf.name()))
+                .append(", $d: ")
+                .append(jsStringLiteral(descriptors.encode(f.type())))
+                .append(", optional: ").append(cf.optional())
+                .append(", nullable: ").append(cf.nullable())
+                .append(", hasDefault: ")
+                .append(cf.defaultExpr().isPresent())
+                .append(" }");
+        }
+        return sb.append("]").toString();
+    }
+
+    /**
      * The D8 import-classification rejections, fired before any import
      * binding is computed (js-backend-emitter D8). A
      * {@code @extern-c}-marked import — keyed on the
@@ -1005,26 +1138,20 @@ public final class JsBackend {
      * component — is E6003 containing {@code FFI_UNSUPPORTED_BACKEND}
      * at the import statement
      * (deal-v1.2-directives-and-c-ffi-declarations D8: an incapable
-     * backend rejects {@code @extern-c} before any artifact write);
-     * a non-stdlib declaration-file import (a {@code hostModules}
-     * entry) is the E6000 host-ABI rejection at the import statement.
-     * The E6003 arm precedes the host-ABI arm when both apply — the
-     * more specific rejection wins, deterministic. Spec-stdlib raw
-     * paths and {@code importResolutions} entries are never rejected
-     * here.
+     * backend rejects {@code @extern-c} before any artifact write).
+     * The former host-ABI E6000 arm retired with ISSUE-0328: a
+     * non-stdlib declaration-file import (a {@code hostModules} entry)
+     * now emits the {@code $rt.loadHost} binding with the declared map
+     * (js-v12-host-abi-completion D1). The E6003 arm precedes any host
+     * handling, so an {@code @extern-c}-marked host path rejects before
+     * the loadHost binding is consulted. Spec-stdlib raw paths and
+     * {@code importResolutions} entries are never rejected here.
      */
     private boolean rejectUnsupportedImport(ImportDeclaration imp) {
         if (imp.directives().contains("@extern-c")) {
             diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6003,
                 "JavaScript backend: @extern-c imports are not supported "
                     + "(FFI_UNSUPPORTED_BACKEND, ISSUE-0169 skeleton)",
-                imp.span()));
-            return true;
-        }
-        if (hostModules.containsKey(imp.modulePath())) {
-            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6000,
-                "JavaScript backend: host-module imports (host ABI) are "
-                    + "not supported (ISSUE-0169 skeleton)",
                 imp.span()));
             return true;
         }
@@ -1231,9 +1358,9 @@ public final class JsBackend {
         switch (stmt) {
             case ImportDeclaration imp -> {
                 // Shape step 5 emitted the binding in the header (a
-                // rejected import — @extern-c E6003 or host-ABI E6000 —
-                // was already diagnosed there and emitted no binding);
-                // the walk itself emits no statement.
+                // rejected @extern-c E6003 import was already diagnosed
+                // there and emitted no binding); the walk itself emits
+                // no statement.
             }
             case FunctionDeclaration fd -> visit(fd);
             case ClassDeclaration cd -> visit(cd);

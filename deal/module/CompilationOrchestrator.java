@@ -5,6 +5,7 @@ import deal.checker.*;
 import deal.codegen.Backend;
 import deal.codegen.SourceMapGenerator;
 import deal.codegen.jvm.JvmBackend;
+import deal.codegen.js.HostModuleDeclarations;
 import deal.codegen.js.JsBackend;
 import deal.codegen.lua.LuaBackend;
 import deal.ir.IrDumper;
@@ -1881,7 +1882,15 @@ public final class CompilationOrchestrator {
             // spec stdlib modules become host modules with their declared
             // export map.
             Map<String, String> importResolutions = new HashMap<>();
-            Map<String, Map<String, Type>> hostModules = new HashMap<>();
+            // Host modules (ISSUE-0328, js-v12-host-abi-completion D1):
+            // the raw import path carries the declared export map PLUS
+            // the declaration AST's class-field records with their
+            // orchestrator-resolved field types — the emitter renders
+            // the loadHost declared map (functions as canonical
+            // declared descriptors, classes as the canonical identity
+            // plus the field-descriptor array) from this record.
+            Map<String, HostModuleDeclarations> hostModules =
+                new HashMap<>();
             if (info.rawAst != null) {
                 for (StatementNode stmt : info.rawAst.statements()) {
                     if (stmt instanceof ImportDeclaration imp) {
@@ -1898,8 +1907,7 @@ public final class CompilationOrchestrator {
                                 if (imported.isDeclarationFile
                                         && !isSpecStdlibModuleInfo(imported)) {
                                     hostModules.put(imp.modulePath(),
-                                        imported.exports != null
-                                            ? imported.exports : Map.of());
+                                        hostDeclarationsOf(imported));
                                 }
                             }
                         }
@@ -1979,6 +1987,70 @@ public final class CompilationOrchestrator {
 
         copyJsRuntimeLibrary();
         copyStdlibJsModules();
+    }
+
+    /**
+     * The ISSUE-0328 host-module declaration record for one imported
+     * declaration file (js-v12-host-abi-completion D1): the declared
+     * export map plus, per class export name, the declaration AST's
+     * {@link ClassField} records with their resolved declared types.
+     * A declaration file never runs the phase-3 name-resolver pass, so
+     * the field types resolve structurally through an
+     * {@link ExportExtractor} over the declaration's own AST — the
+     * same resolution the declaration's export signatures use — with
+     * the declaration's import aliases mapped exactly like the
+     * phase-1 extraction. A same-module class field type (e.g.
+     * {@code endpoint: Endpoint} in {@code cfg.d.deal}) therefore
+     * resolves to the declaring module's class identity, which the
+     * JS emitter's descriptor service projects to the canonical
+     * {@code @$external/&lt;specifier&gt;/&lt;ClassName&gt;} atom.
+     */
+    private HostModuleDeclarations hostDeclarationsOf(
+            ModuleInfo imported) {
+        Map<String, Type> declaredExports = imported.exports != null
+            ? imported.exports : Map.of();
+        Map<String, List<HostModuleDeclarations.HostField>>
+            classFields = new LinkedHashMap<>();
+
+        Map<String, String> importAliasMap = new HashMap<>();
+        for (StatementNode stmt : imported.rawAst.statements()) {
+            if (stmt instanceof ImportDeclaration imp) {
+                String resolved = tryResolveImportPath(imp.modulePath(),
+                    Path.of(imported.sourcePath));
+                if (resolved != null) {
+                    ModuleInfo target = modules.get(resolved);
+                    if (target != null) {
+                        importAliasMap.put(imp.alias(),
+                            target.modulePath);
+                    }
+                }
+            }
+        }
+        ExportExtractor extractor = new ExportExtractor(
+            imported.modulePath, true);
+        extractor.setImportModulePaths(importAliasMap);
+        extractor.extract(imported.rawAst);
+        for (StatementNode stmt : imported.rawAst.statements()) {
+            ClassDeclaration cd = null;
+            if (stmt instanceof ClassDeclaration c) {
+                cd = c;
+            } else if (stmt instanceof ExportDeclaration ed
+                    && ed.declaration() instanceof ClassDeclaration c) {
+                cd = c;
+            }
+            if (cd == null) {
+                continue;
+            }
+            List<HostModuleDeclarations.HostField> fields =
+                new ArrayList<>();
+            for (ClassField cf : cd.fields()) {
+                fields.add(new HostModuleDeclarations.HostField(
+                    cf, extractor.resolveFieldType(cf.type())));
+            }
+            classFields.putIfAbsent(cd.name(), fields);
+        }
+        return new HostModuleDeclarations(declaredExports,
+            classFields);
     }
 
     /**
@@ -2571,6 +2643,19 @@ public final class CompilationOrchestrator {
 
         private final Map<String, ModuleInfo> modules;
         private final List<CompilerDiagnostic> diagnostics;
+        /**
+         * The lazily built name resolvers over declaration-file modules
+         * (keyed by dotted module path): declaration files skip the
+         * phase-3 name-resolution pass, so a cross-module class-field
+         * type annotation declared by a host declaration resolves
+         * through a resolver built on demand over the declaration's own
+         * AST (ISSUE-0328 — the frontend's shared host-class symbol
+         * synthesis). Each resolver is cached before its
+         * {@link NameResolver#resolve} completes so declaration-only
+         * import cycles terminate.
+         */
+        private final Map<String, NameResolver> declarationResolvers =
+            new HashMap<>();
 
         ModuleResolverImpl(Map<String, ModuleInfo> modules,
                            List<CompilerDiagnostic> diagnostics) {
@@ -2637,6 +2722,31 @@ public final class CompilationOrchestrator {
                     if (info.symbolTable != null) {
                         Symbol sym = info.symbolTable.resolve(className);
                         if (sym instanceof Symbol.ClassSymbol cs) return cs;
+                        return null;
+                    }
+                    // Host declaration synthesis (ISSUE-0328,
+                    // js-v12-host-abi-completion D3): a declaration
+                    // file carries no symbol table, so its declared
+                    // classes synthesize as ClassSymbols straight from
+                    // the declaration AST — DEAL-side construction and
+                    // field reads of a declared host class type-check
+                    // against the declaration's field records, and the
+                    // checker's cross-module field-type resolution runs
+                    // against the declaring module's own context (the
+                    // resolveTypeNodeInModule override below).
+                    for (StatementNode stmt : info.rawAst.statements()) {
+                        ClassDeclaration cd = null;
+                        if (stmt instanceof ClassDeclaration c) {
+                            cd = c;
+                        } else if (stmt instanceof ExportDeclaration ed
+                                && ed.declaration()
+                                    instanceof ClassDeclaration c) {
+                            cd = c;
+                        }
+                        if (cd != null && cd.name().equals(className)) {
+                            return new Symbol.ClassSymbol(cd.name(),
+                                cd.fields(), info.modulePath);
+                        }
                     }
                     return null;
                 }
@@ -2666,14 +2776,43 @@ public final class CompilationOrchestrator {
                 throws ModuleNotFoundException {
             for (ModuleInfo info : modules.values()) {
                 if (info.modulePath.equals(modulePath)) {
-                    if (info.nameResolver == null) {
-                        return null;
+                    if (info.nameResolver != null) {
+                        Type resolved =
+                            info.nameResolver.resolveTypeNode(typeNode);
+                        return resolved == Type.Error.INSTANCE
+                            ? null : resolved;
                     }
-                    Type resolved = info.nameResolver.resolveTypeNode(typeNode);
-                    return resolved == Type.Error.INSTANCE ? null : resolved;
+                    // Declaration-file owner (ISSUE-0328): resolve
+                    // through the lazily built resolver over the
+                    // declaration's own AST, so a bare same-module
+                    // class name inside a host class field type
+                    // resolves against the declaring module — never
+                    // against the importing module's scope.
+                    Type resolved = declarationResolver(info)
+                        .resolveTypeNode(typeNode);
+                    return resolved == Type.Error.INSTANCE
+                        ? null : resolved;
                 }
             }
             return null;
+        }
+
+        /**
+         * The cached name resolver over one declaration-file module,
+         * built on demand (ISSUE-0328 host-class symbol synthesis).
+         * The resolver is cached before its resolve completes so
+         * declaration-only import cycles terminate; its own import
+         * resolution runs through this same module resolver.
+         */
+        private NameResolver declarationResolver(ModuleInfo info) {
+            NameResolver cached = declarationResolvers.get(info.modulePath);
+            if (cached != null) {
+                return cached;
+            }
+            NameResolver built = new NameResolver(info.modulePath, this);
+            declarationResolvers.put(info.modulePath, built);
+            built.resolve(info.rawAst);
+            return built;
         }
     }
 }

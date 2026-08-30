@@ -26,6 +26,14 @@ public final class ExportExtractor {
     private boolean isDeclarationFile;
 
     /**
+     * Class declarations by name (the first pass of
+     * {@link #extract(ProgramNode)}), retained so the post-extraction
+     * {@link #resolveFieldType(TypeNode)} surface can resolve bare
+     * class names in the module's own declaration context.
+     */
+    private Map<String, List<ClassField>> classMap = Map.of();
+
+    /**
      * Maps import aliases (local names like "V") to the resolved module path
      * (like "cc_class"). Populated before extraction for correct qualified-type
      * resolution in exported function signatures.
@@ -56,15 +64,16 @@ public final class ExportExtractor {
         diagnostics.clear();
 
         // First pass: collect class declarations (needed for type resolution)
-        Map<String, List<ClassField>> classMap = new HashMap<>();
+        Map<String, List<ClassField>> collected = new HashMap<>();
         for (StatementNode stmt : program.statements()) {
             if (stmt instanceof ClassDeclaration cd) {
-                classMap.put(cd.name(), cd.fields());
+                collected.put(cd.name(), cd.fields());
             } else if (stmt instanceof ExportDeclaration exp
                     && exp.declaration() instanceof ClassDeclaration cd) {
-                classMap.put(cd.name(), cd.fields());
+                collected.put(cd.name(), cd.fields());
             }
         }
+        classMap = collected;
 
         for (StatementNode stmt : program.statements()) {
             if (stmt instanceof ExportDeclaration exp) {
@@ -204,6 +213,7 @@ public final class ExportExtractor {
             case "number" -> Type.Number.INSTANCE;
             case "string" -> Type.String.INSTANCE;
             case "table" -> Type.Table.INSTANCE;
+            case "bytes" -> Type.Bytes.INSTANCE;
             case "Error" -> Types.classType("Error", "");
             default -> {
                 if (classMap.containsKey(name)) {
@@ -213,6 +223,25 @@ public final class ExportExtractor {
                 yield Types.classType(name, "");
             }
         };
+    }
+
+    /**
+     * Resolves one type node in this module's own declaration context —
+     * primitives (the v1.2 {@code bytes} included), arrays, nullables,
+     * function types, locally declared classes, and alias-qualified
+     * classes through {@link #importModulePaths}. The JS host
+     * declared-map gather consumes this for host-class field descriptor
+     * types (ISSUE-0328, js-v12-host-abi-completion D1): a declaration
+     * file never runs the name-resolver pass, so its field types must
+     * resolve structurally against the declaration's own class map.
+     * Callers invoke it after {@link #extract(ProgramNode)}.
+     *
+     * @param typeNode the field type annotation to resolve
+     * @return the resolved type ({@code Type.Error} for an unresolvable
+     *         inner node)
+     */
+    public Type resolveFieldType(TypeNode typeNode) {
+        return resolveTypeNodeSimple(typeNode, classMap);
     }
 
     public List<CompilerDiagnostic> diagnostics() {
