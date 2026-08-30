@@ -64,6 +64,7 @@ javac --release 25 -proc:none -d build \
   test/ContainerPayloadDescriptorsTest.java \
   test/BoundaryExecutorTest.java \
   test/ComparisonExecutorTest.java \
+  test/AddressChainProtocolTest.java \
   test/UnicodeScalarsTest.java \
   test/BoundaryRealizationReportTest.java \
   test/FailureContractRegistryTest.java \
@@ -287,6 +288,12 @@ java -ea -cp build deal.test.BoundaryExecutorTest
 echo ""
 echo "=== Running Comparison Operand View and Executor Tests (ISSUE-0406, ISSUE-0234 B-D1/B-D2/B-D4) ==="
 java -ea -cp build deal.test.ComparisonExecutorTest
+
+echo ""
+echo "=== Running Address Chain Protocol / Normalized Slot Tests (ISSUE-0234 A-D1/A-D3/A-D9) ==="
+java -ea -cp build deal.test.AddressChainProtocolTest
+
+echo ""
 
 echo "=== Running Unicode Scalars Tests (ISSUE-0382, ISSUE-0232 D5) ==="
 java -ea -cp build deal.test.UnicodeScalarsTest
