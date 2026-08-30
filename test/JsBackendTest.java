@@ -115,6 +115,12 @@ public class JsBackendTest {
             testBytesEmissionPins();
             testBytesNodeSemantics();
             testBytesUserNameShadowing();
+            testBytesClosureFunctionArrayNode();
+            testBytesClosureAsyncContainerNode();
+            testBytesClosureClassDefaultsNode();
+            testBytesClosureDeepCompositionsNode();
+            testBytesClosureModuleBoundary();
+            testBytesClosureNoE6000Pins();
             testNumModFloored();
             testScalarStringOps();
             testOptionalThreeState();
@@ -2571,6 +2577,551 @@ public class JsBackendTest {
         check(nestedRun.exitCode() == 0 && nestedRun.output().equals("2"),
             "nested user class named bytes runs under node (b.x === 2): "
                 + nestedRun.output());
+    }
+
+    // =========================================================================
+    // ISSUE-0323 — JS recursive bytes closure verification (js-v12-int32-bytes D5)
+    // =========================================================================
+
+    /**
+     * The closure surface of the first-class sync bytes value: a
+     * {@code ((bytes)->bytes)[]} array built from a real
+     * bytes-transforming function, stored, invoked through the array
+     * index, element-reassigned, and content-asserted through buffer
+     * mutation — plus the arity-extension adapter over a bytes
+     * signature, a nested function declaration, and the E8013/E8012/
+     * E8001 failure propagation through the closure chain (the "no
+     * depth limit, no E6000" surface — every legal position executes
+     * real generated code).
+     */
+    private static void testBytesClosureFunctionArrayNode() throws Exception {
+        System.out.println("-- Node: bytes closure ((bytes)->bytes)[] and arity adapters --");
+        if (!nodeAvailable) { skipNode("bytes closure function array"); return; }
+
+        NodeResult run = runDealNode("""
+            function step(b: bytes): bytes {
+              b[0] = b[0] + 1;
+              return b;
+            }
+            export function test(): int {
+              function localStep(b: bytes): bytes {
+                b[0] = b[0] + 2;
+                return b;
+              }
+              let b: bytes = bytes(2);
+              let f: (b: bytes) => bytes = step;
+              let fs: ((b: bytes) => bytes)[] = [step, f, localStep];
+              if (fs.length !== 3) { return 0; }
+              fs[0](b);
+              let out: bytes = fs[1](b);
+              if (b[0] !== 2 || out[0] !== 2) { return 0; }
+              let alias: bytes = b;
+              alias[1] = 5;
+              if (b[1] !== 5) { return 0; }
+              fs[2](b);
+              if (b[0] !== 4) { return 0; }
+              fs[1] = step;
+              fs[1](b);
+              if (b[0] !== 5) { return 0; }
+              let wide: (b: bytes, extra: int) => bytes = step;
+              wide(b, 41);
+              if (b[0] !== 6) { return 0; }
+              return 1;
+            }
+            """, "bytes-closure-fn-array");
+        check(run.exitCode() == 0 && run.output().equals("1"),
+            "((bytes)->bytes)[] value built from real bytes-transforming "
+                + "functions (module-level and nested declarations), stored, "
+                + "invoked through the index, element-reassigned, aliased, "
+                + "and content-asserted through mutation — plus the "
+                + "(bytes,int)->bytes arity adapter dropping the extra "
+                + "parameter (returns 1): " + run.output());
+
+        // The E8013/E8012 propagation through the closure chain: the
+        // failure raised inside a function-array member crosses the
+        // wrapper, the array index, and the caller unchanged.
+        NodeResult poison = runDealNode("""
+            function poison(b: bytes): bytes {
+              b[0] = 256;
+              return b;
+            }
+            export function test(): int {
+              let fs: ((b: bytes) => bytes)[] = [poison];
+              let b: bytes = bytes(1);
+              fs[0](b);
+              return 0;
+            }
+            """, "bytes-closure-fn-array-poison");
+        check(poison.exitCode() == 1
+                && poison.output().contains("DEAL_ERROR_CODE: E8013"),
+            "an E8013 write through the ((bytes)->bytes)[] closure chain "
+                + "propagates the pinned bytesSet failure unchanged: "
+                + poison.output());
+
+        NodeResult oob = runDealNode("""
+            function outOfBounds(b: bytes): bytes {
+              let v: int = b[9];
+              return b;
+            }
+            export function test(): int {
+              let fs: ((b: bytes) => bytes)[] = [outOfBounds];
+              let b: bytes = bytes(1);
+              fs[0](b);
+              return 0;
+            }
+            """, "bytes-closure-fn-array-oob");
+        check(oob.exitCode() == 1
+                && oob.output().contains("DEAL_ERROR_CODE: E8012"),
+            "an E8012 read through the ((bytes)->bytes)[] closure chain "
+                + "propagates the pinned bytesGet failure unchanged: "
+                + oob.output());
+
+        // The adapter's extended-parameter checkInt boundary is real
+        // (the checkInt gate, T3): a dynamic non-int value surfacing
+        // from a table read into the extra parameter raises E8001 at
+        // the adapter entry.
+        NodeResult adapterCheck = runDealNode("""
+            function step(b: bytes): bytes {
+              b[0] = b[0] + 1;
+              return b;
+            }
+            export function test(): int {
+              let t: table = {};
+              t.extra = 3.5;
+              let b: bytes = bytes(1);
+              let wide: (b: bytes, extra: int) => bytes = step;
+              wide(b, t.extra);
+              return 0;
+            }
+            """, "bytes-closure-adapter-checkint");
+        check(adapterCheck.exitCode() == 1
+                && adapterCheck.output().contains("DEAL_ERROR_CODE: E8001")
+                && adapterCheck.output().contains("expected int"),
+            "the arity adapter's extended-parameter checkInt boundary "
+                + "raises E8001 'expected int' for a dynamic non-int "
+                + "value: " + adapterCheck.output());
+    }
+
+    /**
+     * Containerized async bytes function values awaited end-to-end: the
+     * async wrapper carries the canonical {@code async(bytes)->bytes}
+     * signature byte-for-byte across an array container, a class-field
+     * container, and a dynamic table boundary, and every awaited
+     * completion mutates the same buffer (content asserted, never a
+     * shape-only check).
+     */
+    private static void testBytesClosureAsyncContainerNode() throws Exception {
+        System.out.println("-- Node: containerized async bytes function values awaited end-to-end --");
+        if (!nodeAvailable) { skipNode("bytes closure async containers"); return; }
+
+        NodeResult run = runDealNode("""
+            async function bump(b: bytes): bytes {
+              b[0] = b[0] + 1;
+              return b;
+            }
+            class Box { f: async (b: bytes) => bytes; }
+            export async function test(): int {
+              let b: bytes = bytes(1);
+              let afs: (async (b: bytes) => bytes)[] = [bump, bump];
+              let out: bytes = await afs[1](b);
+              if (out[0] !== 1 || b[0] !== 1) { return 0; }
+              let box: Box = { f: bump };
+              let out2: bytes = await box.f(b);
+              if (out2[0] !== 2 || b[0] !== 2) { return 0; }
+              let t: table = {};
+              t.f = bump;
+              let g: async (b: bytes) => bytes = t.f;
+              let out3: bytes = await g(b);
+              if (out3[0] !== 3 || b[0] !== 3) { return 0; }
+              return 1;
+            }
+            """, "bytes-closure-async-container");
+        check(run.exitCode() == 0 && run.output().equals("1"),
+            "containerized async bytes function values — an "
+                + "[async(bytes)->bytes] array element, a class-field "
+                + "container, and a dynamic table boundary — awaited "
+                + "end-to-end with content-asserted buffer mutation "
+                + "(returns 1): " + run.output());
+    }
+
+    /**
+     * Class-field bytes defaults: a bytes-typed default expression
+     * evaluates fresh per construction (zero-filled, never shared),
+     * a provided literal overrides it, and the compiler-resolved
+     * .length/reads/writes hold on the field positions.
+     */
+    private static void testBytesClosureClassDefaultsNode() throws Exception {
+        System.out.println("-- Node: bytes class fields and per-construction defaults --");
+        if (!nodeAvailable) { skipNode("bytes closure class defaults"); return; }
+
+        NodeResult run = runDealNode("""
+            class Buffer { buf: bytes = bytes(2); }
+            export function test(): int {
+              let h: Buffer = {};
+              if (h.buf.length !== 2) { return 0; }
+              h.buf[0] = 6;
+              if (h.buf[0] !== 6) { return 0; }
+              let h2: Buffer = {};
+              if (h2.buf[0] !== 0 || h2.buf.length !== 2) { return 0; }
+              h.buf[0] = 8;
+              if (h2.buf[0] !== 0) { return 0; }
+              let h3: Buffer = { buf: bytes(1) };
+              if (h3.buf.length !== 1 || h3.buf[0] !== 0) { return 0; }
+              return 1;
+            }
+            """, "bytes-closure-class-defaults");
+        check(run.exitCode() == 0 && run.output().equals("1"),
+            "bytes class fields: fresh zero-filled per-construction "
+                + "defaults (no aliasing between instances), provided-"
+                + "literal override, and compiler-resolved .length/"
+                + "read/write positions (returns 1): " + run.output());
+    }
+
+    /**
+     * Arbitrary-depth Array/Nullable compositions roundtrip through
+     * dynamic and function boundaries: the {@code [?[bytes]]} element
+     * shape (nullable array of bytes inside an array — depth 2) and the
+     * top-level {@code ?[[bytes]]} shape (depth 3) cross table set/get
+     * and function parameter/return boundaries with the canonical
+     * descriptor text byte-exact, the depth walk validates the real
+     * buffers (positive case) and rejects a wrong inner shape at the
+     * pinned depth (negative case), and the mutated buffer stays
+     * observable through the parallel non-null view. The nullable
+     * shapes are flow-only in checker-accepted source: the
+     * {@code === null} test that would unpack them is the
+     * checker-owned E3019 bytes-comparison gate
+     * (binary-comparison-selectors B-D7, ISSUE-0111/ISSUE-0158) — a
+     * frontend gate, never a backend rejection.
+     */
+    private static void testBytesClosureDeepCompositionsNode() throws Exception {
+        System.out.println("-- Node: arbitrary-depth Array/Nullable bytes compositions through boundaries --");
+        if (!nodeAvailable) { skipNode("bytes closure deep compositions"); return; }
+
+        NodeResult run = runDealNode("""
+            function passDeep(x: (bytes[] | null)[]): (bytes[] | null)[] {
+              return x;
+            }
+            function idTop(x: (bytes[])[] | null): (bytes[])[] | null {
+              return x;
+            }
+            export function test(): int {
+              let b0: bytes = bytes(2);
+              let inner: bytes[] = [b0];
+              let xs: (bytes[] | null)[] = [];
+              xs[0] = inner;
+              xs[1] = null;
+              let deep: (bytes[])[] | null = [inner];
+              let t: table = {};
+              t.xs = xs;
+              t.deep = deep;
+              let back: (bytes[] | null)[] = t.xs;
+              let again: (bytes[] | null)[] = passDeep(back);
+              let backTop: (bytes[])[] | null = t.deep;
+              let againTop: (bytes[])[] | null = idTop(backTop);
+              if (again.length !== 2) { return 0; }
+              inner[0][0] = 9;
+              if (b0[0] !== 9) { return 0; }
+              return 1;
+            }
+            """, "bytes-closure-deep-composition");
+        check(run.exitCode() == 0 && run.output().equals("1"),
+            "(bytes[] | null)[] and (bytes[])[] | null compositions "
+                + "roundtrip through table and function boundaries at "
+                + "depth with the canonical [?[bytes]]/[[bytes]] walks, "
+                + "and the mutated buffer stays observable through the "
+                + "parallel non-null view (returns 1): " + run.output());
+
+        // The depth walk is real: a wrong inner shape surfacing from a
+        // table read fails at the pinned depth with the E8003-wrapped
+        // inner mismatch naming the failing descriptor.
+        NodeResult badDepth2 = runDealNode("""
+            export function test(): int {
+              let t: table = {};
+              t.bad = [[7]];
+              let back: (bytes[] | null)[] = t.bad;
+              return 0;
+            }
+            """, "bytes-closure-deep-negative-d2");
+        check(badDepth2.exitCode() == 1
+                && badDepth2.output().contains("DEAL_ERROR_CODE: E8003")
+                && badDepth2.output().contains("expected bytes"),
+            "a wrong inner shape at depth 2 raises the E8003-wrapped "
+                + "element mismatch naming 'expected bytes' (the walker "
+                + "reached the bytes row): " + badDepth2.output());
+
+        NodeResult badDepth3 = runDealNode("""
+            export function test(): int {
+              let t: table = {};
+              t.bad = [42];
+              let back: (bytes[])[] | null = t.bad;
+              return 0;
+            }
+            """, "bytes-closure-deep-negative-d3");
+        check(badDepth3.exitCode() == 1
+                && badDepth3.output().contains("DEAL_ERROR_CODE: E8003")
+                && badDepth3.output().contains("expected array"),
+            "a wrong inner shape at depth 3 raises the E8003-wrapped "
+                + "element mismatch naming 'expected array' (the walker "
+                + "reached the second array level): " + badDepth3.output());
+    }
+
+    /**
+     * The module boundary: an {@code async(bytes)->bytes} export
+     * crosses the import/export surface with the canonical signature
+     * byte-exact in the artifact, and the real node chain awaits the
+     * imported wrapper whose entry parameter check and declared-return
+     * check validate the bytes carrier — plus the sync cross-module
+     * roundtrip.
+     */
+    private static void testBytesClosureModuleBoundary() throws Exception {
+        System.out.println("-- Orchestrator: async(bytes)->bytes across a module boundary --");
+
+        writeFile("bytesx_proj/deal.json",
+            "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}");
+        writeFile("bytesx_proj/src/bytes_closure_lib.deal", """
+            export function syncId(b: bytes): bytes {
+              return b;
+            }
+            export async function tx(b: bytes): bytes {
+              b[0] = b[0] + 5;
+              return b;
+            }
+            """);
+        writeFile("bytesx_proj/src/bytes_closure_main.deal", """
+            import * as lib from "./bytes_closure_lib"
+            export function main(): null { return null; }
+            export function syncBridge(): int {
+              let b: bytes = bytes(2);
+              b[1] = 3;
+              let out: bytes = lib.syncId(b);
+              if (out[0] !== 0 || out[1] !== 3 || b[1] !== 3) {
+                throw { code: "TEST_FAIL", message: "sync cross-module bytes mismatch" };
+              }
+              return 1;
+            }
+            export async function asyncBridge(): int {
+              let b: bytes = bytes(2);
+              let out: bytes = await lib.tx(b);
+              if (out[0] !== 5 || b[0] !== 5) {
+                throw { code: "TEST_FAIL", message: "async cross-module bytes mismatch" };
+              }
+              return 1;
+            }
+            """);
+
+        Path entryFile = tmpDir.resolve("bytesx_proj/src/bytes_closure_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("bytesx_proj/build/js");
+        List<Path> roots = List.of(tmpDir.resolve("bytesx_proj/src").toAbsolutePath());
+        DealConfig config = DealConfig.load(tmpDir.resolve("bytesx_proj")).config();
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, Backend.JS, config, roots,
+            Path.of(".").toAbsolutePath().normalize());
+        boolean success = orchestrator.compile();
+        check(success, "bytes closure cross-module project compiles: "
+            + orchestrator.diagnostics());
+        if (!success) return;
+
+        Path libArtifact = outputDir.resolve("bytes_closure_lib.js");
+        Path mainArtifact = outputDir.resolve("bytes_closure_main.js");
+        check(Files.exists(libArtifact), "orchestrator wrote bytes_closure_lib.js");
+        check(Files.exists(mainArtifact), "orchestrator wrote bytes_closure_main.js");
+        if (Files.exists(libArtifact)) {
+            String js = Files.readString(libArtifact);
+            check(js.contains("$rt.function(\"async(bytes)->bytes\", "
+                    + "async function tx$f("),
+                "the exported async wrapper carries the canonical "
+                    + "async(bytes)->bytes signature byte-for-byte");
+            check(js.contains("$rt.function(\"(bytes)->bytes\", "
+                    + "function syncId$f("),
+                "the exported sync wrapper carries the canonical "
+                    + "(bytes)->bytes signature byte-for-byte");
+            check(js.contains("$rt.checkBytes(b, "),
+                "the imported-wrapper entry parameter check validates "
+                    + "the bytes carrier at the module boundary");
+            check(js.contains("$rt.setProp($exports, \"tx\", tx)")
+                    && js.contains("$rt.setProp($exports, \"syncId\", syncId)"),
+                "both bytes-bearing functions export under their raw keys");
+        }
+        if (Files.exists(mainArtifact)) {
+            String js = Files.readString(mainArtifact);
+            check(js.contains("(await lib.tx.$f("),
+                "the importing module awaits the imported async wrapper "
+                    + "through lib.tx.$f");
+            check(js.contains("lib.syncId.$f("),
+                "the importing module calls the imported sync wrapper "
+                    + "through lib.syncId.$f");
+        }
+
+        if (nodeAvailable) {
+            // The driver exercises the production module surface: it
+            // requires the compiled entry and runs the two exported
+            // bridges (sync and async) through their wrappers — the
+            // async bridge awaits the imported async(bytes)->bytes
+            // export across the real module boundary.
+            Files.writeString(outputDir.resolve("bytes_closure_driver.js"), """
+                "use strict";
+                const $main = require("./bytes_closure_main");
+                (async () => {
+                  const $sync = $main.syncBridge.$f();
+                  if ($sync !== 1) { throw new Error("syncBridge returned " + $sync); }
+                  const $async = await $main.asyncBridge.$f();
+                  if ($async !== 1) { throw new Error("asyncBridge returned " + $async); }
+                  console.log("bytes-module-boundary-ok");
+                })().catch((e) => { console.error(e && e.stack || String(e)); process.exit(1); });
+                """);
+            ProcessBuilder node = new ProcessBuilder("node", "bytes_closure_driver.js");
+            node.directory(outputDir.toFile());
+            node.redirectErrorStream(true);
+            Process np = node.start();
+            String nout = new String(np.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8).trim();
+            int nrc = np.waitFor();
+            check(nrc == 0 && nout.equals("bytes-module-boundary-ok"),
+                "the driver awaits the imported async(bytes)->bytes export "
+                    + "across the real module boundary with content-"
+                    + "asserted buffer mutation: exit " + nrc
+                    + ", output '" + nout + "'");
+        } else {
+            skipNode("bytes closure module-boundary node run");
+        }
+    }
+
+    /**
+     * The no-E6000 pins: every closure program generates with zero
+     * diagnostics and no E6000 for bytes nesting or function shape
+     * alone, the canonical descriptor texts appear byte-exact at the
+     * emitted boundary sites, and the only closure-position rejection
+     * is the checker-owned E3019 bytes-comparison gate
+     * (binary-comparison-selectors B-D7 — frontend, ISSUE-0111/
+     * ISSUE-0158), never a backend rejection.
+     */
+    private static void testBytesClosureNoE6000Pins() {
+        System.out.println("-- Bytes closure: no-E6000 generation pins and canonical descriptor texts --");
+
+        String[] closurePrograms = {
+            // The ((bytes)->bytes)[] + arity adapter shape.
+            """
+            function step(b: bytes): bytes { b[0] = b[0] + 1; return b; }
+            export function test(): int {
+              let fs: ((b: bytes) => bytes)[] = [step];
+              let wide: (b: bytes, extra: int) => bytes = step;
+              let b: bytes = bytes(1);
+              fs[0](b);
+              wide(b, 1);
+              return b[0];
+            }
+            """,
+            // The containerized async bytes function value shape.
+            """
+            async function bump(b: bytes): bytes { b[0] = b[0] + 1; return b; }
+            class Box { f: async (b: bytes) => bytes; }
+            export async function test(): int {
+              let afs: (async (b: bytes) => bytes)[] = [bump];
+              let box: Box = { f: bump };
+              let b: bytes = bytes(1);
+              let x: bytes = await afs[0](b);
+              let y: bytes = await box.f(b);
+              return x[0] + y[0];
+            }
+            """,
+            // The arbitrary-depth Array/Nullable composition shape.
+            """
+            function passDeep(x: (bytes[] | null)[]): (bytes[] | null)[] {
+              return x;
+            }
+            export function test(): int {
+              let xs: (bytes[] | null)[] = [];
+              let deep: (bytes[])[] | null = [[bytes(1)]];
+              let t: table = {};
+              t.xs = xs;
+              t.deep = deep;
+              let back: (bytes[] | null)[] = t.xs;
+              let again: (bytes[] | null)[] = passDeep(back);
+              let backTop: (bytes[])[] | null = t.deep;
+              return again.length;
+            }
+            """,
+        };
+        String[] names = {
+            "closure-pin-fn-array",
+            "closure-pin-async-container",
+            "closure-pin-deep-composition",
+        };
+        for (int i = 0; i < closurePrograms.length; i++) {
+            JsBackend.JsCodegenResult res = generate(closurePrograms[i],
+                names[i]);
+            check(res != null && !res.hasErrors(),
+                "closure program '" + names[i] + "' generates with zero "
+                    + "diagnostics: " + (res == null ? "<null>"
+                        : res.diagnostics()));
+            if (res == null || res.hasErrors()) {
+                continue;
+            }
+            check(!res.diagnostics().contains("E6000")
+                    && !res.source().contains("is not supported"),
+                "closure program '" + names[i] + "' emits no E6000 text "
+                    + "for bytes nesting or function shape alone");
+        }
+
+        // Canonical descriptor texts byte-exact at the emitted boundary
+        // sites (T1's descriptor service realized through the runtime
+        // matcher).
+        JsBackend.JsCodegenResult fnArray = generate(
+            closurePrograms[0], names[0]);
+        if (fnArray != null && !fnArray.hasErrors()) {
+            String js = fnArray.source();
+            check(js.contains("$rt.checkArray(\"[(bytes)->bytes]\", "),
+                "the ((bytes)->bytes)[] declaration boundary emits the "
+                    + "canonical [(bytes)->bytes] descriptor byte-exact");
+            check(js.contains("$rt.function(\"(bytes,int)->bytes\", "),
+                "the arity adapter carries the canonical "
+                    + "(bytes,int)->bytes target descriptor byte-exact");
+        }
+        JsBackend.JsCodegenResult asyncContainer = generate(
+            closurePrograms[1], names[1]);
+        if (asyncContainer != null && !asyncContainer.hasErrors()) {
+            String js = asyncContainer.source();
+            check(js.contains("$rt.checkArray(\"[async(bytes)->bytes]\", "),
+                "the async function-value array boundary emits the "
+                    + "canonical [async(bytes)->bytes] descriptor byte-exact");
+            check(js.contains("$rt.function(\"async(bytes)->bytes\", "
+                    + "async function bump$f("),
+                "the async wrapper carries the canonical "
+                    + "async(bytes)->bytes signature byte-for-byte");
+        }
+        JsBackend.JsCodegenResult deep = generate(
+            closurePrograms[2], names[2]);
+        if (deep != null && !deep.hasErrors()) {
+            String js = deep.source();
+            check(js.contains("$rt.checkArray(\"[?[bytes]]\", "),
+                "the (bytes[] | null)[] boundary emits the canonical "
+                    + "[?[bytes]] descriptor byte-exact");
+            check(js.contains("$rt.checkNullable(\"[[bytes]]\", "),
+                "the (bytes[])[] | null boundary emits the canonical "
+                    + "[[bytes]] inner descriptor byte-exact");
+        }
+
+        // The legal-equality boundary: bytes identity equality stays
+        // the checker-owned E3019 gate (binary-comparison-selectors
+        // B-D7, owned by ISSUE-0111/ISSUE-0158) — the frontend
+        // admission rule, never a backend E6000 rejection. Equality
+        // inside closure programs runs on byte reads (int equality),
+        // which every node case above asserts.
+        Frontend eq = compileFrontend("""
+            export function test(): int {
+              let a: bytes = bytes(1);
+              let b: bytes = a;
+              if (a === b) { return 0; }
+              return 1;
+            }
+            """, "jstest-bytes-closure-eq.deal");
+        check(eq.errors().stream().anyMatch(d -> "E3019".equals(d.code())),
+            "bytes identity equality stays the checker-owned E3019 gate "
+                + "(frontend, ISSUE-0111/ISSUE-0158): " + eq.errors());
+        check(eq.errors().stream().noneMatch(d -> "E6000".equals(d.code())),
+            "the equality closure position is never a backend E6000 "
+                + "rejection: " + eq.errors());
     }
 
     private static void testNumModFloored() throws Exception {

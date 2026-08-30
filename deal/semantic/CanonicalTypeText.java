@@ -18,10 +18,10 @@ import java.util.Set;
 /**
  * The canonical type text of {@code deal.semantic-interface/1} (foundation
  * F2, one inseparable component): the closed structural rendering of the
- * eleven declared-variant forms —
+ * declared-variant forms —
  *
  * <pre>{@code
- * null | boolean | int | number | string | table | T[] | T | null
+ * null | boolean | int | number | string | table | bytes | T[] | T | null
  * | @modulePath/Name | (T1, …, TN) => R | async (T1, …, TN) => R
  * }</pre>
  *
@@ -29,9 +29,10 @@ import java.util.Set;
  * values (implementation entries render the module's Phase-3-corrected
  * resolved export map) and over {@link TypeNode} values (STDLIB/HOST
  * declaration entries and every field interface render the declaration
- * AST) — so both produce byte-identical forms. The ten declared checked
- * variants render as eleven canonical forms ({@code Type.Func} as both
- * the sync and async function forms).</p>
+ * AST) — so both produce byte-identical forms. The eleven declared
+ * checked variants render as twelve canonical forms ({@code Type.Func}
+ * as both the sync and async function forms, {@link Type.Bytes} as the
+ * {@code bytes} primitive name).</p>
  *
  * <p><b>Shared parenthesization rule (the one rule both renderers use):</b>
  * a function form or a nullable form is wrapped in parentheses when it is
@@ -39,12 +40,13 @@ import java.util.Set;
  * ({@code (…) | null}); all other positions render unwrapped —
  * {@code int[]}, {@code int[][]}, {@code int[] | null},
  * {@code ((int) => int)[]}, {@code ((int) => int) | null},
- * {@code (int | null)[]}, {@code (() => null)[]}.</p>
+ * {@code (int | null)[]}, {@code (() => null)[]}, {@code bytes[]},
+ * {@code bytes[] | null}, {@code (bytes) => bytes}.</p>
  *
  * <p>The pinned {@code TypeNode → CanonicalTypeText} grammar:</p>
  * <ul>
  *   <li>{@code NamedType(n)}: {@code n ∈ {null, boolean, int, number,
- *       string, table}} → the literal name; {@code n = "Error"} →
+ *       string, table, bytes}} → the literal name; {@code n = "Error"} →
  *       {@code @/Error} (the builtin Error class reference); any other
  *       {@code n} (a class declared in the declaring module) →
  *       {@code @<moduleId>/<n>} with {@code moduleId} = the entry's
@@ -69,13 +71,13 @@ import java.util.Set;
  * outside the grammar in an index position (an unresolvable qualified-type
  * alias, a chained {@code T | null | null}, or a {@code NamedType} that is
  * neither a primitive nor a class declared in the module) is a fact
- * defect. {@link Type.Bytes} — the v1.2 bytes primitive added to the
- * checked type hierarchy by the bytes epic, which is not one of the
- * eleven declared-variant forms of this interface version — likewise has
- * no rendering: both renderers reject it (the checked-{@link Type} arm
- * raises {@link Defect}; the {@code TypeNode} arm rejects a {@code bytes}
- * {@code NamedType} through the unknown-non-primitive arm), so the two
- * rule sets stay byte-identical. All of these raise {@link Defect} —
+ * defect. {@link Type.Bytes} — the v1.2 bytes primitive — renders as the
+ * {@code bytes} primitive name: the structural-descriptors reservation
+ * held only "until the type and value semantics exist" (the bytes type
+ * and the JS carrier/helper surface landed with the bytes epic), so the
+ * bytes-bearing closure's module-boundary positions
+ * (js-v12-int32-bytes D5: imports/exports) render byte-identically in
+ * both rule sets. All out-of-grammar shapes raise {@link Defect} —
  * never an invented rendering, never a crash;
  * {@link CheckedProjectBuilder} converts the defect into E6005 through
  * the failure contract registry with
@@ -102,12 +104,11 @@ public final class CanonicalTypeText {
     }
 
     /**
-     * A canonical-type-text fact defect: {@link Type.Error} or
-     * {@link Type.Bytes} reached a declared-type position, or a TypeNode
-     * shape fell outside the pinned grammar. The builder owns the
-     * conversion into E6005 ({@code INDEX_INTERNAL_ERROR_SENTINEL}); this
-     * exception is internal control flow, never a crash and never a
-     * rendered fallback.
+     * A canonical-type-text fact defect: {@link Type.Error} reached a
+     * declared-type position, or a TypeNode shape fell outside the pinned
+     * grammar. The builder owns the conversion into E6005
+     * ({@code INDEX_INTERNAL_ERROR_SENTINEL}); this exception is internal
+     * control flow, never a crash and never a rendered fallback.
      */
     public static final class Defect extends RuntimeException {
 
@@ -127,17 +128,14 @@ public final class CanonicalTypeText {
     /**
      * Renders a checked {@link Type} value into its canonical form —
      * implementation entries render the module's Phase-3-corrected
-     * resolved export map through this exact rule set. The ten declared
-     * variants render as eleven canonical forms; {@link Type.Error} and
-     * {@link Type.Bytes} have no rendering and raise {@link Defect}.
+     * resolved export map through this exact rule set. The eleven
+     * declared variants render as twelve canonical forms;
+     * {@link Type.Error} has no rendering and raises {@link Defect}.
      *
      * @param type the checked type; non-null
      * @return the canonical declared-type text
      * @throws Defect when {@code type} is {@link Type.Error} (the internal
-     *         checker sentinel is excluded from the index by contract) or
-     *         {@link Type.Bytes} (the v1.2 bytes primitive is not one of
-     *         the eleven declared-variant forms of this interface
-     *         version)
+     *         checker sentinel is excluded from the index by contract)
      */
     public static String render(Type type) {
         Objects.requireNonNull(type, "type must not be null");
@@ -148,14 +146,10 @@ public final class CanonicalTypeText {
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
+            case Type.Bytes ignored -> "bytes";
             case Type.Error ignored -> throw new Defect(
                 "Type.Error reached a declared-type position: the internal checker "
                     + "sentinel has no canonical rendering and is excluded from the index");
-            case Type.Bytes ignored -> throw new Defect(
-                "Type.Bytes reached a declared-type position: the v1.2 bytes primitive "
-                    + "is not one of the eleven declared-variant forms of "
-                    + "deal.semantic-interface/1 and has no canonical rendering "
-                    + "(out-of-grammar declared type)");
             case Type.Array array -> {
                 String element = render(array.element());
                 yield wrapInArrayPosition(element,
@@ -191,8 +185,7 @@ public final class CanonicalTypeText {
      * @throws Defect for any out-of-grammar shape: an unresolvable
      *         qualified-type alias, a chained {@code T | null | null}, or
      *         a {@code NamedType} that is neither a primitive nor a class
-     *         declared in the module (including the v1.2 {@code bytes}
-     *         name, which is outside the closed eleven-form grammar)
+     *         declared in the module
      */
     public static String render(TypeNode node, Context context) {
         Objects.requireNonNull(node, "node must not be null");
@@ -282,7 +275,8 @@ public final class CanonicalTypeText {
 
     private static String renderNamed(String name, Context context) {
         return switch (name) {
-            case "null", "boolean", "int", "number", "string", "table" -> name;
+            case "null", "boolean", "int", "number", "string", "table",
+                    "bytes" -> name;
             case "Error" -> "@/Error";
             default -> {
                 if (!context.declaredClasses().contains(name)) {
