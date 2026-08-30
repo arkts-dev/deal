@@ -114,6 +114,7 @@ public class JsBackendTest {
             testInt32MatrixNode();
             testBytesEmissionPins();
             testBytesNodeSemantics();
+            testBytesUserNameShadowing();
             testNumModFloored();
             testScalarStringOps();
             testOptionalThreeState();
@@ -2464,6 +2465,112 @@ public class JsBackendTest {
             "a bytes value through std/json.stringify raises E8001 "
                 + "'unsupported type for JSON encoding: bytes': "
                 + jsonReject.output());
+    }
+
+    /**
+     * The class-symbol-first bytes guard (js-v12-int32-bytes D3/D4,
+     * spec-v1.2.md §Name resolution): `bytes` is not a DEAL keyword and
+     * module-level declarations resolve at step 3 (imports at step 4)
+     * before the compiler intrinsics at step 5, so a module-level user
+     * class/function named `bytes` must stay legal and shadow the
+     * intrinsic — with no redeclaration diagnostic (E2002), no header
+     * `const bytes` seed collision, and working artifacts under node.
+     */
+    private static void testBytesUserNameShadowing() throws Exception {
+        System.out.println("-- Bytes: user class/function named bytes shadows the intrinsic --");
+
+        // (a) A module-level user CLASS named bytes: checker-accepted,
+        // no E2002, the annotation resolves to the user ClassSymbol, and
+        // the artifact omits the intrinsic header seed (the class binds
+        // only bytes$new/bytes$meta).
+        JsBackend.JsCodegenResult clsRes = generate("""
+            class bytes { x: int }
+            export function test(): int {
+              let b: bytes = { x: 2 };
+              return b.x;
+            }
+            """, "bytes-user-class");
+        check(clsRes != null && !clsRes.hasErrors(),
+            "module-level user class named bytes compiles clean: "
+                + (clsRes == null ? "<null>" : clsRes.diagnostics()));
+        if (clsRes != null && !clsRes.hasErrors()) {
+            String js = clsRes.source();
+            check(!js.contains("const bytes = $rt.function(\"(int)->bytes\""),
+                "no intrinsic header bytes seed when a user class named "
+                    + "bytes occupies the module binding");
+            check(js.contains("let bytes$new; let bytes$meta;")
+                    && js.contains("bytes$new = (provided, $file, $line, $column) =>"),
+                "the user class named bytes emits its bytes$new/bytes$meta "
+                    + "artifact pair");
+            check(js.contains("$rt.makeClass(\"bytes\""),
+                "class construction routes through $rt.makeClass with "
+                    + "the user class identity");
+        }
+
+        // (b) A module-level user FUNCTION named bytes: checker-accepted,
+        // no E2002, calls resolve to the user function, and the
+        // artifact's predeclared `let bytes;` assignment replaces the
+        // skipped intrinsic header seed.
+        JsBackend.JsCodegenResult fnRes = generate("""
+            function bytes(x: int): int { return x + 1; }
+            export function test(): int { return bytes(3); }
+            """, "bytes-user-function");
+        check(fnRes != null && !fnRes.hasErrors(),
+            "module-level user function named bytes compiles clean: "
+                + (fnRes == null ? "<null>" : fnRes.diagnostics()));
+        if (fnRes != null && !fnRes.hasErrors()) {
+            String js = fnRes.source();
+            check(!js.contains("const bytes = $rt.function(\"(int)->bytes\""),
+                "no intrinsic header bytes seed when a user function "
+                    + "named bytes occupies the module binding");
+            check(js.contains("let bytes;") && js.contains("bytes = $rt.function("),
+                "the user function named bytes keeps its predeclare-then-"
+                    + "assign binding");
+            check(!js.contains("$rt.bytes(3"),
+                "bytes(3) calls the user function (the $rt.bytes call "
+                    + "form never fires for the shadowed binding)");
+        }
+
+        if (!nodeAvailable) { skipNode("bytes user-name shadowing"); return; }
+
+        NodeResult clsRun = runDealNode("""
+            class bytes { x: int }
+            export function test(): int {
+              let b: bytes = { x: 2 };
+              return b.x;
+            }
+            """, "bytes-user-class-run");
+        check(clsRun.exitCode() == 0 && clsRun.output().equals("2"),
+            "module-level user class named bytes runs under node (b.x "
+                + "=== 2): " + clsRun.output());
+
+        NodeResult fnRun = runDealNode("""
+            function bytes(x: int): int { return x + 1; }
+            export function test(): int { return bytes(3); }
+            """, "bytes-user-function-run");
+        check(fnRun.exitCode() == 0 && fnRun.output().equals("4"),
+            "module-level user function named bytes runs under node "
+                + "(bytes(3) === 4): " + fnRun.output());
+
+        // (c) The review's finding (b) repro end-to-end: a NESTED user
+        // class named bytes. The annotation resolves to the nested
+        // ClassSymbol (no E3001), the canonical scope-local
+        // bytes$new/bytes$meta pair constructs it with its defaults,
+        // and the artifact runs under node.
+        NodeResult nestedRun = runDealNode("""
+            export function test(): int {
+              let out: int = 0;
+              {
+                class bytes { x: int = 0; }
+                let b: bytes = { x: 2 };
+                out = b.x;
+              }
+              return out;
+            }
+            """, "bytes-user-class-nested-run");
+        check(nestedRun.exitCode() == 0 && nestedRun.output().equals("2"),
+            "nested user class named bytes runs under node (b.x === 2): "
+                + nestedRun.output());
     }
 
     private static void testNumModFloored() throws Exception {

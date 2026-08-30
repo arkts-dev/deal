@@ -816,9 +816,21 @@ public final class JsBackend {
         // The bytes intrinsic seed (js-v12-int32-bytes D3): the wrapper's
         // $f routes to the same allocation member direct calls use, so a
         // function-typed bytes value calls bytes(n) through the identical
-        // runtime boundary.
-        out.append("const bytes = $rt.function(\"(int)->bytes\", "
-            + "(v, $file, $line, $column) => $rt.bytes(v, $file, $line, $column));\n");
+        // runtime boundary. The seed is emitted only when the module
+        // declares no module-level user binding named `bytes`: a
+        // checker-accepted module-level class/function/let/import named
+        // `bytes` shadows the lowest-tier intrinsic (spec-v1.2.md Name
+        // resolution — module-level declarations at step 3 and imports
+        // at step 4 win over the compiler intrinsics at step 5), and
+        // its emitted predeclare (`let bytes;` / `const bytes =
+        // $require(...)`) would collide with the seed's module-scope
+        // `const bytes`. The shadowing declaration's root symbol
+        // replaces the IntrinsicSymbol, so resolveLocal tells the two
+        // cases apart.
+        if (symbols.resolveLocal("bytes") instanceof Symbol.IntrinsicSymbol) {
+            out.append("const bytes = $rt.function(\"(int)->bytes\", "
+                + "(v, $file, $line, $column) => $rt.bytes(v, $file, $line, $column));\n");
+        }
         out.append("const $ErrorDefaults = () => ({ [\"code\"]: \"\", "
             + "[\"message\"]: \"\" });\n");
         // The builtin Error identity is the canonical @$builtin/Error
@@ -1138,10 +1150,21 @@ public final class JsBackend {
                 // checker-accepted user class named bytes resolves to
                 // its ClassSymbol and wins over the primitive — the
                 // retired defensive rejection arm used the same guard.
+                // The checker resolves the annotation in the lexical
+                // scope that contains it; the emitter's root table
+                // cannot see a nested class declaration, so the visible
+                // nested-class scope frames carry the same
+                // class-symbol-first decision here (a nested user class
+                // named bytes types its annotation as the class, never
+                // as the primitive — the checker accepted the program
+                // on that resolution).
                 case "bytes" -> {
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol cs) {
                         yield Types.classType(nt.name(), cs.modulePath());
+                    }
+                    if (innermostFrame(localClassScopes, nt.name()) >= 0) {
+                        yield Types.classType(nt.name(), modulePath);
                     }
                     yield Type.Bytes.INSTANCE;
                 }
