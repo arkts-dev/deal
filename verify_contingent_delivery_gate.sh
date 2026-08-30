@@ -177,9 +177,9 @@ check_history_discipline() {
     || die "history discipline broken: the fixture's expectation was edited ($n commit(s) mention runtime-error E8004)"
   echo "  [fixture] the shared fixture's @expected line was never edited to runtime-error E8004 (no disposition edit landed)"
 
-  n=$(git -C "$REPO" log --oneline -1 -- std/time.lua)
+  n=$(git -C "$REPO" log --format=%h -1 -- std/time.lua)
   case "$n" in
-    4eba239\ *) : ;;
+    4eba239*) : ;;
     *) die "history discipline broken: std/time.lua last changed outside the pre-epic rewrite ($n)" ;;
   esac
   echo "  [std/time.lua] last commit touching std/time.lua is the pre-epic v1.0 rewrite (4eba239) — byte-identical through the epic"
