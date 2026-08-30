@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "backends": ["luajit", "jvm", "js"],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8012\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8012\",\"message\":\"bytes index out of bounds\",\"sourceFile\":\"backend-runtime/source-location/bytes-index-bounds-source.deal\",\"line\":9,\"column\":10}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8012",
+      "message": "bytes index out of bounds",
+      "sourceFile": "backend-runtime/source-location/bytes-index-bounds-source.deal",
+      "line": 9,
+      "column": 10
+    }
+  }
+}

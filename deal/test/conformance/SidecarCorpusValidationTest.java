@@ -74,12 +74,13 @@ import java.util.stream.Stream;
  *       {@code code, message, sourceFile, line, column, expected,
  *       actual, frames, cause}, minimal RFC 8259 §7 escaping, raw UTF-8,
  *       canonical decimal integers, no whitespace between tokens.</li>
- *   <li>The one tracked {@code known-fail runtime-*} fixture carries no
- *       sidecar (it receives its sidecar only at the zero-skip flip); the
- *       known-fail population is exactly the one tracked fixture. The
- *       promoted {@code int-add-overflow.deal} received its runtime-error
- *       sidecar in the same change that dropped its known-fail marker
- *       (ISSUE-0332).</li>
+ *   <li>The backend-runtime known-fail population is empty since
+ *       ISSUE-0339 promoted the last tracked fixture
+ *       ({@code bytes-buffer-ops.deal}, which received its runtime-ok
+ *       sidecar in the same change that dropped its known-fail marker).
+ *       The promoted {@code int-add-overflow.deal} received its
+ *       runtime-error sidecar in the same change that dropped its
+ *       known-fail marker (ISSUE-0332).</li>
  *   <li>All other fixtures ({@code compile-ok}, {@code compile-error},
  *       {@code companion}, frontend fixtures) carry no sidecar except
  *       the Diagnostics-bullet fixtures.</li>
@@ -122,8 +123,13 @@ public class SidecarCorpusValidationTest {
      * ISSUE-0335 added with their sidecars in the same change:
      * direct-await-completion-values and async-cross-module-chain; plus
      * the four canonical-boundary runtime-ok fixtures ISSUE-0336 added
-     * with their sidecars in the same change). */
-    private static final int RUNTIME_OK_COUNT = 199;
+     * with their sidecars in the same change; plus the six bytes
+     * fixtures ISSUE-0339 added/promoted with their sidecars in the
+     * same change: the promoted bytes-buffer-ops and the new
+     * bytes-length, bytes-descriptor-boundary,
+     * bytes-class-field-descriptor, bytes-write-single-evaluation, and
+     * bytes-write-validation-order fixtures). */
+    private static final int RUNTIME_OK_COUNT = 205;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -136,9 +142,14 @@ public class SidecarCorpusValidationTest {
      * with its sidecar in the same change; plus the host-async-shape-value
      * E8010 fixture ISSUE-0335 added with its sidecar in the same change;
      * plus the canonical signature-mismatch E8010 fixture ISSUE-0336
-     * added with its sidecar in the same change).
+     * added with its sidecar in the same change; plus the six
+     * int-neg/bytes error fixtures ISSUE-0339 added with their sidecars
+     * in the same change: int-neg-min, bytes-index-bounds,
+     * bytes-write-range, source-location/int-neg-min-source,
+     * source-location/bytes-index-bounds-source, and
+     * source-location/bytes-write-range-source).
      */
-    private static final int RUNTIME_ERROR_COUNT = 71;
+    private static final int RUNTIME_ERROR_COUNT = 77;
 
     /** The G4.6 lane error framing prefixes. */
     private static final String DEAL_ERROR_CODE_LINE = "DEAL_ERROR_CODE: ";
@@ -789,9 +800,10 @@ public class SidecarCorpusValidationTest {
             + "exactly " + RUNTIME_ERROR_COUNT + " runtime-error fixtures "
             + "with sidecars, found " + runtimeError);
 
-        // The tracked known-fail population is exactly the one fixture that
-        // receives its sidecar only at the zero-skip flip
-        // (int-add-overflow was promoted by ISSUE-0332).
+        // The tracked known-fail population is empty: the last tracked
+        // backend-runtime known-fail (bytes-buffer-ops, int-add-overflow
+        // was promoted by ISSUE-0332) was promoted by ISSUE-0339, so no
+        // backend-runtime fixture carries a known-fail marker.
         Set<String> knownFail = new TreeSet<>();
         for (Fixture fixture : fixtures) {
             if (fixture.corpusPath().startsWith("backend-runtime/")
@@ -799,8 +811,7 @@ public class SidecarCorpusValidationTest {
                 knownFail.add(fixture.corpusPath());
             }
         }
-        Set<String> expectedKnownFail = new TreeSet<>(Set.of(
-            "backend-runtime/bytes/bytes-buffer-ops.deal"));
+        Set<String> expectedKnownFail = new TreeSet<>();
         check(knownFail.equals(expectedKnownFail),
             "the tracked known-fail population must be exactly "
                 + expectedKnownFail + ", got " + knownFail);

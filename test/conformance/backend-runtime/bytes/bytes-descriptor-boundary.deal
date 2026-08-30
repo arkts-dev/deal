@@ -1,0 +1,51 @@
+// @spec: Runtime execution model — Runtime type descriptor format
+// @description: Canonical bytes-bearing descriptors cross typed boundaries end to end: [bytes] arrays, ?bytes nullables, (bytes)->bytes function values, and [?(bytes)->bytes] arrays of nullable functions all pass through the canonical boundary matcher byte-for-byte with real bytes values (bytes comparison remains E3019-gated, so the nullable shapes exercise the matcher through pass-through boundaries).
+// @expected: runtime-ok
+// @features: descriptors, bytes, functions
+
+function firstByte(xs: bytes[]): int {
+  return xs[0][0];
+}
+
+function fillByte(b: bytes, v: int): bytes {
+  b[0] = v;
+  return b;
+}
+
+function passNullable(b: bytes | null): bytes | null {
+  return b;
+}
+
+function applyAll(fs: (((b: bytes) => bytes) | null)[], b: bytes): bytes {
+  return b;
+}
+
+export function test_bytes_descriptor_boundary(): string {
+  let xs: bytes[] = [bytes(1), bytes(2)];
+  if (firstByte(xs) !== 0) {
+    throw { code: "TEST_FAIL", message: "bytes array boundary mismatch" };
+  }
+  let filled: bytes = fillByte(bytes(3), 200);
+  if (filled[0] !== 200) {
+    throw { code: "TEST_FAIL", message: "bytes function boundary mismatch" };
+  }
+  let through: bytes | null = passNullable(bytes(2));
+  let nothing: bytes | null = passNullable(null);
+  let id: (b: bytes) => bytes = function(b: bytes): bytes { return b; };
+  let tagged: bytes = id(bytes(2));
+  if (tagged.length !== 2) {
+    throw { code: "TEST_FAIL", message: "function bytes boundary mismatch" };
+  }
+  let fs: (((b: bytes) => bytes) | null)[] = [];
+  fs[fs.length] = id;
+  fs[fs.length] = null;
+  let acc: bytes = applyAll(fs, bytes(3));
+  if (acc.length !== 3) {
+    throw { code: "TEST_FAIL", message: "nullable function array boundary mismatch" };
+  }
+  return "canonical bytes descriptor boundary ok";
+}
+
+export function main(): null {
+  return null;
+}

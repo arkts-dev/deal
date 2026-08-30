@@ -1,0 +1,14 @@
+// @spec: Runtime execution model — Source locations for bytes errors
+// @description: A bytes index outside [0, b.length) reports E8012 at the indexing expression's source location (v1.2)
+// @expected: runtime-error E8012
+// @features: source-location, bytes, runtime, v1.2
+
+export function test_bytes_index_bounds_location(): int {
+  let b: bytes = bytes(2);
+  let i: int = 2;
+  return b[i];
+}
+
+export function main(): null {
+  return null;
+}

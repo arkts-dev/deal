@@ -84,7 +84,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       unsupported declared shapes: host class exports,
  *       array/function-typed parameters and returns (E6000), and the
  *       Lua pre-wrapped export form.</li>
- *   <li><b>JVM-GAP-XMOD-FNVALUE</b> (4 entries) — cross-module function
+ *   <li><b>JVM-GAP-XMOD-FNVALUE</b> (5 entries) — cross-module function
  *       values: imported call results and module aliases used as
  *       function values (E6000).</li>
  *   <li><b>JVM-GAP-XMOD-ARRAY</b> (1 entry) — imported async array
@@ -93,6 +93,20 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       guard).</li>
  *   <li><b>JVM-GAP-ASYNC-FNEXPR</b> (2 entries) — async function
  *       expressions and block-level async functions (E6000).</li>
+ *   <li><b>JVM-GAP-DESCRIPTORS</b> (1 entry) — the canonical descriptor
+ *       cutover: the LuaJIT-owned canonical-boundary E8010
+ *       signature-mismatch expectation requires the canonical matcher's
+ *       function row; JVM descriptors are ISSUE-0277's.</li>
+ *   <li><b>JVM-GAP-INT32</b> (8 entries) — the signed-int32 runtime
+ *       gate: JvmBackend retains the ±(2^53−1) safe range until JVM
+ *       v1.2 completion (ISSUE-0277), so the LuaJIT-owned E8004
+ *       int32 expectations (arithmetic, conversion, stdlib/math absInt,
+ *       and unary-negation locations) pass only on LuaJIT.</li>
+ *   <li><b>JVM-GAP-BYTES</b> (10 entries) — the bytes runtime lane:
+ *       JvmBackend raises E6000 at every bytes site until JVM v1.2
+ *       completion (ISSUE-0277), so the LuaJIT-owned bytes expectations
+ *       (zero-fill buffers, E8012/E8013, single-evaluation writes, and
+ *       canonical bytes descriptors) pass only on LuaJIT and Node.</li>
  * </ul>
  *
  * <h2>Gates</h2>
@@ -198,6 +212,64 @@ public class JvmConformanceTest {
             "E8004 for std/math.absInt(-2147483648) requires the "
                 + "signed-int32 gate; JvmBackend retains the ±(2^53−1) "
                 + "safe range (ISSUE-0277).", "JVM-GAP-INT32");
+        skip("backend-runtime/arithmetic/int-neg-min.deal",
+            "E8004 for -(-2147483648) requires the signed-int32 gate; "
+                + "JvmBackend retains the ±(2^53−1) safe range "
+                + "(ISSUE-0277).", "JVM-GAP-INT32");
+        skip("backend-runtime/source-location/int-neg-min-source.deal",
+            "E8004 from unary int negation requires the signed-int32 "
+                + "gate; JvmBackend retains the ±(2^53−1) safe range "
+                + "(ISSUE-0277).", "JVM-GAP-INT32");
+
+        // ---- JVM-GAP-BYTES: the bytes runtime lane (ISSUE-0277) ----
+        // The v1.2 corpus pins the FFI-backed bytes carrier with
+        // zero-fill allocation, E8012 index bounds, E8013 value range,
+        // and the single-evaluation write sequence. The JVM backend has
+        // no bytes lane yet (E6000 at every bytes site), so the
+        // LuaJIT-owned bytes expectations below cannot pass on JVM.
+        // Once JVM bytes lands (ISSUE-0277), the probes start passing
+        // and the stale-skip gate forces these entries out.
+        skip("backend-runtime/bytes/bytes-buffer-ops.deal",
+            "the zero-filled bytes buffer, 0..255 byte writes, and "
+                + "reference-copy semantics require the bytes carrier; "
+                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
+            "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-index-bounds.deal",
+            "E8012 on byte reads/writes outside [0, b.length) requires "
+                + "the bytes carrier; JvmBackend raises E6000 at bytes "
+                + "sites (ISSUE-0277).", "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-write-range.deal",
+            "E8013 on byte values outside 0..255 requires the bytes "
+                + "carrier; JvmBackend raises E6000 at bytes sites "
+                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-length.deal",
+            "the compiler-resolved bytes .length requires the bytes "
+                + "carrier; JvmBackend raises E6000 at bytes sites "
+                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-descriptor-boundary.deal",
+            "canonical [bytes]/?(bytes)/function bytes descriptors "
+                + "require the bytes carrier; JvmBackend raises E6000 at "
+                + "bytes sites (ISSUE-0277).", "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-class-field-descriptor.deal",
+            "class fields carrying real bytes buffers require the bytes "
+                + "carrier; JvmBackend raises E6000 at bytes sites "
+                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-write-single-evaluation.deal",
+            "the once-only receiver/index/RHS bytes write sequence "
+                + "requires the bytes carrier; JvmBackend raises E6000 at "
+                + "bytes sites (ISSUE-0277).", "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-write-validation-order.deal",
+            "validation-after-RHS bytes write ordering requires the "
+                + "bytes carrier; JvmBackend raises E6000 at bytes sites "
+                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+        skip("backend-runtime/source-location/bytes-index-bounds-source.deal",
+            "the E8012 bytes bounds location requires the bytes carrier; "
+                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
+            "JVM-GAP-BYTES");
+        skip("backend-runtime/source-location/bytes-write-range-source.deal",
+            "the E8013 bytes value location requires the bytes carrier; "
+                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
+            "JVM-GAP-BYTES");
 
         // ---- JVM-GAP-JSONABLE-RESIDUAL: residual @jsonable JVM defects ----
         // The two error-typed member-access/NEQ entries retired with
@@ -334,6 +406,12 @@ public class JvmConformanceTest {
             + "the ±(2^53−1) safe range until JVM v1.2 completion "
             + "(ISSUE-0277); the int32-overflow E8004 expectations "
             + "pass only on LuaJIT",
+        "JVM-GAP-BYTES", "bytes runtime lane — JvmBackend raises E6000 on "
+            + "every bytes site (the bytes carrier/lowering slice is "
+            + "ISSUE-0277's); the LuaJIT bytes expectations "
+            + "(zero-fill buffers, E8012/E8013, single-evaluation "
+            + "writes, canonical bytes descriptors) pass only on "
+            + "LuaJIT and Node",
         "JVM-GAP-DESCRIPTORS", "canonical descriptor cutover — the "
             + "LuaJIT-owned canonical-boundary E8010 signature-mismatch "
             + "expectation requires the canonical matcher's function row "

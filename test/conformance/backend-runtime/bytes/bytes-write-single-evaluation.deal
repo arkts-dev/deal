@@ -1,0 +1,38 @@
+// @spec: Bytes — Byte indexing and buffer semantics
+// @description: A bytes write evaluates the receiver and the index exactly once each and the RHS after them: side-effecting chains record one receiver call, one index call, and one RHS call, in that order (v1.2 assignment evaluation order)
+// @expected: runtime-ok
+// @features: bytes, runtime, v1.2
+
+class Log {
+  seq: int[] = [];
+  buf: bytes = bytes(4);
+}
+
+function record(l: Log, tag: int): int {
+  l.seq[l.seq.length] = tag;
+  return tag;
+}
+
+function pick(l: Log, tag: int): bytes {
+  record(l, tag);
+  return l.buf;
+}
+
+export function test_bytes_write_single_evaluation(): null {
+  let l: Log = { seq: [], buf: bytes(4) };
+  pick(l, 1)[record(l, 2)] = record(l, 3);
+  if (l.seq.length !== 3) {
+    throw { code: "TEST_FAIL", message: "bytes write must evaluate receiver, index, and RHS once each" };
+  }
+  if (l.seq[0] !== 1 || l.seq[1] !== 2 || l.seq[2] !== 3) {
+    throw { code: "TEST_FAIL", message: "bytes write operand order mismatch" };
+  }
+  if (l.buf[2] !== 3) {
+    throw { code: "TEST_FAIL", message: "bytes write value mismatch" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

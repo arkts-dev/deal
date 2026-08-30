@@ -1,0 +1,13 @@
+// @spec: Bytes — Byte indexing and buffer semantics
+// @description: Byte reads and writes outside [0, b.length) raise E8012 at the indexing expression (v1.2)
+// @expected: runtime-error E8012
+// @features: bytes, runtime, v1.2
+
+export function test_bytes_index_bounds(): int {
+  let b: bytes = bytes(4);
+  return b[4];
+}
+
+export function main(): null {
+  return null;
+}

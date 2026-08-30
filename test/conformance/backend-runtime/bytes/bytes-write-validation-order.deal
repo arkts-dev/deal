@@ -1,0 +1,47 @@
+// @spec: Bytes — Byte indexing and buffer semantics
+// @description: Write validation runs only after every operand completed: a side-effecting RHS produces an out-of-range value whose E8013 fires after the receiver, index, and RHS side effects were all observed, and a failed write changes no storage (v1.2)
+// @expected: runtime-ok
+// @features: bytes, runtime, v1.2
+
+class Log {
+  seq: int[] = [];
+  buf: bytes = bytes(4);
+}
+
+function record(l: Log, tag: int): int {
+  l.seq[l.seq.length] = tag;
+  return tag;
+}
+
+function pick(l: Log, tag: int): bytes {
+  record(l, tag);
+  return l.buf;
+}
+
+function badValue(l: Log): int {
+  record(l, 3);
+  return 300;
+}
+
+export function test_bytes_write_validation_after_rhs(): null {
+  let l: Log = { seq: [], buf: bytes(4) };
+  try {
+    pick(l, 1)[record(l, 2)] = badValue(l);
+    throw { code: "TEST_FAIL", message: "expected E8013 before completing" };
+  } catch (e) {
+    if (e.code !== "E8013") {
+      throw { code: "TEST_FAIL", message: "expected E8013, got " + e.code };
+    }
+    if (l.seq.length !== 3 || l.seq[0] !== 1 || l.seq[1] !== 2 || l.seq[2] !== 3) {
+      throw { code: "TEST_FAIL", message: "write validation must run after all operand side effects" };
+    }
+  }
+  if (l.buf[1] !== 0) {
+    throw { code: "TEST_FAIL", message: "failed write must not change storage" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

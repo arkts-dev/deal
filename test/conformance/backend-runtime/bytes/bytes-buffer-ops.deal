@@ -1,7 +1,6 @@
 // @spec: Bytes — Byte indexing and buffer semantics
 // @description: bytes(length) allocates a zero-filled buffer; index writes require int 0..255; reads yield int 0..255; b.length is int; assignment copies the reference (v1.2)
-// @expected: known-fail runtime-ok
-// @issue: ISSUE-0111
+// @expected: runtime-ok
 // @features: bytes, runtime, v1.2
 
 export function main(): null {
