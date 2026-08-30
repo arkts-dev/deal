@@ -26,6 +26,7 @@ import deal.ast.IfStatement;
 import deal.ast.ImportDeclaration;
 import deal.ast.IndexExpr;
 import deal.ast.LiteralExpr;
+import deal.ast.LiteralValue;
 import deal.ast.MemberAccessExpr;
 import deal.ast.ObjectLiteralExpr;
 import deal.ast.ProgramNode;
@@ -489,6 +490,173 @@ public class ContainerLoweringArmsTest {
             checkOrigin("literal " + literal.value(), op, literal.span(), SourceOriginKind.USER,
                 null);
             checkEmptyOperands("literal " + literal.value(), op);
+        }
+    }
+
+    // =========================================================================
+    // 1b. CONST arm — the signed32 int-literal range gate (fail closed,
+    //     never truncate; the regression for the silent-narrowing finding)
+    // =========================================================================
+
+    static void checkIntLiteralRangeDetail(String what, RuntimeException defect) {
+        check(defect instanceof SemanticLowerer.IntLiteralOutOfRange,
+            what + " raises IntLiteralOutOfRange");
+        if (!(defect instanceof SemanticLowerer.IntLiteralOutOfRange outOfRange)) {
+            return;
+        }
+        check(outOfRange.getMessage().contains(Long.toString(outOfRange.value())),
+            what + " defect message carries the literal value");
+        LoweringFailureDetail detail = SemanticLowerer.loweringFailureDetail(MODULE, defect);
+        check("main".equals(detail.module()), what + " detail module is main");
+        check(detail.capability() == SemanticCapability.SIGNED_INT32,
+            what + " detail capability SIGNED_INT32");
+        check(SemanticLowerer.INT32_LITERAL_OUT_OF_RANGE.equals(detail.validatorRule()),
+            what + " detail validatorRule INT32_LITERAL_OUT_OF_RANGE");
+        check(detail.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32,
+            what + " detail semanticProfile DEAL_V1_2_INT32");
+        check(LoweredModuleUnit.FORMAT_VERSION.equals(detail.irVersion()),
+            what + " detail irVersion deal.semantic-ir/1");
+        check(("SemanticLowerer " + SemanticLowerer.INT32_LITERAL_OUT_OF_RANGE + " ("
+                + outOfRange.getMessage() + ")").equals(detail.origin()),
+            what + " detail origin is the pinned component description");
+        CompilerDiagnostic diagnostic = FailureContractRegistry.e6005(detail);
+        check("E6005".equals(diagnostic.code())
+                && diagnostic.diagnosticCode() == DiagnosticCode.E6005
+                && "error".equals(diagnostic.severity()),
+            what + " converts to an error-severity E6005 diagnostic through the registry");
+        check(diagnostic.message().contains(SemanticLowerer.INT32_LITERAL_OUT_OF_RANGE),
+            what + " E6005 message carries the INT32_LITERAL_OUT_OF_RANGE rule");
+    }
+
+    static void testConstIntLiteralRangeGate() {
+        System.out.println("-- CONST arm: the signed32 int-literal range gate --");
+
+        // (a) The in-range extrema lower to the exact scalar — the cast is
+        // exact at the boundary, never coerced.
+        long[] inRange = {2147483647L, -2147483648L};
+        for (long value : inRange) {
+            Span span = new Span(SOURCE_ID, 1, 1, 1, 5);
+            LiteralExpr literal = new LiteralExpr(span, new LiteralValue.IntLiteral(value));
+            CheckResult checks = new CheckResult(Map.of(literal, Type.Int.INSTANCE),
+                new SymbolTable(), List.of());
+            SemanticLowerer.ModuleLowerer lowerer = lowerer(checks);
+            ValueId result = lowerer.lowerExpression(literal);
+            List<SemanticOp> ops = lowerer.ops();
+            check(ops.size() == 1, "int literal " + value + " produced exactly one op");
+            if (ops.size() != 1) {
+                continue;
+            }
+            SemanticOp op = ops.get(0);
+            check(op.kind() == SemanticOpKind.CONST,
+                "int literal " + value + " (in-range extreme) lowers to CONST");
+            KindPayload.ConstPayload payload = (KindPayload.ConstPayload) op.payload();
+            check(payload.value().equals(new ScalarValue.Int((int) value)),
+                "int literal " + value + " CONST payload is the exact ScalarValue.Int("
+                    + value + "), never coerced");
+            check(op.result().equals(result),
+                "int literal " + value + " CONST publishes its result ValueId");
+            check(op.resultType().equals(RuntimeDescriptor.Int.INSTANCE),
+                "int literal " + value + " CONST resultType int");
+            check(op.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
+                "int literal " + value + " CONST policy NO_DEAL_FAILURE");
+        }
+
+        // (b) The first out-of-range value on each side fails closed: the
+        // exact defect, zero produced ops (never a truncated CONST), and
+        // the exact LoweringFailureDetail + E6005 at the unit-production
+        // seam.
+        long[] outOfRange = {2147483648L, -2147483649L};
+        for (long value : outOfRange) {
+            Span span = new Span(SOURCE_ID, 1, 1, 1, 5);
+            LiteralExpr literal = new LiteralExpr(span, new LiteralValue.IntLiteral(value));
+            CheckResult checks = new CheckResult(Map.of(literal, Type.Int.INSTANCE),
+                new SymbolTable(), List.of());
+            SemanticLowerer.ModuleLowerer lowerer = lowerer(checks);
+            RuntimeException defect = null;
+            try {
+                lowerer.lowerExpression(literal);
+            } catch (SemanticLowerer.IntLiteralOutOfRange raised) {
+                defect = raised;
+            }
+            check(defect != null,
+                "int literal " + value + " (out of signed32) raises IntLiteralOutOfRange");
+            check(lowerer.ops().isEmpty(),
+                "int literal " + value + " produced no ops (never a truncated CONST)");
+            checkIntLiteralRangeDetail("int literal " + value, defect);
+        }
+
+        // (c) The checker-valid end-to-end trigger: the frontend still
+        // admits 2147483648 (the E1036 signed32 literal gate is
+        // ISSUE-0111's not-yet-satisfied item), so the CONST arm is the
+        // fail-closed gate — never a silently corrupted ScalarValue.Int.
+        CheckedSlice slice = checkSlice("""
+            function f(): null {
+              let n = 2147483648
+              return null
+            }
+            """);
+        if (slice != null) {
+            LiteralExpr literal = first(slice.program(), LiteralExpr.class);
+            check(literal != null
+                    && literal.value() instanceof LiteralValue.IntLiteral intLit
+                    && intLit.value() == 2147483648L,
+                "the checked slice carries the checker-valid IntLiteral 2147483648");
+            if (literal != null) {
+                SemanticLowerer.ModuleLowerer lowerer = lowerer(slice.checks());
+                RuntimeException defect = null;
+                try {
+                    lowerer.lowerExpression(literal);
+                } catch (SemanticLowerer.IntLiteralOutOfRange raised) {
+                    defect = raised;
+                }
+                check(defect != null,
+                    "the checker-valid literal 2147483648 raises the range defect at the "
+                        + "CONST arm (never ScalarValue.Int(-2147483648))");
+                check(lowerer.ops().isEmpty(),
+                    "the out-of-range literal produced no CONST op (no corrupted scalar "
+                        + "enters the contract digest)");
+                checkIntLiteralRangeDetail("checker-valid 2147483648", defect);
+            }
+        }
+
+        // (d) The min-int spelling stays untouched: -2147483648 parses as
+        // NEG(IntLiteral 2147483648) (the pinned in-tree frontend
+        // contract) and the unary-selector arm fails closed before the
+        // CONST arm — no silent interaction between the arms.
+        CheckedSlice negated = checkSlice("""
+            function f(): null {
+              let n = -2147483648
+              return null
+            }
+            """);
+        if (negated != null) {
+            UnaryExpr negation = first(negated.program(), UnaryExpr.class);
+            check(negation != null,
+                "-2147483648 parses as a unary negation of the IntLiteral 2147483648");
+            if (negation != null) {
+                check(negation.expr() instanceof LiteralExpr operand
+                        && operand.value() instanceof LiteralValue.IntLiteral intLit
+                        && intLit.value() == 2147483648L,
+                    "the negation operand is the IntLiteral 2147483648 (the pinned "
+                        + "NEG(IntLiteral 2147483648) spelling)");
+                SemanticLowerer.ModuleLowerer lowerer = lowerer(negated.checks());
+                RuntimeException defect = null;
+                try {
+                    lowerer.lowerExpression(negation);
+                } catch (SemanticLowerer.ConstructUnlowered raised) {
+                    defect = raised;
+                }
+                check(defect != null,
+                    "the unary negation fails closed through the unary-selector arm "
+                        + "(ISSUE-0231 owns UNARY)");
+                check(lowerer.ops().isEmpty(),
+                    "the negation produced no ops (no CONST for its out-of-range operand)");
+                if (defect != null) {
+                    check(((SemanticLowerer.ConstructUnlowered) defect).construct()
+                            .contains("unary selector"),
+                        "the defect names the unary selector arm");
+                }
+            }
         }
     }
 
@@ -1750,6 +1918,7 @@ public class ContainerLoweringArmsTest {
         System.out.println("=== Container Lowering Arms Test (ISSUE-0386) ===\n");
 
         testScalarLiteralConstArm();
+        testConstIntLiteralRangeGate();
         testIdentifierLoopBindingLoad();
         testArrayLiteralArm();
         testTableLiteralArm();

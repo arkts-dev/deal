@@ -80,7 +80,14 @@ import java.util.Optional;
  *   <li>scalar {@link LiteralExpr} → one {@code CONST
  *       {value: ScalarValue}}, result type {@code D(checked type)},
  *       policy {@code NO_DEAL_FAILURE}, origin = the literal span
- *       (template literal parts reuse this exact arm);</li>
+ *       (template literal parts reuse this exact arm). An
+ *       {@code IntLiteral} whose value is outside signed32
+ *       [-2147483648, 2147483647] raises {@link IntLiteralOutOfRange}
+ *       — converted at the unit-production seam to E6005
+ *       {@code INT32_LITERAL_OUT_OF_RANGE} (capability
+ *       {@code SIGNED_INT32}), never a truncated scalar (the E1036
+ *       signed32 literal gate is ISSUE-0111's frontend item, not yet
+ *       satisfied by the checker);</li>
  *   <li>{@link IdentifierExpr} in an operand position → one
  *       {@code BINDING_LOAD {binding, generation}} per the loop-binding
  *       load-resolution rule: a load of an enclosing for-of loop binding
@@ -157,8 +164,15 @@ import java.util.Optional;
  * ({@code FIELD_READ} is E9's), module member access ({@code EXPORT_READ}
  * is E10's), {@code .length} on bytes (ISSUE-0158), numeric selectors
  * (ISSUE-0231's {@code UNARY}/{@code BINARY} arms), and every other
- * foreign construct. The unit-production seam converts the defect to the
- * pinned E6005 {@code CONSTRUCT_UNLOWERED} diagnostic through
+ * foreign construct. An {@code IntLiteral} outside signed32 at the
+ * {@code CONST} arm raises {@link IntLiteralOutOfRange} — the same
+ * fail-closed discipline for a scalar outside the closed scalar set
+ * (the {@code CONST} contract's "a literal outside the closed scalar
+ * set is a producer defect (E6005), never an invented op"), converted
+ * at the same seam to E6005 {@code INT32_LITERAL_OUT_OF_RANGE} with
+ * capability {@code SIGNED_INT32} — never a truncation. The unit-production
+ * seam converts a {@code ConstructUnlowered} defect to the pinned E6005
+ * {@code CONSTRUCT_UNLOWERED} diagnostic through
  * {@link FailureContractRegistry} with the exact
  * {@link LoweringFailureDetail} — a hard compile failure in this stage's
  * window, never a reroute; LEGACY routing for modules containing
@@ -190,6 +204,16 @@ public final class SemanticLowerer {
 
     /** The producer fact-defect identifier of the E6005 unlowered-construct arm (D7). */
     public static final String CONSTRUCT_UNLOWERED = "CONSTRUCT_UNLOWERED";
+
+    /**
+     * The producer fact-defect identifier of the E6005 out-of-signed32
+     * int-literal arm (D1's CONST contract — a literal outside the closed
+     * scalar set is a producer defect, never an invented op): the checked
+     * frontend still admits out-of-int32 literals until the E1036
+     * signed32 literal gate (ISSUE-0111) lands, so the {@code CONST} arm
+     * fails closed instead of truncating.
+     */
+    public static final String INT32_LITERAL_OUT_OF_RANGE = "INT32_LITERAL_OUT_OF_RANGE";
 
     /**
      * The pinned canonical realization id of every lowerer-created
@@ -241,12 +265,49 @@ public final class SemanticLowerer {
     }
 
     /**
+     * An int literal whose value is outside the closed signed32 scalar
+     * set (D1's CONST contract — "a literal outside the closed scalar
+     * set is a producer defect (E6005), never an invented op"): the
+     * checked frontend still admits out-of-int32 literals until the
+     * E1036 signed32 literal gate (ISSUE-0111) lands, so the
+     * {@code CONST} arm fails closed instead of truncating. Converted at
+     * the unit-production seam to the pinned E6005
+     * {@code INT32_LITERAL_OUT_OF_RANGE} diagnostic — a hard compile
+     * failure in this stage's window, never a truncation, never an
+     * invented scalar, and never a crash.
+     */
+    public static final class IntLiteralOutOfRange extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        /** The out-of-range literal value carried into the E6005 origin. */
+        private final long value;
+
+        public IntLiteralOutOfRange(long value) {
+            super("int literal " + value
+                + " outside signed32 [-2147483648, 2147483647] (the E1036 "
+                + "signed32 literal gate is ISSUE-0111's frontend item; this "
+                + "stage fails closed, never truncates)");
+            this.value = value;
+        }
+
+        /** The out-of-range literal value carried into the E6005 origin. */
+        public long value() {
+            return value;
+        }
+    }
+
+    /**
      * The unit-production seam's failure carrier (D2/D7): maps a defect
      * raised by an arm to its exact {@link LoweringFailureDetail} —
      * {@code ConstructUnlowered} → E6005 {@code CONSTRUCT_UNLOWERED}
      * (capability {@code CONTAINERS_AND_STRINGS}, origin
-     * {@code SemanticLowerer CONSTRUCT_UNLOWERED (construct)}), and a
-     * {@link ContainerPayloadDescriptors.Defect} → E6005
+     * {@code SemanticLowerer CONSTRUCT_UNLOWERED (construct)}),
+     * {@link IntLiteralOutOfRange} → E6005
+     * {@code INT32_LITERAL_OUT_OF_RANGE} (capability
+     * {@code SIGNED_INT32}, origin
+     * {@code SemanticLowerer INT32_LITERAL_OUT_OF_RANGE (defect message)}),
+     * and a {@link ContainerPayloadDescriptors.Defect} → E6005
      * {@code DESCRIPTOR_UNREPRESENTABLE} through the bridge's pinned
      * carrier. The caller converts the returned detail into the E6005
      * diagnostic through {@code FailureContractRegistry.e6005(detail)};
@@ -268,6 +329,13 @@ public final class SemanticLowerer {
                 SemanticCapability.CONTAINERS_AND_STRINGS, CONSTRUCT_UNLOWERED,
                 SemanticProfile.DEAL_V1_2_INT32, LoweredModuleUnit.FORMAT_VERSION,
                 "SemanticLowerer " + CONSTRUCT_UNLOWERED + " (" + unlowered.construct() + ")");
+        }
+        if (defect instanceof IntLiteralOutOfRange outOfRange) {
+            return new LoweringFailureDetail(module.path(),
+                SemanticCapability.SIGNED_INT32, INT32_LITERAL_OUT_OF_RANGE,
+                SemanticProfile.DEAL_V1_2_INT32, LoweredModuleUnit.FORMAT_VERSION,
+                "SemanticLowerer " + INT32_LITERAL_OUT_OF_RANGE + " ("
+                    + outOfRange.getMessage() + ")");
         }
         if (defect instanceof ContainerPayloadDescriptors.Defect descriptorDefect) {
             return ContainerPayloadDescriptors.loweringFailureDetail(module, descriptorDefect);
@@ -364,6 +432,10 @@ public final class SemanticLowerer {
             return new LoweringResult(null,
                 List.of(FailureContractRegistry.e6005(
                     loweringFailureDetail(module.moduleId(), unlowered))));
+        } catch (IntLiteralOutOfRange outOfRange) {
+            return new LoweringResult(null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), outOfRange))));
         } catch (ContainerPayloadDescriptors.Defect defect) {
             return new LoweringResult(null,
                 List.of(FailureContractRegistry.e6005(
@@ -645,13 +717,29 @@ public final class SemanticLowerer {
         // The per-construct arms (D1)
         // ---------------------------------------------------------------------
 
-        /** {@code CONST} — the scalar-literal and template-fragment arm. */
+        /**
+         * {@code CONST} — the scalar-literal and template-fragment arm.
+         * An {@code IntLiteral} outside signed32 [-2147483648,
+         * 2147483647] raises {@link IntLiteralOutOfRange} (D1's CONST
+         * contract — a literal outside the closed scalar set is a
+         * producer defect, never an invented op): the checked frontend
+         * still admits out-of-int32 literals until the E1036 signed32
+         * literal gate (ISSUE-0111) lands, so this arm fails closed
+         * instead of truncating — no {@code CONST} is produced for the
+         * out-of-range value, and the in-range cast is exact.
+         */
         private ValueId lowerConst(LiteralExpr literal) {
             Type type = checkedType(literal);
             ScalarValue scalar = switch (literal.value()) {
                 case LiteralValue.NullLiteral ignored -> ScalarValue.Null.INSTANCE;
                 case LiteralValue.BooleanLiteral bool -> new ScalarValue.Boolean(bool.value());
-                case LiteralValue.IntLiteral integer -> new ScalarValue.Int((int) integer.value());
+                case LiteralValue.IntLiteral integer -> {
+                    long value = integer.value();
+                    if (value < -2147483648L || value > 2147483647L) {
+                        throw new IntLiteralOutOfRange(value);
+                    }
+                    yield new ScalarValue.Int((int) value);
+                }
                 case LiteralValue.NumberLiteral number ->
                     new ScalarValue.Number(number.value());
                 case LiteralValue.StringLiteral string ->
