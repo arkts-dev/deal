@@ -1,0 +1,34 @@
+// @spec: Standard library declarations — std/table.d.deal
+// @description: std/table.keys returns exactly the string keys of a table: every string key appears exactly once in the result
+// @expected: runtime-ok
+// @features: stdlib, table
+
+import * as tables from "std/table";
+
+export function test_table_keys_string_inclusion(): null {
+  let t: table = { alpha: 1, beta: "b", gamma: null };
+  let ks: string[] = tables.keys(t);
+  if (ks.length !== 3) {
+    throw { code: "TEST_FAIL", message: "keys length mismatch" };
+  }
+  let found: table = { alpha: false, beta: false, gamma: false };
+  let i: int = 0;
+  while (i < ks.length) {
+    let k: string = ks[i];
+    if (k === "alpha") { found.alpha = true; }
+    if (k === "beta") { found.beta = true; }
+    if (k === "gamma") { found.gamma = true; }
+    i = i + 1;
+  }
+  let alphaHit: boolean = found.alpha;
+  let betaHit: boolean = found.beta;
+  let gammaHit: boolean = found.gamma;
+  if (!alphaHit || !betaHit || !gammaHit) {
+    throw { code: "TEST_FAIL", message: "a string key is missing" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

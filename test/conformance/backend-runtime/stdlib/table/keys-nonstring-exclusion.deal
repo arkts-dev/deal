@@ -1,0 +1,27 @@
+// @spec: Standard library declarations — std/table.d.deal
+// @description: std/table.keys excludes non-string keys (v1.2, luajit-v1.2-stdlib-contracts D4): the integer keys of a json.parse array table are not string keys — the string-key deletes below cannot remove them, and keys() still returns exactly the table's string keys
+// @expected: runtime-ok
+// @features: stdlib, table, json, v1.2
+
+import * as tables from "std/table";
+import * as json from "std/json";
+
+export function test_table_keys_nonstring_exclusion(): null {
+  let t: table = json.parse("[10, 20, 30]");
+  t.keep = 7;
+  delete t["1"];
+  delete t["2"];
+  delete t["3"];
+  let ks: string[] = tables.keys(t);
+  if (ks.length !== 1) {
+    throw { code: "TEST_FAIL", message: "non-string keys were not excluded" };
+  }
+  if (ks[0] !== "keep") {
+    throw { code: "TEST_FAIL", message: "the string key is missing" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

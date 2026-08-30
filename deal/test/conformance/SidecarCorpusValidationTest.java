@@ -141,8 +141,11 @@ public class SidecarCorpusValidationTest {
      * truncated remainder -2147483648 % -1 == 0 on all three lanes —
      * added with its uniform sidecar in the same change; plus the
      * host-class-default-isolation fixture ISSUE-0334 added with its
-     * sidecar in the same change). */
-    private static final int RUNTIME_OK_COUNT = 209;
+     * sidecar in the same change; plus the three stdlib/table keys
+     * fixtures ISSUE-0341 added with their sidecars in the same
+     * change: keys-string-inclusion, keys-nonstring-exclusion, and
+     * keys-order-pin). */
+    private static final int RUNTIME_OK_COUNT = 212;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -170,9 +173,11 @@ public class SidecarCorpusValidationTest {
      * (2 ** 1024 → E8001 infinity, the NaN/infinity-first band) — each
      * added with its uniform three-backend sidecar in the same change;
      * plus the host-class-extra-field E8007 fixture ISSUE-0334 added
-     * with its sidecar in the same change).
+     * with its sidecar in the same change; plus the stdlib/table
+     * keys-nontable-error E8001 fixture ISSUE-0341 added with its
+     * sidecar in the same change).
      */
-    private static final int RUNTIME_ERROR_COUNT = 80;
+    private static final int RUNTIME_ERROR_COUNT = 81;
 
     /**
      * ISSUE-0397 count-pin criterion record (MR-0305 review cycles 1
@@ -212,7 +217,14 @@ public class SidecarCorpusValidationTest {
      * the runtime-ok host-class-default-isolation fixture (pins move
      * 208 -> 209) and the runtime-error E8007 host-class-extra-field
      * fixture (pins move 79 -> 80). The known-fail population stays
-     * empty. The pins below carry those ISSUE-0334 deltas.
+     * empty.
+     *
+     * ISSUE-0341 then lands on the 209/80 corpus and adds the three
+     * stdlib/table keys runtime-ok fixtures (keys-string-inclusion,
+     * keys-nonstring-exclusion, keys-order-pin) and the
+     * keys-nontable-error runtime-error fixture with their sidecars in
+     * the same change, moving the pins to 212/81. The pins below carry
+     * those ISSUE-0334 and ISSUE-0341 deltas.
      */
 
     /** The G4.6 lane error framing prefixes. */

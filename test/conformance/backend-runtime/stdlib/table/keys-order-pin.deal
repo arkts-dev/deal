@@ -1,0 +1,23 @@
+// @spec: Standard library declarations — std/table.d.deal
+// @description: std/table.keys pins LuaJIT's deterministic iteration order for a fixed construction/deletion history: writing zero, one, two, filler then deleting filler yields exactly ["zero","one","two"] — the LuaJIT retained projection for this spec-unspecified-order operation (no shadow order channel is maintained)
+// @expected: runtime-ok
+// @features: stdlib, table, v1.2
+
+import * as tables from "std/table";
+
+export function test_table_keys_order_pin(): null {
+  let t: table = { zero: 0, one: 1, two: 2, filler: 3 };
+  delete t.filler;
+  let ks: string[] = tables.keys(t);
+  if (ks.length !== 3) {
+    throw { code: "TEST_FAIL", message: "keys length mismatch" };
+  }
+  if (ks[0] !== "zero" || ks[1] !== "one" || ks[2] !== "two") {
+    throw { code: "TEST_FAIL", message: "keys order mismatch" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

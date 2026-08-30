@@ -442,13 +442,26 @@ test("table.keys returns keys of a table as strings", function()
   assert(found.a and found.b and found.c)
 end)
 
-test("table.keys converts numeric keys to strings", function()
-  local t = { [1] = "a", [2] = "b" }
+test("table.keys excludes non-string keys", function()
+  -- luajit-v1.2-stdlib-contracts D4: non-string keys (the integer keys
+  -- of a json.parse array table) are excluded; only string keys appear.
+  local t = { [1] = "a", [2] = "b", keep = "c" }
   local keys = tablelib.keys.f(t)
-  assert(#keys == 2)
-  for _, k in ipairs(keys) do
-    assert(type(k) == "string", "numeric key should be converted to string, got " .. type(k))
-  end
+  assert(#keys == 1, "expected only the string key, got " .. #keys)
+  assert(type(keys[1]) == "string", "key should be string, got " .. type(keys[1]))
+  assert(keys[1] == "keep", "expected the string key 'keep', got " .. tostring(keys[1]))
+end)
+
+test("table.keys preserves the deterministic iteration order of the current state", function()
+  -- luajit-v1.2-stdlib-contracts D4: pairs order for the fixed
+  -- construction/deletion history below is zero,one,two in LuaJIT; no
+  -- shadow order channel exists, so the pin is the table's own state.
+  local t = { zero = 0, one = 1, two = 2, filler = 3 }
+  t.filler = nil
+  local keys = tablelib.keys.f(t)
+  assert(#keys == 3, "expected three survivors, got " .. #keys)
+  assert(keys[1] == "zero" and keys[2] == "one" and keys[3] == "two",
+    "order mismatch: " .. table.concat(keys, ","))
 end)
 
 test("table.keys on empty table returns empty array", function()
