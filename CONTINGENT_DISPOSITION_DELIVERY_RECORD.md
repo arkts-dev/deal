@@ -9,7 +9,7 @@ non-applied form, and capture the verification evidence the task pins
 Verification 1–10; `luajit-v1.2-stdlib-contracts` D6;
 `luajit-v1.2-conformance-retirement-and-gate` D3).
 
-Canonical revision: `22ad9e94f5ac34ca37efb845eab1bb9950c22761` (the
+Canonical revision: `b8d4fe0a39873794698ed78ced3cccbd9fa7ec63` (the
 engine-imported canonical HEAD; the mandated rebase replays this
 record's commit onto it).
 
@@ -67,18 +67,30 @@ pinned pre-unit staged state (`PRE_UNIT_STAGED_STATE_PIN.md`):
   (`:141-142`), the `stagedFailure` helper (`:177-181`), and the registry
   validation loop (`:226-231`) intact.
 - Runner dispatch: the staged entry is consulted before any expectation
-  evaluation (`:453-455`); the stale expectation-changed branch fails the
+  evaluation (`:613-615`); the stale expectation-changed branch fails the
   gate with the promotion instruction naming the entry removal
-  (`:456-468`, println `:461-466`); the stale passing branch is the
-  analogous rule for a fixture passing its own expectation (`:625-631`,
-  println `:626-629`).
+  (`:616-628`, println `:621-626`); the stale passing branch is the
+  analogous rule for a fixture passing its own expectation (`:785-791`,
+  println `:786-789`).
+- Gate-closure strict gate (ISSUE-0420, landed at the canonical HEAD):
+  `runGateClosureCheck()` runs in the summary/exit path (call at `:253`;
+  section `:263-410`). Its activation key is the staged-failure registry
+  shape, compared field-exact on the `StagedEntry` fields: dormant under
+  the exact sanctioned pre-unit ISSUE-0237 pair (`isSanctionedPreUnitPair`
+  `:400-409` — no assertion, no extra output); strict under an empty
+  registry (the post-unit landing artifact — zero
+  failed/skipped/known-fail/staged backend-runtime residuals or
+  `GATE FAILURE` lines plus exit 1); any other registry shape is itself a
+  gate failure. The +160-line insertion shifts every runner site after
+  the summary path by +160 (the stale-rule windows re-cited above
+  accordingly).
 - Landed precondition — int32 gate: `deal/runtime.lua` `check_int` carries
   the range check `if v < -2147483648 or v > 2147483647` at `:83` and
   raises E8004 `"int out of range"` at `:84` (ISSUE-0332, MR-0244 —
   ancestor of HEAD). The design checkout's `:78-79` drifted +5 to the
   canonical HEAD: ISSUE-0333 (`ddeed8e`) split the header comment into
   two lines (+1) and the ISSUE-0336 canonical descriptor cutover
-  (`c0b708d`, MR-0270) reworked the file head (+4).
+  (`c0b708d`, merged `7aff920d`, MR-0270) reworked the file head (+4).
 - Direct suite: the two E8004 cases sit at `test_stdlib.lua:1070-1076`
   and stay exactly as landed.
 - Pin test `test/StdlibTimePreActivationPinTest.java`:
@@ -150,7 +162,7 @@ block and its closing `}` (`:164`, `:175`), the `StagedEntry` record
 (`:141-142`), the `stagedFailure` helper (`:177-181`), and the registry
 validation loop (`:226-231`). The removal is mandatory: a flipped fixture
 with the entry still present fails the gate with the stale
-expectation-changed promotion (`:456-468`). After the removal the runner
+expectation-changed promotion (`:616-628`). After the removal the runner
 reports zero staged failures and the fixture executes under its flipped
 expectation via the standard `runtime-error` path.
 
@@ -217,7 +229,7 @@ green.
    `now > 0` body.
 2. **The staged-registry removal lands in the same change** — the same
    block as 3.1 item 2. A passing fixture with the entry still present
-   trips the stale passing promotion (`:625-631`) — a gate failure until
+   trips the stale passing promotion (`:785-791`) — a gate failure until
    the entry is removed.
 3. **The pin-test update:** `testRetainedLuaImplementation` (`:95-109`,
    pinning `std/time.lua:9-10` byte-exactly) retires/updates with the
@@ -303,6 +315,10 @@ Companions (classified support modules): 32
   LuaJIT backend-runtime conformance (v1.2): 275/277 passed, 0 failed, 0 skipped, 1 known-fail (tracked), 1 staged-fail (tracked)
 ```
 
+The ISSUE-0420 gate-closure strict gate is dormant under the exact
+sanctioned pre-unit registry pair — no assertion, no extra output
+(section 2); the summary above is the unchanged pre-unit gate output.
+
 The single staged entry is exactly the locked time fixture:
 
 ```text
@@ -310,8 +326,8 @@ The single staged entry is exactly the locked time fixture:
 ```
 
 Pin test: `Passed: 36, Failed: 0`; direct LuaJIT stdlib suite
-`Passed: 60, Failed: 0, Skipped: 0`; the rebase-added async-export
-driver suite (`e220da0`, ISSUE-0416) reports `All 20 async export
+`Passed: 60, Failed: 0, Skipped: 0`; the async-export
+driver suite (landed `e220da0`, ISSUE-0416) reports `All 20 async export
 driver tests passed`; lock-running suites green (`LoweringSupportTest`,
 `MigrationPlannerTest` with `testTimeConflictNeverShared`, and all
 remaining suites in the same run).
@@ -339,17 +355,22 @@ remaining suites in the same run).
 ### 5.5 Repository state
 
 `git status --porcelain --untracked-files=all` is empty after committing
-this record and its script; the committed diff contains only
+this record and its script; the committed diff contains
 `CONTINGENT_DISPOSITION_DELIVERY_RECORD.md` and
-`verify_contingent_delivery_gate.sh`.
+`verify_contingent_delivery_gate.sh` (the delivery record and its gate
+script), plus a two-line locator-comment correction in the T2 script
+`verify_both_branches_scratch.sh` (its stale-promotion citations
+re-anchored to the canonical HEAD after the ISSUE-0420 +160-line
+insertion: `:461-466` → `:621-626`, `:626-629` → `:786-789`).
 
 ## 6. Locator register (task citations vs the canonical HEAD)
 
 | Site | Task citation | Canonical HEAD | Note |
 |---|---|---|---|
 | Staged registration | `test/ConformanceTest.java:150-159` | call `:165-174`, block `:164-175` | task window starts one line above the call at the design checkout; content identical |
-| Stale expectation-changed rule | `:440-451` | `:456-468` (println `:461-466`) | earlier landings grew the file head |
-| Stale passing rule | `:609-615` | `:625-631` (println `:626-629`) | same |
+| Stale expectation-changed rule | `:440-451` | `:616-628` (println `:621-626`) | earlier landings grew the file head; the ISSUE-0420 strict-gate insertion (+160 lines after the summary path) moved the site |
+| Stale passing rule | `:609-615` | `:785-791` (println `:786-789`) | same |
+| Gate-closure strict gate (ISSUE-0420) | — (landed after the prior canonical revision) | `runGateClosureCheck()` call `:253`; section `:263-410`; `isSanctionedPreUnitPair` `:400-409` | dormant under the exact sanctioned pre-unit pair; strict under an empty registry |
 | Pin-test `testRetainedLuaImplementation` | `:93-107` | `:95-109` | ISSUE-0321 seam-pin edits |
 | Pin-test `testRuntimeSeam` | `:123-149` | `:125-150` | same |
 | Pin-test `testFixtureHeader` | `:150-179` | `:156-180` | same |
