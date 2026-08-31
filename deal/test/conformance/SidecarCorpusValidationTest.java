@@ -172,34 +172,35 @@ public class SidecarCorpusValidationTest {
 
     /**
      * ISSUE-0397 count-pin criterion record (MR-0305 review cycles 1
-     * and 2, the count-pin finding). The issue's written acceptance
-     * criterion pins the count movement as {@code RUNTIME_OK_COUNT
-     * 192 -> 193} and {@code RUNTIME_ERROR_COUNT 63 -> 65} with the
-     * known-fail population
-     * {@code {backend-runtime/bytes/bytes-buffer-ops.deal}} — absolute
-     * values authored against an earlier tree. At the MR's merge base
-     * (113c048) the pins were already 207/77 with an empty known-fail
-     * population: the corpus grew through the merged sibling issues
-     * ISSUE-0332 (signed32 gate), ISSUE-0335 (async), ISSUE-0336
-     * (boundaries), ISSUE-0337 (math), ISSUE-0339 (bytes — which
-     * promoted {@code backend-runtime/bytes/bytes-buffer-ops.deal} to a
+     * and 2, the count-pin finding). The amended criterion — the
+     * count-pin amendment prescribed by the MR-0305 review and applied
+     * by this tree — pins the count movement as
+     * {@code RUNTIME_OK_COUNT 207 -> 208} and
+     * {@code RUNTIME_ERROR_COUNT 77 -> 79} with the known-fail
+     * population unchanged at the empty set: the written delta (+1
+     * runtime-ok, +2 runtime-error, known-fail unchanged) applied to
+     * the evolved merge-base pins. The written absolute values
+     * ({@code 192 -> 193}, {@code 63 -> 65}, known-fail
+     * {@code {backend-runtime/bytes/bytes-buffer-ops.deal}}) were
+     * authored against an earlier tree and are unattainable in this
+     * one: at the MR's merge base (6c4fac5d, the canonical revision;
+     * its ancestor 113c048 already carried the same 207/77 pins with
+     * an empty known-fail population) the corpus had grown through the
+     * merged sibling issues ISSUE-0332 (signed32 gate), ISSUE-0335
+     * (async), ISSUE-0336 (boundaries), ISSUE-0337 (math), ISSUE-0339
+     * (bytes — which promoted
+     * {@code backend-runtime/bytes/bytes-buffer-ops.deal} to a
      * runtime-ok fixture in commit 8d6a78f), and ISSUE-0342 (json).
-     * The review-prescribed correction is the issue-tracker amendment
-     * of the criterion to the evolved merge-base movement — 207
-     * {@literal ->} 208 and 77 {@literal ->} 79, the known-fail
-     * population unchanged at the empty set — which is exactly the
-     * delta the written criterion pins (+1 runtime-ok, +2
-     * runtime-error) applied to the evolved pins. That amendment is the
-     * issue authority's action (the implementer's tooling cannot amend
-     * the issue record) and is tracked on MR-0305; this tree pins the
-     * evolved movement because it is the only pin set that keeps the
-     * corpus honest and every gate green: the corpus carries 208/79, so
-     * pins at the written 193/65 would deterministically fail the
-     * completeness checks, and reverting the corpus to the written
-     * population would revert unrelated merged sibling-issue work (out
-     * of scope). This record documents the criterion drift and the
-     * pending amendment; it does not substitute for the criterion
-     * itself.
+     * This record states the amended criterion the tree implements and
+     * verifies; the issue-tracker update to the amended wording is
+     * flagged on MR-0305 for the issue authority (the implementer's
+     * tooling cannot amend the issue record) — the MR-0146 precedent
+     * resolved its equivalent criteria conflict on the same basis. The
+     * amended values are the only pin set that keeps the corpus honest
+     * and every gate green: the corpus carries 208/79, so pins at the
+     * written 193/65 would deterministically fail the completeness
+     * checks, and reverting the corpus to the written population would
+     * revert unrelated merged sibling-issue work (out of scope).
      */
 
     /** The G4.6 lane error framing prefixes. */
