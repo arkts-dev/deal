@@ -443,7 +443,7 @@ echo "=== Running Source Module Resolver Tests (ISSUE-0267 T6) ==="
 java -ea -cp build deal.module.SourceModuleResolverTest
 
 echo ""
-echo "=== Running LuaJIT Async Export Invoker Tests (ISSUE-0417) ==="
+echo "=== Running LuaJIT Async Export Invoker Tests (ISSUE-0417 component, ISSUE-0418 verification matrix) ==="
 java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.LuaJitAsyncExportInvokerTest
 
 echo ""

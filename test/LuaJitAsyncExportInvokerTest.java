@@ -6,6 +6,7 @@ import deal.codegen.lua.LuaJitAsyncExportInvoker.EnvelopeJson;
 import deal.codegen.lua.LuaJitAsyncExportInvoker.Result;
 import deal.codegen.lua.LuaJitAsyncExportInvocationException;
 import deal.module.CompilationOrchestrator;
+import deal.module.DealConfig;
 
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -30,18 +31,22 @@ import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Component-level tests for the production LuaJIT async-export host
- * invoker (ISSUE-0417, luajit-async-export-invoker Verification 1-5):
- * {@link LuaJitAsyncExportInvoker} is exercised end-to-end under real
- * {@code luajit} — production compilation through
- * {@link CompilationOrchestrator} for the smoke case, staged entry
- * chunks plus a deployed {@code deal/runtime.lua} and {@code std/*.lua}
- * for the component cases (the design's own staging technique), and
- * fake drivers for the codec/hard-failure matrix.
+ * Verification 1-5 of the production LuaJIT async-export host invoker
+ * (ISSUE-0417 component, ISSUE-0418 verification matrix and release
+ * gates, luajit-async-export-invoker): {@link LuaJitAsyncExportInvoker}
+ * is exercised end-to-end under real {@code luajit}. The Verification
+ * 1-4 fixtures compile through the production
+ * {@link CompilationOrchestrator} path and invoke the production
+ * {@link LuaJitAsyncExportInvoker}; the duplicate entry chunk and the
+ * absent-location completion-matcher case stay staged (compiled
+ * artifacts cannot produce duplicate wrappers or a matcher mismatch —
+ * the design's own staging technique); fake drivers cover the
+ * codec/hard-failure matrix.
  */
 public class LuaJitAsyncExportInvokerTest {
 
@@ -130,6 +135,38 @@ public class LuaJitAsyncExportInvokerTest {
         return dirs;
     }
 
+    /**
+     * Asserts the per-invocation temp directory was deleted after the
+     * luajit child exited (the design's cleanup post-state). Other test
+     * JVMs on this shared machine materialize their own invoker dirs
+     * under the same {@code /tmp} prefix at any moment, so a stranger
+     * dir is a leak only when it persists beyond the grace window;
+     * concurrent invokes in other JVMs disappear within it while a real
+     * cleanup defect (the invoker deletes the dir in a finally block)
+     * persists forever and still fails this assertion.
+     */
+    private static void assertNoTempDirLeaks(Set<String> before)
+            throws IOException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (true) {
+            Set<String> after = invokerTempDirs();
+            if (after.equals(before)) {
+                return;
+            }
+            Set<String> strangers = new TreeSet<>(after);
+            strangers.removeAll(before);
+            if (System.nanoTime() >= deadline) {
+                fail("per-invocation temp directories leaked: " + strangers);
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                fail("interrupted while verifying temp-dir cleanup");
+            }
+        }
+    }
+
     private static void deleteRecursively(Path dir) {
         if (dir == null || !Files.exists(dir)) {
             return;
@@ -142,6 +179,109 @@ public class LuaJitAsyncExportInvokerTest {
                 }
             });
         } catch (IOException ignored) {
+        }
+    }
+
+    // =========================================================================
+    // Production compilation helpers (Verification 1-4 matrix)
+    // =========================================================================
+
+    /**
+     * Compiles one entry module through the production orchestrator path
+     * (the ModuleSystemTest drive): the working-tree root is the stdlib
+     * directory, exactly like the CLI, and an optional deal.json manifest
+     * carries externals for host-module fixtures.
+     *
+     * @return the absolute entry source path — the pinned source-location
+     *         file of runtime diagnostics
+     */
+    private static Path compileProductionEntry(Path projectDir,
+            String entryFileName, String source, String manifestJson,
+            Path outRoot) throws IOException {
+        Path srcRoot = projectDir.resolve("src");
+        Files.createDirectories(srcRoot);
+        Path entrySource = srcRoot.resolve(entryFileName);
+        Files.writeString(entrySource, source);
+        DealConfig config = null;
+        if (manifestJson != null) {
+            Files.writeString(projectDir.resolve("deal.json"), manifestJson);
+            DealConfig.DealConfigParseResult parsed = DealConfig.load(projectDir);
+            assertEquals("the externals manifest must parse cleanly",
+                List.of(), parsed.diagnostics());
+            assertNotNull("the externals manifest must yield a config",
+                parsed.config());
+            config = parsed.config();
+        }
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entrySource.toAbsolutePath(), outRoot, false, config,
+            List.of(srcRoot.toAbsolutePath()),
+            Path.of("").toAbsolutePath());
+        boolean ok = orchestrator.compile();
+        assertTrue("production compilation must succeed: "
+            + orchestrator.diagnostics(), ok);
+        return entrySource.toAbsolutePath();
+    }
+
+    /**
+     * The single backend-generated entry artifact under an output root:
+     * the top-level .lua (deal/ and std/ live in subdirectories).
+     */
+    private static Path entryArtifactOf(Path outRoot) throws IOException {
+        List<Path> artifacts;
+        try (Stream<Path> s = Files.list(outRoot)) {
+            artifacts = s.filter(p -> p.getFileName().toString()
+                .endsWith(".lua")).toList();
+        }
+        assertEquals("exactly one compiled entry artifact under " + outRoot,
+            1, artifacts.size());
+        return artifacts.get(0);
+    }
+
+    /** Compiles a fixture and pins a HostFailure with a runtime reason. */
+    private void assertCompiledHostFailure(String caseName, String source,
+            String exportName, String descriptor, String reason)
+            throws IOException {
+        assumeTrue(luajitAvailable);
+        Path out = tmp.resolve("matrix-out-" + caseName);
+        compileProductionEntry(tmp.resolve("matrix-src-" + caseName),
+            "oracle_entry.deal", source, null, out);
+        Result result = invoke(entryArtifactOf(out), exportName, descriptor);
+        assertTrue("expected HostFailure for " + caseName + ", got "
+            + result, result instanceof Result.HostFailure);
+        assertEquals("the runtime's pinned reason verbatim, never a DEAL"
+            + " code", reason, ((Result.HostFailure) result).reason());
+    }
+
+    /**
+     * The Verification 4 snapshot assertion: the value JSON parses to an
+     * object whose load/main/oracle fields are each 1 — order-insensitive,
+     * because the production object encoder iterates pairs(v) and pins no
+     * key order (std/json.lua object branch).
+     */
+    private static void assertExactlyOneSnapshot(Result result) {
+        assertTrue("expected Value, got " + result,
+            result instanceof Result.Value);
+        Result.Value value = (Result.Value) result;
+        assertEquals("the oracle's canonical return descriptor",
+            "table", value.returnDescriptor());
+        final EnvelopeJson.ObjectValue obj;
+        try {
+            obj = EnvelopeJson.parseObject(value.valueJson());
+        } catch (EnvelopeJson.ParseException e) {
+            fail("the completion JSON must parse as an object: "
+                + value.valueJson());
+            return;
+        }
+        assertEquals("exactly the three probe fields (one host-module"
+            + " init, one main call, one oracle invocation)",
+            Set.of("load", "main", "oracle"), obj.fields().keySet());
+        for (String key : new String[] {"load", "main", "oracle"}) {
+            EnvelopeJson.Value field = obj.fields().get(key);
+            assertTrue(key + " must be an integral JSON number",
+                field instanceof EnvelopeJson.NumberValue
+                    && ((EnvelopeJson.NumberValue) field).isIntegralText());
+            assertEquals(key + " is exactly 1 per invoker use", 1L,
+                ((EnvelopeJson.NumberValue) field).longValue());
         }
     }
 
@@ -318,8 +458,10 @@ public class LuaJitAsyncExportInvokerTest {
     }
 
     // =========================================================================
-    // Production-path smoke: compilation through CompilationOrchestrator,
-    // invocation through the production invoker, grep gates.
+    // =========================================================================
+    // Production-path verification matrix: compilation through
+    // CompilationOrchestrator, invocation through the production
+    // invoker, grep gates.
     // =========================================================================
 
     @Test
@@ -327,39 +469,14 @@ public class LuaJitAsyncExportInvokerTest {
             throws Exception {
         assumeTrue(luajitAvailable);
 
-        Path src = Files.createDirectories(tmp.resolve("smoke-src"));
-        Path entrySource = src.resolve("oracle_entry.deal");
-        Files.writeString(entrySource, """
-            export async function oracle(): null { return null; }
-            export function main(): null { return null; }
-            """);
-
-        // The production compile path (the ModuleSystemTest drive):
-        // construct the orchestrator and call compile() with the
-        // working-tree root as the stdlib directory, exactly like the
-        // CLI (deal/Main.java:221 resolves stdlibDir to the project
-        // root when ./std exists; the orchestrator copies
-        // <stdlibDir>/std/<module>.lua per module).
         Path out = tmp.resolve("smoke-out");
-        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entrySource.toAbsolutePath(), out, false, null,
-            List.of(src.toAbsolutePath()),
-            Path.of("").toAbsolutePath());
-        boolean ok = orchestrator.compile();
-        assertTrue("production compilation must succeed: "
-            + orchestrator.diagnostics(), ok);
+        compileProductionEntry(tmp.resolve("smoke-src"),
+            "oracle_entry.deal", """
+                export async function oracle(): null { return null; }
+                export function main(): null { return null; }
+                """, null, out);
 
-        // The compiled entry artifact: the single top-level .lua under
-        // the output root (deal/ and std/ live in subdirectories).
-        List<Path> artifacts;
-        try (Stream<Path> s = Files.list(out)) {
-            artifacts = s.filter(p -> p.getFileName().toString()
-                .endsWith(".lua")).toList();
-        }
-        assertEquals("exactly one compiled entry artifact", 1,
-            artifacts.size());
-        Path entryArtifact = artifacts.get(0);
-
+        Path entryArtifact = entryArtifactOf(out);
         Result result = invoke(entryArtifact, "oracle", "null");
         assertEquals("the parent D9 scenario: null completion, byte-exact"
             + " descriptor", new Result.Value("null", "null"), result);
@@ -376,6 +493,78 @@ public class LuaJitAsyncExportInvokerTest {
             generated.contains("\"async()->null\""));
         assertTrue("main emits the sync wrapper sig",
             generated.contains("\"()->null\""));
+    }
+
+    @Test
+    public void productionCompiledAsyncFortyTwoReturnsExactIntValue()
+            throws Exception {
+        assumeTrue(luajitAvailable);
+
+        Path out = tmp.resolve("smoke-out-42");
+        compileProductionEntry(tmp.resolve("smoke-src-42"),
+            "oracle_entry.deal", """
+                export async function fortyTwo(): int { return 42; }
+                export function main(): null { return null; }
+                """, null, out);
+
+        Result result = invoke(entryArtifactOf(out), "fortyTwo", "int");
+        assertEquals("byte-exact descriptor and exact value JSON",
+            new Result.Value("int", "42"), result);
+    }
+
+    @Test
+    public void generatedArtifactsNeverReachTheRuntimeEntryOrTheDriverMarker()
+            throws Exception {
+        assumeTrue(luajitAvailable);
+
+        Path out = tmp.resolve("gate-out");
+        compileProductionEntry(tmp.resolve("gate-src"),
+            "oracle_entry.deal", """
+                export async function oracle(): null { return null; }
+                export async function parameterized(x: int): int {
+                  return x;
+                }
+                export function main(): null { return null; }
+                """, null, out);
+
+        // The grep gate (Verification 5): no backend-generated artifact
+        // references the runtime entry or the driver marker. The copied
+        // deal/runtime.lua and std/ trees are distribution files (the
+        // runtime entry legitimately lives there), not generated
+        // artifacts.
+        try (Stream<Path> walk = Files.walk(out)) {
+            for (Path p : walk.toList()) {
+                if (!p.getFileName().toString().endsWith(".lua")) {
+                    continue;
+                }
+                Path rel = out.relativize(p);
+                if (rel.getNameCount() > 0) {
+                    String first = rel.getName(0).toString();
+                    if (first.equals("deal") || first.equals("std")) {
+                        continue;
+                    }
+                }
+                String text = Files.readString(p);
+                assertFalse("generated artifacts never call the runtime"
+                    + " entry: " + p, text.contains("invoke_async_export"));
+                assertFalse("generated artifacts never emit the driver"
+                    + " marker: " + p, text.contains(MARKER));
+            }
+        }
+
+        // Async exports emit the same single-wrapper-table shape as sync
+        // exports with a byte-exact canonical sig, and the E6004 entry
+        // gate keeps the chunk-end main call.
+        String generated = Files.readString(entryArtifactOf(out));
+        assertTrue("async export emits the canonical async wrapper sig",
+            generated.contains("__rt.function_(\"async()->null\", function()"));
+        assertTrue("parameterized async export emits the canonical"
+            + " parameterized wrapper sig",
+            generated.contains("__rt.function_(\"async(int)->int\", function(x)"));
+        assertTrue("main emits the same single-wrapper-table shape",
+            generated.contains("__rt.function_(\"()->null\", function()"));
+        assertTrue("the E6004 entry gate emits the chunk-end main call",
+            generated.contains("exports.main.f()"));
     }
 
     // =========================================================================
@@ -429,6 +618,57 @@ public class LuaJitAsyncExportInvokerTest {
         assertEquals("the completion-matcher failure carries no location",
             new Result.DealError("E8001", "expected int", null, null, null),
             result);
+    }
+
+    // =========================================================================
+    // Compiled DEAL-error fixtures (Verification 2)
+    // =========================================================================
+
+    @Test
+    public void productionCompiledOracleDivisionByZeroPropagatesPinnedLocation()
+            throws Exception {
+        assumeTrue(luajitAvailable);
+
+        Path out = tmp.resolve("matrix-out-e8005");
+        Path entrySource = compileProductionEntry(tmp.resolve("matrix-src-e8005"),
+            "oracle_entry.deal", """
+                export async function oracle(): int {
+                  return 1 / 0;
+                }
+                export function main(): null {
+                  return null;
+                }
+                """, null, out);
+
+        Result result = invoke(entryArtifactOf(out), "oracle", "int");
+        assertEquals("code/message/file/line/column propagate unchanged",
+            new Result.DealError("E8005", "integer division by zero",
+                entrySource.toString(), 2, 10), result);
+    }
+
+    @Test
+    public void productionCompiledMainIntOverflowPropagatesPinnedLocation()
+            throws Exception {
+        assumeTrue(luajitAvailable);
+
+        Path out = tmp.resolve("matrix-out-e8004-main");
+        Path entrySource = compileProductionEntry(
+            tmp.resolve("matrix-src-e8004-main"),
+            "oracle_entry.deal", """
+                export async function oracle(): int {
+                  return 1;
+                }
+                export function main(): null {
+                  let x: int = 2147483647;
+                  x = x + 1;
+                  return null;
+                }
+                """, null, out);
+
+        Result result = invoke(entryArtifactOf(out), "oracle", "int");
+        assertEquals("main's DEAL error propagates verbatim",
+            new Result.DealError("E8004", "int out of range",
+                entrySource.toString(), 6, 7), result);
     }
 
     // =========================================================================
@@ -510,6 +750,52 @@ public class LuaJitAsyncExportInvokerTest {
             + result, result instanceof Result.HostFailure);
         assertEquals("return descriptor is not a canonical descriptor: int[]",
             ((Result.HostFailure) result).reason());
+    }
+
+    // =========================================================================
+    // Compiled HostInvocationFailure fixtures (Verification 3)
+    // =========================================================================
+
+    @Test
+    public void productionCompiledMissingExportReturnsPinnedHostFailureReason()
+            throws Exception {
+        assertCompiledHostFailure("missing", """
+            export async function oracle(): int { return 1; }
+            export function main(): null { return null; }
+            """, "nope", "int", "missing export 'nope'");
+    }
+
+    @Test
+    public void productionCompiledSyncExportReturnsPinnedHostFailureReason()
+            throws Exception {
+        assertCompiledHostFailure("sync", """
+            export function runner(): null { return null; }
+            export function main(): null { return null; }
+            """, "runner", "null",
+            "export 'runner' is sync: expected 'async()->null',"
+                + " got '()->null'");
+    }
+
+    @Test
+    public void productionCompiledParameterizedExportReturnsPinnedHostFailureReason()
+            throws Exception {
+        assertCompiledHostFailure("parameterized", """
+            export async function takes(x: int): int { return x; }
+            export function main(): null { return null; }
+            """, "takes", "int",
+            "export 'takes' is parameterized: expected 'async()->int',"
+                + " got 'async(int)->int'");
+    }
+
+    @Test
+    public void productionCompiledDescriptorMismatchedExportReturnsPinnedHostFailureReason()
+            throws Exception {
+        assertCompiledHostFailure("descriptor_mismatch", """
+            export async function oracle(): string { return "x"; }
+            export function main(): null { return null; }
+            """, "oracle", "int",
+            "export 'oracle' signature mismatch: expected 'async()->int',"
+                + " got 'async()->string'");
     }
 
     // =========================================================================
@@ -785,8 +1071,7 @@ public class LuaJitAsyncExportInvokerTest {
         assertEquals("one module load, one chunk-end main call, one oracle"
             + " invocation in one runtime instance",
             "load\nmain\noracle\n", Files.readString(probe));
-        assertEquals("the per-invocation temp directory is deleted after"
-            + " the process exits", before, invokerTempDirs());
+        assertNoTempDirLeaks(before);
 
         assertEquals(new Result.Value("int", "42"),
             invoke(entry, "oracle", "int"));
@@ -794,8 +1079,88 @@ public class LuaJitAsyncExportInvokerTest {
             + " own exactly-once sequence",
             "load\nmain\noracle\nload\nmain\noracle\n",
             Files.readString(probe));
-        assertEquals("no temp directory leaks across invokes", before,
-            invokerTempDirs());
+        assertNoTempDirLeaks(before);
+    }
+
+    // =========================================================================
+    // Compiled host-probe exactly-once fixture (Verification 4)
+    // =========================================================================
+
+    @Test
+    public void productionCompiledHostProbeRunsExactlyOncePerInvoke()
+            throws Exception {
+        assumeTrue(luajitAvailable);
+
+        // Staged host probe declaration (host-module-abi frozen seam —
+        // the same raw-function module shape as
+        // test/conformance/host-fixtures/cfg.lua): mainTouch/oracleTouch
+        // bump per-invocation counters and snapshot() returns the plain
+        // {load, main, oracle} table the oracle completes.
+        Path projectDir = Files.createDirectories(tmp.resolve("probe-src"));
+        Files.writeString(projectDir.resolve("probe.d.deal"), """
+            export function mainTouch(): null;
+            export function oracleTouch(): null;
+            export function snapshot(): table;
+            """);
+        Path out = tmp.resolve("probe-out");
+        compileProductionEntry(projectDir, "oracle_entry.deal", """
+            import * as probe from "host/probe"
+
+            export function main(): null {
+              probe.mainTouch();
+              return null;
+            }
+
+            export async function oracle(): table {
+              probe.oracleTouch();
+              return probe.snapshot();
+            }
+            """, """
+            {
+              "moduleRoots": ["src"],
+              "externals": {
+                "host/probe": { "declaration": "probe.d.deal" }
+              }
+            }
+            """, out);
+
+        // The deployment root carries the staged host implementation at
+        // host/probe.lua (the driver's package.path resolves the raw
+        // slash-form require verbatim).
+        Path hostDir = Files.createDirectories(out.resolve("host"));
+        Files.writeString(hostDir.resolve("probe.lua"), """
+            local rt = require("deal.runtime")
+            local load = 1
+            local main = 0
+            local oracle = 0
+            return {
+              mainTouch = function() main = main + 1 return rt.__NULL end,
+              oracleTouch = function() oracle = oracle + 1 return rt.__NULL end,
+              snapshot = function()
+                return { load = load, main = main, oracle = oracle }
+              end,
+            }
+            """);
+
+        Path entryArtifact = entryArtifactOf(out);
+        String generated = Files.readString(entryArtifact);
+        assertFalse("the probe artifact never references the runtime entry",
+            generated.contains("invoke_async_export"));
+        assertFalse("the probe artifact never emits the driver marker",
+            generated.contains(MARKER));
+
+        Set<String> before = invokerTempDirs();
+
+        // Two consecutive invokes each spawn one fresh runtime instance:
+        // one host-module init, one entry init + chunk-end main call,
+        // and one oracle invocation inside it (load/main/oracle = 1).
+        Result first = invoke(entryArtifact, "oracle", "table");
+        assertExactlyOneSnapshot(first);
+        assertNoTempDirLeaks(before);
+
+        Result second = invoke(entryArtifact, "oracle", "table");
+        assertExactlyOneSnapshot(second);
+        assertNoTempDirLeaks(before);
     }
 
     @Test
