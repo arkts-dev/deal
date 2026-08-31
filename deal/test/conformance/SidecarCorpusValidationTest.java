@@ -170,6 +170,35 @@ public class SidecarCorpusValidationTest {
      */
     private static final int RUNTIME_ERROR_COUNT = 79;
 
+    /**
+     * ISSUE-0397 count-pin criterion amendment record (MR-0305 review
+     * cycle 1, the count-pin finding). The issue's written criterion
+     * pins the count movement as {@code RUNTIME_OK_COUNT 192 -> 193} and
+     * {@code RUNTIME_ERROR_COUNT 63 -> 65} with the known-fail
+     * population {@code {backend-runtime/bytes/bytes-buffer-ops.deal}} —
+     * absolute values authored against an earlier tree. At the MR's
+     * merge base (113c048) the pins were already 207/77 with an empty
+     * known-fail population: the corpus grew through the merged sibling
+     * issues ISSUE-0332 (signed32 gate), ISSUE-0335 (async), ISSUE-0336
+     * (boundaries), ISSUE-0337 (math), ISSUE-0339 (bytes — which
+     * promoted {@code backend-runtime/bytes/bytes-buffer-ops.deal} to a
+     * runtime-ok fixture in commit 8d6a78f), and ISSUE-0342 (json).
+     * The review's prescribed correction ratifies the merge-base
+     * movement — 207 {@literal ->} 208 and 77 {@literal ->} 79, the
+     * known-fail population unchanged at the empty set — which is
+     * exactly the delta the written criterion pins (+1 runtime-ok,
+     * +2 runtime-error), applied to the evolved pins. The written
+     * absolute values are mutually exclusive with this tree: the corpus
+     * carries 208/79, so pins at 193/65 would deterministically fail the
+     * completeness checks, and reverting the corpus to the written
+     * population would revert unrelated merged sibling-issue work
+     * (out of scope). The amendment of the issue's acceptance criterion
+     * itself is an issue-tracker action recorded on MR-0305 (the
+     * implementer's tools cannot amend the issue); this tree pins the
+     * ratified movement, which is the only pin set that keeps every gate
+     * green.
+     */
+
     /** The G4.6 lane error framing prefixes. */
     private static final String DEAL_ERROR_CODE_LINE = "DEAL_ERROR_CODE: ";
     private static final String DEAL_ERROR_SNAPSHOT_LINE = "DEAL_ERROR_SNAPSHOT: ";
