@@ -8,6 +8,8 @@ import deal.codegen.jvm.JvmBackend;
 import deal.lexer.*;
 import deal.module.CompilationOrchestrator;
 import deal.module.DealConfig;
+import deal.semantic.CompilerInvocation;
+import deal.semantic.ir.SemanticProfile;
 import deal.module.ExportExtractor;
 import deal.module.StdlibModuleResolver;
 import deal.parser.*;
@@ -190,46 +192,26 @@ public class JvmConformanceTest {
                 + "reports the mismatch as E8001 (ISSUE-0277).",
             "JVM-GAP-DESCRIPTORS");
 
-        // ---- JVM-GAP-INT32: the signed-int32 runtime gate (ISSUE-0277) ----
+        // ---- JVM-GAP-INT32: the signed-int32 runtime gate ----
         // The v1.2 corpus pins int as [-2147483648, 2147483647] with E8004
-        // on every out-of-range arithmetic result and conversion. The JVM
-        // backend retains the ±(2^53−1) safe range until JVM v1.2
-        // completion (ISSUE-0277), so the LuaJIT-owned int32 expectations
-        // below cannot pass on JVM yet. Once JVM int32 lands, the probes
-        // start passing and the stale-skip gate forces these entries out
-        // (ISSUE-0277 promotion).
-        skip("backend-runtime/arithmetic/int-add-overflow.deal",
-            "E8004 for 2147483647 + 1 requires the signed-int32 gate; "
-                + "JvmBackend retains the ±(2^53−1) safe range "
-                + "(ISSUE-0277).", "JVM-GAP-INT32");
-        skip("backend-runtime/arithmetic/int-sub-overflow.deal",
-            "E8004 for -2147483648 - 1 requires the signed-int32 gate; "
-                + "JvmBackend retains the ±(2^53−1) safe range "
-                + "(ISSUE-0277).", "JVM-GAP-INT32");
-        skip("backend-runtime/arithmetic/int-mul-overflow.deal",
-            "E8004 for 65536 * 65536 requires the signed-int32 gate; "
-                + "JvmBackend retains the ±(2^53−1) safe range "
-                + "(ISSUE-0277).", "JVM-GAP-INT32");
-        skip("backend-runtime/arithmetic/int-conversion-out-of-range.deal",
-            "E8004 for int(2147483648.0) / int(-2147483649.0) requires "
-                + "the signed-int32 gate; JvmBackend retains the "
-                + "±(2^53−1) safe range (ISSUE-0277).", "JVM-GAP-INT32");
-        skip("backend-runtime/source-location/int32-overflow-source.deal",
-            "E8004 from the int32-overflowing expression requires the "
-                + "signed-int32 gate; JvmBackend retains the ±(2^53−1) "
-                + "safe range (ISSUE-0277).", "JVM-GAP-INT32");
+        // on every out-of-range arithmetic result and conversion. The
+        // profile-selected JVM int32 helper bodies landed (ISSUE-0394):
+        // the retained v1.2 invocation now raises E8004 for the
+        // arithmetic/conversion/negation cases below, so those entries
+        // became stale under the A5 seam and were removed with the
+        // promotions (the backend-runtime int-add-overflow case re-homed
+        // to the two-backend slice surface). The single remaining entry
+        // is the int32 std/math.absInt residual: the int-carrier arm's
+        // java.lang.Math.abs(int) of MIN_VALUE stays negative and the
+        // emitted checkInt passes it silently, so the LuaJIT-owned E8004
+        // expectation still fails on JVM (tracked residual).
         skip("backend-runtime/stdlib/math/int-abs-min-overflow.deal",
-            "E8004 for std/math.absInt(-2147483648) requires the "
-                + "signed-int32 gate; JvmBackend retains the ±(2^53−1) "
-                + "safe range (ISSUE-0277).", "JVM-GAP-INT32");
-        skip("backend-runtime/arithmetic/int-neg-min.deal",
-            "E8004 for -(-2147483648) requires the signed-int32 gate; "
-                + "JvmBackend retains the ±(2^53−1) safe range "
-                + "(ISSUE-0277).", "JVM-GAP-INT32");
-        skip("backend-runtime/source-location/int-neg-min-source.deal",
-            "E8004 from unary int negation requires the signed-int32 "
-                + "gate; JvmBackend retains the ±(2^53−1) safe range "
-                + "(ISSUE-0277).", "JVM-GAP-INT32");
+            "E8004 for std/math.absInt(-2147483648) requires the int32 "
+                + "absInt arm to compute the LuaJIT-matching long "
+                + "magnitude (2147483648) before the gate; the int-carrier "
+                + "arm's java.lang.Math.abs(int) of MIN_VALUE stays "
+                + "negative and returns silently (tracked JVM int32 "
+                + "residual).", "JVM-GAP-INT32");
 
         // ---- JVM-GAP-BYTES: the bytes runtime lane (ISSUE-0277) ----
         // The v1.2 corpus pins the FFI-backed bytes carrier with
@@ -412,10 +394,12 @@ public class JvmConformanceTest {
             + "(javac-rejected artifact; a missed E6000 guard)",
         "JVM-GAP-ASYNC-FNEXPR", "async function expressions and "
             + "block-level async functions (E6000)",
-        "JVM-GAP-INT32", "signed-int32 runtime gate — JvmBackend retains "
-            + "the ±(2^53−1) safe range until JVM v1.2 completion "
-            + "(ISSUE-0277); the int32-overflow E8004 expectations "
-            + "pass only on LuaJIT",
+        "JVM-GAP-INT32", "signed-int32 runtime gate — the int32 "
+            + "arithmetic/conversion/negation expectations pass under the "
+            + "v1.2 invocation (entries removed with the A5 seam); the "
+            + "std/math.absInt(-2147483648) E8004 residual stays tracked "
+            + "(the int-carrier java.lang.Math.abs(int) of MIN_VALUE "
+            + "stays negative)",
         "JVM-GAP-BYTES", "bytes runtime lane — JvmBackend raises E6000 on "
             + "every bytes site (the bytes carrier/lowering slice is "
             + "ISSUE-0277's); the LuaJIT bytes expectations "
@@ -553,6 +537,15 @@ public class JvmConformanceTest {
     private static final AtomicInteger frontendFailed = new AtomicInteger();
     private static final AtomicInteger applicableTotal = new AtomicInteger();
     private static final AtomicInteger applicablePassed = new AtomicInteger();
+
+    /** Profile-authority accounting (A4/A5): legacy-authority results
+     * keep their own denominator and earn zero v1.2 credit. */
+    private static final AtomicInteger legacyAuthorityResults =
+        new AtomicInteger();
+    private static final AtomicInteger legacyAuthorityPassed =
+        new AtomicInteger();
+    private static final AtomicInteger legacyAuthorityFailed =
+        new AtomicInteger();
     private static final AtomicInteger applicableFailed = new AtomicInteger();
     private static final AtomicInteger applicableSkipped = new AtomicInteger();
     private static final AtomicInteger knownFailTotal = new AtomicInteger();
@@ -611,7 +604,29 @@ public class JvmConformanceTest {
                 + "JVM execution is not a pass)"));
         System.out.println();
 
-        List<Classified> tests = classifyAll(discoverTests());
+        List<TestFile> discovered = discoverTests();
+        // LegacyProfileRegressionCatalog validation (A4): rows resolve,
+        // the closed completeness scan finds no uncatalogued
+        // legacy-dependent assertion, and the mechanism self-probes pass
+        // before any fixture executes.
+        LegacyProfileRegressionCatalog.validateRows();
+        LegacyProfileRegressionCatalog.runSelfProbes();
+        for (TestFile test : discovered) {
+            LegacyProfileRegressionCatalog.scanDealSource(
+                test.relativePath(), Files.readString(test.path()),
+                test.expected());
+        }
+        List<String> catalogViolations =
+            LegacyProfileRegressionCatalog.drainViolations();
+        if (!catalogViolations.isEmpty()) {
+            System.out.println("CATALOG FAILURE: "
+                + "LegacyProfileRegressionCatalog validation failed:");
+            for (String violation : catalogViolations) {
+                System.out.println("  " + violation);
+            }
+            System.exit(1);
+        }
+        List<Classified> tests = classifyAll(discovered);
         int frontend = (int) tests.stream()
             .filter(c -> c.kind() == Kind.FRONTEND).count();
         int applicable = (int) tests.stream()
@@ -902,7 +917,9 @@ public class JvmConformanceTest {
     private static Outcome runFrontend(Classified classified) {
         TestFile test = classified.test();
         frontendTotal.incrementAndGet();
-        List<CompilerDiagnostic> diags = frontendDiagnostics(test.path());
+        List<CompilerDiagnostic> diags = frontendDiagnostics(test.path(),
+            LegacyProfileRegressionCatalog.frontendInvocation()
+                .semanticProfile());
         boolean hasErrors = diags.stream()
             .anyMatch(d -> "error".equals(d.severity()));
         String expected = test.expected();
@@ -952,7 +969,8 @@ public class JvmConformanceTest {
      * diagnostics and the compile-error tests fail.
      */
     @SuppressWarnings("deprecation")
-    private static List<CompilerDiagnostic> frontendDiagnostics(Path file) {
+    private static List<CompilerDiagnostic> frontendDiagnostics(Path file,
+            SemanticProfile profile) {
         List<CompilerDiagnostic> all = new ArrayList<>();
         try {
             String source = Files.readString(file);
@@ -962,12 +980,13 @@ public class JvmConformanceTest {
             all.addAll(lex.diagnostics());
             if (lex.hasErrors()) return all;
 
-            Parser parser = new Parser(lex.tokens(), filename);
+            Parser parser = new Parser(lex.tokens(), filename, profile);
             ParseResult parseResult = parser.parse();
             all.addAll(parseResult.diagnostics());
             if (parseResult.hasErrors()) return all;
 
-            FrontendModuleResolver resolver = new FrontendModuleResolver(file);
+            FrontendModuleResolver resolver =
+                new FrontendModuleResolver(file, profile);
             NameResolver nr = new NameResolver(filename, resolver);
             SymbolTable symTable;
             try {
@@ -1007,9 +1026,12 @@ public class JvmConformanceTest {
             implements ModuleResolver {
         private final Path testFileDir;
         private final Map<String, Map<String, Type>> stdlibExports;
+        private final SemanticProfile profile;
 
-        FrontendModuleResolver(Path testFile) {
+        FrontendModuleResolver(Path testFile, SemanticProfile profile) {
             this.testFileDir = testFile.toAbsolutePath().getParent();
+            this.profile = java.util.Objects.requireNonNull(profile,
+                "profile must not be null");
             this.stdlibExports = StdlibModuleResolver.stdlibExports();
         }
 
@@ -1038,7 +1060,7 @@ public class JvmConformanceTest {
                             + resolved);
                     }
                     Parser parser = new Parser(lex.tokens(),
-                        resolved.toString());
+                        resolved.toString(), profile);
                     ParseResult parseResult = parser.parse();
                     if (parseResult.hasErrors()) {
                         throw new ModuleNotFoundException("Parse errors in "
@@ -1079,7 +1101,7 @@ public class JvmConformanceTest {
                     .tokenize();
                 if (lex.hasErrors()) return null;
                 Parser parser = new Parser(lex.tokens(),
-                    resolved.toString());
+                    resolved.toString(), profile);
                 ParseResult parseResult = parser.parse();
                 if (parseResult.hasErrors()) return null;
                 NameResolver nr = new NameResolver(resolved.toString(), this);
@@ -1098,7 +1120,8 @@ public class JvmConformanceTest {
                 String source = Files.readString(file);
                 LexResult lex = new Lexer(source, file.toString()).tokenize();
                 if (lex.hasErrors()) return symbols;
-                Parser parser = new Parser(lex.tokens(), file.toString());
+                Parser parser = new Parser(lex.tokens(), file.toString(),
+                    profile);
                 ParseResult parseResult = parser.parse();
                 if (parseResult.hasErrors()) return symbols;
                 String dotted = modulePathOf(file);
@@ -1218,6 +1241,26 @@ public class JvmConformanceTest {
 
     private static Outcome runApplicable(Classified classified,
             boolean knownFailProbe) {
+        boolean legacyAuthority = LegacyProfileRegressionCatalog
+            .isCatalogued(classified.test().relativePath());
+        if (!knownFailProbe && legacyAuthority) {
+            log("  [" + classified.test().relativePath()
+                + "] LEGACY-AUTHORITY (legacy-regression; zero v1.2 credit)");
+        }
+        Outcome outcome = runApplicableImpl(classified, knownFailProbe);
+        if (!knownFailProbe && legacyAuthority) {
+            legacyAuthorityResults.incrementAndGet();
+            if (outcome.pass()) {
+                legacyAuthorityPassed.incrementAndGet();
+            } else {
+                legacyAuthorityFailed.incrementAndGet();
+            }
+        }
+        return outcome;
+    }
+
+    private static Outcome runApplicableImpl(Classified classified,
+            boolean knownFailProbe) {
         TestFile test = classified.test();
         if (!knownFailProbe) {
             applicableTotal.incrementAndGet();
@@ -1288,9 +1331,14 @@ public class JvmConformanceTest {
 
             // 3. The real whole-project pipeline: module discovery,
             // signature extraction, dependency ordering, name resolution,
-            // type checking, per-module JvmBackend codegen.
+            // type checking, per-module JvmBackend codegen. The A5 seam
+            // selects the per-case invocation from the catalog decision
+            // (catalogued -> LEGACY_REGRESSION + LEGACY_SAFE_INT; else
+            // COMMON_SHADOW + DEAL_V1_2_INT32, zero shadow requests).
+            CompilerInvocation invocation = LegacyProfileRegressionCatalog
+                .invocationFor(test.relativePath());
             OrchestratorRun run = runOrchestrator(projectRoot, entryFile,
-                outputRoot, config);
+                outputRoot, config, invocation);
             if (!run.success()) {
                 if (knownFailProbe) {
                     return new Outcome(test, classified, false,
@@ -1334,7 +1382,8 @@ public class JvmConformanceTest {
 
             // 6. Runner: auto-invokes the entry module's zero-arity
             // exports, driven by the real parser's export list.
-            ProgramNode entryProgram = parseEntryProgram(entryFile);
+            ProgramNode entryProgram = parseEntryProgram(entryFile,
+                invocation.semanticProfile());
             Path runnerFile = outputRoot.resolve("JvmConformanceRunner.java");
             Files.writeString(runnerFile,
                 BackendConformanceTest.buildJvmRunner(entryProgram,
@@ -1450,7 +1499,8 @@ public class JvmConformanceTest {
      * stays clean.
      */
     private static OrchestratorRun runOrchestrator(Path projectRoot,
-            Path entryFile, Path outputRoot, DealConfig config) {
+            Path entryFile, Path outputRoot, DealConfig config,
+            CompilerInvocation invocation) {
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         synchronized (CONSOLE_LOCK) {
             PrintStream originalOut = System.out;
@@ -1464,10 +1514,10 @@ public class JvmConformanceTest {
                     new CompilationOrchestrator(
                         entryFile.toAbsolutePath().normalize(),
                         outputRoot.toAbsolutePath().normalize(),
-                        false, false, false, Backend.JVM,
+                        false, false, false, false, Backend.JVM,
                         config,
                         List.of(projectRoot.toAbsolutePath().normalize()),
-                        null);
+                        null, null, invocation);
                 boolean success = orchestrator.compile();
                 return new OrchestratorRun(success,
                     orchestrator.diagnostics(),
@@ -1634,8 +1684,8 @@ public class JvmConformanceTest {
      * re-run here — the orchestrator already checked every module — so
      * this parse cannot act as a checker bypass.
      */
-    private static ProgramNode parseEntryProgram(Path entryFile)
-            throws IOException {
+    private static ProgramNode parseEntryProgram(Path entryFile,
+            SemanticProfile profile) throws IOException {
         String source = Files.readString(entryFile);
         LexResult lex = new Lexer(source, entryFile.toString()).tokenize();
         if (lex.hasErrors()) {
@@ -1643,7 +1693,7 @@ public class JvmConformanceTest {
                 + lex.diagnostics());
         }
         ParseResult parse = new Parser(lex.tokens(),
-            entryFile.toString()).parse();
+            entryFile.toString(), profile).parse();
         if (parse.hasErrors()) {
             throw new IllegalStateException("entry module parse errors: "
                 + parse.diagnostics());
@@ -1702,6 +1752,12 @@ public class JvmConformanceTest {
             + "failed %d, skipped %d (classified), known-fail %d "
             + "(tracked) — pass rate %.1f%%%n",
             denominator, ap, af, as, kf, pct);
+        System.out.println("Profile-authority accounting: "
+            + legacyAuthorityResults.get()
+            + " legacy-authority fixture(s) (LEGACY_REGRESSION + "
+            + "LEGACY_SAFE_INT — zero v1.2/promotion credit; "
+            + legacyAuthorityPassed.get() + " passed, "
+            + legacyAuthorityFailed.get() + " failed)");
         System.out.println();
 
         System.out.println("Skipped backend-runtime groups (every skip "

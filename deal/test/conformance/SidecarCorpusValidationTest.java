@@ -80,7 +80,13 @@ import java.util.stream.Stream;
  *       sidecar in the same change that dropped its known-fail marker).
  *       The promoted {@code int-add-overflow.deal} received its
  *       runtime-error sidecar in the same change that dropped its
- *       known-fail marker (ISSUE-0332).</li>
+ *       known-fail marker (ISSUE-0332); the A5 profile-selection merge
+ *       then removed the backend-runtime home with its sidecar — the
+ *       JS lane's legacy range gate makes a uniform three-backend E8004
+ *       sidecar impossible until JS v1.2 int32 lands, so its coverage
+ *       re-homed to the two-backend slice surface
+ *       ({@code jvm-int32-slice.json#int32-add-overflow}), and this
+ *       population excludes it.</li>
  *   <li>All other fixtures ({@code compile-ok}, {@code compile-error},
  *       {@code companion}, frontend fixtures) carry no sidecar except
  *       the Diagnostics-bullet fixtures.</li>
@@ -135,25 +141,27 @@ public class SidecarCorpusValidationTest {
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
-     * the five int32 E8004 fixtures ISSUE-0332 promoted/added: the
-     * promoted int-add-overflow and the new int-sub-overflow,
-     * int-mul-overflow, int-conversion-out-of-range, and
-     * source-location/int32-overflow-source fixtures each land their
-     * sidecar in the same change as their expectation; plus the
-     * stdlib/math int-abs-min-overflow E8004 fixture ISSUE-0337 added
-     * with its sidecar in the same change; plus the host-async-shape-value
-     * E8010 fixture ISSUE-0335 added with its sidecar in the same change;
-     * plus the canonical signature-mismatch E8010 fixture ISSUE-0336
-     * added with its sidecar in the same change; plus the six
-     * int-neg/bytes error fixtures ISSUE-0339 added with their sidecars
-     * in the same change: int-neg-min, bytes-index-bounds,
+     * the int32 E8004 fixtures ISSUE-0332 promoted/added: the
+     * promoted int-add-overflow — later re-homed to the two-backend
+     * slice surface by the A5 profile-selection merge, which removed the
+     * backend-runtime fixture with its sidecar, so this population
+     * excludes it — and the new int-sub-overflow, int-mul-overflow,
+     * int-conversion-out-of-range, and source-location/int32-overflow-source
+     * fixtures each land their sidecar in the same change as their
+     * expectation; plus the stdlib/math int-abs-min-overflow E8004
+     * fixture ISSUE-0337 added with its sidecar in the same change; plus
+     * the host-async-shape-value E8010 fixture ISSUE-0335 added with its
+     * sidecar in the same change; plus the canonical signature-mismatch
+     * E8010 fixture ISSUE-0336 added with its sidecar in the same change;
+     * plus the six int-neg/bytes error fixtures ISSUE-0339 added with
+     * their sidecars in the same change: int-neg-min, bytes-index-bounds,
      * bytes-write-range, source-location/int-neg-min-source,
      * source-location/bytes-index-bounds-source, and
      * source-location/bytes-write-range-source; plus the
      * stdlib/json/json-stringify-bytes-error E8001 fixture ISSUE-0342
      * added with its sidecar in the same change).
      */
-    private static final int RUNTIME_ERROR_COUNT = 78;
+    private static final int RUNTIME_ERROR_COUNT = 77;
 
     /** The G4.6 lane error framing prefixes. */
     private static final String DEAL_ERROR_CODE_LINE = "DEAL_ERROR_CODE: ";
@@ -805,9 +813,12 @@ public class SidecarCorpusValidationTest {
             + "with sidecars, found " + runtimeError);
 
         // The tracked known-fail population is empty: the last tracked
-        // backend-runtime known-fail (bytes-buffer-ops, int-add-overflow
-        // was promoted by ISSUE-0332) was promoted by ISSUE-0339, so no
-        // backend-runtime fixture carries a known-fail marker.
+        // backend-runtime known-fail (bytes-buffer-ops; int-add-overflow
+        // was promoted by ISSUE-0332 and its backend-runtime home was
+        // removed by the A5 profile-selection merge, whose coverage
+        // re-homes to the two-backend slice surface) was promoted by
+        // ISSUE-0339, so no backend-runtime fixture carries a known-fail
+        // marker — and no pin may name the removed fixture.
         Set<String> knownFail = new TreeSet<>();
         for (Fixture fixture : fixtures) {
             if (fixture.corpusPath().startsWith("backend-runtime/")

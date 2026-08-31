@@ -13,7 +13,7 @@
       "hosts": {
         "host/log": {
           "declaration": "bindings/log.d.deal",
-          "java": "public final class HostLog {\n    public static Object info(long level, String s) { System.out.println(\"HOST:\" + level + \":\" + s); return null; }\n    public static Object add(long a, long b) { return Long.valueOf(a + b); }\n}\n"
+          "java": "public final class HostLog {\n    public static Object info(int level, String s) { System.out.println(\"HOST:\" + level + \":\" + s); return null; }\n    public static Object add(int a, int b) { return Integer.valueOf(a + b); }\n}\n"
         }
       },
       "expectedOutput": "HOST:1:hello\n5",
@@ -279,7 +279,7 @@
       "hosts": {
         "host/log": {
           "declaration": "bindings/log.d.deal",
-          "java": "public final class HostLog {\n    public static Object combine(long a, double b, boolean c, String d) { return \"combine:\" + a + \":\" + b + \":\" + c + \":\" + d; }\n    public static Object maybe(String s) { return s == null ? \"null-seen\" : s + \"-seen\"; }\n}\n"
+          "java": "public final class HostLog {\n    public static Object combine(int a, double b, boolean c, String d) { return \"combine:\" + a + \":\" + b + \":\" + c + \":\" + d; }\n    public static Object maybe(String s) { return s == null ? \"null-seen\" : s + \"-seen\"; }\n}\n"
         }
       },
       "expectedOutput": "combine:7:2.5:true:s\nx-seen\nnull-seen",
@@ -303,7 +303,7 @@
       "hosts": {
         "host/log": {
           "declaration": "bindings/log.d.deal",
-          "java": "import java.util.concurrent.CompletableFuture;\npublic final class HostLog {\n    public static Object fetch(long id) { return CompletableFuture.completedFuture(\"data-\" + id); }\n}\n"
+          "java": "import java.util.concurrent.CompletableFuture;\npublic final class HostLog {\n    public static Object fetch(int id) { return CompletableFuture.completedFuture(\"data-\" + id); }\n}\n"
         }
       },
       "expectedOutput": "data-9",
